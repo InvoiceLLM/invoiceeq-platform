@@ -24,7 +24,7 @@
 * **Daily Schedule**:
   * **Hour 1–2**: Learn how SQLModel interfaces with SQLAlchemy and constructs metadata.
   * **Hour 3–5**: Write the `Tenant` and `User` database models inside `apps/invoice-be/models.py`.
-  * **Hour 6–7**: Write `Vendor`, `Invoice`, and `InvoiceItem` tables with foreign key constraints.
+  * **Hour 6–7**: Write `Invoice` and `AuditLog` tables.
   * **Hour 8**: Validate the syntax of the schema models using static type checkers (Mypy).
 * **Verification**: Run `uv run python -c "from models import SQLModel"` to verify no syntax errors exist.
 

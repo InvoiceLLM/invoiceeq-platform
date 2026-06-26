@@ -166,14 +166,14 @@
   * **Hour 8**: Test validation locally with correct and incorrect invoice JSON samples.
 * **Verification**: Confirm that math errors return warning status codes.
 
-### Day 37: Extraction Agent Vendor Matching Tool
-* **Prerequisite Study**: Read about database queries and joins in SQLModel for matching tables.
+### Day 37: Extraction Agent Exception Handling & Alert Logging
+* **Prerequisite Study**: Learn about error classification, exception handling, and JSONB alert formatting.
 * **Daily Schedule**:
-  * **Hour 1–2**: Study vendor matching criteria.
-  * **Hour 3–5**: Write `@tool("match_vendor_registry")` in `agents/extraction_agent.py`.
-  * **Hour 6–7**: Match vendor name and tax ID against PostgreSQL database.
-  * **Hour 8**: Write unit tests verifying that mismatched vendors flag the invoice.
-* **Verification**: Verify that unknown vendors flag the invoice for manual auditing.
+  * **Hour 1–2**: Study standard finance error flags and status routing.
+  * **Hour 3–5**: Write error handling blocks to catch parsing errors and map them to alert objects.
+  * **Hour 6–7**: Implement the logic that updates status to `AUDIT_REQUIRED` and writes warning comments when math or schema validations fail.
+  * **Hour 8**: Write unit tests verifying that formatting and parsing exceptions are correctly saved as alerts.
+* **Verification**: Verify that corrupted or incorrect invoice uploads generate appropriate alerts on PostgreSQL.
 
 ### Day 38: Trainer Agent Template Generator
 * **Prerequisite Study**: Read about layout parsing offsets and saving layout templates.

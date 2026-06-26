@@ -22,13 +22,11 @@ This document maps each system API to its sequential file and function execution
    └─ File: agents/extraction_agent.py -> Function: validate_extracted_schema()
 7. Calculation Validation (Extraction Tool)
    └─ File: agents/extraction_agent.py -> Function: validate_math_totals()
-8. Supplier Approval Match (Extraction Tool)
-   └─ File: agents/extraction_agent.py -> Function: match_vendor_registry()
-9. Local Vector Calculation & Storage
+8. Local Vector Calculation & Storage
    └─ File: chroma_client.py -> Function: add_documents_to_collection()
-10. Sentence Transformer Processing
-    └─ File: chroma_client.py -> Function: calculate_embeddings()
-11. Real-Time Push Notification Output
+9. Sentence Transformer Processing
+   └─ File: chroma_client.py -> Function: calculate_embeddings()
+10. Real-Time Push Notification Output
     └─ File: routers/invoices.py -> Function: stream_batch_events()
 ```
 

@@ -40,7 +40,7 @@ The Invoice AI SaaS platform is a **multi-tenant, AI-powered invoice processing 
 
 **Core Value Proposition:**
 - **Automated Extraction** — AI agents parse PDF invoices into structured JSON.
-- **Verification Engine** — Math and vendor-match tools automatically flag discrepancies.
+- **Verification Engine** — Math validation checks automatically flag arithmetic discrepancies.
 - **Auditor Control** — Human-in-the-loop approval/rejection workflow.
 - **Semantic Chat** — RAG-based natural language queries over ingested invoice data with source citations.
 
@@ -383,9 +383,9 @@ The backend employs a **multi-agent architecture** where specialized AI agents h
 │  │                         │         │                         │       │
 │  │ • Map OCR/Image to JSON │         │ • Rule-based structural │       │
 │  │ • Run Math Calculations │         │   tagging optimization  │       │
-│  │ • Match Vendor Registry │         │                         │       │
-│  │                         │         │ Trigger:                │       │
-│  │ Trigger: POST /upload   │         │   POST /trainer/rules   │       │
+│  │                         │         │                         │       │
+│  │ Trigger: POST /upload   │         │ Trigger:                │       │
+│  │                         │         │   POST /trainer/rules   │       │
 │  └─────────────────────────┘         └─────────────────────────┘       │
 │               │                                                        │
 │               ▼ (Ingested Invoices)                                    │
@@ -428,13 +428,11 @@ To achieve higher extraction accuracy, the **Extraction Agent** acts as a multi-
 1. **Text Channel**: Receives raw OCR output from Azure Document Intelligence.
 2. **Visual Channel**: Receives page-by-page rendering of the invoice encoded as a **base64 image stream**.
 3. **Execution**: The model combines layout coordinates from OCR with spatial details from base64 images to resolve columns and line item mappings.
-4. **Immediate Verification**: Once extraction is complete, the agent automatically executes verification tools (math checks, vendor registry matching, PO checks) within the same graph loop.
+4. **Immediate Verification**: Once extraction is complete, the agent automatically executes verification tools (math checks) within the same graph loop.
 
 ### 7.3 Extraction & Verification Logic
 The Extraction Agent executes the following validation tools to check correctness:
 - **Math Tool**: Calculates whether line item amounts sum to the stated total, and check subtotal/taxes correctness. Flags discrepancies.
-- **Vendor Match Tool**: Cross-references vendor name against known vendor registry. Flags unknown vendors.
-- **PO Match Tool**: Compares the invoice grand total against the registered Purchase Order limits.
 - **Failure Action**: If any verification tool check fails or raises exceptions → the agent writes flags to the `alerts` array and sets the invoice status to `AUDIT_REQUIRED`.
 
 ### 7.4 Evaluation, Guardrails & Observability
@@ -492,6 +490,7 @@ CREATE TABLE invoices (
     tenant_id       UUID NOT NULL REFERENCES tenants(id),
     file_path       VARCHAR NOT NULL,  -- Azure Blob URL
     vendor_name     VARCHAR,
+    po_number       VARCHAR,           -- Extracted PO number reference
     amount          DECIMAL(12, 2),
     items           JSONB,             -- List of extracted line items stored inline
     alerts          JSONB,             -- List of active warning/anomaly alerts
@@ -507,6 +506,16 @@ CREATE TABLE audit_logs (
     actor_id    UUID NOT NULL REFERENCES users(id),
     action      VARCHAR NOT NULL,  -- e.g., 'MARKED_AS_PAID'
     timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Chat Sessions
+CREATE TABLE chat_sessions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID NOT NULL REFERENCES tenants(id),
+    user_id     UUID NOT NULL REFERENCES users(id),
+    title       VARCHAR(255) NOT NULL DEFAULT 'New Chat',
+    messages    JSONB,             -- Array of conversation messages stored inline
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
 
