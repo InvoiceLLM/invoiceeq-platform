@@ -493,6 +493,8 @@ CREATE TABLE invoices (
     file_path       VARCHAR NOT NULL,  -- Azure Blob URL
     vendor_name     VARCHAR,
     amount          DECIMAL(12, 2),
+    items           JSONB,             -- List of extracted line items stored inline
+    alerts          JSONB,             -- List of active warning/anomaly alerts
     status          VARCHAR NOT NULL DEFAULT 'PROCESSING'
                     CHECK (status IN ('PROCESSING', 'COMPLETED', 'AUDIT_REQUIRED', 'PAID', 'REJECTED')),
     audit_comments  TEXT
@@ -508,7 +510,12 @@ CREATE TABLE audit_logs (
 );
 ```
 
-### 8.3 Invoice Status State Machine
+### 8.3 Denormalization & JSONB Strategy
+To maximize database read performance and simplify database ORM operations, the platform adopts a **denormalized JSONB approach** for line items and anomaly alerts:
+* **No Table Joins**: All invoice line items and alert warning flags are saved directly within the parent `invoices` row inside SQL `JSONB` array fields. Fetching an invoice does not require complex relational joins.
+* **Indexed Queries**: PostgreSQL handles JSONB indexing natively, allowing the system to perform fast queries on line-item descriptions or check for specific warning tags inside the JSON structure when loading dashboards.
+
+### 8.4 Invoice Status State Machine
 
 ```
   PROCESSING
