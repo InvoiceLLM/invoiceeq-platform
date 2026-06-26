@@ -79,6 +79,39 @@ This document maps each system API to its sequential file and function execution
 ```
 1. API Router
    └─ File: routers/audit.py -> Function: resolve_audit_invoice()
+      ```python
+      # Proposed implementation logic outline inside resolve_audit_invoice():
+      #
+      # @router.put("/resolve/{invoice_id}")
+      # def resolve_audit_invoice(invoice_id: UUID, payload: AuditResolutionPayload, db: Session, current_user: User):
+      #     # 1. Retrieve the target invoice
+      #     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+      #
+      #     # 2. Save manual corrections (metadata overrides)
+      #     invoice.amount = payload.amount
+      #     invoice.vendor_name = payload.vendor_name
+      #     invoice.invoice_date = payload.invoice_date
+      #
+      #     # 3. Handle alert dismissals / resolution
+      #     for alert_id in payload.dismissed_alerts_list:
+      #         alert = db.query(AnomalyAlert).filter(AnomalyAlert.id == alert_id).first()
+      #         if alert:
+      #             alert.is_dismissed = True
+      #
+      #     # 4. Resolve the status (stamps PAID or REJECTED)
+      #     invoice.status = payload.status
+      #
+      #     # 5. Save audit metadata logging (auditor details & timestamp)
+      #     audit_log = AuditLog(
+      #         invoice_id=invoice.id,
+      #         changed_by=current_user.id,
+      #         action="audit_resolution",
+      #         previous_state=old_state_json,
+      #         new_state=new_state_json
+      #     )
+      #     db.add(audit_log)
+      #     db.commit()
+      ```
 2. Authentication & Tenant Scope
    └─ File: dependencies.py -> Function: get_tenant_context()
 3. Database Session Verification
