@@ -39,7 +39,7 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | Field Name | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Unique identifier for the user. |
-| `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL` | The tenant workspace this user belongs to. |
+| `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NULL` | The tenant workspace this user belongs to. Nullable during initial signup/onboarding phase before a tenant is created/joined (placeholder for future invite flows). |
 | `email` | `VARCHAR(255)` | `UNIQUE`, `NOT NULL` | User's email address. |
 | `first_name` | `VARCHAR(100)` | `NULL` | User's first name. |
 | `last_name` | `VARCHAR(100)` | `NULL` | User's last name. |

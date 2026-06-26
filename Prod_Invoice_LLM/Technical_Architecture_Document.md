@@ -479,7 +479,7 @@ CREATE TABLE tenants (
 -- Users
 CREATE TABLE users (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL REFERENCES tenants(id),
+    tenant_id   UUID REFERENCES tenants(id), -- Nullable during onboarding/invite phase
     email       VARCHAR NOT NULL UNIQUE,
     role        VARCHAR NOT NULL CHECK (role IN ('Admin', 'Auditor', 'Viewer'))
 );
