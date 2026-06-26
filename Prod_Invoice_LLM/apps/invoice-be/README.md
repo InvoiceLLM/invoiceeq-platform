@@ -68,7 +68,8 @@ uv run uvicorn main:app --reload
 | PUT    | `/api/v1/audit/resolve/{invoice_id}`   | Save manual modifications, dismiss/clear alerts, and mark as PAID or REJECTED |
 | POST   | `/api/v1/chat/query`                   | Semantic search with PDF citations                   |
 | GET    | `/api/v1/dashboard/metrics`            | Aggregated metrics by tenant & status                |
-| POST   | `/api/v1/trainer/rules`                | Submit structural tagging rules                      |
+| POST   | `/api/v1/trainer/chat`                 | Conversational training interface to submit layout rules in plain English |
+| POST   | `/api/v1/trainer/rules`                | Commit and save structured layout rules under `#VendorName` template registry |
 
 ## Real-Time Notification Strategy (Hybrid)
 | Scenario       | Mechanism                  | How It Works                                                     |

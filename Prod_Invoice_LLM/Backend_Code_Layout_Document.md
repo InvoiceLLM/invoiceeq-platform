@@ -141,14 +141,19 @@ This document maps each system API to its sequential file and function execution
 
 ---
 
-## Flow 6: Trainer Rules Management (Manual rules insertion)
-* **API Endpoint**: `POST /api/v1/trainer/rules`
+## Flow 6: Trainer Rules & Chat Management (Conversational Feedback Loop)
+* **API Endpoints**: `POST /api/v1/trainer/chat` (Chat Feedback) & `POST /api/v1/trainer/rules` (Commit to Registry)
 
 ```
-1. API Router
-   └─ File: routers/trainer.py -> Function: create_extraction_rules()
-2. Authentication & Tenant Scope (Requires 'Admin' Role check)
+1. API Router (Chat Feedback)
+   └─ File: routers/trainer.py -> Function: submit_trainer_chat_feedback()
+      - Converts natural language rules into structured JSON constraints via LLM
+      - Returns updated extraction preview results to the frontend
+2. API Router (Commit Rules)
+   └─ File: routers/trainer.py -> Function: commit_trainer_rules_registry()
+      - Saves the finalized structured templates in PostgreSQL under #VendorName
+3. Authentication & Tenant Scope (Requires 'Admin' or 'Auditor' Persona check)
    └─ File: dependencies.py -> Function: get_tenant_context()
-3. Save rules to database
+4. Save rules to database
    └─ File: dependencies.py -> Function: get_db_session()
 ```
