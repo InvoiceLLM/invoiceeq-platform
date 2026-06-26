@@ -14,23 +14,21 @@ This document maps each system API to its sequential file and function execution
    └─ File: dependencies.py -> Function: get_tenant_context()
 3. Async Task Queue (Dispatched)
    └─ File: workers/tasks.py -> Function: process_invoice_task()
-4. Multi-Modal Text & Visual Parsing
+4. Multi-Modal Text, Visual Parsing & Verification
    └─ File: agents/extraction_agent.py -> Class: ExtractionAgent -> Function: run()
 5. Offset & Template Coordinate Lookups (Agent Tool)
    └─ File: agents/extraction_agent.py -> Function: fetch_template_rules_tool()
 6. Validation checks (Agent Tool)
    └─ File: agents/extraction_agent.py -> Function: validate_extracted_schema()
-7. Math and Vendor Registry Checks
-   └─ File: agents/verification_agent.py -> Class: VerificationAgent -> Function: run()
-8. Calculation Validation (Verification Tool)
-   └─ File: agents/verification_agent.py -> Function: validate_math_totals()
-9. Supplier Approval Match (Verification Tool)
-   └─ File: agents/verification_agent.py -> Function: match_vendor_registry()
-10. Local Vector Calculation & Storage
-    └─ File: chroma_client.py -> Function: add_documents_to_collection()
-11. Sentence Transformer Processing
+7. Calculation Validation (Extraction Tool)
+   └─ File: agents/extraction_agent.py -> Function: validate_math_totals()
+8. Supplier Approval Match (Extraction Tool)
+   └─ File: agents/extraction_agent.py -> Function: match_vendor_registry()
+9. Local Vector Calculation & Storage
+   └─ File: chroma_client.py -> Function: add_documents_to_collection()
+10. Sentence Transformer Processing
     └─ File: chroma_client.py -> Function: calculate_embeddings()
-12. Real-Time Push Notification Output
+11. Real-Time Push Notification Output
     └─ File: routers/invoices.py -> Function: stream_batch_events()
 ```
 
@@ -99,10 +97,9 @@ This document maps each system API to its sequential file and function execution
       #     invoice.invoice_date = payload.invoice_date
       #
       #     # 3. Handle alert dismissals / resolution
-      #     for alert_id in payload.dismissed_alerts_list:
-      #         alert = db.query(AnomalyAlert).filter(AnomalyAlert.id == alert_id).first()
-      #         if alert:
-      #             alert.is_dismissed = True
+      #     # Since alerts are stored inline inside the invoices table as a JSONB array,
+      #     # we update the alerts list directly on the invoice record.
+      #     invoice.alerts = [alert for alert in invoice.alerts if alert['id'] not in payload.dismissed_alerts_list]
       #
       #     # 4. Resolve the status (stamps PAID or REJECTED)
       #     invoice.status = payload.status

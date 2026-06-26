@@ -31,9 +31,9 @@ This document serves as the high-level milestone roadmap for the **Invoice AI Sa
   * **Week 6 (Days 26–30)**: Integrating Celery queues and calling the Azure Document Intelligence Prebuilt-Invoice OCR model.
 
 ### Phase 3: AI Agent Operations & Vector Storage (Weeks 7–9)
-* **Goal**: Develop the multi-agent reasoning graphs (Extraction, Verification, and Trainer agents) and build local RAG query clients.
+* **Goal**: Develop the multi-agent reasoning graphs (Extraction and Trainer agents) and build local RAG query clients.
   * **Week 7 (Days 31–35)**: Building the multi-modal Extraction Agent graph using `gpt-4o` base64 page streams and Pydantic validation rules.
-  * **Week 8 (Days 36–40)**: Implementing the Verification Agent calculations verification tools, Trainer Agent template feedback loops, and dashboard metrics APIs.
+  * **Week 8 (Days 36–40)**: Implementing the Extraction Agent calculations verification tools, Trainer Agent template feedback loops, and dashboard metrics APIs.
   * **Week 9 (Days 41–45)**: Loading local `BAAI/bge-m3` embedding calculations and implementing ChromaDB collections and RAG chat.
 
 ### Phase 4: UI Dashboards & Production Deployment (Weeks 10–12)

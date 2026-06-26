@@ -1,6 +1,6 @@
 # Month 2 Implementation Plan (Days 21–40)
 
-* **Goal**: Implement real-time bulk notification streams using Redis Pub/Sub, configure Celery workers to parse OCR details, set up the multi-modal Extraction Agent, Verification Agent, and Trainer Agent template learning logic.
+* **Goal**: Implement real-time bulk notification streams using Redis Pub/Sub, configure Celery workers to parse OCR details, set up the multi-modal Extraction Agent (including logic/math verification), and Trainer Agent template learning logic.
 
 ---
 
@@ -154,23 +154,23 @@
 
 ---
 
-## Week 8: Verification, Trainer, & Analytics APIs
-* **Goal**: Build the Verification Agent, Trainer template learning logic, and Dashboard metrics APIs.
+## Week 8: Extraction Verification Tools, Trainer, & Analytics APIs
+* **Goal**: Build the Extraction Agent verification tools, Trainer template learning logic, and Dashboard metrics APIs.
 
-### Day 36: Verification Agent Math Tools
+### Day 36: Extraction Agent Verification Tools
 * **Prerequisite Study**: Learn about decimal rounding rules, local calculations, and flagging policies.
 * **Daily Schedule**:
   * **Hour 1–2**: Study the verification logic rules.
-  * **Hour 3–5**: Write `@tool("validate_math_totals")` in `agents/verification_agent.py`.
+  * **Hour 3–5**: Write `@tool("validate_math_totals")` in `agents/extraction_agent.py`.
   * **Hour 6–7**: Implement calculations checking line items sum against subtotal and grand totals.
   * **Hour 8**: Test validation locally with correct and incorrect invoice JSON samples.
 * **Verification**: Confirm that math errors return warning status codes.
 
-### Day 37: Vendor Matching Tool
+### Day 37: Extraction Agent Vendor Matching Tool
 * **Prerequisite Study**: Read about database queries and joins in SQLModel for matching tables.
 * **Daily Schedule**:
   * **Hour 1–2**: Study vendor matching criteria.
-  * **Hour 3–5**: Write `@tool("match_vendor_registry")` in `agents/verification_agent.py`.
+  * **Hour 3–5**: Write `@tool("match_vendor_registry")` in `agents/extraction_agent.py`.
   * **Hour 6–7**: Match vendor name and tax ID against PostgreSQL database.
   * **Hour 8**: Write unit tests verifying that mismatched vendors flag the invoice.
 * **Verification**: Verify that unknown vendors flag the invoice for manual auditing.
@@ -199,5 +199,5 @@
   * **Hour 1–2**: Review the code changes with a teammate.
   * **Hour 3–4**: Write integration tests in `tests/test_verification_flow.py`.
   * **Hour 5–6**: Deploy the updated verification containers to UAT.
-  * **Hour 7–8**: Trigger the ingestion API in UAT and confirm that the Verification and Trainer agents execute correctly.
+  * **Hour 7–8**: Trigger the ingestion API in UAT and confirm that the Extraction and Trainer agents execute correctly.
 * **Verification**: Verify that UAT PostgreSQL records update to `AUDIT_REQUIRED` status when math checks fail.

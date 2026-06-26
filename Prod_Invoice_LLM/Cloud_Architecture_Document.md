@@ -297,11 +297,7 @@ PDF Upload → Blob Storage
                 │
                 ▼
      Azure OpenAI (GPT-4)
-     Extraction Agent → JSON Schema
-                │
-                ▼
-     Azure OpenAI (GPT-4)
-     Verification Agent → Math/Vendor Check
+     Extraction Agent (JSON Schema & Verification)
                 │
                 ▼
      Local Hugging Face (BAAI/bge-m3)

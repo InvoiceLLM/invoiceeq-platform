@@ -27,8 +27,7 @@ invoice-be/
 │   ├── chat.py                  # Semantic Query Interface
 │   └── dashboard.py             # Metrics & Filtering
 ├── agents/
-│   ├── extraction_agent.py      # JSON Schema Enforcer
-│   ├── verification_agent.py    # Math/Vendor Verification Tools
+│   ├── extraction_agent.py      # Data Extraction & Verification Tools
 │   ├── query_agent.py           # RAG Logic & Citation Handler
 │   └── trainer_agent.py         # Rule-based Structural Tags
 ├── workers/

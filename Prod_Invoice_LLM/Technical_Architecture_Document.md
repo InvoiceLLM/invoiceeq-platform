@@ -74,7 +74,7 @@ The Invoice AI SaaS platform is a **multi-tenant, AI-powered invoice processing 
 │  │  └────────────┘  └──────────────┘  └──────────┘  └──────────────┘  │   │
 │  │  ┌────────────────────────────────────────────────────────────────┐ │   │
 │  │  │                   AI AGENT LAYER                               │ │   │
-│  │  │  extraction_agent │ verification_agent │ query_agent │ trainer │ │   │
+│  │  │  extraction_agent (with verification) │ query_agent │ trainer │ │   │
 │  │  └────────────────────────────────────────────────────────────────┘ │   │
 │  └──────────────────────────┬───────────────────────────────────────────┘   │
 │                             │                                              │
@@ -133,8 +133,7 @@ The backend follows a **clean separation of concerns** with an async/agentic wor
 │   ├── chat.py                  # Semantic Query Interface
 │   └── dashboard.py             # Metrics & Filtering
 ├── agents/
-│   ├── extraction_agent.py      # JSON Schema Enforcer
-│   ├── verification_agent.py    # Math/Vendor Verification Tools
+│   ├── extraction_agent.py      # Data Extraction & Verification Tools
 │   ├── query_agent.py           # RAG Logic & Citation Handler
 │   └── trainer_agent.py         # Rule-based Structural Tags
 ├── workers/
@@ -182,11 +181,10 @@ POST /api/v1/invoices/upload
 Celery Worker (Background)
        │
        ├── 1. Text Extraction (Azure Document Intelligence)
-       ├── 2. Extraction Agent → Structured JSON
-       ├── 3. Verification Agent → Math + Vendor checks
+       ├── 2. Extraction Agent → Structured JSON & Verification Checks
        │       ├── ✅ Pass → status: COMPLETED
        │       └── ❌ Fail → status: AUDIT_REQUIRED
-       ├── 4. Semantic Chunking → ChromaDB Vectorization
+       ├── 3. Semantic Chunking → ChromaDB Vectorization
        │
        ▼
 Frontend polls GET /status/{job_id}
@@ -380,27 +378,26 @@ The backend employs a **multi-agent architecture** where specialized AI agents h
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        AGENTIC AI PIPELINE                             │
 │                                                                        │
-│  ┌──────────────────┐    ┌──────────────────────┐                      │
-│  │ Extraction Agent  │───▶│ Verification Agent    │                      │
-│  │                  │    │                      │                      │
-│  │ • Map text→JSON  │    │ • Math Tool          │                      │
-│  │ • JSON Schema    │    │ • Vendor Match Tool  │                      │
-│  │   Enforcer       │    │ • Sets AUDIT_REQUIRED│                      │
-│  │                  │    │   on failure          │                      │
-│  │ Trigger:         │    │ Trigger:             │                      │
-│  │  POST /upload    │    │  POST /upload        │                      │
-│  └──────────────────┘    └──────────────────────┘                      │
-│                                                                        │
-│  ┌──────────────────┐    ┌──────────────────────┐                      │
-│  │ Query Agent       │    │ Trainer Agent         │                      │
-│  │                  │    │                      │                      │
-│  │ • Vector DB Query│    │ • Rule-based          │                      │
-│  │ • Citation       │    │   structural tags     │                      │
-│  │   Formatter      │    │                      │                      │
-│  │                  │    │ Trigger:             │                      │
-│  │ Trigger:         │    │  POST /trainer/rules │                      │
-│  │  POST /chat/query│    │                      │                      │
-│  └──────────────────┘    └──────────────────────┘                      │
+│  ┌─────────────────────────┐         ┌─────────────────────────┐       │
+│  │    Extraction Agent     │────────▶│      Trainer Agent      │       │
+│  │                         │         │                         │       │
+│  │ • Map OCR/Image to JSON │         │ • Rule-based structural │       │
+│  │ • Run Math Calculations │         │   tagging optimization  │       │
+│  │ • Match Vendor Registry │         │                         │       │
+│  │                         │         │ Trigger:                │       │
+│  │ Trigger: POST /upload   │         │   POST /trainer/rules   │       │
+│  └─────────────────────────┘         └─────────────────────────┘       │
+│               │                                                        │
+│               ▼ (Ingested Invoices)                                    │
+│  ┌─────────────────────────┐                                           │
+│  │       Query Agent       │                                           │
+│  │                         │                                           │
+│  │ • Vector DB RAG Search  │                                           │
+│  │ • Citation Formatter    │                                           │
+│  │                         │                                           │
+│  │ Trigger:                │                                           │
+│  │   POST /chat/query      │                                           │
+│  └─────────────────────────┘                                           │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -426,16 +423,19 @@ For multi-turn queries, the **Query Agent** uses session-level memory persistenc
 * **Short-Term Memory**: Checkpointer stores step-by-step agent trajectories.
 * **Long-Term Memory**: Stores user preferences and custom tenant settings.
 
-#### C. Multi-Modal Processing
+#### C. Multi-Modal Processing & Verification
 To achieve higher extraction accuracy, the **Extraction Agent** acts as a multi-modal agent:
 1. **Text Channel**: Receives raw OCR output from Azure Document Intelligence.
 2. **Visual Channel**: Receives page-by-page rendering of the invoice encoded as a **base64 image stream**.
 3. **Execution**: The model combines layout coordinates from OCR with spatial details from base64 images to resolve columns and line item mappings.
+4. **Immediate Verification**: Once extraction is complete, the agent automatically executes verification tools (math checks, vendor registry matching, PO checks) within the same graph loop.
 
-### 7.3 Verification Logic
-- **Math Tool**: Calculates whether line item amounts sum to the stated total. Flags discrepancies.
+### 7.3 Extraction & Verification Logic
+The Extraction Agent executes the following validation tools to check correctness:
+- **Math Tool**: Calculates whether line item amounts sum to the stated total, and check subtotal/taxes correctness. Flags discrepancies.
 - **Vendor Match Tool**: Cross-references vendor name against known vendor registry. Flags unknown vendors.
-- **Failure Action**: If either tool raises an exception → invoice status set to `AUDIT_REQUIRED`.
+- **PO Match Tool**: Compares the invoice grand total against the registered Purchase Order limits.
+- **Failure Action**: If any verification tool check fails or raises exceptions → the agent writes flags to the `alerts` array and sets the invoice status to `AUDIT_REQUIRED`.
 
 ### 7.4 Evaluation, Guardrails & Observability
 
@@ -511,8 +511,9 @@ CREATE TABLE audit_logs (
 ```
 
 ### 8.3 Denormalization & JSONB Strategy
-To maximize database read performance and simplify database ORM operations, the platform adopts a **denormalized JSONB approach** for line items and anomaly alerts:
+To maximize database read performance and simplify database ORM operations, the platform adopts a **denormalized JSONB approach** for line items, anomaly alerts, and conversational history:
 * **No Table Joins**: All invoice line items and alert warning flags are saved directly within the parent `invoices` row inside SQL `JSONB` array fields. Fetching an invoice does not require complex relational joins.
+* **Denormalized Conversational History**: The `chat_sessions` table stores all conversation messages (exchanges between user and query assistant) directly in a single `messages` `JSONB` array field, eliminating the need to join a separate messages table when loading conversational threads.
 * **Indexed Queries**: PostgreSQL handles JSONB indexing natively, allowing the system to perform fast queries on line-item descriptions or check for specific warning tags inside the JSON structure when loading dashboards.
 
 ### 8.4 Invoice Status State Machine

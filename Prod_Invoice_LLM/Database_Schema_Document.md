@@ -139,7 +139,7 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 ---
 
 ## 8. Table: `chat_sessions`
-*Stores semantic conversation threads.*
+*Stores semantic conversation threads and message history.*
 
 | Field Name | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
@@ -147,21 +147,8 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL` | Tenant workspace. |
 | `user_id` | `UUID` | `FOREIGN KEY` references `users(id)`, `NOT NULL` | Chat creator. |
 | `title` | `VARCHAR(255)` | `NOT NULL`, Default: `'New Chat'` | Conversation summary name. |
+| `messages` | `JSONB` | `NULL` | List of conversation messages (e.g. `[{"sender_type": "user", "content": "hello", "citations": [...], "created_at": "..."}]`) stored as a native JSON array. |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Chat started date. |
-
----
-
-## 9. Table: `chat_messages`
-*Stores conversational RAG message exchanges.*
-
-| Field Name | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Message identifier. |
-| `session_id` | `UUID` | `FOREIGN KEY` references `chat_sessions(id)` ON DELETE CASCADE, `NOT NULL` | Active chat session thread. |
-| `sender_type` | `VARCHAR(50)` | `NOT NULL`, Check: `IN ('user', 'assistant')` | Identifies message sender. |
-| `content` | `TEXT` | `NOT NULL` | The message text (Markdown supported). |
-| `citations` | `JSONB` | `NULL` | List of reference invoice IDs and source PDF links. |
-| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Message timestamp. |
 
 ---
 
