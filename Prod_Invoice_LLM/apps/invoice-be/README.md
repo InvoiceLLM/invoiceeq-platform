@@ -96,4 +96,10 @@ AZURE_DOC_INTEL_KEY=
 CHROMA_HOST=
 CHROMA_PORT=
 CLERK_SECRET_KEY=
+
+# LangSmith AI Agent Tracking & Evaluation
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
+LANGCHAIN_API_KEY=
+LANGCHAIN_PROJECT="invoice-ai-platform"
 ```

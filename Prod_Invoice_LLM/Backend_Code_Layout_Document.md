@@ -59,8 +59,9 @@ This document maps each system API to its sequential file and function execution
    └─ File: routers/chat.py -> Function: query_invoices_chat()
 2. Authentication & Tenant Scope
    └─ File: dependencies.py -> Function: get_tenant_context()
-3. Conversational RAG Loop Execution
+3. Conversational RAG Loop Execution (Stateful Checkpointer Memory)
    └─ File: agents/query_agent.py -> Class: QueryAgent -> Function: run()
+      - Uses LangGraph checkpointer `InMemorySaver()` to persist conversation history context
 4. Local Search Execution (Query Agent Tool)
    └─ File: agents/query_agent.py -> Function: query_chroma_vector_store()
 5. Local Embeddings Calculation
@@ -69,6 +70,10 @@ This document maps each system API to its sequential file and function execution
    └─ File: chroma_client.py -> Function: query_semantic_chunks()
 7. Database Aggregates Lookup (Query Agent Tool)
    └─ File: agents/query_agent.py -> Function: query_postgresql_aggregates()
+8. Output Guardrails & Safety Filter
+   - Enforces output check rules to prevent data leaks or bad database syntax
+9. LangSmith Tracing & Logging
+   - Automatically tracks token costs, latency, and agent step decisions in real-time
 ```
 
 ---
