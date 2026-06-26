@@ -1,6 +1,6 @@
 # Cloud Architecture Document
 
-![Azure Production Cloud Architecture](file:///C:/Users/S%20Banerjee/.gemini/antigravity-ide/brain/392b5e54-7ced-4b8e-9fed-3735c4dcf808/azure_prod_architecture_1782387118810.png)
+![Azure Production Cloud Architecture](./azure_prod_architecture_1782387118810.png)
 
 ## Invoice AI SaaS Platform — Azure Cloud Infrastructure
 

@@ -1,6 +1,6 @@
 # Technical Architecture Document
 
-![User Journey and Data Flow](file:///C:/Users/S%20Banerjee/.gemini/antigravity-ide/brain/392b5e54-7ced-4b8e-9fed-3735c4dcf808/user_data_flow_1782387729047.png)
+![User Journey and Data Flow](./user_data_flow_1782387729047.png)
 
 ## Invoice AI SaaS Platform — Production-Grade Architecture
 
