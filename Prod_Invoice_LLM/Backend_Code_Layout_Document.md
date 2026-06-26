@@ -52,6 +52,7 @@ This document maps each system API to its sequential file and function execution
 
 ## Flow 3: Semantic Chat & Invoice Query
 * **API Endpoint**: `POST /api/v1/chat/query`
+* **Response Payload**: Contains conversational `answer` string, list of `citations` page mappings, and the optional `generated_sql` query code for database auditability.
 
 ```
 1. API Router
