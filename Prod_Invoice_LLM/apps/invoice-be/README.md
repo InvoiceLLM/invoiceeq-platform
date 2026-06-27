@@ -49,13 +49,52 @@ invoice-be/
 
 ## Local Development Setup
 
-To run the backend locally, we use the **`uv`** package manager for fast, reproducible dependency resolution:
+To run the backend locally, you must spin up the local isolated databases (PostgreSQL, ChromaDB, and Redis) using Docker and initialize the database schema via Alembic.
 
+### 1. Setup Environment Variables
+Clone the `.env.example` template into a local `.env` file (which is git-ignored):
 ```bash
-# Install dependencies and sync virtual environment
+cp .env.example .env
+```
+Ensure you fill in your actual developer API keys (such as `AZURE_OPENAI_API_KEY`, `AZURE_DOC_INTEL_KEY`, and `CLERK_SECRET_KEY`) inside the `.env` file. The database and Redis strings are pre-configured to target your local containers.
+
+### 2. Start Local Databases (Docker Compose)
+We maintain a shared database environment in the repository root. Run the following command from the project root directory:
+```bash
+# Start Postgres, ChromaDB, and Redis containers in the background
+docker compose up -d
+```
+You can verify the containers are healthy by running:
+```bash
+docker compose ps
+```
+
+### 3. Apply Schema Migrations (Alembic)
+Once the Postgres container is healthy, run the migrations to create the local tables:
+```bash
+# Navigate to backend directory
+cd apps/invoice-be
+
+# Synchronize local packages and dependencies
 uv sync
 
-# Run FastAPI app in development mode
+# Apply all migrations to your local Postgres database
+uv run alembic upgrade head
+```
+
+### 4. Working with Database Changes (For Developers)
+If you add or modify database tables in [models.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/models.py):
+1. **Generate Migration Script**: Run the autogenerate command:
+   ```bash
+   uv run alembic revision --autogenerate -m "describe_your_changes"
+   ```
+   This will auto-detect the delta between SQLModel models and your local DB schema and create a new script under `alembic/versions/`.
+2. **Apply Local Updates**: Run `uv run alembic upgrade head` to apply it to your local container.
+3. **Commit to Git**: Check in the new generated revision script inside your feature branch so other developers get the updates when they pull.
+
+### 5. Run Backend Server
+Launch the FastAPI development reload server:
+```bash
 uv run uvicorn main:app --reload
 ```
 

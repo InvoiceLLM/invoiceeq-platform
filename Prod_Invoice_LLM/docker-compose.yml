@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # Relational Database for Structured Transactions & Audits
+  postgres:
+    image: postgres:16-alpine
+    container_name: invoice-postgres-local
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: localpassword123
+      POSTGRES_DB: invoice_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d invoice_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Vector Database for Document Semantic Storage & RAG Chat
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: invoice-chromadb-local
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/data
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Cache and Task Queue Broker for Celery Workers
+  redis:
+    image: redis:alpine
+    container_name: invoice-redis-local
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  chroma_data:
+  redis_data:

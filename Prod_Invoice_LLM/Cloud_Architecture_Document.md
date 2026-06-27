@@ -456,14 +456,144 @@ Parameters that differ between environments are externalized into `.env` files a
 | **Vulnerability Scanning**| Microsoft Defender for Containers    |
 | **Retention Policy**     | Keep last 30 tagged images per repo   |
 
-### 10.2 Docker Images
+### 10.2 Docker Images Architecture
 
-| Image Name           | Dockerfile Location          | Base Image            | Build Stage       |
-|----------------------|------------------------------|-----------------------|-------------------|
-| `invoice-website`    | `/docker/Dockerfile.website` | `node:20-alpine`      | Multi-stage (build + serve) |
-| `invoice-fe`         | `/docker/Dockerfile.fe`      | `node:20-alpine`      | Multi-stage (build + serve) |
-| `invoice-be`         | `/docker/Dockerfile.be`      | `python:3.12-slim`    | Multi-stage (deps + runtime) |
-| `celery-worker`      | `/docker/Dockerfile.worker`  | `python:3.12-slim`    | Shared with `invoice-be` + Celery entrypoint |
+We maintain separate `Dockerfiles` inside the `/docker` directory to containerize our stateless app layers. 
+
+| Image Name           | Dockerfile Location          | Base Image            | Build Stage & Rationale |
+|----------------------|------------------------------|-----------------------|-------------------------|
+| `invoice-website`    | `/docker/Dockerfile.website` | `node:20-alpine`      | **Multi-stage**: Builds static assets and serves the Next.js marketing website. |
+| `invoice-fe`         | `/docker/Dockerfile.fe`      | `node:20-alpine`      | **Multi-stage**: Builds the frontend dashboard client, optimizing file size. |
+| `invoice-be`         | `/docker/Dockerfile.be`      | `python:3.12-slim`    | **Multi-stage**: Installs python environment using `uv` and runs the FastAPI API. |
+| `celery-worker`      | `/docker/Dockerfile.worker`  | `python:3.12-slim`    | **Shared Image**: Reuses the `invoice-be` environment, overriding the startup command to launch the Celery task consumer (`celery -A workers.tasks worker`). |
+
+#### Why separate Dockerfiles?
+1. **Isolation of Concerns**: The website, frontend, and backend use different runtimes (Node.js vs. Python). 
+2. **Security**: Keeping the backend dependencies separate from frontend UI assets minimizes the attack surface area of the individual containers.
+3. **Optimized Scaling**: Azure Container Apps scales each container independently. For example, `celery-worker` can scale up to 5 instances under heavy background jobs without duplicating memory footprints of the web frontends.
+
+---
+
+### 10.3 CD YAML Workflow Mapping
+
+The CD process is managed by GitHub Actions `.yml` workflow files (such as `.github/workflows/deploy-uat.yml`). Here is how the pipeline knows where to route and place each container:
+
+1. **Building & Tagging**:
+   * The CD `.yml` file triggers on merges to target branches (`uat` or `main`).
+   * It logs into the Azure Container Registry (ACR) using a Service Principal.
+   * It builds all 3 Dockerfiles in parallel and tags them with the git commit SHA:
+     ```bash
+     docker build -f docker/Dockerfile.be -t acr.azurecr.io/invoice-be:sha-123456 .
+     docker push acr.azurecr.io/invoice-be:sha-123456
+     ```
+2. **Infrastructure Deployment & Mapping**:
+   * The workflow uses the **`Azure/arm-deploy`** action to run the Bicep template ([infra/main.bicep](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/infra/main.bicep)).
+   * It passes parameters containing the newly pushed image tags (e.g. `backendImageTag=sha-123456`).
+3. **Container Placement & Ingress Rules**:
+   * The Bicep template defines individual **Azure Container Apps** and applies specific network ingress bindings:
+     * **`invoice-website` & `invoice-fe`**: Deployed with `ingress.external = true` (exposed to port 443 via Front Door).
+     * **`invoice-be`**: Deployed with `ingress.external = false` and `ingress.targetPort = 8000`. This locks the API inside the VNet, making it accessible only to the frontend.
+     * **`celery-worker`**: Deployed with `ingress = null` (no ports open). It pulls tasks from Redis, making ingress unnecessary.
+
+---
+
+### 10.4 Production Network Connection Topology
+
+The diagram below visualizes how the containers connect to each other and the data layer within the private Azure Virtual Network (VNet):
+
+```mermaid
+graph TD
+    Client[Web Browser / User] -->|HTTPS: 443| FD[Azure Front Door]
+    FD -->|VNet Ingress| FE[invoice-fe Container App]
+    FD -->|VNet Ingress| WEB[invoice-website Container App]
+    
+    subgraph Private VNet [Azure Private Virtual Network]
+        FE -->|Private HTTP: 8000| BE[invoice-be Container App]
+        
+        BE -->|Celery Tasks| Redis[(Azure Cache for Redis)]
+        Worker[celery-worker Container App] -->|Pulls Tasks| Redis
+        
+        BE -->|Relational Data| Postgres[(Azure DB for PostgreSQL)]
+        Worker -->|Relational Data| Postgres
+        
+        BE -->|Vector Search| Chroma[(ChromaDB Container App)]
+        Worker -->|Vector Search| Chroma
+        
+        BE -->|Upload/Download| Storage[(Azure Blob Storage)]
+        Worker -->|Upload/Download| Storage
+        
+        BE -->|Cognitive Extraction| OCR[Azure Doc Intelligence]
+        Worker -->|Cognitive Extraction| OCR
+    end
+
+    classDef external fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef publicApp fill:#bbf,stroke:#333,stroke-width:2px;
+    classDef privateApp fill:#fbf,stroke:#333,stroke-width:2px;
+    classDef data fill:#ffb,stroke:#333,stroke-width:2px;
+    
+    class Client,FD external;
+    class FE,WEB publicApp;
+    class BE,Worker privateApp;
+    class Redis,Postgres,Chroma,Storage,OCR data;
+```
+
+---
+
+### 10.5 Step-by-Step Azure Portal click-through setup (1st Time Provisioning)
+
+Before automating deployments with Bicep, you can provision the cloud workspace manually through the Azure Portal:
+
+#### Step 1: Create the Resource Group
+1. Navigate to the **Azure Portal**.
+2. Click **Resource Groups** $\rightarrow$ **+ Create**.
+3. Choose your Subscription. Enter Resource Group name: `rg-invoiceai-prod` (or `rg-invoiceai-uat`).
+4. Select region (e.g. `East US 2`). Click **Review + create** $\rightarrow$ **Create**.
+
+#### Step 2: Create Azure Container Registry (ACR)
+1. In the search bar, search for **Container Registries** $\rightarrow$ **+ Create**.
+2. Set Resource Group to `rg-invoiceai-prod`. Registry name: `acrinvoiceaiprod`.
+3. Choose SKU: **Premium** (required for Private Endpoints).
+4. Select **Networking** tab $\rightarrow$ Set Connectivity to **Private Endpoint**.
+5. Click **Review + create** $\rightarrow$ **Create**.
+
+#### Step 3: Create the Virtual Network (VNet)
+1. Search for **Virtual Networks** $\rightarrow$ **+ Create**.
+2. Use Resource Group `rg-invoiceai-prod`. VNet name: `vnet-invoiceai-prod`.
+3. Under **IP Addresses**:
+   * Address space: `10.0.0.0/16`
+   * Add Subnet: `snet-aca` (Range: `10.0.1.0/24`) $\rightarrow$ delegate to **Azure Container Apps**.
+   * Add Subnet: `snet-pe` (Range: `10.0.2.0/24`) $\rightarrow$ for Private Endpoints (Postgres, Redis, Storage).
+4. Click **Review + create** $\rightarrow$ **Create**.
+
+#### Step 4: Create the Managed Databases & Storage
+* **Azure Database for PostgreSQL (Flexible Server)**:
+  1. Search for **Azure Database for PostgreSQL** $\rightarrow$ **+ Create** $\rightarrow$ Select **Flexible Server**.
+  2. Server name: `db-invoiceai-prod`. Configure Compute: **General Purpose D4s**.
+  3. Under **Networking**: Select **Private Access** $\rightarrow$ Associate with `vnet-invoiceai-prod` and subnet `snet-pe`.
+  4. Click **Review + create** $\rightarrow$ **Create**.
+* **Azure Cache for Redis**:
+  1. Search for **Azure Cache for Redis** $\rightarrow$ **+ Create**.
+  2. DNS Name: `redis-invoiceai-prod`. SKU: **Premium P1**.
+  3. Under **Networking**: Set Connectivity to **Private Endpoint** and attach to subnet `snet-pe`.
+  4. Click **Review + create** $\rightarrow$ **Create**.
+* **Azure Blob Storage Account**:
+  1. Search for **Storage Accounts** $\rightarrow$ **+ Create**.
+  2. Name: `stinvoiceaiprod`. SKU: **Standard LRS**.
+  3. Under **Networking**: Disable public access. Set up a **Private Endpoint** linking blob service to subnet `snet-pe`.
+  4. Click **Review + create** $\rightarrow$ **Create**.
+
+#### Step 5: Provision the Azure Container Apps (ACA) Environment
+1. Search for **Container Apps** $\rightarrow$ **+ Create**.
+2. Resource Group: `rg-invoiceai-prod`. App name: `ca-invoice-be-prod`.
+3. Under **Container Apps Environment**: Click **Create new**.
+4. In the Environment creation wizard:
+   * **Networking** tab $\rightarrow$ Set **Virtual Network** to `vnet-invoiceai-prod` $\rightarrow$ Associate with subnet `snet-aca`.
+   * Set **Virtual IP** to **Internal** (for backend VNet encapsulation).
+5. Click **Create** to provision the environment.
+6. Once the environment is ready, deploy the backend (`invoice-be`), frontend (`invoice-fe`), website (`invoice-website`), and ChromaDB containers into it, passing the respective container images built during GitHub actions.
+
+---
+
 
 ---
 
