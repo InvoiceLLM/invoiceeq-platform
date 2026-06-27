@@ -25,7 +25,8 @@ invoice-be/
 │   ├── invoices.py              # Upload, Status Polling, Delete
 │   ├── audit.py                 # Flagging, Approve/Reject/Paid Logic
 │   ├── chat.py                  # Semantic Query Interface
-│   └── dashboard.py             # Metrics & Filtering
+│   ├── dashboard.py             # Metrics & Filtering
+│   └── trainer.py               # Conversational Feedback Loops & Rule Registry
 ├── agents/
 │   ├── extraction_agent.py      # Data Extraction & Verification Tools
 │   ├── query_agent.py           # RAG Logic & Citation Handler

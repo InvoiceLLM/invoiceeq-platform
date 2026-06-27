@@ -403,7 +403,10 @@ The backend employs a **multi-agent architecture** where specialized AI agents h
 
 ### 7.2 Agent Details & Construction Pattern
 
-All agents are built using **LangChain/LangGraph** utilizing the **ReAct (Reasoning and Action)** design pattern (thought → action → observation cycle).
+Agents are built using **LangChain/LangGraph** with custom graph topologies tailored to their roles rather than generic, open-ended ReAct loops:
+
+* **Extraction Agent (`extraction_agent.py`)**: Utilizes a deterministic **State Graph** combined with **Pydantic** structured schema enforcement (`LLM.with_structured_output(InvoiceSchema)`). If mathematical or schema validation fails, the graph routes the output back to the extraction node as feedback, enabling the agent to self-correct up to a maximum retry threshold before flagging for audit.
+* **Query Agent (`query_agent.py`)**: Utilizes a **Router-based Node topology**. It routes queries immediately to specialized nodes (Vector Search RAG, Postgres SQL Metadata Search, or Casual/Synthesis) to guarantee low latency and avoid redundant tool-calling loops.
 
 #### A. Tool Construction & Precise Docstrings
 Tools are defined using the `@tool` decorator. Since the LLM selects tools based on descriptions, precise Python **docstrings** are mandatory to describe tool parameters and behaviors:
@@ -429,6 +432,7 @@ To achieve higher extraction accuracy, the **Extraction Agent** acts as a multi-
 2. **Visual Channel**: Receives page-by-page rendering of the invoice encoded as a **base64 image stream**.
 3. **Execution**: The model combines layout coordinates from OCR with spatial details from base64 images to resolve columns and line item mappings.
 4. **Immediate Verification**: Once extraction is complete, the agent automatically executes verification tools (math checks) within the same graph loop.
+
 
 ### 7.3 Extraction & Verification Logic
 The Extraction Agent executes the following validation tools to check correctness:
