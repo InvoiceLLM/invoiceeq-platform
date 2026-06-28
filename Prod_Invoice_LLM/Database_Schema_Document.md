@@ -121,6 +121,23 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 
 ---
 
+## 7. Table: `tenant_connections`
+*Stores third-party API OAuth credentials and tokens securely per tenant.*
+
+| Field Name | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Connection identifier. |
+| `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL` | Tenant owner. |
+| `provider` | `VARCHAR(50)` | `NOT NULL` | The integration provider (e.g. `'google_drive'`, `'salesforce'`). |
+| `encrypted_access_token` | `TEXT` | `NOT NULL` | Access token encrypted at rest via AES-256 Fernet. |
+| `encrypted_refresh_token` | `TEXT` | `NULL` | Refresh token encrypted at rest via AES-256 Fernet. |
+| `token_expiry` | `TIMESTAMPTZ` | `NOT NULL` | Access token expiration timestamp. |
+| `status` | `VARCHAR(50)` | `NOT NULL`, Default: `'active'` | Status: `'active'`, `'revoked'`, `'error'`. |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Connection timestamp. |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Connection last updated. |
+
+---
+
 # PART 2: ChromaDB Vector Store Collections
 
 ChromaDB is a document-based vector database and does not use a rigid, structured SQL schema. Instead, it is organized into **Collections** containing four key data layers per record.

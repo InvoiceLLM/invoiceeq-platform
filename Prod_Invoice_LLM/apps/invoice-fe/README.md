@@ -44,7 +44,9 @@ invoice-fe/
 │   ├── ingestion/
 │   │   ├── TagSelector.tsx               # Row-level #tag checkbox selector (applied before upload)
 │   │   ├── DropZone.tsx                  # Drag & drop PDF upload area (supports multi-file)
-│   │   └── StatusTable.tsx               # Real-time processing status table (polling + SSE rows)
+│   │   ├── StatusTable.tsx               # Real-time processing status table (polling + SSE rows)
+│   │   ├── ConnectorGrid.tsx             # Card selectors to connect/configure third-party integration accounts
+│   │   └── FileBrowserModal.tsx          # Remote folder tree browser modal for selecting and importing invoices
 │   │
 │   ├── audit/
 │   │   ├── PdfViewer.tsx                 # react-pdf based PDF preview panel (left panel)
@@ -93,6 +95,7 @@ invoice-fe/
 | **SSE vs Polling** | Decided at upload time by file count. `useSSEStream.ts` for 6+ files, `usePolling.ts` for 1–5 files. |
 | **Shadcn base isolation** | Components inside `components/ui/` are never modified directly. Feature-specific wrappers live in their own folders. |
 | **Form validation** | All audit form fields validated client-side via Zod schemas before calling `PUT /audit/resolve`. |
+| **Connector Integration** | 1-time OAuth authorization stores refresh tokens on the backend; subsequent folder browses load instantly without re-authentication. Ingestion triggers a background Celery task, allowing the UI to remain responsive. |
 
 ---
 

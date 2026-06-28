@@ -210,6 +210,7 @@ All secrets are stored in **Azure Key Vault** and injected into Container Apps a
 | `CLERK_SECRET_KEY`           | Clerk/Auth0 backend key              | `invoice-be`, `invoice-website` |
 | `NEXT_PUBLIC_CLERK_KEY`      | Clerk/Auth0 publishable key          | `invoice-fe`, `invoice-website` |
 | `CHROMA_HOST`                | ChromaDB connection host             | `invoice-be`, `celery-worker` |
+| `TOKEN_ENCRYPTION_KEY`       | AES-256 key for encrypting OAuth tokens | `invoice-be`, `celery-worker` |
 
 ---
 

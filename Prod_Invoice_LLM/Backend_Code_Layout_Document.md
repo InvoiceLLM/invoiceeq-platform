@@ -158,3 +158,31 @@ This document maps each system API to its sequential file and function execution
 4. Save rules to database
    └─ File: dependencies.py -> Function: get_db_session()
 ```
+
+---
+
+## Flow 7: Ingest from Integrations (Google Shared Drive/Salesforce)
+* **API Endpoints**: `GET /api/v1/connectors/auth-url/{provider}`, `GET /api/v1/connectors/callback/{provider}`, `GET /api/v1/connectors/files/{provider}`, & `POST /api/v1/connectors/import/{provider}`
+
+```
+1. Initiating Integration Auth
+   ├─ API Router: routers/connectors.py -> Function: get_auth_url()
+   └─ Controller: connectors/factory.py -> Class: ConnectorFactory -> get_auth_url()
+2. OAuth Callback Handler
+   ├─ API Router: routers/connectors.py -> Function: handle_oauth_callback()
+   ├─ Token Exchange: connectors/google_drive.py -> Function: exchange_code_for_tokens()
+   ├─ Encryption: dependencies.py -> Function: encrypt_token_value() (using TOKEN_ENCRYPTION_KEY)
+   └─ Database Write: dependencies.py -> Function: get_db_session() (adds TenantConnection record)
+3. Remote Folder Browsing
+   ├─ API Router: routers/connectors.py -> Function: list_remote_files()
+   ├─ Decryption: dependencies.py -> Function: decrypt_token_value() (loads TOKEN_ENCRYPTION_KEY)
+   ├─ Auth Refresh: connectors/google_drive.py -> Function: refresh_access_token() (if expired)
+   └─ Fetch Remote Index: connectors/google_drive.py -> Function: list_files() (requests remote folder API)
+4. Async Import Task Trigger
+   ├─ API Router: routers/connectors.py -> Function: trigger_remote_import() (accepts selected file list)
+   ├─ Celery Task Dispatch: workers/tasks.py -> Function: process_remote_import_task()
+   ├─ Background File Download: connectors/google_drive.py -> Function: download_file()
+   ├─ File Storage: workers/tasks.py -> Uploads downloaded binary to Azure Blob Storage
+   └─ Process Ingestion: workers/tasks.py -> Triggers process_invoice_task() (Flow 1 ingestion)
+```
+
