@@ -1,12 +1,13 @@
 # pyrefly: ignore [missing-import]
 from fastapi import FastAPI
 from config import get_settings
-from routers import auth
+from routers import auth, invoices
 
 app = FastAPI(title="Invoice AI", version="1.0")
 settings = get_settings()
 
 app.include_router(auth.router)
+app.include_router(invoices.router, prefix="/api/v1")
 
 @app.get("/")
 def read_root():

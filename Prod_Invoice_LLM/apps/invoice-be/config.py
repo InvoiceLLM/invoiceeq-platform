@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     TOKEN_ENCRYPTION_KEY: str
     CLERK_JWT_ISSUER: str = ""
     CLERK_JWKS_URL: str = ""
+    DEFAULT_FREE_INVOICES_LIMIT: int = 50
 
     # --- ADD THESE THREE LINES ---
     LLM_PROVIDER: str = "azure"
