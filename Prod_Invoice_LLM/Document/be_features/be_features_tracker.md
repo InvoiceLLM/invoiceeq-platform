@@ -7,7 +7,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 3: Status Tracking & Real-Time SSE Streams](feature_3_sse.md)
 - `[x]` [Feature 4: Invoice Queries & PDF Delivery API](feature_4_queries_pdf.md)
 - `[x]` [Feature 5: Multi-Modal Extraction & Verification Agent](feature_5_extraction.md)
-- `[ ]` [Feature 6: Conversational RAG & Thread Management](feature_6_rag.md)
+- `[x]` [Feature 6: Conversational RAG & Thread Management](feature_6_rag.md)
 - `[ ]` [Feature 7: Audit Resolution & finalization](feature_7_audit.md)
 - `[ ]` [Feature 8: Dashboard Metrics & Analytics API](feature_8_dashboard.md)
 - `[ ]` [Feature 9: Third-Party Connectors & Ingestion](feature_9_connectors.md)
