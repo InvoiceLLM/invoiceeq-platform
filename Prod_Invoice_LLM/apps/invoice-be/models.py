@@ -61,3 +61,15 @@ class ChatMessage(SQLModel, table=True):
     generated_sql: str | None = Field(default=None)
     citations: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class AuditLog(SQLModel, table=True):
+    __tablename__ = "audit_logs"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    invoice_id: UUID = Field(index=True)
+    actor_user_id: str = Field(max_length=255)
+    actor_role: str = Field(max_length=50)
+    action: str = Field(max_length=255)
+    details: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT))
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
