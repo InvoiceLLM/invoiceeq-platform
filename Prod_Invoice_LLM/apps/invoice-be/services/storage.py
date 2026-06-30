@@ -49,3 +49,35 @@ def upload_pdf_to_blob_storage(file_data: bytes, tenant_id: str, invoice_id: str
         f.write(file_data)
         
     return local_path
+
+def download_pdf_from_storage(file_path: str) -> bytes:
+    """
+    Downloads invoice PDF bytes from storage (Azure Blob Storage or Local Filesystem).
+    
+    If the path starts with 'azure://', it fetches from Azure. Otherwise, it loads
+    from the local fallback path.
+    """
+    if file_path.startswith("azure://"):
+        try:
+            logger.info("Attempting download from Azure Blob Storage: %s", file_path)
+            # Format: azure://{container}/{blob_name}
+            # e.g. azure://invoices/tenants/{tenant_id}/invoices/{invoice_id}.pdf
+            parts = file_path.replace("azure://", "").split("/", 1)
+            container_name = parts[0]
+            blob_name = parts[1]
+            
+            blob_service_client = BlobServiceClient.from_connection_string(settings.AZURE_STORAGE_CONNECTION_STRING)
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            download_stream = blob_client.download_blob()
+            return download_stream.readall()
+        except Exception as e:
+            logger.error("Failed to download PDF from Azure Blob Storage: %s", e)
+            raise e
+    else:
+        # Local filesystem path
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Local file not found: {file_path}")
+        logger.info("Reading PDF locally from: %s", file_path)
+        with open(file_path, "rb") as f:
+            return f.read()
+
