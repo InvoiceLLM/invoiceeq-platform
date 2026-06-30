@@ -1,0 +1,232 @@
+{
+  "ACME Corporation": {
+    "constraints": [
+      "Ensure vendor name is always ACME Corporation",
+      "Field invoice_number is always prefixed with INV-"
+    ]
+  },
+  "Global Tech Solutions": {
+    "constraints": [
+      "due_date is typically located at the bottom-right of page 1",
+      "tax_amount should be set to 0.0 if not explicitly mentioned"
+    ]
+  },
+  "Alpha Logistics": {
+    "constraints": [
+      "invoice_date is located under the shipping address",
+      "grand_total is the sum of total and freight charges"
+    ]
+  },
+  "Beta Construction": {
+    "constraints": [
+      "po_number is labeled as 'Reference Job ID'",
+      "vendor_name is extracted from the header logo text"
+    ]
+  },
+  "Gamma Consulting": {
+    "constraints": [
+      "subtotal is located above the tax section",
+      "due_date is exactly 30 days after the invoice_date"
+    ]
+  },
+  "Delta Utilities": {
+    "constraints": [
+      "invoice_number is labeled as 'Account Number'",
+      "grand_total includes the water service charge"
+    ]
+  },
+  "Epsilon Foods": {
+    "constraints": [
+      "invoice_date is written as 'Date of Delivery'",
+      "tax_amount is always 7% of subtotal"
+    ]
+  },
+  "Zeta Security": {
+    "constraints": [
+      "po_number is located on the top left corner",
+      "grand_total is labeled as 'Balance Due'"
+    ]
+  },
+  "Eta Manufacturing": {
+    "constraints": [
+      "vendor_name is written as 'Eta Industries'",
+      "invoice_number is located on the top right"
+    ]
+  },
+  "Theta Software": {
+    "constraints": [
+      "subtotal is labeled as 'Amount Due'",
+      "due_date is written as 'Payment Deadline'"
+    ]
+  },
+  "Iota Systems": {
+    "constraints": [
+      "po_number is labeled as 'Reference Number'",
+      "grand_total is located at the bottom of the page"
+    ]
+  },
+  "Kappa Electronics": {
+    "constraints": [
+      "invoice_number is prefixed with 'KE-'",
+      "tax_amount should not include shipping tax"
+    ]
+  },
+  "Lambda Media": {
+    "constraints": [
+      "vendor_name is Lambda Media Group",
+      "invoice_date is located in the middle section"
+    ]
+  },
+  "Mu Healthcare": {
+    "constraints": [
+      "po_number is labeled as 'Patient Reference ID'",
+      "grand_total is the net patient responsibility"
+    ]
+  },
+  "Nu Agriculture": {
+    "constraints": [
+      "subtotal is located under the description list",
+      "due_date is labeled as 'Pay By'"
+    ]
+  },
+  "Xi Chemicals": {
+    "constraints": [
+      "invoice_number is labeled as 'Batch ID'",
+      "tax_amount is exactly 10% of subtotal"
+    ]
+  },
+  "Omicron Printing": {
+    "constraints": [
+      "vendor_name is Omicron Press",
+      "grand_total is labeled as 'Total Due'"
+    ]
+  },
+  "Pi Real Estate": {
+    "constraints": [
+      "po_number is labeled as 'Property Code'",
+      "due_date is always the first of the month"
+    ]
+  },
+  "Rho Retail": {
+    "constraints": [
+      "invoice_date is labeled as 'Sale Date'",
+      "subtotal is labeled as 'Net Price'"
+    ]
+  },
+  "Sigma Services": {
+    "constraints": [
+      "vendor_name is Sigma Cleaners",
+      "invoice_number is located near the footer"
+    ]
+  },
+  "Tau Shipping": {
+    "constraints": [
+      "po_number is labeled as 'Bill of Lading'",
+      "grand_total includes port fees"
+    ]
+  },
+  "Upsilon Travel": {
+    "constraints": [
+      "invoice_date is labeled as 'Booking Date'",
+      "subtotal is labeled as 'Fare Total'"
+    ]
+  },
+  "Phi Finance": {
+    "constraints": [
+      "vendor_name is Phi Capital",
+      "due_date is labeled as 'Settlement Date'"
+    ]
+  },
+  "Chi Engineering": {
+    "constraints": [
+      "po_number is labeled as 'Project Reference'",
+      "tax_amount is labeled as 'VAT'"
+    ]
+  },
+  "Psi Legal": {
+    "constraints": [
+      "invoice_number is labeled as 'Matter Number'",
+      "grand_total is labeled as 'Total Professional Fees'"
+    ]
+  },
+  "Omega Energy": {
+    "constraints": [
+      "vendor_name is Omega Power",
+      "subtotal includes delivery charge"
+    ]
+  },
+  "Vendor_27": { "constraints": [ "Always check bottom of page 1 for invoice_number", "Default tax_amount to 0 if missing" ] },
+  "Vendor_28": { "constraints": [ "due_date is labeled as 'Due On'", "grand_total is listed twice" ] },
+  "Vendor_29": { "constraints": [ "vendor_name is written in small font in header", "po_number is 'Client PO'" ] },
+  "Vendor_30": { "constraints": [ "invoice_date is written as DD/MM/YYYY", "subtotal is located above taxes" ] },
+  "Vendor_31": { "constraints": [ "tax_amount is labeled as 'GST'", "invoice_number is prefixed with 'INV'" ] },
+  "Vendor_32": { "constraints": [ "po_number is 'Contract ID'", "grand_total is labeled as 'Invoice Amount'" ] },
+  "Vendor_33": { "constraints": [ "vendor_name is 'Global Logistics'", "due_date is 15 days from date" ] },
+  "Vendor_34": { "constraints": [ "invoice_number is labeled as 'Doc ID'", "tax_amount is always 0.0" ] },
+  "Vendor_35": { "constraints": [ "subtotal is net amount", "grand_total is gross amount" ] },
+  "Vendor_36": { "constraints": [ "invoice_date is written as Month DD, YYYY", "due_date is 'Terms'" ] },
+  "Vendor_37": { "constraints": [ "vendor_name is 'Central Supply'", "po_number is labeled as 'PO#'" ] },
+  "Vendor_38": { "constraints": [ "tax_amount is labeled as 'Sales Tax'", "grand_total is labeled as 'Net Payable'" ] },
+  "Vendor_39": { "constraints": [ "invoice_number is 'Reference No.'", "due_date is 'Please Pay By'" ] },
+  "Vendor_40": { "constraints": [ "subtotal is labeled as 'Total Before Tax'", "grand_total includes discount" ] },
+  "Vendor_41": { "constraints": [ "vendor_name is 'Pacific Electric'", "invoice_date is labeled as 'Date'" ] },
+  "Vendor_42": { "constraints": [ "po_number is labeled as 'Purchase Order'", "tax_amount is labeled as 'Taxes'" ] },
+  "Vendor_43": { "constraints": [ "invoice_number is 'Invoice ID'", "due_date is 'Payment Due'" ] },
+  "Vendor_44": { "constraints": [ "subtotal is labeled as 'Sub-Total'", "grand_total is labeled as 'Total Amount'" ] },
+  "Vendor_45": { "constraints": [ "vendor_name is 'Apex Ltd'", "tax_amount is labeled as 'VAT Amount'" ] },
+  "Vendor_46": { "constraints": [ "invoice_date is 'Issued Date'", "due_date is 'Due Date'" ] },
+  "Vendor_47": { "constraints": [ "po_number is 'P.O. Number'", "grand_total is labeled as 'Total Balance'" ] },
+  "Vendor_48": { "constraints": [ "invoice_number is 'Bill No.'", "subtotal is labeled as 'Base Amount'" ] },
+  "Vendor_49": { "constraints": [ "vendor_name is 'Swift Delivery'", "tax_amount is labeled as 'GST/HST'" ] },
+  "Vendor_50": { "constraints": [ "invoice_date is 'Invoice Date'", "due_date is 'Expiry Date'" ] },
+  "Vendor_51": { "constraints": [ "po_number is 'Cust PO'", "grand_total is labeled as 'Amount Due'" ] },
+  "Vendor_52": { "constraints": [ "invoice_number is 'Invoice No'", "subtotal is 'Subtotal'" ] },
+  "Vendor_53": { "constraints": [ "vendor_name is 'Summit Services'", "tax_amount is 'State Tax'" ] },
+  "Vendor_54": { "constraints": [ "invoice_date is 'Billing Date'", "due_date is 'Final Due Date'" ] },
+  "Vendor_55": { "constraints": [ "po_number is 'Order Number'", "grand_total is 'Grand Total'" ] },
+  "Vendor_56": { "constraints": [ "invoice_number is 'Invoice #' ", "subtotal is 'Total Ex. Tax'" ] },
+  "Vendor_57": { "constraints": [ "vendor_name is 'Peak Tech'", "tax_amount is 'Local Tax'" ] },
+  "Vendor_58": { "constraints": [ "invoice_date is 'Date of Invoice'", "due_date is 'Payable Before'" ] },
+  "Vendor_59": { "constraints": [ "po_number is 'Reference Job'", "grand_total is 'Total Charge'" ] },
+  "Vendor_60": { "constraints": [ "invoice_number is 'Voucher ID'", "subtotal is 'Net Total'" ] },
+  "Vendor_61": { "constraints": [ "vendor_name is 'Nova Media'", "tax_amount is 'Municipal Tax'" ] },
+  "Vendor_62": { "constraints": [ "invoice_date is 'Creation Date'", "due_date is 'Due'" ] },
+  "Vendor_63": { "constraints": [ "po_number is 'P.O. ID'", "grand_total is 'Total Billing'" ] },
+  "Vendor_64": { "constraints": [ "invoice_number is 'Doc No.'", "subtotal is 'Base Price'" ] },
+  "Vendor_65": { "constraints": [ "vendor_name is 'Zenith Solutions'", "tax_amount is 'County Tax'" ] },
+  "Vendor_66": { "constraints": [ "invoice_date is 'Invoice Created'", "due_date is 'Payment Deadline'" ] },
+  "Vendor_67": { "constraints": [ "po_number is 'Customer PO'", "grand_total is 'Invoice Total'" ] },
+  "Vendor_68": { "constraints": [ "invoice_number is 'Ref No'", "subtotal is 'Gross Total'" ] },
+  "Vendor_69": { "constraints": [ "vendor_name is 'Horizon Foods'", "tax_amount is 'Value Added Tax'" ] },
+  "Vendor_70": { "constraints": [ "invoice_date is 'Date Issued'", "due_date is 'Due On'" ] },
+  "Vendor_71": { "constraints": [ "po_number is 'Order Ref'", "grand_total is 'Amount Outstanding'" ] },
+  "Vendor_72": { "constraints": [ "invoice_number is 'Transaction ID'", "subtotal is 'Pre-Tax Total'" ] },
+  "Vendor_73": { "constraints": [ "vendor_name is 'Galaxy Supply'", "tax_amount is 'Tax total'" ] },
+  "Vendor_74": { "constraints": [ "invoice_date is 'Tax Invoice Date'", "due_date is 'Payment Target'" ] },
+  "Vendor_75": { "constraints": [ "po_number is 'Client PO'", "grand_total is 'Net Due'" ] },
+  "Vendor_76": { "constraints": [ "invoice_number is 'Invoice Reference'", "subtotal is 'Subtotal Price'" ] },
+  "Vendor_77": { "constraints": [ "vendor_name is 'Prime Industries'", "tax_amount is 'VAT 20%'" ] },
+  "Vendor_78": { "constraints": [ "invoice_date is 'Billing Period Start'", "due_date is 'Due By'" ] },
+  "Vendor_79": { "constraints": [ "po_number is 'Requisition Number'", "grand_total is 'Total Price'" ] },
+  "Vendor_80": { "constraints": [ "invoice_number is 'Statement ID'", "subtotal is 'Net Payable'" ] },
+  "Vendor_81": { "constraints": [ "vendor_name is 'Vanguard Security'", "tax_amount is 'Sales tax'" ] },
+  "Vendor_82": { "constraints": [ "invoice_date is 'Date of Bill'", "due_date is 'Settlement Date'" ] },
+  "Vendor_83": { "constraints": [ "po_number is 'Project ID'", "grand_total is 'Total Amount Due'" ] },
+  "Vendor_84": { "constraints": [ "invoice_number is 'Account Ref'", "subtotal is 'Before Taxes'" ] },
+  "Vendor_85": { "constraints": [ "vendor_name is 'Alliance Tech'", "tax_amount is 'VAT 15%'" ] },
+  "Vendor_86": { "constraints": [ "invoice_date is 'Statement Date'", "due_date is 'Terms of Payment'" ] },
+  "Vendor_87": { "constraints": [ "po_number is 'Work Order'", "grand_total is 'Total Invoiced'" ] },
+  "Vendor_88": { "constraints": [ "invoice_number is 'Doc Ref'", "subtotal is 'Amount Excl. Tax'" ] },
+  "Vendor_89": { "constraints": [ "vendor_name is 'Nexus Logistics'", "tax_amount is 'Total GST'" ] },
+  "Vendor_90": { "constraints": [ "invoice_date is 'Charge Date'", "due_date is 'Due Immediately'" ] },
+  "Vendor_91": { "constraints": [ "po_number is 'Order Ref Number'", "grand_total is 'Balance Due'" ] },
+  "Vendor_92": { "constraints": [ "invoice_number is 'Bill Ref'", "subtotal is 'Sub Total'" ] },
+  "Vendor_93": { "constraints": [ "vendor_name is 'Liberty Consulting'", "tax_amount is 'Taxes/Fees'" ] },
+  "Vendor_94": { "constraints": [ "invoice_date is 'Date of Transaction'", "due_date is 'Pay Before'" ] },
+  "Vendor_95": { "constraints": [ "po_number is 'Project Number'", "grand_total is 'Total Charge Amount'" ] },
+  "Vendor_96": { "constraints": [ "invoice_number is 'Document ID'", "subtotal is 'Charges Subtotal'" ] },
+  "Vendor_97": { "constraints": [ "vendor_name is 'Core Engineering'", "tax_amount is 'Service Tax'" ] },
+  "Vendor_98": { "constraints": [ "invoice_date is 'Billing Period End'", "due_date is 'Payable Date'" ] },
+  "Vendor_99": { "constraints": [ "po_number is 'Job Code'", "grand_total is 'Total Due Amount'" ] },
+  "Vendor_100": { "constraints": [ "invoice_number is 'Receipt ID'", "subtotal is 'Base Price Sum'" ] }
+}

@@ -16,7 +16,11 @@ Enable interactive sandbox learning for invoice layout extraction templates, tra
   - Update layout constraints in the Trainer Agent context, re-extract fields, and return revised parsed variables.
 - [ ] **Task 10.3: Code Rules Registry Commit Route**
   - Implement `POST /api/v1/trainer/sessions/{session_id}/commit` saving customized extraction rules or templates to the PostgreSQL `extraction_templates` table.
+  - Support saving to the static global file [apps/invoice-be/config/default_templates.json](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/config/default_templates.json) if the commit request specifies global/developer mode.
+- [ ] **Task 10.4: Integrate Static Global Template Fallback**
+  - Create the static fallback configuration file [apps/invoice-be/config/default_templates.json](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/config/default_templates.json) to store version-controlled base templates trained by developers (e.g. from 1,000+ base PDFs).
+  - Update the parsing pipeline to first query the tenant's database `extraction_templates` table. If no tenant-specific match is found, fallback to loading layout rules from the static `default_templates.json` file.
 
 ### Verification Plan
-* **Automated Tests**: Run `uv run pytest tests/test_trainer.py` validating transient upload parsing and prompt rule creations.
-* **Manual Verification**: Upload an invoice in the Trainer UI console, correct the date extraction value in the chat panel, and click Commit to check template records inside PostgreSQL.
+* **Automated Tests**: Run `uv run pytest tests/test_trainer.py` validating transient upload parsing, prompt rule creations, and static fallback file lookups.
+* **Manual Verification**: Upload an invoice in the Trainer UI console, correct the date extraction value in the chat panel, commit as a global template, and verify that the rules are written to `default_templates.json` and correctly applied to other tenants' default ingestion flows.

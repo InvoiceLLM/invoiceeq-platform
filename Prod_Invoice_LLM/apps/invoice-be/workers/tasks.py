@@ -115,12 +115,49 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
         if "fail" in file_path.lower():
             raise Exception("Mock processing failure triggered by file name keyword.")
         
-        # Run extraction agent
+        # Run extraction agent (first pass)
         agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id)
         
         status = agent_result["status"]
         alerts = agent_result["alerts"]
         extracted_data = agent_result["extracted_data"] or {}
+
+        # Look up custom templates or default fallbacks based on vendor_name
+        vendor_name = extracted_data.get("vendor_name")
+        if vendor_name:
+            rules = None
+            # 1. Query database for tenant-specific template
+            from uuid import UUID
+            from models import ExtractionTemplate
+            with Session(engine) as session:
+                stmt = select(ExtractionTemplate).where(
+                    ExtractionTemplate.tenant_id == UUID(tenant_id),
+                    ExtractionTemplate.vendor_name == vendor_name
+                )
+                template = session.exec(stmt).first()
+                if template:
+                    rules = template.rules
+
+            # 2. Fallback to default_templates.json
+            if not rules:
+                import os
+                config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config")
+                default_templates_path = os.path.join(config_dir, "default_templates.json")
+                if os.path.exists(default_templates_path):
+                    try:
+                        with open(default_templates_path, "r") as f:
+                            templates = json.load(f)
+                            rules = templates.get(vendor_name)
+                    except Exception as e:
+                        logger.error("Failed to load static default templates during ingestion: %s", e)
+
+            # 3. Re-run extraction if rules are found
+            if rules:
+                logger.info("Found custom layout rules for vendor %s. Re-running extraction.", vendor_name)
+                agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id, rules=rules)
+                status = agent_result["status"]
+                alerts = agent_result["alerts"]
+                extracted_data = agent_result["extracted_data"] or {}
         
         # Update invoice record in the database
         with Session(engine) as session:

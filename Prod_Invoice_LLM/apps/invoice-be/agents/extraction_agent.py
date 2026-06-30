@@ -41,6 +41,7 @@ class ExtractionState(TypedDict):
     extracted_data: Optional[Dict[str, Any]]
     alerts: List[Dict[str, Any]]
     status: str
+    rules: Optional[Dict[str, Any]]
 
 # 3. PDF to base64 images helper
 def pdf_to_base64_images(file_path: str) -> List[str]:
@@ -64,19 +65,27 @@ def pdf_to_base64_images(file_path: str) -> List[str]:
         logger.error("Failed to convert PDF pages to base64 images: %s", e)
     return base64_images
 
-def build_multimodal_prompt(ocr_text: str, images: List[str]) -> List[HumanMessage]:
+def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Dict[str, Any]] = None) -> List[HumanMessage]:
     """
     Pipes visual streams and OCR text layout content into the agent model.
     """
+    prompt_text = (
+        "You are an expert invoice processing agent. Analyze the following OCR text "
+        "and visual representations of the invoice. Extract structured data aligning "
+        "with the schema.\n\n"
+    )
+    if rules and "constraints" in rules:
+        prompt_text += "You MUST respect the following layout extraction constraints/rules:\n"
+        for rule in rules["constraints"]:
+            prompt_text += f"- {rule}\n"
+        prompt_text += "\n"
+        
+    prompt_text += f"OCR Text:\n{ocr_text}"
+    
     content = [
         {
             "type": "text",
-            "text": (
-                "You are an expert invoice processing agent. Analyze the following OCR text "
-                "and visual representations of the invoice. Extract structured data aligning "
-                "with the schema.\n\n"
-                f"OCR Text:\n{ocr_text}"
-            )
+            "text": prompt_text
         }
     ]
     for img_url in images:
@@ -127,16 +136,23 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
     """Node state for executing LLM structured output extraction."""
     settings = get_settings()
     llm = get_llm(temperature=0.0, max_tokens=4096)
+    rules = state.get("rules")
     
     try:
         # Wrap LLM with structured output schema
         structured_llm = llm.with_structured_output(InvoiceExtractionSchema)
         
         if settings.LLM_PROVIDER.lower() == "azure" and state["images"]:
-            messages = build_multimodal_prompt(state["ocr_text"], state["images"])
+            messages = build_multimodal_prompt(state["ocr_text"], state["images"], rules)
             result = structured_llm.invoke(messages)
         else:
-            prompt = f"Extract structured details from the following invoice OCR text:\n\n{state['ocr_text']}"
+            prompt = "Extract structured details from the following invoice OCR text:\n\n"
+            if rules and "constraints" in rules:
+                prompt += "You MUST respect the following layout extraction constraints/rules:\n"
+                for rule in rules["constraints"]:
+                    prompt += f"- {rule}\n"
+                prompt += "\n"
+            prompt += f"{state['ocr_text']}"
             result = structured_llm.invoke(prompt)
             
         if hasattr(result, "dict"):
@@ -188,7 +204,7 @@ builder.add_edge("extract", "verify")
 builder.add_edge("verify", END)
 graph = builder.compile()
 
-def run_extraction_agent(file_path: str, ocr_text: str, tenant_id: str) -> dict:
+def run_extraction_agent(file_path: str, ocr_text: str, tenant_id: str, rules: Optional[Dict[str, Any]] = None) -> dict:
     """
     Runs the multi-modal extraction agent graph over the given invoice file.
     """
@@ -229,7 +245,8 @@ def run_extraction_agent(file_path: str, ocr_text: str, tenant_id: str) -> dict:
         "images": images,
         "extracted_data": None,
         "alerts": [],
-        "status": "PROCESSING"
+        "status": "PROCESSING",
+        "rules": rules
     }
     
     final_state = graph.invoke(initial_state)
