@@ -73,3 +73,14 @@ class AuditLog(SQLModel, table=True):
     details: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT))
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
+
+class ExtractionTemplate(SQLModel, table=True):
+    __tablename__ = "extraction_templates"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    vendor_name: str = Field(max_length=255)
+    rules: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
