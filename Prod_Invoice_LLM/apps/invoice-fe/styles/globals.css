@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-main: #0B0F19;               /* Primary dark navy canvas */
+  --bg-panel: rgba(21, 27, 38, 0.75);/* Glassmorphic panel base background */
+  --border-default: #222D3D;        /* Panel separations and card borders */
+  --text-primary: #E2E8F0;          /* High contrast light grey headings */
+  --text-muted: #94A3B8;            /* Dull slate grey labels and captions */
+  
+  /* Brand/Status Accents */
+  --accent-green: #10B981;          /* Save, Success, Complete indicators */
+  --accent-red: #EF4444;            /* Reject, Error warnings */
+  --accent-blue: #3B82F6;           /* Processing, Active selections */
+  --accent-yellow: #F59E0B;         /* Warnings and Audit required states */
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+/* Glassmorphism helpers */
+.glass-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
