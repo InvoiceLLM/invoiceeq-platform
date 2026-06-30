@@ -1,11 +1,13 @@
 import json
 import logging
+from datetime import datetime
 import redis
 from .celery_app import celery_app
 from config import get_settings, Settings
 from sqlmodel import Session, select
 from database import engine
 from models import Invoice
+from agents.extraction_agent import run_extraction_agent
 
 
 logger = logging.getLogger(__name__)
@@ -113,29 +115,40 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
         if "fail" in file_path.lower():
             raise Exception("Mock processing failure triggered by file name keyword.")
         
-        status = "COMPLETED"
-        alerts = []
-        if "audit" in file_path.lower():
-            status = "AUDIT_REQUIRED"
-            alerts = ["Math mismatch"]
-
-        # Temporary Mock/Placeholder structure returned to allow development flow testing:
-        structured_data = {
-            "vendor_name": "ACME Corporation",
-            "grand_total": 165.00,
-            "status": status,
-            "alerts": alerts
-        }
+        # Run extraction agent
+        agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id)
+        
+        status = agent_result["status"]
+        alerts = agent_result["alerts"]
+        extracted_data = agent_result["extracted_data"] or {}
         
         # Update invoice record in the database
         with Session(engine) as session:
             statement = select(Invoice).where(Invoice.file_path == file_path)
             invoice = session.exec(statement).first()
             if invoice:
-                invoice.vendor_name = structured_data["vendor_name"]
-                invoice.grand_total = structured_data["grand_total"]
+                invoice.vendor_name = extracted_data.get("vendor_name")
+                invoice.grand_total = extracted_data.get("grand_total")
+                invoice.invoice_number = extracted_data.get("invoice_number")
+                
+                # Parse date strings if present
+                for date_field in ["invoice_date", "due_date"]:
+                    date_val = extracted_data.get(date_field)
+                    if date_val:
+                        try:
+                            # Truncate time if any or split by space/T
+                            date_str = str(date_val).split("T")[0].split(" ")[0].strip()
+                            setattr(invoice, date_field, datetime.strptime(date_str, "%Y-%m-%d").date())
+                        except Exception as de:
+                            logger.warning("Could not parse date %s for %s: %s", date_val, date_field, de)
+                            
+                invoice.tax_amount = extracted_data.get("tax_amount")
+                invoice.po_number = extracted_data.get("po_number")
                 invoice.status = status
                 invoice.sa_alerts = alerts
+                invoice.tags = extracted_data.get("tags", [])
+                invoice.items = extracted_data.get("items", [])
+                
                 session.add(invoice)
                 session.commit()
         
@@ -143,11 +156,16 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
         _publish_sse_events(batch_id, {
             "status": status,
             "message": "Invoice processing successfully finished!",
-            "data": structured_data,
+            "data": extracted_data,
             "alerts": alerts
         })
         
-        return structured_data
+        return {
+            "vendor_name": extracted_data.get("vendor_name"),
+            "grand_total": extracted_data.get("grand_total"),
+            "status": status,
+            "alerts": alerts
+        }
 
     except Exception as e:
         logger.error("Error processing invoice batch %s: %s", batch_id, e)
