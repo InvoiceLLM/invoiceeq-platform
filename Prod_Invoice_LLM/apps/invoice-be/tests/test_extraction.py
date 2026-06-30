@@ -1,17 +1,14 @@
-import io
 import pytest
 from unittest.mock import patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 from datetime import date
-from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, create_engine, Session, select
+from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy.pool import StaticPool
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
 from models import Invoice
 from workers.tasks import process_invoice_task
-from agents.extraction_agent import run_extraction_agent, pdf_to_base64_images
 
 # Setup isolated in-memory test database session
 sqlite_url = "sqlite:///:memory:"

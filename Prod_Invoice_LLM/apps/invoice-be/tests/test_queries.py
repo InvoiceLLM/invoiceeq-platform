@@ -1,14 +1,13 @@
-import io
 import pytest
 from unittest.mock import patch
-from uuid import UUID, uuid4
-from datetime import date, datetime
+from uuid import uuid4
+from datetime import date
 from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, create_engine, Session, select
+from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy.pool import StaticPool
 
 from main import app
-from dependencies import get_db_session, MOCK_TENANT_ID, MOCK_USER_ID, TenantContext, get_tenant_context
+from dependencies import get_db_session, MOCK_TENANT_ID
 from models import Invoice
 
 # Setup an in-memory SQLite database for testing isolation

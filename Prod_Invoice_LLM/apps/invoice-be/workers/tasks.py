@@ -151,14 +151,32 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
                 
                 session.add(invoice)
                 session.commit()
-        
-        # 4. Update status: completed
-        _publish_sse_events(batch_id, {
-            "status": status,
-            "message": "Invoice processing successfully finished!",
-            "data": extracted_data,
-            "alerts": alerts
-        })
+            
+            # If successfully completed, run page-level RAG indexing
+            if status == "COMPLETED":
+                try:
+                    _publish_sse_events(batch_id, {
+                        "status": "INDEXING",
+                        "message": "Generating page embeddings and indexing document chunks..."
+                    })
+                    from chroma_client import index_invoice_document
+                    index_invoice_document(
+                        invoice_id=str(invoice.id),
+                        tenant_id=str(invoice.tenant_id),
+                        vendor_name=invoice.vendor_name,
+                        file_path=file_path
+                    )
+                except Exception as ie:
+                    logger.error("RAG indexing failed for invoice %s: %s", invoice.id, ie)
+            
+            # Update SSE status to COMPLETED/AUDIT_REQUIRED
+            _publish_sse_events(batch_id, {
+                "status": status,
+                "message": f"Processing finished with status: {status}",
+                "invoice_id": str(invoice.id),
+                "data": extracted_data,
+                "alerts": alerts
+            })
         
         return {
             "vendor_name": extracted_data.get("vendor_name"),

@@ -46,3 +46,18 @@ class TenantConnection(SQLModel, table=True):
     token_expiry: datetime
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ChatSession(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    title: str = Field(max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ChatMessage(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    session_id: UUID = Field(index=True)
+    role: str = Field(max_length=50)  # 'user' or 'assistant'
+    content: str
+    generated_sql: str | None = Field(default=None)
+    citations: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
