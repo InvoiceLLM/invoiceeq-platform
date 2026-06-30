@@ -10,5 +10,5 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 6: Conversational RAG & Thread Management](feature_6_rag.md)
 - `[x]` [Feature 7: Audit Resolution & finalization](feature_7_audit.md)
 - `[x]` [Feature 8: Dashboard Metrics & Analytics API](feature_8_dashboard.md)
-- `[ ]` [Feature 9: Third-Party Connectors & Ingestion](feature_9_connectors.md)
+- `[x]` [Feature 9: Third-Party Connectors & Ingestion](feature_9_connectors.md)
 - `[ ]` [Feature 10: AI Trainer Sandbox & Rules Registry](feature_10_trainer.md)
