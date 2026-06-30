@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     CLERK_JWT_ISSUER: str = ""
     CLERK_JWKS_URL: str = ""
     DEFAULT_FREE_INVOICES_LIMIT: int = 50
+    AZURE_STORAGE_CONNECTION_STRING: str = ""
 
     # --- ADD THESE THREE LINES ---
     LLM_PROVIDER: str = "azure"

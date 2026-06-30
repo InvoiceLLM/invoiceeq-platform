@@ -2,7 +2,8 @@ import logging
 import json
 import asyncio
 from uuid import uuid4, UUID
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
+from datetime import date
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis as AsyncRedis
 from sqlmodel import Session, select
@@ -10,7 +11,7 @@ from config import settings
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice, Tenant
-from services.storage import upload_pdf_to_blob_storage
+from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from workers.tasks import process_invoice_task
 
 logger = logging.getLogger(__name__)
@@ -174,3 +175,96 @@ async def get_invoice_status(
         "grand_total": invoice.grand_total,
         "alerts": invoice.sa_alerts
     }
+
+
+@router.get("", response_model=list[Invoice])
+async def list_invoices(
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    start_date: date | None = None,
+    end_date: date | None = None,
+    status: str | None = None,
+    tag: str | None = None,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Fetches a list of matching records for the requesting tenant.
+    Supports pagination, date ranges, status filters, and search tags.
+    """
+    query = select(Invoice).where(Invoice.tenant_id == context.tenant_id)
+    
+    if start_date:
+        query = query.where(Invoice.invoice_date >= start_date)
+    if end_date:
+        query = query.where(Invoice.invoice_date <= end_date)
+    if status:
+        query = query.where(Invoice.status == status)
+    if tag:
+        # Check DB dialect to use correct JSON query syntax
+        if db_session.bind.dialect.name == "postgresql":
+            query = query.where(Invoice.tags.contains([tag]))
+        else:
+            query = query.where(Invoice.tags.like(f'%"{tag}"%'))
+            
+    query = query.offset(offset).limit(limit)
+    return db_session.exec(query).all()
+
+
+@router.get("/{invoice_id}", response_model=Invoice)
+async def get_invoice(
+    invoice_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Fetches a single invoice details. Enforces tenant isolation.
+    """
+    query = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
+    invoice = db_session.exec(query).first()
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found or access denied."
+        )
+    return invoice
+
+
+@router.get("/{invoice_id}/pdf")
+async def get_invoice_pdf(
+    invoice_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Streams the secure PDF file retrieved from storage (Azure or Local fallback).
+    Enforces tenant isolation.
+    """
+    query = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
+    invoice = db_session.exec(query).first()
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found or access denied."
+        )
+    
+    try:
+        pdf_bytes = download_pdf_from_storage(invoice.file_path)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice PDF file not found in storage."
+        )
+    except Exception as e:
+        logger.error("Error retrieving PDF for invoice %s: %s", invoice_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve invoice PDF."
+        )
+        
+    import io
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename={invoice_id}.pdf"}
+    )
