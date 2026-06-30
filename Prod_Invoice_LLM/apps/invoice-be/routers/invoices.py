@@ -1,7 +1,12 @@
 import logging
-from uuid import uuid4
+import json
+import asyncio
+from uuid import uuid4, UUID
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
-from sqlmodel import Session
+from fastapi.responses import StreamingResponse
+from redis.asyncio import Redis as AsyncRedis
+from sqlmodel import Session, select
+from config import settings
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice, Tenant
@@ -109,4 +114,63 @@ async def upload_invoices(
     return {
         "batch_id": batch_id,
         "job_ids": job_ids
+    }
+
+
+async def sse_event_generator(batch_id: str):
+    """Async generator to yield Redis pub/sub messages as Server-Sent Events."""
+    redis_client = AsyncRedis.from_url(settings.REDIS_URL, decode_responses=True)
+    pubsub = redis_client.pubsub()
+    channel = f"invoice.update.{batch_id}"
+    await pubsub.subscribe(channel)
+    
+    try:
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message:
+                data = message["data"]
+                yield f"data: {data}\n\n"
+                
+                # Terminate stream on final state
+                try:
+                    payload = json.loads(data)
+                    if payload.get("status") in ["COMPLETED", "AUDIT_REQUIRED", "FAILED"]:
+                        break
+                except Exception:
+                    pass
+            else:
+                # Heartbeat keep-alive to keep connection open
+                yield ": keep-alive\n\n"
+                
+            await asyncio.sleep(0.5)
+    except asyncio.CancelledError:
+        logger.info("SSE subscription disconnected for batch %s", batch_id)
+    finally:
+        await pubsub.unsubscribe(channel)
+        await redis_client.close()
+
+
+@router.get("/stream/{batch_id}")
+async def stream_invoice_status(batch_id: UUID, context: TenantContext = Depends(get_tenant_context)):
+    """Streaming response endpoint yielding real-time processing updates for a batch."""
+    return StreamingResponse(sse_event_generator(str(batch_id)), media_type="text/event-stream")
+
+
+@router.get("/status/{job_id}")
+async def get_invoice_status(
+    job_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """Polling status endpoint returning DB record details for a single invoice."""
+    statement = select(Invoice).where(Invoice.id == job_id, Invoice.tenant_id == context.tenant_id)
+    invoice = db_session.exec(statement).first()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found or access denied.")
+    return {
+        "id": invoice.id,
+        "status": invoice.status,
+        "vendor_name": invoice.vendor_name,
+        "grand_total": invoice.grand_total,
+        "alerts": invoice.sa_alerts
     }
