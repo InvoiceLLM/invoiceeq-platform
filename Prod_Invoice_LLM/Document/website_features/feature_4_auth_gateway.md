@@ -19,17 +19,9 @@ Manage user sign-ups, handle automatic email domain-based company/tenant creatio
       2. Set `billing_plan` to `'free'`, and `free_invoices_remaining` to `50`.
       3. Register the user under this new tenant ID.
       4. Automatically assign the first registering user of a domain the role of **`Admin`**. All subsequent sign-ups from that domain default to **`Viewer`** until modified by the Admin.
-- [ ] **Task 4.3: Secure JWT Token Issuance & Scoping**
-  - Once the tenant scope is resolved, generate a secure JWT signature containing:
-    ```json
-    {
-      "user_id": "uuid",
-      "tenant_id": "uuid",
-      "role": "Admin | Auditor | Loader | Trainer | Viewer",
-      "billing_plan": "free | pro | unpaid"
-    }
-    ```
-  - Redirect the authenticated user to the Next.js frontend application dashboard URL (`app.yourinvoiceai.com`) passing the JWT secure token in cookies or state.
+- [ ] **Task 4.3: Clerk User Metadata Provisioning & Redirect**
+  - Once the tenant scope is resolved, update Clerk user metadata (tenant_id, role, billing_plan) via Clerk API so they are included in Clerk's session JWT.
+  - Redirect the authenticated user to the Next.js frontend application dashboard URL (`app.yourinvoiceai.com`).
 
 ### Verification Plan
 * **Automated Tests**: Execute `uv run pytest tests/test_provisioning.py` verifying that new domains trigger tenant inserts while existing domains join existing groups.
