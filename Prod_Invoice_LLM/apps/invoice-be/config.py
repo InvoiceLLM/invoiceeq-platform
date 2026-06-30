@@ -1,5 +1,4 @@
 # pyrefly: ignore [missing-import]
-from re import IGNORECASE
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -10,6 +9,8 @@ class Settings(BaseSettings):
     CHROMA_PORT: int
     CLERK_SECRET_KEY: str
     TOKEN_ENCRYPTION_KEY: str
+    CLERK_JWT_ISSUER: str = ""
+    CLERK_JWKS_URL: str = ""
 
     # --- ADD THESE THREE LINES ---
     LLM_PROVIDER: str = "azure"

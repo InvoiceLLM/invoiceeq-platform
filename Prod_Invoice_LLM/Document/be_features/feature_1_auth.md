@@ -7,17 +7,17 @@ Ensure secure, isolated access for multiple tenant organizations and support use
 * Dependency Injection: [apps/invoice-be/dependencies.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/dependencies.py)
 
 ### Tasks
-- [ ] **Task 1.1: Setup Auth JWT Decoding**
+- [x] **Task 1.1: Setup Auth JWT Decoding**
   - Verify and decode JWT tokens from the Authorization header using PyJWT or python-jose.
   - Pull JWKS (JSON Web Key Sets) dynamically from Clerk/Auth0 domains specified in settings.
-- [ ] **Task 1.2: Implement `get_tenant_context()` Dependency**
+- [x] **Task 1.2: Implement `get_tenant_context()` Dependency**
   - Extract `tenant_id`, `user_id`, `role`, and `billing_plan` from the decoded JWT.
   - Return a structured schema representing the current request's tenant/user context.
   - Raise `401 Unauthorized` if the token is invalid, and `403 Forbidden` if permissions do not match.
-- [ ] **Task 1.3: Enforce Tenant-Isolated Database Queries**
+- [x] **Task 1.3: Enforce Tenant-Isolated Database Queries**
   - Create a FastAPI dependency `get_db_session()` in `dependencies.py` that yields a session.
   - Ensure all database queries in backend routers automatically filter by `tenant_id` context parameter.
-- [ ] **Task 1.4: Block Unpaid Subscription Accounts**
+- [x] **Task 1.4: Block Unpaid Subscription Accounts**
   - Inside `get_tenant_context()`, check the tenant's plan status. If it is `'unpaid'`, raise a `402 Payment Required` exception to block all app interactions until payment is updated.
 
 ### Verification Plan

@@ -2,7 +2,7 @@
 
 This document tracks the implementation progress of the reconciled backend features for the `invoice-be` component, aligned with the frontend screen requirements.
 
-- `[ ]` [Feature 1: Multi-Tenant Authentication & Security Scoping](feature_1_auth.md)
+- `[x]` [Feature 1: Multi-Tenant Authentication & Security Scoping](feature_1_auth.md)
 - `[ ]` [Feature 2: Ingestion & Storage Pipeline](feature_2_pipeline.md)
 - `[ ]` [Feature 3: Status Tracking & Real-Time SSE Streams](feature_3_sse.md)
 - `[ ]` [Feature 4: Invoice Queries & PDF Delivery API](feature_4_queries_pdf.md)
