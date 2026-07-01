@@ -1,5 +1,12 @@
+import os
+import sys
 from celery import Celery
+
+# Ensure backend root is in the Python search path for tasks
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from config import get_settings
+
 
 settings = get_settings()
 

@@ -82,6 +82,75 @@ async def upload_invoices(
                 detail=f"Failed to read file {file.filename}: {str(e)}"
             )
 
+        # Compute SHA-256 hash of file content
+        import hashlib
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        # Check for duplicates
+        existing_invoice = db_session.exec(
+            select(Invoice).where(
+                Invoice.tenant_id == context.tenant_id,
+                Invoice.file_hash == file_hash
+            )
+        ).first()
+
+        if existing_invoice:
+            # Create duplicate database entry copying metadata
+            db_invoice = Invoice(
+                id=invoice_id,
+                tenant_id=context.tenant_id,
+                batch_id=batch_id,
+                file_path=existing_invoice.file_path,  # Reuse existing file path
+                file_hash=file_hash,
+                vendor_name=existing_invoice.vendor_name,
+                grand_total=existing_invoice.grand_total,
+                invoice_number=existing_invoice.invoice_number,
+                invoice_date=existing_invoice.invoice_date,
+                due_date=existing_invoice.due_date,
+                tax_amount=existing_invoice.tax_amount,
+                po_number=existing_invoice.po_number,
+                status="DUPLICATE",
+                sa_alerts=[{
+                    "type": "duplicate",
+                    "message": f"This file is a duplicate of a previously uploaded invoice (ID: {existing_invoice.id})."
+                }],
+                tags=tags,
+                items=existing_invoice.items
+            )
+            db_session.add(db_invoice)
+            db_session.commit()
+            db_session.refresh(db_invoice)
+            job_ids.append(str(invoice_id))
+
+            # Publish completed event instantly to SSE
+            try:
+                import redis
+                r = redis.Redis.from_url(settings.REDIS_URL)
+                event_data = {
+                    "status": "DUPLICATE",
+                    "message": "Duplicate invoice signature detected. Copied data from previous upload.",
+                    "invoice_id": str(invoice_id),
+                    "data": {
+                        "vendor_name": existing_invoice.vendor_name,
+                        "invoice_number": existing_invoice.invoice_number,
+                        "invoice_date": str(existing_invoice.invoice_date) if existing_invoice.invoice_date else None,
+                        "due_date": str(existing_invoice.due_date) if existing_invoice.due_date else None,
+                        "grand_total": existing_invoice.grand_total,
+                        "tax_amount": existing_invoice.tax_amount,
+                        "po_number": existing_invoice.po_number,
+                        "items": existing_invoice.items,
+                        "tags": tags
+                    },
+                    "alerts": [{
+                        "type": "duplicate",
+                        "message": f"Duplicate of invoice {existing_invoice.invoice_number or existing_invoice.id}."
+                    }]
+                }
+                r.publish(f"invoice.update.{batch_id}", json.dumps(event_data))
+            except Exception as re:
+                logger.warning("Failed to publish SSE duplicate event: %s", re)
+            continue
+
         # Upload file to storage
         try:
             file_path = upload_pdf_to_blob_storage(file_bytes, str(context.tenant_id), str(invoice_id))
@@ -97,6 +166,7 @@ async def upload_invoices(
             tenant_id=context.tenant_id,
             batch_id=batch_id,
             file_path=file_path,
+            file_hash=file_hash,
             status="PROCESSING",
             tags=tags
         )

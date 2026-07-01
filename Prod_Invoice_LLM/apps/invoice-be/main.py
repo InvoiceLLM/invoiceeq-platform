@@ -1,10 +1,21 @@
 # pyrefly: ignore [missing-import]
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from config import get_settings
 from routers import auth, invoices, chat, audit, dashboard, connectors, trainer
 
 app = FastAPI(title="Invoice AI", version="1.0")
+
 settings = get_settings()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS.split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 app.include_router(auth.router)
 app.include_router(invoices.router, prefix="/api/v1")
