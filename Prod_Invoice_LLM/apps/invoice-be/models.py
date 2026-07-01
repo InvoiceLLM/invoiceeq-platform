@@ -24,6 +24,8 @@ class Invoice(SQLModel, table=True):
     tenant_id: UUID = Field(index=True)
     batch_id: UUID | None = Field(default=None, index=True)
     file_path: str = Field(max_length=1024)
+    file_hash: str | None = Field(default=None, index=True, max_length=64)
+
     vendor_name: str | None = Field(default=None)
     grand_total: float | None = Field(default=None)
     invoice_number: str | None = Field(default=None)

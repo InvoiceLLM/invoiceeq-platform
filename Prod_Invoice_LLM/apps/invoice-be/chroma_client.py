@@ -31,8 +31,10 @@ def get_chroma_client():
 def get_embedding_model():
     """Returns the SentenceTransformer model (mocked if MOCK_EMBEDDINGS=true)."""
     global _embedding_model
-    if os.getenv("MOCK_EMBEDDINGS", "false").lower() == "true":
+    settings = get_settings()
+    if settings.MOCK_EMBEDDINGS:
         return None
+
     if _embedding_model is None:
         logger.info("Loading sentence-transformers BAAI/bge-m3 model...")
         _embedding_model = SentenceTransformer("BAAI/bge-m3")

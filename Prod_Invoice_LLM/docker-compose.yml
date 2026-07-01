@@ -26,7 +26,7 @@ services:
     container_name: invoice-chromadb-local
     restart: always
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - chroma_data:/chroma/data
     environment:
