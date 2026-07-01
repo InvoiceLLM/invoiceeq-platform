@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# Python artifacts
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.venv
+**/venv
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+
+# Node artifacts
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+
+# Local env files
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Local temp data (not for cloud)
+apps/invoice-be/temp_chroma_db
+apps/invoice-be/temp_storage
+
+# Infrastructure and docs (not needed in Docker image)
+infra/
+Document/
+docs/
+docker-compose.yml
+*.md
+*.msi
+*.xlsx
+
+# Test files
+**/tests/
+**/__tests__/
+
+# IDE
+.vscode/
+.idea/

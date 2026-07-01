@@ -1,6 +1,5 @@
 param location string
 param keyVaultName string
-param managedIdentityPrincipalId string
 
 @secure()
 param dbAdminPassword string
@@ -12,6 +11,10 @@ param tokenEncryptionKey string
 param azureOpenAiApiKey string
 @secure()
 param azureDocIntelKey string
+@secure()
+param databaseUrl string
+@secure()
+param redisUrl string
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
@@ -71,6 +74,22 @@ resource secretDocIntelKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'AZURE-DOC-INTEL-KEY'
   properties: {
     value: azureDocIntelKey
+  }
+}
+
+resource secretDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'DATABASE-URL'
+  properties: {
+    value: databaseUrl
+  }
+}
+
+resource secretRedisUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'REDIS-URL'
+  properties: {
+    value: redisUrl
   }
 }
 

@@ -12,7 +12,7 @@ param azureOpenAiDeploymentName string
 param azureDocIntelEndpoint string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
-var keyVaultUrl = 'https://${keyVaultName}.vault.azure.net'
+var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 resource celeryWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName

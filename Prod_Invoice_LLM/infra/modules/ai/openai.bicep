@@ -73,4 +73,3 @@ resource openaiPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDn
 
 output openaiId string = openaiAccount.id
 output endpoint string = openaiAccount.properties.endpoint
-output apiKey string = openaiAccount.listKeys().key1

@@ -85,14 +85,19 @@ module keyVault './modules/security/keyvault.bicep' = {
   params: {
     location: location
     keyVaultName: keyVaultName
-    managedIdentityPrincipalId: identities.outputs.principalId
     // Initial secret seeding
     dbAdminPassword: dbAdminPassword
     clerkSecretKey: clerkSecretKey
     tokenEncryptionKey: tokenEncryptionKey
     azureOpenAiApiKey: azureOpenAiApiKey
     azureDocIntelKey: azureDocIntelKey
+    databaseUrl: 'postgresql://${dbAdminLogin}:${dbAdminPassword}@${postgresql.outputs.fqdn}:5432/invoice_db?sslmode=require'
+    redisUrl: 'rediss://:${redis.outputs.host}:${redis.outputs.port}'
   }
+  dependsOn: [
+    postgresql
+    redis
+  ]
 }
 
 // ================= 4. Data Services =================
@@ -173,6 +178,10 @@ module chromadb './modules/data/chromadb.bicep' = {
 // ================= 8. Compute Layer (Stateless Containers) =================
 module backendApp './modules/compute/invoice-be.bicep' = {
   name: 'backend-deploy'
+  dependsOn: [
+    rbacAssignments
+    keyVault
+  ]
   params: {
     location: location
     caeId: containerEnv.outputs.caeId
@@ -226,11 +235,15 @@ module frontendApp './modules/compute/invoice-fe.bicep' = {
 // ================= 9. RBAC Assignments =================
 module rbacAssignments './modules/security/rbac-assignments.bicep' = {
   name: 'rbac-assignments-deploy'
+  dependsOn: [
+    keyVault
+  ]
   params: {
     identityPrincipalId: identities.outputs.principalId
     storageAccountName: storage.outputs.storageAccountName
     openaiName: 'oai-${namingPrefix}-${environment}'
     docIntelName: 'docintel-${namingPrefix}-${environment}'
+    keyVaultName: keyVaultName
   }
 }
 
