@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RESOURCE_GROUP: invoice-llm-dev
-      ACR_NAME: ${{ secrets.ACR_NAME }} # e.g. acrinvoiceaidev
+      ACR_NAME: ACR_NAME # e.g. acrinvoiceaidev
 
     steps:
       # 1. Checkout repository
