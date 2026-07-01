@@ -37,21 +37,21 @@ jobs:
       # 4. Build and Push Backend API Image
       - name: Build & Push Backend API
         run: |
-          docker build -f docker/Dockerfile.be -t $ACR_NAME.azurecr.io/invoice-be:${{ github.sha }} -t $ACR_NAME.azurecr.io/invoice-be:latest .
+          docker build -f Prod_Invoice_LLM/docker/Dockerfile.be -t $ACR_NAME.azurecr.io/invoice-be:${{ github.sha }} -t $ACR_NAME.azurecr.io/invoice-be:latest Prod_Invoice_LLM
           docker push $ACR_NAME.azurecr.io/invoice-be:${{ github.sha }}
           docker push $ACR_NAME.azurecr.io/invoice-be:latest
 
       # 5. Build and Push Celery Worker Image
       - name: Build & Push Celery Worker
         run: |
-          docker build -f docker/Dockerfile.worker -t $ACR_NAME.azurecr.io/celery-worker:${{ github.sha }} -t $ACR_NAME.azurecr.io/celery-worker:latest .
+          docker build -f Prod_Invoice_LLM/docker/Dockerfile.worker -t $ACR_NAME.azurecr.io/celery-worker:${{ github.sha }} -t $ACR_NAME.azurecr.io/celery-worker:latest Prod_Invoice_LLM
           docker push $ACR_NAME.azurecr.io/celery-worker:${{ github.sha }}
           docker push $ACR_NAME.azurecr.io/celery-worker:latest
 
       # 6. Build and Push Frontend UI Image
       - name: Build & Push Frontend UI
         run: |
-          docker build -f docker/Dockerfile.fe -t $ACR_NAME.azurecr.io/invoice-fe:${{ github.sha }} -t $ACR_NAME.azurecr.io/invoice-fe:latest .
+          docker build -f Prod_Invoice_LLM/docker/Dockerfile.fe -t $ACR_NAME.azurecr.io/invoice-fe:${{ github.sha }} -t $ACR_NAME.azurecr.io/invoice-fe:latest Prod_Invoice_LLM
           docker push $ACR_NAME.azurecr.io/invoice-fe:${{ github.sha }}
           docker push $ACR_NAME.azurecr.io/invoice-fe:latest
 
@@ -60,9 +60,9 @@ jobs:
         uses: azure/arm-deploy@v2
         with:
           resourceGroupName: ${{ env.RESOURCE_GROUP }}
-          template: ./infra/main.bicep
+          template: ./Prod_Invoice_LLM/infra/main.bicep
           parameters: >
-            ./infra/params.dev.json
+            ./Prod_Invoice_LLM/infra/params.dev.json
             backendImage=${{ env.ACR_NAME }}.azurecr.io/invoice-be:${{ github.sha }}
             celeryWorkerImage=${{ env.ACR_NAME }}.azurecr.io/celery-worker:${{ github.sha }}
             frontendImage=${{ env.ACR_NAME }}.azurecr.io/invoice-fe:${{ github.sha }}
