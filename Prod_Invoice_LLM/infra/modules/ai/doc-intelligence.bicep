@@ -55,4 +55,3 @@ resource docIntelPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/private
 
 output docIntelId string = docIntelAccount.id
 output endpoint string = docIntelAccount.properties.endpoint
-output apiKey string = docIntelAccount.listKeys().key1
