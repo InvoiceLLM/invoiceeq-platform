@@ -3,6 +3,13 @@ param acrName string
 param subnetId string
 param privateDnsZoneId string
 
+@description('Public network access for ACR. Must stay Enabled for GitHub-hosted CI runners to push images over the public internet. Container Apps still pull privately via the VNet private endpoint below regardless of this setting - the two are independent paths.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param publicNetworkAccess string = 'Enabled'
+
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
   location: location
@@ -11,7 +18,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
   properties: {
     adminUserEnabled: true
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: publicNetworkAccess
   }
 }
 
