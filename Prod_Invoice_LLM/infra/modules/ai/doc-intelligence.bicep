@@ -13,7 +13,6 @@ resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   properties: {
     publicNetworkAccess: 'Disabled'
     customSubDomainName: docIntelName
-    restore: true
   }
 }
 

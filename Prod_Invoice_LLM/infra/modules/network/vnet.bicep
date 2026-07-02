@@ -85,6 +85,11 @@ resource docIntelDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   location: 'global'
 }
 
+resource acrDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: 'privatelink.azurecr.io'
+  location: 'global'
+}
+
 // VNet Links for DNS Zones
 resource postgresDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: postgresDnsZone
@@ -146,6 +151,18 @@ resource docIntelDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@
   }
 }
 
+resource acrDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: acrDnsZone
+  name: '${vnetName}-acr-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
+    }
+  }
+}
+
 output vnetId string = vnet.id
 output acaSubnetId string = vnet.properties.subnets[0].id
 output postgresSubnetId string = vnet.properties.subnets[1].id
@@ -157,3 +174,4 @@ output redisDnsZoneId string = redisDnsZone.id
 output storageDnsZoneId string = storageDnsZone.id
 output openaiDnsZoneId string = openaiDnsZone.id
 output docIntelDnsZoneId string = docIntelDnsZone.id
+output acrDnsZoneId string = acrDnsZone.id

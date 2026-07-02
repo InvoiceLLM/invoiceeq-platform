@@ -10,6 +10,7 @@ param chromaHost string
 param azureOpenAiEndpoint string
 param azureOpenAiDeploymentName string
 param azureDocIntelEndpoint string
+param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
@@ -27,6 +28,12 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: caeId
     configuration: {
       activeRevisionsMode: 'Single'
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: userAssignedIdentityId
+        }
+      ]
       ingress: null // No HTTP endpoints needed for task runner
       secrets: [
         {

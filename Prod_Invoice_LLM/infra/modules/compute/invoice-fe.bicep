@@ -8,6 +8,7 @@ param keyVaultName string
 // App configurations
 param backendApiUrl string
 param nextPublicClerkPublishableKey string
+param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
@@ -25,6 +26,12 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: caeId
     configuration: {
       activeRevisionsMode: 'Single'
+      registries: [
+        {
+          server: '${acrName}.azurecr.io'
+          identity: userAssignedIdentityId
+        }
+      ]
       ingress: {
         external: true // Exposed to public traffic for Dev
         targetPort: 3000

@@ -61,6 +61,7 @@ param frontendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 var uniqueSuffix = uniqueString(resourceGroup().id)
 var keyVaultName = 'kv-${namingPrefix}-${environment}-${substring(uniqueSuffix, 0, 4)}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
+var acrName = 'acr${replace(namingPrefix, '-', '')}${environment}'
 var vnetName = 'vnet-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 
@@ -136,12 +137,22 @@ module storage './modules/data/storage.bicep' = {
   }
 }
 
+module acr './modules/data/acr.bicep' = {
+  name: 'acr-deploy'
+  params: {
+    location: location
+    acrName: acrName
+    subnetId: network.outputs.dataSubnetId
+    privateDnsZoneId: network.outputs.acrDnsZoneId
+  }
+}
+
 // ================= 5. Cognitive & AI Services =================
 module openai './modules/ai/openai.bicep' = {
   name: 'openai-deploy'
   params: {
     location: location
-    openaiName: 'oai-${namingPrefix}-${environment}'
+    openaiName: 'openai-${namingPrefix}-${environment}'
     deploymentName: azureOpenAiDeploymentName
     modelName: azureOpenAiDeploymentName
     modelVersion: azureOpenAiModelVersion
@@ -199,6 +210,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
     azureDocIntelEndpoint: azureDocIntelEndpoint
+    acrName: acrName
     image: backendImage
   }
 }
@@ -221,6 +233,7 @@ module celeryWorker './modules/compute/celery-worker.bicep' = {
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
     azureDocIntelEndpoint: azureDocIntelEndpoint
+    acrName: acrName
     image: celeryWorkerImage
   }
 }
@@ -241,6 +254,7 @@ module frontendApp './modules/compute/invoice-fe.bicep' = {
     // Settings
     backendApiUrl: backendApp.outputs.fqdn
     nextPublicClerkPublishableKey: nextPublicClerkPublishableKey
+    acrName: acrName
     image: frontendImage
   }
 }
@@ -254,9 +268,10 @@ module rbacAssignments './modules/security/rbac-assignments.bicep' = {
   params: {
     identityPrincipalId: identities.outputs.principalId
     storageAccountName: storage.outputs.storageAccountName
-    openaiName: 'oai-${namingPrefix}-${environment}'
+    openaiName: 'openai-${namingPrefix}-${environment}'
     docIntelName: 'docintel-${namingPrefix}-${environment}'
     keyVaultName: keyVaultName
+    acrName: acrName
   }
 }
 

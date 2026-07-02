@@ -27,7 +27,7 @@
       "value": "gAAAAABmR5x4fQ6a8Yk4B6...mock-key..."
     },
     "azureOpenAiEndpoint": {
-      "value": "https://oai-invoice-llm-dev.openai.azure.com/"
+      "value": "https://openai-invoice-llm-dev.openai.azure.com/"
     },
     "azureOpenAiApiKey": {
       "value": "mock_openai_api_key"
