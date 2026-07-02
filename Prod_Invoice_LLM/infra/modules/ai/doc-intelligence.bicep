@@ -13,6 +13,7 @@ resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   properties: {
     publicNetworkAccess: 'Disabled'
     customSubDomainName: docIntelName
+    restore: true
   }
 }
 
@@ -30,7 +31,7 @@ resource docIntelPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01'
         properties: {
           privateLinkServiceId: docIntelAccount.id
           groupIds: [
-            'cognitiveServices'
+            'account'
           ]
         }
       }

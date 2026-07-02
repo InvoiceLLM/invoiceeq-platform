@@ -36,7 +36,10 @@ param azureOpenAiEndpoint string
 param azureOpenAiApiKey string
 
 @description('Azure OpenAI Model Deployment Name')
-param azureOpenAiDeploymentName string = 'gpt-4o-mini'
+param azureOpenAiDeploymentName string = 'gpt-5-mini'
+
+@description('Azure OpenAI Model Version - verify current availability before deploying: az cognitiveservices account list-models --location <region> -o table')
+param azureOpenAiModelVersion string
 
 @description('Azure Document Intelligence Endpoint URL')
 param azureDocIntelEndpoint string
@@ -108,7 +111,7 @@ module postgresql './modules/data/postgresql.bicep' = {
     serverName: 'psql-${namingPrefix}-${environment}'
     adminLogin: dbAdminLogin
     adminPassword: dbAdminPassword
-    subnetId: network.outputs.dataSubnetId
+    subnetId: network.outputs.postgresSubnetId
     privateDnsZoneId: network.outputs.postgresDnsZoneId
   }
 }
@@ -140,6 +143,8 @@ module openai './modules/ai/openai.bicep' = {
     location: location
     openaiName: 'oai-${namingPrefix}-${environment}'
     deploymentName: azureOpenAiDeploymentName
+    modelName: azureOpenAiDeploymentName
+    modelVersion: azureOpenAiModelVersion
     subnetId: network.outputs.aiSubnetId
     privateDnsZoneId: network.outputs.openaiDnsZoneId
   }
@@ -200,6 +205,10 @@ module backendApp './modules/compute/invoice-be.bicep' = {
 
 module celeryWorker './modules/compute/celery-worker.bicep' = {
   name: 'worker-deploy'
+  dependsOn: [
+    rbacAssignments
+    keyVault
+  ]
   params: {
     location: location
     caeId: containerEnv.outputs.caeId
@@ -218,6 +227,10 @@ module celeryWorker './modules/compute/celery-worker.bicep' = {
 
 module frontendApp './modules/compute/invoice-fe.bicep' = {
   name: 'frontend-deploy'
+  dependsOn: [
+    rbacAssignments
+    keyVault
+  ]
   params: {
     location: location
     caeId: containerEnv.outputs.caeId
