@@ -96,7 +96,7 @@ module keyVault './modules/security/keyvault.bicep' = {
     azureOpenAiApiKey: azureOpenAiApiKey
     azureDocIntelKey: azureDocIntelKey
     databaseUrl: 'postgresql://${dbAdminLogin}:${dbAdminPassword}@${postgresql.outputs.fqdn}:5432/invoice_db?sslmode=require'
-    redisUrl: 'rediss://:${redis.outputs.host}:${redis.outputs.port}'
+    redisUrl: 'rediss://${redis.outputs.host}:${redis.outputs.port}'
   }
   dependsOn: [
     postgresql
