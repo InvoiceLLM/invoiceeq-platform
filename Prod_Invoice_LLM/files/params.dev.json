@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "namingPrefix": {
+      "value": "invoice-llm"
+    },
+    "dbAdminLogin": {
+      "value": "dbadmin"
+    },
+    "dbAdminPassword": {
+      "value": "P@ssw0rd12345!"
+    },
+    "clerkSecretKey": {
+      "value": "sk_test_mock_clerk_secret_key_here"
+    },
+    "nextPublicClerkPublishableKey": {
+      "value": "pk_test_mock_clerk_publishable_key_here"
+    },
+    "tokenEncryptionKey": {
+      "value": "gAAAAABmR5x4fQ6a8Yk4B6...mock-key..."
+    },
+    "azureOpenAiEndpoint": {
+      "value": "https://oai-invoice-llm-dev.openai.azure.com/"
+    },
+    "azureOpenAiApiKey": {
+      "value": "mock_openai_api_key"
+    },
+    "azureOpenAiDeploymentName": {
+      "value": "gpt-5-mini"
+    },
+    "azureOpenAiModelVersion": {
+      "value": "2025-08-07"
+    },
+    "azureDocIntelEndpoint": {
+      "value": "https://docintel-invoice-llm-dev.cognitiveservices.azure.com/"
+    },
+    "azureDocIntelKey": {
+      "value": "mock_doc_intel_key"
+    },
+    "backendImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "celeryWorkerImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "frontendImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    }
+  }
+}
