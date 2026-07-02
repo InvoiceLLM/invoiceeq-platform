@@ -33,7 +33,10 @@
       "value": "mock_openai_api_key"
     },
     "azureOpenAiDeploymentName": {
-      "value": "gpt-4.1-mini"
+      "value": "gpt-5-mini"
+    },
+    "azureOpenAiModelVersion": {
+      "value": "2025-08-07"
     },
     "azureDocIntelEndpoint": {
       "value": "https://docintel-invoice-llm-dev.cognitiveservices.azure.com/"

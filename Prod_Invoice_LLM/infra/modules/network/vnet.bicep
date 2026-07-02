@@ -26,9 +26,12 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
         }
       }
       {
-        name: 'snet-pe'
+        // Dedicated, exclusively-delegated subnet for PostgreSQL Flexible Server.
+        // A delegated subnet cannot also host private endpoints, so this must
+        // be separate from snet-pe below.
+        name: 'snet-postgres'
         properties: {
-          addressPrefix: '10.0.2.0/24'
+          addressPrefix: '10.0.4.0/24'
           delegations: [
             {
               name: 'postgresql-delegation'
@@ -37,6 +40,13 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
               }
             }
           ]
+        }
+      }
+      {
+        // Private endpoints for Redis and Storage. No delegation here on purpose.
+        name: 'snet-pe'
+        properties: {
+          addressPrefix: '10.0.2.0/24'
         }
       }
       {
@@ -138,8 +148,9 @@ resource docIntelDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@
 
 output vnetId string = vnet.id
 output acaSubnetId string = vnet.properties.subnets[0].id
-output dataSubnetId string = vnet.properties.subnets[1].id
-output aiSubnetId string = vnet.properties.subnets[2].id
+output postgresSubnetId string = vnet.properties.subnets[1].id
+output dataSubnetId string = vnet.properties.subnets[2].id
+output aiSubnetId string = vnet.properties.subnets[3].id
 
 output postgresDnsZoneId string = postgresDnsZone.id
 output redisDnsZoneId string = redisDnsZone.id

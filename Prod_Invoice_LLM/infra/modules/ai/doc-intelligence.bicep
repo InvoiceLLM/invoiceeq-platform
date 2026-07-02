@@ -31,7 +31,7 @@ resource docIntelPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01'
         properties: {
           privateLinkServiceId: docIntelAccount.id
           groupIds: [
-            'cognitiveServices'
+            'account'
           ]
         }
       }
