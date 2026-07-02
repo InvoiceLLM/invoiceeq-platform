@@ -3,22 +3,38 @@ param redisName string
 param subnetId string
 param privateDnsZoneId string
 
-resource redisCache 'Microsoft.Cache/redis@2023-08-01' = {
+// Azure Managed Redis (Redis Enterprise) — replaces the retiring
+// Microsoft.Cache/Redis (Basic/Standard/Premium) SKU.
+// Balanced_B0 is the smallest Redis Enterprise SKU, roughly comparable
+// to a Standard C1 cache. Adjust sku.name/capacity for your workload.
+resource redisEnterpriseCache 'Microsoft.Cache/redisEnterprise@2025-04-01' = {
   name: redisName
   location: location
+  sku: {
+    name: 'Balanced_B0'
+  }
   properties: {
-    sku: {
-      name: 'Standard'
-      family: 'C'
-      capacity: 1
-    }
-    enableNonSslPort: false
     minimumTlsVersion: '1.2'
-    publicNetworkAccess: 'Disabled'
+    highAvailability: 'Enabled'
   }
 }
 
-// Private Endpoint for Redis Cache
+// Default database — required child resource; Redis Enterprise
+// doesn't function without at least one database defined.
+resource redisEnterpriseDatabase 'Microsoft.Cache/redisEnterprise/databases@2025-04-01' = {
+  name: 'default'
+  parent: redisEnterpriseCache
+  properties: {
+    clientProtocol: 'Encrypted'
+    port: 10000
+    clusteringPolicy: 'OSSCluster'
+    evictionPolicy: 'NoEviction'
+    accessKeysAuthentication: 'Enabled' // keep access-key auth on for the connection-string pattern main.bicep already uses
+  }
+}
+
+// Private Endpoint for Redis Enterprise
+// NOTE groupIds is 'redisEnterprise', NOT 'redisCache' (that group is only for the old Microsoft.Cache/Redis resource type)
 resource redisPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
   name: '${redisName}-pe'
   location: location
@@ -30,9 +46,9 @@ resource redisPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = 
       {
         name: '${redisName}-connection'
         properties: {
-          privateLinkServiceId: redisCache.id
+          privateLinkServiceId: redisEnterpriseCache.id
           groupIds: [
-            'redisCache'
+            'redisEnterprise'
           ]
         }
       }
@@ -56,6 +72,6 @@ resource redisPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDns
   }
 }
 
-output redisId string = redisCache.id
-output host string = redisCache.properties.hostName
-output port int = redisCache.properties.sslPort
+output redisId string = redisEnterpriseCache.id
+output host string = redisEnterpriseCache.properties.hostName
+output port int = redisEnterpriseDatabase.properties.port

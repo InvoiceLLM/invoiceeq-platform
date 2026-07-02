@@ -200,6 +200,10 @@ module backendApp './modules/compute/invoice-be.bicep' = {
 
 module celeryWorker './modules/compute/celery-worker.bicep' = {
   name: 'worker-deploy'
+  dependsOn: [
+    rbacAssignments
+    keyVault
+  ]
   params: {
     location: location
     caeId: containerEnv.outputs.caeId
@@ -218,6 +222,10 @@ module celeryWorker './modules/compute/celery-worker.bicep' = {
 
 module frontendApp './modules/compute/invoice-fe.bicep' = {
   name: 'frontend-deploy'
+  dependsOn: [
+    rbacAssignments
+    keyVault
+  ]
   params: {
     location: location
     caeId: containerEnv.outputs.caeId

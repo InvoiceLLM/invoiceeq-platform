@@ -29,6 +29,14 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
         name: 'snet-pe'
         properties: {
           addressPrefix: '10.0.2.0/24'
+          delegations: [
+            {
+              name: 'postgresql-delegation'
+              properties: {
+                serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers'
+              }
+            }
+          ]
         }
       }
       {
@@ -48,7 +56,7 @@ resource postgresDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
 }
 
 resource redisDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
-  name: 'privatelink.redis.cache.windows.net'
+  name: 'privatelink.redisenterprise.cache.azure.net' // Redis Enterprise / Azure Managed Redis uses a different zone than classic Azure Cache for Redis
   location: 'global'
 }
 

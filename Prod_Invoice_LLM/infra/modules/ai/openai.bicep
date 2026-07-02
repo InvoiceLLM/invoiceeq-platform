@@ -1,6 +1,6 @@
 param location string
 param openaiName string
-param deploymentName string = 'gpt-4o-mini'
+param deploymentName string = 'gpt-4.1-mini'
 param subnetId string
 param privateDnsZoneId string
 
@@ -18,14 +18,18 @@ resource openaiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
 }
 
 // Deploy OpenAI Model
+// NOTE: gpt-4o-mini (2024-07-18) is deprecated per Microsoft's model retirement
+// schedule (retires 2026-10-01). Official designated replacement is gpt-4.1-mini.
+// Verify current versions before deploying: az cognitiveservices account
+// deployment list-models --location <region> --model-name gpt-4.1-mini
 resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = {
   parent: openaiAccount
   name: deploymentName
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-4o-mini'
-      version: '2024-07-18'
+      name: 'gpt-4.1-mini'
+      version: '2025-04-14'
     }
   }
   sku: {
