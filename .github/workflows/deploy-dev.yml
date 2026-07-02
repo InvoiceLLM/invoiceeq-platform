@@ -90,6 +90,7 @@ jobs:
       - name: Deploy to Azure Container Apps
         uses: azure/arm-deploy@v2
         with:
+          failOnStdErr: false
           resourceGroupName: ${{ env.RESOURCE_GROUP }}
           template: ./Prod_Invoice_LLM/infra/main.bicep
           parameters: >
