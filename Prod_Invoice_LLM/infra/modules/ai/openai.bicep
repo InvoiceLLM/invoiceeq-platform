@@ -20,6 +20,12 @@ resource openaiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   properties: {
     publicNetworkAccess: 'Disabled'
     customSubDomainName: openaiName
+    // Added networkAcls block to resolve the deployment error
+    networkAcls: {
+      defaultAction: 'Deny'
+      ipRules: []
+      virtualNetworkRules: []
+    }
   }
 }
 
@@ -41,7 +47,7 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-
     }
   }
   sku: {
-    name: 'Standard'
+    name: 'GlobalStandard'
     capacity: 20 // 20k TPM for Dev
   }
 }

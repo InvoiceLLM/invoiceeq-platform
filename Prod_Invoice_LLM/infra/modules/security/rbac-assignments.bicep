@@ -7,7 +7,7 @@ param acrName string
 
 // Role Definition IDs (Azure Standard Roles)
 var storageBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-var cognitiveServicesUser = '14e7a4ae-c3c2-489c-85f2-2a00e0007bc1'
+var cognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 var keyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
 var acrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 

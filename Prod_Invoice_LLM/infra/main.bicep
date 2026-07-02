@@ -152,7 +152,7 @@ module openai './modules/ai/openai.bicep' = {
   name: 'openai-deploy'
   params: {
     location: location
-    openaiName: 'oai-${namingPrefix}-${environment}'
+    openaiName: 'openai-${namingPrefix}-${environment}'
     deploymentName: azureOpenAiDeploymentName
     modelName: azureOpenAiDeploymentName
     modelVersion: azureOpenAiModelVersion
@@ -268,7 +268,7 @@ module rbacAssignments './modules/security/rbac-assignments.bicep' = {
   params: {
     identityPrincipalId: identities.outputs.principalId
     storageAccountName: storage.outputs.storageAccountName
-    openaiName: 'oai-${namingPrefix}-${environment}'
+    openaiName: 'openai-${namingPrefix}-${environment}'
     docIntelName: 'docintel-${namingPrefix}-${environment}'
     keyVaultName: keyVaultName
     acrName: acrName
