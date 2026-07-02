@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RESOURCE_GROUP: invoice-llm-dev
-      ACR_NAME: acrinvoiceaidev
+      ACR_NAME: acrinvoicellmdev
 
     steps:
       # 1. Checkout repository
