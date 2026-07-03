@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RESOURCE_GROUP: invoice-llm-dev
-      ACR_NAME: acrinvoiceaidev
+      ACR_NAME: acrinvoicellmdev
 
     steps:
       # 1. Checkout repository
@@ -90,6 +90,7 @@ jobs:
       - name: Deploy to Azure Container Apps
         uses: azure/arm-deploy@v2
         with:
+          failOnStdErr: false
           resourceGroupName: ${{ env.RESOURCE_GROUP }}
           template: ./Prod_Invoice_LLM/infra/main.bicep
           parameters: >
