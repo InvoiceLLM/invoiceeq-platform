@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, s
 from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis as AsyncRedis
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 from config import settings
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
@@ -54,7 +55,7 @@ async def upload_invoices(
             billing_plan=context.billing_plan,
         )
         db_session.add(tenant)
-        db_session.commit()
+        await run_in_threadpool(db_session.commit)
         db_session.refresh(tenant)
 
     # 3. Enforce Free Plan Limits
@@ -66,7 +67,7 @@ async def upload_invoices(
             )
         tenant.free_invoices_remaining -= len(files)
         db_session.add(tenant)
-        db_session.commit()
+        await run_in_threadpool(db_session.commit)
 
     batch_id = uuid4()
     job_ids = []
@@ -118,7 +119,7 @@ async def upload_invoices(
                 items=existing_invoice.items
             )
             db_session.add(db_invoice)
-            db_session.commit()
+            await run_in_threadpool(db_session.commit)
             db_session.refresh(db_invoice)
             job_ids.append(str(invoice_id))
 
@@ -153,7 +154,9 @@ async def upload_invoices(
 
         # Upload file to storage
         try:
-            file_path = upload_pdf_to_blob_storage(file_bytes, str(context.tenant_id), str(invoice_id))
+            file_path = await run_in_threadpool(
+                upload_pdf_to_blob_storage(file_bytes, str(context.tenant_id), str(invoice_id))
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -171,7 +174,7 @@ async def upload_invoices(
             tags=tags
         )
         db_session.add(db_invoice)
-        db_session.commit()
+        await run_in_threadpool(db_session.commit)
         db_session.refresh(db_invoice)
         
         job_ids.append(str(invoice_id))

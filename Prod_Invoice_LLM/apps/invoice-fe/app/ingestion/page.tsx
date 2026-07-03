@@ -36,11 +36,7 @@ export default function IngestionPage() {
     });
 
     try {
-      const response = await apiClient.post("/invoices/upload", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      });
+      const response = await apiClient.post("/invoices/upload", formData);
 
       const { batch_id, job_ids } = response.data;
 
@@ -103,13 +99,12 @@ export default function IngestionPage() {
           <button
             onClick={handleUpload}
             disabled={files.length === 0 || isUploading}
-            className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-semibold tracking-wide border transition-all duration-300 ${
-              files.length === 0
-                ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
-                : isUploading
+            className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-semibold tracking-wide border transition-all duration-300 ${files.length === 0
+              ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
+              : isUploading
                 ? "bg-accent-blue/20 border-accent-blue/40 text-accent-blue cursor-wait"
                 : "bg-accent-blue border-accent-blue text-white shadow-lg shadow-accent-blue/10 hover:shadow-accent-blue/20 hover:bg-[#2563EB]"
-            }`}
+              }`}
           >
             {isUploading ? (
               <>
