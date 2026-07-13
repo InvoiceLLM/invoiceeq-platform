@@ -1,0 +1,104 @@
+<h2 class="sr-only">Mockup of the split-screen auditor review console: a PDF viewer with bounding box overlays on the left, and read-only metadata with dismissible alerts on the right</h2>
+<div style="background:#0B1220;border-radius:12px;padding:20px;font-family:sans-serif;color:#E2E8F0;">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+    <div style="font-size:15px;font-weight:500;color:#F1F5F9;">Auditor review — INV-2026-0417</div>
+    <div style="display:flex;gap:8px;">
+      <button id="rejectBtn" style="background:transparent;border:1px solid #7F1D1D;color:#FCA5A5;font-size:12.5px;font-weight:500;padding:7px 14px;border-radius:8px;cursor:pointer;">Reject invoice</button>
+      <button id="paidBtn" style="background:#10B981;border:none;color:#04342C;font-size:12.5px;font-weight:500;padding:7px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+        <i class="ti ti-check" style="font-size:14px;" aria-hidden="true"></i>Mark paid and finalize
+      </button>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1.15fr 1fr;gap:14px;">
+
+    <div style="background:#111827;border:1px solid #222D3D;border-radius:10px;padding:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:11px;color:#64748B;">invoice_0417.pdf</div>
+        <div style="display:flex;gap:4px;">
+          <button style="background:#1E293B;border:1px solid #222D3D;color:#94A3B8;border-radius:6px;width:26px;height:26px;cursor:pointer;"><i class="ti ti-zoom-in" style="font-size:14px;" aria-hidden="true"></i></button>
+          <button style="background:#1E293B;border:1px solid #222D3D;color:#94A3B8;border-radius:6px;width:26px;height:26px;cursor:pointer;"><i class="ti ti-zoom-out" style="font-size:14px;" aria-hidden="true"></i></button>
+          <button style="background:#1E293B;border:1px solid #222D3D;color:#94A3B8;border-radius:6px;width:26px;height:26px;cursor:pointer;"><i class="ti ti-rotate" style="font-size:14px;" aria-hidden="true"></i></button>
+        </div>
+      </div>
+      <div style="position:relative;background:#F8FAFC;border-radius:6px;padding:20px;min-height:340px;color:#1E293B;font-size:11.5px;line-height:1.6;">
+        <div style="font-weight:500;font-size:14px;margin-bottom:10px;">Invoice</div>
+        <div>Vendor: Nordic Supply Co.</div>
+        <div>Date: 2026-04-07</div>
+        <div style="margin-top:14px;border-top:1px dashed #CBD5E1;padding-top:8px;">
+          <div>Line 1 — Cable trays x40 ....... NOK 4,200.00</div>
+          <div>Line 2 — Installation .......... NOK 6,750.00</div>
+        </div>
+        <div style="margin-top:14px;">Total: NOK 12,450.00</div>
+
+        <div style="position:absolute;top:20px;left:64px;width:140px;height:16px;border:1px solid #10B981;background:rgba(16,185,129,0.1);box-shadow:0 0 10px rgba(16,185,129,0.4);border-radius:3px;"></div>
+        <div style="position:absolute;top:158px;left:20px;width:230px;height:16px;border:1px solid #10B981;background:rgba(16,185,129,0.1);box-shadow:0 0 10px rgba(16,185,129,0.4);border-radius:3px;"></div>
+        <div style="position:absolute;top:222px;left:20px;width:150px;height:16px;border:1px solid #10B981;background:rgba(16,185,129,0.1);box-shadow:0 0 10px rgba(16,185,129,0.4);border-radius:3px;"></div>
+      </div>
+    </div>
+
+    <div>
+      <div style="background:#111827;border:1px solid #222D3D;border-radius:10px;padding:14px;margin-bottom:12px;">
+        <div style="font-size:11px;color:#64748B;margin-bottom:10px;">Verified details <span style="color:#475569;">(read-only)</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><div style="font-size:10px;color:#64748B;margin-bottom:3px;">Vendor name</div><div style="background:#1E293B;border:1px solid #222D3D;color:#CBD5E1;border-radius:6px;padding:7px 9px;font-size:12px;">Nordic Supply Co.</div></div>
+          <div><div style="font-size:10px;color:#64748B;margin-bottom:3px;">Invoice date</div><div style="background:#1E293B;border:1px solid #222D3D;color:#CBD5E1;border-radius:6px;padding:7px 9px;font-size:12px;">2026-04-07</div></div>
+          <div><div style="font-size:10px;color:#64748B;margin-bottom:3px;">Total amount</div><div style="background:#1E293B;border:1px solid #222D3D;color:#CBD5E1;border-radius:6px;padding:7px 9px;font-size:12px;">NOK 12,450.00</div></div>
+          <div><div style="font-size:10px;color:#64748B;margin-bottom:3px;">Tax amount</div><div style="background:#1E293B;border:1px solid #222D3D;color:#CBD5E1;border-radius:6px;padding:7px 9px;font-size:12px;">NOK 2,490.00</div></div>
+          <div><div style="font-size:10px;color:#64748B;margin-bottom:3px;">Due date</div><div style="background:#1E293B;border:1px solid #222D3D;color:#CBD5E1;border-radius:6px;padding:7px 9px;font-size:12px;">2026-05-07</div></div>
+          <div><div style="font-size:10px;color:#64748B;margin-bottom:3px;">PO number</div><div style="background:#1E293B;border:1px solid #222D3D;color:#CBD5E1;border-radius:6px;padding:7px 9px;font-size:12px;">PO-88213</div></div>
+        </div>
+      </div>
+
+      <div style="background:#111827;border:1px solid #222D3D;border-radius:10px;padding:14px;">
+        <div id="alertHeader" style="font-size:11px;color:#64748B;margin-bottom:10px;">Active alerts <span id="alertCount">(2)</span></div>
+        <div id="alertList" style="display:flex;flex-direction:column;gap:8px;">
+          <div class="alert-card" style="background:rgba(113,63,18,0.2);border:1px solid rgba(180,83,9,0.5);color:#FDE68A;border-radius:8px;padding:10px 12px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+            <div style="font-size:12px;line-height:1.4;"><i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:4px;" aria-hidden="true"></i>Tax total does not reconcile with line items (off by NOK 45.00).</div>
+            <button class="dismiss-btn" style="background:transparent;border:1px solid rgba(253,230,138,0.4);color:#FDE68A;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;">Dismiss</button>
+          </div>
+          <div class="alert-card" style="background:rgba(113,63,18,0.2);border:1px solid rgba(180,83,9,0.5);color:#FDE68A;border-radius:8px;padding:10px 12px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+            <div style="font-size:12px;line-height:1.4;"><i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:4px;" aria-hidden="true"></i>PO number not found in connected ERP records.</div>
+            <button class="dismiss-btn" style="background:transparent;border:1px solid rgba(253,230,138,0.4);color:#FDE68A;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;">Dismiss</button>
+          </div>
+        </div>
+        <div id="noAlerts" style="display:none;font-size:12px;color:#5DCAA5;display:flex;align-items:center;gap:6px;"><i class="ti ti-circle-check" style="font-size:15px;" aria-hidden="true"></i>All alerts resolved.</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" style="display:none;margin-top:14px;background:#0F6E56;color:#E1F5EE;font-size:12.5px;padding:9px 14px;border-radius:8px;align-items:center;gap:7px;"></div>
+</div>
+<script>
+function updateAlertCount(){
+  var remaining = document.querySelectorAll('.alert-card').length;
+  document.getElementById('alertCount').textContent = '(' + remaining + ')';
+  if(remaining === 0){
+    document.getElementById('alertList').style.display = 'none';
+    document.getElementById('noAlerts').style.display = 'flex';
+  }
+}
+document.querySelectorAll('.dismiss-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    this.closest('.alert-card').remove();
+    updateAlertCount();
+  });
+});
+function showToast(msg, color, bg){
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.color = color; t.style.background = bg;
+  t.style.display = 'flex';
+}
+document.getElementById('paidBtn').addEventListener('click', function(){
+  document.querySelectorAll('.alert-card').forEach(function(c){ c.remove(); });
+  updateAlertCount();
+  showToast('Marked as paid — all alerts dismissed and audit log updated.', '#E1F5EE', '#0F6E56');
+});
+document.getElementById('rejectBtn').addEventListener('click', function(){
+  document.querySelectorAll('.alert-card').forEach(function(c){ c.remove(); });
+  updateAlertCount();
+  showToast('Invoice rejected — logged with timestamp and auditor id.', '#FCEBEB', '#791F1F');
+});
+</script>

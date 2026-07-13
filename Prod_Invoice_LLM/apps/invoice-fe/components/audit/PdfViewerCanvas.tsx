@@ -18,8 +18,6 @@ interface PdfViewerCanvasProps {
   coordinates?: Coordinate[];
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1";
-
 export default function PdfViewerCanvas({
   invoiceId,
   title,
@@ -29,7 +27,7 @@ export default function PdfViewerCanvas({
   const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
 
-  const pdfUrl = `${API_BASE}/invoices/${invoiceId}/pdf`;
+  const pdfUrl = `/api/invoices/${invoiceId}/pdf`;
 
   const statusBadge: Record<string, string> = {
     COMPLETED: "bg-emerald-500/20 text-emerald-300 border-emerald-600/50",
