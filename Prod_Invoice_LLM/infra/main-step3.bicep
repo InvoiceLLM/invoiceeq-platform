@@ -10,21 +10,17 @@ param location string = resourceGroup().location
 @description('Prefix for resource naming')
 param namingPrefix string = 'invoice-llm'
 
-@description('VNet name from step1')
-param vnetName string
-
-@description('Identity ID from step1')
-param identityId string
 
 @description('Storage account name from step1')
 param storageAccountName string
 
 @description('Storage account key from step1')
+@secure()
 param storageAccountKey string
 
 // ================= Variables =================
-var uniqueSuffix = uniqueString(resourceGroup().id)
 var caeName = 'cae-${namingPrefix}-${environment}'
+var vnetName = 'vnet-${namingPrefix}-${environment}'
 
 // Get VNet outputs from existing deployment
 module network './modules/network/vnet.bicep' = {
@@ -54,9 +50,10 @@ module chromadb './modules/data/chromadb.bicep' = {
     appName: 'ca-chromadb-${environment}'
     storageAccountName: storageAccountName
     storageAccountKey: storageAccountKey
-    userAssignedIdentityId: identityId
   }
 }
+
+
 
 // ================= Outputs =================
 output caeId string = containerEnv.outputs.caeId

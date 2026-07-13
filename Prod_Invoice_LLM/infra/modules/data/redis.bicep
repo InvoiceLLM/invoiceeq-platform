@@ -27,7 +27,7 @@ resource redisEnterpriseDatabase 'Microsoft.Cache/redisEnterprise/databases@2025
   properties: {
     clientProtocol: 'Encrypted'
     port: 10000
-    clusteringPolicy: 'EnterpriseCluster'
+    clusteringPolicy: 'OSSCluster'
     evictionPolicy: 'NoEviction'
     accessKeysAuthentication: 'Enabled' // keep access-key auth on for the connection-string pattern main.bicep already uses
   }

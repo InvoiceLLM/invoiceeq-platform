@@ -16,10 +16,9 @@ param azureOpenAiDeploymentName string = 'gpt-5-mini'
 @description('Azure OpenAI Model Version - verify current availability before deploying: az cognitiveservices account list-models --location <region> -o table')
 param azureOpenAiModelVersion string
 
-@description('VNet name from step1')
-param vnetName string
 
 // ================= Variables =================
+var vnetName = 'vnet-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}-${substring(uniqueString(resourceGroup().id), 0, 4)}'
 
 // Get VNet outputs from existing deployment

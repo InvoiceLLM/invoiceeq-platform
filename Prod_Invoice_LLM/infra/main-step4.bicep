@@ -31,8 +31,6 @@ param celeryWorkerImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:lat
 @description('Image tag for frontend container')
 param frontendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
-@description('VNet name from step1')
-param vnetName string
 
 @description('Identity ID from step1')
 param identityId string
@@ -57,6 +55,7 @@ param chromaDbFqdn string
 
 // ================= Variables =================
 var uniqueSuffix = uniqueString(resourceGroup().id)
+var vnetName = 'vnet-${namingPrefix}-${environment}'
 
 // Get VNet outputs from existing deployment
 module network './modules/network/vnet.bicep' = {

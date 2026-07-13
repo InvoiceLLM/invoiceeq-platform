@@ -35,32 +35,60 @@ if ($exists -eq "false") {
 }
 
 # Step 1: Core Infrastructure
+# Pre-check: if Redis already exists and is Running, skip Bicep (re-deploying an existing
+# Redis Enterprise database always returns BadRequest — it is not re-creatable in-place).
 Write-Host ""
-Write-Host "Step 1: Deploying Core Infrastructure (VNet, Identities, Key Vault, Data Services)..." -ForegroundColor Cyan
-Write-Host "This may take 10-15 minutes..." -ForegroundColor Yellow
-
-$step1Output = az deployment group create `
+$redisName = "redis-$NamingPrefix-$Environment"
+$redisState = az resource show `
     --resource-group $ResourceGroup `
-    --template-file "$PSScriptRoot/main-step1.bicep" `
-    --parameters $ParamsFile `
-    --parameters environment=$Environment `
-    --parameters location=$Location `
-    --parameters namingPrefix=$NamingPrefix
+    --name $redisName `
+    --resource-type Microsoft.Cache/redisEnterprise `
+    --query "properties.resourceState" -o tsv 2>$null
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Step 1 failed!" -ForegroundColor Red
-    exit 1
+if ($redisState -eq "Running") {
+    Write-Host "Redis Enterprise '$redisName' already exists and is Running." -ForegroundColor Yellow
+    Write-Host "Skipping Step 1 Bicep — reading outputs from existing resources..." -ForegroundColor Yellow
+
+    $identityName = "id-$NamingPrefix-$Environment"
+    $keyVaultName       = az keyvault list --resource-group $ResourceGroup --query "[0].name" -o tsv
+    $identityId         = az identity show --name $identityName --resource-group $ResourceGroup --query id -o tsv
+    $identityClientId   = az identity show --name $identityName --resource-group $ResourceGroup --query clientId -o tsv
+    $vnetName           = az network vnet list --resource-group $ResourceGroup --query "[0].name" -o tsv
+    $storageAccountName = az storage account list --resource-group $ResourceGroup --query "[0].name" -o tsv
+    $acrName            = az acr list --resource-group $ResourceGroup --query "[0].name" -o tsv
+
+    Write-Host "Step 1 skipped — using existing resources" -ForegroundColor Green
+    Write-Host "  VNet:    $vnetName" -ForegroundColor Gray
+    Write-Host "  Storage: $storageAccountName" -ForegroundColor Gray
+    Write-Host "  ACR:     $acrName" -ForegroundColor Gray
+
+} else {
+    Write-Host "Step 1: Deploying Core Infrastructure (VNet, Identities, Key Vault, Data Services)..." -ForegroundColor Cyan
+    Write-Host "This may take 10-15 minutes..." -ForegroundColor Yellow
+
+    $step1Output = az deployment group create `
+        --resource-group $ResourceGroup `
+        --template-file "$PSScriptRoot/main-step1.bicep" `
+        --parameters $ParamsFile `
+        --parameters environment=$Environment `
+        --parameters location=$Location `
+        --parameters namingPrefix=$NamingPrefix
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Step 1 failed!" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "Step 1 completed successfully" -ForegroundColor Green
+
+    # Extract outputs from Step 1
+    $keyVaultName     = ($step1Output | ConvertFrom-Json).properties.outputs.keyVaultName.value
+    $identityId       = ($step1Output | ConvertFrom-Json).properties.outputs.identityId.value
+    $identityClientId = ($step1Output | ConvertFrom-Json).properties.outputs.identityClientId.value
+    $vnetName         = ($step1Output | ConvertFrom-Json).properties.outputs.vnetName.value
+    $storageAccountName = ($step1Output | ConvertFrom-Json).properties.outputs.storageAccountName.value
+    $acrName          = ($step1Output | ConvertFrom-Json).properties.outputs.acrName.value
 }
-
-Write-Host "Step 1 completed successfully" -ForegroundColor Green
-
-# Extract outputs from Step 1
-$keyVaultName = ($step1Output | ConvertFrom-Json).properties.outputs.keyVaultName.value
-$identityId = ($step1Output | ConvertFrom-Json).properties.outputs.identityId.value
-$identityClientId = ($step1Output | ConvertFrom-Json).properties.outputs.identityClientId.value
-$vnetName = ($step1Output | ConvertFrom-Json).properties.outputs.vnetName.value
-$storageAccountName = ($step1Output | ConvertFrom-Json).properties.outputs.storageAccountName.value
-$acrName = ($step1Output | ConvertFrom-Json).properties.outputs.acrName.value
 
 Write-Host "Key Vault: $keyVaultName" -ForegroundColor Gray
 Write-Host "Identity ID: $identityId" -ForegroundColor Gray
@@ -71,6 +99,7 @@ $storageAccountKey = az storage account keys list `
     --resource-group $ResourceGroup `
     --account-name $storageAccountName `
     --query '[0].value' -o tsv
+
 
 # Step 2: AI Services
 Write-Host ""
@@ -83,8 +112,7 @@ $step2Output = az deployment group create `
     --parameters environment=$Environment `
     --parameters location=$Location `
     --parameters namingPrefix=$NamingPrefix `
-    --parameters azureOpenAiModelVersion="2025-08-07" `
-    --parameters vnetName=$vnetName
+    --parameters azureOpenAiModelVersion="2025-08-07"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Step 2 failed!" -ForegroundColor Red
@@ -141,8 +169,6 @@ $step3Output = az deployment group create `
     --parameters environment=$Environment `
     --parameters location=$Location `
     --parameters namingPrefix=$NamingPrefix `
-    --parameters vnetName=$vnetName `
-    --parameters identityId=$identityId `
     --parameters storageAccountName=$storageAccountName `
     --parameters storageAccountKey=$storageAccountKey
 
@@ -185,7 +211,6 @@ $step4Output = az deployment group create `
     --parameters backendImage=$backendImage `
     --parameters celeryWorkerImage=$celeryWorkerImage `
     --parameters frontendImage=$frontendImage `
-    --parameters vnetName=$vnetName `
     --parameters identityId=$identityId `
     --parameters identityClientId=$identityClientId `
     --parameters keyVaultName=$keyVaultName `
