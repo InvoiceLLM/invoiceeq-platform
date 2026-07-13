@@ -81,15 +81,50 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
         
         with open(file_path, "rb") as f:
             poller = client.begin_analyze_document(
-                model_id="prebuilt-layout",
+                model_id="prebuilt-invoice",
                 analyze_request=f,
                 content_type="application/octet-stream"
             )
         result = poller.result()
-        return result.content or ""
+
+        coordinates_list = []
+        confidence_dict = {}
+
+        if hasattr(result, "documents") and result.documents:
+            doc = result.documents[0]
+            if hasattr(doc, "fields") and doc.fields:
+                for field_name, field in doc.fields.items():
+                    if hasattr(field, "confidence") and field.confidence is not None:
+                        confidence_dict[field_name] = field.confidence
+                    
+                    if hasattr(field, "bounding_regions") and field.bounding_regions:
+                        for region in field.bounding_regions:
+                            if hasattr(region, "polygon") and region.polygon:
+                                poly = region.polygon
+                                if len(poly) >= 8:
+                                    xs = [poly[i] for i in range(0, len(poly), 2)]
+                                    ys = [poly[i] for i in range(1, len(poly), 2)]
+                                    x_min, x_max = min(xs), max(xs)
+                                    y_min, y_max = min(ys), max(ys)
+                                    coordinates_list.append({
+                                        "field": field_name,
+                                        "x": x_min,
+                                        "y": y_min,
+                                        "width": x_max - x_min,
+                                        "height": y_max - y_min,
+                                        "page": region.page_number or 1
+                                    })
+
+        return {
+            "content": result.content or "",
+            "coordinates": coordinates_list,
+            "field_confidence": confidence_dict
+        }
+
     except Exception as e:
         logger.error("Azure Document Intelligence call failed for %s: %s", file_path, e)
         raise e
+
 
 @celery_app.task(name="workers.tasks.process_invoice_task")
 def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
@@ -105,18 +140,28 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
     _publish_sse_events(batch_id, {"status": "PROCESSING_OCR", "message": "Extracting text from PDF invoice..."})
     
     try:
-        # 2. Extract raw layout text
-        _extracted_text = _run_ocr(file_path, settings)
+        # 2. Extract raw layout text and metadata
+        ocr_result = _run_ocr(file_path, settings)
+        if isinstance(ocr_result, dict):
+            _extracted_text = ocr_result["content"]
+            coordinates = ocr_result.get("coordinates", [])
+            field_confidence = ocr_result.get("field_confidence", {})
+        else:
+            _extracted_text = ocr_result
+            coordinates = []
+            field_confidence = {}
         
         # 3. Update status: extracting structures (agent processing)
         _publish_sse_events(batch_id, {"status": "EXTRACTING_DATA", "message": "Extracting structured fields using LLM..."})
         
         # Test environment overrides triggered by keywords in file_path
+
         if "fail" in file_path.lower():
             raise Exception("Mock processing failure triggered by file name keyword.")
         
         # Run extraction agent (first pass)
-        agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id)
+        agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id, ocr_result=ocr_result)
+
         
         status = agent_result["status"]
         alerts = agent_result["alerts"]
@@ -154,19 +199,44 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
             # 3. Re-run extraction if rules are found
             if rules:
                 logger.info("Found custom layout rules for vendor %s. Re-running extraction.", vendor_name)
-                agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id, rules=rules)
+                agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id, rules=rules, ocr_result=ocr_result)
                 status = agent_result["status"]
                 alerts = agent_result["alerts"]
                 extracted_data = agent_result["extracted_data"] or {}
+
         
         # Update invoice record in the database
         with Session(engine) as session:
             statement = select(Invoice).where(Invoice.file_path == file_path)
             invoice = session.exec(statement).first()
             if invoice:
-                invoice.vendor_name = extracted_data.get("vendor_name")
+                vendor_name = extracted_data.get("vendor_name")
+                invoice_number = extracted_data.get("invoice_number")
+                
+                # Layer 2 Duplicate Detection
+                if vendor_name and invoice_number:
+                    from sqlalchemy import func
+                    dup_stmt = select(Invoice).where(
+                        Invoice.tenant_id == invoice.tenant_id,
+                        Invoice.id != invoice.id,
+                        func.lower(Invoice.invoice_number) == invoice_number.lower(),
+                        func.lower(Invoice.vendor_name) == vendor_name.lower()
+                    )
+                    dup_invoice = session.exec(dup_stmt).first()
+                    if dup_invoice:
+                        dup_alert = {
+                            "type": "duplicate_invoice",
+                            "message": f"An invoice with the same number ({invoice_number}) and vendor ({vendor_name}) already exists (ID: {dup_invoice.id})."
+                        }
+                        if dup_alert not in alerts:
+                            alerts = list(alerts)
+                            alerts.append(dup_alert)
+                        status = "AUDIT_REQUIRED"
+
+                invoice.vendor_name = vendor_name
                 invoice.grand_total = extracted_data.get("grand_total")
-                invoice.invoice_number = extracted_data.get("invoice_number")
+                invoice.invoice_number = invoice_number
+
                 
                 # Parse date strings if present
                 for date_field in ["invoice_date", "due_date"]:
@@ -181,6 +251,19 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
                             
                 invoice.tax_amount = extracted_data.get("tax_amount")
                 invoice.po_number = extracted_data.get("po_number")
+                invoice.coordinates = coordinates
+                invoice.field_confidence = field_confidence
+                invoice.currency = extracted_data.get("currency")
+                invoice.discount_percent = extracted_data.get("discount_percent")
+                invoice.discount_amount = extracted_data.get("discount_amount")
+                invoice.taxes = extracted_data.get("taxes", [])
+                invoice.discounts = extracted_data.get("discounts", [])
+                invoice.deductions = extracted_data.get("deductions", [])
+                invoice.tax_ids = extracted_data.get("tax_ids", [])
+                invoice.payment_instructions = extracted_data.get("payment_instructions", [])
+                invoice.references = extracted_data.get("references", [])
+                invoice.addresses = extracted_data.get("addresses", [])
+                invoice.compliance_metadata = extracted_data.get("compliance_metadata", [])
                 invoice.status = status
                 invoice.sa_alerts = alerts
                 invoice.tags = extracted_data.get("tags", [])
@@ -188,6 +271,8 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
                 
                 session.add(invoice)
                 session.commit()
+
+
             
             # If successfully completed, run page-level RAG indexing
             if status == "COMPLETED":
