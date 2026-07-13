@@ -24,7 +24,7 @@
       "value": "pk_test_mock_clerk_publishable_key_here"
     },
     "tokenEncryptionKey": {
-      "value": "gAAAAABmR5x4fQ6a8Yk4B6...mock-key..."
+      "value": "9OWQ4zLbBbNTm7CLm7BGOh5uEi-UeA9_i0mCNyzV49Q="
     },
     "azureOpenAiEndpoint": {
       "value": "https://openai-invoice-llm-dev.openai.azure.com/"
