@@ -86,15 +86,81 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 9. Deploy Infrastructure (Bicep) with Updated Image Tags
-      - name: Deploy to Azure Container Apps
-        uses: azure/arm-deploy@v2
-        with:
-          failOnStdErr: false
-          resourceGroupName: ${{ env.RESOURCE_GROUP }}
-          template: ./Prod_Invoice_LLM/infra/main.bicep
-          parameters: >
-            ./Prod_Invoice_LLM/infra/params.dev.json
-            backendImage=${{ env.ACR_NAME }}.azurecr.io/invoice-be:${{ github.sha }}
-            celeryWorkerImage=${{ env.ACR_NAME }}.azurecr.io/celery-worker:${{ github.sha }}
-            frontendImage=${{ env.ACR_NAME }}.azurecr.io/invoice-fe:${{ github.sha }}
+      - name: Update Container Apps images (no Bicep)
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ env.RESOURCE_GROUP }}
+          ACR_NAME: ${{ env.ACR_NAME }}
+          GITHUB_SHA: ${{ github.sha }}
+          PARAMS_FILE: Prod_Invoice_LLM/infra/params.dev.json
+        run: |
+          set -euo pipefail
+
+          # ensure jq is available
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
+
+          echo "Using params file: $PARAMS_FILE"
+          jq -c '.' $PARAMS_FILE || true
+
+          namingPrefix=$(jq -r '.parameters.namingPrefix.value // empty' $PARAMS_FILE)
+          environment=$(jq -r '.parameters.environment.value // empty' $PARAMS_FILE)
+
+          if [ -z "$namingPrefix" ] || [ -z "$environment" ]; then
+            echo "ERROR: namingPrefix or environment not found in $PARAMS_FILE" >&2
+            exit 1
+          fi
+
+          # Optional explicit app names in params.dev.json:
+          backend_app=$(jq -r '.parameters.backendAppName.value // empty' $PARAMS_FILE)
+          worker_app=$(jq -r '.parameters.celeryWorkerAppName.value // empty' $PARAMS_FILE)
+          frontend_app=$(jq -r '.parameters.frontendAppName.value // empty' $PARAMS_FILE)
+
+          # Derive names if not explicitly present
+          if [ -z "$backend_app" ]; then
+            backend_app="${namingPrefix}-backend-${environment}"
+          fi
+          if [ -z "$worker_app" ]; then
+            worker_app="${namingPrefix}-worker-${environment}"
+          fi
+          if [ -z "$frontend_app" ]; then
+            frontend_app="${namingPrefix}-frontend-${environment}"
+          fi
+
+          echo "Using app names:"
+          echo "  backend:  $backend_app"
+          echo "  worker:   $worker_app"
+          echo "  frontend: $frontend_app"
+
+          backend_img="${ACR_NAME}.azurecr.io/invoice-be:${GITHUB_SHA}"
+          worker_img="${ACR_NAME}.azurecr.io/celery-worker:${GITHUB_SHA}"
+          frontend_img="${ACR_NAME}.azurecr.io/invoice-fe:${GITHUB_SHA}"
+
+          echo "Updating backend ($backend_app) -> $backend_img"
+          if az containerapp show --name "$backend_app" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            az containerapp update --name "$backend_app" --resource-group "$RESOURCE_GROUP" --set properties.template.containers[0].image="$backend_img"
+          else
+            echo "Warning: backend app $backend_app not found in $RESOURCE_GROUP" >&2
+          fi
+
+          echo "Updating worker ($worker_app) -> $worker_img"
+          if az containerapp show --name "$worker_app" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            az containerapp update --name "$worker_app" --resource-group "$RESOURCE_GROUP" --set properties.template.containers[0].image="$worker_img"
+          else
+            echo "Warning: worker app $worker_app not found in $RESOURCE_GROUP" >&2
+          fi
+
+          echo "Updating frontend ($frontend_app) -> $frontend_img"
+          if az containerapp show --name "$frontend_app" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            az containerapp update --name "$frontend_app" --resource-group "$RESOURCE_GROUP" --set properties.template.containers[0].image="$frontend_img"
+          else
+            echo "Warning: frontend app $frontend_app not found in $RESOURCE_GROUP" >&2
+          fi
+
+          echo "Verifying current image tags (backend, worker, frontend):"
+          az containerapp show --name "$backend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
+          az containerapp show --name "$worker_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
+          az containerapp show --name "$frontend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
+
