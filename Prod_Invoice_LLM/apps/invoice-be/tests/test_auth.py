@@ -1,8 +1,34 @@
+import pytest
+from sqlmodel import SQLModel, create_engine, Session, select
+from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
-from sqlmodel import Session
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID, MOCK_USER_ID
+
+sqlite_url = "sqlite:///:memory:"
+engine = create_engine(
+    sqlite_url,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool
+)
+
+@pytest.fixture(name="db_session")
+def db_session_fixture():
+    """Yields clean isolated test database session."""
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
+    SQLModel.metadata.drop_all(engine)
+
+@pytest.fixture(autouse=True)
+def override_db_session(db_session):
+    """Overrides dependencies database session."""
+    def get_db_session_override():
+        yield db_session
+    app.dependency_overrides[get_db_session] = get_db_session_override
+    yield
+    app.dependency_overrides.clear()
 
 client = TestClient(app)
 

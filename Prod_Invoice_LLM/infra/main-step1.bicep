@@ -28,6 +28,27 @@ param nextPublicClerkPublishableKey string
 @secure()
 param tokenEncryptionKey string
 
+@description('Azure OpenAI Endpoint URL')
+param azureOpenAiEndpoint string = ''
+
+@description('Azure OpenAI Model Deployment Name')
+param azureOpenAiDeploymentName string = ''
+
+@description('Azure OpenAI Model Version')
+param azureOpenAiModelVersion string = ''
+
+@description('Azure Document Intelligence Endpoint URL')
+param azureDocIntelEndpoint string = ''
+
+@description('Image tag for backend API container')
+param backendImage string = ''
+
+@description('Image tag for celery worker container')
+param celeryWorkerImage string = ''
+
+@description('Image tag for frontend container')
+param frontendImage string = ''
+
 // ================= Variables =================
 var uniqueSuffix = uniqueString(resourceGroup().id)
 var keyVaultName = 'kv-${namingPrefix}-${environment}-${substring(uniqueSuffix, 0, 4)}'

@@ -6,11 +6,15 @@ param(
     [string]$Location = "eastus2",
     [string]$Environment = "dev",
     [string]$NamingPrefix = "invoice-llm",
-    [string]$ParamsFile = "Prod_Invoice_LLM/infra/params.dev.json"
+    [string]$ParamsFile = ""
 )
 
 # Error handling
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrEmpty($ParamsFile)) {
+    $ParamsFile = "$PSScriptRoot/params.dev.json"
+}
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Invoice-LLM Infrastructure Deployment" -ForegroundColor Cyan
@@ -21,8 +25,8 @@ Write-Host "Environment: $Environment"
 Write-Host ""
 
 # Check if resource group exists
-$rg = az group show --name $ResourceGroup --query name -o tsv 2>$null
-if (-not $rg) {
+$exists = az group exists --name $ResourceGroup
+if ($exists -eq "false") {
     Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Yellow
     az group create --name $ResourceGroup --location $Location | Out-Null
     Write-Host "Resource group created successfully" -ForegroundColor Green
@@ -37,7 +41,7 @@ Write-Host "This may take 10-15 minutes..." -ForegroundColor Yellow
 
 $step1Output = az deployment group create `
     --resource-group $ResourceGroup `
-    --template-file Prod_Invoice_LLM/infra/main-step1.bicep `
+    --template-file "$PSScriptRoot/main-step1.bicep" `
     --parameters $ParamsFile `
     --parameters environment=$Environment `
     --parameters location=$Location `
@@ -75,7 +79,7 @@ Write-Host "This may take 5-10 minutes..." -ForegroundColor Yellow
 
 $step2Output = az deployment group create `
     --resource-group $ResourceGroup `
-    --template-file Prod_Invoice_LLM/infra/main-step2.bicep `
+    --template-file "$PSScriptRoot/main-step2.bicep" `
     --parameters environment=$Environment `
     --parameters location=$Location `
     --parameters namingPrefix=$NamingPrefix `
@@ -133,7 +137,7 @@ Write-Host "This may take 5-10 minutes..." -ForegroundColor Yellow
 
 $step3Output = az deployment group create `
     --resource-group $ResourceGroup `
-    --template-file Prod_Invoice_LLM/infra/main-step3.bicep `
+    --template-file "$PSScriptRoot/main-step3.bicep" `
     --parameters environment=$Environment `
     --parameters location=$Location `
     --parameters namingPrefix=$NamingPrefix `
@@ -170,7 +174,7 @@ $frontendImage = $params.parameters.frontendImage.value
 
 $step4Output = az deployment group create `
     --resource-group $ResourceGroup `
-    --template-file Prod_Invoice_LLM/infra/main-step4.bicep `
+    --template-file "$PSScriptRoot/main-step4.bicep" `
     --parameters environment=$Environment `
     --parameters location=$Location `
     --parameters namingPrefix=$NamingPrefix `

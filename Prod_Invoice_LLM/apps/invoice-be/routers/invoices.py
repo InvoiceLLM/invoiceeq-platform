@@ -45,18 +45,13 @@ async def upload_invoices(
                 detail=f"Invalid file format: {file.filename}. Only PDF is allowed."
             )
 
-    # 2. Fetch or Auto-Provision Tenant Context
+    # 2. Fetch Tenant context (provisioned by get_tenant_context)
     tenant = db_session.get(Tenant, context.tenant_id)
     if not tenant:
-        tenant = Tenant(
-            id=context.tenant_id,
-            name="Tenant Account",
-            domain=f"domain-{context.tenant_id}.com",
-            billing_plan=context.billing_plan,
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found."
         )
-        db_session.add(tenant)
-        await run_in_threadpool(db_session.commit)
-        db_session.refresh(tenant)
 
     # 3. Enforce Free Plan Limits
     if tenant.billing_plan == "free":
@@ -155,7 +150,7 @@ async def upload_invoices(
         # Upload file to storage
         try:
             file_path = await run_in_threadpool(
-                upload_pdf_to_blob_storage(file_bytes, str(context.tenant_id), str(invoice_id))
+                upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
             )
         except Exception as e:
             raise HTTPException(

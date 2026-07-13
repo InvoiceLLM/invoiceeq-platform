@@ -3,16 +3,19 @@ import jwt
 from jwt.algorithms import RSAAlgorithm
 from uuid import UUID
 from typing import Generator
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, status, Depends
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
+from datetime import datetime
 
 from config import settings
 from database import engine
+from models import Tenant, User
 
 class TenantContext(BaseModel):
     tenant_id: UUID
     user_id: str
+    db_user_id: UUID | None = None
     role: str
     billing_plan: str
 
@@ -61,103 +64,181 @@ def get_jwk(kid: str) -> dict:
     
     return _jwks_cache[kid]
 
-def get_tenant_context(authorization: str | None = Header(None)) -> TenantContext:
+def get_tenant_context(
+    authorization: str | None = Header(None),
+    db_session: Session = Depends(get_db_session)
+) -> TenantContext:
     """
     Decodes and validates the Clerk JWT token.
     Falls back to a mock context if no header is present or if using a 'test_' token.
     Blocks any request with an 'unpaid' billing plan with HTTP 402.
+    Provisions Tenant and User rows in the database if they do not exist.
     """
     # 1. Local Development / Test Fallback
     if not authorization or not authorization.startswith("Bearer "):
-        return TenantContext(
-            tenant_id=MOCK_TENANT_ID,
-            user_id=MOCK_USER_ID,
-            role=MOCK_ROLE,
-            billing_plan=MOCK_BILLING_PLAN
-        )
-    
-    token = authorization.split(" ")[1]
-    
-    # Check for mock test token format (e.g. 'test_', 'test_unpaid')
-    if token.startswith("test_"):
-        plan = "unpaid" if "unpaid" in token else MOCK_BILLING_PLAN
-        role = "Viewer" if "viewer" in token else MOCK_ROLE
-        
         tenant_id = MOCK_TENANT_ID
-        # Extract UUID if provided in test token
-        for part in token.split("_"):
+        user_id = MOCK_USER_ID
+        role = MOCK_ROLE
+        plan = MOCK_BILLING_PLAN
+        email = "test@example.com"
+        first_name = "Test"
+        last_name = "User"
+    else:
+        token = authorization.split(" ")[1]
+        
+        # Check for mock test token format (e.g. 'test_', 'test_unpaid')
+        if token.startswith("test_"):
+            plan = "unpaid" if "unpaid" in token else MOCK_BILLING_PLAN
+            role = "Viewer" if "viewer" in token else MOCK_ROLE
+            
+            tenant_id = MOCK_TENANT_ID
+            # Extract UUID if provided in test token
+            for part in token.split("_"):
+                try:
+                    tenant_id = UUID(part)
+                except ValueError:
+                    continue
+            user_id = MOCK_USER_ID
+            email = "test@example.com"
+            first_name = "Test"
+            last_name = "User"
+        else:
+            # 2. Live JWT Decoding & Verification
             try:
-                tenant_id = UUID(part)
-            except ValueError:
-                continue
+                header = jwt.get_unverified_header(token)
+                kid = header.get("kid")
+                if not kid:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Missing key ID (kid) in token header."
+                    )
                 
-        context = TenantContext(
-            tenant_id=tenant_id,
-            user_id=MOCK_USER_ID,
-            role=role,
-            billing_plan=plan
-        )
-        
-        # Payment gate block
-        if context.billing_plan == "unpaid":
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="Tenant subscription is unpaid. Access blocked."
-            )
-        return context
+                jwk_dict = get_jwk(kid)
+                public_key = RSAAlgorithm.from_jwk(jwk_dict)
+                
+                payload = jwt.decode(
+                    token,
+                    public_key,
+                    algorithms=["RS256"],
+                    issuer=settings.CLERK_JWT_ISSUER or None,
+                    options={"verify_iss": bool(settings.CLERK_JWT_ISSUER)}
+                )
+            except jwt.ExpiredSignatureError:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token signature has expired."
+                )
+            except jwt.InvalidTokenError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Invalid token: {str(e)}"
+                )
+            
+            # 3. Extract tenant parameters from JWT claims
+            tenant_id_str = payload.get("tenant_id") or payload.get("org_id")
+            tenant_id = None
+            if tenant_id_str:
+                try:
+                    tenant_id = UUID(tenant_id_str)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="tenant_id in token claims is not a valid UUID."
+                    )
+                
+            user_id = payload.get("sub", MOCK_USER_ID)
+            role = payload.get("role") or payload.get("org_role", "Viewer")
+            plan = payload.get("billing_plan", "free")
+            email = payload.get("email") or payload.get("email_address") or f"{user_id}@domain.com"
+            first_name = payload.get("first_name") or payload.get("given_name")
+            last_name = payload.get("last_name") or payload.get("family_name")
 
-    # 2. Live JWT Decoding & Verification
-    try:
-        header = jwt.get_unverified_header(token)
-        kid = header.get("kid")
-        if not kid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing key ID (kid) in token header."
-            )
-        
-        jwk_dict = get_jwk(kid)
-        public_key = RSAAlgorithm.from_jwk(jwk_dict)
-        
-        payload = jwt.decode(
-            token,
-            public_key,
-            algorithms=["RS256"],
-            issuer=settings.CLERK_JWT_ISSUER or None,
-            options={"verify_iss": bool(settings.CLERK_JWT_ISSUER)}
-        )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token signature has expired."
-        )
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}"
-        )
+    # DB Provisioning and Lookup
+    user = db_session.exec(select(User).where(User.clerk_user_id == user_id)).first()
     
-    # 3. Extract tenant parameters from JWT claims
-    tenant_id_str = payload.get("tenant_id") or payload.get("org_id")
-    if not tenant_id_str:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing tenant_id/org_id in token claims."
-        )
+    if not user:
+        domain = email.split("@")[-1]
         
-    try:
-        tenant_id = UUID(tenant_id_str)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="tenant_id in token claims is not a valid UUID."
+        tenant = None
+        if tenant_id:
+            tenant = db_session.get(Tenant, tenant_id)
+            
+        if not tenant:
+            tenant = db_session.exec(select(Tenant).where(Tenant.domain == domain)).first()
+            
+        if not tenant:
+            if not tenant_id:
+                import uuid
+                tenant_id = uuid.uuid4()
+            tenant = Tenant(
+                id=tenant_id,
+                name=f"{domain.split('.')[0].title()} Workspace" if "." in domain else "Tenant Account",
+                domain=domain,
+                billing_plan=plan
+            )
+            db_session.add(tenant)
+            db_session.commit()
+            db_session.refresh(tenant)
+        else:
+            tenant_id = tenant.id
+            
+        user = User(
+            clerk_user_id=user_id,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            role=role,
+            tenant_id=tenant_id,
+            last_login=datetime.utcnow()
         )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+    else:
+        user.last_login = datetime.utcnow()
+        if role and user.role != role:
+            user.role = role
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
         
+        if user.tenant_id:
+            tenant_id = user.tenant_id
+            tenant = db_session.get(Tenant, tenant_id)
+            if not tenant:
+                tenant = Tenant(
+                    id=tenant_id,
+                    name="Tenant Account",
+                    domain=f"domain-{tenant_id}.com",
+                    billing_plan=plan
+                )
+                db_session.add(tenant)
+                db_session.commit()
+                db_session.refresh(tenant)
+        else:
+            if not tenant_id:
+                tenant_id = MOCK_TENANT_ID
+            tenant = db_session.get(Tenant, tenant_id)
+            if not tenant:
+                tenant = Tenant(
+                    id=tenant_id,
+                    name="Tenant Account",
+                    domain=f"domain-{tenant_id}.com",
+                    billing_plan=plan
+                )
+                db_session.add(tenant)
+                db_session.commit()
+                db_session.refresh(tenant)
+            user.tenant_id = tenant_id
+            db_session.add(user)
+            db_session.commit()
+
     context = TenantContext(
         tenant_id=tenant_id,
-        user_id=payload.get("sub", MOCK_USER_ID),
-        role=payload.get("role") or payload.get("org_role", "Viewer"),
-        billing_plan=payload.get("billing_plan", "free")
+        user_id=user_id,
+        db_user_id=user.id,
+        role=role,
+        billing_plan=tenant.billing_plan
     )
     
     # 4. Enforce billing subscription gate
@@ -168,3 +249,4 @@ def get_tenant_context(authorization: str | None = Header(None)) -> TenantContex
         )
         
     return context
+

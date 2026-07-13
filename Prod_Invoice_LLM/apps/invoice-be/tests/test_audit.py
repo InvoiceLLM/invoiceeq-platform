@@ -65,7 +65,9 @@ def test_resolve_invoice_paid(db_session):
     assert len(audit_logs) == 1
     log = audit_logs[0]
     assert log.tenant_id == MOCK_TENANT_ID
-    assert log.actor_user_id == MOCK_USER_ID
+    from models import User
+    db_user = db_session.exec(select(User).where(User.clerk_user_id == MOCK_USER_ID)).first()
+    assert log.actor_user_id == db_user.id
     assert log.actor_role == MOCK_ROLE
     assert log.action == "RESOLVE_INVOICE"
     assert log.details["target_status"] == "PAID"

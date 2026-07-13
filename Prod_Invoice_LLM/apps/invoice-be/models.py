@@ -64,12 +64,24 @@ class ChatMessage(SQLModel, table=True):
     citations: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID | None = Field(default=None, foreign_key="tenant.id", nullable=True)
+    email: str = Field(max_length=255, unique=True, index=True)
+    first_name: str | None = Field(default=None, max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
+    role: str = Field(max_length=50)
+    clerk_user_id: str = Field(max_length=255, unique=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_login: datetime | None = Field(default=None)
+
 class AuditLog(SQLModel, table=True):
     __tablename__ = "audit_logs"
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(index=True)
     invoice_id: UUID = Field(index=True)
-    actor_user_id: str = Field(max_length=255)
+    actor_user_id: UUID = Field(foreign_key="users.id")
     actor_role: str = Field(max_length=50)
     action: str = Field(max_length=255)
     details: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT))

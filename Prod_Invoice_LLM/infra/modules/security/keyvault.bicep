@@ -8,9 +8,9 @@ param clerkSecretKey string
 @secure()
 param tokenEncryptionKey string
 @secure()
-param azureOpenAiApiKey string
+param azureOpenAiApiKey string = ''
 @secure()
-param azureDocIntelKey string
+param azureDocIntelKey string = ''
 @secure()
 param databaseUrl string
 @secure()
@@ -61,7 +61,7 @@ resource secretEncryptionKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource secretOpenAiKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretOpenAiKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(azureOpenAiApiKey)) {
   parent: keyVault
   name: 'AZURE-OPENAI-API-KEY'
   properties: {
@@ -69,7 +69,7 @@ resource secretOpenAiKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource secretDocIntelKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretDocIntelKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(azureDocIntelKey)) {
   parent: keyVault
   name: 'AZURE-DOC-INTEL-KEY'
   properties: {
