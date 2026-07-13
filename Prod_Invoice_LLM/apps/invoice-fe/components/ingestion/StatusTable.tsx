@@ -91,9 +91,8 @@ export default function StatusTable({
 
     if (isSSE) {
       // --- SSE Connection for 6+ files ---
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
-      const sseUrl = `${baseUrl}/invoices/stream/${batchId}`;
-      
+      const sseUrl = `/api/invoices/stream/${batchId}`;
+
       const es = new EventSource(sseUrl);
       eventSourceRef.current = es;
 

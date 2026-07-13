@@ -67,8 +67,10 @@ invoice-fe/
 │   └── useChatSession.ts                 # Manages thread_id UUID lifecycle for multi-turn chat memory
 │
 └── lib/                                  # Shared utilities, API client, and constants
-    ├── apiClient.ts                      # Axios/fetch base client — injects Authorization: Bearer <JWT>
-    │                                     # and NEXT_PUBLIC_API_URL prefix on every request
+    ├── apiClient.ts                      # Axios base client — same-origin `/api` prefix, routed through
+    │                                     # this app's own Route Handlers (app/api/**)
+    ├── backendProxy.ts                   # Server-only helper used by Route Handlers to call
+    │                                     # BACKEND_API_URL (never exposed to the browser)
     ├── constants.ts                      # API base URL, polling intervals (2000ms), SSE endpoints
     └── utils.ts                          # Tailwind class merger (cn()), currency & date formatters
 ```
@@ -122,7 +124,9 @@ The frontend uses a **hybrid notification strategy** based on upload volume:
 ## Environment Variables
 ```env
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=     # Clerk publishable key for SSO auth
-NEXT_PUBLIC_API_URL=                   # Base URL of the FastAPI backend (e.g. https://api.yourdomain.com)
+BACKEND_API_URL=                       # Base URL of the FastAPI backend (e.g. https://api.yourdomain.com)
+                                        # Server-only — read exclusively by Route Handlers under app/api/**,
+                                        # never bundled into client JS. No NEXT_PUBLIC_ prefix.
 ```
 
 ---
@@ -136,4 +140,4 @@ npm install
 npm run dev
 ```
 
-> Ensure `NEXT_PUBLIC_API_URL` points to a running instance of the backend (`apps/invoice-be`) before starting.
+> Ensure `BACKEND_API_URL` points to a running instance of the backend (`apps/invoice-be`) before starting.

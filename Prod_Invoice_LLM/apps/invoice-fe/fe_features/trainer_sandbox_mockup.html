@@ -1,0 +1,76 @@
+<h2 class="sr-only">Mockup of the AI trainer sandbox: a PDF viewer on the left and a correction chat with extracted fields on the right</h2>
+<div style="background:#0B1220;border-radius:12px;padding:20px;font-family:sans-serif;color:#E2E8F0;">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="font-size:15px;font-weight:500;color:#F1F5F9;">Trainer sandbox</div>
+    <button id="commitBtn" style="background:#10B981;color:#04342C;border:none;font-weight:500;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+      <i class="ti ti-git-commit" style="font-size:15px;" aria-hidden="true"></i>Commit to template registry
+    </button>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+
+    <div style="background:#111827;border:1px solid #222D3D;border-radius:10px;padding:14px;">
+      <div style="font-size:11px;color:#64748B;margin-bottom:10px;display:flex;align-items:center;gap:6px;"><i class="ti ti-file-text" style="font-size:14px;" aria-hidden="true"></i>training_invoice_004.pdf</div>
+      <div style="background:#F8FAFC;border-radius:6px;padding:16px;color:#1E293B;font-size:11.5px;line-height:1.5;">
+        <div style="font-weight:500;margin-bottom:8px;">Invoice</div>
+        <div style="display:flex;justify-content:space-between;"><span>Vendor</span><span style="background:#FEF3C7;padding:0 4px;border-radius:3px;">Nordic Supply Co.</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;"><span>Date</span><span style="background:#FEE2E2;padding:0 4px;border-radius:3px;">04/07/2026</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;"><span>Total</span><span>NOK 12,450.00</span></div>
+        <div style="margin-top:14px;border-top:1px dashed #CBD5E1;padding-top:8px;color:#64748B;">Line items ---------------------</div>
+      </div>
+    </div>
+
+    <div style="background:#111827;border:1px solid #222D3D;border-radius:10px;padding:14px;display:flex;flex-direction:column;">
+      <div style="font-size:11px;color:#64748B;margin-bottom:10px;">Extracted fields</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;">
+        <div style="background:#0B1220;border:1px solid #222D3D;border-radius:6px;padding:6px 8px;">
+          <div style="font-size:10px;color:#64748B;">Vendor</div>
+          <div style="font-size:12px;color:#E2E8F0;">Nordic Supply Co.</div>
+        </div>
+        <div id="dateField" style="background:#0B1220;border:1px solid #222D3D;border-radius:6px;padding:6px 8px;">
+          <div style="font-size:10px;color:#64748B;">Date</div>
+          <div id="dateVal" style="font-size:12px;color:#E2E8F0;">2026-04-07</div>
+        </div>
+      </div>
+
+      <div id="chatLog" style="flex:1;display:flex;flex-direction:column;gap:8px;min-height:120px;">
+        <div style="align-self:flex-end;background:#1D4ED8;color:#DBEAFE;font-size:12px;padding:7px 11px;border-radius:10px 10px 2px 10px;max-width:85%;">No, read the date as DD-MM-YYYY</div>
+        <div style="align-self:flex-start;background:#1E293B;color:#CBD5E1;font-size:12px;padding:7px 11px;border-radius:10px 10px 10px 2px;max-width:85%;">Updated — date now reads 07-04-2026. Applying this rule to the vendor's future invoices.</div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <input id="chatInput" placeholder="Correct a field, e.g. \"vendor name is wrong\"" style="flex:1;background:#0B1220;border:1px solid #222D3D;border-radius:8px;padding:8px 12px;font-size:12px;color:#E2E8F0;outline:none;">
+        <button id="sendBtn" style="background:#1E293B;border:1px solid #222D3D;color:#CBD5E1;border-radius:8px;padding:0 12px;cursor:pointer;"><i class="ti ti-send" style="font-size:15px;" aria-hidden="true"></i></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" style="display:none;margin-top:14px;background:#0F6E56;color:#E1F5EE;font-size:12.5px;padding:9px 14px;border-radius:8px;align-items:center;gap:7px;">
+    <i class="ti ti-check" style="font-size:15px;" aria-hidden="true"></i>Template committed — future invoices from this vendor apply these coordinates.
+  </div>
+</div>
+<script>
+document.getElementById('commitBtn').addEventListener('mouseenter', function(){ this.style.background = '#059669'; this.style.color='#fff'; });
+document.getElementById('commitBtn').addEventListener('mouseleave', function(){ this.style.background = '#10B981'; this.style.color='#04342C'; });
+document.getElementById('commitBtn').addEventListener('click', function(){
+  var t = document.getElementById('toast');
+  t.style.display = 'flex';
+});
+function sendCorrection(){
+  var input = document.getElementById('chatInput');
+  if(!input.value.trim()) return;
+  var log = document.getElementById('chatLog');
+  var userMsg = document.createElement('div');
+  userMsg.style.cssText = "align-self:flex-end;background:#1D4ED8;color:#DBEAFE;font-size:12px;padding:7px 11px;border-radius:10px 10px 2px 10px;max-width:85%;";
+  userMsg.textContent = input.value;
+  log.appendChild(userMsg);
+  var reply = document.createElement('div');
+  reply.style.cssText = "align-self:flex-start;background:#1E293B;color:#CBD5E1;font-size:12px;padding:7px 11px;border-radius:10px 10px 10px 2px;max-width:85%;";
+  reply.textContent = "Got it — extraction updated based on your correction.";
+  log.appendChild(reply);
+  input.value = '';
+}
+document.getElementById('sendBtn').addEventListener('click', sendCorrection);
+document.getElementById('chatInput').addEventListener('keydown', function(e){ if(e.key==='Enter') sendCorrection(); });
+</script>
