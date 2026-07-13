@@ -21,3 +21,23 @@ The `tokenEncryptionKey` parameter in `params.dev.json` must be a valid 32-byte 
 
 Once generated, set the value of `"tokenEncryptionKey"` in `params.dev.json` to the generated string. Bicep will automatically seed this into Azure Key Vault during the Stage 1 deployment.
 
+---
+
+## GitHub CI/CD & Secrets Synchronization
+
+To configure the automated GitHub Actions CI/CD pipeline and synchronize secrets between Azure Key Vault and GitHub:
+
+1. **GitHub Workflow Permissions**:
+   * Navigate to **Settings → Actions → General → Workflow permissions**.
+   * Select **"Read and write permissions"** and click Save (this is required for the sync workflow to update secrets).
+
+2. **Add Azure Credentials**:
+   * Navigate to **Settings → Secrets and variables → Actions**.
+   * Create a new repository secret named `AZURE_CREDENTIALS` containing your Azure Service Principal credentials (in JSON format).
+
+3. **Secrets Synchronization**:
+   * The repository uses a daily automated sync workflow (`.github/workflows/sync-secrets.yml`) to sync secrets from Azure Key Vault directly to GitHub Repository Secrets (e.g. `DB_ADMIN_PASSWORD`, `CLERK_SECRET_KEY`, etc.).
+   * To trigger a sync manually, go to the **Actions** tab on GitHub, select **"Sync Azure Key Vault Secrets to GitHub"**, and click **"Run workflow"**.
+   * *For more details, see the parent directory's `SECRETS_SYNC_GUIDE.md`.*
+
+
