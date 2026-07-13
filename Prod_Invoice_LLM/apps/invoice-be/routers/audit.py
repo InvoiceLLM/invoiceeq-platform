@@ -79,7 +79,7 @@ async def resolve_audit_invoice(
     audit_log = AuditLog(
         tenant_id=context.tenant_id,
         invoice_id=invoice_id,
-        actor_user_id=context.user_id,
+        actor_user_id=context.db_user_id,
         actor_role=context.role,
         action="RESOLVE_INVOICE",
         details=log_details,

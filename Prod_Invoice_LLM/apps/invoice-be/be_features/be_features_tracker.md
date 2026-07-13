@@ -40,7 +40,7 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 - `[ ]` **Gap 17: Field-level confidence scores** — populate `invoices.field_confidence` to drive Gap 3's per-field audit routing
 - `[ ]` **Gap 18: Per-line-item tax/discount math** — extend `verify_line_items_math` beyond top-level totals to `qty × rate × (1 − discount) × (1 + tax)` per line
 - `[ ]` **Gap 19: Remove fallback fake data** — `get_fallback_extracted_data()` currently returns a mock invoice on LLM/parsing failure instead of routing to `AUDIT_REQUIRED` with an `extraction_failed` alert
-- `[ ]` **Gap 24: P0 bug — upload endpoint 500s** — `routers/invoices.py` passes `upload_pdf_to_blob_storage(...)`'s return value into `run_in_threadpool` instead of the callable + args; fix by passing them separately. Confirmed via `pytest tests/test_ingestion.py::test_upload_single_pdf`
+- `[x]` **Gap 24: P0 bug — upload endpoint 500s** — `routers/invoices.py` passes `upload_pdf_to_blob_storage(...)`'s return value into `run_in_threadpool` instead of the callable + args; fix by passing them separately. Confirmed via `pytest tests/test_ingestion.py::test_upload_single_pdf`
 
 **Chat / RAG** ([feature_6_rag.md](feature_6_rag.md)):
 - `[ ]` **Gap 7: Chat Q&A Registry table** — create `chat_qa_shortcuts` (see `Database_Schema_Document.md`)
@@ -69,8 +69,8 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 - `[ ]` **Gap 30: No actionable-insights generation endpoint** — `GET /dashboard/metrics` (Task 8.1) only returns numeric aggregates; nothing generates the AI-written strategic-recommendations text that `fe_features/feature_2_dashboard.md` Gap 4 (Actionable Insights Panel) needs *(new — needed to unblock fe_features_tracker.md Gap 4)*
 
 **Auth & tenancy** ([feature_1_auth.md](feature_1_auth.md), [Database_Schema_Document.md](../../../Database_Schema_Document.md)):
-- `[ ]` **Gap 14: `users` table** — no `User` SQLModel exists yet; `user_id`/`role` are read from JWT claims only and never persisted, `AuditLog.actor_user_id` isn't FK-backed. Blocks Website Feature 4 (domain-based provisioning) and proper user-attributed audit logs — build this first
-- `[ ]` **Gap 25: Consolidate tenant auto-provisioning** — `routers/invoices.py` has an undocumented fallback that creates a bare `Tenant` row on first upload; once the real domain-matching/role-assignment login flow (Website Feature 4) lands, remove this fallback to avoid two divergent tenant-creation paths
+- `[x]` **Gap 14: `users` table** — no `User` SQLModel exists yet; `user_id`/`role` are read from JWT claims only and never persisted, `AuditLog.actor_user_id` isn't FK-backed. Blocks Website Feature 4 (domain-based provisioning) and proper user-attributed audit logs — build this first
+- `[x]` **Gap 25: Consolidate tenant auto-provisioning** — `routers/invoices.py` has an undocumented fallback that creates a bare `Tenant` row on first upload; once the real domain-matching/role-assignment login flow (Website Feature 4) lands, remove this fallback to avoid two divergent tenant-creation paths
 
 **API endpoints**:
 - `[ ]` **Gap 12: Directory Watcher Start Endpoint** — `POST /api/watcher/start` for bulk/automated ingestion
