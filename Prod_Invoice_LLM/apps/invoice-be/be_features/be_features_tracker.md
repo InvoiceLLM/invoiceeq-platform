@@ -30,21 +30,16 @@ This document tracks the implementation progress of the reconciled backend featu
 Gaps below are grouped by the feature file whose target design (in `Technical_Architecture_Document.md` and the corresponding `feature_N_*.md`) they still need to catch up to.
 
 **Extraction pipeline** ([feature_2_pipeline_extraction.md](feature_2_pipeline_extraction.md)):
-- `[x]` **Gap 1: Complexity Classification Node** — invoice classifier with weighted scoring, routes standard vs. dynamic-schema extraction
-- `[x]` **Gap 2: Evaluator Router** — retry logic with feedback-driven fallback to re-extraction
-- `[x]` **Gap 3: Critic Node** — field-level confidence review and self-correction feedback loop
-- `[x]` **Gap 4: Dynamic QA Node** — custom Q&A generation per invoice on the dynamic-schema path
-
-
-- `[x]` **Gap 9: Layer 2 Duplicate Detection** — post-extraction `invoice_number` + `vendor_name` match (Layer 1 SHA-256 hash match is done)
-
-- `[x]` **Gap 15: OCR model switch** — move `workers/tasks.py::_run_ocr()` from `prebuilt-layout` to `prebuilt-invoice` (solves Gap 16/17 for free, cuts LLM token volume)
-- `[x]` **Gap 16: Bounding-box coordinates** — populate `invoices.coordinates`; the FE auditor UI (`PdfViewerCanvas.tsx`) already renders the overlay and has no data source
-- `[x]` **Gap 17: Field-level confidence scores** — populate `invoices.field_confidence` to drive Gap 3's per-field audit routing
-
-- `[x]` **Gap 18: Per-line-item tax/discount math** — extend `verify_line_items_math` beyond top-level totals to `qty × rate × (1 − discount) × (1 + tax)` per line
-
-- `[x]` **Gap 19: Remove fallback fake data** — `get_fallback_extracted_data()` currently returns a mock invoice on LLM/parsing failure instead of routing to `AUDIT_REQUIRED` with an `extraction_failed` alert
+- `[ ]` **Gap 1: Complexity Classification Node** — invoice classifier with weighted scoring, routes standard vs. dynamic-schema extraction
+- `[ ]` **Gap 2: Evaluator Router** — retry logic with feedback-driven fallback to re-extraction
+- `[ ]` **Gap 3: Critic Node** — field-level confidence review and self-correction feedback loop
+- `[ ]` **Gap 4: Dynamic QA Node** — custom Q&A generation per invoice on the dynamic-schema path
+- `[ ]` **Gap 9: Layer 2 Duplicate Detection** — post-extraction `invoice_number` + `vendor_name` match (Layer 1 SHA-256 hash match is done)
+- `[ ]` **Gap 15: OCR model switch** — move `workers/tasks.py::_run_ocr()` from `prebuilt-layout` to `prebuilt-invoice` (solves Gap 16/17 for free, cuts LLM token volume)
+- `[ ]` **Gap 16: Bounding-box coordinates** — populate `invoices.coordinates`; the FE auditor UI (`PdfViewerCanvas.tsx`) already renders the overlay and has no data source
+- `[ ]` **Gap 17: Field-level confidence scores** — populate `invoices.field_confidence` to drive Gap 3's per-field audit routing
+- `[ ]` **Gap 18: Per-line-item tax/discount math** — extend `verify_line_items_math` beyond top-level totals to `qty × rate × (1 − discount) × (1 + tax)` per line
+- `[ ]` **Gap 19: Remove fallback fake data** — `get_fallback_extracted_data()` currently returns a mock invoice on LLM/parsing failure instead of routing to `AUDIT_REQUIRED` with an `extraction_failed` alert
 - `[x]` **Gap 24: P0 bug — upload endpoint 500s** — `routers/invoices.py` passes `upload_pdf_to_blob_storage(...)`'s return value into `run_in_threadpool` instead of the callable + args; fix by passing them separately. Confirmed via `pytest tests/test_ingestion.py::test_upload_single_pdf`
 
 **Chat / RAG** ([feature_6_rag.md](feature_6_rag.md)):

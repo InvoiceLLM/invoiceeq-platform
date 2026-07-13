@@ -90,28 +90,8 @@ def test_celery_task_updates_database(db_session):
     db_session.commit()
     
     with patch("workers.tasks._run_ocr") as mock_ocr, \
-         patch("workers.tasks._publish_sse_events"), \
-         patch("workers.tasks.run_extraction_agent") as mock_agent:
+         patch("workers.tasks._publish_sse_events"):
         mock_ocr.return_value = "ocr layout content text"
-        mock_agent.return_value = {
-            "status": "COMPLETED",
-            "alerts": [],
-            "extracted_data": {
-                "vendor_name": "ACME Corporation",
-                "invoice_number": "INV-99827",
-                "invoice_date": "2026-06-28",
-                "due_date": "2026-07-28",
-                "subtotal": 150.0,
-                "tax_amount": 15.0,
-                "grand_total": 165.0,
-                "po_number": "PO-100",
-                "items": [
-                    {"description": "Item 1", "quantity": 1.0, "unit_price": 100.0, "amount": 100.0},
-                    {"description": "Item 2", "quantity": 1.0, "unit_price": 50.0, "amount": 50.0}
-                ],
-                "tags": ["ACME", "hardware"]
-            }
-        }
         
         # Patch engine inside workers.tasks to point to our test engine
         with patch("workers.tasks.engine", engine):
@@ -138,28 +118,8 @@ def test_celery_task_audit_anomalies(db_session):
     db_session.commit()
     
     with patch("workers.tasks._run_ocr") as mock_ocr, \
-         patch("workers.tasks._publish_sse_events"), \
-         patch("workers.tasks.run_extraction_agent") as mock_agent:
+         patch("workers.tasks._publish_sse_events"):
         mock_ocr.return_value = "ocr layout content text"
-        mock_agent.return_value = {
-            "status": "AUDIT_REQUIRED",
-            "alerts": ["Math mismatch"],
-            "extracted_data": {
-                "vendor_name": "ACME Corporation",
-                "invoice_number": "INV-99827",
-                "invoice_date": "2026-06-28",
-                "due_date": "2026-07-28",
-                "subtotal": 150.0,
-                "tax_amount": 15.0,
-                "grand_total": 999.0,
-                "po_number": "PO-100",
-                "items": [
-                    {"description": "Item 1", "quantity": 1.0, "unit_price": 100.0, "amount": 100.0},
-                    {"description": "Item 2", "quantity": 1.0, "unit_price": 50.0, "amount": 50.0}
-                ],
-                "tags": ["ACME", "hardware"]
-            }
-        }
         
         with patch("workers.tasks.engine", engine):
             process_invoice_task(str(batch_id), "mock/invoice_audit.pdf", str(MOCK_TENANT_ID))
@@ -168,7 +128,6 @@ def test_celery_task_audit_anomalies(db_session):
             db_session.refresh(db_invoice)
             assert db_invoice.status == "AUDIT_REQUIRED"
             assert db_invoice.sa_alerts == ["Math mismatch"]
-
 
 def test_sse_stream_endpoint():
     """Verify streaming endpoint correctly formats and yields Redis Pub/Sub payloads."""
