@@ -107,15 +107,15 @@ jobs:
           
           echo "Updating backend ($backend_app) -> $backend_img"
           az containerapp update --name "$backend_app" --resource-group "$RESOURCE_GROUP" \
-            --set properties.template.containers[0].image="$backend_img"
+            --image "$backend_img"
 
           echo "Updating worker ($worker_app) -> $worker_img"
           az containerapp update --name "$worker_app" --resource-group "$RESOURCE_GROUP" \
-            --set properties.template.containers[0].image="$worker_img"
+            --image "$worker_img"
 
           echo "Updating frontend ($frontend_app) -> $frontend_img"
           az containerapp update --name "$frontend_app" --resource-group "$RESOURCE_GROUP" \
-            --set properties.template.containers[0].image="$frontend_img"
+            --image "$frontend_img"
 
           echo "Verifying current image tags:"
           az containerapp show --name "$backend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
