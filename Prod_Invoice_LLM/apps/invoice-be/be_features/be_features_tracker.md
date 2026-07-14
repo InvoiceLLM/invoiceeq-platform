@@ -20,6 +20,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 9: Third-Party Connectors & Ingestion](feature_9_connectors.md)
 - `[x]` [Feature 10: AI Trainer Sandbox & Rules Registry](feature_10_trainer.md) *(redesigned 2026-07-13 into Global / existing-production-vendor / new-vendor rule scopes — see doc header)*
 - `[ ]` [Feature 11: Stripe Billing & Subscriptions API](feature_11_billing.md) — `routers/billing.py` not yet implemented, see Gap 14
+- `[ ]` [Feature 12: Alembic Database Migrations](feature_12_alembic.md)
 
 > Note: Features 4, 5, 6, 7, 8, 9, 10 are marked `[x]` because the corresponding routers/agents are implemented and functioning — the per-task checkboxes inside those individual files were simply never ticked off after the work landed. That's cosmetic bookkeeping, not a real gap, and has been left as-is rather than backfilled.
 
