@@ -37,7 +37,22 @@ class Invoice(SQLModel, table=True):
     sa_alerts: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     tags: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     items: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    coordinates: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    field_confidence: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
+    currency: str | None = Field(default=None)
+    discount_percent: float | None = Field(default=None)
+    discount_amount: float | None = Field(default=None)
+    taxes: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    discounts: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    deductions: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    tax_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    payment_instructions: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    references: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    addresses: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    compliance_metadata: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 
 class TenantConnection(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
