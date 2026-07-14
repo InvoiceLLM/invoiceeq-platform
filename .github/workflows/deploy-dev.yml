@@ -107,41 +107,15 @@ jobs:
           
           echo "Updating backend ($backend_app) -> $backend_img"
           az containerapp update --name "$backend_app" --resource-group "$RESOURCE_GROUP" \
-            --set properties.template.containers[0].image="$backend_img" \
-            --set-env-vars "DATABASE_URL=secretref:db-url-secret" \
-                           "REDIS_URL=secretref:redis-url-secret" \
-                           "CLERK_SECRET_KEY=secretref:clerk-secret-secret" \
-                           "TOKEN_ENCRYPTION_KEY=secretref:token-encryption-secret" \
-                           "AZURE_OPENAI_API_KEY=secretref:openai-key-secret" \
-                           "AZURE_DOC_INTEL_KEY=secretref:docintel-key-secret" \
-                           "AZURE_OPENAI_ENDPOINT=https://openai-invoice-llm-dev.openai.azure.com/" \
-                           "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini" \
-                           "AZURE_OPENAI_MODEL_VERSION=2025-08-07" \
-                           "AZURE_DOC_INTEL_ENDPOINT=https://docintel-invoice-llm-dev.cognitiveservices.azure.com/" \
-                           "CHROMA_HOST=ca-chromadb-dev.internal.bravegrass-b60ed56f.eastus2.azurecontainerapps.io" \
-                           "CHROMA_PORT=8000"
+            --set properties.template.containers[0].image="$backend_img"
 
           echo "Updating worker ($worker_app) -> $worker_img"
           az containerapp update --name "$worker_app" --resource-group "$RESOURCE_GROUP" \
-            --set properties.template.containers[0].image="$worker_img" \
-            --set-env-vars "DATABASE_URL=secretref:db-url-secret" \
-                           "REDIS_URL=secretref:redis-url-secret" \
-                           "CLERK_SECRET_KEY=secretref:clerk-secret-secret" \
-                           "TOKEN_ENCRYPTION_KEY=secretref:token-encryption-secret" \
-                           "AZURE_OPENAI_API_KEY=secretref:openai-key-secret" \
-                           "AZURE_DOC_INTEL_KEY=secretref:docintel-key-secret" \
-                           "AZURE_OPENAI_ENDPOINT=https://openai-invoice-llm-dev.openai.azure.com/" \
-                           "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini" \
-                           "AZURE_OPENAI_MODEL_VERSION=2025-08-07" \
-                           "AZURE_DOC_INTEL_ENDPOINT=https://docintel-invoice-llm-dev.cognitiveservices.azure.com/" \
-                           "CHROMA_HOST=ca-chromadb-dev.internal.bravegrass-b60ed56f.eastus2.azurecontainerapps.io" \
-                           "CHROMA_PORT=8000"
+            --set properties.template.containers[0].image="$worker_img"
 
           echo "Updating frontend ($frontend_app) -> $frontend_img"
           az containerapp update --name "$frontend_app" --resource-group "$RESOURCE_GROUP" \
-            --set properties.template.containers[0].image="$frontend_img" \
-            --set-env-vars "CLERK_SECRET_KEY=secretref:clerk-secret-secret" \
-                           "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_mock_clerk_publishable_key_here"
+            --set properties.template.containers[0].image="$frontend_img"
 
           echo "Verifying current image tags:"
           az containerapp show --name "$backend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
