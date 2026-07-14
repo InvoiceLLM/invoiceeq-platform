@@ -34,7 +34,6 @@ if ($exists -eq "false") {
     Write-Host "Resource group already exists: $ResourceGroup" -ForegroundColor Green
 }
 
-# Step 1: Core Infrastructure
 # Pre-check: if Redis already exists and is Running, skip Bicep (re-deploying an existing
 # Redis Enterprise database always returns BadRequest — it is not re-creatable in-place).
 Write-Host ""
@@ -56,6 +55,13 @@ if ($redisState -eq "Running") {
     $vnetName           = az network vnet list --resource-group $ResourceGroup --query "[0].name" -o tsv
     $storageAccountName = az storage account list --resource-group $ResourceGroup --query "[0].name" -o tsv
     $acrName            = az acr list --resource-group $ResourceGroup --query "[0].name" -o tsv
+
+    if (-not $keyVaultName) {
+        Write-Host "Key Vault missing! Deploying Key Vault patch..." -ForegroundColor Yellow
+        # Quick patch for missing Key Vault using Bicep
+        az deployment group create --resource-group $ResourceGroup --template-file "$PSScriptRoot/modules/security/keyvault.bicep" --parameters keyVaultName="kv-$NamingPrefix-$Environment-ptch" dbAdminPassword=$dbAdminPassword clerkSecretKey=$clerkSecretKey tokenEncryptionKey=$tokenEncryptionKey databaseUrl="dummy" redisUrl="dummy" location=$Location | Out-Null
+        $keyVaultName = "kv-$NamingPrefix-$Environment-ptch"
+    }
 
     Write-Host "Step 1 skipped — using existing resources" -ForegroundColor Green
     Write-Host "  VNet:    $vnetName" -ForegroundColor Gray

@@ -75,4 +75,4 @@ resource redisPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDns
 output redisId string = redisEnterpriseCache.id
 output host string = redisEnterpriseCache.properties.hostName
 output port int = redisEnterpriseDatabase.properties.port
-output primaryKey string = redisEnterpriseCache.listKeys().primaryKey
+output primaryKey string = redisEnterpriseDatabase.listKeys().primaryKey

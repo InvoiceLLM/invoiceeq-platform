@@ -12,8 +12,16 @@ var storageResourceName = 'chromadb-storage'
 var caeName = last(split(caeId, '/'))
 
 // ================= 1. Create File Share in existing Storage Account =================
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
+  name: storageAccountName
+}
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-01-01' existing = {
+  parent: storageAccount
+  name: 'default'
+}
 resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-  name: '${storageAccountName}/default/${fileShareName}'
+  parent: fileService
+  name: fileShareName
   properties: {
     shareQuota: 10  // 10 GB
   }

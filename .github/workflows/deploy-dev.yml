@@ -95,71 +95,55 @@ jobs:
           PARAMS_FILE: Prod_Invoice_LLM/infra/params.dev.json
         run: |
           set -euo pipefail
-
-          # ensure jq is available
-          if ! command -v jq >/dev/null 2>&1; then
-            sudo apt-get update -y
-            sudo apt-get install -y jq
-          fi
-
-          echo "Using params file: $PARAMS_FILE"
-          jq -c '.' $PARAMS_FILE || true
-
-          namingPrefix=$(jq -r '.parameters.namingPrefix.value // empty' $PARAMS_FILE)
-          environment=$(jq -r '.parameters.environment.value // empty' $PARAMS_FILE)
-
-          if [ -z "$namingPrefix" ] || [ -z "$environment" ]; then
-            echo "ERROR: namingPrefix or environment not found in $PARAMS_FILE" >&2
-            exit 1
-          fi
-
-          # Optional explicit app names in params.dev.json:
-          backend_app=$(jq -r '.parameters.backendAppName.value // empty' $PARAMS_FILE)
-          worker_app=$(jq -r '.parameters.celeryWorkerAppName.value // empty' $PARAMS_FILE)
-          frontend_app=$(jq -r '.parameters.frontendAppName.value // empty' $PARAMS_FILE)
-
-          # Derive names if not explicitly present
-          if [ -z "$backend_app" ]; then
-            backend_app="${namingPrefix}-backend-${environment}"
-          fi
-          if [ -z "$worker_app" ]; then
-            worker_app="${namingPrefix}-worker-${environment}"
-          fi
-          if [ -z "$frontend_app" ]; then
-            frontend_app="${namingPrefix}-frontend-${environment}"
-          fi
-
-          echo "Using app names:"
-          echo "  backend:  $backend_app"
-          echo "  worker:   $worker_app"
-          echo "  frontend: $frontend_app"
-
+          
+          # Use explicit app names matching Azure Container Apps resources
+          backend_app="ca-invoice-be-dev"
+          worker_app="ca-celery-worker-dev"
+          frontend_app="ca-invoice-fe-dev"
+          
           backend_img="${ACR_NAME}.azurecr.io/invoice-be:${GITHUB_SHA}"
           worker_img="${ACR_NAME}.azurecr.io/celery-worker:${GITHUB_SHA}"
           frontend_img="${ACR_NAME}.azurecr.io/invoice-fe:${GITHUB_SHA}"
-
+          
           echo "Updating backend ($backend_app) -> $backend_img"
-          if az containerapp show --name "$backend_app" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
-            az containerapp update --name "$backend_app" --resource-group "$RESOURCE_GROUP" --set properties.template.containers[0].image="$backend_img"
-          else
-            echo "Warning: backend app $backend_app not found in $RESOURCE_GROUP" >&2
-          fi
+          az containerapp update --name "$backend_app" --resource-group "$RESOURCE_GROUP" \
+            --set properties.template.containers[0].image="$backend_img" \
+            --set-env-vars "DATABASE_URL=secretref:db-url-secret" \
+                           "REDIS_URL=secretref:redis-url-secret" \
+                           "CLERK_SECRET_KEY=secretref:clerk-secret-secret" \
+                           "TOKEN_ENCRYPTION_KEY=secretref:token-encryption-secret" \
+                           "AZURE_OPENAI_API_KEY=secretref:openai-key-secret" \
+                           "AZURE_DOC_INTEL_KEY=secretref:docintel-key-secret" \
+                           "AZURE_OPENAI_ENDPOINT=https://openai-invoice-llm-dev.openai.azure.com/" \
+                           "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini" \
+                           "AZURE_OPENAI_MODEL_VERSION=2025-08-07" \
+                           "AZURE_DOC_INTEL_ENDPOINT=https://docintel-invoice-llm-dev.cognitiveservices.azure.com/" \
+                           "CHROMA_HOST=ca-chromadb-dev.internal.bravegrass-b60ed56f.eastus2.azurecontainerapps.io" \
+                           "CHROMA_PORT=8000"
 
           echo "Updating worker ($worker_app) -> $worker_img"
-          if az containerapp show --name "$worker_app" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
-            az containerapp update --name "$worker_app" --resource-group "$RESOURCE_GROUP" --set properties.template.containers[0].image="$worker_img"
-          else
-            echo "Warning: worker app $worker_app not found in $RESOURCE_GROUP" >&2
-          fi
+          az containerapp update --name "$worker_app" --resource-group "$RESOURCE_GROUP" \
+            --set properties.template.containers[0].image="$worker_img" \
+            --set-env-vars "DATABASE_URL=secretref:db-url-secret" \
+                           "REDIS_URL=secretref:redis-url-secret" \
+                           "CLERK_SECRET_KEY=secretref:clerk-secret-secret" \
+                           "TOKEN_ENCRYPTION_KEY=secretref:token-encryption-secret" \
+                           "AZURE_OPENAI_API_KEY=secretref:openai-key-secret" \
+                           "AZURE_DOC_INTEL_KEY=secretref:docintel-key-secret" \
+                           "AZURE_OPENAI_ENDPOINT=https://openai-invoice-llm-dev.openai.azure.com/" \
+                           "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini" \
+                           "AZURE_OPENAI_MODEL_VERSION=2025-08-07" \
+                           "AZURE_DOC_INTEL_ENDPOINT=https://docintel-invoice-llm-dev.cognitiveservices.azure.com/" \
+                           "CHROMA_HOST=ca-chromadb-dev.internal.bravegrass-b60ed56f.eastus2.azurecontainerapps.io" \
+                           "CHROMA_PORT=8000"
 
           echo "Updating frontend ($frontend_app) -> $frontend_img"
-          if az containerapp show --name "$frontend_app" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
-            az containerapp update --name "$frontend_app" --resource-group "$RESOURCE_GROUP" --set properties.template.containers[0].image="$frontend_img"
-          else
-            echo "Warning: frontend app $frontend_app not found in $RESOURCE_GROUP" >&2
-          fi
+          az containerapp update --name "$frontend_app" --resource-group "$RESOURCE_GROUP" \
+            --set properties.template.containers[0].image="$frontend_img" \
+            --set-env-vars "CLERK_SECRET_KEY=secretref:clerk-secret-secret" \
+                           "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_mock_clerk_publishable_key_here"
 
-          echo "Verifying current image tags (backend, worker, frontend):"
+          echo "Verifying current image tags:"
           az containerapp show --name "$backend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
           az containerapp show --name "$worker_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
           az containerapp show --name "$frontend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
