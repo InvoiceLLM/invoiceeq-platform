@@ -41,6 +41,7 @@ def upgrade() -> None:
     op.alter_column('audit_logs', 'actor_user_id',
                existing_type=sa.VARCHAR(length=255),
                type_=sa.Uuid(),
+               postgresql_using='actor_user_id::uuid',
                existing_nullable=False)
     op.create_foreign_key(None, 'audit_logs', 'users', ['actor_user_id'], ['id'])
     op.add_column('invoice', sa.Column('coordinates', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=True))
