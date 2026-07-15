@@ -60,16 +60,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 7. Build and Push Celery Worker Image
-      - name: Build & Push Celery Worker
+      # 7. Build and Push Queue Worker Image
+      - name: Build & Push Queue Worker
         uses: docker/build-push-action@v5
         with:
           context: ./Prod_Invoice_LLM
           file: ./Prod_Invoice_LLM/docker/Dockerfile.worker
           push: true
           tags: |
-            ${{ env.ACR_NAME }}.azurecr.io/celery-worker:${{ github.sha }}
-            ${{ env.ACR_NAME }}.azurecr.io/celery-worker:latest
+            ${{ env.ACR_NAME }}.azurecr.io/queue-worker:${{ github.sha }}
+            ${{ env.ACR_NAME }}.azurecr.io/queue-worker:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -98,11 +98,11 @@ jobs:
           
           # Use explicit app names matching Azure Container Apps resources
           backend_app="ca-invoice-be-dev"
-          worker_app="ca-celery-worker-dev"
+          worker_app="ca-queue-worker-dev"
           frontend_app="ca-invoice-fe-dev"
           
           backend_img="${ACR_NAME}.azurecr.io/invoice-be:${GITHUB_SHA}"
-          worker_img="${ACR_NAME}.azurecr.io/celery-worker:${GITHUB_SHA}"
+          worker_img="${ACR_NAME}.azurecr.io/queue-worker:${GITHUB_SHA}"
           frontend_img="${ACR_NAME}.azurecr.io/invoice-fe:${GITHUB_SHA}"
           
           echo "Updating backend ($backend_app) -> $backend_img"

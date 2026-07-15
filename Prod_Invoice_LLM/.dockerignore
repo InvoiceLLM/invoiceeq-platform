@@ -9,6 +9,9 @@
 **/*.pyd
 **/.venv
 **/venv
+apps/invoice-be/.venv
+apps/invoice-fe/node_modules
+apps/invoice-website/node_modules
 **/.mypy_cache
 **/.pytest_cache
 **/.ruff_cache
