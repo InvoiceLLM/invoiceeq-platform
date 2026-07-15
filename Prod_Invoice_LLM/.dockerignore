@@ -36,6 +36,7 @@ docker-compose.yml
 *.md
 *.msi
 *.xlsx
+*.zip
 
 # Test files
 **/tests/
