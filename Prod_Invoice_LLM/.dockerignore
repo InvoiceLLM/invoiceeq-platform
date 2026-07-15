@@ -12,6 +12,7 @@
 apps/invoice-be/.venv
 apps/invoice-fe/node_modules
 apps/invoice-website/node_modules
+invoice-fe-lite/
 **/.mypy_cache
 **/.pytest_cache
 **/.ruff_cache
