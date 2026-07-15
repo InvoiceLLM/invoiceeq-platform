@@ -44,57 +44,39 @@ $redisState = az resource show `
     --resource-type Microsoft.Cache/redisEnterprise `
     --query "properties.resourceState" -o tsv 2>$null
 
+$deployRedis = "true"
 if ($redisState -eq "Running") {
     Write-Host "Redis Enterprise '$redisName' already exists and is Running." -ForegroundColor Yellow
-    Write-Host "Skipping Step 1 Bicep — reading outputs from existing resources..." -ForegroundColor Yellow
-
-    $identityName = "id-$NamingPrefix-$Environment"
-    $keyVaultName       = az keyvault list --resource-group $ResourceGroup --query "[0].name" -o tsv
-    $identityId         = az identity show --name $identityName --resource-group $ResourceGroup --query id -o tsv
-    $identityClientId   = az identity show --name $identityName --resource-group $ResourceGroup --query clientId -o tsv
-    $vnetName           = az network vnet list --resource-group $ResourceGroup --query "[0].name" -o tsv
-    $storageAccountName = az storage account list --resource-group $ResourceGroup --query "[0].name" -o tsv
-    $acrName            = az acr list --resource-group $ResourceGroup --query "[0].name" -o tsv
-
-    if (-not $keyVaultName) {
-        Write-Host "Key Vault missing! Deploying Key Vault patch..." -ForegroundColor Yellow
-        # Quick patch for missing Key Vault using Bicep
-        az deployment group create --resource-group $ResourceGroup --template-file "$PSScriptRoot/modules/security/keyvault.bicep" --parameters keyVaultName="kv-$NamingPrefix-$Environment-ptch" dbAdminPassword=$dbAdminPassword clerkSecretKey=$clerkSecretKey tokenEncryptionKey=$tokenEncryptionKey databaseUrl="dummy" redisUrl="dummy" location=$Location | Out-Null
-        $keyVaultName = "kv-$NamingPrefix-$Environment-ptch"
-    }
-
-    Write-Host "Step 1 skipped — using existing resources" -ForegroundColor Green
-    Write-Host "  VNet:    $vnetName" -ForegroundColor Gray
-    Write-Host "  Storage: $storageAccountName" -ForegroundColor Gray
-    Write-Host "  ACR:     $acrName" -ForegroundColor Gray
-
-} else {
-    Write-Host "Step 1: Deploying Core Infrastructure (VNet, Identities, Key Vault, Data Services)..." -ForegroundColor Cyan
-    Write-Host "This may take 10-15 minutes..." -ForegroundColor Yellow
-
-    $step1Output = az deployment group create `
-        --resource-group $ResourceGroup `
-        --template-file "$PSScriptRoot/main-step1.bicep" `
-        --parameters $ParamsFile `
-        --parameters environment=$Environment `
-        --parameters location=$Location `
-        --parameters namingPrefix=$NamingPrefix
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Step 1 failed!" -ForegroundColor Red
-        exit 1
-    }
-
-    Write-Host "Step 1 completed successfully" -ForegroundColor Green
-
-    # Extract outputs from Step 1
-    $keyVaultName     = ($step1Output | ConvertFrom-Json).properties.outputs.keyVaultName.value
-    $identityId       = ($step1Output | ConvertFrom-Json).properties.outputs.identityId.value
-    $identityClientId = ($step1Output | ConvertFrom-Json).properties.outputs.identityClientId.value
-    $vnetName         = ($step1Output | ConvertFrom-Json).properties.outputs.vnetName.value
-    $storageAccountName = ($step1Output | ConvertFrom-Json).properties.outputs.storageAccountName.value
-    $acrName          = ($step1Output | ConvertFrom-Json).properties.outputs.acrName.value
+    Write-Host "Passing deployRedis=false to Step 1..." -ForegroundColor Yellow
+    $deployRedis = "false"
 }
+
+Write-Host "Step 1: Deploying Core Infrastructure (VNet, Identities, Key Vault, Data Services)..." -ForegroundColor Cyan
+Write-Host "This may take 10-15 minutes..." -ForegroundColor Yellow
+
+$step1Output = az deployment group create `
+    --resource-group $ResourceGroup `
+    --template-file "$PSScriptRoot/main-step1.bicep" `
+    --parameters $ParamsFile `
+    --parameters environment=$Environment `
+    --parameters location=$Location `
+    --parameters namingPrefix=$NamingPrefix `
+    --parameters deployRedis=$deployRedis
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Step 1 failed!" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "Step 1 completed successfully" -ForegroundColor Green
+
+# Extract outputs from Step 1
+$keyVaultName     = ($step1Output | ConvertFrom-Json).properties.outputs.keyVaultName.value
+$identityId       = ($step1Output | ConvertFrom-Json).properties.outputs.identityId.value
+$identityClientId = ($step1Output | ConvertFrom-Json).properties.outputs.identityClientId.value
+$vnetName         = ($step1Output | ConvertFrom-Json).properties.outputs.vnetName.value
+$storageAccountName = ($step1Output | ConvertFrom-Json).properties.outputs.storageAccountName.value
+$acrName          = ($step1Output | ConvertFrom-Json).properties.outputs.acrName.value
 
 Write-Host "Key Vault: $keyVaultName" -ForegroundColor Gray
 Write-Host "Identity ID: $identityId" -ForegroundColor Gray
@@ -201,7 +183,7 @@ Write-Host "This may take 5-10 minutes..." -ForegroundColor Yellow
 $params = Get-Content $ParamsFile | ConvertFrom-Json
 $nextPublicClerkPublishableKey = $params.parameters.nextPublicClerkPublishableKey.value
 $backendImage = $params.parameters.backendImage.value
-$celeryWorkerImage = $params.parameters.celeryWorkerImage.value
+$queueWorkerImage = $params.parameters.queueWorkerImage.value
 $frontendImage = $params.parameters.frontendImage.value
 
 $step4Output = az deployment group create `
@@ -215,7 +197,7 @@ $step4Output = az deployment group create `
     --parameters azureOpenAiDeploymentName="gpt-5-mini" `
     --parameters azureDocIntelEndpoint=$docIntelEndpoint `
     --parameters backendImage=$backendImage `
-    --parameters celeryWorkerImage=$celeryWorkerImage `
+    --parameters queueWorkerImage=$queueWorkerImage `
     --parameters frontendImage=$frontendImage `
     --parameters identityId=$identityId `
     --parameters identityClientId=$identityClientId `

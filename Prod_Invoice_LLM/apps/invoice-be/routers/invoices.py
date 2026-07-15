@@ -13,7 +13,8 @@ from config import settings
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice, Tenant
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
-from workers.tasks import process_invoice_task
+from azure.storage.queue import QueueClient
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -174,11 +175,26 @@ async def upload_invoices(
         
         job_ids.append(str(invoice_id))
 
-        # Enqueue background tasks via Celery
+        # Enqueue background tasks via Azure Storage Queue
         try:
-            process_invoice_task.delay(str(batch_id), file_path, str(context.tenant_id))
+            settings = get_settings()
+            if settings.AZURE_STORAGE_CONNECTION_STRING:
+                queue_client = QueueClient.from_connection_string(
+                    settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
+                )
+                payload = {
+                    "task": "process_invoice",
+                    "kwargs": {
+                        "batch_id": str(batch_id),
+                        "file_path": file_path,
+                        "tenant_id": str(context.tenant_id)
+                    }
+                }
+                queue_client.send_message(json.dumps(payload))
+            else:
+                logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
         except Exception as e:
-            logger.warning("Failed to dispatch Celery task: %s (Ignored for local offline dev)", e)
+            logger.warning("Failed to dispatch Azure Storage Queue task: %s", e)
 
     return {
         "batch_id": batch_id,

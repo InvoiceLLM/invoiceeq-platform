@@ -75,6 +75,11 @@ resource storageDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   location: 'global'
 }
 
+resource queueDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: 'privatelink.queue.core.windows.net'
+  location: 'global'
+}
+
 resource openaiDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   name: 'privatelink.openai.azure.com'
   location: 'global'
@@ -118,6 +123,18 @@ resource redisDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@202
 resource storageDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: storageDnsZone
   name: '${vnetName}-storage-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
+    }
+  }
+}
+
+resource queueDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: queueDnsZone
+  name: '${vnetName}-queue-link'
   location: 'global'
   properties: {
     registrationEnabled: false
@@ -172,6 +189,7 @@ output aiSubnetId string = vnet.properties.subnets[3].id
 output postgresDnsZoneId string = postgresDnsZone.id
 output redisDnsZoneId string = redisDnsZone.id
 output storageDnsZoneId string = storageDnsZone.id
+output queueDnsZoneId string = queueDnsZone.id
 output openaiDnsZoneId string = openaiDnsZone.id
 output docIntelDnsZoneId string = docIntelDnsZone.id
 output acrDnsZoneId string = acrDnsZone.id

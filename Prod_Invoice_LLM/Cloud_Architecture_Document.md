@@ -85,12 +85,12 @@ The cloud architecture is governed by five non-negotiable principles derived fro
 │  │  │  │            AZURE CONTAINER APPS ENVIRONMENT                     │  │    │   │
 │  │  │  │                                                                 │  │    │   │
 │  │  │  │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────────┐  │  │    │   │
-│  │  │  │  │ invoice-  │  │ invoice-  │  │ invoice-  │  │  celery-    │  │  │    │   │
+│  │  │  │  │ invoice-  │  │ invoice-  │  │ invoice-  │  │  queue-     │  │  │    │   │
 │  │  │  │  │ website   │  │ fe        │  │ be        │  │  worker     │  │  │    │   │
 │  │  │  │  │ (Next.js) │  │ (Next.js) │  │ (FastAPI) │  │  (Python)   │  │  │    │   │
 │  │  │  │  │           │  │           │  │           │  │             │  │  │    │   │
 │  │  │  │  │ Scale:    │  │ Scale:    │  │ Scale:    │  │ Scale:      │  │  │    │   │
-│  │  │  │  │ 0-3       │  │ 0-5       │  │ 1-10      │  │ 1-5         │  │  │    │   │
+│  │  │  │  │ 0-3       │  │ 0-5       │  │ 1-10      │  │ 0-10        │  │  │    │   │
 │  │  │  │  └───────────┘  └───────────┘  └───────────┘  └─────────────┘  │  │    │   │
 │  │  │  └─────────────────────────────────────────────────────────────────┘  │    │   │
 │  │  └──────────────────────────────────────────────────────────────────────┘    │   │
@@ -183,14 +183,14 @@ Private DNS Zones are linked to the VNet to resolve private endpoint FQDNs from 
 | `invoice-website`  | `/apps/invoice-website`  | `acr.azurecr.io/invoice-website:latest` | 0 / 3  | External (443)| 0.5 vCPU / 1Gi |
 | `invoice-fe`       | `/apps/invoice-fe`       | `acr.azurecr.io/invoice-fe:latest`      | 0 / 5  | External (443)| 0.5 vCPU / 1Gi |
 | `invoice-be`       | `/apps/invoice-be`       | `acr.azurecr.io/invoice-be:latest`      | 1 / 10 | Internal (8000)| 1 vCPU / 2Gi  |
-| `celery-worker`    | `/apps/invoice-be`       | `acr.azurecr.io/celery-worker:latest`   | 1 / 5  | None (worker) | 2 vCPU / 4Gi  |
+| `queue-worker`     | `/apps/invoice-be`       | `acr.azurecr.io/queue-worker:latest`    | 0 / 10 | None (worker) | 2 vCPU / 4Gi  |
 
 ### 4.3 Scaling Rules
 
 | App               | Scaling Trigger                          | Threshold                          |
 |--------------------|------------------------------------------|------------------------------------|
 | `invoice-be`       | HTTP concurrent requests                 | Scale up at > 50 concurrent        |
-| `celery-worker`    | Redis queue depth (`celery` queue)       | Scale up at > 10 pending tasks     |
+| `queue-worker`     | Azure Storage Queue depth                | Scale up at > 5 messages in queue  |
 | `invoice-fe`       | HTTP concurrent requests                 | Scale up at > 30 concurrent        |
 | `invoice-website`  | HTTP concurrent requests                 | Scale to zero when idle             |
 
@@ -234,13 +234,13 @@ All secrets are stored in **Azure Key Vault** and injected into Container Apps a
 | Parameter                | Value                                    |
 |--------------------------|------------------------------------------|
 | **SKU**                  | Standard C1 (Dev/UAT), Premium P1 (Prod) |
-| **Use Case 1**           | Celery task broker + result backend      |
+| **Use Case 1**           | Chat conversational memory, Rate Limiting, Metrics caching |
 | **Use Case 2**           | **Pub/Sub channel** for SSE real-time notifications (bulk upload status) |
-| **Access**               | Private Endpoint only                    |
+| **Access**               | Private Endpoint only (EnterpriseCluster Policy for single node behavior) |
 | **Persistence**          | AOF enabled (Production)                 |
 | **Eviction Policy**      | `volatile-lru`                           |
 
-> **SSE Integration**: When Celery workers finish processing an invoice, they publish a completion event to a Redis Pub/Sub channel (`batch:{batch_id}`). The FastAPI SSE endpoint subscribes to this channel and streams events to the browser in real-time. This avoids excessive polling when users upload 50–100 PDFs in bulk.
+> **SSE Integration**: When Queue workers finish processing an invoice, they publish a completion event to a Redis Pub/Sub channel (`batch:{batch_id}`). The FastAPI SSE endpoint subscribes to this channel and streams events to the browser in real-time. This avoids excessive polling when users upload 50–100 PDFs in bulk.
 
 ### 5.3 Azure Blob Storage
 
@@ -466,7 +466,7 @@ We maintain separate `Dockerfiles` inside the `/docker` directory to containeriz
 | `invoice-website`    | `/docker/Dockerfile.website` | `node:20-alpine`      | **Multi-stage**: Builds static assets and serves the Next.js marketing website. |
 | `invoice-fe`         | `/docker/Dockerfile.fe`      | `node:20-alpine`      | **Multi-stage**: Builds the frontend dashboard client, optimizing file size. |
 | `invoice-be`         | `/docker/Dockerfile.be`      | `python:3.12-slim`    | **Multi-stage**: Installs python environment using `uv` and runs the FastAPI API. |
-| `celery-worker`      | `/docker/Dockerfile.worker`  | `python:3.12-slim`    | **Shared Image**: Reuses the `invoice-be` environment, overriding the startup command to launch the Celery task consumer (`celery -A workers.tasks worker`). |
+| `queue-worker`       | `/docker/Dockerfile.worker`  | `python:3.12-slim`    | **Shared Image**: Reuses the `invoice-be` environment, overriding the startup command to launch the Storage Queue poller (`python -m queue_worker.main`). |
 
 #### Why separate Dockerfiles?
 1. **Isolation of Concerns**: The website, frontend, and backend use different runtimes (Node.js vs. Python). 
@@ -494,7 +494,7 @@ The CD process is managed by GitHub Actions `.yml` workflow files (such as `.git
    * The Bicep template defines individual **Azure Container Apps** and applies specific network ingress bindings:
      * **`invoice-website` & `invoice-fe`**: Deployed with `ingress.external = true` (exposed to port 443 via Front Door).
      * **`invoice-be`**: Deployed with `ingress.external = false` and `ingress.targetPort = 8000`. This locks the API inside the VNet, making it accessible only to the frontend.
-     * **`celery-worker`**: Deployed with `ingress = null` (no ports open). It pulls tasks from Redis, making ingress unnecessary.
+     * **`queue-worker`**: Deployed with `ingress = null` (no ports open). It pulls tasks from Azure Storage Queues, making ingress unnecessary.
 
 ---
 
@@ -511,8 +511,8 @@ graph TD
     subgraph Private VNet [Azure Private Virtual Network]
         FE -->|Private HTTP: 8000| BE[invoice-be Container App]
         
-        BE -->|Celery Tasks| Redis[(Azure Cache for Redis)]
-        Worker[celery-worker Container App] -->|Pulls Tasks| Redis
+        BE -->|Cache & Pub/Sub| Redis[(Azure Cache for Redis)]
+        Worker[queue-worker Container App] -->|Pub/Sub| Redis
         
         BE -->|Relational Data| Postgres[(Azure DB for PostgreSQL)]
         Worker -->|Relational Data| Postgres
@@ -520,8 +520,8 @@ graph TD
         BE -->|Vector Search| Chroma[(ChromaDB Container App)]
         Worker -->|Vector Search| Chroma
         
-        BE -->|Upload/Download| Storage[(Azure Blob Storage)]
-        Worker -->|Upload/Download| Storage
+        BE -->|Upload/Drop Msg| Storage[(Azure Blob & Queue Storage)]
+        Worker -->|Pull Msg/Download| Storage
         
         BE -->|Cognitive Extraction| OCR[Azure Doc Intelligence]
         Worker -->|Cognitive Extraction| OCR

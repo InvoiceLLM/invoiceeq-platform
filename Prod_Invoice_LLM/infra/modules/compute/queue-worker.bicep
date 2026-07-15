@@ -15,7 +15,7 @@ param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
-resource celeryWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
   identity: {
@@ -66,19 +66,22 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY'
           identity: userAssignedIdentityId
         }
+        {
+          name: 'storage-conn-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
+          identity: userAssignedIdentityId
+        }
       ]
     }
     template: {
       containers: [
         {
-          name: 'celery-worker'
+          name: 'queue-worker'
           image: image
           command: [
-            'celery'
-            '-A'
-            'workers.tasks'
-            'worker'
-            '--loglevel=info'
+            'python'
+            '-m'
+            'queue_worker.main_worker'
           ]
           resources: {
             cpu: json('1.0')
@@ -141,12 +144,34 @@ resource celeryWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedIdentityClientId
             }
+            {
+              name: 'AZURE_STORAGE_CONNECTION_STRING'
+              secretRef: 'storage-conn-secret'
+            }
           ]
         }
       ]
       scale: {
-        minReplicas: 1
-        maxReplicas: 3
+        minReplicas: 0
+        maxReplicas: 5
+        rules: [
+          {
+            name: 'azure-queue-scale-rule'
+            custom: {
+              type: 'azure-queue'
+              metadata: {
+                queueName: 'extraction-tasks-queue'
+                queueLength: '5'
+              }
+              auth: [
+                {
+                  secretRef: 'storage-conn-secret'
+                  triggerParameter: 'connection'
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   }

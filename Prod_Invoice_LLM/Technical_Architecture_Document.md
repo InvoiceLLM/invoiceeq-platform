@@ -136,9 +136,9 @@ The backend follows a **clean separation of concerns** with an async/agentic wor
 │   ├── extraction_agent.py      # Data Extraction & Verification Tools
 │   ├── query_agent.py           # RAG Logic & Citation Handler
 │   └── trainer_agent.py         # Rule-based Structural Tags
-├── workers/
-│   ├── celery_app.py            # Celery Configuration
-│   └── tasks.py                 # Background Tasks (Chunking, Vectorization, Parsing)
+├── queue_worker/
+│   ├── main.py                  # Storage Queue polling loop
+│   └── handlers.py              # Background Tasks (Chunking, Vectorization, Parsing)
 ├── models.py                    # SQLAlchemy/SQLModel Definitions (Tenant-Isolated)
 ├── chroma_client.py             # Vector DB Connection Logic
 ├── mcp_servers/
@@ -153,7 +153,8 @@ The backend follows a **clean separation of concerns** with an async/agentic wor
 |-------------------|------------------------------------------------|
 | **Framework**     | FastAPI (Python)                               |
 | **ORM**           | SQLAlchemy / SQLModel                          |
-| **Task Queue**    | Celery + Redis                                 |
+| **Task Queue**    | Azure Storage Queues (Message Broker)          |
+| **Memory / Cache**| Azure Cache for Redis (Chat Memory & Throttling)|
 | **Database**      | PostgreSQL (Azure Managed, Tenant-Isolated)    |
 | **Vector DB**     | ChromaDB (Managed)                             |
 | **LLM Provider**  | Azure OpenAI (GPT-4 class models)              |
@@ -178,7 +179,7 @@ POST /api/v1/invoices/upload
        ├── Return job_id to Frontend
        │
        ▼
-Celery Worker (Background)
+Queue Worker (Azure Storage Queue Poller)
        │
        ├── 1. Text Extraction (Azure Document Intelligence)
        ├── 2. Extraction Agent → Structured JSON & Verification Checks
@@ -197,13 +198,13 @@ Frontend polls GET /status/{job_id}
 When uploading many PDFs at once, polling each individually would generate excessive requests (e.g., 100 PDFs × 1 request every 2 seconds = 50 req/sec). Instead, the system uses **SSE** — a single persistent HTTP connection where the backend pushes status updates as each PDF completes.
 
 ```
-Frontend                              Backend                        Celery Worker
+Frontend                              Backend                        Queue Worker
    │                                     │                               │
    ├── POST /invoices/upload (bulk) ────▶│  (accepts N PDFs)             │
    │                                     ├── Save all → Blob Storage     │
    │                                     ├── Create N records (PROCESSING)
    │◀── { batch_id: "xyz", job_ids: [] }┤                               │
-   │                                     ├── Queue N Celery tasks ──────▶│
+   │                                     ├── Drop N Messages to Queue ──▶│
    │                                     │                               │
    ├── GET /invoices/stream/{batch_id} ─▶│  (opens SSE connection)       │
    │    (single long-lived connection)   │                               │
@@ -219,7 +220,7 @@ Frontend                              Backend                        Celery Work
 ```
 
 **SSE Implementation Details:**
-- Backend uses **Redis Pub/Sub** — Celery workers publish to channel `batch:{batch_id}` on each task completion
+- Backend uses **Redis Pub/Sub** — Queue workers publish to channel `batch:{batch_id}` on each task completion
 - SSE endpoint (`/invoices/stream/{batch_id}`) subscribes to that Redis channel and streams events to the browser
 - Frontend uses the native browser `EventSource` API (no additional libraries required)
 - Connection auto-closes when all PDFs in the batch are processed
@@ -813,7 +814,6 @@ main          ← Production-ready code ONLY (manual merge approval required)
 | **RAG**                  | Retrieval Augmented Generation — combining vector search with LLM inference      |
 | **MCP**                  | Model Context Protocol — standardized connector pattern for external services    |
 | **VNet**                 | Azure Virtual Network — private network boundary for cloud resources             |
-| **Celery**               | Distributed task queue for background processing                                 |
 | **ChromaDB**             | Open-source vector database for embedding storage and similarity search          |
 | **Shadcn/UI**            | Copy-paste UI component library built on Radix primitives                        |
 | **TanStack Query**       | Data-fetching and caching library for React (formerly React Query)               |

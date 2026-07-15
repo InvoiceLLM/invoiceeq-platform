@@ -15,6 +15,8 @@ param azureDocIntelKey string = ''
 param databaseUrl string
 @secure()
 param redisUrl string
+@secure()
+param azureStorageConnectionString string
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
@@ -90,6 +92,14 @@ resource secretRedisUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'REDIS-URL'
   properties: {
     value: redisUrl
+  }
+}
+
+resource secretStorageConnectionString 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'AZURE-STORAGE-CONNECTION-STRING'
+  properties: {
+    value: azureStorageConnectionString
   }
 }
 

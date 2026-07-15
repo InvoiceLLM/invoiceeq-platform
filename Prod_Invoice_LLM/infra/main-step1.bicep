@@ -43,11 +43,14 @@ param azureDocIntelEndpoint string = ''
 @description('Image tag for backend API container')
 param backendImage string = ''
 
-@description('Image tag for celery worker container')
-param celeryWorkerImage string = ''
+@description('Image tag for queue worker container')
+param queueWorkerImage string = ''
 
 @description('Image tag for frontend container')
 param frontendImage string = ''
+
+@description('Whether to deploy Redis (skip if already exists due to ARM bug)')
+param deployRedis bool = true
 
 // ================= Variables =================
 var uniqueSuffix = uniqueString(resourceGroup().id)
@@ -87,7 +90,7 @@ module postgresql './modules/data/postgresql.bicep' = {
   }
 }
 
-module redis './modules/data/redis.bicep' = {
+module redis './modules/data/redis.bicep' = if (deployRedis) {
   name: 'redis-deploy'
   params: {
     location: location
@@ -104,6 +107,7 @@ module storage './modules/data/storage.bicep' = {
     storageAccountName: storageAccountName
     subnetId: network.outputs.dataSubnetId
     privateDnsZoneId: network.outputs.storageDnsZoneId
+    queueDnsZoneId: network.outputs.queueDnsZoneId
   }
 }
 
@@ -127,12 +131,12 @@ module keyVault './modules/security/keyvault.bicep' = {
     dbAdminPassword: dbAdminPassword
     clerkSecretKey: clerkSecretKey
     tokenEncryptionKey: tokenEncryptionKey
-    databaseUrl: 'postgresql://${dbAdminLogin}:${dbAdminPassword}@${postgresql.outputs.fqdn}:5432/invoice_db?sslmode=require'
-    redisUrl: 'rediss://:${redis.outputs.primaryKey}@${redis.outputs.host}:${redis.outputs.port}/0'
+    databaseUrl: 'postgresql://${dbAdminLogin}:${uriComponent(dbAdminPassword)}@${postgresql.outputs.fqdn}:5432/invoice_db?sslmode=require'
+    redisUrl: deployRedis ? 'rediss://:${uriComponent(redis.outputs.primaryKey)}@${redis.outputs.host}:${redis.outputs.port}/0' : ''
+    azureStorageConnectionString: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${listKeys(resourceId('Microsoft.Storage/storageAccounts', storageAccountName), '2023-01-01').keys[0].value};EndpointSuffix=core.windows.net'
   }
   dependsOn: [
-    postgresql
-    redis
+    storage
   ]
 }
 

@@ -9,6 +9,9 @@ from pydantic import BaseModel
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import TenantConnection, Invoice
 from utils.encryption import encrypt_token, decrypt_token
+import json
+from azure.storage.queue import QueueClient
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -204,16 +207,25 @@ async def trigger_file_import(
             detail=f"Integration '{provider}' is not connected."
         )
 
-    # Spawn Celery background task
+    # Spawn background task via Azure Storage Queue
     try:
-        from workers.tasks import import_connector_file_task
-        # Dispatch background task passing file details and tenant isolated scope
-        import_connector_file_task.delay(
-            provider=prov,
-            file_id=payload.file_id,
-            tenant_id=str(context.tenant_id)
-        )
+        settings = get_settings()
+        if settings.AZURE_STORAGE_CONNECTION_STRING:
+            queue_client = QueueClient.from_connection_string(
+                settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
+            )
+            payload = {
+                "task": "import_connector_file",
+                "kwargs": {
+                    "provider": prov,
+                    "file_id": payload.file_id,
+                    "tenant_id": str(context.tenant_id)
+                }
+            }
+            queue_client.send_message(json.dumps(payload))
+        else:
+            logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
     except Exception as e:
-        logger.warning("Failed to dispatch Celery import task: %s (Ignored for local offline dev)", e)
+        logger.warning("Failed to dispatch Azure Storage Queue import task: %s", e)
 
     return {"success": True, "message": f"Queued background import for file {payload.file_id}"}

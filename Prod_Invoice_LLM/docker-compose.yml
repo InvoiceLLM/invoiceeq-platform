@@ -53,7 +53,20 @@ services:
       timeout: 5s
       retries: 5
 
+  # Local Emulator for Azure Storage (Blob & Queue)
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: invoice-azurite-local
+    restart: always
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+    volumes:
+      - azurite_data:/data
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --location /data"
+
 volumes:
   postgres_data:
   chroma_data:
   redis_data:
+  azurite_data:

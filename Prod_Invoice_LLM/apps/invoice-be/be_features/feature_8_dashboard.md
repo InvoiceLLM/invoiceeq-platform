@@ -12,6 +12,7 @@ Expose aggregated database statistics and multi-dimensional filtering for backen
 - [ ] **Task 8.1: Implement Metrics Aggregate Endpoint**
   - Code `GET /api/v1/dashboard/metrics`.
   - Calculate total spend, average processing times, count of active alerts, and invoices list grouping.
+  - Cache the heavy aggregated response in Azure Cache for Redis to improve dashboard load times and reduce PostgreSQL load.
   - Return explicit properties: `total_invoiced`, `paid_amount`, `outstanding_amount`, `at_risk_amount`, `spend_over_time` (series), and `top_vendors` (series).
 - [ ] **Task 8.2: Code Advanced API Filters**
   - Add query parameter filters: date ranges (start/end), specific vendor names, PO numbers, and status keys.

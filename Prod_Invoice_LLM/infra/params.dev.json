@@ -41,7 +41,7 @@
     "backendImage": {
       "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
     },
-    "celeryWorkerImage": {
+    "queueWorkerImage": {
       "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
     },
     "frontendImage": {

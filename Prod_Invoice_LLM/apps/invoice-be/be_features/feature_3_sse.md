@@ -4,17 +4,17 @@ Expose HTTP streaming and polling endpoints to provide live status feedback to t
 
 ### File Coordinates
 * Router: [apps/invoice-be/routers/invoices.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/invoices.py) → `sse_event_generator()`, `GET /invoices/stream/{batch_id}` → `stream_invoice_status()`, `GET /invoices/status/{job_id}` → `get_invoice_status()`
-* Background Worker: [apps/invoice-be/workers/tasks.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/workers/tasks.py) → `_publish_sse_events()`
+* Background Worker: [apps/invoice-be/queue_worker/handlers.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/queue_worker/handlers.py) → `_publish_sse_events()`
 
 ### Functionality
-`stream_invoice_status()` returns a `StreamingResponse` backed by `sse_event_generator(batch_id)`, an async generator that opens its own `AsyncRedis` pubsub subscription to channel `invoice.update.{batch_id}`, yields each message as an SSE `data:` frame, sends `: keep-alive\n\n` heartbeats when idle, and breaks the loop once it sees a terminal `status` (`COMPLETED` / `AUDIT_REQUIRED` / `FAILED`) — closing the connection itself rather than waiting on the client. On the publish side, `workers/tasks.py::_publish_sse_events(batch_id, payload)` is called at each stage of `process_invoice_task()` (see `feature_2_pipeline_extraction.md`) and just does a synchronous `redis.Redis.publish()` on that same channel — it's a fire-and-forget pub/sub, not a queue, so a client that connects after a stage has already published it will never see that event (this is why the FE also needs the polling fallback below `6` files). `get_invoice_status()` is a plain synchronous DB read of the current `Invoice` row for clients that poll instead of subscribing.
+`stream_invoice_status()` returns a `StreamingResponse` backed by `sse_event_generator(batch_id)`, an async generator that opens its own `AsyncRedis` pubsub subscription to channel `invoice.update.{batch_id}`, yields each message as an SSE `data:` frame, sends `: keep-alive\n\n` heartbeats when idle, and breaks the loop once it sees a terminal `status` (`COMPLETED` / `AUDIT_REQUIRED` / `FAILED`) — closing the connection itself rather than waiting on the client. On the publish side, `queue_worker/handlers.py::_publish_sse_events(batch_id, payload)` is called at each stage of `handle_process_invoice()` (see `feature_2_pipeline_extraction.md`) and just does a synchronous `redis.Redis.publish()` on that same channel — it's a fire-and-forget pub/sub, not a queue, so a client that connects after a stage has already published it will never see that event (this is why the FE also needs the polling fallback below `6` files). `get_invoice_status()` is a plain synchronous DB read of the current `Invoice` row for clients that poll instead of subscribing.
 
 ### Tasks
 - [x] **Task 3.1: Configure Redis Client for Pub/Sub Messaging**
   - Add Redis connection parameters to `apps/invoice-be/config.py` (ensure `REDIS_URL` is configured).
-  - Implement a helper function `_get_redis_sync()` in `apps/invoice-be/workers/tasks.py` to initialize the Redis connection pool.
-- [x] **Task 3.2: Implement Redis Publisher in Celery Tasks**
-  - Update `_publish_sse_events(batch_id: str, payload: dict)` in `apps/invoice-be/workers/tasks.py`.
+  - Implement a helper function `_get_redis_sync()` in `apps/invoice-be/queue_worker/handlers.py` to initialize the Redis connection pool.
+- [x] **Task 3.2: Implement Redis Publisher in Queue Handlers**
+  - Update `_publish_sse_events(batch_id: str, payload: dict)` in `apps/invoice-be/queue_worker/handlers.py`.
   - Enforce the payload structure for updates:
     ```json
     {

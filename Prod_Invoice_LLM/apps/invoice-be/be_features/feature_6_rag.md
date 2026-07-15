@@ -46,7 +46,7 @@ Construct document indexers and semantic chat clients utilizing vector similarit
 - [ ] **Task 6.10: Prompt-injection input guard**
   - Add an input filter/classifier in `run_query_agent()` to catch injection attempts (e.g. "ignore previous instructions") before user text reaches the system prompt.
 - [ ] **Task 6.11: Semantic/result caching**
-  - Cache answers keyed on `(tenant_id, normalized_query)` in `chat_qa_shortcuts`, serving repeated/near-identical questions instantly instead of re-running retrieval + LLM synthesis.
+  - Cache answers keyed on `(tenant_id, normalized_query)` in Azure Cache for Redis, serving repeated/near-identical questions instantly instead of re-running retrieval + LLM synthesis. (Replaces the `chat_qa_shortcuts` PostgreSQL table approach).
 - [ ] **Task 6.12: Real conversational memory**
   - Replace `get_chat_history()`'s raw "last 10 messages" SQL fetch with a token-aware, `PostgresSaver`-backed LangGraph checkpointer.
 

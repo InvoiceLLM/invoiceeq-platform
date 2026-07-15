@@ -2,6 +2,7 @@ param location string
 param storageAccountName string
 param subnetId string
 param privateDnsZoneId string
+param queueDnsZoneId string
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -65,6 +66,43 @@ resource storagePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateD
         name: 'blob-config'
         properties: {
           privateDnsZoneId: privateDnsZoneId
+        }
+      }
+    ]
+  }
+}
+
+// Private Endpoint for Storage Account (Queue service)
+resource storageQueuePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+  name: '${storageAccountName}-queue-pe'
+  location: location
+  properties: {
+    subnet: {
+      id: subnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: '${storageAccountName}-queue-connection'
+        properties: {
+          privateLinkServiceId: storageAccount.id
+          groupIds: [
+            'queue'
+          ]
+        }
+      }
+    ]
+  }
+}
+
+resource storageQueuePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+  parent: storageQueuePrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'queue-config'
+        properties: {
+          privateDnsZoneId: queueDnsZoneId
         }
       }
     ]

@@ -7,7 +7,7 @@ Accept PDF uploads, persist them to Azure Blob Storage, queue background process
 ### File Coordinates
 * Router: [apps/invoice-be/routers/invoices.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/invoices.py)
 * Database Models: [apps/invoice-be/models.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/models.py)
-* Background Worker: [apps/invoice-be/workers/tasks.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/workers/tasks.py)
+* Background Worker: [apps/invoice-be/queue_worker/main.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/queue_worker/main.py)
 * Extraction Agent: [apps/invoice-be/agents/extraction_agent.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/agents/extraction_agent.py)
 * Math Validator: [apps/invoice-be/utils/verification_tools.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/utils/verification_tools.py)
 * Token Guardrails: [apps/invoice-be/utils/token_management.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/utils/token_management.py)
@@ -19,8 +19,8 @@ Accept PDF uploads, persist them to Azure Blob Storage, queue background process
 1. `routers/invoices.py` → `POST /upload`:
    - Fetches the `Tenant` row for `context.tenant_id`; if none exists, **silently auto-provisions one** with a placeholder domain (`domain-{tenant_id}.com`) — an undocumented fallback that bypasses the real domain-based tenant provisioning flow (Website Feature 4 / Clerk gateway). See Task 2.19 / tracker Gap 25.
    - Enforces free-plan limits, then per file: computes a SHA-256 `file_hash` and checks it against existing `Invoice` rows for that tenant. **Exact-hash duplicate detection (Layer 1) is already implemented** — a hash match creates a `status=DUPLICATE` row copying the prior extraction's data and publishes a `DUPLICATE` SSE event immediately, skipping re-processing. Near-duplicate matching (Layer 2 — same `invoice_number` + `vendor_name` with a different file hash, e.g. a rescanned copy) is not implemented. See Task 2.20 / tracker Gap 9.
-   - For non-duplicate files: uploads bytes to Blob Storage, inserts `Invoice` row (`status=PROCESSING`), enqueues Celery task, returns `batch_id`. ⚠️ This upload call is currently broken — see Task 2.18 / tracker Gap 24 (P0).
-2. `workers/tasks.py` → `process_invoice_task(batch_id, file_path, tenant_id)` — the pipeline orchestrator. Sequence:
+   - For non-duplicate files: uploads bytes to Blob Storage, inserts `Invoice` row (`status=PROCESSING`), drops message to Azure Storage Queue, returns `batch_id`. ⚠️ This upload call is currently broken — see Task 2.18 / tracker Gap 24 (P0).
+2. `queue_worker/handlers.py` → `handle_process_invoice(batch_id, file_path, tenant_id)` — the pipeline orchestrator. Sequence:
    - `_publish_sse_events()` → emits `PROCESSING_OCR` over Redis pub/sub (channel `invoice.update.{batch_id}`), consumed by the FE `EventSource`/polling.
    - `_run_ocr(file_path, settings)` → local `pypdf` text extraction (Ollama/dev) or Azure Document Intelligence `prebuilt-layout` (prod — see Task 2.14 / tracker Gap 15 to switch this to `prebuilt-invoice`).
    - `_publish_sse_events()` → emits `EXTRACTING_DATA`.
@@ -29,7 +29,7 @@ Accept PDF uploads, persist them to Azure Blob Storage, queue background process
    - Writes extracted fields, `sa_alerts`, and `status` (`COMPLETED` / `AUDIT_REQUIRED`) back onto the `Invoice` row.
    - If `status == COMPLETED`: `_publish_sse_events()` emits `INDEXING`, then `chroma_client.index_invoice_document()` chunks the document and writes vector embeddings for RAG.
    - `_publish_sse_events()` → emits final status (`COMPLETED` / `AUDIT_REQUIRED` / `FAILED`) with the extracted data and alerts payload.
-3. `workers/tasks.py` → `import_connector_file_task(provider, file_id, tenant_id)` — third-party connector variant (Google Drive / Salesforce): downloads the source file, uploads it via `services/storage.py`, creates the `Invoice` row, then synchronously calls `process_invoice_task()` to re-enter the same flow as step 2.
+3. `queue_worker/handlers.py` → `handle_import_connector_file(provider, file_id, tenant_id)` — third-party connector variant (Google Drive / Salesforce): downloads the source file, uploads it via `services/storage.py`, creates the `Invoice` row, then synchronously calls `handle_process_invoice()` to re-enter the same flow as step 2.
 
 ### Extraction Agent Internals (LangGraph)
 `run_extraction_agent()` compiles and runs a 2-node `StateGraph`:
@@ -60,8 +60,8 @@ Net effect once this lands: an Indian GST invoice, a US multi-jurisdiction sales
 - [x] **Task 2.3: Create Processing DB Entry**
   - Insert a record into the `invoices` table with status `PROCESSING` and the associated tags payload.
   - Return the generated `batch_id` and the database `job_ids` in the HTTP response.
-- [x] **Task 2.4: Dispatch Celery Extraction Task**
-  - Enqueue the extraction job `process_invoice_task` in the Celery queue.
+- [x] **Task 2.4: Dispatch Storage Queue Message**
+  - Drop the extraction job JSON payload to the Azure Storage Queue.
   - Pass parameter identifiers: `batch_id`, `file_path`, and `tenant_id`.
 - [x] **Task 2.5: Enforce Free Plan 50 Invoice limit**
   - Check the tenant's remaining invoices before creating records. If `billing_plan == 'free'` and `free_invoices_remaining <= 0`, raise `HTTPException(402, "Limit reached")`.
@@ -143,5 +143,5 @@ Net effect once this lands: an Indian GST invoice, a US multi-jurisdiction sales
   - Execute `uv run pytest tests/test_extraction.py` to verify math checks, token limits, and DB persistence.
   - Run `uv run pytest` to check for zero regressions, ensuring compatibility with `test_sse.py`'s `"audit"` file path trigger.
 * **Manual Verification**:
-  - Run `docker compose up -d` to spin up local Redis/Postgres/ChromaDB. Upload a mock PDF to the router and check that the Celery task receives it.
+  - Run `docker compose up -d` to spin up local Azurite (Storage Emulator)/Redis/Postgres/ChromaDB. Upload a mock PDF to the router and check that the Storage Queue worker receives it.
   - Run extraction on test PDFs and inspect generated database alerts.

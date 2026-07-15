@@ -30,7 +30,7 @@ Scopes #2 and #3 both write to the same per-vendor `ExtractionTemplate` row — 
 * Router: [apps/invoice-be/routers/trainer.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/trainer.py) → `upload_transient_file()`, `trainer_chat()`, `trainer_commit()`
 * Trainer Agent: [apps/invoice-be/agents/trainer_agent.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/agents/trainer_agent.py) → `run_trainer_agent()`, `refine_constraints()`
 * Database Models: [apps/invoice-be/models.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/models.py)
-* Pipeline Extraction Handoff: [apps/invoice-be/workers/tasks.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/workers/tasks.py) — see [feature_2_pipeline_extraction.md](feature_2_pipeline_extraction.md)
+* Pipeline Extraction Handoff: [apps/invoice-be/queue_worker/handlers.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/queue_worker/handlers.py) — see [feature_2_pipeline_extraction.md](feature_2_pipeline_extraction.md)
 
 ### Current Implementation (pre-redesign — none of Tasks 10.1–10.11 below have landed yet)
 `routers/trainer.py` still runs the flat, single-scope design the redesign above supersedes:
@@ -55,7 +55,7 @@ Scopes #2 and #3 both write to the same per-vendor `ExtractionTemplate` row — 
 - [ ] **Task 10.7: Re-audit trigger on commit** *(scope #2 only)*
   - Committing an "Initialize from Production" (scope #2) session queues a background re-evaluation of that vendor's existing production invoices against the updated (merged global+vendor) rules. Scope #3 commits skip this — there's no production history yet. Scope #1 (Global) commits should also queue this across *all* vendors' recent invoices for the tenant, since a global rule change can affect every vendor.
 - [ ] **Task 10.8: Two-stage rule resolution in the pipeline**
-  - Update `workers/tasks.py::process_invoice_task()` to fetch and apply the tenant's Global template on the *first* extraction pass (not just the vendor-specific second pass, which today only fires after `vendor_name` is known).
+  - Update `queue_worker/handlers.py::handle_process_invoice()` to fetch and apply the tenant's Global template on the *first* extraction pass (not just the vendor-specific second pass, which today only fires after `vendor_name` is known).
 - [ ] **Task 10.9: Move session storage to Redis**
   - Store active sandbox sessions in Redis (TTL-bound) instead of the in-process `TRAINER_SESSIONS` dict, so sessions survive across the multi-replica `invoice-be` deployment.
 - [ ] **Task 10.10: Rule versioning and rollback** *(new — safety net once trainer is a frequently-used core feature, not a rare sandbox visit)*

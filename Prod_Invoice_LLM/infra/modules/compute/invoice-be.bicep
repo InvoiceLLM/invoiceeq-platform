@@ -70,6 +70,11 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY'
           identity: userAssignedIdentityId
         }
+        {
+          name: 'storage-conn-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
+          identity: userAssignedIdentityId
+        }
       ]
     }
     template: {
@@ -137,6 +142,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedIdentityClientId
+            }
+            {
+              name: 'AZURE_STORAGE_CONNECTION_STRING'
+              secretRef: 'storage-conn-secret'
             }
           ]
         }

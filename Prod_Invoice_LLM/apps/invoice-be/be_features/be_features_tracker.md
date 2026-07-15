@@ -8,6 +8,8 @@ This document tracks the implementation progress of the reconciled backend featu
 
 ## Feature Tracker
 
+- `[/]` **MAJOR REFACTOR**: Replace Celery with Azure Storage Queues, retain Redis for caching.
+
 - `[x]` [Feature 1: Multi-Tenant Authentication & Security Scoping](feature_1_auth.md)
 - `[x]` [Feature 2: Ingestion, Storage & Extraction Pipeline](feature_2_pipeline_extraction.md) *(merged with former Feature 5 — see doc header)* — ⚠️ known regression, see Gap 24
 - `[x]` [Feature 3: Status Tracking & Real-Time SSE Streams](feature_3_sse.md)
@@ -39,7 +41,7 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 
 - `[x]` **Gap 9: Layer 2 Duplicate Detection** — post-extraction `invoice_number` + `vendor_name` match (Layer 1 SHA-256 hash match is done)
 
-- `[x]` **Gap 15: OCR model switch** — move `workers/tasks.py::_run_ocr()` from `prebuilt-layout` to `prebuilt-invoice` (solves Gap 16/17 for free, cuts LLM token volume)
+- `[x]` **Gap 15: OCR model switch** — move `queue_worker/handlers.py::_run_ocr()` from `prebuilt-layout` to `prebuilt-invoice` (solves Gap 16/17 for free, cuts LLM token volume)
 - `[x]` **Gap 16: Bounding-box coordinates** — populate `invoices.coordinates`; the FE auditor UI (`PdfViewerCanvas.tsx`) already renders the overlay and has no data source
 - `[x]` **Gap 17: Field-level confidence scores** — populate `invoices.field_confidence` to drive Gap 3's per-field audit routing
 

@@ -25,8 +25,8 @@ param azureDocIntelEndpoint string
 @description('Image tag for backend API container')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
-@description('Image tag for celery worker container')
-param celeryWorkerImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
+@description('Image tag for queue worker container')
+param queueWorkerImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
 @description('Image tag for frontend container')
 param frontendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
@@ -102,7 +102,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
   }
 }
 
-module celeryWorker './modules/compute/celery-worker.bicep' = {
+module queueWorker './modules/compute/queue-worker.bicep' = {
   name: 'worker-deploy'
   dependsOn: [
     rbacAssignments
@@ -110,7 +110,7 @@ module celeryWorker './modules/compute/celery-worker.bicep' = {
   params: {
     location: location
     caeId: caeId
-    appName: 'ca-celery-worker-${environment}'
+    appName: 'ca-queue-worker-${environment}'
     userAssignedIdentityId: identityId
     userAssignedIdentityClientId: identityClientId
     keyVaultName: keyVaultName
@@ -120,7 +120,7 @@ module celeryWorker './modules/compute/celery-worker.bicep' = {
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
     azureDocIntelEndpoint: azureDocIntelEndpoint
     acrName: acrName
-    image: celeryWorkerImage
+    image: queueWorkerImage
   }
 }
 

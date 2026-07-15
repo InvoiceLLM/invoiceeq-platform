@@ -56,8 +56,9 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: [
             {
-              name: 'NEXT_PUBLIC_API_URL'
-              value: 'https://${backendApiUrl}'
+              // Server-side proxy env var — must use http:// for internal Container Apps traffic
+              name: 'BACKEND_API_URL'
+              value: 'http://${backendApiUrl}'
             }
             {
               name: 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'

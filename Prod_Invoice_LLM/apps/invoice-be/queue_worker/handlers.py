@@ -2,7 +2,6 @@ import json
 import logging
 from datetime import datetime
 import redis
-from .celery_app import celery_app
 from config import get_settings, Settings
 from sqlmodel import Session, select
 from database import engine
@@ -126,8 +125,7 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
         raise e
 
 
-@celery_app.task(name="workers.tasks.process_invoice_task")
-def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
+def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dict:
     """
     Asynchronous Celery task to process an uploaded invoice PDF:
     1. Runs OCR/Text extraction via _run_ocr.
@@ -313,8 +311,7 @@ def process_invoice_task(batch_id: str, file_path: str, tenant_id: str) -> dict:
         _publish_sse_events(batch_id, {"status": "FAILED", "message": str(e)})
         raise e
 
-@celery_app.task(name="workers.tasks.import_connector_file_task")
-def import_connector_file_task(provider: str, file_id: str, tenant_id: str) -> dict:
+def handle_import_connector_file(provider: str, file_id: str, tenant_id: str) -> dict:
     """
     Downloads file from Google Drive / Salesforce (using decrypted credentials),
     uploads it to blob storage, creates an Invoice database entry, and triggers
@@ -355,7 +352,7 @@ def import_connector_file_task(provider: str, file_id: str, tenant_id: str) -> d
         
     # 4. Trigger processing pipeline synchronously
     try:
-        process_invoice_task(str(batch_id), storage_file_path, tenant_id)
+        handle_process_invoice(str(batch_id), storage_file_path, tenant_id)
     except Exception as e:
         logger.error("Failed to process connector invoice task: %s", e)
         raise e

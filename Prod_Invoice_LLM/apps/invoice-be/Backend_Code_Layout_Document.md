@@ -17,10 +17,11 @@ This document maps each system API to its sequential file and function execution
    └─ File: services/storage.py -> Function: upload_pdf_to_blob_storage()
    └─ Note: known bug — routers/invoices.py currently calls this function synchronously and passes its *return value*
      into run_in_threadpool() instead of passing the callable, which raises on every non-duplicate upload. See feature_2_pipeline.md.
-4. Async Task Queue (Dispatched)
-   └─ File: workers/tasks.py -> Function: process_invoice_task()
+4. Async Task Queue (Dispatched to Azure Storage Queue)
+   └─ File: queue_worker/main.py -> Function: poll_queue()
+   └─ File: queue_worker/handlers.py -> Function: handle_process_invoice()
 5. OCR / Layout Extraction
-   └─ File: workers/tasks.py -> Function: _run_ocr()
+   └─ File: queue_worker/handlers.py -> Function: _run_ocr()
       - Local dev: pypdf text extraction. Production: Azure Document Intelligence `prebuilt-layout` model
         (not the invoice-specific `prebuilt-invoice` model — see feature_5_extraction.md recommendation)
 6. Multi-Modal Extraction & Verification (LangGraph, 2 nodes)
@@ -29,11 +30,11 @@ This document maps each system API to its sequential file and function execution
       - verify_node(): calls verify_line_items_math() / verify_totals_math() from utils/verification_tools.py
       - No retry/self-correction loop back to extract_node on validation failure yet — see feature_5_extraction.md
 7. Template Rule Lookup (not an agent tool — happens in the worker before re-running extraction)
-   └─ File: workers/tasks.py -> queries ExtractionTemplate table, falls back to config/default_templates.json
+   └─ File: queue_worker/handlers.py -> queries ExtractionTemplate table, falls back to config/default_templates.json
 8. Local Vector Calculation & Storage (only runs if status == COMPLETED)
    └─ File: chroma_client.py -> Function: index_invoice_document() -> get_embeddings()
 9. Real-Time Push Notification Output
-   └─ File: workers/tasks.py -> Function: _publish_sse_events() (Redis Pub/Sub)
+   └─ File: queue_worker/handlers.py -> Function: _publish_sse_events() (Redis Pub/Sub)
    └─ File: routers/invoices.py -> Function: stream_invoice_status() (SSE endpoint, subscribes to the same channel)
 ```
 
@@ -163,8 +164,8 @@ This document maps each system API to its sequential file and function execution
    └─ Decryption: utils/encryption.py -> Function: decrypt_token()
 5. Async Import Task Trigger
    └─ File: routers/connectors.py -> Function: trigger_file_import()
-   └─ Celery Task Dispatch: workers/tasks.py -> Function: import_connector_file_task()
-      - Uses mock/simulated file bytes rather than a real download, then calls process_invoice_task() (Flow 1)
+   └─ Storage Queue Dispatch: queue_worker/handlers.py -> Function: handle_import_connector_file()
+      - Uses mock/simulated file bytes rather than a real download, then calls handle_process_invoice() (Flow 1)
 ```
 
 **Note:** There is no `connectors/factory.py`, `connectors/google_drive.py`, or similar per-provider module — all provider logic currently lives inline in `routers/connectors.py` and is mocked. Building real OAuth2 exchanges is tracked in `feature_9_connectors.md`.
