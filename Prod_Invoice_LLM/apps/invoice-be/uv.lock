@@ -238,6 +238,21 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-storage-queue"
+version = "12.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "cryptography" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/7d/babb616eb1ed1ac5f13cbb336875fd91c9c6f8b1702bf2ff860b222cb833/azure_storage_queue-12.17.0.tar.gz", hash = "sha256:6eb108a88554be371feb2eba9715fa0e3f7baca7b3f00c19ec417fc7ce5b3834", size = 203777, upload-time = "2026-06-08T18:03:16.393Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/e3/6aee19df63974d87e55dc0ddf5bb18eb1022cd290b125a46792594a00673/azure_storage_queue-12.17.0-py3-none-any.whl", hash = "sha256:aaef08ee2613f84a3a85e60a059d29567361e5a2af455298bb0e529f0b47d5a1", size = 189526, upload-time = "2026-06-08T18:03:19.139Z" },
+]
+
+[[package]]
 name = "bcrypt"
 version = "5.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1129,6 +1144,7 @@ dependencies = [
     { name = "azure-ai-documentintelligence" },
     { name = "azure-core" },
     { name = "azure-storage-blob" },
+    { name = "azure-storage-queue" },
     { name = "celery" },
     { name = "chromadb" },
     { name = "cryptography" },
@@ -1167,6 +1183,7 @@ requires-dist = [
     { name = "azure-ai-documentintelligence", specifier = ">=1.0.2" },
     { name = "azure-core", specifier = ">=1.41.0" },
     { name = "azure-storage-blob", specifier = ">=12.19.0" },
+    { name = "azure-storage-queue", specifier = ">=12.17.0" },
     { name = "celery", specifier = ">=5.3.6" },
     { name = "chromadb", specifier = ">=1.5.9" },
     { name = "cryptography", specifier = ">=42.0.5" },

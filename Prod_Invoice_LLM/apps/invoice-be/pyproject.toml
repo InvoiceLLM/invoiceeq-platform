@@ -32,6 +32,7 @@ dependencies = [
     "tiktoken>=0.13.0",
     "sentence-transformers>=5.6.0",
     "chromadb>=1.5.9",
+    "azure-storage-queue>=12.17.0",
 ]
 
 [dependency-groups]
