@@ -36,6 +36,7 @@ apps/invoice-be/temp_storage
 infra/
 Document/
 docs/
+docs
 docker-compose.yml
 *.md
 *.msi
