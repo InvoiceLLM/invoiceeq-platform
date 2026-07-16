@@ -191,9 +191,12 @@ async def upload_invoices(
                     }
                 }
                 queue_client.send_message(json.dumps(payload))
+                print(f"SUCCESS: Dispatched Azure Storage Queue task for invoice {invoice_id}", flush=True)
             else:
+                print("WARNING: AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.", flush=True)
                 logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
         except Exception as e:
+            print(f"ERROR: Failed to dispatch Azure Storage Queue task: {str(e)}", flush=True)
             logger.warning("Failed to dispatch Azure Storage Queue task: %s", e)
 
     return {

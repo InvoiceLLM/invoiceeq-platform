@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from config import get_settings
 from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import ExtractionTemplate
-from workers.tasks import _run_ocr
+from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
 from agents.trainer_agent import run_trainer_agent
 from services.storage import LOCAL_STORAGE_DIR
