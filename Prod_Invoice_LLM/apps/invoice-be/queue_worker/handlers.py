@@ -64,7 +64,7 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
                 if text_content:
                     extracted_text += text_content + "\n"
             return extracted_text.strip()
-         except Exception as e:
+        except Exception as e:
             logger.error("Failed to extract local PDF text from %s: %s", file_path, e)
             raise e
 
