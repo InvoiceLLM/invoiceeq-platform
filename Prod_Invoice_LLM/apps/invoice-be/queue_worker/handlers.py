@@ -30,12 +30,22 @@ def _publish_sse_events(batch_id: str, payload: dict) -> None:
         logger.error("failed to publish event %s with data %s: %s", event, payload, e)
         return
 
+import io
+from services.storage import download_pdf_from_storage
+
 def _run_ocr(file_path: str, settings: Settings) -> str:
     """
     Runs the OCR / PDF layout extraction process for a given file path.
     - In local dev (LLM_PROVIDER=ollama): extracts text using local pypdf.
     - In production (LLM_PROVIDER=azure): calls Azure Document Intelligence.
     """
+    # Download file bytes from storage (Azure Blob or Local Filesystem)
+    try:
+        pdf_bytes = download_pdf_from_storage(file_path)
+    except Exception as e:
+        logger.error("Failed to load PDF bytes from storage for %s: %s", file_path, e)
+        raise e
+
     if settings.LLM_PROVIDER == "ollama":
         logger.info("Running local PDF text extraction (Ollama mode) using pypdf for file: %s", file_path)
         try:
@@ -47,14 +57,14 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
             )
 
         try:
-            reader = pypdf.PdfReader(file_path)
+            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
             extracted_text = ""
             for page in reader.pages:
                 text_content = page.extract_text()
                 if text_content:
                     extracted_text += text_content + "\n"
             return extracted_text.strip()
-        except Exception as e:
+         except Exception as e:
             logger.error("Failed to extract local PDF text from %s: %s", file_path, e)
             raise e
 
@@ -78,12 +88,11 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
             credential=AzureKeyCredential(settings.AZURE_DOC_INTEL_KEY)
         )
         
-        with open(file_path, "rb") as f:
-            poller = client.begin_analyze_document(
-                model_id="prebuilt-invoice",
-                analyze_request=f,
-                content_type="application/octet-stream"
-            )
+        poller = client.begin_analyze_document(
+            model_id="prebuilt-invoice",
+            analyze_request=pdf_bytes,
+            content_type="application/octet-stream"
+        )
         result = poller.result()
 
         coordinates_list = []
@@ -123,6 +132,7 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
     except Exception as e:
         logger.error("Azure Document Intelligence call failed for %s: %s", file_path, e)
         raise e
+
 
 
 def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dict:
