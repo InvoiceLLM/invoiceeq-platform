@@ -104,10 +104,10 @@ Net effect once this lands: an Indian GST invoice, a US multi-jurisdiction sales
 - [ ] **Task 2.17: Field-level confidence scores** *(tracker Gap 17)*
   - Populate a `field_confidence` map per extracted field (sourced from Task 2.14's `prebuilt-invoice` output where available) so low-confidence fields can be flagged individually and drive Task 2.16's Critic Node.
   - No standalone value without a consumer: pair this with either Task 2.16 (route only low-confidence fields back for retry) or a simpler direct FE affordance (highlight low-confidence fields yellow for the auditor) — decide which before implementing.
-- [ ] **Task 2.18: Fix P0 upload crash bug** *(tracker Gap 24 — confirmed live in code, highest priority in this file)*
-  - [routers/invoices.py:157-159](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/invoices.py): `file_path = await run_in_threadpool(upload_pdf_to_blob_storage(file_bytes, str(context.tenant_id), str(invoice_id)))` calls `upload_pdf_to_blob_storage(...)` synchronously and passes its **return value** (a string) into `run_in_threadpool`, which then tries to call that string — raising `TypeError: 'str' object is not callable`.
-  - Every non-duplicate PDF upload crashes with a 500 today.
-  - Fix: `run_in_threadpool(upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id))` — pass the callable and its args separately.
+- [x] **Task 2.18: Fix P0 upload crash bug** *(tracker Gap 24 — resolved)*
+  - [routers/invoices.py:157-159](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/invoices.py): `file_path = await run_in_threadpool(upload_pdf_to_blob_storage(file_bytes, str(context.tenant_id), str(invoice_id)))` called `upload_pdf_to_blob_storage(...)` synchronously and passed its **return value** (a string) into `run_in_threadpool`, which then tried to call that string — raising `TypeError: 'str' object is not callable`.
+  - Every non-duplicate PDF upload crashed with a 500.
+  - Fix: `run_in_threadpool(upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id))` — passed the callable and its args separately.
 - [ ] **Task 2.19: Consolidate tenant auto-provisioning** *(tracker Gap 25)*
   - Remove the undocumented bare-`Tenant`-row fallback in `routers/invoices.py` (Pipeline Flow step 1) once the real domain-matching/role-assignment login flow (Website Feature 4) is live, so there's a single tenant-creation path instead of two that can diverge.
 - [ ] **Task 2.20: Layer-2 duplicate detection** *(tracker Gap 9)*
@@ -137,6 +137,10 @@ Net effect once this lands: an Indian GST invoice, a US multi-jurisdiction sales
 - [ ] **Task 2.31: Add per-line-item `hsn_sac_code` / `uom` fields**
   - Add `hsn_sac_code: str | None` and `uom: str | None` to `InvoiceLineItem`. Achieves: India's GST invoices require an HSN/SAC code per line item by law; unit-of-measure (each/kg/hours) varies especially between goods and service invoices and is needed to sanity-check `quantity × unit_price = amount`.
 
+### Recent P0 Bug Fixes (Jul 17, 2026)
+* **P0 Pydantic Settings Validation Error (Resolved)**: Added `AZURE_DOC_INTEL_ENDPOINT` and `AZURE_DOC_INTEL_KEY` directly to the `Settings` class in `config.py`. Pydantic was silently ignoring these environment variables on startup because they weren't defined as fields in the class, causing an `AttributeError` when the queue worker attempted Document Intelligence OCR.
+* **P0 Remote Path Extraction FileNotFoundError (Resolved)**: Fixed the crash inside the queue worker's `_run_ocr` function in `handlers.py`. Previously, it attempted a local `open(file_path, "rb")` on the file path string. In production, this path is a remote Azure storage URI (`azure://invoices/...`), leading to a file not found crash. Updated it to download the PDF bytes from storage using `download_pdf_from_storage(file_path)` before parsing layout.
+
 ### Verification Plan
 * **Automated Tests**:
   - Execute `uv run pytest tests/test_ingestion.py` testing file uploads.
@@ -145,3 +149,4 @@ Net effect once this lands: an Indian GST invoice, a US multi-jurisdiction sales
 * **Manual Verification**:
   - Run `docker compose up -d` to spin up local Azurite (Storage Emulator)/Redis/Postgres/ChromaDB. Upload a mock PDF to the router and check that the Storage Queue worker receives it.
   - Run extraction on test PDFs and inspect generated database alerts.
+
