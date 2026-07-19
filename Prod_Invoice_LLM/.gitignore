@@ -65,3 +65,12 @@ Domain_Adaptation_Impact_Analysis.md
 
 # invoice-fe-lite (local development frontend)
 invoice-fe-lite/
+
+# Temp debug scripts
+apps/invoice-be/temp_*.py
+clean.py
+count.py
+run_temp.py
+list_queues.sh
+peek.sh
+worker-app.yaml
