@@ -1,5 +1,4 @@
 import base64
-import os
 import logging
 from typing import List, Dict, Any, TypedDict, Optional
 from pydantic import BaseModel, Field
@@ -9,13 +8,21 @@ from config import get_settings
 from utils.llm import get_llm
 from utils.verification_tools import verify_line_items_math, verify_totals_math
 from utils.token_management import check_token_guardrails
+from services.storage import download_pdf_from_storage
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
 
 logger = logging.getLogger(__name__)
 
 # 1. Structured Output Schema
+# NOTE: every model below sets model_config = {"extra": "forbid"}. Azure/OpenAI structured
+# output (with_structured_output's default method="json_schema", strict mode) requires
+# `additionalProperties: false` on every object in the schema, recursively — Pydantic only
+# emits that when extra="forbid" is set. A bare Dict[str, Any] can never satisfy this (it
+# renders as {"type": "object", "additionalProperties": true} — the opposite of what's
+# required), so every previously-freeform nested list below is now a typed model instead.
 class InvoiceLineItem(BaseModel):
+    model_config = {"extra": "forbid"}
     description: str = Field(description="Description of the item or service")
     quantity: Optional[float] = Field(default=None, description="Quantity of the item")
     unit_price: Optional[float] = Field(default=None, description="Unit price of the item")
@@ -27,7 +34,52 @@ class InvoiceLineItem(BaseModel):
     tax_percent: Optional[float] = Field(default=None, description="Tax percentage applied to this line item")
     tax_amount: Optional[float] = Field(default=None, description="Tax amount applied to this line item")
 
+class TaxItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    tax_type: str = Field(description="e.g. 'VAT', 'GST', 'CGST', 'SGST', 'IGST', 'Sales Tax'")
+    rate_percent: Optional[float] = Field(default=None, description="Tax rate as a percentage")
+    amount: float = Field(description="Tax amount")
+
+class DiscountItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    discount_type: str = Field(description="e.g. 'trade discount', 'early-payment discount', 'promo code'")
+    percent: Optional[float] = Field(default=None, description="Discount rate as a percentage")
+    amount: float = Field(description="Discount amount")
+
+class DeductionItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    deduction_type: str = Field(description="e.g. 'retention/holdback', 'advance payment already received'")
+    amount: float = Field(description="Deduction amount")
+
+class TaxIdItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    id_type: str = Field(description="e.g. 'GSTIN', 'PAN', 'EU VAT', 'USt-IdNr', 'SIRET', 'EIN'")
+    value: str = Field(description="The tax ID value")
+    party: Optional[str] = Field(default=None, description="'vendor' or 'buyer'")
+
+class PaymentInstructionItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    method_type: str = Field(description="e.g. 'IBAN+SWIFT/BIC', 'ACH routing+account', 'UPI ID + IFSC'")
+    details: str = Field(description="The payment method details/value")
+
+class ReferenceItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    ref_type: str = Field(description="e.g. 'Sales Order', 'e-Way Bill', 'Credit Note', 'Debit Note'")
+    value: str = Field(description="The reference value")
+
+class AddressItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    address_type: str = Field(description="'billing', 'shipping', or 'vendor'")
+    text: str = Field(description="The full address text")
+    country: Optional[str] = Field(default=None, description="Country name or code")
+
+class ComplianceMetadataItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    key: str = Field(description="e.g. 'IRN', 'QR code', 'Peppol electronic address', 'SDI code'")
+    value: str = Field(description="The compliance metadata value")
+
 class InvoiceExtractionSchema(BaseModel):
+    model_config = {"extra": "forbid"}
     vendor_name: Optional[str] = Field(default=None, description="Name of the vendor")
     invoice_number: Optional[str] = Field(default=None, description="Invoice number")
     invoice_date: Optional[str] = Field(default=None, description="Date of the invoice (YYYY-MM-DD format if possible)")
@@ -41,14 +93,14 @@ class InvoiceExtractionSchema(BaseModel):
     currency: Optional[str] = Field(default=None, description="ISO 4217 currency code (e.g. INR, EUR, USD)")
     discount_percent: Optional[float] = Field(default=None, description="Top-level discount percentage")
     discount_amount: Optional[float] = Field(default=None, description="Top-level discount amount")
-    taxes: List[Dict[str, Any]] = Field(default=[], description="Detailed list of taxes: {tax_type: str, rate_percent: float, amount: float}")
-    discounts: List[Dict[str, Any]] = Field(default=[], description="Detailed list of discounts: {discount_type: str, percent: float, amount: float}")
-    deductions: List[Dict[str, Any]] = Field(default=[], description="Detailed list of deductions: {deduction_type: str, amount: float}")
-    tax_ids: List[Dict[str, Any]] = Field(default=[], description="List of tax registration numbers: {id_type: str, value: str, party: 'vendor'|'buyer'}")
-    payment_instructions: List[Dict[str, Any]] = Field(default=[], description="Payment methods: {method_type: str, details: str}")
-    references: List[Dict[str, Any]] = Field(default=[], description="Secondary document references: {ref_type: str, value: str}")
-    addresses: List[Dict[str, Any]] = Field(default=[], description="Addresses: {address_type: 'billing'|'shipping'|'vendor', text: str, country: str}")
-    compliance_metadata: List[Dict[str, Any]] = Field(default=[], description="E-invoicing compliance metadata: {key: str, value: str}")
+    taxes: List[TaxItem] = Field(default=[], description="Detailed list of taxes")
+    discounts: List[DiscountItem] = Field(default=[], description="Detailed list of discounts")
+    deductions: List[DeductionItem] = Field(default=[], description="Detailed list of deductions")
+    tax_ids: List[TaxIdItem] = Field(default=[], description="List of tax registration numbers")
+    payment_instructions: List[PaymentInstructionItem] = Field(default=[], description="Payment methods")
+    references: List[ReferenceItem] = Field(default=[], description="Secondary document references")
+    addresses: List[AddressItem] = Field(default=[], description="Addresses")
+    compliance_metadata: List[ComplianceMetadataItem] = Field(default=[], description="E-invoicing compliance metadata")
 
 
 # 2. State definition
@@ -74,12 +126,14 @@ def pdf_to_base64_images(file_path: str) -> List[str]:
     Converts PDF pages into base64 visual PNG strings to support table/column layout mapping.
     """
     base64_images = []
-    if not os.path.exists(file_path):
-        logger.warning("PDF file not found for base64 conversion: %s", file_path)
-        return base64_images
-        
     try:
-        doc = fitz.open(file_path)
+        pdf_bytes = download_pdf_from_storage(file_path)
+    except Exception as e:
+        logger.warning("PDF file not found for base64 conversion: %s (%s)", file_path, e)
+        return base64_images
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         for page in doc:
             pix = page.get_pixmap()
             img_bytes = pix.tobytes("png")

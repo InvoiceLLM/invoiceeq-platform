@@ -9,6 +9,7 @@ from agents.extraction_agent import run_extraction_agent
 logger = logging.getLogger(__name__)
 
 class ConstraintList(BaseModel):
+    model_config = {"extra": "forbid"}
     constraints: List[str] = Field(description="The refined list of layout constraints/rules")
 
 SYSTEM_PROMPT = (
@@ -26,7 +27,7 @@ def refine_constraints(user_message: str, current_constraints: List[str]) -> Lis
     """
     Uses LLM to refine the list of rules/constraints based on user conversational corrections.
     """
-    llm = get_llm(temperature=0.0)
+    llm = get_llm()
     try:
         structured_llm = llm.with_structured_output(ConstraintList)
         prompt = f"Current constraints: {current_constraints}\nUser feedback: {user_message}"

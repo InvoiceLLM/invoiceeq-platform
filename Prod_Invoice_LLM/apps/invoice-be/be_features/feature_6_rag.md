@@ -16,6 +16,8 @@ Construct document indexers and semantic chat clients utilizing vector similarit
    - **RAG route**: `chroma_client.py::query_invoice_chunks(tenant_id, user_message, limit=5)` always returns the top 5 chunks (Task 6.7 — no distance cutoff applied yet), which get concatenated into the LLM's context along with dedup'd citation links (`[Source: {vendor} (Page {n})](file:///api/v1/invoices/{id}/pdf)`) appended to the answer text.
    - **CHAT route**: a plain LLM call with the chat-history transcript, no retrieval.
 
+**P0 fix (Jul 19, 2026)**: `QueryRoutingSchema` and `SQLGenerationSchema` were missing `model_config = {"extra": "forbid"}`, meaning their structured-output calls had no `additionalProperties: false` on the generated JSON schema — the same OpenAI strict-mode rejection found in `InvoiceExtractionSchema` (see `feature_2_pipeline_extraction.md`). Fixed by adding `extra="forbid"` to both.
+
 ### Tasks
 - [x] **Task 6.1: Setup Chat Sessions & Threads API**
   - Implement endpoints:

@@ -9,7 +9,7 @@ Handles authentication, invoice processing, AI agent orchestration, audit workfl
 |----------------|---------------------------------------------|
 | Framework      | FastAPI (Python)                            |
 | ORM            | SQLAlchemy / SQLModel                       |
-| Task Queue     | Celery + Redis                              |
+| Task Queue     | Azure Storage Queues (background worker), Redis (Pub/Sub + cache) |
 | Database       | PostgreSQL (Azure Managed, Tenant-Isolated) |
 | Vector DB      | ChromaDB (Managed)                          |
 | LLM Provider   | Azure OpenAI (GPT-4 class models)           |
@@ -26,23 +26,25 @@ invoice-be/
 │   ├── audit.py                 # Flagging, Approve/Reject/Paid Logic
 │   ├── chat.py                  # Semantic Query Interface
 │   ├── dashboard.py             # Metrics & Filtering
+│   ├── connectors.py            # Google Drive / Salesforce OAuth + import
 │   └── trainer.py               # Conversational Feedback Loops & Rule Registry
 ├── agents/
 │   ├── extraction_agent.py      # Data Extraction & Verification Tools
 │   ├── query_agent.py           # RAG Logic & Citation Handler
 │   └── trainer_agent.py         # Rule-based Structural Tags
-├── workers/
-│   ├── celery_app.py            # Celery Configuration
-│   └── tasks.py                 # Background Tasks (Chunking, Vectorization, Parsing)
+├── queue_worker/
+│   ├── main_worker.py           # Azure Storage Queue polling loop (standalone process)
+│   └── handlers.py              # Background Tasks (OCR, extraction, chunking, vectorization)
 ├── mcp_servers/
-│   ├── ingestion_mcp.py         # Connector for SharePoint/Drive
-│   └── action_mcp.py            # Webhooks/Notification Logic
+│   └── ingestion_mcp.py         # Connector for Google Drive/Salesforce (not yet wired into an agent)
+├── alembic/                     # Database migrations (env.py + versions/)
 ├── tests/                       # Unit & integration tests
 ├── models.py                    # SQLAlchemy/SQLModel Definitions (Tenant-Isolated)
 ├── chroma_client.py             # Vector DB Connection Logic
 ├── config.py                    # Application configuration & settings
 ├── dependencies.py              # FastAPI dependencies (tenant extraction, auth)
-├── main.py                      # FastAPI Entry Point
+├── entrypoint.sh                # Container CMD: runs `alembic upgrade head` then starts uvicorn
+├── main.py                      # FastAPI Entry Point (API only — does not process the queue)
 ├── pyproject.toml               # Python project configuration and dependencies
 └── uv.lock                      # Lockfile for reproducible builds
 ```
@@ -92,10 +94,15 @@ If you add or modify database tables in [models.py](file:///c:/Users/S%20Banerje
 2. **Apply Local Updates**: Run `uv run alembic upgrade head` to apply it to your local container.
 3. **Commit to Git**: Check in the new generated revision script inside your feature branch so other developers get the updates when they pull.
 
-### 5. Run Backend Server
-Launch the FastAPI development reload server:
+### 5. Run Backend Server + Queue Worker
+`main.py` only serves the HTTP API — it no longer processes the background queue itself (it used to run the worker as an embedded thread; that was removed since `queue-worker` is deployed as its own separately-scaled Container App in Azure, and running both in-process locally masked whether the standalone worker actually worked). To get a fully working local pipeline (upload → OCR → extraction), run both in separate terminals:
+
 ```bash
+# Terminal 1 — API server
 uv run uvicorn main:app --reload
+
+# Terminal 2 — Queue worker (polls Azure Storage Queue / Azurite)
+uv run python -m queue_worker.main_worker
 ```
 
 ## API Endpoints
@@ -105,10 +112,10 @@ uv run uvicorn main:app --reload
 | GET    | `/api/v1/invoices/status/{job_id}`     | Poll processing status (single upload, 1–5 PDFs)    |
 | GET    | `/api/v1/invoices/stream/{batch_id}`   | **SSE stream** for bulk upload status (6+ PDFs)      |
 | PUT    | `/api/v1/audit/resolve/{invoice_id}`   | Save manual modifications, dismiss/clear alerts, and mark as PAID or REJECTED |
-| POST   | `/api/v1/chat/query`                   | Semantic search with PDF citations                   |
+| POST   | `/api/v1/chat/sessions/{session_id}/message` | Semantic search / SQL / casual chat, with PDF citations |
 | GET    | `/api/v1/dashboard/metrics`            | Aggregated metrics by tenant & status                |
-| POST   | `/api/v1/trainer/chat`                 | Conversational training interface to submit layout rules in plain English |
-| POST   | `/api/v1/trainer/rules`                | Commit and save structured layout rules under `#VendorName` template registry |
+| POST   | `/api/v1/trainer/sessions/{session_id}/chat`   | Conversational training interface to submit layout rules in plain English |
+| POST   | `/api/v1/trainer/sessions/{session_id}/commit` | Commit and save structured layout rules under the vendor's template registry |
 
 ## Real-Time Notification Strategy (Hybrid)
 | Scenario       | Mechanism                  | How It Works                                                     |
@@ -116,7 +123,7 @@ uv run uvicorn main:app --reload
 | 1–5 PDFs       | **Polling** (React Query)  | Frontend polls `GET /status/{job_id}` every 2 seconds            |
 | 6+ PDFs (bulk) | **SSE** (Server-Sent Events)| Frontend opens `GET /stream/{batch_id}` — backend pushes updates |
 
-- Celery workers publish completion events to **Redis Pub/Sub** (`batch:{batch_id}` channel)
+- `queue_worker` (a separately deployed/scaled process, not `invoice-be` itself) publishes completion events to **Redis Pub/Sub** (`invoice.update.{batch_id}` channel)
 - SSE endpoint subscribes to that Redis channel and streams events to the browser
 - Frontend uses the browser-native `EventSource` API (no extra libraries)
 

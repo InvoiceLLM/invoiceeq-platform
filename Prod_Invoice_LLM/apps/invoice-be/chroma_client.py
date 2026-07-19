@@ -4,6 +4,7 @@ import fitz
 import chromadb
 from sentence_transformers import SentenceTransformer
 from config import get_settings
+from services.storage import download_pdf_from_storage
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,14 @@ def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | N
     generate embedding vectors, and index chunks into the Chroma collection.
     """
     logger.info("Indexing invoice document %s for tenant %s", invoice_id, tenant_id)
-    if not os.path.exists(file_path):
-        logger.warning("PDF file not found for RAG indexing: %s", file_path)
-        return
-        
     try:
-        doc = fitz.open(file_path)
+        pdf_bytes = download_pdf_from_storage(file_path)
+    except Exception as e:
+        logger.warning("PDF file not found for RAG indexing: %s (%s)", file_path, e)
+        return
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
         logger.error("Failed to open PDF for RAG indexing: %s", e)
         return

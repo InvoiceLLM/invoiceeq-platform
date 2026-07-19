@@ -1,7 +1,5 @@
 # pyrefly: ignore [missing-import]
-import threading
 import logging
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import get_settings
@@ -9,19 +7,7 @@ from routers import auth, invoices, chat, audit, dashboard, connectors, trainer
 
 logger = logging.getLogger(__name__)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Start the Azure Queue worker in a background daemon thread on startup."""
-    try:
-        from queue_worker.main_worker import poll_queue
-        worker_thread = threading.Thread(target=poll_queue, daemon=True, name="queue-worker")
-        worker_thread.start()
-        logger.info("Queue worker thread started.")
-    except Exception as e:
-        logger.error("Failed to start queue worker: %s", e)
-    yield
-
-app = FastAPI(title="Invoice AI", version="1.0", lifespan=lifespan)
+app = FastAPI(title="Invoice AI", version="1.0")
 
 settings = get_settings()
 

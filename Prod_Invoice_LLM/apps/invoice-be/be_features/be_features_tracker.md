@@ -8,7 +8,7 @@ This document tracks the implementation progress of the reconciled backend featu
 
 ## Feature Tracker
 
-- `[/]` **MAJOR REFACTOR**: Replace Celery with Azure Storage Queues, retain Redis for caching.
+- `[x]` **MAJOR REFACTOR**: Replace Celery with Azure Storage Queues, retain Redis for caching. *(Jul 19, 2026 — closed the last loose end: `main.py` was also running an embedded copy of the queue poller alongside the dedicated `queue-worker` Container App; removed, see `feature_2_pipeline_extraction.md`.)*
 
 - `[x]` [Feature 1: Multi-Tenant Authentication & Security Scoping](feature_1_auth.md)
 - `[x]` [Feature 2: Ingestion, Storage & Extraction Pipeline](feature_2_pipeline_extraction.md) *(merged with former Feature 5 — see doc header)* — ⚠️ known regression, see Gap 24
@@ -22,7 +22,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 9: Third-Party Connectors & Ingestion](feature_9_connectors.md)
 - `[x]` [Feature 10: AI Trainer Sandbox & Rules Registry](feature_10_trainer.md) *(redesigned 2026-07-13 into Global / existing-production-vendor / new-vendor rule scopes — see doc header)*
 - `[ ]` [Feature 11: Stripe Billing & Subscriptions API](feature_11_billing.md) — `routers/billing.py` not yet implemented, see Gap 14
-- `[ ]` [Feature 12: Alembic Database Migrations](feature_12_alembic.md)
+- `[x]` [Feature 12: Alembic Database Migrations](feature_12_alembic.md) — verified against a throwaway local Postgres; local/Azure dev DBs still need manual reconciliation before their first `alembic upgrade head`, see doc
 
 > Note: Features 4, 5, 6, 7, 8, 9, 10 are marked `[x]` because the corresponding routers/agents are implemented and functioning — the per-task checkboxes inside those individual files were simply never ticked off after the work landed. That's cosmetic bookkeeping, not a real gap, and has been left as-is rather than backfilled.
 

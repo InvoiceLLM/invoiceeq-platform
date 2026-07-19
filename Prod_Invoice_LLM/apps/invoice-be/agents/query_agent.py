@@ -7,10 +7,12 @@ from chroma_client import query_invoice_chunks
 logger = logging.getLogger(__name__)
 
 class QueryRoutingSchema(BaseModel):
+    model_config = {"extra": "forbid"}
     route: str = Field(description="The target route for this query. Must be exactly 'RAG', 'SQL', or 'CHAT'")
     reasoning: str = Field(description="Brief reason explaining the routing decision.")
 
 class SQLGenerationSchema(BaseModel):
+    model_config = {"extra": "forbid"}
     sql: str = Field(description="The exact read-only SELECT SQL statement to execute. Must filter strictly by tenant_id.")
 
 def classify_query(query: str) -> str:
