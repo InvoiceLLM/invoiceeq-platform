@@ -1,0 +1,41 @@
+name: Cleanup Stuck Records
+
+on:
+  schedule:
+    # Run every hour
+    - cron: '0 * * * *'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        working-directory: ./Prod_Invoice_LLM/apps/invoice-be
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run cleanup script
+        working-directory: ./Prod_Invoice_LLM/apps/invoice-be
+        env:
+          DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          python cleanup_stuck_records.py --minutes 30
+
+      - name: Run dry-run cleanup (for testing)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: ./Prod_Invoice_LLM/apps/invoice-be
+        env:
+          DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          python cleanup_stuck_records.py --minutes 30 --dry-run
