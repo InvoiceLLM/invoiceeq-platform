@@ -199,7 +199,7 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
                     + "\n".join(f"- {fb}" for fb in feedback)
                     + "\nPlease correct these math/verification issues in the next output."
                 )
-                messages[0].content += feedback_msg
+                messages[0].content.append({"type": "text", "text": feedback_msg})
             result = structured_llm.invoke(messages)
         else:
             if state.get("complexity") == "COMPLEX":

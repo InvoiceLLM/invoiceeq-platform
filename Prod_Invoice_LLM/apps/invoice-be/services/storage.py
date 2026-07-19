@@ -1,6 +1,7 @@
 import os
 import logging
 from azure.storage.blob import BlobServiceClient
+from azure.core.exceptions import ResourceNotFoundError
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -80,4 +81,25 @@ def download_pdf_from_storage(file_path: str) -> bytes:
         logger.info("Reading PDF locally from: %s", file_path)
         with open(file_path, "rb") as f:
             return f.read()
+
+def delete_pdf_from_storage(file_path: str) -> None:
+    """
+    Deletes an invoice PDF from storage (Azure Blob Storage or Local Filesystem).
+    Mirrors download_pdf_from_storage's azure:// vs. local path branching.
+    A missing blob/file is treated as already-deleted, not an error.
+    """
+    if file_path.startswith("azure://"):
+        parts = file_path.replace("azure://", "").split("/", 1)
+        container_name = parts[0]
+        blob_name = parts[1]
+
+        blob_service_client = BlobServiceClient.from_connection_string(settings.AZURE_STORAGE_CONNECTION_STRING)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+        try:
+            blob_client.delete_blob()
+        except ResourceNotFoundError:
+            logger.info("Blob already absent for %s, nothing to delete.", file_path)
+    else:
+        if os.path.exists(file_path):
+            os.remove(file_path)
 

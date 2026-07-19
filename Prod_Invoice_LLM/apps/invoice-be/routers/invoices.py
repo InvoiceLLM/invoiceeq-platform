@@ -11,8 +11,9 @@ from starlette.concurrency import run_in_threadpool
 from config import settings
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
-from models import Invoice, Tenant
-from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
+from models import Invoice, Tenant, AuditLog
+from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage, delete_pdf_from_storage
+from chroma_client import delete_invoice_chunks
 from azure.storage.queue import QueueClient
 from config import get_settings
 
@@ -355,3 +356,44 @@ async def get_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename={invoice_id}.pdf"}
     )
+
+
+@router.delete("/{invoice_id}")
+async def delete_invoice(
+    invoice_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Permanently deletes an invoice: the Postgres row, the PDF in Blob Storage,
+    its indexed vector chunks in ChromaDB, and any related audit log entries.
+    Enforces tenant isolation. Blob/vector cleanup is best-effort — a failure there
+    logs a warning but does not block removing the Postgres row, so a flaky
+    downstream store can't make an invoice permanently undeletable.
+    """
+    query = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
+    invoice = db_session.exec(query).first()
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found or access denied."
+        )
+
+    try:
+        await run_in_threadpool(delete_pdf_from_storage, invoice.file_path)
+    except Exception as e:
+        logger.warning("Failed to delete PDF for invoice %s: %s", invoice_id, e)
+
+    try:
+        await run_in_threadpool(delete_invoice_chunks, str(invoice_id))
+    except Exception as e:
+        logger.warning("Failed to delete vector chunks for invoice %s: %s", invoice_id, e)
+
+    audit_stmt = select(AuditLog).where(AuditLog.invoice_id == invoice_id, AuditLog.tenant_id == context.tenant_id)
+    for log in db_session.exec(audit_stmt).all():
+        db_session.delete(log)
+
+    db_session.delete(invoice)
+    await run_in_threadpool(db_session.commit)
+
+    return {"success": True}

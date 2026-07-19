@@ -2,17 +2,19 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { 
-  FileText, 
-  ExternalLink, 
-  MoreHorizontal, 
-  AlertCircle, 
-  CheckCircle, 
-  Loader2, 
-  Eye, 
-  FileDown 
+import {
+  FileText,
+  ExternalLink,
+  MoreHorizontal,
+  AlertCircle,
+  CheckCircle,
+  Loader2,
+  Eye,
+  FileDown,
+  Trash2
 } from "lucide-react";
 import { formatCurrency, formatDate } from "../../lib/utils";
+import { apiClient } from "../../lib/apiClient";
 
 export interface InvoiceRecord {
   id: string;
@@ -27,13 +29,35 @@ export interface InvoiceRecord {
 interface RecentInvoicesTableProps {
   invoices: InvoiceRecord[];
   isLoading: boolean;
+  onDelete?: (id: string) => void;
 }
 
 export default function RecentInvoicesTable({
   invoices = [],
   isLoading,
+  onDelete,
 }: RecentInvoicesTableProps) {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (inv: InvoiceRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setActiveMenuId(null);
+    const label = inv.invoice_number || inv.id;
+    if (!window.confirm(`Delete invoice ${label}? This permanently removes the PDF, extracted data, and indexed chat content.`)) {
+      return;
+    }
+    setDeletingId(inv.id);
+    try {
+      await apiClient.delete(`/invoices/${inv.id}`);
+      onDelete?.(inv.id);
+    } catch (err) {
+      console.error("Failed to delete invoice", err);
+      window.alert("Failed to delete invoice. Please try again.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     const rawStatus = (status || "PROCESSING").toUpperCase();
@@ -221,7 +245,7 @@ export default function RecentInvoicesTable({
                         </Link>
                         
                         <a
-                          href={`http://localhost:8000/invoices/${inv.id}/pdf`}
+                          href={`/api/invoices/${inv.id}/pdf`}
                           target="_blank"
                           rel="noreferrer"
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300 hover:bg-[#1E293B] hover:text-white transition-colors"
@@ -229,6 +253,18 @@ export default function RecentInvoicesTable({
                           <FileDown className="w-3.5 h-3.5 text-slate-400" />
                           Download Original PDF
                         </a>
+
+                        <div className="h-px bg-[#222D3D] my-1" />
+
+                        <button
+                          type="button"
+                          disabled={deletingId === inv.id}
+                          onClick={(e) => handleDelete(inv, e)}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {deletingId === inv.id ? "Deleting..." : "Delete Invoice"}
+                        </button>
                       </div>
                     )}
                   </td>

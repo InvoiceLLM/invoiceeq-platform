@@ -110,6 +110,14 @@ def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | N
     )
     logger.info("Successfully indexed %d page chunks for invoice %s", len(chunks), invoice_id)
 
+def delete_invoice_chunks(invoice_id: str) -> None:
+    """
+    Deletes all indexed vector chunks for a given invoice from the invoice_chunks collection.
+    """
+    client = get_chroma_client()
+    collection = client.get_or_create_collection(name="invoice_chunks")
+    collection.delete(where={"invoice_id": str(invoice_id)})
+
 def query_invoice_chunks(tenant_id: str, query_text: str, limit: int = 5) -> list[dict]:
     """
     Query indexed invoice chunks, isolating results strictly by requesting tenant_id.

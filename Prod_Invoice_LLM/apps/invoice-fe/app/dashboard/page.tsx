@@ -156,6 +156,11 @@ export default function DashboardPage() {
     setFilters(newFilters);
   };
 
+  const handleInvoiceDeleted = (id: string) => {
+    setInvoices((prev) => prev.filter((inv: any) => inv.id !== id));
+    setAllInvoices((prev) => prev.filter((inv: any) => inv.id !== id));
+  };
+
   // Build unique lists of client/vendor names and tags from historical data
   const uniqueVendors = Array.from(
     new Set([
@@ -199,7 +204,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Table list - takes 2 cols on lg screens */}
         <div className="lg:col-span-2">
-          <RecentInvoicesTable invoices={invoices} isLoading={isLoading} />
+          <RecentInvoicesTable invoices={invoices} isLoading={isLoading} onDelete={handleInvoiceDeleted} />
         </div>
 
         {/* Vendors bar chart - takes 1 col on lg screens */}

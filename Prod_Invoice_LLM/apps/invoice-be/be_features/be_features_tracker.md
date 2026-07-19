@@ -2,7 +2,7 @@
 
 This document tracks the implementation progress of the reconciled backend features for the `invoice-be` component, aligned with the frontend screen requirements. Feature spec files (`feature_1..11_*.md`) describe the target design only — every open item, bug, and pending build task is tracked here instead, so status doesn't drift out of sync across files.
 
-**Current Status:** ~75% complete against [Technical_Architecture_Document.md](../../../Technical_Architecture_Document.md), with 32 open items below.
+**Current Status:** ~75% complete against [Technical_Architecture_Document.md](../../../Technical_Architecture_Document.md), with 21 open items below. *(Recalculated Jul 19, 2026 — the count had drifted stale after several gaps were closed without the header being updated; Gaps 3 and 4 were also reopened after being found miscredited as done, see below.)*
 
 ---
 
@@ -11,7 +11,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` **MAJOR REFACTOR**: Replace Celery with Azure Storage Queues, retain Redis for caching. *(Jul 19, 2026 — closed the last loose end: `main.py` was also running an embedded copy of the queue poller alongside the dedicated `queue-worker` Container App; removed, see `feature_2_pipeline_extraction.md`.)*
 
 - `[x]` [Feature 1: Multi-Tenant Authentication & Security Scoping](feature_1_auth.md)
-- `[x]` [Feature 2: Ingestion, Storage & Extraction Pipeline](feature_2_pipeline_extraction.md) *(merged with former Feature 5 — see doc header)* — ⚠️ known regression, see Gap 24
+- `[x]` [Feature 2: Ingestion, Storage & Extraction Pipeline](feature_2_pipeline_extraction.md) *(merged with former Feature 5 — see doc header)*
 - `[x]` [Feature 3: Status Tracking & Real-Time SSE Streams](feature_3_sse.md)
 - `[ ]` [Feature 3.1: Duplicate Detection & Ingestion UI Refinements](feature_3.1_fix_ftr2_3.md)
 
@@ -21,7 +21,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 8: Dashboard Metrics & Analytics API](feature_8_dashboard.md)
 - `[x]` [Feature 9: Third-Party Connectors & Ingestion](feature_9_connectors.md)
 - `[x]` [Feature 10: AI Trainer Sandbox & Rules Registry](feature_10_trainer.md) *(redesigned 2026-07-13 into Global / existing-production-vendor / new-vendor rule scopes — see doc header)*
-- `[ ]` [Feature 11: Stripe Billing & Subscriptions API](feature_11_billing.md) — `routers/billing.py` not yet implemented, see Gap 14
+- `[ ]` [Feature 11: Stripe Billing & Subscriptions API](feature_11_billing.md) — `routers/billing.py` not yet implemented at all; the whole feature is the gap, no dedicated Gap number
 - `[x]` [Feature 12: Alembic Database Migrations](feature_12_alembic.md) — verified against a throwaway local Postgres; local/Azure dev DBs still need manual reconciliation before their first `alembic upgrade head`, see doc
 
 > Note: Features 4, 5, 6, 7, 8, 9, 10 are marked `[x]` because the corresponding routers/agents are implemented and functioning — the per-task checkboxes inside those individual files were simply never ticked off after the work landed. That's cosmetic bookkeeping, not a real gap, and has been left as-is rather than backfilled.
@@ -33,10 +33,10 @@ This document tracks the implementation progress of the reconciled backend featu
 Gaps below are grouped by the feature file whose target design (in `Technical_Architecture_Document.md` and the corresponding `feature_N_*.md`) they still need to catch up to.
 
 **Extraction pipeline** ([feature_2_pipeline_extraction.md](feature_2_pipeline_extraction.md)):
-- `[x]` **Gap 1: Complexity Classification Node** — invoice classifier with weighted scoring, routes standard vs. dynamic-schema extraction
-- `[x]` **Gap 2: Evaluator Router** — retry logic with feedback-driven fallback to re-extraction
-- `[x]` **Gap 3: Critic Node** — field-level confidence review and self-correction feedback loop
-- `[x]` **Gap 4: Dynamic QA Node** — custom Q&A generation per invoice on the dynamic-schema path
+- `[x]` **Gap 1: Complexity Classification Node** — invoice classifier exists and routes standard vs. complex, but simpler than originally specced: keyword/field-presence match, not weighted layout/tax/line-item scoring *(Task 2.12)*
+- `[x]` **Gap 2: Evaluator Router** — retry logic with feedback-driven fallback to re-extraction *(Task 2.16)*
+- `[ ]` **Gap 3: Critic Node** — field-level confidence review and self-correction feedback loop. **Reopened Jul 19, 2026**: verified against the actual LangGraph definition — no such node or logic exists. `field_confidence` is populated (Gap 17) but nothing reads it back; this was previously miscredited as done alongside Gap 2 under one combined task. See `feature_2_pipeline_extraction.md` Task 2.32
+- `[ ]` **Gap 4: Dynamic QA Node** — custom Q&A generation per invoice on the dynamic-schema path. **Reopened Jul 19, 2026**: verified against the actual code — the `COMPLEX` classification only swaps in a different prompt string against the same fixed schema; no distinct QA-generation step exists. See `feature_2_pipeline_extraction.md` Task 2.33
 
 
 - `[x]` **Gap 9: Layer 2 Duplicate Detection** — post-extraction `invoice_number` + `vendor_name` match (Layer 1 SHA-256 hash match is done)
