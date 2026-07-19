@@ -124,7 +124,8 @@ def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Di
 def extract_node(state: ExtractionState) -> Dict[str, Any]:
     """Node state for executing LLM structured output extraction."""
     settings = get_settings()
-    llm = get_llm(temperature=0.0, max_tokens=4096)
+    # Remove temperature parameter as some models don't support it
+    llm = get_llm(max_tokens=4096)
     rules = state.get("rules")
     retry_count = state.get("retry_count") or 0
     feedback = state.get("feedback") or []

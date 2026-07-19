@@ -231,7 +231,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                         func.lower(Invoice.vendor_name) == vendor_name.lower()
                     )
                     dup_invoice = session.exec(dup_stmt).first()
-                    if dup_invoice:
+                    if dup_invoice and dup_invoice.id:
                         dup_alert = {
                             "type": "duplicate_invoice",
                             "message": f"An invoice with the same number ({invoice_number}) and vendor ({vendor_name}) already exists (ID: {dup_invoice.id})."

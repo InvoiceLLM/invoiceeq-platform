@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Automated cleanup script for stuck PROCESSING records.
+One-time cleanup script for stuck PROCESSING records and orphaned files.
 Deletes invoice records that have been in PROCESSING status for more than 30 minutes
 and their corresponding PDF files from storage.
-Intended for CI/CD pipeline integration.
+Also cleans up orphaned PDF files in storage that have no corresponding database records.
 """
 
 import os
@@ -16,6 +16,7 @@ from sqlmodel import Session, select, create_engine
 from config import get_settings
 from models import Invoice
 from services.storage import delete_pdf_from_storage
+from azure.storage.blob import BlobServiceClient
 
 # Configure logging
 logging.basicConfig(
@@ -51,8 +52,8 @@ def cleanup_stuck_records(minutes_threshold: int = 30, dry_run: bool = False):
         logger.info(f"Found {len(stuck_records)} stuck PROCESSING records")
         
         if not stuck_records:
-            logger.info("No stuck records found. Exiting.")
-            return
+            logger.info("No stuck records found.")
+            return 0
         
         # Display records that will be deleted
         logger.info("Records to be deleted:")
@@ -61,7 +62,7 @@ def cleanup_stuck_records(minutes_threshold: int = 30, dry_run: bool = False):
         
         if dry_run:
             logger.info("DRY RUN - No actual deletions performed")
-            return
+            return len(stuck_records)
         
         # Delete records and their files
         deleted_count = 0
@@ -103,10 +104,84 @@ def cleanup_stuck_records(minutes_threshold: int = 30, dry_run: bool = False):
             logger.warning("Storage errors:")
             for error in storage_errors:
                 logger.warning(f"  - {error}")
+        
+        return deleted_count
+
+def cleanup_orphaned_files(dry_run: bool = False):
+    """
+    Find and delete PDF files in Azure Blob Storage that have no corresponding database records.
+    
+    Args:
+        dry_run: If True, only report what would be deleted without actually deleting
+    """
+    settings = get_settings()
+    engine = create_engine(settings.DATABASE_URL)
+    
+    logger.info("Looking for orphaned PDF files in storage...")
+    
+    try:
+        blob_service_client = BlobServiceClient.from_connection_string(settings.AZURE_STORAGE_CONNECTION_STRING)
+        container_client = blob_service_client.get_container_client("invoices")
+        
+        # Get all PDF files from storage
+        blob_list = container_client.list_blobs(name_starts_with="tenants/")
+        pdf_files = [blob.name for blob in blob_list if blob.name.endswith('.pdf')]
+        
+        logger.info(f"Found {len(pdf_files)} PDF files in storage")
+        
+        # Get all file paths from database
+        with Session(engine) as session:
+            statement = select(Invoice.file_path)
+            db_files = session.exec(statement).all()
+            db_file_paths = set()
+            for fp in db_files:
+                if fp.startswith("azure://"):
+                    # Convert azure://container/path to container/path
+                    db_file_paths.add(fp.replace("azure://", ""))
+        
+        # Find orphaned files
+        orphaned_files = []
+        for pdf_file in pdf_files:
+            storage_path = f"invoices/{pdf_file}"
+            if storage_path not in db_file_paths:
+                orphaned_files.append(pdf_file)
+        
+        logger.info(f"Found {len(orphaned_files)} orphaned PDF files")
+        
+        if not orphaned_files:
+            logger.info("No orphaned files found.")
+            return 0
+        
+        # Display orphaned files
+        logger.info("Orphaned files to be deleted:")
+        for file in orphaned_files:
+            logger.info(f"  - {file}")
+        
+        if dry_run:
+            logger.info("DRY RUN - No actual deletions performed")
+            return len(orphaned_files)
+        
+        # Delete orphaned files
+        deleted_count = 0
+        for file in orphaned_files:
+            try:
+                blob_client = container_client.get_blob_client(file)
+                blob_client.delete_blob()
+                logger.info(f"  ✓ Deleted orphaned file: {file}")
+                deleted_count += 1
+            except Exception as e:
+                logger.error(f"  ✗ Failed to delete {file}: {str(e)}")
+        
+        logger.info(f"Successfully deleted {deleted_count} orphaned files")
+        return deleted_count
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup orphaned files: {str(e)}")
+        return 0
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Cleanup stuck PROCESSING records and their PDF files"
+        description="One-time cleanup of stuck PROCESSING records and orphaned files"
     )
     parser.add_argument(
         "--minutes",
@@ -119,11 +194,27 @@ def main():
         action="store_true",
         help="Only report what would be deleted without actually deleting"
     )
+    parser.add_argument(
+        "--orphaned-only",
+        action="store_true",
+        help="Only cleanup orphaned files, skip stuck records"
+    )
     
     args = parser.parse_args()
     
     try:
-        cleanup_stuck_records(minutes_threshold=args.minutes, dry_run=args.dry_run)
+        total_deleted = 0
+        
+        if not args.orphaned_only:
+            stuck_deleted = cleanup_stuck_records(minutes_threshold=args.minutes, dry_run=args.dry_run)
+            total_deleted += stuck_deleted
+        
+        orphaned_deleted = cleanup_orphaned_files(dry_run=args.dry_run)
+        total_deleted += orphaned_deleted
+        
+        logger.info(f"=== TOTAL DELETED ===")
+        logger.info(f"Total items deleted: {total_deleted}")
+        
         sys.exit(0)
     except Exception as e:
         logger.error(f"Cleanup failed: {str(e)}")
