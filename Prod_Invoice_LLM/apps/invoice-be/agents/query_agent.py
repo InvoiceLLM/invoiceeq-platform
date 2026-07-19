@@ -15,7 +15,7 @@ class SQLGenerationSchema(BaseModel):
 
 def classify_query(query: str) -> str:
     """Classifies user queries into RAG, SQL, or CHAT."""
-    llm = get_llm(temperature=0.0)
+    llm = get_llm()
     try:
         structured_llm = llm.with_structured_output(QueryRoutingSchema)
         result = structured_llm.invoke(
@@ -110,7 +110,7 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     route = classify_query(user_message)
     logger.info("Selected Route: %s", route)
     
-    llm = get_llm(temperature=0.0)
+    llm = get_llm()
     response_text = ""
     generated_sql = None
     citations = []
