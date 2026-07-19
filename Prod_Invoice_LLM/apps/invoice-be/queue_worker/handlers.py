@@ -90,7 +90,7 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
         
         poller = client.begin_analyze_document(
             model_id="prebuilt-invoice",
-            analyze_request=pdf_bytes,
+            body=pdf_bytes,
             content_type="application/octet-stream"
         )
         result = poller.result()
