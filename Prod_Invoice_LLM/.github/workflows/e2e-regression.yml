@@ -1,0 +1,96 @@
+name: E2E Regression Suite (On-Demand)
+
+# Full end-to-end regression suite: real LLM + real Document Intelligence calls
+# against an ephemeral local stack (Postgres/Redis/Chroma/Azurite via docker-compose).
+# Manual trigger only — each run makes real Azure OpenAI/Document Intelligence
+# calls and costs money, so this intentionally does not run on every push.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      RESOURCE_GROUP: invoice-llm-dev
+      KEY_VAULT: kv-invoice-llm-dev
+      WORKDIR: Prod_Invoice_LLM/apps/invoice-be
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Fetch LLM/OCR secrets from Key Vault
+        id: kv
+        run: |
+          echo "openai_key=$(az keyvault secret show --vault-name $KEY_VAULT --name AZURE-OPENAI-API-KEY --query value -o tsv)" >> "$GITHUB_OUTPUT"
+          echo "docintel_key=$(az keyvault secret show --vault-name $KEY_VAULT --name AZURE-DOC-INTEL-KEY --query value -o tsv)" >> "$GITHUB_OUTPUT"
+
+      - name: Start local infra (Postgres, Redis, Chroma, Azurite)
+        run: docker compose up -d --wait
+        working-directory: Prod_Invoice_LLM
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --group dev
+        working-directory: ${{ env.WORKDIR }}
+
+      - name: Generate ephemeral token encryption key
+        id: keygen
+        run: echo "key=$(uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")" >> "$GITHUB_OUTPUT"
+        working-directory: ${{ env.WORKDIR }}
+
+      - name: Run Alembic migrations
+        env:
+          DATABASE_URL: "postgresql://postgres:localpassword123@localhost:5433/invoice_db"
+        run: uv run alembic upgrade head
+        working-directory: ${{ env.WORKDIR }}
+
+      - name: Start backend + queue worker
+        env:
+          DATABASE_URL: "postgresql://postgres:localpassword123@localhost:5433/invoice_db"
+          REDIS_URL: "redis://localhost:6379"
+          CHROMA_HOST: "localhost"
+          CHROMA_PORT: "8001"
+          AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
+          CLERK_SECRET_KEY: "sk_test_ci_only_unused"
+          TOKEN_ENCRYPTION_KEY: ${{ steps.keygen.outputs.key }}
+          AZURE_OPENAI_ENDPOINT: "https://openai-invoice-llm-dev.openai.azure.com/"
+          AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-5-mini"
+          AZURE_OPENAI_API_VERSION: "2025-08-07"
+          AZURE_OPENAI_API_KEY: ${{ steps.kv.outputs.openai_key }}
+          AZURE_DOC_INTEL_ENDPOINT: "https://docintel-invoice-llm-dev.cognitiveservices.azure.com/"
+          AZURE_DOC_INTEL_KEY: ${{ steps.kv.outputs.docintel_key }}
+        run: |
+          uv run uvicorn main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          uv run python -m queue_worker.main_worker > worker.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/docs > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:8000/docs > /dev/null || (echo "Backend did not become healthy" && cat backend.log && exit 1)
+        working-directory: ${{ env.WORKDIR }}
+
+      - name: Run e2e regression suite
+        env:
+          E2E_BASE_URL: "http://localhost:8000/api/v1"
+        run: uv run pytest -m e2e tests/e2e -v
+        working-directory: ${{ env.WORKDIR }}
+
+      - name: Show backend/worker logs on failure
+        if: failure()
+        run: |
+          echo "--- backend.log ---"; cat backend.log || true
+          echo "--- worker.log ---"; cat worker.log || true
+        working-directory: ${{ env.WORKDIR }}
+
+      - name: Tear down local infra
+        if: always()
+        run: docker compose down -v
+        working-directory: Prod_Invoice_LLM

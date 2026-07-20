@@ -40,6 +40,7 @@ dev = [
     "pytest>=8.1.1",
     "pytest-asyncio>=0.23.5",
     "ruff>=0.3.2",
+    "reportlab>=4.1.0",
 ]
 
 [tool.pytest.ini_options]
@@ -48,3 +49,7 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
 ]
+markers = [
+    "e2e: full end-to-end tests that upload real PDFs through the live API and make real Azure OpenAI/Document Intelligence calls. Excluded by default — run explicitly with `pytest -m e2e`.",
+]
+addopts = "-m \"not e2e\""

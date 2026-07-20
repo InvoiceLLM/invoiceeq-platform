@@ -2,15 +2,32 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def verify_line_items_math(items: list[dict], subtotal: float | None) -> dict | None:
+def verify_line_items_math(items: list[dict], subtotal: float | None, invoice_tax_amount: float | None = None) -> dict | None:
     """
     Checks if sum(item.amount) == subtotal.
     Also verifies each item's amount matches qty * rate * (1 - discount) * (1 + tax) if details are present.
     Returns an alert dict if mismatch, else None.
+
+    Guard: if every item shares the identical tax_percent and that rate matches the invoice's
+    own effective tax rate (tax_amount / subtotal), it's almost certainly a single invoice-level
+    tax rate that got copied onto each line during extraction rather than genuine per-line tax —
+    skip the tax step for that case instead of raising a false positive. Invoices with real
+    per-line tax (different rates per row) are unaffected, since this only fires when every rate
+    is identical.
     """
     if subtotal is None:
         return None
-        
+
+    suppress_line_tax = False
+    try:
+        line_tax_percents = [float(item.get("tax_percent")) for item in items if item.get("tax_percent") is not None]
+        if line_tax_percents and len(set(round(t, 2) for t in line_tax_percents)) == 1 and subtotal:
+            invoice_effective_rate = (float(invoice_tax_amount) / float(subtotal)) * 100.0 if invoice_tax_amount is not None else None
+            if invoice_effective_rate is not None and abs(line_tax_percents[0] - invoice_effective_rate) < 0.5:
+                suppress_line_tax = True
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+
     try:
         # 1. Verify individual line item math calculations
         for item in items:
@@ -34,14 +51,15 @@ def verify_line_items_math(items: list[dict], subtotal: float | None) -> dict | 
                 elif discount_amount is not None:
                     discounted_subtotal -= float(discount_amount)
                     
-                # Apply item-level tax if present
-                tax_percent = item.get("tax_percent")
-                tax_amount = item.get("tax_amount")
+                # Apply item-level tax if present (unless it looks like a copied-down invoice-level rate)
                 expected_amount = discounted_subtotal
-                if tax_percent is not None:
-                    expected_amount += discounted_subtotal * (float(tax_percent) / 100.0)
-                elif tax_amount is not None:
-                    expected_amount += float(tax_amount)
+                if not suppress_line_tax:
+                    tax_percent = item.get("tax_percent")
+                    tax_amount = item.get("tax_amount")
+                    if tax_percent is not None:
+                        expected_amount += discounted_subtotal * (float(tax_percent) / 100.0)
+                    elif tax_amount is not None:
+                        expected_amount += float(tax_amount)
                     
                 if abs(expected_amount - amount) >= 0.01:
                     return {

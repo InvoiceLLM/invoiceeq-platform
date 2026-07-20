@@ -31,8 +31,8 @@ class InvoiceLineItem(BaseModel):
     uom: Optional[str] = Field(default=None, description="Unit of measure (e.g., each, kg, hours)")
     discount_percent: Optional[float] = Field(default=None, description="Discount percentage applied to this line item")
     discount_amount: Optional[float] = Field(default=None, description="Discount amount applied to this line item")
-    tax_percent: Optional[float] = Field(default=None, description="Tax percentage applied to this line item")
-    tax_amount: Optional[float] = Field(default=None, description="Tax amount applied to this line item")
+    tax_percent: Optional[float] = Field(default=None, description="Tax percentage applied to THIS specific line item, ONLY if shown per-row in the line-items table (e.g. a GST%/Tax% column). Leave null if tax appears once in the invoice's summary/totals section — that is invoice-level tax, not a line-item field.")
+    tax_amount: Optional[float] = Field(default=None, description="Tax amount applied to THIS specific line item, ONLY if itemized per-row. Leave null if tax is invoice-level only (see tax_percent).")
 
 class TaxItem(BaseModel):
     model_config = {"extra": "forbid"}
@@ -179,7 +179,7 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
     """Node state for executing LLM structured output extraction."""
     settings = get_settings()
     # Remove temperature parameter as some models don't support it
-    llm = get_llm(max_tokens=4096)
+    llm = get_llm(max_tokens=16384)
     rules = state.get("rules")
     retry_count = state.get("retry_count") or 0
     feedback = state.get("feedback") or []
@@ -263,7 +263,7 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     # 1. Verify line items math check
     items = data.get("items", [])
     subtotal = data.get("subtotal")
-    line_item_alert = verify_line_items_math(items, subtotal)
+    line_item_alert = verify_line_items_math(items, subtotal, invoice_tax_amount=data.get("tax_amount"))
     if line_item_alert:
         alerts.append(line_item_alert)
         

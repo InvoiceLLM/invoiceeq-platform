@@ -45,7 +45,7 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 - `[x]` **Gap 16: Bounding-box coordinates** — populate `invoices.coordinates`; the FE auditor UI (`PdfViewerCanvas.tsx`) already renders the overlay and has no data source
 - `[x]` **Gap 17: Field-level confidence scores** — populate `invoices.field_confidence` to drive Gap 3's per-field audit routing
 
-- `[x]` **Gap 18: Per-line-item tax/discount math** — extend `verify_line_items_math` beyond top-level totals to `qty × rate × (1 − discount) × (1 + tax)` per line
+- `[x]` **Gap 18: Per-line-item tax/discount math** — extend `verify_line_items_math` beyond top-level totals to `qty × rate × (1 − discount) × (1 + tax)` per line. **Refined Jul 20, 2026**: fixed a false-positive class where invoice-level-only tax got misattributed to every line item — see `feature_2_pipeline_extraction.md` P0 fix log
 
 - `[x]` **Gap 19: Remove fallback fake data** — `get_fallback_extracted_data()` currently returns a mock invoice on LLM/parsing failure instead of routing to `AUDIT_REQUIRED` with an `extraction_failed` alert
 - `[x]` **Gap 24: P0 bug — upload endpoint 500s** — `routers/invoices.py` passes `upload_pdf_to_blob_storage(...)`'s return value into `run_in_threadpool` instead of the callable + args; fix by passing them separately. Confirmed via `pytest tests/test_ingestion.py::test_upload_single_pdf`
@@ -82,3 +82,5 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 
 **API endpoints**:
 - `[ ]` **Gap 12: Directory Watcher Start Endpoint** — `POST /api/watcher/start` for bulk/automated ingestion
+
+- `[ ]` **Gap 31: India/GST invoice math verification gaps** — found Jul 20, 2026 stress-testing a real Indian GST invoice (per-line HSN codes, per-line discount %, per-line GST %, CGST+SGST split, round-off). Not yet fixed, three distinct issues: (1) `verify_line_items_math`'s `0.01` absolute tolerance flags economically-immaterial rounding differences on large invoices (e.g. a real ~13-unit gap on an 80,000-unit line from percentage-discount rounding) — needs a relative tolerance in addition to the absolute one; (2) `verify_totals_math` assumes `subtotal` is always pre-discount (per the schema's field description), but GST-convention invoices state "Subtotal (Taxable Value)" as already post-line-discount, so the formula double-subtracts discount and false-flags; (3) the schema's single flat `tax_amount` field can't represent a CGST+SGST (or IGST) split without extraction reliably summing both into one number, and there's no term in `verify_totals_math` for a "Round Off" line that many Indian invoices include. See `feature_2_pipeline_extraction.md` for the full analysis.
