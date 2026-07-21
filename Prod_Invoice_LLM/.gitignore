@@ -50,6 +50,10 @@ coverage/
 htmlcov/
 .pytest_cache/
 
+# Local dev fallback storage (blob/chroma emulation when Azure isn't configured)
+apps/invoice-be/temp_storage/
+apps/invoice-be/temp_chroma_db/
+
 # Misc
 *.bak
 *.tmp
