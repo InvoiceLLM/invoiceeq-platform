@@ -141,9 +141,6 @@ The backend follows a **clean separation of concerns** with an async/agentic wor
 │   └── handlers.py              # Background Tasks (Chunking, Vectorization, Parsing)
 ├── models.py                    # SQLAlchemy/SQLModel Definitions (Tenant-Isolated)
 ├── chroma_client.py             # Vector DB Connection Logic
-├── mcp_servers/
-│   ├── ingestion_mcp.py         # Connector for SharePoint/Drive
-│   └── action_mcp.py            # Webhooks/Notification Logic
 └── main.py                      # FastAPI Entry Point
 ```
 
@@ -812,7 +809,6 @@ main          ← Production-ready code ONLY (manual merge approval required)
 |--------------------------|---------------------------------------------------------------------------------|
 | **Tenant**               | An isolated customer organization within the SaaS platform                       |
 | **RAG**                  | Retrieval Augmented Generation — combining vector search with LLM inference      |
-| **MCP**                  | Model Context Protocol — standardized connector pattern for external services    |
 | **VNet**                 | Azure Virtual Network — private network boundary for cloud resources             |
 | **ChromaDB**             | Open-source vector database for embedding storage and similarity search          |
 | **Shadcn/UI**            | Copy-paste UI component library built on Radix primitives                        |
