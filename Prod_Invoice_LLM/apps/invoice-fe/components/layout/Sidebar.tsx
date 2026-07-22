@@ -7,6 +7,7 @@ import {
   UploadCloud, 
   ClipboardList, 
   MessageSquare, 
+  GraduationCap,
   Settings, 
   HelpCircle,
   FileText
@@ -15,10 +16,15 @@ import {
 export default function Sidebar() {
   const pathname = usePathname();
 
+  // Navigation items definition for the primary sidebar.
+  // NOTE FOR DEVELOPERS: Feature 6 (AI Trainer Interactive Sandbox) route is registered at '/trainer'
+  // using the GraduationCap icon to provide direct access to rule fine-tuning.
   const menuItems = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Ingest", href: "/ingestion", icon: UploadCloud },
     { name: "Invoices", href: "/audit", icon: ClipboardList },
+    // AI Trainer link for rule scope fine-tuning & sandbox evaluation (Feature 6)
+    { name: "AI Trainer", href: "/trainer", icon: GraduationCap },
     { name: "Chat", href: "/chat", icon: MessageSquare },
     { name: "Settings", href: "/settings", icon: Settings },
     { name: "Help", href: "/help", icon: HelpCircle },
