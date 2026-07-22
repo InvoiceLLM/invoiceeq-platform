@@ -14,7 +14,7 @@ raw Q&A included so a human can eyeball anything marked inconclusive.
 import re
 from dataclasses import dataclass
 
-from tests.benchmark.generator import GeneratedInvoice
+from tests.benchmark.generator import GeneratedInvoice, _parse_amount
 
 AMOUNT_TOLERANCE = 0.05  # relative, e.g. 0.05 = 5%
 
@@ -43,12 +43,23 @@ def build_daily_chat_questions(batches_by_region: dict[str, list[GeneratedInvoic
             gt = gen.ground_truth
             invoice_number = gt.get("invoice_number", gen.name)
 
+            # gt["expected_grand_total"] is captured before _apply_flaw() runs, so on
+            # any AUDIT_REQUIRED invoice it holds the pre-flaw (arithmetically
+            # reconciled) value, not what's actually printed and correctly extracted
+            # - found via a clean benchmark run flagging a false "amount_mismatch" on
+            # a faithfully-extracted flawed invoice (grand_total matched the printed
+            # figure exactly, just not gt["expected_grand_total"]). The last
+            # summary_rows entry is always the printed total, added *after* the flaw
+            # is applied in every region's generator - use that instead.
+            printed_total_str = gen.pdf_kwargs["summary_rows"][-1][-1]
+            expected_amount = _parse_amount(printed_total_str)
+
             questions.append(ChatQuestion(
                 region=region,
                 invoice_number=invoice_number,
                 kind="amount",
                 question=f"What is the total amount (grand total) for invoice {invoice_number}?",
-                expected=gt.get("expected_grand_total"),
+                expected=expected_amount,
             ))
             questions.append(ChatQuestion(
                 region=region,
