@@ -116,11 +116,29 @@ def grade_answer(q: ChatQuestion, answer: str) -> str:
 
     if q.kind == "audit_status":
         expects_audit = q.expected == "AUDIT_REQUIRED"
-        mentions_audit = any(kw in text for kw in ["audit", "flag", "mismatch", "discrepanc", "issue"])
-        if expects_audit:
-            return "pass" if mentions_audit else "fail"
-        # clean invoice: pass unless it wrongly claims an audit/issue
-        return "fail" if mentions_audit else "pass"
+        # Prefer an explicit status echo when present - both real answer styles
+        # observed include a literal "Status: COMPLETED"/"Status: AUDIT_REQUIRED"
+        # line, which is unambiguous regardless of surrounding phrasing.
+        if "status: audit_required" in text or "status = audit_required" in text:
+            stated_audit = True
+        elif "status: completed" in text or "status = completed" in text:
+            stated_audit = False
+        else:
+            # Fall back to a negation-aware keyword heuristic - the previous
+            # version just checked for "audit"/"flag" presence, which
+            # false-failed every correctly-worded "not flagged for audit"
+            # answer on a clean invoice (found via the benchmark's own Day 1
+            # re-run: those words appear in the negative phrasing too).
+            negation_patterns = [
+                r"\bnot\s+(?:currently\s+)?flagged\b",
+                r"\bno\b[^.]{0,30}\bflag",
+                r"isn'?t\s+flagged",
+                r"is\s+not\s+flagged",
+            ]
+            has_negation = any(re.search(p, text) for p in negation_patterns)
+            mentions_audit = any(kw in text for kw in ["audit", "flag", "mismatch", "discrepanc", "issue"])
+            stated_audit = mentions_audit and not has_negation
+        return "pass" if stated_audit == expects_audit else "fail"
 
     if q.kind == "audit_count":
         expected = q.expected

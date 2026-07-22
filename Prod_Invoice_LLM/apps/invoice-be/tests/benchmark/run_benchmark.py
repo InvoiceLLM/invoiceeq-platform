@@ -83,6 +83,28 @@ def _poll(client: httpx.Client, base_url: str, invoice_id: str) -> dict:
     return last or {"status": "TIMEOUT"}
 
 
+# Multiple independent checks can legitimately catch the same underlying flaw -
+# e.g. a bad line-item amount can be caught by the subtotal-sum check
+# (line_items_mismatch), the per-line calc check (line_item_calculation_mismatch),
+# or the Gap 36 OCR-faithfulness check (line_item_not_verified_in_source).
+# Grading on an exact alert-type match produced false failures where the
+# invoice was correctly flagged AUDIT_REQUIRED but by a *different*, equally
+# valid check than the one the generator's ground truth predicted. Group
+# alert types by what they're actually detecting and accept any type in the
+# same family as a match.
+_ALERT_TYPE_FAMILIES = [
+    {"tax_mismatch", "total_not_verified_in_source"},
+    {"line_items_mismatch", "line_item_calculation_mismatch", "line_item_not_verified_in_source"},
+]
+
+
+def _alert_type_matches(expected: str, actual_types: list[str]) -> bool:
+    if expected in actual_types:
+        return True
+    family = next((f for f in _ALERT_TYPE_FAMILIES if expected in f), None)
+    return bool(family) and any(t in family for t in actual_types)
+
+
 def _compare(gen: GeneratedInvoice, actual: dict) -> dict:
     """Returns {"pass": bool, "root_cause": str|None, "detail": str}."""
     gt = gen.ground_truth
@@ -108,7 +130,7 @@ def _compare(gen: GeneratedInvoice, actual: dict) -> dict:
     if expected_status == "AUDIT_REQUIRED":
         expected_alert = gt.get("expected_alert_type")
         alert_types = [a.get("type") for a in (actual.get("sa_alerts") or [])]
-        if expected_alert and expected_alert not in alert_types:
+        if expected_alert and not _alert_type_matches(expected_alert, alert_types):
             root_cause = "known_gap_31_india" if known_gap_31 else "wrong_alert_type"
             return {"pass": known_gap_31, "root_cause": root_cause, "detail": f"expected alert '{expected_alert}', got {alert_types}"}
         return {"pass": True, "root_cause": None, "detail": "audit-required correctly flagged"}

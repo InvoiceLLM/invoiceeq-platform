@@ -63,15 +63,22 @@ def classify_query(query: str) -> str:
         structured_llm = llm.with_structured_output(QueryRoutingSchema)
         result = structured_llm.invoke(
             f"Determine the routing logic for this user message: '{query}'. "
-            "RAG: For semantic queries about invoice line details or items descriptions. "
-            "SQL: For quantitative checks (total spent, count of invoices, averages, status filters, sums, dates). "
+            "SQL: For ANY lookup of a structured invoice field on the 'invoice' table - "
+            "this includes not just quantitative checks (total spent, count of invoices, "
+            "averages, sums) but also plain field lookups like vendor name, invoice/due "
+            "date, PO number, or status, even when phrased as 'who'/'what' questions "
+            "(e.g. 'who is the vendor on invoice X' is SQL, not RAG - vendor_name is a "
+            "column, not free-text document content). "
+            "RAG: For semantic queries about content that is NOT a structured column - "
+            "line-item descriptions, what a document says about something, or anything "
+            "requiring reading the actual invoice text rather than a database field. "
             "CHAT: For casual greeting, feedback, or general chats."
         )
         return result.route.upper()
     except Exception as e:
         logger.warning("Routing classification failed: %s. Using keyword fallback.", e)
         q = query.lower()
-        if any(kw in q for kw in ["total", "spent", "sum", "average", "how many", "count", "mean", "min", "max", "date", "status"]):
+        if any(kw in q for kw in ["total", "spent", "sum", "average", "how many", "count", "mean", "min", "max", "date", "status", "vendor", "po number", "purchase order"]):
             return "SQL"
         if any(kw in q for kw in ["hello", "hi ", "hey", "who are you", "what is your name"]):
             return "CHAT"
