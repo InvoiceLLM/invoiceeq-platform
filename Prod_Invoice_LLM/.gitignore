@@ -54,6 +54,10 @@ htmlcov/
 apps/invoice-be/temp_storage/
 apps/invoice-be/temp_chroma_db/
 
+# Benchmark suite scratch/output (regenerated each run, not meaningful to keep in git)
+apps/invoice-be/tests/benchmark/_scratch/
+apps/invoice-be/tests/benchmark/reports/
+
 # Misc
 *.bak
 *.tmp

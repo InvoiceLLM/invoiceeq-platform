@@ -63,7 +63,7 @@ jobs:
           TOKEN_ENCRYPTION_KEY: ${{ steps.keygen.outputs.key }}
           AZURE_OPENAI_ENDPOINT: "https://openai-invoice-llm-dev.openai.azure.com/"
           AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-5-mini"
-          AZURE_OPENAI_API_VERSION: "2025-08-07"
+          AZURE_OPENAI_API_VERSION: "2024-02-15-preview"
           AZURE_OPENAI_API_KEY: ${{ steps.kv.outputs.openai_key }}
           AZURE_DOC_INTEL_ENDPOINT: "https://docintel-invoice-llm-dev.cognitiveservices.azure.com/"
           AZURE_DOC_INTEL_KEY: ${{ steps.kv.outputs.docintel_key }}

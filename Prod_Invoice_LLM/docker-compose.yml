@@ -63,7 +63,7 @@ services:
       - "10001:10001"
     volumes:
       - azurite_data:/data
-    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --location /data"
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --location /data --skipApiVersionCheck"
 
 volumes:
   postgres_data:

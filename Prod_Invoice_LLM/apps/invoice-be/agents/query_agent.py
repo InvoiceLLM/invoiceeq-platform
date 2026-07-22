@@ -1,10 +1,51 @@
+import json
 import logging
+import re
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from utils.llm import get_llm
 from chroma_client import query_invoice_chunks
 
 logger = logging.getLogger(__name__)
+
+# Task 6.11: semantic/result caching. Repeated or near-identical questions get served
+# instantly from Redis instead of re-running retrieval + LLM synthesis, keyed on
+# (tenant_id, normalized_query) — same key shape originally planned for the
+# chat_qa_shortcuts Postgres table (Database_Schema_Document.md), but this
+# supersedes that approach per feature_6_rag.md's own decision. Only SQL/RAG route
+# results are cached (real retrieval+synthesis work); CHAT route (casual chat) and
+# failed lookups are never cached, so a transient error doesn't get served for an hour.
+CACHE_TTL_SECONDS = 3600
+
+
+def _get_redis_client():
+    import redis
+    from config import get_settings
+    return redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+
+
+def _normalize_query(user_message: str) -> str:
+    return re.sub(r"\s+", " ", user_message.strip().lower())
+
+
+def _cache_key(tenant_id: str, user_message: str) -> str:
+    return f"chat_answer_cache:{tenant_id}:{_normalize_query(user_message)}"
+
+
+def get_cached_answer(tenant_id: str, user_message: str) -> dict | None:
+    try:
+        raw = _get_redis_client().get(_cache_key(tenant_id, user_message))
+        return json.loads(raw) if raw else None
+    except Exception as e:
+        logger.warning("Chat answer cache lookup failed, proceeding without cache: %s", e)
+        return None
+
+
+def set_cached_answer(tenant_id: str, user_message: str, result: dict) -> None:
+    try:
+        _get_redis_client().set(_cache_key(tenant_id, user_message), json.dumps(result), ex=CACHE_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("Chat answer cache write failed: %s", e)
 
 class QueryRoutingSchema(BaseModel):
     model_config = {"extra": "forbid"}
@@ -44,9 +85,11 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session) -> str:
         
     sql_lower = sql_clean.lower()
     
-    # Safety Check 1: Mutating keywords
+    # Safety Check 1: Mutating keywords (word-boundary match, not substring — a bare substring
+    # check false-positives on read-only SELECTs referencing a matching column name, e.g.
+    # Invoice.created_at contains "create". Gap 32.)
     mutating = ["insert", "update", "delete", "drop", "alter", "create", "replace", "truncate"]
-    if any(kw in sql_lower for kw in mutating):
+    if any(re.search(rf"\b{kw}\b", sql_lower) for kw in mutating):
         raise ValueError("Mutating SQL operations are strictly forbidden.")
         
     # Safety Check 2: Must be a SELECT query
@@ -104,19 +147,25 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     safe database queries, or conversational chat saves with multi-turn short-term memory.
     """
     logger.info("Executing Query Agent for session %s, tenant %s", session_id, tenant_id)
-    
+
+    cached = get_cached_answer(tenant_id, user_message)
+    if cached is not None:
+        logger.info("Serving cached answer for tenant %s (Task 6.11 semantic cache hit)", tenant_id)
+        return cached
+
     # Retrieve short-term context history
     chat_history = get_chat_history(session_id, db_session)
-    
+
     # 1. Routing classification
     route = classify_query(user_message)
     logger.info("Selected Route: %s", route)
-    
+
     llm = get_llm()
     response_text = ""
     generated_sql = None
     citations = []
-    
+    route_succeeded = False
+
     if route == "SQL":
         system_prompt = f"""You are a database SQL query expert.
 Given the 'invoice' table schema:
@@ -160,6 +209,7 @@ User Query: {user_message}
 """
             final_res = llm.invoke(summary_prompt)
             response_text = final_res.content + f"\n\n### Query Results\n{db_result}"
+            route_succeeded = True
         except Exception as e:
             logger.error("SQL path execution failed: %s", e)
             response_text = f"Failed to execute database check: {str(e)}"
@@ -206,6 +256,7 @@ Conversation History (Short-term context):
                     citation_links.append(link)
                 
                 response_text += "\n\n**Citations:**\n" + ", ".join(citation_links)
+            route_succeeded = True
         except Exception as e:
             logger.error("RAG path execution failed: %s", e)
             response_text = f"Failed to run document lookup: {str(e)}"
@@ -223,8 +274,13 @@ Conversation History:
             logger.error("Chat path execution failed: %s", e)
             response_text = f"Error generating message response: {str(e)}"
             
-    return {
+    result = {
         "content": response_text,
         "generated_sql": generated_sql,
         "citations": citations
     }
+
+    if route in ("SQL", "RAG") and route_succeeded:
+        set_cached_answer(tenant_id, user_message, result)
+
+    return result

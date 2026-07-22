@@ -26,6 +26,12 @@ BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:8000/api/v1")
 POLL_TIMEOUT_SECONDS = int(os.environ.get("E2E_POLL_TIMEOUT_SECONDS", "180"))
 POLL_INTERVAL_SECONDS = 3
 AMOUNT_TOLERANCE = 0.05
+# Local runs: process synchronously in-process instead of relying on Azure Storage
+# Queue + a separately-running worker (Azurite's queue emulator wedges unreliably
+# during local iteration — see tests/sync_processing.py). CI (e2e-regression.yml)
+# runs a real worker against real Azurite in a fresh docker-compose stack each time
+# and leaves this off, so the queue path itself still gets exercised there.
+SYNC_PROCESSING = os.environ.get("E2E_SYNC_PROCESSING", "false").lower() == "true"
 
 pytestmark = pytest.mark.e2e
 
@@ -34,7 +40,12 @@ def _upload_and_wait(client: httpx.Client, pdf_path: str, filename: str) -> dict
     with open(pdf_path, "rb") as f:
         resp = client.post("/invoices/upload", files={"files": (filename, f, "application/pdf")})
     resp.raise_for_status()
-    job_id = resp.json()["job_ids"][0]
+    body = resp.json()
+    job_id = body["job_ids"][0]
+
+    if SYNC_PROCESSING:
+        from tests.sync_processing import process_invoice_sync
+        process_invoice_sync(job_id, body["batch_id"])
 
     deadline = time.time() + POLL_TIMEOUT_SECONDS
     while time.time() < deadline:

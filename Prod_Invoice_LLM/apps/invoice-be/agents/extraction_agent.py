@@ -84,9 +84,10 @@ class InvoiceExtractionSchema(BaseModel):
     invoice_number: Optional[str] = Field(default=None, description="Invoice number")
     invoice_date: Optional[str] = Field(default=None, description="Date of the invoice (YYYY-MM-DD format if possible)")
     due_date: Optional[str] = Field(default=None, description="Due date of the invoice (YYYY-MM-DD format if possible)")
-    subtotal: Optional[float] = Field(default=None, description="Subtotal before taxes/discounts")
-    tax_amount: Optional[float] = Field(default=None, description="Tax amount")
-    grand_total: Optional[float] = Field(default=None, description="Grand total amount")
+    subtotal: Optional[float] = Field(default=None, description="Subtotal before taxes/discounts. On invoices with a 'Subtotal (Taxable Value)' line (common on Indian GST invoices) that is already net of discount, use that printed value as-is rather than adding the discount back.")
+    tax_amount: Optional[float] = Field(default=None, description="Tax amount. On invoices with a CGST + SGST (or IGST) split, sum them into this single field.")
+    grand_total: Optional[float] = Field(default=None, description="Grand total amount. Transcribe the printed figure exactly as it appears (e.g. the 'TOTAL DUE' or 'Grand Total' line) — even if it does not appear to reconcile with the subtotal and tax. Do not calculate, correct, or override it yourself; a mismatch between the printed total and the arithmetic is a real finding the downstream verification step needs to see, not something to fix here.")
+    round_off: Optional[float] = Field(default=None, description="Small rounding adjustment line (e.g. 'Round Off'), positive or negative, common on Indian GST invoices. Leave null if the invoice has no such line.")
     po_number: Optional[str] = Field(default=None, description="Purchase order (PO) number")
     items: List[InvoiceLineItem] = Field(default=[], description="List of line items in the invoice")
     tags: List[str] = Field(default=[], description="Suggested category or tag keywords for the invoice")
@@ -275,7 +276,8 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
         tax_amount,
         grand_total,
         discount_amount=data.get("discount_amount"),
-        discount_percent=data.get("discount_percent")
+        discount_percent=data.get("discount_percent"),
+        round_off=data.get("round_off"),
     )
     if totals_alert:
         alerts.append(totals_alert)

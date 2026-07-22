@@ -18,6 +18,10 @@ Construct document indexers and semantic chat clients utilizing vector similarit
 
 **P0 fix (Jul 19, 2026)**: `QueryRoutingSchema` and `SQLGenerationSchema` were missing `model_config = {"extra": "forbid"}`, meaning their structured-output calls had no `additionalProperties: false` on the generated JSON schema — the same OpenAI strict-mode rejection found in `InvoiceExtractionSchema` (see `feature_2_pipeline_extraction.md`). Fixed by adding `extra="forbid"` to both.
 
+**P0 fix (Gap 32, Jul 21, 2026)**: `execute_generated_sql()`'s mutating-keyword check was a raw substring match on lowercased SQL text, which false-triggered on any read-only SELECT referencing a matching column name — e.g. `invoice.created_at` contains "create". Found via `tests/benchmark/` on a simple audit-status question. Fixed with a word-boundary regex (`\bcreate\b` etc.) instead of substring match.
+
+**Task 6.11 implemented (Jul 21, 2026)**: `run_query_agent()` now checks a Redis cache (`get_cached_answer()`/`set_cached_answer()`, keyed on `(tenant_id, normalized_query)`) before doing any routing/retrieval/LLM work, and writes successful SQL/RAG-route results back to it (1-hour TTL). CHAT-route answers and failed lookups are never cached. This supersedes the `chat_qa_shortcuts` Postgres-table plan referenced by the tracker's old Gap 7/10 wording — see `be_features_tracker.md`.
+
 ### Tasks
 - [x] **Task 6.1: Setup Chat Sessions & Threads API**
   - Implement endpoints:
@@ -47,7 +51,7 @@ Construct document indexers and semantic chat clients utilizing vector similarit
   - Add a bounded retry loop (up to 3 attempts) to `execute_generated_sql()` that feeds a SQL error back to the LLM for repair instead of surfacing it directly to the user.
 - [ ] **Task 6.10: Prompt-injection input guard**
   - Add an input filter/classifier in `run_query_agent()` to catch injection attempts (e.g. "ignore previous instructions") before user text reaches the system prompt.
-- [ ] **Task 6.11: Semantic/result caching**
+- [x] **Task 6.11: Semantic/result caching**
   - Cache answers keyed on `(tenant_id, normalized_query)` in Azure Cache for Redis, serving repeated/near-identical questions instantly instead of re-running retrieval + LLM synthesis. (Replaces the `chat_qa_shortcuts` PostgreSQL table approach).
 - [ ] **Task 6.12: Real conversational memory**
   - Replace `get_chat_history()`'s raw "last 10 messages" SQL fetch with a token-aware, `PostgresSaver`-backed LangGraph checkpointer.

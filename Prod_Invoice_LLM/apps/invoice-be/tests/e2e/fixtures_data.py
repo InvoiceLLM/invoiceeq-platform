@@ -106,26 +106,28 @@ VERTEX_INDIA_GST_COMPLEX = (
             ["6", "9999.00", "Freight & Handling Charges (Non-GST)", "1", "4,500.00", "-", "4,500.00", "0%", "4,500.00"],
         ],
         summary_rows=[
-            ["Subtotal (Taxable Value):", "4,16,249.91"],
-            ["Total Discount Applied:", "(-) 8,822.35"],
-            ["Total CGST:", "35,049.37"],
-            ["Total SGST:", "35,049.37"],
+            ["Subtotal (Taxable Value):", "3,42,481.65"],
+            ["Total Discount Applied:", "(-) 17,127.50"],
+            ["Total CGST:", "28,410.23"],
+            ["Total SGST:", "28,410.22"],
             ["Round Off:", "0.35"],
-            ["GRAND TOTAL (INR):", "4,86,349.00"],
+            ["GRAND TOTAL (INR):", "3,99,302.45"],
         ],
     ),
     {
         "name": "vertex_india_gst_complex",
         "description": (
             "Real per-line GST that genuinely varies (18/18/18/12/18/0%) — the C guard must NOT suppress tax "
-            "checking here. Known-unresolved issues (documented, not yet fixed): line 5 has a ~13.35 rounding "
-            "gap against a strict 0.01 tolerance; the invoice-level subtotal is already post-discount (GST "
-            "convention) which verify_totals_math doesn't yet account for; CGST+SGST split isn't reconciled "
-            "into a single tax_amount; there's no Round Off term. Expect AUDIT_REQUIRED — this fixture exists "
-            "to prove those gaps stay visible, not to pass clean yet."
+            "checking here. Regression fixture for Gap 31 (fixed Jul 21, 2026): line 5's ~13-unit rounding gap "
+            "must pass under the new relative tolerance; the post-discount 'Subtotal (Taxable Value)' "
+            "convention must be accepted without double-subtracting the printed discount; CGST+SGST "
+            "(35,049.37 + 35,049.37) must be summed into tax_amount and the Round Off (0.35) accounted for. "
+            "Expect a clean COMPLETED now — this fixture used to document the gap staying visible; it now "
+            "proves the fix."
         ),
-        "expected_status": "AUDIT_REQUIRED",
-        "loose_check_only": True,
+        "expected_status": "COMPLETED",
+        "expected_grand_total": 399302.45,
+        "expected_tax_amount": 56820.45,
     },
 )
 
