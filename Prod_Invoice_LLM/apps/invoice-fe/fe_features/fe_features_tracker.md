@@ -15,6 +15,8 @@ This document tracks the implementation progress of all frontend features for th
 - `[ ]` [Feature 5: Semantic Chat Assistant & SQL Audit Drawer](feature_5_chat.md)
 - `[ ]` [Feature 6: AI Trainer Interactive Sandbox](feature_6_trainer.md)
 - `[ ]` [Feature 7: Third-Party Connectors & Explorer View](feature_7_connectors.md)
+- `[ ]` [Feature 8: Email Ingestion Settings](feature_8_email_ingestion.md) — spec only, added 2026-07-22; backend (`be_features/feature_14_email_ingestion.md`) blocked on a vendor decision before implementation starts
+- `[ ]` [Feature 9: Webhooks Settings](feature_9_webhooks.md) — spec only, added 2026-07-22
 
 ---
 
@@ -55,3 +57,6 @@ Gaps below are grouped by the feature file whose target design they still need t
 - `[ ]` **Gap 9: Active Validation Alerts Panel** — display triggered warnings in real time
 - `[ ]` **Gap 16: Rule History & Rollback UI** — Task 6.7; list committed rule versions and roll back a bad Global or vendor rule (see `be_features_tracker.md` Gap 29)
 - `[ ]` **Gap 17: Audit-Seeded Trainer Session Entry** — Task 6.8; accept a session pre-populated from the Auditor console's rule-suggestion prompt (Task 4.7 / Gap 20) instead of starting blank
+
+**Connectors** ([feature_7_connectors.md](feature_7_connectors.md)):
+- **Note (2026-07-22):** SAP and QuickBooks were deferred from Task 7.1's integration grid, not forgotten — no confirmed customer/system needs them today. Re-add if real demand shows up.

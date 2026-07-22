@@ -15,7 +15,7 @@ Build integration connection toggles, folder navigation trees, and bulk file imp
 
 ### Tasks
 - [ ] **Task 7.1: Build Integration Cards Grid**
-  - Render configuration modules for Salesforce, SAP, QuickBooks, and Webhooks.
+  - Render configuration modules for Google Drive and Salesforce — the only two providers `routers/connectors.py` actually implements. SAP and QuickBooks were never real (not even mocked) and were removed from scope (no confirmed customer/system); Webhooks moved to its own dedicated feature (see `feature_9_webhooks.md`) rather than a connector-grid card, since it's outbound event delivery (multiple endpoints, event subscriptions, delivery logs) rather than an inbound OAuth-toggle integration like the other two.
   - Implement active connection toggles calling oauth redirection routes.
   - Display active status states based on `/api/v1/connectors/status`.
 - [ ] **Task 7.2: Code Directory Folder Explorer**
