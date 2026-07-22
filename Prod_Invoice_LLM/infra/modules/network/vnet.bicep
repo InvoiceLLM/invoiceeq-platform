@@ -1,6 +1,13 @@
 param location string
 param vnetName string
 
+@description('NSG resource ID applied to snet-aca. Pass empty string to skip (first-run bootstrap order: nsg.bicep must deploy before this).')
+param nsgAcaId string = ''
+@description('NSG resource ID applied to snet-postgres and snet-pe (shared data trust boundary).')
+param nsgDataId string = ''
+@description('NSG resource ID applied to snet-ai.')
+param nsgAiId string = ''
+
 resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: vnetName
   location: location
@@ -23,6 +30,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
               }
             }
           ]
+          networkSecurityGroup: empty(nsgAcaId) ? null : {
+            id: nsgAcaId
+          }
         }
       }
       {
@@ -40,6 +50,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
               }
             }
           ]
+          networkSecurityGroup: empty(nsgDataId) ? null : {
+            id: nsgDataId
+          }
         }
       }
       {
@@ -47,12 +60,18 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
         name: 'snet-pe'
         properties: {
           addressPrefix: '10.0.2.0/24'
+          networkSecurityGroup: empty(nsgDataId) ? null : {
+            id: nsgDataId
+          }
         }
       }
       {
         name: 'snet-ai'
         properties: {
           addressPrefix: '10.0.3.0/24'
+          networkSecurityGroup: empty(nsgAiId) ? null : {
+            id: nsgAiId
+          }
         }
       }
     ]
@@ -92,6 +111,11 @@ resource docIntelDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
 
 resource acrDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   name: 'privatelink.azurecr.io'
+  location: 'global'
+}
+
+resource keyVaultDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: 'privatelink.vaultcore.azure.net'
   location: 'global'
 }
 
@@ -180,6 +204,18 @@ resource acrDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-
   }
 }
 
+resource keyVaultDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: keyVaultDnsZone
+  name: '${vnetName}-kv-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
+    }
+  }
+}
+
 output vnetId string = vnet.id
 output acaSubnetId string = vnet.properties.subnets[0].id
 output postgresSubnetId string = vnet.properties.subnets[1].id
@@ -193,3 +229,4 @@ output queueDnsZoneId string = queueDnsZone.id
 output openaiDnsZoneId string = openaiDnsZone.id
 output docIntelDnsZoneId string = docIntelDnsZone.id
 output acrDnsZoneId string = acrDnsZone.id
+output keyVaultDnsZoneId string = keyVaultDnsZone.id

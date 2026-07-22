@@ -1,6 +1,12 @@
 targetScope = 'resourceGroup'
 
-// ================= Parameters =================
+// ================= Stage 4: Cognitive AI Services =================
+// Azure OpenAI + Document Intelligence. Depends on Stage 1 only.
+// Target state is publicNetworkAccess: Disabled (private-endpoint-only,
+// per Cloud_Architecture_Document.md §6). NOTE: live OpenAI/DocIntel are
+// currently manually flipped to Enabled for benchmark testing — running
+// this stage reverts that. Do not run until benchmark testing is done.
+
 @description('Deployment environment (e.g. dev, uat, prod)')
 param environment string = 'dev'
 
@@ -16,21 +22,11 @@ param azureOpenAiDeploymentName string = 'gpt-5-mini'
 @description('Azure OpenAI Model Version - verify current availability before deploying: az cognitiveservices account list-models --location <region> -o table')
 param azureOpenAiModelVersion string
 
-
-// ================= Variables =================
 var vnetName = 'vnet-${namingPrefix}-${environment}'
-var keyVaultName = 'kv-${namingPrefix}-${environment}-${substring(uniqueString(resourceGroup().id), 0, 4)}'
+var aiSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, 'snet-ai')
+var openaiDnsZoneId = resourceId('Microsoft.Network/privateDnsZones', 'privatelink.openai.azure.com')
+var docIntelDnsZoneId = resourceId('Microsoft.Network/privateDnsZones', 'privatelink.cognitiveservices.azure.com')
 
-// Get VNet outputs from existing deployment
-module network './modules/network/vnet.bicep' = {
-  name: 'network-reference'
-  params: {
-    location: location
-    vnetName: vnetName
-  }
-}
-
-// ================= 1. Cognitive & AI Services =================
 module openai './modules/ai/openai.bicep' = {
   name: 'openai-deploy'
   params: {
@@ -39,8 +35,8 @@ module openai './modules/ai/openai.bicep' = {
     deploymentName: azureOpenAiDeploymentName
     modelName: azureOpenAiDeploymentName
     modelVersion: azureOpenAiModelVersion
-    subnetId: network.outputs.aiSubnetId
-    privateDnsZoneId: network.outputs.openaiDnsZoneId
+    subnetId: aiSubnetId
+    privateDnsZoneId: openaiDnsZoneId
   }
 }
 
@@ -49,8 +45,8 @@ module docIntelligence './modules/ai/doc-intelligence.bicep' = {
   params: {
     location: location
     docIntelName: 'docintel-${namingPrefix}-${environment}'
-    subnetId: network.outputs.aiSubnetId
-    privateDnsZoneId: network.outputs.docIntelDnsZoneId
+    subnetId: aiSubnetId
+    privateDnsZoneId: docIntelDnsZoneId
   }
 }
 

@@ -1,23 +1,51 @@
 # Infrastructure Deployment Tracker
 
-This file tracks the status of the Azure Bicep infrastructure deployment.
+This file tracks the status of the Azure Bicep infrastructure deployment
+for `invoice-llm-dev`. Rebuilt 2026-07-22 into 10 sequential, independently
+verifiable stages (see `README.md` for the verification command per stage)
+— replaces the old 4-stage `main-step1..4.bicep` layout, which never
+completed a clean end-to-end run.
 
 ## Deployment Stages
 
-- **[ ] Stage 1: Core Infrastructure** (`main-step1.bicep`)
-  - Status: *Not Started*
-  - Resources: VNet (`snet-aca`, `snet-pe`, `snet-ai`, `snet-postgres`), Managed Identity, Key Vault, PostgreSQL Flexible Server, Redis Enterprise (Managed Redis), Storage Account, ACR.
-- **[ ] Stage 2: Cognitive AI Services** (`main-step2.bicep`)
-  - Status: *Not Started*
-  - Resources: Azure OpenAI, Document Intelligence (OCR), key seeding into Key Vault.
-- **[ ] Stage 3: Container Environment & Vector DB** (`main-step3.bicep`)
-  - Status: *Not Started*
-  - Resources: Container Apps Environment (CAE), ChromaDB container (with Azure File Share mount).
-- **[ ] Stage 4: App Container Services** (`main-step4.bicep`)
-  - Status: *Not Started*
-  - Resources: Backend API container, Celery Worker container, Frontend dashboard container, RBAC role assignments.
+- **[x] Stage 1: Network** (`01-network.bicep`) — VNet, 4 subnets, 7 private
+  DNS zones + links, 3 NSGs. Live and matches bicep.
+- **[x] Stage 2: Security** (`02-security.bicep`) — Managed identity, Key
+  Vault (+ private endpoint). Live vault (`kv-invoice-llm-dev`) currently has
+  `publicNetworkAccess: Enabled` for benchmark testing — bicep target is
+  `Disabled`; re-run this stage once testing is done to lock it back down.
+- **[x] Stage 3: Data Services** (`03-data.bicep`) — PostgreSQL, Redis
+  Enterprise, Storage, ACR. Live.
+- **[x] Stage 4: Cognitive AI Services** (`04-ai.bicep`) — OpenAI, Doc
+  Intelligence. Live, currently manually flipped to `publicNetworkAccess:
+  Enabled` for benchmark testing — bicep target is `Disabled`.
+- **[x] Stage 5: Secret Seeding** (`05-secrets.bicep`) — 7 secrets in Key
+  Vault. Decoupled from Stage 2 so it can run after the resources it
+  describes actually exist.
+- **[x] Stage 6: Compute Environment** (`06-compute-env.bicep`) — Container
+  Apps Environment + ChromaDB. Live.
+- **[x] Stage 7: RBAC** (`07-rbac.bicep`) — 5 role assignments for the
+  managed identity. Live.
+- **[x] Stage 8: Application Containers** (`08-apps.bicep`) — Backend,
+  queue-worker, frontend. Live.
+- **[ ] Stage 9: Monitoring** (`09-monitoring.bicep`) — Log Analytics
+  (existing `law-invoice-llm-dev` gets reconciled), Application Insights
+  (new), action group, diagnostic settings, ~16 health/availability alert
+  rules. Not yet deployed.
+- **[ ] Stage 10: Budget** (`10-budget.bicep`) — $150/month consumption
+  budget with 80%/100% notifications. Not yet deployed.
+
+## Known live drift to clean up manually (not managed by any bicep stage)
+
+- `kv-invoice-llm-dev-rb6z` — orphaned duplicate Key Vault, unused, zero
+  RBAC assignments. Delete via Portal.
+- `pe-queue-stinvoicellmdev` — duplicate private endpoint for the storage
+  account's queue service (twin of `stinvoicellmdev-queue-pe`, which is the
+  one Stage 3's bicep declares). Delete via Portal.
 
 ## Prerequisites Check
 
-- [x] Azure CLI logged in (`sbanerji@admsofttech.com`)
-- [ ] Validated credentials in `params.dev.json` (Clerk secret, publishable key, Fernet encryption key)
+- [x] Azure CLI logged in
+- [x] `infra/params.dev.secrets.json` created locally from
+      `params.dev.secrets.json.example` (gitignored — never commit real
+      values)

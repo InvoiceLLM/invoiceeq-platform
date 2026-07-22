@@ -1,23 +1,13 @@
 param location string
 param keyVaultName string
+param subnetId string
+param privateDnsZoneId string
 
-@secure()
-param dbAdminPassword string
-@secure()
-param clerkSecretKey string
-@secure()
-param tokenEncryptionKey string
-@secure()
-param azureOpenAiApiKey string = ''
-@secure()
-param azureDocIntelKey string = ''
-@secure()
-param databaseUrl string
-@secure()
-param redisUrl string
-@secure()
-param azureStorageConnectionString string
-
+// Target state: private-endpoint-only, matching Cloud_Architecture_Document.md's
+// "Private by Default" principle. Secret *values* are seeded separately in
+// 05-secrets.bicep, once the data/AI resources this vault stores connection
+// info for actually exist — this module only creates the vault + network
+// plumbing, so it has no dependency on anything downstream of it.
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
   location: location
@@ -31,75 +21,47 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enabledForDeployment: true
     enabledForTemplateDeployment: true
     enabledForDiskEncryption: true
+    publicNetworkAccess: 'Disabled'
     networkAcls: {
-      defaultAction: 'Allow' // Allowing access from ACA env; ideally restricted via Private Endpoints in prod
+      defaultAction: 'Deny'
       bypass: 'AzureServices'
     }
   }
 }
 
-// Key Vault Secrets
-resource secretDbPassword 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'DATABASE-PASSWORD'
+resource keyVaultPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+  name: '${keyVaultName}-pe'
+  location: location
   properties: {
-    value: dbAdminPassword
+    subnet: {
+      id: subnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: '${keyVaultName}-connection'
+        properties: {
+          privateLinkServiceId: keyVault.id
+          groupIds: [
+            'vault'
+          ]
+        }
+      }
+    ]
   }
 }
 
-resource secretClerkKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'CLERK-SECRET-KEY'
+resource keyVaultPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+  parent: keyVaultPrivateEndpoint
+  name: 'default'
   properties: {
-    value: clerkSecretKey
-  }
-}
-
-resource secretEncryptionKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'TOKEN-ENCRYPTION-KEY'
-  properties: {
-    value: tokenEncryptionKey
-  }
-}
-
-resource secretOpenAiKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(azureOpenAiApiKey)) {
-  parent: keyVault
-  name: 'AZURE-OPENAI-API-KEY'
-  properties: {
-    value: azureOpenAiApiKey
-  }
-}
-
-resource secretDocIntelKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(azureDocIntelKey)) {
-  parent: keyVault
-  name: 'AZURE-DOC-INTEL-KEY'
-  properties: {
-    value: azureDocIntelKey
-  }
-}
-
-resource secretDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'DATABASE-URL'
-  properties: {
-    value: databaseUrl
-  }
-}
-
-resource secretRedisUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'REDIS-URL'
-  properties: {
-    value: redisUrl
-  }
-}
-
-resource secretStorageConnectionString 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'AZURE-STORAGE-CONNECTION-STRING'
-  properties: {
-    value: azureStorageConnectionString
+    privateDnsZoneConfigs: [
+      {
+        name: 'vault-config'
+        properties: {
+          privateDnsZoneId: privateDnsZoneId
+        }
+      }
+    ]
   }
 }
 

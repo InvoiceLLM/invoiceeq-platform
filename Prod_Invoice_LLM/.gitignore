@@ -74,6 +74,9 @@ Domain_Adaptation_Impact_Analysis.md
 # invoice-fe-lite (local development frontend)
 invoice-fe-lite/
 
+# Real infra secrets (params.dev.secrets.json.example is the safe template)
+infra/params.*.secrets.json
+
 # Temp debug scripts
 apps/invoice-be/temp_*.py
 clean.py

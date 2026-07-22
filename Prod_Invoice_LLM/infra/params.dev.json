@@ -14,20 +14,8 @@
     "dbAdminLogin": {
       "value": "dbadmin"
     },
-    "dbAdminPassword": {
-      "value": "P@ssw0rd12345!"
-    },
-    "clerkSecretKey": {
-      "value": "sk_test_mock_clerk_secret_key_here"
-    },
     "nextPublicClerkPublishableKey": {
       "value": "pk_test_mock_clerk_publishable_key_here"
-    },
-    "tokenEncryptionKey": {
-      "value": "9OWQ4zLbBbNTm7CLm7BGOh5uEi-UeA9_i0mCNyzV49Q="
-    },
-    "azureOpenAiEndpoint": {
-      "value": "https://openai-invoice-llm-dev.openai.azure.com/"
     },
     "azureOpenAiDeploymentName": {
       "value": "gpt-5-mini"
@@ -35,8 +23,11 @@
     "azureOpenAiModelVersion": {
       "value": "2025-08-07"
     },
-    "azureDocIntelEndpoint": {
-      "value": "https://docintel-invoice-llm-dev.cognitiveservices.azure.com/"
+    "alertEmail": {
+      "value": "sbanerji@admsofttech.com"
+    },
+    "monthlyBudgetAmount": {
+      "value": 150
     },
     "backendImage": {
       "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"

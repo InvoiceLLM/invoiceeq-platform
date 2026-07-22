@@ -1,6 +1,9 @@
 targetScope = 'resourceGroup'
 
-// ================= Parameters =================
+// ================= Stage 6: Container Apps Environment + ChromaDB =================
+// Depends on Stage 1 (aca subnet) and Stage 3 (storage account for the
+// ChromaDB file share).
+
 @description('Deployment environment (e.g. dev, uat, prod)')
 param environment string = 'dev'
 
@@ -10,38 +13,24 @@ param location string = resourceGroup().location
 @description('Prefix for resource naming')
 param namingPrefix string = 'invoice-llm'
 
-
-@description('Storage account name from step1')
-param storageAccountName string
-
-@description('Storage account key from step1')
-@secure()
-param storageAccountKey string
-
-// ================= Variables =================
-var caeName = 'cae-${namingPrefix}-${environment}'
 var vnetName = 'vnet-${namingPrefix}-${environment}'
+var caeName = 'cae-${namingPrefix}-${environment}'
+var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
+var acaSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, 'snet-aca')
 
-// Get VNet outputs from existing deployment
-module network './modules/network/vnet.bicep' = {
-  name: 'network-reference'
-  params: {
-    location: location
-    vnetName: vnetName
-  }
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
+  name: storageAccountName
 }
 
-// ================= 1. Container Apps Environment =================
 module containerEnv './modules/compute/container-env.bicep' = {
   name: 'container-env-deploy'
   params: {
     location: location
     caeName: caeName
-    subnetId: network.outputs.acaSubnetId
+    subnetId: acaSubnetId
   }
 }
 
-// ================= 2. Vector Database (ChromaDB Container) =================
 module chromadb './modules/data/chromadb.bicep' = {
   name: 'chromadb-deploy'
   params: {
@@ -49,11 +38,9 @@ module chromadb './modules/data/chromadb.bicep' = {
     caeId: containerEnv.outputs.caeId
     appName: 'ca-chromadb-${environment}'
     storageAccountName: storageAccountName
-    storageAccountKey: storageAccountKey
+    storageAccountKey: storageAccount.listKeys().keys[0].value
   }
 }
-
-
 
 // ================= Outputs =================
 output caeId string = containerEnv.outputs.caeId
