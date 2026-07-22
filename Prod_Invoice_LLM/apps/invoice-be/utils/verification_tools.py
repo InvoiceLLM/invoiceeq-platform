@@ -210,3 +210,51 @@ def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str |
 
     return None
 
+
+def verify_line_item_amounts_in_source_text(items: list[dict] | None, ocr_text: str | None) -> dict | None:
+    """
+    Gap 36 — Gap 33's sibling at the line-item level: the same LLM behavior that
+    silently "corrects" an inconsistent grand_total can also silently correct an
+    individual line item's amount so sum(items) reconciles with the printed
+    subtotal, defeating verify_line_items_math's subtotal-sum/per-line checks
+    the same way Gap 33 defeated verify_totals_math. Found via the benchmark's
+    `subtotal_mismatch`/`rounding_gap` flaw types (deliberately bump one printed
+    row's amount without touching the printed subtotal) — the extraction
+    repeatedly extracted a line amount that summed exactly to the correct
+    (unflawed) subtotal instead of the deliberately-wrong printed figure.
+
+    Same principle as verify_grand_total_in_source_text: independent of
+    arithmetic, only asks whether each line item's extracted `amount` appears
+    verbatim (in a plausible printed form) anywhere in the raw OCR text.
+    """
+    if not items or not ocr_text:
+        return None
+
+    try:
+        unverified = []
+        for idx, item in enumerate(items):
+            amount = item.get("amount")
+            if amount is None:
+                continue
+            variants = _number_text_variants(float(amount))
+            if not any(v in ocr_text for v in variants):
+                unverified.append((idx, item.get("description") or f"item {idx + 1}", float(amount)))
+
+        if not unverified:
+            return None
+
+        desc = "; ".join(f"'{d}' ({a:.2f})" for _, d, a in unverified)
+        return {
+            "type": "line_item_not_verified_in_source",
+            "message": (
+                f"Extracted line item amount(s) not found verbatim in the source document text: {desc} — "
+                "possible silent correction of a printed figure rather than faithful transcription. "
+                "Flagged for manual review."
+            ),
+            "field": "items"
+        }
+    except Exception as e:
+        logger.warning("Failed to perform line item source-text verification: %s", e)
+
+    return None
+

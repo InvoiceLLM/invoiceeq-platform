@@ -118,6 +118,13 @@ Dynamic/procedural, so tracked by category rather than fixed instance — each c
   - `cache_hit_check` (Task 6.11) and `mutating_regression` (Gap 32) both **passed** — those fixes are holding under real daily-cadence conditions, not just the original fixture re-run.
   - **Day 2 should confirm**: extraction accuracy back near 100% on the status-misclassification category (Gap 33 closure), RAG chat pass rate substantially recovered (Gap 34 fix), and `audit_count` matching exactly (harness fix).
 
+- **2026-07-22 (continued) — Day 1 regression re-run (same seed 20260722), interrupted, but a new gap found**: re-ran Day 1's exact seed against the Gap 33/34-fixed code as a true regression check (not fresh Day 2 scenarios — same 30 invoices, deterministic). The local environment (Docker/Postgres/backend) was torn down mid-run by an unrelated session interruption before the report could be written, but the DB (`bench-sanity-pg`) survived as a stopped container and was recovered — 18 of 30 invoices had completed extraction before the interruption, giving a real (if partial) result.
+  - Compared the 18 completed invoices against freshly-regenerated ground truth (same seed, deterministic): **12/18 (66.7%) status-classification match**. 6 mismatches investigated by actual `expected_alert_type`, not just symptom — corrected an error from the original Day 1 report, which had lumped all 6 together as Gap 33 by symptom alone.
+  - **1 of 6** (`INDIA-20260722-004`) is the pre-existing India Gap 31 edge case — unrelated.
+  - **5 of 6** turned out to be a new, previously-unidentified defect (Gap 36 — see `be_features_tracker.md`): the same silent-correction behavior as Gap 33, but at the line-item level, which Gap 33's fix doesn't cover. Fixed same day.
+  - RAG chat pass never started before the interruption — Gap 34 remains unconfirmed pending a clean run.
+  - **Next**: a fresh, uninterrupted Day 1 re-run (same seed) with both Gap 33 and Gap 36 fixes in place, to get one clean, complete result covering extraction accuracy and RAG chat together.
+
 ## Task Breakdown
 - `[x]` Task 13.1: Build Tier 1 fixture regression suite (`tests/e2e/`).
 - `[x]` Task 13.2: Wire Tier 1 into `workflow_dispatch` CI (`e2e-regression.yml`).

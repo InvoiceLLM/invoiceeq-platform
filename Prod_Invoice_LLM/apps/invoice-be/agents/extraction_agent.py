@@ -6,7 +6,12 @@ import fitz  # PyMuPDF
 
 from config import get_settings
 from utils.llm import get_llm
-from utils.verification_tools import verify_line_items_math, verify_totals_math, verify_grand_total_in_source_text
+from utils.verification_tools import (
+    verify_line_items_math,
+    verify_totals_math,
+    verify_grand_total_in_source_text,
+    verify_line_item_amounts_in_source_text,
+)
 from utils.token_management import check_token_guardrails
 from services.storage import download_pdf_from_storage
 from langchain_core.messages import HumanMessage
@@ -289,6 +294,11 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     source_text_alert = verify_grand_total_in_source_text(grand_total, state.get("ocr_text"))
     if source_text_alert:
         alerts.append(source_text_alert)
+
+    # 4. Gap 36 (Gap 33's sibling): same faithfulness check, per line item.
+    line_item_source_text_alert = verify_line_item_amounts_in_source_text(items, state.get("ocr_text"))
+    if line_item_source_text_alert:
+        alerts.append(line_item_source_text_alert)
 
     status = "AUDIT_REQUIRED" if alerts else "COMPLETED"
     
