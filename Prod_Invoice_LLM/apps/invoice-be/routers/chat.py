@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, ConfigDict
 from sqlmodel import Session, select
@@ -7,6 +8,8 @@ from datetime import datetime
 from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import ChatSession, ChatMessage
 from agents.query_agent import run_query_agent
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -141,13 +144,27 @@ def post_chat_message(
     db_session.add(user_msg)
     db_session.commit()
     
-    # 3. Invoke multi-agent Query Agent routing pipeline
-    agent_output = run_query_agent(
-        session_id=str(session_id),
-        user_message=payload.content,
-        tenant_id=str(tenant_context.tenant_id),
-        db_session=db_session
-    )
+    # 3. Invoke multi-agent Query Agent routing pipeline.
+    # Gap 37: the SQL/RAG/CHAT routes inside run_query_agent() each already
+    # have their own try/except, but the call itself was unguarded here -
+    # any exception outside those three branches (routing classification,
+    # chat-history lookup, cache access) surfaced as a raw, unhandled 500
+    # instead of a graceful chat response. Found via the benchmark's Day 1
+    # RAG chat sample (a 500 on an audit_status question).
+    try:
+        agent_output = run_query_agent(
+            session_id=str(session_id),
+            user_message=payload.content,
+            tenant_id=str(tenant_context.tenant_id),
+            db_session=db_session
+        )
+    except Exception as e:
+        logger.error("run_query_agent failed unexpectedly for session %s: %s", session_id, e)
+        agent_output = {
+            "content": "Sorry, something went wrong answering that — please try again.",
+            "generated_sql": None,
+            "citations": [],
+        }
     
     # 4. Save assistant response to database
     assistant_msg = ChatMessage(
