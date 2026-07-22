@@ -23,6 +23,7 @@ swallowed by it on large high-complexity invoices:
                             hallucinating a value
 """
 import random
+import re
 from dataclasses import dataclass, field
 
 from tests.benchmark.catalog import REGIONS
@@ -237,8 +238,26 @@ def _generate_uk(rng: random.Random, invoice_id: str, complexity: str, flaw: str
     )
 
 
+def _parse_amount(s: str) -> float:
+    """Strips everything except digits/decimal-point before parsing (commas AND
+    a leading currency symbol, e.g. US rows are formatted via _fmt() as "$8,756.48"
+    while INDIA/UK rows are plain "8,756.48" with no symbol at all - a bare
+    `.replace(",", "")` leaves the "$" in place and float() raises on it)."""
+    cleaned = re.sub(r"[^\d.]", "", s)
+    return float(cleaned)
+
+
 def _apply_flaw(flaw, rng, rows, summary_rows, meta_lines, gt, symbol, grand_total, subtotal, amount_col_index=-1):
-    """Mutates rows/meta_lines/gt in place for the chosen flaw type; returns the (possibly broken) grand_total."""
+    """Mutates rows/meta_lines/gt in place for the chosen flaw type; returns the (possibly broken) grand_total.
+
+    gt["expected_status"]/["expected_alert_type"] are only set to AUDIT_REQUIRED
+    once the row mutation has actually succeeded — previously they were set
+    unconditionally before a try/except that could silently no-op the mutation
+    (found via the benchmark's own Day 1 regression run, Jul 22 2026: US rows'
+    "$"-prefixed amount strings broke float() parsing here, silently leaving the
+    row un-flawed while ground truth still claimed AUDIT_REQUIRED - a false
+    positive in the test harness itself, not a real extraction/verification bug).
+    """
     if flaw is None:
         gt["expected_status"] = "COMPLETED"
         return grand_total
@@ -258,31 +277,29 @@ def _apply_flaw(flaw, rng, rows, summary_rows, meta_lines, gt, symbol, grand_tot
         # exceeds the subtotal-sum check's tolerance regardless of invoice size.
         if rows:
             row = rows[0]
-            try:
-                current = float(row[amount_col_index].replace(",", ""))
-                gap = current * rng.uniform(0.03, 0.06) + rng.uniform(20, 100)
-                row[amount_col_index] = f"{current + gap:,.2f}"
-            except (ValueError, IndexError):
-                pass
-        gt["expected_status"] = "AUDIT_REQUIRED"
-        gt["expected_alert_type"] = "line_items_mismatch"
+            current = _parse_amount(row[amount_col_index])
+            gap = current * rng.uniform(0.03, 0.06) + rng.uniform(20, 100)
+            row[amount_col_index] = f"{current + gap:,.2f}"
+            gt["expected_status"] = "AUDIT_REQUIRED"
+            gt["expected_alert_type"] = "line_items_mismatch"
+        else:
+            gt["expected_status"] = "COMPLETED"
         return grand_total
 
     if flaw == "rounding_gap":
         if rows:
             row = rows[0]
-            try:
-                current = float(row[amount_col_index].replace(",", ""))
-                # Must reliably exceed verify_line_items_math's tolerance
-                # (max(0.01, 0.5% relative)) regardless of line size — a flat
-                # 1-5 unit gap gets swallowed by the relative tolerance on large
-                # lines. Scale with the line's own value, with margin.
-                gap = current * rng.uniform(0.02, 0.04) + rng.uniform(1.0, 3.0)
-                row[amount_col_index] = f"{current + gap:,.2f}"
-            except (ValueError, IndexError):
-                pass
-        gt["expected_status"] = "AUDIT_REQUIRED"
-        gt["expected_alert_type"] = "line_item_calculation_mismatch"
+            current = _parse_amount(row[amount_col_index])
+            # Must reliably exceed verify_line_items_math's tolerance
+            # (max(0.01, 0.5% relative)) regardless of line size — a flat
+            # 1-5 unit gap gets swallowed by the relative tolerance on large
+            # lines. Scale with the line's own value, with margin.
+            gap = current * rng.uniform(0.02, 0.04) + rng.uniform(1.0, 3.0)
+            row[amount_col_index] = f"{current + gap:,.2f}"
+            gt["expected_status"] = "AUDIT_REQUIRED"
+            gt["expected_alert_type"] = "line_item_calculation_mismatch"
+        else:
+            gt["expected_status"] = "COMPLETED"
         return grand_total
 
     if flaw == "missing_optional_field":
