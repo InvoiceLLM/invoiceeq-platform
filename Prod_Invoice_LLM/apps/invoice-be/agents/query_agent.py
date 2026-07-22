@@ -192,20 +192,30 @@ def get_chat_history(session_id: str, db_session, limit: int = 10) -> str:
         sess_uuid = UUID(session_id)
     except ValueError:
         return ""
-        
-    statement = (
-        select(ChatMessage)
-        .where(ChatMessage.session_id == sess_uuid)
-        .order_by(ChatMessage.created_at.desc())
-        .limit(limit)
-    )
-    messages = db_session.exec(statement).all()
-    messages.reverse()
-    
-    history_str = ""
-    for m in messages:
-        history_str += f"{m.role.capitalize()}: {m.content}\n"
-    return history_str
+
+    try:
+        statement = (
+            select(ChatMessage)
+            .where(ChatMessage.session_id == sess_uuid)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+        )
+        messages = db_session.exec(statement).all()
+        messages.reverse()
+
+        history_str = ""
+        for m in messages:
+            history_str += f"{m.role.capitalize()}: {m.content}\n"
+        return history_str
+    except Exception as e:
+        # Gap 37: this query previously had no failure guard at all, so any
+        # transient DB hiccup here (unlike every LLM-call branch below, which
+        # already has its own try/except) propagated all the way up through
+        # run_query_agent as a raw, unhandled 500 instead of degrading
+        # gracefully. Missing history is recoverable — proceed without it
+        # rather than fail the whole request.
+        logger.warning("Failed to load chat history for session %s: %s", session_id, e)
+        return ""
 
 def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_session) -> dict:
     """

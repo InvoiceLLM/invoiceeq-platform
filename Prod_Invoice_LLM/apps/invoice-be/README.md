@@ -35,8 +35,6 @@ invoice-be/
 ├── queue_worker/
 │   ├── main_worker.py           # Azure Storage Queue polling loop (standalone process)
 │   └── handlers.py              # Background Tasks (OCR, extraction, chunking, vectorization)
-├── mcp_servers/
-│   └── ingestion_mcp.py         # Connector for Google Drive/Salesforce (not yet wired into an agent)
 ├── alembic/                     # Database migrations (env.py + versions/)
 ├── tests/                       # Unit & integration tests
 ├── models.py                    # SQLAlchemy/SQLModel Definitions (Tenant-Isolated)
