@@ -66,13 +66,13 @@ Dynamic/procedural, so tracked by category rather than fixed instance — each c
 
 | ID | Test case category | Checks | Linked gap | Status |
 |---|---|---|---|---|
-| BM-1 | Extraction accuracy (US/India/UK, clean + flawed, medium + high complexity) | Field-level correctness + status classification against generated ground truth | — | ⏳ Pending first post-fix run |
-| BM-2 | RAG chat: amount lookup | Single-invoice grand_total lookup via SQL route | — | ✅ Passing (2026-07-21 sanity run) |
-| BM-3 | RAG chat: vendor lookup | Single-invoice vendor_name lookup via SQL route | — | ✅ Passing (2026-07-21 sanity run) |
-| BM-4 | RAG chat: audit-status lookup | Single-invoice status lookup via SQL route | — | ✅ Passing (2026-07-21 sanity run) |
-| BM-5 | RAG chat: cross-invoice aggregate count | `COUNT(*) WHERE status='AUDIT_REQUIRED'` across the whole batch — exercises more complex SQL generation (Gap 13/11 territory) | Gap 13, Gap 11 (informational — not required to pass, watch for how often it fails) | ⏳ Pending first post-fix run |
-| BM-6 | RAG chat: mutating-keyword regression | "most recently created" phrasing must not be rejected by the mutating-SQL guardrail | **Gap 32** (fixed Jul 21) | ⏳ Fix applied, not yet re-run |
-| BM-7 | RAG chat: cache-hit regression | Re-asking the same question in a new session returns a byte-identical (cached) answer | **Task 6.11 / Gap 7+10** (implemented Jul 21) | ⏳ Fix applied, not yet re-run |
+| BM-1 | Extraction accuracy (US/India/UK, clean + flawed, medium + high complexity) | Field-level correctness + status classification against generated ground truth | Gap 33 (status_misclassification, 5/30 Day 1) | ⚠️ 25/30 (83.3%) Day 1 — see Run Log; Gap 33 closed same day, re-run needed to confirm |
+| BM-2 | RAG chat: amount lookup | Single-invoice grand_total lookup via SQL route | Gap 34 | ⚠️ Intermittent Day 1 ("no records found" on real invoices) — Gap 34 fixed same day, re-run needed |
+| BM-3 | RAG chat: vendor lookup | Single-invoice vendor_name lookup via SQL route | Gap 34 | ⚠️ Intermittent Day 1, same root cause as BM-2 — Gap 34 fixed same day |
+| BM-4 | RAG chat: audit-status lookup | Single-invoice status lookup via SQL route | Gap 34 | ⚠️ Intermittent Day 1, same root cause as BM-2 — Gap 34 fixed same day |
+| BM-5 | RAG chat: cross-invoice aggregate count | `COUNT(*) WHERE status='AUDIT_REQUIRED'` across the whole batch — exercises more complex SQL generation (Gap 13/11 territory) | Gap 13, Gap 11 (informational) | ⚠️ Day 1: harness bug, not a product defect — expected count was scoped to only that day's 30 invoices, but leftover invoices from unrelated local test runs inflated the live count. Fixed via a pre-run cleanup step in `run_benchmark.py` |
+| BM-6 | RAG chat: mutating-keyword regression | "most recently created" phrasing must not be rejected by the mutating-SQL guardrail | **Gap 32** (fixed Jul 21) | ✅ Passing (Day 1, 2026-07-22) |
+| BM-7 | RAG chat: cache-hit regression | Re-asking the same question in a new session returns a byte-identical (cached) answer | **Task 6.11 / Gap 7+10** (implemented Jul 21) | ✅ Passing (Day 1, 2026-07-22) |
 
 ### Not yet covered by any test case (backlog, add when prioritized)
 | Gap | What test case would be needed |
@@ -108,6 +108,15 @@ Dynamic/procedural, so tracked by category rather than fixed instance — each c
     - Also found and fixed: `vertex_india_gst_complex`'s own test data had a latent arithmetic inconsistency (printed subtotal didn't match its own line items) — corrected the fixture.
   - Also fixed the benchmark generator's flaw-injection magnitude (`broken_total`/`subtotal_mismatch`/`rounding_gap` all now scale with the affected amount) — a flat few-unit gap no longer reliably exceeds the new relative tolerance on large invoices, which would have silently produced false negatives (flawed invoices misreported as clean) in the daily cadence.
   - Full 5-fixture suite: 5/5 passing (with Gap 33's residual ~1-in-5 rate on `synthex_deliberate_mismatch` noted, not hidden).
+
+- **2026-07-22 — Day 1 of the real benchmark cadence (30 invoices: 10 US, 10 India, 10 UK)**:
+  - **Extraction: 25/30 (83.3%)** — US 7/10 (70%), India 10/10 (100%), UK 8/10 (80%).
+  - **5 failures, all the same shape**: expected `AUDIT_REQUIRED`, got `COMPLETED` (3 US, 2 UK) — the Day 1 run itself confirmed Gap 33's residual rate live (previously only observed in isolated repeat testing). **Fixed same day** — see Gap 33 in `be_features_tracker.md` / `feature_2_pipeline_extraction.md`: closed with a deterministic OCR-text faithfulness check (`verify_grand_total_in_source_text`) instead of relying on prompt tuning alone.
+  - 1 more failure: already-known, already-tracked India Gap 31 edge case — informational, not new.
+  - **RAG chat: 12/21 (57%)** — most failures were "no records found matching the query criteria" for invoices confirmed to exist in the DB (verified directly for one case). Root-caused to SQL-generation non-determinism, not missing data. **New Gap 34, fixed same day** — see `be_features_tracker.md` / `feature_6_rag.md`: deterministic case/whitespace normalization on generated SQL string-equality filters, plus a direct-lookup fallback when the generated SQL still finds nothing for a question naming a specific invoice.
+  - `audit_count` aggregate question also failed (16 vs expected 11) — diagnosed as a **benchmark harness bug, not a product defect**: the expected count was scoped to only today's 30 invoices, but the mock tenant's invoice table still had leftover rows from unrelated local test/sanity runs earlier in the session, inflating the live count. Fixed with a pre-run cleanup step in `run_benchmark.py::_cleanup_preexisting_invoices()` that clears the mock tenant before generating each day's batch.
+  - `cache_hit_check` (Task 6.11) and `mutating_regression` (Gap 32) both **passed** — those fixes are holding under real daily-cadence conditions, not just the original fixture re-run.
+  - **Day 2 should confirm**: extraction accuracy back near 100% on the status-misclassification category (Gap 33 closure), RAG chat pass rate substantially recovered (Gap 34 fix), and `audit_count` matching exactly (harness fix).
 
 ## Task Breakdown
 - `[x]` Task 13.1: Build Tier 1 fixture regression suite (`tests/e2e/`).

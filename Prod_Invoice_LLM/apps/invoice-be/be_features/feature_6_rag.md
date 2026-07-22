@@ -22,6 +22,8 @@ Construct document indexers and semantic chat clients utilizing vector similarit
 
 **Task 6.11 implemented (Jul 21, 2026)**: `run_query_agent()` now checks a Redis cache (`get_cached_answer()`/`set_cached_answer()`, keyed on `(tenant_id, normalized_query)`) before doing any routing/retrieval/LLM work, and writes successful SQL/RAG-route results back to it (1-hour TTL). CHAT-route answers and failed lookups are never cached. This supersedes the `chat_qa_shortcuts` Postgres-table plan referenced by the tracker's old Gap 7/10 wording — see `be_features_tracker.md`.
 
+**P0 fix (Gap 34, Jul 22, 2026)**: the Day 1 benchmark's RAG chat sample scored only 12/21 — most failures were the SQL route answering "no records found matching the query criteria" for invoices confirmed to exist in the DB (verified directly against one case). Root cause: `SQLGenerationSchema`'s free-form `WHERE invoice_number = '...'` clause has no guaranteed case/whitespace consistency against the stored value — the LLM generates syntactically valid SQL that just doesn't match. Fixed with two deterministic (non-LLM) layers in `agents/query_agent.py`: (1) `_normalize_string_equality()` rewrites the generated SQL's exact-match filters on `invoice_number`/`vendor_name`/`po_number` (OCR/LLM-sourced columns — `status` is deliberately excluded, it's our own enum) to a case-insensitive, trimmed comparison before execution; (2) `lookup_invoice_by_number_fallback()` — if the generated SQL still returns zero rows and the question names a specific invoice (regex-matched), a direct parameterized lookup runs as a safety net.
+
 ### Tasks
 - [x] **Task 6.1: Setup Chat Sessions & Threads API**
   - Implement endpoints:

@@ -200,6 +200,29 @@ def _run_chat_pass(client: httpx.Client, base_url: str, batches_by_region: dict)
     return results
 
 
+def _cleanup_preexisting_invoices(client: httpx.Client, base_url: str) -> int:
+    """Defensive pre-run cleanup: the mock tenant's invoice table can carry leftover
+    rows from unrelated ad-hoc test/sanity runs (this harness's own `finally` block
+    only cleans up invoices *it* created). Aggregate questions like audit_count
+    compute expected values from only this run's ground truth, so stale rows from
+    other runs silently inflate the live count and produce a false failure. Deletes
+    everything for the mock tenant before generating this run's batch."""
+    deleted = 0
+    while True:
+        resp = client.get(f"{base_url}/invoices", params={"limit": 100}, timeout=30)
+        resp.raise_for_status()
+        items = resp.json()
+        if not items:
+            break
+        for item in items:
+            try:
+                client.delete(f"{base_url}/invoices/{item['id']}", timeout=30)
+                deleted += 1
+            except Exception:
+                pass
+    return deleted
+
+
 def run(regions: list[str], count: int, day_seed: int, base_url: str) -> dict:
     scratch = PDF_SCRATCH_DIR / f"day{day_seed}"
     batches_by_region = {r: generate_daily_batch(r, day_seed, count) for r in regions}
@@ -209,6 +232,9 @@ def run(regions: list[str], count: int, day_seed: int, base_url: str) -> dict:
 
     with httpx.Client() as client:
         try:
+            cleaned = _cleanup_preexisting_invoices(client, base_url)
+            if cleaned:
+                print(f"Cleaned up {cleaned} pre-existing invoice(s) from the mock tenant before starting.")
             for region, batch in batches_by_region.items():
                 for gen in batch:
                     pdf_path = _render_pdf(gen, scratch)

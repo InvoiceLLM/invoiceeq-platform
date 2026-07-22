@@ -6,7 +6,7 @@ import fitz  # PyMuPDF
 
 from config import get_settings
 from utils.llm import get_llm
-from utils.verification_tools import verify_line_items_math, verify_totals_math
+from utils.verification_tools import verify_line_items_math, verify_totals_math, verify_grand_total_in_source_text
 from utils.token_management import check_token_guardrails
 from services.storage import download_pdf_from_storage
 from langchain_core.messages import HumanMessage
@@ -282,7 +282,14 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     if totals_alert:
         alerts.append(totals_alert)
 
-        
+    # 3. Gap 33: grand_total faithfulness check, independent of arithmetic —
+    # catches the case where the LLM silently "corrected" an inconsistent
+    # printed total instead of transcribing it (which verify_totals_math
+    # alone cannot detect, since a self-corrected total always reconciles).
+    source_text_alert = verify_grand_total_in_source_text(grand_total, state.get("ocr_text"))
+    if source_text_alert:
+        alerts.append(source_text_alert)
+
     status = "AUDIT_REQUIRED" if alerts else "COMPLETED"
     
     feedback = []

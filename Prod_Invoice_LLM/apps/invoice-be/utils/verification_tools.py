@@ -1,4 +1,5 @@
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,58 @@ def verify_totals_math(
         }
     except Exception as e:
         logger.warning("Failed to perform totals math verification: %s", e)
+
+    return None
+
+
+def _number_text_variants(value: float) -> list[str]:
+    """Plausible printed forms of a number: with/without thousands separator,
+    with/without trailing .00, and rounded to 0/1/2 decimals (OCR sometimes
+    drops trailing zeros or a decimal entirely on whole-number totals)."""
+    variants = set()
+    for decimals in (2, 1, 0):
+        rounded = round(value, decimals)
+        plain = f"{rounded:.{decimals}f}"
+        with_commas = f"{rounded:,.{decimals}f}"
+        variants.add(plain)
+        variants.add(with_commas)
+    return list(variants)
+
+
+def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str | None) -> dict | None:
+    """
+    Gap 33: an LLM extracting from an internally-inconsistent invoice (printed
+    total doesn't match subtotal+tax) will sometimes "correct" the figure to
+    the arithmetically-correct value instead of transcribing what's actually
+    printed — silently defeating verify_totals_math, since the corrected
+    number reconciles perfectly with itself and no mismatch is ever raised.
+
+    This check is deliberately independent of arithmetic: it only asks
+    whether the extracted grand_total appears verbatim (in some plausible
+    printed form) anywhere in the raw OCR text. A faithfully-transcribed
+    total — correct or deliberately wrong — always passes this; a
+    silently-recalculated one usually does not, because the recalculated
+    figure was never printed on the document at all.
+    """
+    if grand_total is None or not ocr_text:
+        return None
+
+    try:
+        variants = _number_text_variants(float(grand_total))
+        if any(v in ocr_text for v in variants):
+            return None
+
+        return {
+            "type": "total_not_verified_in_source",
+            "message": (
+                f"Extracted grand_total ({grand_total:.2f}) was not found verbatim in the "
+                "source document text — possible silent correction of a printed figure rather "
+                "than faithful transcription. Flagged for manual review."
+            ),
+            "field": "grand_total"
+        }
+    except Exception as e:
+        logger.warning("Failed to perform grand_total source-text verification: %s", e)
 
     return None
 
