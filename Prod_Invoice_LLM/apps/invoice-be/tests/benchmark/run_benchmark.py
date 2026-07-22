@@ -364,6 +364,9 @@ def _summarize(report: dict) -> str:
     ]
     for region in report["regions"]:
         region_results = [r for r in ext if r["region"] == region]
+        if not region_results:
+            lines.append(f"- {region}: 0/0 (pending)")
+            continue
         region_pass = sum(1 for r in region_results if r["pass"])
         lines.append(f"- {region}: {region_pass}/{len(region_results)} ({region_pass/len(region_results)*100:.1f}%)")
 
