@@ -152,11 +152,6 @@ def _generate_india(rng: random.Random, invoice_id: str, complexity: str, flaw: 
         "expected_tax_amount": round(cgst + sgst, 2),
         "expected_subtotal": taxable_total,
         "expected_vendor_name": vendor_name,
-        # India's post-discount subtotal + CGST/SGST split + round-off are known-unresolved
-        # (Gap 31) - verify_totals_math will likely false-flag these even when the invoice
-        # itself is internally consistent. Not asserted strictly; harness records it as a
-        # known-gap category rather than a new defect.
-        "known_gap_31_affected": True,
     }
 
     grand_total = _apply_flaw(flaw, rng, rows, summary_rows, meta_lines, gt, symbol, grand_total, taxable_total, amount_col_index=-1)

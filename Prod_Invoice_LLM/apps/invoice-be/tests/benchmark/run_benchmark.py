@@ -16,6 +16,7 @@ meant to be run manually against a reachable invoice-be instance (see the
 approved plan for the temporary-external-ingress procedure against dev).
 """
 import argparse
+import concurrent.futures
 import json
 import sys
 import time
@@ -34,6 +35,18 @@ POLL_INTERVAL_S = 3
 POLL_TIMEOUT_S = 180
 AMOUNT_ABS_TOLERANCE = 0.05
 AMOUNT_REL_TOLERANCE = 0.005  # 0.5%
+
+# Extraction is I/O-bound (Azure OpenAI + Doc Intelligence network calls), so
+# threads parallelize it despite the GIL. Capped rather than unbounded to
+# avoid tripping 429 throttling on those deployments - the pipeline has no
+# retry/backoff for that today.
+MAX_WORKERS = 5
+
+# Written after every Nth completed extraction (overwriting the same report
+# files main() would write at the end) so a hung/killed run - like the one
+# that lost 28 finished invoices with nothing on disk to show for it -
+# leaves a recoverable partial report instead of nothing.
+CHECKPOINT_EVERY = 5
 
 REPORT_DIR = Path(__file__).parent / "reports"
 PDF_SCRATCH_DIR = Path(__file__).parent / "_scratch"
@@ -117,13 +130,10 @@ def _compare(gen: GeneratedInvoice, actual: dict) -> dict:
     if actual_status == "FAILED":
         return {"pass": False, "root_cause": "extraction_failed", "detail": str(actual.get("sa_alerts"))}
 
-    known_gap_31 = gt.get("known_gap_31_affected", False)
-
     if actual_status != expected_status:
-        root_cause = "known_gap_31_india" if known_gap_31 else "status_misclassification"
         return {
-            "pass": known_gap_31,
-            "root_cause": root_cause,
+            "pass": False,
+            "root_cause": "status_misclassification",
             "detail": f"expected {expected_status}, got {actual_status}; alerts={actual.get('sa_alerts')}",
         }
 
@@ -131,18 +141,15 @@ def _compare(gen: GeneratedInvoice, actual: dict) -> dict:
         expected_alert = gt.get("expected_alert_type")
         alert_types = [a.get("type") for a in (actual.get("sa_alerts") or [])]
         if expected_alert and not _alert_type_matches(expected_alert, alert_types):
-            root_cause = "known_gap_31_india" if known_gap_31 else "wrong_alert_type"
-            return {"pass": known_gap_31, "root_cause": root_cause, "detail": f"expected alert '{expected_alert}', got {alert_types}"}
+            return {"pass": False, "root_cause": "wrong_alert_type", "detail": f"expected alert '{expected_alert}', got {alert_types}"}
         return {"pass": True, "root_cause": None, "detail": "audit-required correctly flagged"}
 
     # COMPLETED path: check numeric fields
     if not _amounts_close(actual.get("grand_total"), gt.get("expected_grand_total")):
-        root_cause = "known_gap_31_india" if known_gap_31 else "amount_mismatch_total"
-        return {"pass": known_gap_31, "root_cause": root_cause, "detail": f"grand_total expected {gt.get('expected_grand_total')}, got {actual.get('grand_total')}"}
+        return {"pass": False, "root_cause": "amount_mismatch_total", "detail": f"grand_total expected {gt.get('expected_grand_total')}, got {actual.get('grand_total')}"}
 
     if not _amounts_close(actual.get("tax_amount"), gt.get("expected_tax_amount")):
-        root_cause = "known_gap_31_india" if known_gap_31 else "amount_mismatch_tax"
-        return {"pass": known_gap_31, "root_cause": root_cause, "detail": f"tax_amount expected {gt.get('expected_tax_amount')}, got {actual.get('tax_amount')}"}
+        return {"pass": False, "root_cause": "amount_mismatch_tax", "detail": f"tax_amount expected {gt.get('expected_tax_amount')}, got {actual.get('tax_amount')}"}
 
     if "expected_po_number" in gt and gt["expected_po_number"] is None and actual.get("po_number"):
         return {"pass": False, "root_cause": "hallucinated_optional_field", "detail": f"po_number should be null, got {actual.get('po_number')}"}
@@ -245,9 +252,56 @@ def _cleanup_preexisting_invoices(client: httpx.Client, base_url: str) -> int:
     return deleted
 
 
+def _process_one(client: httpx.Client, base_url: str, scratch: Path, region: str, gen: GeneratedInvoice) -> dict:
+    """One invoice end-to-end: render, upload, extract, poll, grade. Never
+    raises - failures at any stage become a failed result dict, since this
+    runs inside a worker thread where an uncaught exception would just be
+    silently swallowed by the executor until .result() is called."""
+    pdf_path = _render_pdf(gen, scratch)
+    try:
+        invoice_id, batch_id = _upload(client, base_url, pdf_path)
+    except Exception as e:
+        return {"region": region, "name": gen.name, "pass": False, "root_cause": "upload_failed", "detail": str(e)}
+
+    try:
+        process_invoice_sync(invoice_id, batch_id)
+    except Exception as e:
+        return {
+            "region": region, "name": gen.name, "invoice_id": invoice_id,
+            "pass": False, "root_cause": "extraction_failed", "detail": str(e),
+        }
+
+    actual = _poll(client, base_url, invoice_id)
+    verdict = _compare(gen, actual)
+    return {
+        "region": region, "name": gen.name, "invoice_id": invoice_id,
+        "invoice_number": gen.ground_truth.get("invoice_number"),
+        "complexity": "high" if len(gen.pdf_kwargs["rows"]) >= 7 else "medium",
+        **verdict,
+    }
+
+
+def _write_checkpoint(day_seed: int, regions: list[str], count: int, extraction_results: list[dict], total: int) -> None:
+    report = {
+        "day_seed": day_seed,
+        "run_at": datetime.utcnow().isoformat() + "Z",
+        "regions": regions,
+        "count_per_region": count,
+        "extraction_results": extraction_results,
+        "chat_results": [],
+    }
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    (REPORT_DIR / f"day{day_seed}.json").write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    header = f"**IN PROGRESS - {len(extraction_results)}/{total} extractions done, RAG chat pass not started yet**\n\n"
+    (REPORT_DIR / f"day{day_seed}.md").write_text(header + _summarize(report), encoding="utf-8")
+    print(f"Checkpoint written: {len(extraction_results)}/{total} extractions.")
+
+
 def run(regions: list[str], count: int, day_seed: int, base_url: str) -> dict:
     scratch = PDF_SCRATCH_DIR / f"day{day_seed}"
     batches_by_region = {r: generate_daily_batch(r, day_seed, count) for r in regions}
+    tasks = [(region, gen) for region, batch in batches_by_region.items() for gen in batch]
+    total = len(tasks)
 
     extraction_results = []
     created_invoice_ids = []
@@ -257,34 +311,19 @@ def run(regions: list[str], count: int, day_seed: int, base_url: str) -> dict:
             cleaned = _cleanup_preexisting_invoices(client, base_url)
             if cleaned:
                 print(f"Cleaned up {cleaned} pre-existing invoice(s) from the mock tenant before starting.")
-            for region, batch in batches_by_region.items():
-                for gen in batch:
-                    pdf_path = _render_pdf(gen, scratch)
-                    try:
-                        invoice_id, batch_id = _upload(client, base_url, pdf_path)
-                    except Exception as e:
-                        extraction_results.append({
-                            "region": region, "name": gen.name, "pass": False,
-                            "root_cause": "upload_failed", "detail": str(e),
-                        })
-                        continue
-                    created_invoice_ids.append(invoice_id)
-                    try:
-                        process_invoice_sync(invoice_id, batch_id)
-                    except Exception as e:
-                        extraction_results.append({
-                            "region": region, "name": gen.name, "invoice_id": invoice_id,
-                            "pass": False, "root_cause": "extraction_failed", "detail": str(e),
-                        })
-                        continue
-                    actual = _poll(client, base_url, invoice_id)
-                    verdict = _compare(gen, actual)
-                    extraction_results.append({
-                        "region": region, "name": gen.name, "invoice_id": invoice_id,
-                        "invoice_number": gen.ground_truth.get("invoice_number"),
-                        "complexity": "high" if len(gen.pdf_kwargs["rows"]) >= 7 else "medium",
-                        **verdict,
-                    })
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = {
+                    executor.submit(_process_one, client, base_url, scratch, region, gen): (region, gen)
+                    for region, gen in tasks
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if result.get("invoice_id"):
+                        created_invoice_ids.append(result["invoice_id"])
+                    extraction_results.append(result)
+                    if len(extraction_results) % CHECKPOINT_EVERY == 0:
+                        _write_checkpoint(day_seed, regions, count, extraction_results, total)
 
             chat_results = _run_chat_pass(client, base_url, batches_by_region)
 
@@ -312,7 +351,7 @@ def _summarize(report: dict) -> str:
 
     by_cause = {}
     for r in ext:
-        if not r["pass"] or r.get("root_cause") == "known_gap_31_india":
+        if not r["pass"]:
             cause = r.get("root_cause") or "unknown"
             by_cause.setdefault(cause, []).append(r)
 
@@ -332,8 +371,7 @@ def _summarize(report: dict) -> str:
     if not by_cause:
         lines.append("None.")
     for cause, items in sorted(by_cause.items(), key=lambda kv: -len(kv[1])):
-        label = "known India Gap 31 (informational, not a new defect)" if cause == "known_gap_31_india" else cause
-        lines.append(f"\n### {label} ({len(items)})")
+        lines.append(f"\n### {cause} ({len(items)})")
         for r in items:
             lines.append(f"- [{r['region']}] {r['name']} (`{r.get('invoice_id', '?')}`): {r['detail']}")
 

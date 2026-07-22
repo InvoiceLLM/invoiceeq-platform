@@ -302,7 +302,13 @@ User Query: {user_message}
         except Exception as e:
             logger.error("SQL path execution failed: %s", e)
             response_text = f"Failed to execute database check: {str(e)}"
-            
+            # A DB-level failure (e.g. the LLM hallucinating a column that isn't in
+            # the schema it was given) aborts the whole Postgres transaction; without
+            # a rollback here, db_session stays poisoned and the *next* operation on
+            # it - chat.py's post_chat_message() saving this very fallback message -
+            # fails too, turning a handled failure into an unhandled 500.
+            db_session.rollback()
+
     elif route == "RAG":
         # Vector search (Long-term semantic facts)
         chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
