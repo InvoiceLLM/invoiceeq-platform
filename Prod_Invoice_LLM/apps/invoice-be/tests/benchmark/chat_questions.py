@@ -14,7 +14,7 @@ raw Q&A included so a human can eyeball anything marked inconclusive.
 import re
 from dataclasses import dataclass
 
-from tests.benchmark.generator import GeneratedInvoice
+from tests.benchmark.generator import GeneratedInvoice, _parse_amount
 
 AMOUNT_TOLERANCE = 0.05  # relative, e.g. 0.05 = 5%
 
@@ -43,12 +43,23 @@ def build_daily_chat_questions(batches_by_region: dict[str, list[GeneratedInvoic
             gt = gen.ground_truth
             invoice_number = gt.get("invoice_number", gen.name)
 
+            # gt["expected_grand_total"] is captured before _apply_flaw() runs, so on
+            # any AUDIT_REQUIRED invoice it holds the pre-flaw (arithmetically
+            # reconciled) value, not what's actually printed and correctly extracted
+            # - found via a clean benchmark run flagging a false "amount_mismatch" on
+            # a faithfully-extracted flawed invoice (grand_total matched the printed
+            # figure exactly, just not gt["expected_grand_total"]). The last
+            # summary_rows entry is always the printed total, added *after* the flaw
+            # is applied in every region's generator - use that instead.
+            printed_total_str = gen.pdf_kwargs["summary_rows"][-1][-1]
+            expected_amount = _parse_amount(printed_total_str)
+
             questions.append(ChatQuestion(
                 region=region,
                 invoice_number=invoice_number,
                 kind="amount",
                 question=f"What is the total amount (grand total) for invoice {invoice_number}?",
-                expected=gt.get("expected_grand_total"),
+                expected=expected_amount,
             ))
             questions.append(ChatQuestion(
                 region=region,
@@ -116,11 +127,29 @@ def grade_answer(q: ChatQuestion, answer: str) -> str:
 
     if q.kind == "audit_status":
         expects_audit = q.expected == "AUDIT_REQUIRED"
-        mentions_audit = any(kw in text for kw in ["audit", "flag", "mismatch", "discrepanc", "issue"])
-        if expects_audit:
-            return "pass" if mentions_audit else "fail"
-        # clean invoice: pass unless it wrongly claims an audit/issue
-        return "fail" if mentions_audit else "pass"
+        # Prefer an explicit status echo when present - both real answer styles
+        # observed include a literal "Status: COMPLETED"/"Status: AUDIT_REQUIRED"
+        # line, which is unambiguous regardless of surrounding phrasing.
+        if "status: audit_required" in text or "status = audit_required" in text:
+            stated_audit = True
+        elif "status: completed" in text or "status = completed" in text:
+            stated_audit = False
+        else:
+            # Fall back to a negation-aware keyword heuristic - the previous
+            # version just checked for "audit"/"flag" presence, which
+            # false-failed every correctly-worded "not flagged for audit"
+            # answer on a clean invoice (found via the benchmark's own Day 1
+            # re-run: those words appear in the negative phrasing too).
+            negation_patterns = [
+                r"\bnot\s+(?:currently\s+)?flagged\b",
+                r"\bno\b[^.]{0,30}\bflag",
+                r"isn'?t\s+flagged",
+                r"is\s+not\s+flagged",
+            ]
+            has_negation = any(re.search(p, text) for p in negation_patterns)
+            mentions_audit = any(kw in text for kw in ["audit", "flag", "mismatch", "discrepanc", "issue"])
+            stated_audit = mentions_audit and not has_negation
+        return "pass" if stated_audit == expects_audit else "fail"
 
     if q.kind == "audit_count":
         expected = q.expected
