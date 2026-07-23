@@ -2,7 +2,7 @@
 
 This document tracks the implementation progress of all frontend features for the `invoice-fe` Next.js client, including theme, layouts, and page routing. Feature spec files (`feature_1..7_*.md`) describe the target design only — every open item and pending build task is tracked here instead, so status doesn't drift out of sync across files.
 
-**Current Status:** ~55% complete against the feature specs below (scope expanded 2026-07-13 to match the finalized backend specs), with 20 open items below.
+**Current Status:** ~71% complete (5 of 7 features done) against the feature specs below, with 19 open gap items remaining. Feature 5 core implementation completed 2026-07-22.
 
 ---
 
@@ -12,7 +12,7 @@ This document tracks the implementation progress of all frontend features for th
 - `[x]` [Feature 2: Dashboard Analytics Command Center](feature_2_dashboard.md)
 - `[x]` [Feature 3: File Ingestion Portal & Active Tagging](feature_3_ingestion.md)
 - `[x]` [Feature 4: Split-Screen Auditor Review Console](feature_4_auditor.md)
-- `[ ]` [Feature 5: Semantic Chat Assistant & SQL Audit Drawer](feature_5_chat.md)
+- `[x]` [Feature 5: Semantic Chat Assistant & SQL Audit Drawer](feature_5_chat.md)
 - `[ ]` [Feature 6: AI Trainer Interactive Sandbox](feature_6_trainer.md)
 - `[ ]` [Feature 7: Third-Party Connectors & Explorer View](feature_7_connectors.md)
 - `[ ]` [Feature 8: Email Ingestion Settings](feature_8_email_ingestion.md) — spec only, added 2026-07-22; backend (`be_features/feature_14_email_ingestion.md`) blocked on a vendor decision before implementation starts
@@ -47,8 +47,32 @@ Gaps below are grouped by the feature file whose target design they still need t
 > Note: `PdfViewerCanvas.tsx`'s bounding-box overlay (Task 4.2) is fully built but has no backend data source yet — see `be_features_tracker.md` Gap 16.
 
 **Chat assistant** ([feature_5_chat.md](feature_5_chat.md)):
-- `[ ]` **Gap 6: Suggestion Chips** — clickable chips that auto-fill and submit common queries
-- `[ ]` **Gap 13: Typing Indicators** — "Thinking..." animation while waiting for the LLM response
+
+> ✅ **Core Feature 5 implemented 2026-07-22** — 10 new files created, 0 existing files modified, TypeScript compile: **0 errors**.
+
+**Completed Tasks (from `feature_5_chat.md`):**
+
+- `[x]` **Task 5.1: Build Conversational Message Thread Interface** — scroll-to-bottom chat bubble container with markdown formatting, thread selector sidebar with `+ New Chat` action, active thread highlighting, and empty state guidance.
+  - Files: `components/chat/ChatWindow.tsx`, `components/chat/MessageBubble.tsx` (includes `MessageStream` with auto-scroll)
+- `[x]` **Task 5.2: Integrate Interactive Citations** — parse `citations[]` from the backend RAG response and render as clickable pills. Each pill navigates to `/audit?invoice_id={id}&page={n}`.
+  - File: `components/chat/CitationPill.tsx`
+- `[x]` **Task 5.3: Build Expandable SQL Drawer** — collapsible accordion titled "Executed SQL Query & Data Sources" with emerald-green formatted code block and one-click copy-to-clipboard.
+  - File: `components/chat/SqlAuditDrawer.tsx`
+- `[x]` **Task 5.4: Bind Chat Queries to Backend** — async submit hook (`useChatSession`) with optimistic user bubble, error rollback, and session title auto-update. Three Next.js API proxy routes forward to the FastAPI backend.
+  - Files: `hooks/useChatSession.ts`, `app/api/chat/sessions/route.ts`, `app/api/chat/sessions/[sessionId]/route.ts`, `app/api/chat/sessions/[sessionId]/message/route.ts`
+
+**Supporting files created:**
+
+- `[x]` `types/chat.ts` — TypeScript interfaces for `ChatSession`, `ChatMessage`, `Citation`, and all request/response shapes matching the backend API contract.
+- `[x]` `app/chat/page.tsx` — `/chat` page entry point wiring `useChatSession` hook to `ChatWindow`. Uses `-m-8` to fill the full viewport edge-to-edge.
+
+**Completed Gaps:**
+
+- `[x]` **Gap 13: Typing Indicators** — three bouncing dots animation in `MessageBubble.tsx` `MessageStream` component while `isSending` is true, matching WhatsApp/Slack UX convention.
+
+**Remaining Gaps:**
+
+- `[ ]` **Gap 6: Suggestion Chips** — clickable preset query chips (e.g. "Total spend this month", "Show flagged invoices") that auto-fill and submit common queries. Not part of `feature_5_chat.md` task list — tracked as a separate enhancement.
 
 **Trainer sandbox** ([feature_6_trainer.md](feature_6_trainer.md) — redesigned 2026-07-13 into Global / Existing Vendor / New Vendor rule scopes, matching `be_features/feature_10_trainer.md`):
 - `[ ]` **Gap 3: Rule Scope Selector** — Tasks 6.1–6.4; 3-way Global / Existing Vendor / New Vendor entry point, replacing the old single uploader
