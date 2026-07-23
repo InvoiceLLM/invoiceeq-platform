@@ -1,0 +1,376 @@
+// =============================================================================
+// FILE: components/chat/ChatWindow.tsx
+// FEATURE: Feature 5 — Semantic Chat Assistant & SQL Audit Drawer
+// REASON ADDED: This is the top-level layout component for the /chat page.
+//   It orchestrates three sub-sections:
+//     1. ThreadSidebar (left, w-64) — lists sessions, "+ New Chat" button
+//     2. Message area (flex-1) — shows MessageStream, empty state, or loading
+//     3. InputBar (pinned to bottom) — auto-resizing textarea + Send button
+//   WHY a separate component instead of putting everything in page.tsx:
+//     page.tsx is kept thin (just the hook wiring) so ChatWindow can be
+//     tested or reused in a modal context later without importing Next.js
+//     page conventions.  All display logic lives here.
+//   Sub-components (ThreadSidebar, EmptyState, InputBar) are co-located in
+//   this file rather than split into separate files because they are small,
+//   tightly coupled to ChatWindow, and never used elsewhere.
+// =============================================================================
+
+"use client";
+
+import { useRef, useEffect, useState, KeyboardEvent } from "react";
+import {
+  MessageSquarePlus,
+  MessageSquare,
+  Send,
+  Loader2,
+  BotMessageSquare,
+} from "lucide-react";
+import { MessageStream } from "./MessageBubble";
+import type { ChatSession, ChatMessage } from "@/types/chat";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// WHY this helper: the sidebar shows relative or absolute timestamps depending
+//   on the age of the session.  Sessions from today show HH:MM; older ones
+//   show "Jan 5" etc.  This mimics the convention used by Slack/WhatsApp.
+function formatSessionDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const diffHours = diff / (1000 * 60 * 60);
+  if (diffHours < 24) {
+    return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// =============================================================================
+// ThreadSidebar — left panel showing the session list
+// REASON: Extracted into its own component so ThreadSidebar's render logic
+//   is isolated from the message area and input bar, making it easier to
+//   update the sidebar independently (e.g. adding search, folder grouping).
+// =============================================================================
+
+interface ThreadSidebarProps {
+  sessions: ChatSession[];
+  activeSessionId: string | null;
+  isLoading: boolean;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+}
+
+function ThreadSidebar({
+  sessions,
+  activeSessionId,
+  isLoading,
+  onSelect,
+  onCreate,
+}: ThreadSidebarProps) {
+  return (
+    <div className="w-64 shrink-0 border-r border-[#222D3D] flex flex-col h-full bg-[#080B12]/60">
+      {/* Header with "+ New Chat" button */}
+      <div className="px-4 py-4 border-b border-[#222D3D] flex items-center justify-between">
+        <span className="text-sm font-semibold text-slate-200">Conversations</span>
+        {/* id="chat-new-session-btn" — unique ID for e2e test targeting */}
+        <button
+          id="chat-new-session-btn"
+          onClick={onCreate}
+          title="New Chat"
+          className="
+            flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300
+            bg-blue-900/20 hover:bg-blue-900/40 border border-blue-800/30
+            px-2.5 py-1.5 rounded-lg transition-all duration-150
+            focus:outline-none focus:ring-1 focus:ring-blue-600
+          "
+        >
+          <MessageSquarePlus className="w-3.5 h-3.5" />
+          New Chat
+        </button>
+      </div>
+
+      {/* Thread List — three states: loading, empty, populated */}
+      <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
+        {isLoading ? (
+          // WHY Loader2 spinner: consistent with other loading states in the app
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />
+          </div>
+        ) : sessions.length === 0 ? (
+          // Empty state guides the user to the action rather than leaving a blank panel
+          <div className="text-center py-8 text-xs text-slate-500 px-4">
+            No conversations yet.
+            <br />
+            Click &quot;New Chat&quot; to start.
+          </div>
+        ) : (
+          sessions.map((session) => {
+            const isActive = session.id === activeSessionId;
+            return (
+              // Each session button has a unique id for programmatic test access
+              <button
+                key={session.id}
+                id={`chat-session-${session.id}`}
+                onClick={() => onSelect(session.id)}
+                className={`
+                  w-full text-left px-3 py-2.5 rounded-lg
+                  flex items-start gap-2.5 transition-all duration-150
+                  focus:outline-none group
+                  ${isActive
+                    // Active: solid background + blue left indicator matching the app's
+                    // active nav link convention in Sidebar.tsx
+                    ? "bg-[#1E293B] border border-blue-800/40 text-white"
+                    : "text-slate-400 hover:bg-[#1E293B]/40 hover:text-slate-200 border border-transparent"
+                  }
+                `}
+              >
+                <MessageSquare
+                  className={`w-4 h-4 mt-0.5 shrink-0 ${isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-400"}`}
+                />
+                <div className="flex-1 min-w-0">
+                  {/* Title truncated — long first messages would overflow the sidebar */}
+                  <p className="text-xs font-medium truncate">
+                    {session.title || "New Chat"}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {formatSessionDate(session.updated_at || session.created_at)}
+                    {/* Message count hidden when zero — avoids "0 msgs" on new sessions */}
+                    {session.message_count > 0 && (
+                      <span className="ml-1.5">· {session.message_count} msgs</span>
+                    )}
+                  </p>
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// EmptyState — shown when no session is selected
+// REASON: A blank white (or dark) area with no guidance creates a dead end for
+//   new users.  The empty state explains the feature and provides a direct
+//   call-to-action to create a session, reducing time-to-first-message.
+// =============================================================================
+
+function EmptyState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-5 text-center px-8">
+      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-900/40 to-purple-900/40 border border-blue-800/30 flex items-center justify-center">
+        <BotMessageSquare className="w-8 h-8 text-blue-400" />
+      </div>
+      <div>
+        <h2 className="text-lg font-semibold text-slate-200 mb-1">
+          Invoice AI Chat
+        </h2>
+        <p className="text-sm text-slate-500 max-w-xs">
+          Ask anything about your invoices — totals, vendors, flagged items, or
+          spending trends. The AI will query your data and show the source.
+        </p>
+      </div>
+      <button
+        id="chat-empty-new-btn"
+        onClick={onCreate}
+        className="
+          flex items-center gap-2 px-5 py-2.5
+          bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium
+          rounded-xl transition-all duration-150 shadow-lg shadow-blue-900/30
+          focus:outline-none focus:ring-2 focus:ring-blue-500
+        "
+      >
+        <MessageSquarePlus className="w-4 h-4" />
+        Start New Chat
+      </button>
+    </div>
+  );
+}
+
+// =============================================================================
+// InputBar — auto-resizing textarea + Send button
+// REASON: A standard <input> cannot grow vertically for multi-line messages.
+//   A <textarea> with JavaScript height adjustment mimics the UX of modern
+//   chat apps (Slack, WhatsApp) where the input grows with content up to a
+//   max height, then becomes scrollable.
+//   WHY local state for `value` instead of lifting to the hook:
+//     The input text is transient — it only matters until Send is pressed.
+//     Keeping it local avoids unnecessary re-renders of the entire ChatWindow
+//     on every keystroke.
+// =============================================================================
+
+interface InputBarProps {
+  onSend: (text: string) => void;
+  isSending: boolean;
+  disabled: boolean; // True when no session is active — prevents orphan messages
+}
+
+function InputBar({ onSend, isSending, disabled }: InputBarProps) {
+  const [value, setValue] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize: reset height to "auto" first so shrinkage works correctly
+  // (without the reset, removing text wouldn't shrink the box).
+  // Capped at 160px (~6 lines) to prevent the input eating the message area.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [value]);
+
+  const handleSend = () => {
+    if (!value.trim() || isSending || disabled) return;
+    onSend(value.trim());
+    setValue("");
+    // Reset height back to one row after send
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+  };
+
+  // Enter sends; Shift+Enter inserts a newline (standard chat convention)
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault(); // Prevents the newline from being inserted before send
+      handleSend();
+    }
+  };
+
+  return (
+    <div className="border-t border-[#222D3D] bg-[#080B12]/80 px-4 py-4">
+      {/* Input container — focus-within highlights the border when typing */}
+      <div className="flex items-end gap-3 bg-[#0F172A] border border-[#222D3D] rounded-2xl px-4 py-3 focus-within:border-blue-700/60 transition-colors duration-200">
+        <textarea
+          ref={textareaRef}
+          id="chat-input-textarea" // Unique ID for e2e test targeting
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={
+            disabled
+              ? "Select a chat to start…"
+              : "Ask about your invoices… (Enter to send, Shift+Enter for newline)"
+          }
+          disabled={disabled || isSending}
+          rows={1} // Starting height — JS expands it as needed
+          className="
+            flex-1 bg-transparent text-sm text-slate-200 placeholder:text-slate-500
+            resize-none outline-none leading-relaxed
+            disabled:opacity-50 disabled:cursor-not-allowed
+            max-h-40 overflow-y-auto
+          "
+        />
+        {/* Send button — shows a spinner while isSending is true */}
+        <button
+          id="chat-send-btn" // Unique ID for e2e test targeting
+          onClick={handleSend}
+          disabled={!value.trim() || isSending || disabled}
+          title="Send message"
+          className="
+            shrink-0 w-9 h-9 flex items-center justify-center rounded-xl
+            bg-blue-600 hover:bg-blue-500 disabled:bg-[#1E293B] disabled:text-slate-500
+            text-white transition-all duration-150
+            focus:outline-none focus:ring-2 focus:ring-blue-500
+            disabled:cursor-not-allowed
+          "
+        >
+          {/* WHY Loader2 instead of hiding the button: keeps the layout stable
+              and signals to the user that their message is being processed. */}
+          {isSending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Send className="w-4 h-4" />
+          )}
+        </button>
+      </div>
+      {/* Disclaimer — important for a financial AI tool to set expectations */}
+      <p className="text-[10px] text-slate-600 mt-2 text-center">
+        AI may make mistakes. Always verify critical figures against source invoices.
+      </p>
+    </div>
+  );
+}
+
+// =============================================================================
+// ChatWindow — main exported component, composed of the above sub-components
+// All props flow down from useChatSession via page.tsx (no prop drilling beyond
+// one level — ChatWindow → sub-components — which is acceptable at this scale).
+// =============================================================================
+
+interface ChatWindowProps {
+  sessions: ChatSession[];
+  activeSessionId: string | null;
+  messages: ChatMessage[];
+  isLoadingSessions: boolean;
+  isLoadingMessages: boolean;
+  isSending: boolean;
+  error: string | null;
+  onCreateSession: () => void;
+  onSelectSession: (id: string) => void;
+  onSendMessage: (text: string) => void;
+}
+
+export default function ChatWindow({
+  sessions,
+  activeSessionId,
+  messages,
+  isLoadingSessions,
+  isLoadingMessages,
+  isSending,
+  error,
+  onCreateSession,
+  onSelectSession,
+  onSendMessage,
+}: ChatWindowProps) {
+  const hasActiveSession = !!activeSessionId;
+
+  return (
+    // h-full: fills the container set by page.tsx (100vh minus header height)
+    // overflow-hidden: the scroll is managed inside MessageStream and ThreadSidebar,
+    //   not on this container — prevents double scrollbars.
+    <div className="flex h-full overflow-hidden">
+      {/* Left: Thread Sidebar */}
+      <ThreadSidebar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        isLoading={isLoadingSessions}
+        onSelect={onSelectSession}
+        onCreate={onCreateSession}
+      />
+
+      {/* Right: Chat Area — flex column so input bar is always pinned to bottom */}
+      <div className="flex flex-col flex-1 overflow-hidden">
+        {/* Error Banner — shown when the hook sets a non-null error string */}
+        {error && (
+          <div className="px-4 py-2.5 bg-red-950/40 border-b border-red-800/40 text-xs text-red-300 flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+            {error}
+          </div>
+        )}
+
+        {/* Message Area — three states: no session, loading, messages */}
+        <div className="flex-1 overflow-y-auto">
+          {!hasActiveSession ? (
+            <EmptyState onCreate={onCreateSession} />
+          ) : isLoadingMessages ? (
+            // Loading state while selectSession fetches message history
+            <div className="flex items-center justify-center h-full gap-2 text-slate-500 text-sm">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading messages…
+            </div>
+          ) : (
+            <MessageStream messages={messages} isSending={isSending} />
+          )}
+        </div>
+
+        {/* Input Bar — always rendered but disabled when no session is active */}
+        <InputBar
+          onSend={onSendMessage}
+          isSending={isSending}
+          disabled={!hasActiveSession}
+        />
+      </div>
+    </div>
+  );
+}
