@@ -50,6 +50,34 @@ module docIntelligence './modules/ai/doc-intelligence.bicep' = {
   }
 }
 
+// Two additional Doc Intelligence resources (Jul 2026, Gap 41/42 scaling work) -
+// each S0 tier gets its own independent 15 req/10s rate limit (unlike Azure
+// OpenAI, Doc Intelligence has no shared regional quota pool), so horizontal
+// scale-out via multiple resources is the effective lever here. 3 resources
+// combined = ~270 req/min vs. a single resource's ~90 req/min. The app
+// round-robins across all configured endpoints (utils/doc_intel_client.py).
+module docIntelligence2 './modules/ai/doc-intelligence.bicep' = {
+  name: 'docintel2-deploy'
+  params: {
+    location: location
+    docIntelName: 'docintel-${namingPrefix}-${environment}-2'
+    subnetId: aiSubnetId
+    privateDnsZoneId: docIntelDnsZoneId
+  }
+}
+
+module docIntelligence3 './modules/ai/doc-intelligence.bicep' = {
+  name: 'docintel3-deploy'
+  params: {
+    location: location
+    docIntelName: 'docintel-${namingPrefix}-${environment}-3'
+    subnetId: aiSubnetId
+    privateDnsZoneId: docIntelDnsZoneId
+  }
+}
+
 // ================= Outputs =================
 output openaiEndpoint string = openai.outputs.endpoint
 output docIntelEndpoint string = docIntelligence.outputs.endpoint
+output docIntelEndpoint2 string = docIntelligence2.outputs.endpoint
+output docIntelEndpoint3 string = docIntelligence3.outputs.endpoint

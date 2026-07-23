@@ -190,7 +190,7 @@ Private DNS Zones are linked to the VNet to resolve private endpoint FQDNs from 
 | App               | Scaling Trigger                          | Threshold                          |
 |--------------------|------------------------------------------|------------------------------------|
 | `invoice-be`       | HTTP concurrent requests                 | Scale up at > 50 concurrent        |
-| `queue-worker`     | Azure Storage Queue depth                | Scale up at > 5 messages in queue  |
+| `queue-worker`     | Azure Storage Queue depth                | Scale up at > 15 messages in queue (raised from 5, Jul 2026 - see §4.5) |
 | `invoice-fe`       | HTTP concurrent requests                 | Scale up at > 30 concurrent        |
 | `invoice-website`  | HTTP concurrent requests                 | Scale to zero when idle             |
 
@@ -211,6 +211,19 @@ All secrets are stored in **Azure Key Vault** and injected into Container Apps a
 | `NEXT_PUBLIC_CLERK_KEY`      | Clerk/Auth0 publishable key          | `invoice-fe`, `invoice-website` |
 | `CHROMA_HOST`                | ChromaDB connection host             | `invoice-be`, `celery-worker` |
 | `TOKEN_ENCRYPTION_KEY`       | AES-256 key for encrypting OAuth tokens | `invoice-be`, `celery-worker` |
+
+### 4.5 Extraction Concurrency & Scale-Out (added Jul 2026, Gap 41/42)
+
+Found via a benchmark harness parallelization test that concurrent extraction calls could exceed both the Azure OpenAI deployment's rate limit and the single Doc Intelligence resource's per-resource limit, with no application-level retry once Azure's own SDK-level retries were exhausted. Addressed with:
+
+- **`queue-worker` in-process concurrency**: `main_worker.py` now processes up to **10 messages concurrently per replica** via a `ThreadPoolExecutor` (previously strictly one message at a time). Safe because the work is I/O-bound (waiting on Azure OpenAI/Doc Intelligence network calls) and each concurrent task opens its own DB session against a shared connection-pooled engine.
+- **Azure OpenAI deployment capacity**: raised `gpt-5-mini` from 20 to **500 (500 RPM / 500k TPM)**, GlobalStandard tier (pay-per-token, no cost impact from the ceiling itself). Well within the region's subscription-level quota (1,000k TPM), so this was self-service - no Microsoft support request needed.
+- **Document Intelligence horizontal scale-out**: added **2 additional S0 resources** (`docintel-invoice-llm-dev-2`/`-3`, each with its own private endpoint), since Doc Intelligence has no shared regional quota pool like Azure OpenAI - each S0 resource's ~90 req/min limit is independent. The app round-robins across all 3 (`utils/doc_intel_client.py`), ~270 req/min combined.
+- **DB connection pool**: `database.py`'s SQLAlchemy engine now explicitly sets `pool_size=10, max_overflow=10` (previously untuned defaults of 5/10), matched to the 10-thread-per-replica design. Verified against live Postgres `max_connections=429` - 10 replicas × 20 max connections = 200, well under the ceiling.
+- **`queue-worker` scale rule**: `queueLength` trigger raised from 2 (drifted live value) to **15**, since each replica now absorbs far more backlog before needing a sibling replica; `maxReplicas` stays at 10.
+- **Known open item**: no per-tenant fair-share throttling yet - all tenants share one queue with no isolation, so one tenant's large batch can still consume most of the available worker capacity. Planned as a follow-up (Redis-backed per-tenant in-flight cap), not yet implemented.
+
+A load test (150 PDFs) is planned to validate this design under real concurrent load before treating these numbers as final - see `feature_13_test_benchmark_suite.md` Task 13.8.
 
 ---
 

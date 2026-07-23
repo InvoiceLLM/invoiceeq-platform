@@ -38,6 +38,7 @@ var keyVaultName = 'kv-${namingPrefix}-${environment}'
 var acrName = 'acr${replace(namingPrefix, '-', '')}${environment}'
 var openaiName = 'openai-${namingPrefix}-${environment}'
 var docIntelName = 'docintel-${namingPrefix}-${environment}'
+var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: identityName
@@ -91,6 +92,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: acrName
+    storageAccountName: storageAccountName
     image: queueWorkerImage
   }
 }

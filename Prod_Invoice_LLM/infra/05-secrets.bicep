@@ -37,6 +37,8 @@ var postgresServerName = 'psql-${namingPrefix}-${environment}'
 var redisName = 'redis-${namingPrefix}-${environment}'
 var openaiName = 'openai-${namingPrefix}-${environment}'
 var docIntelName = 'docintel-${namingPrefix}-${environment}'
+var docIntelName2 = 'docintel-${namingPrefix}-${environment}-2'
+var docIntelName3 = 'docintel-${namingPrefix}-${environment}-3'
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
@@ -65,6 +67,14 @@ resource openaiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existin
 
 resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
   name: docIntelName
+}
+
+resource docIntelAccount2 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+  name: docIntelName2
+}
+
+resource docIntelAccount3 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+  name: docIntelName3
 }
 
 resource secretDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
@@ -104,6 +114,41 @@ resource secretDocIntelKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'AZURE-DOC-INTEL-KEY'
   properties: {
     value: docIntelAccount.listKeys().key1
+  }
+}
+
+// Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence resources, each
+// with its own independent rate limit, round-robined across in code
+// (utils/doc_intel_client.py) - see feature_2_pipeline_extraction.md.
+resource secretDocIntelKey2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'AZURE-DOC-INTEL-KEY-2'
+  properties: {
+    value: docIntelAccount2.listKeys().key1
+  }
+}
+
+resource secretDocIntelEndpoint2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'AZURE-DOC-INTEL-ENDPOINT-2'
+  properties: {
+    value: docIntelAccount2.properties.endpoint
+  }
+}
+
+resource secretDocIntelKey3 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'AZURE-DOC-INTEL-KEY-3'
+  properties: {
+    value: docIntelAccount3.listKeys().key1
+  }
+}
+
+resource secretDocIntelEndpoint3 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'AZURE-DOC-INTEL-ENDPOINT-3'
+  properties: {
+    value: docIntelAccount3.properties.endpoint
   }
 }
 

@@ -79,13 +79,14 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
             "Please run: uv add azure-ai-documentintelligence azure-core"
         )
 
-    if not settings.AZURE_DOC_INTEL_ENDPOINT or not settings.AZURE_DOC_INTEL_KEY:
-        raise ValueError("Azure Document Intelligence credentials (endpoint or key) are missing in settings.")
+    from utils.doc_intel_client import get_doc_intel_pool
+    pool = get_doc_intel_pool(settings)
+    endpoint, key = pool.next_endpoint_key()
 
     try:
         client = DocumentIntelligenceClient(
-            endpoint=settings.AZURE_DOC_INTEL_ENDPOINT,
-            credential=AzureKeyCredential(settings.AZURE_DOC_INTEL_KEY)
+            endpoint=endpoint,
+            credential=AzureKeyCredential(key)
         )
         
         poller = client.begin_analyze_document(

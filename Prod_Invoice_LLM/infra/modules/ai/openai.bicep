@@ -48,7 +48,16 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-
   }
   sku: {
     name: 'GlobalStandard'
-    capacity: 20 // 20k TPM for Dev
+    // 500k TPM / ~500 RPM - raised from 20k Jul 2026 to support concurrent
+    // (multi-threaded) extraction processing (Gap 41/42) with headroom for
+    // future scale. Pay-per-token billing (GlobalStandard) means this
+    // ceiling costs nothing extra unless actually used. Subscription-level
+    // quota for gpt-5-mini GlobalStandard in this region is 1,000k TPM with
+    // only ~30k in active use elsewhere, so this stays well within the
+    // self-service range (no support-ticket quota increase needed).
+    // Re-tune based on real token-usage-per-invoice data from the planned
+    // 150-PDF load test (Task 13.8).
+    capacity: 500
   }
 }
 

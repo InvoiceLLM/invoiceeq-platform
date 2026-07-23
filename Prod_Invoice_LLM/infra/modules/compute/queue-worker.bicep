@@ -11,6 +11,7 @@ param azureOpenAiEndpoint string
 param azureOpenAiDeploymentName string
 param azureDocIntelEndpoint string
 param acrName string
+param storageAccountName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
@@ -67,6 +68,26 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
           identity: userAssignedIdentityId
         }
         {
+          name: 'docintel-key-secret-2'
+          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY-2'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'docintel-endpoint-secret-2'
+          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-ENDPOINT-2'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'docintel-key-secret-3'
+          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY-3'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'docintel-endpoint-secret-3'
+          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-ENDPOINT-3'
+          identity: userAssignedIdentityId
+        }
+        {
           name: 'storage-conn-secret'
           keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
           identity: userAssignedIdentityId
@@ -84,8 +105,11 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             'queue_worker.main_worker'
           ]
           resources: {
-            cpu: json('1.0')
-            memory: '2.0Gi'
+            // Raised from 1.0/2.0Gi (Gap 41/42, Jul 2026) to support up to
+            // 10 concurrent threads (main_worker.py MAX_WORKERS) holding
+            // PDF bytes + OCR output + LLM responses in memory at once.
+            cpu: json('2.0')
+            memory: '4.0Gi'
           }
           env: [
             {
@@ -141,6 +165,26 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               secretRef: 'docintel-key-secret'
             }
             {
+              // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence
+              // resources, round-robined in code (utils/doc_intel_client.py).
+              // Each Key Vault secret needs its own env var - Container Apps
+              // can't join multiple secretRefs into one comma-separated value.
+              name: 'AZURE_DOC_INTEL_ENDPOINT_2'
+              secretRef: 'docintel-endpoint-secret-2'
+            }
+            {
+              name: 'AZURE_DOC_INTEL_KEY_2'
+              secretRef: 'docintel-key-secret-2'
+            }
+            {
+              name: 'AZURE_DOC_INTEL_ENDPOINT_3'
+              secretRef: 'docintel-endpoint-secret-3'
+            }
+            {
+              name: 'AZURE_DOC_INTEL_KEY_3'
+              secretRef: 'docintel-key-secret-3'
+            }
+            {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedIdentityClientId
             }
@@ -153,15 +197,27 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       scale: {
         minReplicas: 0
-        maxReplicas: 5
+        // Reconciled to match the live value (Jul 2026) - this bicep
+        // previously said 5 while the deployed resource was actually 10,
+        // provisioned out-of-band at some point (see Gap 41 in
+        // be_features_tracker.md for the drift this caused).
+        maxReplicas: 10
         rules: [
           {
-            name: 'azure-queue-scale-rule'
+            // Live rule is actually named 'queue-depth-scaler', not this -
+            // another sign of drift from this bicep. Renamed to match.
+            name: 'queue-depth-scaler'
             custom: {
               type: 'azure-queue'
               metadata: {
                 queueName: 'extraction-tasks-queue'
-                queueLength: '5'
+                accountName: storageAccountName
+                // Raised from 2 (Gap 41/42, Jul 2026): each replica now
+                // handles up to 10 concurrent messages (main_worker.py
+                // MAX_WORKERS) instead of 1, so the old queueLength=2
+                // would trigger a new replica almost immediately even
+                // though a single replica has far more headroom now.
+                queueLength: '15'
               }
               auth: [
                 {
