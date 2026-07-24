@@ -1,17 +1,19 @@
 /**
  * AI Trainer Sandbox Service Layer & Data Models (Feature 6)
- * 
+ *
  * FOR MANAGERS & DEVELOPERS:
- * This module defines the core data contracts and API service layer for the AI Trainer Interactive Sandbox.
- * It supports all three redesign rule scopes specified in feature_6_trainer.md & feature_10_trainer.md:
+ * This module defines the core data contracts and the API service layer for the AI Trainer
+ * Interactive Sandbox. It talks to the live FastAPI backend through this app's own
+ * same-origin proxy routes under `/api/trainer/*` (see app/api/trainer/**), which forward
+ * server-side to the backend `/trainer/*` endpoints.
+ *
+ * It supports all three rule scopes from feature_6_trainer.md & feature_10_trainer.md:
  *   1. "global": Tenant-wide, vendor-agnostic rules (e.g. VAT handling)
- *   2. "existing_vendor": Refine rules for a vendor with production history (seeds from production invoice)
- *   3. "new_vendor": Cold-start rules for a brand new vendor (seeds from uploaded sample PDF)
- * 
- * BACKEND INTEGRATION NOTE:
- * When connecting live FastAPI backend endpoints, replace mock return data inside the functions below 
- * with direct HTTP fetch calls to POST /trainer/sessions/* and GET /trainer/templates/* endpoints.
+ *   2. "existing_vendor": Refine rules for a vendor with production history (seeds from a production invoice)
+ *   3. "new_vendor": Cold-start rules for a brand new vendor (seeds from an uploaded sample PDF)
  */
+
+import { apiClient } from "./apiClient";
 
 /**
  * 3-Way Rule Scope Selector Types
@@ -81,6 +83,7 @@ export interface RuleVersion {
   changedBy: string;
   changedAt: string;
   isCurrent?: boolean;
+  templateId?: string; // Parent template id — needed to target the rollback endpoint
 }
 
 /**
@@ -99,231 +102,159 @@ export interface TrainerSession {
 }
 
 /**
- * Mock Tenant Vendors Dataset for Scope #2 dropdown selection
+ * Result of committing a session's rules to the template registry (Task 6.6 / 10.6)
  */
-export const MOCK_TENANT_VENDORS: VendorOption[] = [
-  {
-    id: "v-acme",
-    name: "Acme Logistics Corp",
-    invoiceCount: 42,
-    sampleInvoiceId: "inv-8921",
-    sampleFileName: "INV-2026-ACME-049.pdf",
-    samplePdfUrl: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-  },
-  {
-    id: "v-techsupplies",
-    name: "TechSupplies Global Ltd",
-    invoiceCount: 19,
-    sampleInvoiceId: "inv-4412",
-    sampleFileName: "TechSupplies_Invoice_882.pdf",
-    samplePdfUrl: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-  },
-  {
-    id: "v-cloudcloud",
-    name: "Cloud Hosting Solutions Inc",
-    invoiceCount: 31,
-    sampleInvoiceId: "inv-1092",
-    sampleFileName: "CloudHosting_JUL2026.pdf",
-    samplePdfUrl: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-  },
-];
+export interface CommitResult {
+  scope: TrainerScope;
+  vendorName?: string;
+  version: number;
+  rules: string[];
+  reauditQueued: boolean;
+}
 
 /**
- * Baseline mock extraction variables set for document preview
+ * Normalises a raw backend session payload into a well-formed TrainerSession.
+ * The backend already returns the camelCase `TrainerSession` shape; this just guards
+ * against missing arrays / nulls so the UI never crashes on a partial response.
  */
-const DEFAULT_MOCK_VARIABLES: ExtractedVariable[] = [
-  { id: "1", key: "invoice_number", label: "Invoice Number", value: "INV-2026-089", confidence: 0.98 },
-  { id: "2", key: "invoice_date", label: "Invoice Date", value: "19/07/2026", confidence: 0.72 },
-  { id: "3", key: "vendor_name", label: "Vendor Name", value: "Acme Logistics Corp", confidence: 0.95 },
-  { id: "4", key: "subtotal", label: "Subtotal (Taxable)", value: "$12,450.00", confidence: 0.91 },
-  { id: "5", key: "tax_amount", label: "VAT / Tax Amount", value: "$2,241.00", confidence: 0.65 },
-  { id: "6", key: "total_amount", label: "Grand Total", value: "$14,691.00", confidence: 0.97 },
-];
+function normalizeSession(raw: any): TrainerSession {
+  return {
+    sessionId: raw?.sessionId,
+    scope: raw?.scope,
+    vendorName: raw?.vendorName ?? undefined,
+    fileName: raw?.fileName ?? undefined,
+    pdfUrl: raw?.pdfUrl ?? undefined,
+    createdAt: raw?.createdAt,
+    variables: Array.isArray(raw?.variables) ? raw.variables : [],
+    activeRules: Array.isArray(raw?.activeRules) ? raw.activeRules : [],
+    chatHistory: Array.isArray(raw?.chatHistory) ? raw.chatHistory : [],
+  };
+}
 
 /**
- * Service API Abstraction layer.
- * Connects directly to backend FastAPI router (/trainer/*) when deployed,
- * or gracefully provides responsive mock states during local frontend design validation.
+ * Service API abstraction layer — connects to the backend FastAPI trainer router
+ * through this app's `/api/trainer/*` proxy routes.
  */
 export const trainerService = {
   /**
-   * Fetches tenant vendors for Scope #2 (Existing Vendor) dropdown picker.
-   * Target Endpoint: GET /api/vendors
+   * Fetches tenant vendors for the Scope #2 (Existing Vendor) dropdown picker.
+   * GET /api/trainer/vendors
    */
   async getTenantVendors(): Promise<VendorOption[]> {
-    return MOCK_TENANT_VENDORS;
+    const { data } = await apiClient.get("/trainer/vendors");
+    return Array.isArray(data) ? data : [];
   },
 
   /**
    * Initializes a new Trainer session based on the chosen scope.
-   * Target Endpoints:
-   *   - Global: POST /trainer/sessions/global (Task 10.2)
-   *   - Existing Vendor: POST /trainer/sessions/from-production?vendor_name=X (Task 10.3)
-   *   - New Vendor: POST /trainer/upload (Task 10.4)
+   *   - Global:          POST /api/trainer/sessions/global            (Task 10.2)
+   *   - Existing Vendor: POST /api/trainer/sessions/from-production   (Task 10.3)
+   *   - New Vendor:      POST /api/trainer/upload                     (Task 10.4)
+   *
+   * For upload-based scopes (New Vendor, and Global-with-PDF), the browser already holds
+   * the File, so we show it via a local object URL — the backend does not serve transient
+   * training PDFs. Existing-Vendor sessions use the backend-provided invoice PDF URL.
    */
   async startSession(scope: TrainerScope, vendorName?: string, file?: File): Promise<TrainerSession> {
-    const sessionId = `tr-sess-${Date.now().toString(36)}`;
-    let fileName = undefined;
-    let pdfUrl = undefined;
-    let initialVars = DEFAULT_MOCK_VARIABLES;
-
-    if (scope === "existing_vendor" && vendorName) {
-      const v = MOCK_TENANT_VENDORS.find((vendor) => vendor.name === vendorName);
-      if (v) {
-        fileName = v.sampleFileName;
-        pdfUrl = v.samplePdfUrl;
-      } else {
-        fileName = `${vendorName}_Sample_Invoice.pdf`;
+    if (scope === "existing_vendor") {
+      if (!vendorName) {
+        throw new Error("A vendor must be selected for the Existing Vendor scope.");
       }
-    } else if (scope === "new_vendor" && file) {
-      fileName = file.name;
-      pdfUrl = URL.createObjectURL(file);
-    } else if (scope === "global") {
-      if (file) {
-        fileName = file.name;
-        pdfUrl = URL.createObjectURL(file);
-      } else {
-        initialVars = []; // Global session without grounding PDF starts with empty extraction list
-      }
+      const { data } = await apiClient.post("/trainer/sessions/from-production", null, {
+        params: { vendor_name: vendorName },
+      });
+      return normalizeSession(data);
     }
 
-    const initialMessage: ChatMessage = {
-      id: "m-init",
-      sender: "assistant",
-      text: scope === "global"
-        ? "Welcome to the Global Rule Sandbox! All rules trained here will apply tenant-wide to every vendor. What rule would you like to add or refine?"
-        : scope === "existing_vendor"
-        ? `Loaded production sample invoice for ${vendorName}. What corrections or extraction rules should we refine for this vendor?`
-        : `Uploaded sample invoice ${fileName || ""}. Let's set up cold-start extraction rules for this new vendor.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
+    if (scope === "new_vendor") {
+      if (!file) {
+        throw new Error("A sample PDF is required to start a New Vendor session.");
+      }
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await apiClient.post("/trainer/upload", form);
+      const session = normalizeSession(data);
+      session.pdfUrl = URL.createObjectURL(file);
+      session.fileName = file.name;
+      return session;
+    }
 
-    return {
-      sessionId,
-      scope,
-      vendorName,
-      fileName,
-      pdfUrl,
-      createdAt: new Date().toISOString(),
-      variables: initialVars,
-      activeRules: scope === "global" ? ["VAT is a tax item after line discount"] : [],
-      chatHistory: [initialMessage],
-    };
+    // scope === "global": chat-only, or optionally grounded on an uploaded PDF.
+    const form = new FormData();
+    if (file) form.append("file", file);
+    const { data } = await apiClient.post("/trainer/sessions/global", form);
+    const session = normalizeSession(data);
+    if (file) {
+      session.pdfUrl = URL.createObjectURL(file);
+      session.fileName = file.name;
+    }
+    return session;
   },
 
   /**
-   * Processes a natural language rule correction instruction from the user.
-   * Target Endpoint: POST /trainer/sessions/{id}/chat (Task 10.5)
+   * Sends a natural-language rule correction and returns the re-extracted session.
+   * POST /api/trainer/sessions/{id}/chat (Task 10.5)
    */
   async sendChatMessage(
     session: TrainerSession,
     userMessageText: string
   ): Promise<{ updatedSession: TrainerSession; newRuleCreated?: string }> {
-    const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      sender: "user",
-      text: userMessageText,
-      timestamp,
-    };
+    const { data } = await apiClient.post(`/trainer/sessions/${session.sessionId}/chat`, {
+      content: userMessageText,
+    });
 
-    let replyText = "";
-    let suggestedRule: string | undefined = undefined;
-    let updatedVariables = { ...session.variables };
-
-    const lower = userMessageText.toLowerCase();
-
-    // Pattern recognition simulation matching user instructions to rule constraints & variable updates
-    if (lower.includes("date") || lower.includes("dd-mm-yyyy") || lower.includes("dd/mm/yyyy")) {
-      suggestedRule = "Parse dates in DD/MM/YYYY format explicitly before converting to ISO";
-      replyText = `Understood. I have updated the Date parser rule: "${suggestedRule}". I applied this to the active document preview.`;
-      updatedVariables = updatedVariables.map((v) =>
-        v.key === "invoice_date" ? { ...v, value: "19/07/2026", confidence: 0.99, isCorrected: true } : v
-      );
-    } else if (lower.includes("vat") || lower.includes("tax")) {
-      suggestedRule = "VAT/Tax should be computed as subtotal * 18% post-discount";
-      replyText = `Rule registered: "${suggestedRule}". Tax amount variable updated.`;
-      updatedVariables = updatedVariables.map((v) =>
-        v.key === "tax_amount" ? { ...v, value: "$2,241.00", confidence: 0.98, isCorrected: true } : v
-      );
-    } else if (lower.includes("number") || lower.includes("inv-")) {
-      suggestedRule = "Match Invoice Number regex pattern INV-[0-9]{4}-[0-9]{3}";
-      replyText = `Understood. Invoice number format rule created: "${suggestedRule}".`;
-      updatedVariables = updatedVariables.map((v) =>
-        v.key === "invoice_number" ? { ...v, isCorrected: true } : v
-      );
-    } else {
-      suggestedRule = `Extract ${userMessageText.slice(0, 40)} constraint`;
-      replyText = `Got it! I've analyzed your instruction and registered the constraint candidate: "${suggestedRule}". You can commit this to the registry when ready.`;
-    }
-
-    const aiMsg: ChatMessage = {
-      id: `msg-ai-${Date.now()}`,
-      sender: "assistant",
-      text: replyText,
-      timestamp,
-      suggestedRule,
-    };
-
-    const combinedRules = suggestedRule ? [...session.activeRules, suggestedRule] : session.activeRules;
-    const newRules = Array.from(new Set(combinedRules));
+    const updatedSession = normalizeSession(data?.updatedSession);
+    // Preserve the client-side PDF preview across turns (object URLs live only in the browser).
+    updatedSession.pdfUrl = updatedSession.pdfUrl ?? session.pdfUrl;
+    updatedSession.fileName = updatedSession.fileName ?? session.fileName;
 
     return {
-      updatedSession: {
-        ...session,
-        variables: updatedVariables,
-        activeRules: newRules,
-        chatHistory: [...session.chatHistory, userMsg, aiMsg],
-      },
-      newRuleCreated: suggestedRule,
+      updatedSession,
+      newRuleCreated: data?.newRuleCreated ?? undefined,
     };
   },
 
   /**
-   * Fetches historical rule versions for auditability and rollback drawer.
-   * Target Endpoint: GET /trainer/templates/{id}/history (Task 10.10)
+   * Commits the session's active rules to the template registry (Global or vendor scope),
+   * writing a new version and queuing a background re-audit where applicable.
+   * POST /api/trainer/sessions/{id}/commit (Task 10.6 / 10.7)
+   */
+  async commitSession(session: TrainerSession): Promise<CommitResult> {
+    const { data } = await apiClient.post(`/trainer/sessions/${session.sessionId}/commit`);
+    return {
+      scope: data?.scope,
+      vendorName: data?.vendor_name ?? undefined,
+      version: data?.version,
+      rules: data?.rules?.constraints ?? [],
+      reauditQueued: Boolean(data?.reaudit_queued),
+    };
+  },
+
+  /**
+   * Fetches the version history for the active template (Global, or the selected vendor).
+   * GET /api/trainer/templates/history?scope=&vendor_name=  (Task 10.10)
    */
   async getRuleHistory(scope: TrainerScope, vendorName?: string): Promise<RuleVersion[]> {
-    return [
-      {
-        id: "rv-v3",
-        version: 3,
-        scope,
-        vendorName,
-        rules: [
-          "Parse dates in DD/MM/YYYY format explicitly",
-          "VAT/Tax is calculated at 18% post-line-discount",
-          "Match Invoice Number prefix INV-",
-        ],
-        changedBy: "alex.auditor@enterprise.com",
-        changedAt: new Date(Date.now() - 3600000 * 2).toLocaleString(),
-        isCurrent: true,
-      },
-      {
-        id: "rv-v2",
-        version: 2,
-        scope,
-        vendorName,
-        rules: [
-          "VAT/Tax is calculated at 18% post-line-discount",
-          "Match Invoice Number prefix INV-",
-        ],
-        changedBy: "sarah.lead@enterprise.com",
-        changedAt: new Date(Date.now() - 3600000 * 48).toLocaleString(),
-        isCurrent: false,
-      },
-      {
-        id: "rv-v1",
-        version: 1,
-        scope,
-        vendorName,
-        rules: [
-          "Default vendor extraction schema template",
-        ],
-        changedBy: "system_auto",
-        changedAt: new Date(Date.now() - 3600000 * 120).toLocaleString(),
-        isCurrent: false,
-      },
-    ];
+    const params: Record<string, string> = { scope };
+    if (scope !== "global" && vendorName) {
+      params.vendor_name = vendorName;
+    }
+    const { data } = await apiClient.get("/trainer/templates/history", { params });
+    return Array.isArray(data) ? data : [];
+  },
+
+  /**
+   * Rolls a past rule version back to current (writes a new version + queues re-audit).
+   * POST /api/trainer/templates/{templateId}/rollback/{version} (Task 10.10)
+   */
+  async rollbackTemplate(
+    templateId: string,
+    version: number
+  ): Promise<{ version: number; reauditQueued: boolean }> {
+    const { data } = await apiClient.post(`/trainer/templates/${templateId}/rollback/${version}`);
+    return {
+      version: data?.version,
+      reauditQueued: Boolean(data?.reaudit_queued),
+    };
   },
 };

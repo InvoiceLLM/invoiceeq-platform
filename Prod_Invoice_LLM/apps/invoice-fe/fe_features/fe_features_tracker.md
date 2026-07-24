@@ -25,7 +25,7 @@ All 6 open gaps are now closed. Below is a summary of every file delivered:
 | File | Task | Status |
 |---|---|---|
 | `components/layout/Sidebar.tsx` | Added `/trainer` nav link (GraduationCap icon) | ✅ Done |
-| `lib/trainer-service.ts` | Full service layer: data models, mock data, 4 service methods | ✅ Done |
+| `lib/trainer-service.ts` | Service layer: data models + 6 methods (live API calls via `/api/trainer/*` as of 2026-07-23) | ✅ Done |
 | `components/trainer/ScopeSelector.tsx` | 3-way Global / Existing Vendor / New Vendor tab selector | ✅ Done |
 | `components/trainer/TrainerUploader.tsx` | Scope-conditioned vendor dropdown + drag-and-drop PDF uploader | ✅ Done |
 | `components/trainer/PdfViewerPanel.tsx` | PDF viewer canvas + Global empty state card (dual mode) | ✅ Done |
@@ -45,16 +45,17 @@ All 6 open gaps are now closed. Below is a summary of every file delivered:
 - Scope-adaptive confirm button colors in `CommitModal` (blue / emerald / purple)
 - Active bottom indicator line on `ScopeSelector` active tab
 
-**Backend Integration Note:** All service functions in `trainer-service.ts` return mock data.
-When the backend FastAPI routes ship, replace mock returns with `fetch()` calls:
-- `GET /api/vendors` → `getTenantVendors()`
-- `POST /trainer/sessions/global` → `startSession("global")`
-- `POST /trainer/sessions/from-production?vendor_name=X` → `startSession("existing_vendor", ...)`
-- `POST /trainer/upload` → `startSession("new_vendor", ..., file)`
-- `POST /trainer/sessions/{id}/chat` → `sendChatMessage()`
-- `POST /trainer/sessions/{id}/commit` → CommitModal `onConfirm` handler
-- `GET /trainer/templates/{id}/history` → `getRuleHistory()`
-- `POST /trainer/templates/{id}/rollback/{version}` → RuleHistoryDrawer `onRollback`
+**Backend Integration Completed (2026-07-23):** `trainer-service.ts` now calls the live backend through same-origin proxy Route Handlers added under `app/api/trainer/**`; the mock datasets were removed. Wiring:
+- `GET /api/trainer/vendors` → `getTenantVendors()`
+- `POST /api/trainer/sessions/global` → `startSession("global")` (multipart, PDF optional)
+- `POST /api/trainer/sessions/from-production?vendor_name=X` → `startSession("existing_vendor", ...)`
+- `POST /api/trainer/upload` → `startSession("new_vendor", ..., file)`
+- `POST /api/trainer/sessions/{id}/chat` → `sendChatMessage()`
+- `POST /api/trainer/sessions/{id}/commit` → `commitSession()` (wired into `CommitModal` `onConfirm` / `handleConfirmCommit`)
+- `GET /api/trainer/templates/history?scope=&vendor_name=` → `getRuleHistory()`
+- `POST /api/trainer/templates/{id}/rollback/{version}` → `rollbackTemplate()` (wired into `RuleHistoryDrawer` `onRollback`)
+
+`page.tsx`'s `handleConfirmCommit` and `handleRollback` now perform real network calls with success/error toasts, and New-Vendor sessions start empty until a PDF is uploaded. Matching backend: `be_features_tracker.md` Gaps 1b, 5, 6, 8, 29 (Feature 10).
 
 ---
 

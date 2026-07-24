@@ -59,9 +59,9 @@ function TrainerContent() {
   const [isSubmittingCommit, setIsSubmittingCommit] = useState(false);
 
   // Toast Notification State
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "info" } | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "info" | "error" } | null>(null);
 
-  const showToast = (text: string, type: "success" | "info" = "success") => {
+  const showToast = (text: string, type: "success" | "info" | "error" = "success") => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 5000);
   };
@@ -75,38 +75,43 @@ function TrainerContent() {
    */
   useEffect(() => {
     const init = async () => {
-      const vendorList = await trainerService.getTenantVendors();
-      setVendors(vendorList);
+      try {
+        const vendorList = await trainerService.getTenantVendors();
+        setVendors(vendorList);
 
-      // Task 6.8: Deep-link handling from Auditor Console resolution prompt
-      const fromAudit = searchParams.get("from") === "audit";
-      const paramScope = (searchParams.get("scope") as TrainerScope) || "existing_vendor";
-      const paramVendor = searchParams.get("vendor_name") || vendorList[0]?.name;
-      const paramCorrection = searchParams.get("correction");
+        // Task 6.8: Deep-link handling from Auditor Console resolution prompt
+        const fromAudit = searchParams.get("from") === "audit";
+        const paramScope = (searchParams.get("scope") as TrainerScope) || "existing_vendor";
+        const paramVendor = searchParams.get("vendor_name") || vendorList[0]?.name;
+        const paramCorrection = searchParams.get("correction");
 
-      if (fromAudit) {
-        setActiveScope(paramScope);
-        if (paramVendor) setSelectedVendorName(paramVendor);
+        if (fromAudit) {
+          setActiveScope(paramScope);
+          if (paramVendor) setSelectedVendorName(paramVendor);
 
-        const newSession = await trainerService.startSession(paramScope, paramVendor);
+          const newSession = await trainerService.startSession(paramScope, paramVendor);
 
-        if (paramCorrection) {
-          const { updatedSession } = await trainerService.sendChatMessage(
-            newSession,
-            `Audit Correction: ${paramCorrection}`
-          );
-          setSession(updatedSession);
-        } else {
-          setSession(newSession);
+          if (paramCorrection) {
+            const { updatedSession } = await trainerService.sendChatMessage(
+              newSession,
+              `Audit Correction: ${paramCorrection}`
+            );
+            setSession(updatedSession);
+          } else {
+            setSession(newSession);
+          }
+
+          showToast("Session pre-seeded from Auditor correction prompt", "info");
+          return;
         }
 
-        showToast("Session pre-seeded from Auditor correction prompt", "info");
-        return;
+        // Default Global Scope Initialization
+        const defaultSess = await trainerService.startSession("global");
+        setSession(defaultSess);
+      } catch (err) {
+        console.error("Trainer initialization failed", err);
+        showToast("Failed to initialize the Trainer session.", "error");
       }
-
-      // Default Global Scope Initialization
-      const defaultSess = await trainerService.startSession("global");
-      setSession(defaultSess);
     };
 
     init();
@@ -126,8 +131,24 @@ function TrainerContent() {
       setSelectedVendorName(vendor);
     }
 
-    const newSess = await trainerService.startSession(newScope, vendor);
-    setSession(newSess);
+    // New Vendor needs an uploaded PDF first; Existing Vendor needs a known vendor.
+    if (newScope === "new_vendor") {
+      setSession(null);
+      return;
+    }
+    if (newScope === "existing_vendor" && !vendor) {
+      setSession(null);
+      showToast("No production vendors available to train yet.", "info");
+      return;
+    }
+
+    try {
+      const newSess = await trainerService.startSession(newScope, vendor);
+      setSession(newSess);
+    } catch (err) {
+      console.error("Failed to start session", err);
+      showToast("Failed to start the training session.", "error");
+    }
   };
 
   /**
@@ -136,8 +157,13 @@ function TrainerContent() {
    */
   const handleSelectVendor = async (vendorName: string) => {
     setSelectedVendorName(vendorName);
-    const newSess = await trainerService.startSession("existing_vendor", vendorName);
-    setSession(newSess);
+    try {
+      const newSess = await trainerService.startSession("existing_vendor", vendorName);
+      setSession(newSess);
+    } catch (err) {
+      console.error("Failed to load vendor session", err);
+      showToast("Failed to load the vendor's production sample.", "error");
+    }
   };
 
   /**
@@ -145,10 +171,14 @@ function TrainerContent() {
    * Uploads a sample PDF for cold-starting rules (New Vendor) or grounding (Global).
    */
   const handleUploadFile = async (file: File) => {
-    if (!session) return;
-    const newSess = await trainerService.startSession(activeScope, selectedVendorName, file);
-    setSession(newSess);
-    showToast(`Loaded sample file ${file.name}`, "info");
+    try {
+      const newSess = await trainerService.startSession(activeScope, selectedVendorName, file);
+      setSession(newSess);
+      showToast(`Loaded sample file ${file.name}`, "info");
+    } catch (err) {
+      console.error("Failed to load sample file", err);
+      showToast("Failed to process the uploaded sample.", "error");
+    }
   };
 
   /**
@@ -166,6 +196,9 @@ function TrainerContent() {
       if (newRuleCreated) {
         showToast(`Rule Candidate Created: "${newRuleCreated}"`, "success");
       }
+    } catch (err) {
+      console.error("Failed to send chat correction", err);
+      showToast("Failed to process your correction. Please try again.", "error");
     } finally {
       setIsSending(false);
     }
@@ -176,16 +209,40 @@ function TrainerContent() {
    */
   const handleOpenHistory = async () => {
     setIsHistoryDrawerOpen(true);
-    const history = await trainerService.getRuleHistory(activeScope, selectedVendorName);
-    setRuleHistory(history);
+    try {
+      const history = await trainerService.getRuleHistory(activeScope, selectedVendorName);
+      setRuleHistory(history);
+    } catch (err) {
+      console.error("Failed to load rule history", err);
+      setRuleHistory([]);
+      showToast("Failed to load rule history.", "error");
+    }
   };
 
   /**
    * HANDLER: Rollback Rule Version (Task 6.7)
    */
-  const handleRollback = (version: RuleVersion) => {
-    showToast(`Rolled back to Rule Version v${version.version}`, "success");
-    setIsHistoryDrawerOpen(false);
+  const handleRollback = async (version: RuleVersion) => {
+    if (!version.templateId) {
+      showToast("Cannot roll back: template reference is missing.", "error");
+      return;
+    }
+    try {
+      const result = await trainerService.rollbackTemplate(version.templateId, version.version);
+      showToast(
+        result.reauditQueued
+          ? `Rolled back to rule v${version.version} (now v${result.version}). Background re-audit queued.`
+          : `Rolled back to rule v${version.version} (now v${result.version}).`,
+        "success"
+      );
+      // Refresh so the drawer reflects the new current version.
+      const history = await trainerService.getRuleHistory(activeScope, selectedVendorName);
+      setRuleHistory(history);
+      setIsHistoryDrawerOpen(false);
+    } catch (err) {
+      console.error("Rollback failed", err);
+      showToast("Failed to roll back the rule version.", "error");
+    }
   };
 
   /**
@@ -197,17 +254,31 @@ function TrainerContent() {
     setIsSubmittingCommit(true);
 
     try {
-      await new Promise((res) => setTimeout(res, 800)); // Simulate async network call
-
+      const result = await trainerService.commitSession(session);
       setIsCommitModalOpen(false);
 
-      if (activeScope === "global") {
-        showToast("Global template committed! Queued background re-audit across ALL tenant vendors.", "success");
-      } else if (activeScope === "existing_vendor") {
-        showToast(`Vendor template committed! Queued background re-audit for ${selectedVendorName || "vendor"}.`, "success");
+      const versionNote = `v${result.version}`;
+      if (result.scope === "global") {
+        showToast(
+          result.reauditQueued
+            ? `Global template committed (${versionNote}). Queued background re-audit across ALL tenant vendors.`
+            : `Global template committed (${versionNote}).`,
+          "success"
+        );
+      } else if (result.scope === "existing_vendor") {
+        const vendorLabel = result.vendorName || selectedVendorName || "vendor";
+        showToast(
+          result.reauditQueued
+            ? `Vendor template committed (${versionNote}). Queued background re-audit for ${vendorLabel}.`
+            : `Vendor template committed (${versionNote}) for ${vendorLabel}.`,
+          "success"
+        );
       } else {
-        showToast("New vendor template registered into production registry.", "success");
+        showToast(`New vendor template registered (${versionNote}).`, "success");
       }
+    } catch (err) {
+      console.error("Commit failed", err);
+      showToast("Failed to commit rules to the registry.", "error");
     } finally {
       setIsSubmittingCommit(false);
     }
@@ -222,10 +293,16 @@ function TrainerContent() {
             className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border text-xs font-medium ${
               toastMessage.type === "success"
                 ? "bg-[#10B981]/15 text-emerald-300 border-[#10B981]/40"
+                : toastMessage.type === "error"
+                ? "bg-[#EF4444]/15 text-red-300 border-[#EF4444]/40"
                 : "bg-[#3B82F6]/15 text-blue-300 border-[#3B82F6]/40"
             }`}
           >
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            {toastMessage.type === "error" ? (
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            )}
             <span>{toastMessage.text}</span>
             <button
               onClick={() => setToastMessage(null)}

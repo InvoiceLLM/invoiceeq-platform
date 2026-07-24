@@ -105,11 +105,46 @@ class AuditLog(SQLModel, table=True):
 
 class ExtractionTemplate(SQLModel, table=True):
     __tablename__ = "extraction_templates"
+    # Two scopes share this table (feature_10_trainer.md):
+    #   - vendor_name IS NULL  -> the tenant's single "Global" template (scope #1)
+    #   - vendor_name set       -> a per-vendor template (scope #2 / #3)
+    # A composite unique keeps one row per (tenant, vendor); a partial unique index
+    # keeps at most one Global (NULL-vendor) row per tenant, since SQL treats NULLs
+    # as distinct and would otherwise allow many.
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", "vendor_name", name="uq_extraction_templates_tenant_vendor"),
+        sa.Index(
+            "uq_extraction_templates_tenant_global",
+            "tenant_id",
+            unique=True,
+            postgresql_where=sa.text("vendor_name IS NULL"),
+            sqlite_where=sa.text("vendor_name IS NULL"),
+        ),
+    )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(index=True)
-    vendor_name: str = Field(max_length=255)
+    vendor_name: str | None = Field(default=None, max_length=255)
     rules: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
+    version: int = Field(default=1)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExtractionTemplateVersion(SQLModel, table=True):
+    """Append-only history of every committed/rolled-back ExtractionTemplate change.
+
+    Lets the Trainer's Rule History drawer show what changed and revert it
+    (feature_10_trainer.md Task 10.10). One row is written on each commit and each
+    rollback, capturing the rules value at that version plus who/when.
+    """
+    __tablename__ = "extraction_template_versions"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    template_id: UUID = Field(index=True, foreign_key="extraction_templates.id")
+    tenant_id: UUID = Field(index=True)
+    vendor_name: str | None = Field(default=None, max_length=255)
+    version: int
+    rules: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
+    changed_by: str | None = Field(default=None, max_length=255)
+    changed_at: datetime = Field(default_factory=datetime.utcnow)
 
 
