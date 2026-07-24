@@ -25,8 +25,8 @@ Inside `upload_invoices()`, per file: compute `hashlib.sha256(file_bytes).hexdig
     - Do not dispatch a Storage Queue extraction message.
 - [x] **Task 3.1.3: Update UI RecentInvoicesTable Component**
   - Verified done in `components/dashboard/RecentInvoicesTable.tsx`: `getStatusBadge()` renders a `Duplicate` badge (amber, with a `title` tooltip) for `status === "DUPLICATE"`; the vendor cell falls back to `"Processing Vendor..."` only while `status === "PROCESSING"` and `"Unknown Vendor"` otherwise; the tags row uses `opacity-0 max-h-0` → `group-hover:opacity-100 group-hover:max-h-16` with a `transition-all duration-300` to fade/slide in only on row hover.
-- [ ] **Task 3.1.4: Layer 2 duplicate detection (post-extraction)**
-  - After extraction completes, check for an existing invoice with the same `invoice_number` + `vendor_name` for the tenant, catching re-scanned/re-named duplicates that Layer 1's file-hash check misses because the underlying bytes differ.
+- [x] **Task 3.1.4: Layer 2 duplicate detection (post-extraction)**
+  - Implemented in `queue_worker/handlers.py` lines 225-244: queries DB for existing invoice matching `tenant_id`, `lower(vendor_name)`, and `lower(invoice_number)`. Appends a `duplicate_invoice` alert and sets `status = "AUDIT_REQUIRED"` to catch re-scanned/renamed duplicate PDFs.
 
 ### Verification Plan
 * **Manual Verification**:

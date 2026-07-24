@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime
 import redis
 from config import get_settings, Settings
@@ -73,6 +74,7 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
     try:
         from azure.ai.documentintelligence import DocumentIntelligenceClient
         from azure.core.credentials import AzureKeyCredential
+        from azure.core.exceptions import ServiceRequestError, ServiceResponseError, HttpResponseError
     except ImportError:
         raise ImportError(
             "Azure Document Intelligence SDK is required for Azure extraction. "
@@ -81,58 +83,94 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
 
     from utils.doc_intel_client import get_doc_intel_pool
     pool = get_doc_intel_pool(settings)
-    endpoint, key = pool.next_endpoint_key()
 
-    try:
-        client = DocumentIntelligenceClient(
-            endpoint=endpoint,
-            credential=AzureKeyCredential(key)
-        )
-        
-        poller = client.begin_analyze_document(
-            model_id="prebuilt-invoice",
-            body=pdf_bytes,
-            content_type="application/octet-stream"
-        )
-        result = poller.result()
+    # ---------------------------------------------------------------------------
+    # Azure Document Intelligence OCR Retry & Failover Loop
+    # ---------------------------------------------------------------------------
+    # Retries transient connection drops, timeouts, and rate-limits (HTTP 429/503/504)
+    # with exponential backoff (1s, 2s). On every attempt (including retries),
+    # next_endpoint_key() automatically rotates to the NEXT Azure resource in our
+    # 3-resource pool, ensuring failover to a healthy endpoint if one is busy.
+    # ---------------------------------------------------------------------------
+    MAX_OCR_ATTEMPTS = 3
+    last_exc = None
+    result = None
 
-        coordinates_list = []
-        confidence_dict = {}
+    for attempt in range(MAX_OCR_ATTEMPTS):
+        endpoint, key = pool.next_endpoint_key()  # rotates resource on every attempt
+        try:
+            client = DocumentIntelligenceClient(
+                endpoint=endpoint,
+                credential=AzureKeyCredential(key)
+            )
+            
+            poller = client.begin_analyze_document(
+                model_id="prebuilt-invoice",
+                body=pdf_bytes,
+                content_type="application/octet-stream"
+            )
+            result = poller.result()
+            break
+        except (ServiceRequestError, ServiceResponseError) as e:
+            last_exc = e
+            logger.warning(
+                "Doc Intelligence connection error (attempt %d/%d) on %s: %s",
+                attempt + 1, MAX_OCR_ATTEMPTS, endpoint, e
+            )
+        except HttpResponseError as e:
+            if e.status_code not in (429, 503, 504):
+                raise  # Permanent error (e.g. 400 Bad Request), don't retry
+            last_exc = e
+            logger.warning(
+                "Doc Intelligence transient HTTP %s (attempt %d/%d) on %s",
+                e.status_code, attempt + 1, MAX_OCR_ATTEMPTS, endpoint
+            )
+        except Exception as e:
+            last_exc = e
+            logger.warning(
+                "Doc Intelligence error (attempt %d/%d) on %s: %s",
+                attempt + 1, MAX_OCR_ATTEMPTS, endpoint, e
+            )
+            
+        if attempt < MAX_OCR_ATTEMPTS - 1:
+            time.sleep(2 ** attempt)
+    else:
+        logger.error("Azure Document Intelligence call failed after %d attempts for %s: %s", MAX_OCR_ATTEMPTS, file_path, last_exc)
+        raise last_exc
 
-        if hasattr(result, "documents") and result.documents:
-            doc = result.documents[0]
-            if hasattr(doc, "fields") and doc.fields:
-                for field_name, field in doc.fields.items():
-                    if hasattr(field, "confidence") and field.confidence is not None:
-                        confidence_dict[field_name] = field.confidence
-                    
-                    if hasattr(field, "bounding_regions") and field.bounding_regions:
-                        for region in field.bounding_regions:
-                            if hasattr(region, "polygon") and region.polygon:
-                                poly = region.polygon
-                                if len(poly) >= 8:
-                                    xs = [poly[i] for i in range(0, len(poly), 2)]
-                                    ys = [poly[i] for i in range(1, len(poly), 2)]
-                                    x_min, x_max = min(xs), max(xs)
-                                    y_min, y_max = min(ys), max(ys)
-                                    coordinates_list.append({
-                                        "field": field_name,
-                                        "x": x_min,
-                                        "y": y_min,
-                                        "width": x_max - x_min,
-                                        "height": y_max - y_min,
-                                        "page": region.page_number or 1
-                                    })
+    coordinates_list = []
+    confidence_dict = {}
 
-        return {
-            "content": result.content or "",
-            "coordinates": coordinates_list,
-            "field_confidence": confidence_dict
-        }
+    if hasattr(result, "documents") and result.documents:
+        doc = result.documents[0]
+        if hasattr(doc, "fields") and doc.fields:
+            for field_name, field in doc.fields.items():
+                if hasattr(field, "confidence") and field.confidence is not None:
+                    confidence_dict[field_name] = field.confidence
+                
+                if hasattr(field, "bounding_regions") and field.bounding_regions:
+                    for region in field.bounding_regions:
+                        if hasattr(region, "polygon") and region.polygon:
+                            poly = region.polygon
+                            if len(poly) >= 8:
+                                xs = [poly[i] for i in range(0, len(poly), 2)]
+                                ys = [poly[i] for i in range(1, len(poly), 2)]
+                                x_min, x_max = min(xs), max(xs)
+                                y_min, y_max = min(ys), max(ys)
+                                coordinates_list.append({
+                                    "field": field_name,
+                                    "x": x_min,
+                                    "y": y_min,
+                                    "width": x_max - x_min,
+                                    "height": y_max - y_min,
+                                    "page": region.page_number or 1
+                                })
 
-    except Exception as e:
-        logger.error("Azure Document Intelligence call failed for %s: %s", file_path, e)
-        raise e
+    return {
+        "content": result.content or "",
+        "coordinates": coordinates_list,
+        "field_confidence": confidence_dict
+    }
 
 
 

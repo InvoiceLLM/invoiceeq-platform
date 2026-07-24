@@ -2,6 +2,7 @@ import os
 import logging
 import fitz
 import chromadb
+import threading
 from sentence_transformers import SentenceTransformer
 from config import get_settings
 from services.storage import download_pdf_from_storage
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _chroma_client = None
 _embedding_model = None
+_embedding_lock = threading.Lock()
 
 def get_chroma_client():
     """Returns the Chroma client instance, falling back to a persistent local db."""
@@ -37,8 +39,10 @@ def get_embedding_model():
         return None
 
     if _embedding_model is None:
-        logger.info("Loading sentence-transformers BAAI/bge-m3 model...")
-        _embedding_model = SentenceTransformer("BAAI/bge-m3")
+        with _embedding_lock:
+            if _embedding_model is None:
+                logger.info("Loading sentence-transformers BAAI/bge-m3 model...")
+                _embedding_model = SentenceTransformer("BAAI/bge-m3")
     return _embedding_model
 
 def get_embeddings(texts: list[str]) -> list[list[float]]:
@@ -47,7 +51,8 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
     if model is None:
         import random
         return [[random.uniform(-0.1, 0.1) for _ in range(1024)] for _ in texts]
-    embeddings = model.encode(texts, convert_to_numpy=True)
+    with _embedding_lock:
+        embeddings = model.encode(texts, convert_to_numpy=True)
     return embeddings.tolist()
 
 def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | None, file_path: str):

@@ -1,5 +1,6 @@
 import base64
 import logging
+import time
 from typing import List, Dict, Any, TypedDict, Optional
 from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
@@ -11,6 +12,9 @@ from utils.verification_tools import (
     verify_totals_math,
     verify_grand_total_in_source_text,
     verify_line_item_amounts_in_source_text,
+    verify_subtotal_in_source_text,
+    verify_unit_prices_in_source_text,
+    verify_field_confidence,
 )
 from utils.token_management import check_token_guardrails
 from services.storage import download_pdf_from_storage
@@ -123,6 +127,7 @@ class ExtractionState(TypedDict):
     retry_count: int
     max_retries: int
     feedback: List[str]
+    dynamic_qa_context: Optional[str]
 
 
 
@@ -180,6 +185,38 @@ def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Di
         })
     return [HumanMessage(content=content)]
 
+# ---------------------------------------------------------------------------
+# Gap 41 — App-level retry loop with exponential backoff for network errors
+# ---------------------------------------------------------------------------
+# Transient cloud network glitches (connection timeouts, rate limits, 502/503s)
+# can cause raw API exceptions during LLM calls. Instead of letting a 1-second
+# network blip fail the invoice permanently, this helper catches connection-class
+# errors and retries automatically with exponential backoff (1s, 2s, 4s wait).
+# ---------------------------------------------------------------------------
+def invoke_with_retry(llm_callable, payload, max_retries: int = 3):
+    """
+    Gap 41: Invokes an LLM with exponential backoff retries for transient
+    connection and network-level failures before raising an exception.
+    """
+    for attempt in range(max_retries):
+        try:
+            return llm_callable(payload)
+        except Exception as e:
+            err_msg = str(e).lower()
+            is_transient = any(kw in err_msg for kw in [
+                "connection", "timeout", "rate", "429", "503", "502", "504", "reset", "overloaded"
+            ])
+            if is_transient and attempt < max_retries - 1:
+                wait_s = 2 ** attempt
+                logger.warning(
+                    "Transient connection error during LLM call (attempt %d/%d): %s. Retrying in %ds...",
+                    attempt + 1, max_retries, e, wait_s
+                )
+                time.sleep(wait_s)
+            else:
+                raise e
+
+
 # 4. LangGraph Nodes
 def extract_node(state: ExtractionState) -> Dict[str, Any]:
     """Node state for executing LLM structured output extraction."""
@@ -197,8 +234,11 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
         # Wrap LLM with structured output schema
         structured_llm = llm.with_structured_output(InvoiceExtractionSchema)
         
+        dynamic_qa_context = state.get("dynamic_qa_context")
         if settings.LLM_PROVIDER.lower() == "azure" and state["images"]:
             messages = build_multimodal_prompt(state["ocr_text"], state["images"], rules)
+            if dynamic_qa_context:
+                messages[0].content.append({"type": "text", "text": f"\n\nDYNAMIC LAYOUT PRE-ANALYSIS FINDINGS:\n{dynamic_qa_context}"})
             if feedback:
                 feedback_msg = (
                     "\n\nCRITICAL FEEDBACK FROM PREVIOUS EXTRACTION ATTEMPT:\n"
@@ -206,15 +246,17 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
                     + "\nPlease correct these math/verification issues in the next output."
                 )
                 messages[0].content.append({"type": "text", "text": feedback_msg})
-            result = structured_llm.invoke(messages)
+            result = invoke_with_retry(structured_llm.invoke, messages)
         else:
             if state.get("complexity") == "COMPLEX":
                 prompt = (
                     "You are analyzing a COMPLEX invoice. This invoice contains complex layouts, multi-tax tables (like GST/VAT), "
                     "or item-level discount structures. Please perform a deep dynamic extraction. Do not restrict yourself to standard fields; "
-                    "extract all taxes, discounts, deductions, compliance metadata, and banking references into the appropriate list structures.\n\n"
-                    f"Extract structured details from the following invoice OCR text:\n\n{state['ocr_text']}"
+                    "extract all taxes, discounts, deductions, compliance metadata, and banking references into the appropriate list structures.\n"
                 )
+                if dynamic_qa_context:
+                    prompt += f"\nDYNAMIC LAYOUT PRE-ANALYSIS FINDINGS (Gap 4 Targeted Q&A):\n{dynamic_qa_context}\n"
+                prompt += f"\nExtract structured details from the following invoice OCR text:\n\n{state['ocr_text']}"
             else:
                 prompt = "Extract structured details from the following standard invoice OCR text:\n\n"
                 if rules and "constraints" in rules:
@@ -231,7 +273,7 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
                     + "\nPlease correct these math/verification issues in the next output."
                 )
 
-            result = structured_llm.invoke(prompt)
+            result = invoke_with_retry(structured_llm.invoke, prompt)
             
         if hasattr(result, "dict"):
             extracted_data = result.dict()
@@ -300,6 +342,28 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     if line_item_source_text_alert:
         alerts.append(line_item_source_text_alert)
 
+    # 5. Gap 43: subtotal faithfulness check, independent of arithmetic.
+    subtotal_source_text_alert = verify_subtotal_in_source_text(subtotal, state.get("ocr_text"))
+    if subtotal_source_text_alert:
+        alerts.append(subtotal_source_text_alert)
+
+    # 6. Gap 44: unit price faithfulness check, independent of arithmetic.
+    unit_price_source_text_alert = verify_unit_prices_in_source_text(items, state.get("ocr_text"))
+    if unit_price_source_text_alert:
+        alerts.append(unit_price_source_text_alert)
+
+    # 7. Gap 3 (Critic Node): confidence-driven audit routing.
+    # Azure Document Intelligence attaches a confidence score (0.0–1.0) to
+    # every field it reads from the document. If a critical field (like
+    # vendor_name or grand_total) has a low confidence score, the document
+    # may be blurred/smudged — flag those specific fields for human review
+    # instead of blindly accepting the AI's uncertain guess.
+    ocr_result = state.get("ocr_result")
+    field_confidence = ocr_result.get("field_confidence", {}) if isinstance(ocr_result, dict) else {}
+    confidence_alerts = verify_field_confidence(field_confidence)
+    if confidence_alerts:
+        alerts.extend(confidence_alerts)
+
     status = "AUDIT_REQUIRED" if alerts else "COMPLETED"
     
     feedback = []
@@ -315,12 +379,38 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
 
 
 # 4. LangGraph Nodes
-def classify_node(state: ExtractionState) -> Dict[str, Any]:
-    """Node state for classifying invoice complexity."""
-    from services.invoice_classifier import classify_invoice_complexity
-    ocr_result = state.get("ocr_result") or state["ocr_text"]
-    complexity = classify_invoice_complexity(ocr_result)
-    return {"complexity": complexity}
+def dynamic_qa_node(state: ExtractionState) -> Dict[str, Any]:
+    """
+    Gap 4: Dynamic QA Node — targeted pre-extraction Q&A for COMPLEX invoices.
+
+    When an invoice is classified as COMPLEX (non-standard layout, multi-tax tables,
+    retention/holdbacks, specialized compliance codes), this node runs a targeted
+    pre-analysis pass over the OCR text. It asks document-specific questions to
+    elicit non-standard structure before main extraction runs, folding the answers
+    into state["dynamic_qa_context"] for extract_node to consume.
+    """
+    complexity = state.get("complexity", "STANDARD")
+    if complexity != "COMPLEX":
+        return {"dynamic_qa_context": None}
+
+    logger.info("Executing Dynamic QA Node for COMPLEX invoice: %s", state.get("file_path"))
+    try:
+        llm = get_llm(max_tokens=2048)
+        prompt = (
+            "You are an expert invoice layout analyzer. Perform a targeted pre-analysis of this COMPLEX invoice.\n"
+            "Analyze the document text and answer the following structural questions concisely:\n"
+            "1. Tax Structure: Are there multiple tax rates/slabs (e.g. CGST/SGST, VAT 5%/20%, Reverse Charge)? List them.\n"
+            "2. Deductions/Retentions: Are there advance payments, holdbacks, or retention withholdings listed?\n"
+            "3. Compliance Metadata: Are there specific e-invoicing identifiers present (e.g. IRN, e-Way Bill, QR Code, Peppol ID, USt-IdNr)?\n"
+            "4. References: Are there multiple Purchase Orders, Sales Orders, or Delivery Notes referenced?\n\n"
+            f"Invoice OCR Text:\n{state['ocr_text']}"
+        )
+        response = invoke_with_retry(llm.invoke, prompt)
+        qa_summary = response.content if hasattr(response, "content") else str(response)
+        return {"dynamic_qa_context": qa_summary}
+    except Exception as e:
+        logger.warning("Dynamic QA Node pre-analysis failed: %s. Continuing with standard extraction.", e)
+        return {"dynamic_qa_context": None}
 
 
 def route_after_verification(state: ExtractionState) -> str:
@@ -342,10 +432,12 @@ def route_after_verification(state: ExtractionState) -> str:
 # 5. Compile LangGraph State Graph
 builder = StateGraph(ExtractionState)
 builder.add_node("classify", classify_node)
+builder.add_node("dynamic_qa", dynamic_qa_node)
 builder.add_node("extract", extract_node)
 builder.add_node("verify", verify_node)
 builder.set_entry_point("classify")
-builder.add_edge("classify", "extract")
+builder.add_edge("classify", "dynamic_qa")
+builder.add_edge("dynamic_qa", "extract")
 builder.add_edge("extract", "verify")
 builder.add_conditional_edges(
     "verify",
@@ -411,7 +503,8 @@ def run_extraction_agent(
         "ocr_result": ocr_result,
         "retry_count": 0,
         "max_retries": 2,
-        "feedback": []
+        "feedback": [],
+        "dynamic_qa_context": None
     }
     
     final_state = graph.invoke(initial_state)

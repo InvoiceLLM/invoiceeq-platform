@@ -240,3 +240,173 @@ def verify_line_item_amounts_in_source_text(items: list[dict] | None, ocr_text: 
 
     return None
 
+
+def verify_subtotal_in_source_text(subtotal: float | None, ocr_text: str | None) -> dict | None:
+    """
+    Gap 43: Same principle as Gap 33 (grand_total) and Gap 36 (line items).
+    An LLM extracting from an internally-inconsistent invoice (printed subtotal
+    doesn't match the sum of line items) will sometimes silently "correct" the
+    extracted subtotal instead of transcribing it as printed.
+
+    This check verifies that the extracted subtotal appears verbatim (in some
+    plausible printed form) anywhere in the raw OCR text.
+    """
+    if subtotal is None or not ocr_text:
+        return None
+
+    try:
+        variants = _number_text_variants(float(subtotal))
+        if any(v in ocr_text for v in variants):
+            return None
+
+        return {
+            "type": "subtotal_not_verified_in_source",
+            "message": (
+                f"Extracted subtotal ({subtotal:.2f}) was not found verbatim in the "
+                "source document text — possible silent correction of a printed figure rather "
+                "than faithful transcription. Flagged for manual review."
+            ),
+            "field": "subtotal"
+        }
+    except Exception as e:
+        logger.warning("Failed to perform subtotal source-text verification: %s", e)
+
+    return None
+
+
+def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | None) -> dict | None:
+    """
+    Gap 44: Same principle as Gap 33 (grand_total), Gap 36 (line items), and Gap 43 (subtotal).
+    If a printed line amount does not equal quantity * unit_price, the LLM
+    sometimes silently recalculates/corrects the extracted unit_price (or quantity)
+    to reconcile the line multiplication, inventing a price that was never printed on the page.
+
+    This check verifies that each extracted line item's unit_price appears
+    verbatim (in some plausible printed form) anywhere in the raw OCR text.
+    """
+    if not items or not ocr_text:
+        return None
+
+    try:
+        unverified = []
+        for idx, item in enumerate(items):
+            price = item.get("unit_price")
+            if price is None:
+                continue
+            variants = _number_text_variants(float(price))
+            if not any(v in ocr_text for v in variants):
+                unverified.append((idx, item.get("description") or f"item {idx + 1}", float(price)))
+
+        if not unverified:
+            return None
+
+        desc = "; ".join(f"'{d}' ({p:.2f})" for _, d, p in unverified)
+        return {
+            "type": "unit_price_not_verified_in_source",
+            "message": (
+                f"Extracted unit price(s) not found verbatim in the source document text: {desc} — "
+                "possible silent correction of a printed figure rather than faithful transcription. "
+                "Flagged for manual review."
+            ),
+            "field": "items"
+        }
+    except Exception as e:
+        logger.warning("Failed to perform unit-price source-text verification: %s", e)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 — Critic Node: confidence-driven audit routing
+# ---------------------------------------------------------------------------
+# Azure Document Intelligence returns a per-field confidence score (0.0–1.0)
+# for every field it extracts from the document. Until this check was added,
+# those scores were saved to the DB but never acted on — so a smudged or
+# blurry invoice could be silently accepted even when the OCR engine itself
+# was only 20% sure about a critical field like the invoice number.
+#
+# This function checks whether any *critical* field has a confidence score
+# below the given threshold. If so, it returns a per-field alert so the
+# extraction agent can either retry (hoping the LLM does better on a second
+# pass with feedback) or flag the invoice for human audit review.
+# ---------------------------------------------------------------------------
+
+# These are the fields we consider critical — if the OCR is unsure about
+# any of these, the invoice should not be auto-completed without review.
+CRITICAL_CONFIDENCE_FIELDS = [
+    "VendorName",
+    "InvoiceId",
+    "InvoiceDate",
+    "InvoiceTotal",
+    "SubTotal",
+    "TotalTax",
+    "PurchaseOrder",
+]
+
+# Minimum acceptable OCR confidence for critical fields.
+# Fields below this threshold will be flagged for audit.
+CONFIDENCE_THRESHOLD = 0.6
+
+
+def verify_field_confidence(
+    field_confidence: dict | None,
+    threshold: float = CONFIDENCE_THRESHOLD,
+) -> list[dict]:
+    """
+    Gap 3 (Critic Node): checks OCR-level confidence scores for critical
+    invoice fields. Returns a list of alert dicts — one per low-confidence
+    field — so the auditor sees exactly *which* fields need a second look,
+    not a generic "review everything" warning.
+
+    The field names come from Azure Document Intelligence's prebuilt-invoice
+    model (e.g. "VendorName", "InvoiceId", "InvoiceTotal"). We map them to
+    our schema's field names in the alert for frontend display.
+
+    Returns an empty list if all critical fields are above threshold or if
+    no confidence data is available (e.g. mock/local OCR mode).
+    """
+    if not field_confidence:
+        return []
+
+    # Map Azure Doc Intelligence field names → our schema field names
+    # so the frontend can highlight the right cell in the auditor UI.
+    AZURE_TO_SCHEMA = {
+        "VendorName": "vendor_name",
+        "InvoiceId": "invoice_number",
+        "InvoiceDate": "invoice_date",
+        "InvoiceTotal": "grand_total",
+        "SubTotal": "subtotal",
+        "TotalTax": "tax_amount",
+        "PurchaseOrder": "po_number",
+    }
+
+    low_confidence_alerts = []
+
+    try:
+        for azure_field in CRITICAL_CONFIDENCE_FIELDS:
+            score = field_confidence.get(azure_field)
+            # score is None when the field wasn't found on the document at all
+            # — that's fine, skip it (missing optional fields aren't a concern).
+            if score is None:
+                continue
+            if score < threshold:
+                schema_field = AZURE_TO_SCHEMA.get(azure_field, azure_field)
+                low_confidence_alerts.append({
+                    "type": "low_confidence_field",
+                    "message": (
+                        f"OCR confidence for '{schema_field}' is {score:.0%} "
+                        f"(below {threshold:.0%} threshold) — the document may be "
+                        "blurred, smudged, or faintly printed in this area. "
+                        "Flagged for manual review."
+                    ),
+                    "field": schema_field,
+                    "confidence": score,
+                })
+    except Exception as e:
+        logger.warning("Failed to perform field confidence verification: %s", e)
+
+    return low_confidence_alerts
+
+
+
+
