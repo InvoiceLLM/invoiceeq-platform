@@ -6,7 +6,9 @@ import redis
 from config import get_settings, Settings
 from sqlmodel import Session, select
 from database import engine
-from models import Invoice
+from uuid import UUID, uuid4
+from azure.storage.queue import QueueClient
+from models import Invoice, ExtractionTemplate
 from agents.extraction_agent import run_extraction_agent
 
 
@@ -174,6 +176,52 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
 
 
 
+def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | None) -> list:
+    """Return the constraints list for a template scope, or [] if none exists.
+
+    vendor_name=None resolves the tenant's single Global template (Task 10.8).
+    """
+    stmt = select(ExtractionTemplate).where(ExtractionTemplate.tenant_id == UUID(tenant_id))
+    if vendor_name is None:
+        stmt = stmt.where(ExtractionTemplate.vendor_name.is_(None))
+    else:
+        stmt = stmt.where(ExtractionTemplate.vendor_name == vendor_name)
+    tpl = session.exec(stmt).first()
+    if tpl and isinstance(tpl.rules, dict):
+        return tpl.rules.get("constraints", []) or []
+    return []
+
+
+def _merge_constraints(global_constraints: list, vendor_constraints: list) -> list:
+    """Merge Global + vendor constraints. Vendor rules are appended last (they win on
+    conflict); exact duplicates are dropped."""
+    merged = list(global_constraints)
+    for c in vendor_constraints:
+        if c not in merged:
+            merged.append(c)
+    return merged
+
+
+def _enqueue_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> bool:
+    """Put a single invoice back on the extraction queue (used to fan out re-audits)."""
+    settings = get_settings()
+    if not settings.AZURE_STORAGE_CONNECTION_STRING:
+        logger.warning("AZURE_STORAGE_CONNECTION_STRING missing; cannot enqueue re-audit item.")
+        return False
+    try:
+        queue_client = QueueClient.from_connection_string(
+            settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
+        )
+        queue_client.send_message(json.dumps({
+            "task": "process_invoice",
+            "kwargs": {"batch_id": batch_id, "file_path": file_path, "tenant_id": tenant_id},
+        }))
+        return True
+    except Exception as e:
+        logger.error("Failed to enqueue re-audit process_invoice message: %s", e)
+        return False
+
+
 def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dict:
     """
     Asynchronous Celery task to process an uploaded invoice PDF:
@@ -206,47 +254,35 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
         if "fail" in file_path.lower():
             raise Exception("Mock processing failure triggered by file name keyword.")
         
-        # Run extraction agent (first pass)
-        agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id, ocr_result=ocr_result)
+        # ── Two-stage rule resolution (Task 10.8) ──────────────────────────────
+        # Stage 1: apply the tenant's Global template (vendor-agnostic rules) on the
+        # first pass, before we know the vendor.
+        with Session(engine) as session:
+            global_constraints = _get_template_rules(session, tenant_id, None)
 
-        
+        first_pass_rules = {"constraints": global_constraints} if global_constraints else None
+        agent_result = run_extraction_agent(
+            file_path, _extracted_text, tenant_id, rules=first_pass_rules, ocr_result=ocr_result
+        )
         status = agent_result["status"]
         alerts = agent_result["alerts"]
         extracted_data = agent_result["extracted_data"] or {}
 
-        # Look up custom templates or default fallbacks based on vendor_name
+        # Stage 2: now that the vendor is known, merge Global + vendor-specific
+        # constraints (vendor wins on conflict) and re-run if a vendor template exists.
         vendor_name = extracted_data.get("vendor_name")
         if vendor_name:
-            rules = None
-            # 1. Query database for tenant-specific template
-            from uuid import UUID
-            from models import ExtractionTemplate
             with Session(engine) as session:
-                stmt = select(ExtractionTemplate).where(
-                    ExtractionTemplate.tenant_id == UUID(tenant_id),
-                    ExtractionTemplate.vendor_name == vendor_name
+                vendor_constraints = _get_template_rules(session, tenant_id, vendor_name)
+            if vendor_constraints:
+                merged = _merge_constraints(global_constraints, vendor_constraints)
+                logger.info(
+                    "Applying merged Global+vendor rules for vendor %s (%d constraints). Re-running extraction.",
+                    vendor_name, len(merged)
                 )
-                template = session.exec(stmt).first()
-                if template:
-                    rules = template.rules
-
-            # 2. Fallback to default_templates.json
-            if not rules:
-                import os
-                config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config")
-                default_templates_path = os.path.join(config_dir, "default_templates.json")
-                if os.path.exists(default_templates_path):
-                    try:
-                        with open(default_templates_path, "r") as f:
-                            templates = json.load(f)
-                            rules = templates.get(vendor_name)
-                    except Exception as e:
-                        logger.error("Failed to load static default templates during ingestion: %s", e)
-
-            # 3. Re-run extraction if rules are found
-            if rules:
-                logger.info("Found custom layout rules for vendor %s. Re-running extraction.", vendor_name)
-                agent_result = run_extraction_agent(file_path, _extracted_text, tenant_id, rules=rules, ocr_result=ocr_result)
+                agent_result = run_extraction_agent(
+                    file_path, _extracted_text, tenant_id, rules={"constraints": merged}, ocr_result=ocr_result
+                )
                 status = agent_result["status"]
                 alerts = agent_result["alerts"]
                 extracted_data = agent_result["extracted_data"] or {}
@@ -414,3 +450,51 @@ def handle_import_connector_file(provider: str, file_id: str, tenant_id: str) ->
 
 
 
+
+def handle_reaudit_templates(tenant_id: str, vendor_name: str = None) -> dict:
+    """Re-audit a tenant's invoices after trainer rules were committed/rolled back (Task 10.7).
+
+    Scope of the re-audit:
+      - vendor_name=None  -> Global change: re-audit invoices across all vendors.
+      - vendor_name set   -> re-audit only that vendor's invoices.
+
+    Only invoices that a human hasn't finalized are touched (statuses COMPLETED and
+    AUDIT_REQUIRED). PAID / REJECTED / PROCESSING / DUPLICATE are left alone so we never
+    overturn an auditor's decision or fight an in-flight job.
+
+    Rather than reprocessing every invoice inline (which could exceed the queue message's
+    visibility timeout), each target is re-enqueued as its own ``process_invoice`` message.
+    Those re-runs pick up the freshly committed rules via the two-stage resolution above.
+    """
+    REAUDIT_STATUSES = ("COMPLETED", "AUDIT_REQUIRED")
+    REAUDIT_LIMIT = 500  # safety cap so a Global re-audit can't flood the queue unbounded
+
+    with Session(engine) as session:
+        stmt = select(Invoice).where(
+            Invoice.tenant_id == UUID(tenant_id),
+            Invoice.status.in_(REAUDIT_STATUSES),
+        )
+        if vendor_name:
+            stmt = stmt.where(Invoice.vendor_name == vendor_name)
+        stmt = stmt.order_by(Invoice.created_at.desc()).limit(REAUDIT_LIMIT)
+        targets = [
+            (str(inv.id), inv.file_path, str(inv.batch_id) if inv.batch_id else None)
+            for inv in session.exec(stmt).all()
+        ]
+
+    logger.info(
+        "Re-audit requested for tenant %s (vendor=%s): %d invoice(s) to reprocess.",
+        tenant_id, vendor_name, len(targets)
+    )
+
+    enqueued = 0
+    for _invoice_id, file_path, batch_id in targets:
+        if _enqueue_process_invoice(batch_id or str(uuid4()), file_path, tenant_id):
+            enqueued += 1
+
+    return {
+        "tenant_id": tenant_id,
+        "vendor_name": vendor_name,
+        "enqueued": enqueued,
+        "total": len(targets),
+    }

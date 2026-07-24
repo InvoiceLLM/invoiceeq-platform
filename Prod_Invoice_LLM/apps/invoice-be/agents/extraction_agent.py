@@ -379,6 +379,14 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
 
 
 # 4. LangGraph Nodes
+def classify_node(state: ExtractionState) -> Dict[str, Any]:
+    """Node state for classifying invoice complexity."""
+    from services.invoice_classifier import classify_invoice_complexity
+    ocr_result = state.get("ocr_result") or state["ocr_text"]
+    complexity = classify_invoice_complexity(ocr_result)
+    return {"complexity": complexity}
+
+
 def dynamic_qa_node(state: ExtractionState) -> Dict[str, Any]:
     """
     Gap 4: Dynamic QA Node — targeted pre-extraction Q&A for COMPLEX invoices.
@@ -413,16 +421,24 @@ def dynamic_qa_node(state: ExtractionState) -> Dict[str, Any]:
         return {"dynamic_qa_context": None}
 
 
+# Alert types that a re-extraction pass cannot fix: extraction_failed is a permanent
+# parse/LLM failure, and low_confidence_field reflects OCR confidence on the already-run
+# Doc Intelligence pass, which doesn't change no matter how many times extract_node retries.
+NON_RETRYABLE_ALERT_TYPES = {"extraction_failed", "low_confidence_field"}
+
+
 def route_after_verification(state: ExtractionState) -> str:
     """Conditional routing logic after verify_node to loop back to extract on errors."""
     alerts = state.get("alerts") or []
     retry_count = state.get("retry_count") or 0
     max_retries = state.get("max_retries") or 2
-    
+
     # Route back to extract if errors exist and retries remain
     if alerts and retry_count < max_retries:
-        # Filter out permanent extraction errors from trigger loop
-        if not any(isinstance(a, dict) and a.get("type") == "extraction_failed" for a in alerts):
+        # Only retry if at least one alert is something extract_node could plausibly
+        # fix on a second pass (math mismatch, faithfulness check, etc.) — skip retry
+        # if every alert present is permanent/non-retryable.
+        if any(not isinstance(a, dict) or a.get("type") not in NON_RETRYABLE_ALERT_TYPES for a in alerts):
             logger.info("Validation failed. Routing back to extract node. Retry: %d/%d", retry_count, max_retries)
             return "extract"
             

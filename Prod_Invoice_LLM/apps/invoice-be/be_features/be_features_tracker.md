@@ -2,7 +2,7 @@
 
 This document tracks the implementation progress of the reconciled backend features for the `invoice-be` component, aligned with the frontend screen requirements. Feature spec files (`feature_1..11_*.md`) describe the target design only — every open item, bug, and pending build task is tracked here instead, so status doesn't drift out of sync across files.
 
-**Current Status:** ~86% complete against [Technical_Architecture_Document.md](../../../Technical_Architecture_Document.md), with 14 open items below. *(Recalculated Jul 24, 2026 — closed Gaps 3, 4, 41, 42, 43, 44 and Feature 3.1.)*
+**Current Status:** ~91% complete against [Technical_Architecture_Document.md](../../../Technical_Architecture_Document.md), with 9 open items below. *(Recalculated Jul 24, 2026 — merged two parallel closure sets: Gaps 3, 4, 41, 42, 43, 44 and Feature 3.1 (extraction pipeline), plus Gaps 1b, 5, 6, 8, and 29 (Feature 10 AI Trainer backend redesign) — see the respective sections below.)*
 
 ---
 
@@ -65,11 +65,13 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 - Prompt-injection input guard — not yet wired into `run_query_agent()`
 
 **Trainer sandbox** ([feature_10_trainer.md](feature_10_trainer.md) — redesigned 2026-07-13 into Global / existing-production-vendor / new-vendor rule template scopes):
-- `[ ]` **Gap 1b: Global rule template scope** — tenant-wide, vendor-agnostic rules (e.g. "VAT is a tax item after discount"); requires nullable `vendor_name` on `ExtractionTemplate` (Task 10.1) + new session/commit routes (Tasks 10.2, 10.6)
-- `[ ]` **Gap 5: Session Management** — move `TRAINER_SESSIONS` off the in-process dict onto Redis (TTL-bound), required once `invoice-be` runs multi-replica *(Task 10.9)*
-- `[ ]` **Gap 6: Initialize from Production** — load existing production invoices into the sandbox for training *(Task 10.3)*
-- `[ ]` **Gap 8: Commit with Re-audit** — `trainer_commit()` saves rules but doesn't yet trigger the documented background re-evaluation of matching production invoices *(Task 10.7)*
-- `[ ]` **Gap 29: No rule versioning/rollback** — `ExtractionTemplate` rows are overwritten on commit with no history; a bad Global rule affects every vendor and can't currently be diagnosed or reverted *(Task 10.10)*
+- `[x]` **Gap 1b: Global rule template scope** — tenant-wide, vendor-agnostic rules; `ExtractionTemplate.vendor_name` made nullable (NULL = the tenant's Global template) with a partial unique index enforcing one Global row per tenant (Task 10.1, migration `f3a9c7b21d84`), plus `POST /trainer/sessions/global` and scope-based commit (Tasks 10.2, 10.6). *(Jul 23, 2026)*
+- `[x]` **Gap 5: Session Management** — `TRAINER_SESSIONS` moved off the in-process dict onto Redis (TTL-bound) via `services/trainer_sessions.py`, with an in-process fallback for single-process/local runs *(Task 10.9, Jul 23, 2026)*
+- `[x]` **Gap 6: Initialize from Production** — `POST /trainer/sessions/from-production?vendor_name=X` seeds the sandbox from a vendor's latest production invoice *(Task 10.3, Jul 23, 2026)*
+- `[x]` **Gap 8: Commit with Re-audit** — commit/rollback enqueue a `reaudit_templates` task; the worker re-runs matching invoices (Global => all vendors, vendor scope => that vendor; PAID/REJECTED skipped) *(Task 10.7, Jul 23, 2026)*
+- `[x]` **Gap 29: Rule versioning/rollback** — `ExtractionTemplate.version` + a new `extraction_template_versions` history table; every commit/rollback records a version, exposed via `GET /trainer/templates/history` and `POST /trainer/templates/{id}/rollback/{version}` *(Task 10.10, Jul 23, 2026)*
+
+> Also landed alongside the above (Jul 23, 2026): scope-aware trainer chat that passes the tenant's Global rules to the agent as read-only context (Task 10.5); two-stage rule resolution in `queue_worker/handlers.py` — the Global template is applied on the first extraction pass and merged with the vendor template (vendor wins on conflict) on the second (Task 10.8); the legacy `config/default_templates.json` fallback was retired (Task 10.6). `tests/test_trainer.py` was rewritten to cover the redesign. **Known separate issue (not trainer-scoped):** the rest of the historical test suite still imports the removed `workers.tasks` (Celery) module from before the Azure-Queue migration and needs its own reconciliation pass.
 
 **Connectors** ([feature_9_connectors.md](feature_9_connectors.md)):
 - `[x]` **Gap 35: Dead MCP ingestion server — removed, not fixed (2026-07-22)** — `mcp_servers/ingestion_mcp.py` duplicated `routers/connectors.py`'s list/import logic and wasn't wired into any agent's tool context. Decision: the agent-facing-MCP use case doesn't apply to this product. Deleted the file, the 3 tests that exercised it (`tests/test_connectors.py::test_mcp_server_*`), and every reference (both READMEs' repo trees, `docs/Document/test_cases/invoice_be_tests.md`'s TC-BE-26, `Technical_Architecture_Document.md`'s repo tree + MCP glossary row — that doc also listed a never-built `action_mcp.py`, dropped too — and `feature_9_connectors.md`'s prose/Task 9.3). Confirmed via repo-wide grep: no remaining references outside this entry's own historical record.

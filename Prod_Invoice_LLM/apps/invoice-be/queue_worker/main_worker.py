@@ -5,7 +5,11 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from azure.storage.queue import QueueClient
 from config import get_settings
-from queue_worker.handlers import handle_process_invoice, handle_import_connector_file
+from queue_worker.handlers import (
+    handle_process_invoice,
+    handle_import_connector_file,
+    handle_reaudit_templates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +133,11 @@ def _process_message(queue_client: QueueClient, msg) -> None:
                 provider=kwargs.get("provider"),
                 file_id=kwargs.get("file_id"),
                 tenant_id=tenant_id
+            )
+        elif task_name == "reaudit_templates":
+            handle_reaudit_templates(
+                tenant_id=tenant_id,
+                vendor_name=kwargs.get("vendor_name")
             )
         else:
             logger.warning(f"Unknown task {task_name}")
