@@ -32,12 +32,11 @@ def db_session_fixture():
 
 @pytest.fixture(autouse=True)
 def override_db_session(db_session):
-    """Overrides dependencies database session and patches Celery worker database engine."""
+    """Overrides dependencies database session."""
     def get_db_session_override():
         yield db_session
     app.dependency_overrides[get_db_session] = get_db_session_override
-    with patch("workers.tasks.engine", engine):
-        yield
+    yield
     app.dependency_overrides.clear()
 
 def test_session_lifecycle_and_tenant_isolation(db_session):

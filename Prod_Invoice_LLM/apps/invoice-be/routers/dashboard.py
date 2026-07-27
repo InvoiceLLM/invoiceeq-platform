@@ -47,6 +47,10 @@ async def get_dashboard_metrics(
     outstanding_amount = 0.0
     at_risk_amount = 0.0
     active_alerts_count = 0
+    invoices_with_alerts = 0
+    total_processed = 0
+    total_processing_time = 0.0
+    timed_invoice_count = 0
     
     spend_by_date = {}
     spend_by_vendor = {}
@@ -67,9 +71,22 @@ async def get_dashboard_metrics(
         if inv_status == "AUDIT_REQUIRED":
             at_risk_amount += grand_total
 
+        if inv_status in ["COMPLETED", "PAID", "AUDIT_REQUIRED", "REJECTED"]:
+            total_processed += 1
+            # Real elapsed time from queue pickup (created_at) to pipeline completion
+            # (completed_at, set by handlers.py once when status is finalized). Invoices
+            # processed before completed_at existed have it as None and are excluded
+            # from the average rather than estimated.
+            if inv.completed_at:
+                elapsed_seconds = (inv.completed_at - inv.created_at).total_seconds()
+                if elapsed_seconds >= 0:
+                    total_processing_time += elapsed_seconds
+                    timed_invoice_count += 1
+
         # Alerts count
         if inv.sa_alerts:
             active_alerts_count += len(inv.sa_alerts)
+            invoices_with_alerts += 1
 
         # Spend over time (series)
         # Fallback to created_at date if invoice_date is not set
@@ -88,8 +105,16 @@ async def get_dashboard_metrics(
     spend_over_time = [{"date": d, "amount": round(amt, 2)} for d, amt in sorted(spend_by_date.items())]
     top_vendors = [{"vendor_name": v, "amount": round(amt, 2)} for v, amt in sorted(spend_by_vendor.items(), key=lambda x: x[1], reverse=True)]
 
-    # Mock average processing time if invoices exist
-    average_processing_time = 4.5 if invoices else 0.0
+    # Dynamic metrics based on data
+    average_processing_time = (
+        round(total_processing_time / timed_invoice_count, 1) if timed_invoice_count > 0 else 0.0
+    )
+    
+    # Calculate real accuracy (what % of invoices went through without alerts)
+    extraction_accuracy = 100.0
+    if total_processed > 0:
+        extraction_accuracy = round(100.0 * (1.0 - (invoices_with_alerts / total_processed)), 1)
+        extraction_accuracy = max(0.0, min(100.0, extraction_accuracy))
 
     return {
         "total_invoiced": round(total_invoiced, 2),
@@ -97,6 +122,7 @@ async def get_dashboard_metrics(
         "outstanding_amount": round(outstanding_amount, 2),
         "at_risk_amount": round(at_risk_amount, 2),
         "average_processing_time": average_processing_time,
+        "extraction_accuracy": extraction_accuracy,
         "active_alerts_count": active_alerts_count,
         "spend_over_time": spend_over_time,
         "top_vendors": top_vendors,

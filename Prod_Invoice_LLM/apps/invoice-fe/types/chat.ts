@@ -18,7 +18,7 @@
 export interface Citation {
   invoice_id: string;    // UUID — used to navigate to the audit detail view
   vendor_name: string;   // Displayed as the pill label
-  page_number: number;   // Page within the PDF where the chunk was found
+  page: number;          // Page within the PDF where the chunk was found — matches backend's CitationResponse.page
   invoice_number?: string; // Optional — used as a human-friendly fallback label
 }
 
@@ -76,25 +76,20 @@ export interface CreateSessionRequest {
   title?: string; // Optional; backend defaults to "New Chat"
 }
 
-/** GET /chat/sessions — response */
-export interface ListSessionsResponse {
-  sessions: ChatSession[];
-}
+/** GET /chat/sessions — response: the backend returns a bare array, no wrapper */
+export type ListSessionsResponse = ChatSession[];
 
-/** GET /chat/sessions/{id} — response (includes the full message history) */
-export interface GetSessionResponse {
-  session: ChatSession;
-  messages: ChatMessage[];
-}
+/** GET /chat/sessions/{id} — response: the backend returns a bare array of
+ *  messages (no session object) — routers/chat.py::get_session_messages()
+ *  has response_model=list[MessageResponse] */
+export type GetSessionResponse = ChatMessage[];
 
-/** POST /chat/sessions/{id}/message — body */
+/** POST /chat/sessions/{id}/message — body: backend's MessageCreate requires `content` */
 export interface SendMessageRequest {
-  message: string; // Raw user text; the backend handles classification
+  content: string; // Raw user text; the backend handles classification
 }
 
-/** POST /chat/sessions/{id}/message — response */
-export interface SendMessageResponse {
-  // The backend returns the assistant ChatMessage with all optional fields
-  // (generated_sql, citations) already populated based on the query path taken.
-  message: ChatMessage;
+/** POST /chat/sessions/{id}/message — response: the backend returns the
+ *  assistant ChatMessage directly (MessageResponse), not wrapped in an envelope. */
+export type SendMessageResponse = ChatMessage;
 }

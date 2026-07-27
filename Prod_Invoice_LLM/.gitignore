@@ -86,3 +86,6 @@ run_temp.py
 list_queues.sh
 peek.sh
 worker-app.yaml
+
+# Session handoff scratch doc (not a permanent project doc)
+HANDOFF_PROMPT.md

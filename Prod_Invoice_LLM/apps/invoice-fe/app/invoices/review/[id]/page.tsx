@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, Loader2, Pencil, AlertTriangle, Sparkles } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import Shell from "@/components/layout/Shell";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
@@ -28,23 +28,95 @@ interface InvoiceDetail {
   sa_alerts: { type: string; message: string }[];
   items: LineItem[] | null;
   coordinates?: { x: number; y: number; width: number; height: number; label?: string }[];
+  field_confidence?: Record<string, number>;
 }
 
-const readonlyFieldClass =
-  "w-full rounded-lg border border-[#222D3D] bg-[#1E293B] px-3 py-2 text-sm text-slate-300 pointer-events-none select-none outline-none";
-
-function ReadOnlyField({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-slate-500">{label}</label>
-      <input className={readonlyFieldClass} value={value ?? "—"} readOnly tabIndex={-1} />
-    </div>
-  );
+interface SuggestedRule {
+  scope: "global" | "existing_vendor" | "new_vendor";
+  field: string;
+  vendor_name: string | null;
+  sample_correction: string;
 }
+
+// Task 7.3's correctable field set, each mapped to the Azure prebuilt-invoice
+// confidence key that verify_field_confidence() (Gap 3) already populates on
+// invoice.field_confidence — same mapping, kept in sync manually since this is
+// display-only (Task 4.5), not a source of truth.
+const CORRECTABLE_FIELDS: { key: keyof InvoiceDetail; label: string; azureKey: string; type: "text" | "date" | "number" }[] = [
+  { key: "vendor_name", label: "Vendor", azureKey: "VendorName", type: "text" },
+  { key: "invoice_number", label: "Invoice Number", azureKey: "InvoiceId", type: "text" },
+  { key: "invoice_date", label: "Date", azureKey: "InvoiceDate", type: "date" },
+  { key: "due_date", label: "Due Date", azureKey: "DueDate", type: "date" },
+  { key: "po_number", label: "PO Number", azureKey: "PurchaseOrder", type: "text" },
+  { key: "grand_total", label: "Total Amount", azureKey: "InvoiceTotal", type: "number" },
+  { key: "tax_amount", label: "Tax Amount", azureKey: "TotalTax", type: "number" },
+];
+const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
 function fmt(val?: number | null) {
   if (val == null) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val);
+}
+
+/**
+ * Task 4.6: click-to-edit field. Read-only until clicked; once dirty, its value
+ * flows into the page's `corrections` diff instead of being sent on every save.
+ * Task 4.5: an amber ring + warning icon when the backend's OCR confidence for
+ * this field was below threshold — a prompt to double-check it, not an error.
+ */
+function EditableField({
+  label,
+  value,
+  onChange,
+  isDirty,
+  isLowConfidence,
+  confidence,
+  disabled,
+  inputType = "text",
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  isDirty: boolean;
+  isLowConfidence: boolean;
+  confidence?: number;
+  disabled?: boolean;
+  inputType?: "text" | "date" | "number";
+}) {
+  const [editing, setEditing] = useState(false);
+
+  const baseClass = "w-full rounded-lg border px-3 py-2 text-sm outline-none transition-colors";
+  const stateClass = disabled
+    ? "border-[#222D3D] bg-[#1E293B] text-slate-300 pointer-events-none select-none"
+    : editing
+    ? "border-blue-500 bg-[#1E293B] text-slate-100 cursor-text"
+    : isLowConfidence
+    ? "border-amber-500/60 bg-[#1E293B] text-slate-300 cursor-pointer hover:border-amber-400"
+    : "border-[#222D3D] bg-[#1E293B] text-slate-300 cursor-pointer hover:border-slate-500";
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
+        {label}
+        {isDirty && <Pencil size={10} className="text-blue-400" title="Corrected — will be saved on resolve/dismiss" />}
+        {isLowConfidence && !isDirty && (
+          <span title={`OCR confidence ${Math.round((confidence ?? 0) * 100)}% — below the ${LOW_CONFIDENCE_THRESHOLD * 100}% review threshold`}>
+            <AlertTriangle size={10} className="text-amber-400" />
+          </span>
+        )}
+      </label>
+      <input
+        type={inputType}
+        className={`${baseClass} ${stateClass}`}
+        value={value}
+        readOnly={disabled || !editing}
+        onClick={() => !disabled && setEditing(true)}
+        onBlur={() => setEditing(false)}
+        onChange={(e) => onChange(e.target.value)}
+        tabIndex={disabled ? -1 : 0}
+      />
+    </div>
+  );
 }
 
 export default function AuditorReviewPage() {
@@ -53,9 +125,11 @@ export default function AuditorReviewPage() {
 
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [alerts, setAlerts] = useState<{ type: string; message: string }[]>([]);
+  const [corrections, setCorrections] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [suggestedRule, setSuggestedRule] = useState<SuggestedRule | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -69,21 +143,50 @@ export default function AuditorReviewPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const handleResolve = async (targetStatus: "PAID" | "REJECTED") => {
+  // Current display value for a field: the in-progress correction if dirty, else the original.
+  const displayValue = (key: keyof InvoiceDetail): string => {
+    if (key in corrections) return corrections[key as string];
+    const raw = invoice?.[key];
+    if (raw == null) return "";
+    if (key === "grand_total" || key === "tax_amount") return String(raw);
+    return String(raw);
+  };
+
+  const handleFieldChange = (key: string, next: string) => {
+    setCorrections((prev) => ({ ...prev, [key]: next }));
+  };
+
+  const handleResolve = async (targetStatus?: "PAID" | "REJECTED") => {
     if (!invoice) return;
-    setActionLoading(targetStatus === "PAID" ? "paid" : "rejected");
+    if (targetStatus) setActionLoading(targetStatus === "PAID" ? "paid" : "rejected");
     try {
-      await apiClient.put(`/audit/resolve/${invoice.id}`, {
-        status: targetStatus,
+      const res = await apiClient.put(`/audit/resolve/${invoice.id}`, {
+        ...(targetStatus ? { status: targetStatus } : {}),
         dismissed_alerts: alerts.map((a) => a.message),
+        corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
       });
-      setInvoice((prev) => prev ? { ...prev, status: targetStatus } : prev);
+      setInvoice((prev) => (prev ? { ...prev, status: targetStatus ?? prev.status, ...corrections } : prev));
       setAlerts([]);
+      setCorrections({});
+      if (res.data?.suggested_rule) {
+        setSuggestedRule(res.data.suggested_rule);
+      }
     } catch (err) {
       console.error("Resolve failed:", err);
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handleSaveAsRule = () => {
+    if (!suggestedRule) return;
+    const params = new URLSearchParams({
+      from: "audit",
+      scope: suggestedRule.scope,
+      correction: suggestedRule.sample_correction,
+    });
+    if (suggestedRule.vendor_name) params.set("vendor_name", suggestedRule.vendor_name);
+    router.push(`/trainer?${params.toString()}`);
   };
 
   /* ── Loading / Error states ── */
@@ -109,6 +212,7 @@ export default function AuditorReviewPage() {
   }
 
   const isResolved = ["PAID", "REJECTED"].includes(invoice.status);
+  const hasUnsavedCorrections = Object.keys(corrections).length > 0;
 
   return (
     <Shell>
@@ -142,6 +246,34 @@ export default function AuditorReviewPage() {
           </span>
         </div>
 
+        {/* Task 4.7: Rule Suggestion Prompt — surfaced after a correction pattern
+            recurred enough times (Task 7.4) to be worth automating. */}
+        {suggestedRule && (
+          <div className="flex items-center gap-3 rounded-xl border border-purple-500/40 bg-purple-950/20 px-4 py-3">
+            <Sparkles size={18} className="shrink-0 text-purple-300" />
+            <div className="flex-1 text-sm text-purple-100">
+              <p className="font-medium">Want to save this as a rule?</p>
+              <p className="text-xs text-purple-300/80 mt-0.5">
+                You've corrected <strong>{suggestedRule.field}</strong>{" "}
+                {suggestedRule.scope === "global" ? "across several vendors" : `for ${suggestedRule.vendor_name}`}{" "}
+                a few times now — teach the AI Trainer so it stops needing manual fixes.
+              </p>
+            </div>
+            <button
+              onClick={handleSaveAsRule}
+              className="shrink-0 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-2 transition-colors"
+            >
+              Open Trainer
+            </button>
+            <button
+              onClick={() => setSuggestedRule(null)}
+              className="shrink-0 text-purple-300/60 hover:text-purple-200 text-xs"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {/* Split Layout */}
         <div className="grid flex-1 grid-cols-2 gap-4 overflow-hidden">
           {/* LEFT — PDF Viewer */}
@@ -160,7 +292,7 @@ export default function AuditorReviewPage() {
                 Auditor Details &amp; Validation
               </p>
               <span className="rounded-md border border-[#222D3D] px-2 py-1 text-xs text-slate-500">
-                Read-only fields
+                {isResolved ? "Resolved — read-only" : "Click a field to correct it"}
               </span>
             </div>
 
@@ -170,20 +302,46 @@ export default function AuditorReviewPage() {
               alerts={alerts}
               currentStatus={invoice.status}
               onAlertsChange={setAlerts}
+              corrections={corrections}
+              onDismissed={(res) => {
+                if (Object.keys(corrections).length > 0) {
+                  setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
+                  setCorrections({});
+                }
+                if (res?.suggested_rule) setSuggestedRule(res.suggested_rule);
+              }}
             />
 
-            {/* Metadata Fields */}
+            {/* Metadata Fields — editable (Task 4.6), confidence-flagged (Task 4.5) */}
             <div className="grid grid-cols-2 gap-3 rounded-xl border border-[#222D3D] bg-[#0F172A] p-4">
-              <ReadOnlyField label="Invoice ID" value={invoice.invoice_number ?? invoice.id} />
-              <ReadOnlyField label="Date" value={invoice.invoice_date ?? undefined} />
-              <div className="col-span-2">
-                <ReadOnlyField label="Vendor" value={invoice.vendor_name ?? undefined} />
-              </div>
-              <ReadOnlyField label="Total Amount" value={fmt(invoice.grand_total)} />
-              <ReadOnlyField label="Tax Amount" value={fmt(invoice.tax_amount)} />
-              <ReadOnlyField label="Due Date" value={invoice.due_date ?? undefined} />
-              <ReadOnlyField label="PO Number" value={invoice.po_number ?? undefined} />
+              {CORRECTABLE_FIELDS.map(({ key, label, azureKey, type }) => {
+                const confidence = invoice.field_confidence?.[azureKey];
+                const isLowConfidence = confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
+                const rawValue = displayValue(key);
+                const displayed = type === "number" && !(key in corrections) ? fmt(rawValue ? Number(rawValue) : null) : rawValue;
+                return (
+                  <div key={key as string} className={key === "vendor_name" ? "col-span-2" : undefined}>
+                    <EditableField
+                      label={label}
+                      value={displayed}
+                      onChange={(next) => handleFieldChange(key as string, next)}
+                      isDirty={key in corrections}
+                      isLowConfidence={isLowConfidence}
+                      confidence={confidence}
+                      disabled={isResolved}
+                      inputType={type === "number" ? "text" : type === "date" ? "text" : "text"}
+                    />
+                  </div>
+                );
+              })}
             </div>
+
+            {hasUnsavedCorrections && !isResolved && (
+              <div className="flex items-center gap-2 rounded-lg border border-blue-600/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
+                <Pencil size={12} />
+                {Object.keys(corrections).length} field(s) corrected — will be saved when you dismiss an alert or finalize below.
+              </div>
+            )}
 
             {/* Line Items */}
             {invoice.items && invoice.items.length > 0 && (

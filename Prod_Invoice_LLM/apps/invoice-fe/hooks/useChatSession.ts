@@ -57,7 +57,7 @@ export function useChatSession(): UseChatSessionReturn {
     setIsLoadingSessions(true);
     try {
       const res = await apiClient.get<ListSessionsResponse>("/chat/sessions");
-      setSessions(res.data.sessions ?? []);
+      setSessions(res.data ?? []);
     } catch {
       // Gracefully handle backend being offline during local development.
       // The empty array keeps the UI functional — user can still start a chat.
@@ -86,7 +86,7 @@ export function useChatSession(): UseChatSessionReturn {
     setError(null);
     try {
       const res = await apiClient.get<GetSessionResponse>(`/chat/sessions/${id}`);
-      setMessages(res.data.messages ?? []);
+      setMessages(res.data ?? []);
     } catch {
       setError("Failed to load messages for this session.");
     } finally {
@@ -151,11 +151,11 @@ export function useChatSession(): UseChatSessionReturn {
         // Step 2: POST to proxy → backend run_query_agent()
         const res = await apiClient.post<SendMessageResponse>(
           `/chat/sessions/${activeSessionId}/message`,
-          { message: text.trim() }
+          { content: text.trim() }
         );
 
         // Step 3: Append the real assistant message (may include generated_sql + citations)
-        const assistantMsg = res.data.message;
+        const assistantMsg = res.data;
         setMessages((prev) => [...prev, assistantMsg]);
 
         // Optimistically rename "New Chat" to the first message text for sidebar legibility

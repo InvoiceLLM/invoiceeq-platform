@@ -72,6 +72,36 @@ export default function QnAPanel({
   const [inputText, setInputText] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // ── Estimated progress during a chat correction ────────────────────────
+  // A correction round-trip is a single synchronous backend call covering two
+  // real LLM steps (refine constraints, then re-extract with them) — the
+  // backend doesn't stream incremental progress, so this is a client-side
+  // elapsed-time estimate against a typical ~28s round-trip, not a real
+  // server-reported percentage. It's capped short of 100% and jumps there
+  // only once the actual response lands (isSending flips false), so it never
+  // falsely claims completion before the real answer arrives.
+  const [progressPct, setProgressPct] = useState(0);
+  const ESTIMATED_DURATION_MS = 28000;
+  useEffect(() => {
+    if (!isSending) {
+      setProgressPct(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      // Approach 92% asymptotically so it never appears finished while still waiting.
+      const pct = Math.min(92, Math.round((elapsed / ESTIMATED_DURATION_MS) * 92));
+      setProgressPct(pct);
+    }, 300);
+    return () => clearInterval(interval);
+  }, [isSending]);
+
+  const progressStage =
+    progressPct < 35 ? "Analyzing correction..." :
+    progressPct < 75 ? "Re-extracting with updated rules..." :
+    "Finalizing...";
+
   // Quick-action suggestion chips for common rule patterns
   const suggestionChips = [
     "Dates are in DD/MM/YYYY format",
@@ -229,22 +259,33 @@ export default function QnAPanel({
               );
             })}
 
-            {/* AI Thinking / Typing Pulse Indicator */}
+            {/* AI Thinking / Typing Pulse Indicator, with an estimated progress bar.
+                A correction re-runs extraction (2 real LLM calls), typically ~25-30s —
+                the bar/percentage is a client-side elapsed-time estimate (see the
+                progressPct effect above), not a real backend-reported value. */}
             {isSending && (
               <div className="flex items-end gap-2.5">
                 <div className="w-7 h-7 rounded-xl bg-[#111827] text-emerald-400 border border-emerald-500/25 flex items-center justify-center shadow-md">
                   <Bot className="w-4 h-4" />
                 </div>
-                <div className="bg-[#111827] border border-[#1E2D45] px-4 py-3 rounded-2xl rounded-bl-sm flex items-center gap-1.5">
-                  {/* Three-dot pulse animation */}
-                  {[0, 150, 300].map((delay) => (
-                    <span
-                      key={delay}
-                      style={{ animationDelay: `${delay}ms` }}
-                      className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce"
+                <div className="bg-[#111827] border border-[#1E2D45] px-4 py-3 rounded-2xl rounded-bl-sm min-w-[220px]">
+                  <div className="flex items-center gap-1.5">
+                    {[0, 150, 300].map((delay) => (
+                      <span
+                        key={delay}
+                        style={{ animationDelay: `${delay}ms` }}
+                        className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce"
+                      />
+                    ))}
+                    <span className="ml-2 text-[11px] text-slate-400">{progressStage}</span>
+                    <span className="ml-auto text-[10px] font-mono text-blue-400">{progressPct}%</span>
+                  </div>
+                  <div className="mt-2 h-1 bg-[#1E2D45] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 transition-all duration-300 ease-out rounded-full"
+                      style={{ width: `${progressPct}%` }}
                     />
-                  ))}
-                  <span className="ml-2 text-[11px] text-slate-400">Refining rules...</span>
+                  </div>
                 </div>
               </div>
             )}

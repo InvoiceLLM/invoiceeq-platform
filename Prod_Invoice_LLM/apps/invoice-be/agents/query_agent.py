@@ -162,9 +162,11 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session) -> str:
     if not sql_lower.startswith("select"):
         raise ValueError("Only read-only SELECT queries are permitted.")
         
-    # Safety Check 3: Tenant UUID must be present in query text
-    if str(tenant_id) not in sql_clean:
-        raise ValueError("Access Denied: SQL query does not contain tenant isolation filter.")
+    # Safety Check 3: Tenant UUID must be present in query text (Gap 20: validate predicate structure)
+    # Ensure tenant_id = '...' is actually part of a condition, not just a random string in the SELECT
+    isolation_pattern = rf"\btenant_id\s*=\s*['\"]?{tenant_id}['\"]?\b"
+    if not re.search(isolation_pattern, sql_clean, re.IGNORECASE):
+        raise ValueError("Access Denied: SQL query does not contain valid tenant isolation predicate.")
         
     result = db_session.execute(text(sql_clean))
     rows = result.fetchall()
@@ -182,8 +184,77 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session) -> str:
         
     return f"\n\n{header}\n{separator}\n" + "\n".join(markdown_rows)
 
-def get_chat_history(session_id: str, db_session, limit: int = 10) -> str:
-    """Retrieve short-term conversational context from the database."""
+def _get_global_business_rules(tenant_id: str, db_session) -> list[str]:
+    """Fetch the tenant's committed Global Trainer rules (feature_10_trainer.md) so
+    Chat answers reflect the same business knowledge taught into extraction — e.g.
+    "tax_amount is CGST+SGST summed" helps the LLM correctly *explain* that column
+    to a user, not just correctly extract it in the first place. This closes the
+    loop the trainer sandbox was missing: committing a rule previously only ever
+    affected future extractions, never how Chat talks about the resulting data.
+
+    Deliberately Global-scope only, not per-vendor: at this point in the request
+    we don't yet know which vendor (if any) the question is about — that's only
+    resolved after the SQL/RAG route actually runs — so there's no reliable way to
+    pick the right vendor template ahead of time. The Global template applies
+    tenant-wide unconditionally, so it's always safe to include.
+    """
+    from models import ExtractionTemplate
+    from sqlmodel import select
+    from uuid import UUID
+    try:
+        stmt = select(ExtractionTemplate).where(
+            ExtractionTemplate.tenant_id == UUID(str(tenant_id)),
+            ExtractionTemplate.vendor_name.is_(None),
+        )
+        template = db_session.exec(stmt).first()
+        if template and isinstance(template.rules, dict):
+            return template.rules.get("constraints", []) or []
+    except Exception as e:
+        logger.warning("Failed to load Global trainer rules for tenant %s: %s", tenant_id, e)
+    return []
+
+def _get_vendor_business_rules(tenant_id: str, user_message: str, db_session) -> list[str]:
+    """Fetch vendor-specific rules by checking if any vendor name from the templates 
+    appears in the user's message. (Gap 52)"""
+    from models import ExtractionTemplate
+    from sqlmodel import select
+    from uuid import UUID
+    try:
+        stmt = select(ExtractionTemplate).where(
+            ExtractionTemplate.tenant_id == UUID(str(tenant_id)),
+            ExtractionTemplate.vendor_name.is_not(None),
+        )
+        templates = db_session.exec(stmt).all()
+        
+        user_message_lower = user_message.lower()
+        matched_rules = []
+        for template in templates:
+            # Basic substring match, e.g., "Home Depot" inside "what did we spend at home depot?"
+            if template.vendor_name and template.vendor_name.lower() in user_message_lower:
+                if isinstance(template.rules, dict):
+                    rules = template.rules.get("constraints", [])
+                    matched_rules.extend(rules)
+        return matched_rules
+    except Exception as e:
+        logger.warning("Failed to load vendor trainer rules for tenant %s: %s", tenant_id, e)
+    return []
+
+
+def _business_rules_block(business_rules: list[str]) -> str:
+    """Render the trainer-taught rules as a prompt section, or '' if there are none
+    (so prompts stay clean for tenants who haven't trained anything yet)."""
+    if not business_rules:
+        return ""
+    rules_text = "\n".join(f"- {r}" for r in business_rules)
+    return (
+        "\n\nTenant Business Rules (taught via the AI Trainer sandbox — apply these "
+        f"when interpreting or explaining the data):\n{rules_text}\n"
+    )
+
+
+def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str:
+    """Retrieve short-term conversational context from the database, bounded by token length (Gap 23)."""
+    import tiktoken
     from models import ChatMessage
     from sqlmodel import select
     from uuid import UUID
@@ -194,26 +265,31 @@ def get_chat_history(session_id: str, db_session, limit: int = 10) -> str:
         return ""
 
     try:
+        # Fetch a larger pool of recent messages, then trim by tokens
         statement = (
             select(ChatMessage)
             .where(ChatMessage.session_id == sess_uuid)
             .order_by(ChatMessage.created_at.desc())
-            .limit(limit)
+            .limit(50)
         )
         messages = db_session.exec(statement).all()
-        messages.reverse()
+        
+        encoder = tiktoken.get_encoding("cl100k_base")
+        current_tokens = 0
+        selected_messages = []
 
-        history_str = ""
         for m in messages:
-            history_str += f"{m.role.capitalize()}: {m.content}\n"
-        return history_str
+            msg_str = f"{m.role.capitalize()}: {m.content}\n"
+            tokens = len(encoder.encode(msg_str))
+            if current_tokens + tokens > max_tokens:
+                break
+            current_tokens += tokens
+            selected_messages.append(msg_str)
+            
+        selected_messages.reverse()
+        return "".join(selected_messages)
     except Exception as e:
-        # Gap 37: this query previously had no failure guard at all, so any
-        # transient DB hiccup here (unlike every LLM-call branch below, which
-        # already has its own try/except) propagated all the way up through
-        # run_query_agent as a raw, unhandled 500 instead of degrading
-        # gracefully. Missing history is recoverable — proceed without it
-        # rather than fail the whole request.
+        # Gap 37: Missing history is recoverable — proceed without it rather than fail request
         logger.warning("Failed to load chat history for session %s: %s", session_id, e)
         return ""
 
@@ -231,6 +307,17 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
 
     # Retrieve short-term context history
     chat_history = get_chat_history(session_id, db_session)
+
+    # Trainer-taught business rules (Global scope + heuristically matched Vendor scope)
+    global_rules = _get_global_business_rules(tenant_id, db_session)
+    vendor_rules = _get_vendor_business_rules(tenant_id, user_message, db_session)
+    
+    business_rules = list(global_rules)
+    for rule in vendor_rules:
+        if rule not in business_rules:
+            business_rules.append(rule)
+            
+    rules_block = _business_rules_block(business_rules)
 
     # 1. Routing classification
     route = classify_query(user_message)
@@ -257,25 +344,44 @@ Given the 'invoice' table schema:
 - tax_amount: FLOAT
 - po_number: VARCHAR
 - status: VARCHAR (e.g. 'COMPLETED', 'AUDIT_REQUIRED', 'PROCESSING')
+- sa_alerts: JSONB
 - created_at: DATETIME
 
 Write a SQL query to answer the user's question. 
 CRITICAL RULES:
 1. You MUST filter by tenant_id = '{tenant_id}'.
 2. You MUST only generate a read-only SELECT statement.
-
+3. IMPORTANT: Audit status lives exclusively in the `status` enum and `sa_alerts` column. There is no `audit_flags`, `audit_logs`, or `audit_reasons` table. Do not hallucinate columns like `is_flagged_for_audit`.
+{rules_block}
 Conversation History for Context:
 {chat_history}
 """
-        try:
-            structured_sql = llm.with_structured_output(SQLGenerationSchema)
-            res = structured_sql.invoke(f"{system_prompt}\nUser Question: {user_message}")
-            generated_sql = res.sql
-            logger.info("Generated SQL: %s", generated_sql)
-            
-            # Execute SQL
-            db_result = execute_generated_sql(generated_sql, tenant_id, db_session)
-
+        max_attempts = 3
+        last_error = None
+        db_result = None
+        current_prompt = f"{system_prompt}\nUser Question: {user_message}"
+        
+        for attempt in range(max_attempts):
+            try:
+                structured_sql = llm.with_structured_output(SQLGenerationSchema)
+                res = structured_sql.invoke(current_prompt)
+                generated_sql = res.sql
+                logger.info("Generated SQL (attempt %d): %s", attempt + 1, generated_sql)
+                
+                # Execute SQL
+                db_result = execute_generated_sql(generated_sql, tenant_id, db_session)
+                break
+            except Exception as e:
+                db_session.rollback()
+                last_error = e
+                logger.warning("SQL execution failed on attempt %d: %s", attempt + 1, e)
+                # Feed the error back to the LLM
+                current_prompt += f"\n\nPrevious attempt failed with error:\n{e}\nPlease correct the SQL query and try again."
+        
+        if db_result is None:
+            logger.error("SQL path execution failed after %d attempts: %s", max_attempts, last_error)
+            response_text = f"Failed to execute database check: {str(last_error)}"
+        else:
             # Deterministic fallback: if the LLM-generated SQL found nothing but the
             # question plainly names a specific invoice, try a direct trimmed/
             # case-insensitive lookup before giving up. Catches whatever formatting
@@ -293,21 +399,16 @@ Conversation History for Context:
             summary_prompt = f"""Format a friendly summary explaining these database query results:
 Results:
 {db_result}
-
+{rules_block}
 User Query: {user_message}
 """
-            final_res = llm.invoke(summary_prompt)
-            response_text = final_res.content + f"\n\n### Query Results\n{db_result}"
-            route_succeeded = True
-        except Exception as e:
-            logger.error("SQL path execution failed: %s", e)
-            response_text = f"Failed to execute database check: {str(e)}"
-            # A DB-level failure (e.g. the LLM hallucinating a column that isn't in
-            # the schema it was given) aborts the whole Postgres transaction; without
-            # a rollback here, db_session stays poisoned and the *next* operation on
-            # it - chat.py's post_chat_message() saving this very fallback message -
-            # fails too, turning a handled failure into an unhandled 500.
-            db_session.rollback()
+            try:
+                final_res = llm.invoke(summary_prompt)
+                response_text = final_res.content + f"\n\n### Query Results\n{db_result}"
+                route_succeeded = True
+            except Exception as e:
+                logger.error("SQL summary synthesis failed: %s", e)
+                response_text = f"Failed to format database check: {str(e)}"
 
     elif route == "RAG":
         # Vector search (Long-term semantic facts)
@@ -327,7 +428,7 @@ Use the following extracted context chunks and short-term conversation history t
 
 Extracted Document Context (Long-term Facts):
 {context_str}
-
+{rules_block}
 Conversation History (Short-term context):
 {chat_history}
 """

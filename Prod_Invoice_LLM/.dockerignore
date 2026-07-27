@@ -46,6 +46,7 @@ docker-compose.yml
 # Test files
 **/tests/
 **/__tests__/
+apps/invoice-fe/_manual_test/
 
 # IDE
 .vscode/

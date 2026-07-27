@@ -51,6 +51,7 @@ class Invoice(SQLModel, table=True):
     addresses: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     compliance_metadata: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
 
 
 

@@ -49,9 +49,8 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
   const paidPercent = totalInvoiced > 0 ? Math.round((paidAmount / totalInvoiced) * 100) : 0;
 
   // Extraction Accuracy (circular indicator). 
-  // Let's calculate a mock extraction accuracy based on active alerts and total invoiced.
-  // 98.4% is the default baseline, adjusted slightly if alerts are high.
-  const extractionAccuracy = Math.max(90.0, Math.min(99.8, 99.4 - (activeAlerts * 0.1)));
+  // Use real backend data if available, fallback to 0 if loading.
+  const extractionAccuracy = metrics?.extraction_accuracy ?? 0.0;
 
   // SVG Chart Dimensions
   const svgWidth = 600;

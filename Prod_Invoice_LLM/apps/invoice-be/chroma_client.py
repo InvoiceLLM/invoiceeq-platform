@@ -126,31 +126,79 @@ def delete_invoice_chunks(invoice_id: str) -> None:
 def query_invoice_chunks(tenant_id: str, query_text: str, limit: int = 5) -> list[dict]:
     """
     Query indexed invoice chunks, isolating results strictly by requesting tenant_id.
+    Includes a hybrid keyword pass and local reranker (Gap 22), enforcing a distance
+    relevance threshold (Gap 21).
     """
+    import re
+    
     client = get_chroma_client()
     collection = client.get_or_create_collection(name="invoice_chunks")
     
     query_embeddings = get_embeddings([query_text])
     
+    # Gap 22: Fetch a larger candidate pool for reranking
+    candidate_limit = limit * 3
     results = collection.query(
         query_embeddings=query_embeddings,
         where={"tenant_id": str(tenant_id)},
-        n_results=limit
+        n_results=candidate_limit
     )
     
-    matched_chunks = []
-    if results and results.get("documents") and len(results["documents"]) > 0:
-        documents = results["documents"][0]
-        metadatas = results["metadatas"][0]
-        distances = results.get("distances", [[]])[0]
-        ids = results["ids"][0]
+    if not results or not results.get("documents") or len(results["documents"]) == 0:
+        return []
+
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
+    distances = results.get("distances", [[]])[0]
+    ids = results["ids"][0]
+    
+    # Extract query keywords for hybrid pass (ignore common stopwords)
+    stopwords = {"THE", "AND", "FOR", "WITH", "THAT", "THIS", "ARE", "WAS", "WHAT", "WHO", "WHERE", "HOW", "MANY", "MUCH", "DOES", "DID", "HAS", "HAVE", "HAD"}
+    keywords = set(re.findall(r'\b[A-Z0-9-]{3,}\b|\b\d+(?:\.\d+)?\b', query_text.upper()))
+    keywords = {kw for kw in keywords if kw not in stopwords}
+
+    candidates = []
+    for idx in range(len(documents)):
+        doc_text = documents[idx]
+        doc_upper = doc_text.upper()
         
-        for idx in range(len(documents)):
+        # Original semantic distance (Chroma default is L2, but we treat lower as better)
+        vec_dist = distances[idx] if idx < len(distances) else 1.0
+        
+        # Keyword Pass Score (TF-like)
+        k_score = sum(1 for kw in keywords if kw in doc_upper)
+        
+        # Combine: each matching keyword boosts the semantic distance (lowers it)
+        # We cap the boost so a huge keyword match doesn't pull in totally irrelevant semantic stuff
+        # but 0.1 per keyword is enough to rerank strong exact matches to the top.
+        combined_score = vec_dist - (k_score * 0.1)
+        
+        candidates.append({
+            "id": ids[idx],
+            "document": doc_text,
+            "metadata": metadatas[idx],
+            "distance": vec_dist,
+            "combined_score": combined_score,
+            "keyword_score": k_score
+        })
+
+    # Rerank by combined score
+    candidates.sort(key=lambda x: x["combined_score"])
+
+    # Gap 21: Enforce relevance threshold (0.4)
+    # We apply the threshold on the original vector distance to avoid false positives,
+    # OR if there's a strong keyword match, we let it pass (exact match fallback).
+    matched_chunks = []
+    min_k_score = min(2, max(1, len(keywords))) # Require 1 if only 1 keyword, 2 if >= 2
+    for chunk in candidates:
+        if chunk["distance"] <= 0.4 or chunk["keyword_score"] >= min_k_score:
             matched_chunks.append({
-                "id": ids[idx],
-                "document": documents[idx],
-                "metadata": metadatas[idx],
-                "distance": distances[idx] if idx < len(distances) else None
+                "id": chunk["id"],
+                "document": chunk["document"],
+                "metadata": chunk["metadata"],
+                "distance": chunk["distance"]
             })
-            
+            if len(matched_chunks) >= limit:
+                break
+                
     return matched_chunks

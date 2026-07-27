@@ -23,10 +23,11 @@ import { ExtractedVariable } from "@/lib/trainer-service";
  *
  *   MODE 1 — PDF Document Viewer Canvas:
  *     Shown when a real document is loaded (pdfUrl is set).
- *     Renders a realistic document preview with:
+ *     Renders the actual PDF (via iframe — works for both the client-side blob
+ *     URL of a freshly uploaded file and the real backend-served invoice PDF
+ *     for Existing Vendor sessions), plus a live summary strip built from the
+ *     session's real extracted field values (not sample/placeholder data).
  *       • Zoom controls toolbar (75% – 175%)
- *       • Simulated invoice body with OCR field table
- *       • Interactive blue dashed bounding-box highlight on variable selection
  *
  *   MODE 2 — Global Chat-Only Empty State:
  *     Shown when no document is loaded (Global scope, no optional PDF uploaded).
@@ -48,6 +49,8 @@ interface PdfViewerPanelProps {
   selectedVariable?: ExtractedVariable | null;
   /** Callback fired when user selects a variable in the viewer */
   onSelectVariable?: (variable: ExtractedVariable) => void;
+  /** Real extracted scalar fields for this session — drives the live summary strip. */
+  variables?: ExtractedVariable[];
 }
 
 export default function PdfViewerPanel({
@@ -55,7 +58,9 @@ export default function PdfViewerPanel({
   pdfUrl,
   isGlobalScopeNoPdf = false,
   selectedVariable,
+  variables = [],
 }: PdfViewerPanelProps) {
+  const getVar = (key: string) => variables.find((v) => v.key === key)?.value;
   // Zoom level for the document canvas; range 75% – 175%
   const [zoom, setZoom] = useState(100);
 
@@ -171,104 +176,60 @@ export default function PdfViewerPanel({
         </div>
       </div>
 
-      {/* ── PDF Viewport Canvas Area ──────────────────────────────────── */}
-      <div className="flex-1 bg-[#050810] p-4 overflow-auto flex items-start justify-center relative">
-        {/* Zoomed document page card */}
+      {/* ── PDF Viewport — the actual uploaded/loaded document ─────────── */}
+      <div className="flex-1 min-h-0 bg-[#050810] p-3 flex flex-col gap-3">
         <div
           style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center" }}
-          className="transition-transform duration-150 w-full max-w-[540px] bg-[#0B1120] border border-[#1E2D45] rounded-2xl shadow-2xl p-7 relative min-h-[600px] text-slate-300 text-xs select-none"
+          className="transition-transform duration-150 flex-1 min-h-0 bg-[#0B1120] border border-[#1E2D45] rounded-2xl overflow-hidden relative"
         >
-          {/* ── Document Header Row ───────────────────────────────── */}
-          <div className="border-b border-[#1E2D45] pb-4 mb-5 flex justify-between items-start">
-            <div>
-              <h2 className="text-sm font-bold text-white tracking-wide uppercase">Invoice Document</h2>
-              <p className="text-[11px] text-slate-500 mt-0.5">Sample for rule verification</p>
-            </div>
-            <span className="inline-block px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 font-mono text-[10px] border border-blue-500/20 font-semibold">
-              OCR PROCESSED
-            </span>
-          </div>
+          {/* Real PDF — a blob URL for freshly uploaded files (New Vendor / Global
+              grounding) or the real backend-served invoice for Existing Vendor
+              sessions. The browser's native PDF viewer renders it directly. */}
+          <iframe src={pdfUrl} title={fileName || "Sample invoice PDF"} className="w-full h-full" />
 
-          {/* ── Vendor & Date Block ───────────────────────────────── */}
-          <div className="grid grid-cols-2 gap-4 bg-[#070D1A] p-3.5 rounded-xl border border-[#1E2D45] mb-5">
-            <div>
-              <span className="text-[9px] text-slate-500 block uppercase tracking-wider font-semibold mb-1">Vendor</span>
-              <span className="font-semibold text-white text-sm">Acme Logistics Corp</span>
-            </div>
-            <div className="text-right">
-              <span className="text-[9px] text-slate-500 block uppercase tracking-wider font-semibold mb-1">Invoice Date</span>
-              <span className="font-mono text-emerald-400 font-semibold">19/07/2026</span>
-            </div>
-          </div>
-
-          {/* ── Invoice Number & PO Row ───────────────────────────── */}
-          <div className="grid grid-cols-2 gap-4 mb-5 text-[11px]">
-            <div>
-              <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">Invoice No.</span>
-              <span className="font-mono text-white">INV-2026-00742</span>
-            </div>
-            <div className="text-right">
-              <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">PO Reference</span>
-              <span className="font-mono text-white">PO-88213-A</span>
-            </div>
-          </div>
-
-          {/* ── Line Items Table ──────────────────────────────────── */}
-          <div className="space-y-1.5 mb-5">
-            <span className="text-[9px] text-slate-500 block uppercase tracking-wider font-semibold mb-2">Extracted Line Items</span>
-            <div className="border border-[#1E2D45] rounded-xl overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#111827] text-slate-500 text-[9px] uppercase tracking-wider">
-                    <th className="p-2.5 font-semibold">Description</th>
-                    <th className="p-2.5 text-right font-semibold">Qty</th>
-                    <th className="p-2.5 text-right font-semibold">Rate</th>
-                    <th className="p-2.5 text-right font-semibold">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#1E2D45] text-[11px]">
-                  <tr className="hover:bg-[#111827]/60 transition-colors">
-                    <td className="p-2.5 text-slate-200">Freight Express Handling</td>
-                    <td className="p-2.5 text-right text-slate-400">10</td>
-                    <td className="p-2.5 text-right text-slate-400">$450.00</td>
-                    <td className="p-2.5 text-right text-white font-mono font-medium">$4,500.00</td>
-                  </tr>
-                  <tr className="hover:bg-[#111827]/60 transition-colors">
-                    <td className="p-2.5 text-slate-200">Container Storage Fee</td>
-                    <td className="p-2.5 text-right text-slate-400">25</td>
-                    <td className="p-2.5 text-right text-slate-400">$318.00</td>
-                    <td className="p-2.5 text-right text-white font-mono font-medium">$7,950.00</td>
-                  </tr>
-                  <tr className="hover:bg-[#111827]/60 transition-colors">
-                    <td className="p-2.5 text-slate-200">VAT (18%)</td>
-                    <td className="p-2.5 text-right text-slate-400">—</td>
-                    <td className="p-2.5 text-right text-slate-400">18%</td>
-                    <td className="p-2.5 text-right text-amber-400 font-mono font-medium">$2,241.00</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* ── Total Amount Row ──────────────────────────────────── */}
-          <div className="pt-4 border-t border-[#1E2D45] flex justify-between items-center">
-            <span className="text-slate-400 text-sm">Total Amount Payable</span>
-            <span className="text-white font-mono text-base bg-emerald-500/10 px-3.5 py-1.5 rounded-xl border border-emerald-500/20 text-emerald-400 font-bold">
-              $14,691.00
-            </span>
-          </div>
-
-          {/* ── Active Bounding Box Highlight ─────────────────────── */}
-          {/* Shown when the user selects a variable in the Variables Inspector */}
+          {/* Selected-variable callout — real bounding-box coordinates aren't
+              plumbed into the trainer session yet, so this names the field
+              rather than drawing a box over an unknown location on the page. */}
           {selectedVariable && (
-            <div className="absolute top-[88px] left-5 right-5 p-3 border-2 border-dashed border-blue-400/70 bg-blue-500/8 rounded-xl pointer-events-none transition-all duration-300 shadow-lg shadow-blue-500/10">
-              <span className="absolute -top-3.5 left-3 bg-blue-500 text-white text-[9px] px-2 py-0.5 rounded-md font-mono font-bold tracking-wide shadow-md">
-                ⬛ BBOX · {selectedVariable.label} = {selectedVariable.value}
-              </span>
+            <div className="absolute top-3 left-3 bg-blue-500 text-white text-[10px] px-2.5 py-1 rounded-md font-mono font-semibold shadow-lg pointer-events-none">
+              Selected: {selectedVariable.label} = {selectedVariable.value}
             </div>
           )}
         </div>
+
+        {/* ── Live Extracted Summary — real session data, not a mock ──── */}
+        <div className="shrink-0 bg-[#0B1120] border border-[#1E2D45] rounded-2xl p-4 text-xs">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">
+              Extracted Summary (live)
+            </span>
+            <span className="inline-block px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 font-mono text-[10px] border border-blue-500/20 font-semibold">
+              {variables.length} FIELDS
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">
+            <SummaryField label="Vendor" value={getVar("vendor_name")} />
+            <SummaryField label="Invoice #" value={getVar("invoice_number")} />
+            <SummaryField label="Invoice Date" value={getVar("invoice_date")} />
+            <SummaryField label="Due Date" value={getVar("due_date")} />
+            <SummaryField label="Subtotal" value={getVar("subtotal")} />
+            <SummaryField label="Tax Amount" value={getVar("tax_amount")} />
+            <SummaryField label="Discount" value={getVar("discount_amount")} />
+            <SummaryField label="Grand Total" value={getVar("grand_total")} highlight />
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function SummaryField({ label, value, highlight }: { label: string; value?: string; highlight?: boolean }) {
+  return (
+    <div>
+      <span className="text-[9px] text-slate-500 uppercase tracking-wider block mb-1">{label}</span>
+      <span className={highlight ? "font-mono text-emerald-400 font-semibold" : "font-mono text-white"}>
+        {value ?? "—"}
+      </span>
     </div>
   );
 }

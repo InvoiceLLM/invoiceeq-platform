@@ -276,6 +276,23 @@ function TrainerContent() {
       } else {
         showToast(`New vendor template registered (${versionNote}).`, "success");
       }
+
+      // The backend deletes the committed session immediately (routers/trainer.py::
+      // trainer_commit()), so it can never be chatted into or re-committed again —
+      // leaving it on screen would silently reference a session_id that no longer
+      // exists. Clear the workspace back to a clean starting point per scope.
+      setSelectedVariable(null);
+      if (result.scope === "global") {
+        // Global always has an active session (same as the initial page-mount
+        // behavior), so start a fresh one immediately rather than showing nothing.
+        const freshSession = await trainerService.startSession("global");
+        setSession(freshSession);
+      } else if (result.scope === "existing_vendor") {
+        setSession(null);
+        setSelectedVendorName("");
+      } else {
+        setSession(null);
+      }
     } catch (err) {
       console.error("Commit failed", err);
       showToast("Failed to commit rules to the registry.", "error");
@@ -380,6 +397,7 @@ function TrainerContent() {
             pdfUrl={session?.pdfUrl}
             isGlobalScopeNoPdf={activeScope === "global" && !session?.pdfUrl}
             selectedVariable={selectedVariable}
+            variables={session?.variables}
           />
         </div>
 

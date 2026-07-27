@@ -27,11 +27,11 @@ export default function CitationPill({ citation }: CitationPillProps) {
   const router = useRouter();
 
   // WHY router.push instead of <Link>: We need to build a URL from dynamic
-  //   props (invoice_id, page_number) at runtime, not at render time.
+  //   props (invoice_id, page) at runtime, not at render time.
   //   router.push is cleaner here than constructing an href string in JSX.
   const handleClick = () => {
     router.push(
-      `/audit?invoice_id=${citation.invoice_id}&page=${citation.page_number}`
+      `/audit?invoice_id=${citation.invoice_id}&page=${citation.page}`
     );
   };
 
@@ -39,7 +39,7 @@ export default function CitationPill({ citation }: CitationPillProps) {
     <button
       onClick={handleClick}
       // Tooltip shows full context for screen readers and on hover
-      title={`Open ${citation.vendor_name} invoice — page ${citation.page_number}`}
+      title={`Open ${citation.vendor_name} invoice — page ${citation.page}`}
       className="
         inline-flex items-center gap-1.5
         bg-[#1E293B] border border-[#222D3D]
@@ -61,7 +61,7 @@ export default function CitationPill({ citation }: CitationPillProps) {
       <span className="text-slate-500">·</span>
 
       {/* Page reference — shrink-0 ensures it never gets truncated */}
-      <span className="text-slate-400 shrink-0">p.{citation.page_number}</span>
+      <span className="text-slate-400 shrink-0">p.{citation.page}</span>
     </button>
   );
 }

@@ -348,6 +348,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.addresses = extracted_data.get("addresses", [])
                 invoice.compliance_metadata = extracted_data.get("compliance_metadata", [])
                 invoice.status = status
+                invoice.completed_at = datetime.utcnow()
                 invoice.sa_alerts = alerts
                 invoice.tags = extracted_data.get("tags", [])
                 invoice.items = extracted_data.get("items", [])

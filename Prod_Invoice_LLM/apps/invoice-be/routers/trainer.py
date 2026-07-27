@@ -203,6 +203,25 @@ def _enqueue_reaudit(tenant_id: str, vendor_name: str | None) -> bool:
         return False
 
 
+def _invalidate_chat_answer_cache(tenant_id: str) -> None:
+    """Committing a Global rule changes how `agents/query_agent.py` should answer
+    questions (see `_get_global_business_rules()`), but the SQL/RAG answer cache
+    (Task 6.11, `chat_answer_cache:{tenant_id}:{query}`, 1hr TTL) has no way to know
+    that on its own — without this, a question asked again within the hour would
+    silently keep getting the pre-rule cached answer. Best-effort: a cache miss is
+    never a correctness problem, only a cache flush failure would be, and that's
+    not worth failing the commit over.
+    """
+    try:
+        import redis
+        r = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+        keys = r.keys(f"chat_answer_cache:{tenant_id}:*")
+        if keys:
+            r.delete(*keys)
+    except Exception as e:
+        logger.warning("Failed to invalidate chat answer cache for tenant %s: %s", tenant_id, e)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Session entry points (one per scope) — Tasks 10.2, 10.3, 10.4
 # ─────────────────────────────────────────────────────────────────────────────
@@ -568,6 +587,7 @@ def trainer_commit(
     reaudit_queued = False
     if scope == "global":
         reaudit_queued = _enqueue_reaudit(str(tenant_context.tenant_id), None)
+        _invalidate_chat_answer_cache(str(tenant_context.tenant_id))
     elif scope == "existing_vendor":
         reaudit_queued = _enqueue_reaudit(str(tenant_context.tenant_id), vendor_name)
 
@@ -666,6 +686,8 @@ def rollback_template(
     db_session.refresh(template)
 
     reaudit_queued = _enqueue_reaudit(str(tenant_context.tenant_id), template.vendor_name)
+    if template.vendor_name is None:
+        _invalidate_chat_answer_cache(str(tenant_context.tenant_id))
 
     return {
         "status": "success",
