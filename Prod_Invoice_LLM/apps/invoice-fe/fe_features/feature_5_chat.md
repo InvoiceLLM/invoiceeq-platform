@@ -20,6 +20,17 @@ Build the conversational invoice analyst RAG chat box, document citation connect
 - Types: `apps/invoice-fe/types/chat.ts` ✅ _(created 2026-07-22)_
 - Proxy Routes: `app/api/chat/sessions/route.ts`, `app/api/chat/sessions/[sessionId]/route.ts`, `app/api/chat/sessions/[sessionId]/message/route.ts` ✅ _(all created 2026-07-22)_
 
+### P0 Fix: Chat never actually worked through the real UI (Gap 22, Jul 24, 2026)
+Everything above was built and marked complete on 2026-07-22, but never actually exercised against a live backend until real end-to-end browser testing on Jul 24 — the benchmark harness that reported "95.2% RAG chat passed" calls the backend directly, bypassing this entire FE layer, so this class of bug was invisible to it.
+
+Every single message send failed with `422 Unprocessable Entity`. Root cause: `useChatSession.ts::sendMessage()` posted `{message: text.trim()}`, and `types/chat.ts::SendMessageRequest` documented that same (wrong) shape — but the backend's `routers/chat.py::MessageCreate` requires `{content: text}`. Three more silent mismatches (wrong/`undefined` data, not errors) found in the same pass:
+- `GET /chat/sessions` returns a bare `SessionResponse[]` array; `fetchSessions()` read `res.data.sessions`.
+- `GET /chat/sessions/{id}` returns a bare `MessageResponse[]` array; `selectSession()` read `res.data.messages`.
+- `POST .../message`'s response is the flat `ChatMessage` object; `sendMessage()` read `res.data.message`.
+- `Citation.page_number` didn't match the backend's `CitationResponse.page` — would have rendered "p.undefined" on every RAG citation pill.
+
+Fixed all five in `useChatSession.ts`, `types/chat.ts`, and `CitationPill.tsx` — see `be_features_tracker.md`/`fe_features_tracker.md` Gap 22 for the full writeup. Verified live: 3 real questions against a real ingested invoice, correct SQL-routed answers, zero console errors.
+
 ### Tasks
 
 - [x] **Task 5.1: Build Conversational Message Thread Interface**

@@ -16,14 +16,17 @@ Enable human auditor overrides, update database transaction states, and save tem
   - *Note*: superseded by Task 7.3 below — fields are no longer strictly read-only.
 - [ ] **Task 7.2: Implement Audit Logging**
   - Log audit details to `audit_logs` table (capture actor details, action taken, and timestamps).
-- [ ] **Task 7.3: Accept field corrections on resolve** *(new — closes the audit→trainer feedback loop)*
+- [x] **Task 7.3: Accept field corrections on resolve** *(new — closes the audit→trainer feedback loop)*
   - Extend `PUT /api/v1/audit/resolve/{invoice_id}` to accept an optional `corrections: dict[str, Any]` payload (field name → corrected value). Persist the corrected values onto the `Invoice` row.
   - Log the before/after diff in `audit_logs.details` (Task 7.2) — this is the raw training signal: what the AI got wrong and what a human said instead.
   - This requires the FE metadata inspector to become editable — see `fe_features/feature_4_auditor.md` Task 4.6.
-- [ ] **Task 7.4: Detect correction patterns and suggest a trainer rule** *(new)*
+- [x] **Task 7.4: Detect correction patterns and suggest a trainer rule** *(new)*
   - After persisting a correction (Task 7.3), check whether the same field has been corrected on ≥N recent invoices — for this vendor (suggests a Vendor-scope rule) or across multiple vendors (suggests a Global-scope rule, per `feature_10_trainer.md`).
   - Return a `suggested_rule: {scope, field, sample_correction} | None` on the resolve response so the FE can surface "Want to save this as a rule?" inline (`feature_4_auditor.md` Task 4.7) instead of requiring a separate trip to the Trainer sandbox.
   - Threshold `N` and the lookback window should be configurable per tenant, not hardcoded — false-positive suggestions erode trust in the feature fast.
+
+### Recent Fixes
+* **P0 Bug - AlertConsole 400 Error**: Fixed Jul 25, 2026. The `status` field was previously required on every resolve call, causing `AlertConsole.tsx`'s "Dismiss" button (which sent `status: currentStatus`, e.g., `"AUDIT_REQUIRED"`) to always fail with a 400 error since the backend only accepted `PAID`/`REJECTED`. Made `status` optional on the backend so omitting it correctly dismisses/corrects without finalizing the invoice.
 
 ### Verification Plan
 * **Automated Tests**: Run `uv run pytest tests/test_audit.py` testing resolution overrides and status updates.

@@ -47,5 +47,14 @@ Committing a Global or Existing Vendor session queues a background re-audit (Glo
   - Accept a deep-link/query param carrying `{scope, field, sample_correction}` from the "Want to save this as a rule?" prompt (`feature_4_auditor.md` Task 4.7), per Task 10.11.
   - Pre-select the given scope, skip the vendor/PDF picker if already resolved, and pre-populate the chat with the sample correction instead of an empty session.
 
+### P0 Fixes from live end-to-end testing (Jul 25, 2026)
+This trainer code was only merged from a feature branch the day before (Jul 24) and had never been run against a live backend in a real browser until this pass. Three issues found and fixed:
+
+* **Gap 23 — screen not cleared after commit, left pointing at a dead session**: the backend deletes the session immediately on commit, but `page.tsx::handleConfirmCommit()` never reset FE state — the same chat/PDF/variables stayed on screen looking live, so any further interaction with it would 404. Fixed: clear state per scope after a successful commit (Global auto-starts a fresh session, matching initial page-load behavior; Existing/New Vendor reset to their empty picker state).
+* **Gap 24 — document viewer panel was a hardcoded mock, not the real document**: `PdfViewerPanel.tsx`'s "MODE 1" canvas rendered literal sample data (`"Acme Logistics Corp"`, `"INV-2026-00742"`) regardless of what was actually uploaded — its own code comment called it a "simulated invoice body." This defeated the whole point of the split-screen sandbox (visually comparing extraction against the source). Fixed: real `<iframe src={pdfUrl}>` render (works for both a freshly-uploaded file's client-side blob URL and the real backend-served invoice for Existing Vendor sessions) plus a live summary strip built from the session's actual `variables`.
+* **Gap 25 — chat correction had no progress feedback during its ~25-30s round-trip**: a correction re-runs extraction (2 real sequential LLM calls: refine constraints, then re-extract), and the UI showed only a static "Refining rules..." spinner the whole time — long enough to look hung even though it wasn't (confirmed via network capture: the response always lands correctly, the UI just gave no sense of progress). Added a client-side elapsed-time-estimated progress bar + stage text ("Analyzing correction..." → "Re-extracting with updated rules..." → "Finalizing...") in `QnAPanel.tsx`, capped short of 100% until the real response arrives.
+
+See `be_features_tracker.md` Gaps 50/51 and `fe_features_tracker.md` Gaps 23-25 for the full writeups.
+
 ### Verification Plan
 * **Manual Verification**: Create a Global rule with no vendor context and confirm it applies to a brand-new vendor's next upload. Load an Existing Vendor session, submit a correction, commit, and confirm the re-audit toast appears. Open the Rule History drawer and roll back a version.

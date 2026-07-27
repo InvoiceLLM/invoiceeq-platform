@@ -3,6 +3,9 @@
 Settings page for a tenant to find their inbound email alias and manage
 which sender addresses are allowed to submit invoices by email.
 
+### Navigation
+Lives under the **Settings** sidebar tab as a sub-section (`Settings → Email Ingestion`), alongside Connectors (`feature_7_connectors.md`) and Webhooks (`feature_9_webhooks.md`) — the sidebar exposes one "Settings" entry, and these three features are its sub-pages.
+
 ### Theme & Styling Specifications
 * Alias display card: `bg-[#151B26] border border-[#222D3D] rounded-xl p-4`,
   monospace alias text with a copy-to-clipboard button.

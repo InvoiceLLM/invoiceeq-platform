@@ -3,6 +3,9 @@
 Settings page to add/edit webhook endpoints, pick which events they
 receive, and see recent delivery status.
 
+### Navigation
+Lives under the **Settings** sidebar tab as a sub-section (`Settings → Webhooks`), alongside Connectors (`feature_7_connectors.md`) and Email Ingestion (`feature_8_email_ingestion.md`) — the sidebar exposes one "Settings" entry, and these three features are its sub-pages.
+
 ### Theme & Styling Specifications
 * Subscription rows: same list style as `feature_8_email_ingestion.md`'s
   allowed-senders list, for visual consistency within Settings.

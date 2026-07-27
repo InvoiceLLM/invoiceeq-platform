@@ -24,15 +24,18 @@ Develop the read-only verification console, visual PDF coordinate viewer, and al
 - [x] **Task 4.4: Code Active Alerts Review & Dismissal Actions**
   - `AlertConsole.tsx` renders per-alert yellow warning cards each with a `Dismiss` button calling `PUT /api/v1/audit/resolve/{id}`.
   - `Mark Paid & Finalize` and `Reject Invoice` buttons in the review page call `PUT /audit/resolve` with `status: PAID/REJECTED` and dismiss all remaining alerts.
-- [ ] **Task 4.5: Confidence-based field highlighting**
+- [x] **Task 4.5: Confidence-based field highlighting**
   - Extend `ExtractedDataForm`/the metadata inspector to visually flag low-confidence fields (e.g. amber border/badge) using the backend's per-field confidence scores, so auditors can scan straight to what needs review instead of re-checking every field.
-- [ ] **Task 4.6: Editable Metadata Inspector & Correction Capture**
+- [x] **Task 4.6: Editable Metadata Inspector & Correction Capture**
   - Convert each `ReadOnlyField` into an editable input on click (drop `pointer-events-none` + `readOnly`; apply the Editable Field style above while dirty).
   - Track a `corrections: Record<string, any>` diff of fields changed from their original extracted values.
   - Include `corrections` in the `PUT /api/v1/audit/resolve/{id}` payload sent by Dismiss / `Mark Paid & Finalize` / `Reject Invoice`, per `be_features/feature_7_audit.md` Task 7.3.
-- [ ] **Task 4.7: Rule Suggestion Prompt**
+- [x] **Task 4.7: Rule Suggestion Prompt**
   - When the `PUT /audit/resolve` response includes a `suggested_rule: {scope, field, sample_correction}` object (per `be_features/feature_7_audit.md` Task 7.4), surface an inline "Want to save this as a rule?" banner.
   - Accepting it opens a Trainer sandbox session pre-seeded with the suggested scope (Global or Vendor) and the sample correction already in chat context — see `feature_6_trainer.md` Task 6.8 / `be_features/feature_10_trainer.md` Task 10.11 — instead of a blank session.
+
+### Recent Fixes
+* **P0 Bug - AlertConsole 400 Error**: Fixed Jul 25, 2026. The `status` field was previously required on every resolve call, causing `AlertConsole.tsx`'s "Dismiss" button (which sent `status: currentStatus`, e.g., `"AUDIT_REQUIRED"`) to always fail with a 400 error since the backend only accepted `PAID`/`REJECTED`. Made `status` optional on the backend so omitting it correctly dismisses/corrects without finalizing the invoice.
 
 ### Verification Plan
 * **Manual Verification**: Launch the review screen for a flagged invoice. Confirm metadata fields switch to editable on click, that a corrected value is included in the `PUT /audit/resolve` payload, and that clicking "Dismiss" updates the alert list and clears overlays.
