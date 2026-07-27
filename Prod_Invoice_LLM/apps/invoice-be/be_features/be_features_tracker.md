@@ -26,6 +26,12 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 13: Automated Test & Benchmark Suite](feature_13_test_benchmark_suite.md) — test tooling spanning Feature 2 (extraction) + Feature 6 (RAG chat); Tier 1 regression suite is built and CI-wired, Tier 2 daily benchmark harness is fully verified, resolving Key Vault permissions, model name configuration, missing queue creation, and ThreadPoolExecutor SentenceTransformer concurrency crashes (86.7% extraction, 95.2% RAG chat passed on Day 2).
 - `[ ]` [Feature 14: Email-In Invoice Ingestion](feature_14_email_ingestion.md) — spec only, added 2026-07-22; blocked on the ACS Email vs. SendGrid Inbound Parse decision (Task 14.1) before implementation starts
 - `[ ]` [Feature 15: Outbound Webhooks](feature_15_webhooks.md) — spec only, added 2026-07-22
+- `[ ]` [Feature 16: Settings](feature_16_settings.md) — spec only, added 2026-07-27; first-ever Settings feature, consolidates Connectors/Email Ingestion/Webhooks by reference plus the two new Vendor Flow toggles
+- `[ ]` [Feature 17: Invoice Builder](feature_17_invoice_builder.md) — placeholder only, deliberately decoupled from Vendor Flow, not scoped
+- `[ ]` [Feature 2.1: Vendor Flow — Outbound Ingestion](feature_2.1_vendor_flow_ingestion.md) — spec only, added 2026-07-27; extends Feature 2
+- `[ ]` [Feature 7.1: Vendor Flow — Outbound Auditor & Standing Rules](feature_7.1_vendor_flow_auditor.md) — spec only, added 2026-07-27; extends Feature 7
+- `[ ]` [Feature 8.1: Vendor Flow — Outbound Dashboard](feature_8.1_vendor_flow_dashboard.md) — spec only, added 2026-07-27; extends Feature 8
+- `[ ]` [Feature 6.1: Vendor Flow — Direction-Aware Chat](feature_6.1_vendor_flow_chat.md) — spec only, added 2026-07-27; extends Feature 6, the one narrow sanctioned edit to `query_agent.py` in the whole Vendor Flow effort
 
 > Note: Features 4, 5, 6, 7, 8, 9, 10 are marked `[x]` because the corresponding routers/agents are implemented and functioning — the per-task checkboxes inside those individual files were simply never ticked off after the work landed. That's cosmetic bookkeeping, not a real gap, and has been left as-is rather than backfilled.
 

@@ -31,6 +31,7 @@
 14. [Testing & Quality Assurance](#14-testing--quality-assurance)
 15. [Operational & Licensing Costs](#15-operational--licensing-costs)
 16. [Glossary](#16-glossary)
+17. [Vendor Flow (Outbound) — Planned](#17-vendor-flow-outbound--planned)
 
 ---
 
@@ -815,3 +816,41 @@ main          ← Production-ready code ONLY (manual merge approval required)
 | **TanStack Query**       | Data-fetching and caching library for React (formerly React Query)               |
 | **IaC**                  | Infrastructure as Code — provisioning cloud resources via version-controlled code |
 | **UAT**                  | User Acceptance Testing — pre-production validation environment                  |
+
+---
+
+## 17. Vendor Flow (Outbound) — Planned
+
+**Status: fully unimplemented — spec-only.** Full detail lives in the 11 feature docs listed below; this section is an architecture-level summary, added additively without altering any section above.
+
+### 17.1 What it is
+The bidirectional counterpart to everything in §7-9 above. Today the platform only handles invoices coming *into* the tenant (inbound/AP). Vendor Flow adds the outbound/AR side: the tenant uploads their own pre-made invoice PDFs addressed to their customers, verified through a parallel pipeline before being marked sent and tracked to payment. Upload-only in v1 — no in-app invoice generation/branding (that's a separately deferred feature).
+
+### 17.2 Design principle: new files, one narrow exception
+Every new capability is built as new routers/agents/components, importing existing pure logic (`verification_tools.py`, `_run_ocr()`, `PdfViewerCanvas.tsx`) rather than editing it. The one deliberate exception is `agents/query_agent.py`, which gets a small additive edit so Chat remains one screen able to answer inbound, outbound, and combined/net questions.
+
+### 17.3 New/changed data model (additive columns only)
+- `invoices`: `flow_direction` (`INBOUND`/`OUTBOUND`, default `INBOUND`), `customer_name`, `customer_id`, `sent_at`, `paid_at`.
+- `extraction_templates`: `flow_direction`, enabling a Global-only "standing rule" for the tenant's one consistent outbound document format (no vendor-scoped equivalent — there's no vendor variability outbound).
+- `tenants`: `receive_invoices_enabled`, `send_invoices_enabled` (Admin-only toggles).
+
+### 17.4 New agent: parallel outbound extraction
+A new `agents/outbound_extraction_agent.py`, structurally simpler than the inbound 6-node graph (§7.2) — a single extract→verify pass, no classify/dynamic-QA split, since the tenant's own format doesn't vary the way unpredictable vendor formats do. Reuses the inbound pipeline's math/faithfulness verification functions and OCR call by import.
+
+### 17.5 Screen-level behavior
+Visibility of every outbound surface follows the two new Settings toggles, never showing an empty half for a single-service tenant:
+- **Ingestion, Auditor**: tab pattern (one side visible at a time) — action screens.
+- **Dashboard**: split-screen (both halves visible simultaneously) when both services are active — a passive overview screen benefits from seeing totality at once. No combined/net figure is ever rendered here.
+- **Chat**: single screen, no visibility gating needed — an inactive direction just has no data to answer from.
+- **Trainer**: unaffected, no changes — outbound's "standing rule" mechanism is a lightweight addition to the outbound Auditor, not a Trainer sandbox scope.
+
+### 17.6 Full spec index
+| Screen/Concern | Backend spec | Frontend spec |
+|---|---|---|
+| Ingestion (Send Invoices) | `be_features/feature_2.1_vendor_flow_ingestion.md` | `fe_features/feature_3.1_vendor_flow_ingestion.md` |
+| Auditor (pre-send validation + standing rules) | `be_features/feature_7.1_vendor_flow_auditor.md` | `fe_features/feature_4.1_vendor_flow_auditor.md` |
+| Dashboard (split-screen) | `be_features/feature_8.1_vendor_flow_dashboard.md` | `fe_features/feature_2.1_vendor_flow_dashboard.md` |
+| Chat (direction-aware) | `be_features/feature_6.1_vendor_flow_chat.md` | — (no FE-specific spec; UI is the existing Chat screen) |
+| Settings | `be_features/feature_16_settings.md` | `fe_features/feature_10_settings.md` |
+| Invoice generation/branding | `be_features/feature_17_invoice_builder.md` (deferred placeholder) | — |
+| Pricing | `apps/invoice-website/website_features/feature_3.1_vendor_flow_pricing.md` (open decision, unresolved) | — |

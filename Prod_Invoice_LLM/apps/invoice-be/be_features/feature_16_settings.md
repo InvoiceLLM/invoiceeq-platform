@@ -1,0 +1,36 @@
+# Feature 16: Settings
+
+New feature — this is the first time "Settings" exists as a formal BE feature. No `feature_*_settings.md` existed before this; there's also no live `/settings` route on the frontend yet (confirmed by listing `apps/invoice-fe/app/**/page.tsx`). Consolidates, by reference only (no content duplication), what already conceptually belongs under a Settings screen — [feature_9_connectors.md](feature_9_connectors.md), [feature_14_email_ingestion.md](feature_14_email_ingestion.md), [feature_15_webhooks.md](feature_15_webhooks.md) — plus the two new Vendor Flow toggles.
+
+### File Coordinates (planned)
+* New router: `apps/invoice-be/routers/settings.py` — `GET /settings/vendor-flow`, `PUT /settings/vendor-flow`.
+* Model: `apps/invoice-be/models.py::Tenant` — two new additive columns.
+* Existing, unmodified: `apps/invoice-be/dependencies.py::get_tenant_context()` — read from, not edited, to get the current user's role for the Admin-only check.
+
+### Functionality
+
+**Toggles:** `Tenant.receive_invoices_enabled: bool` (default `True` — every existing tenant already uses this flow, so the default preserves current behavior exactly) and `Tenant.send_invoices_enabled: bool` (default `False` — new capability, opt-in).
+
+**Admin-only enforcement:** `PUT /settings/vendor-flow` checks the requesting user's `role == "Admin"` (via the existing, unmodified `get_tenant_context()`); Auditor/Viewer roles get `403`. `GET /settings/vendor-flow` is readable by any authenticated role, since the FE needs it just to decide which tabs to render, not to change anything.
+
+**Signup-time interaction:** whatever the signup flow currently asks (if anything) about inbound/outbound only sets these two columns' *initial* values — Settings is the permanent, ongoing control from that point forward.
+
+**What these toggles actually gate** (for cross-reference, not re-specified here):
+- Ingestion: the *Send Invoices* tab ([feature_3.1_vendor_flow_ingestion.md](feature_3.1_vendor_flow_ingestion.md) FE) only renders if `send_invoices_enabled`.
+- Dashboard: single-view vs. split-screen behavior ([feature_8.1](feature_8.1_vendor_flow_dashboard.md)) is entirely driven by the combination of both flags.
+- Auditor: the outbound alert tab ([feature_7.1](feature_7.1_vendor_flow_auditor.md)) follows the same rule as Ingestion.
+- Chat ([feature_6.1](feature_6.1_vendor_flow_chat.md)): no explicit gate needed — if `send_invoices_enabled` is `False`, there's simply no outbound data for the SQL/RAG routes to find, so it degrades naturally without any special-case code.
+
+### Explicitly out of scope
+- Connectors/Email Ingestion/Webhooks implementation — those remain their own features, referenced here only because they'll eventually live on the same screen; no change to their specs or status.
+- Any UI — covered in the FE counterpart, [feature_10_settings.md](feature_10_settings.md).
+
+### Tasks
+- [ ] **Task 16.1:** Add `receive_invoices_enabled`, `send_invoices_enabled` columns to `Tenant` (Alembic migration, additive, matching defaults above).
+- [ ] **Task 16.2:** Build `routers/settings.py` — `GET`/`PUT /settings/vendor-flow`, Admin-only enforcement on the `PUT`.
+
+### Verification Plan
+* **Manual Verification:**
+  - Confirm every existing tenant row, post-migration, has `receive_invoices_enabled=True`, `send_invoices_enabled=False` — no behavior change for any current tenant.
+  - As an Auditor-role user, attempt `PUT /settings/vendor-flow`; confirm `403`.
+  - As an Admin, toggle `send_invoices_enabled` on; confirm `GET /settings/vendor-flow` reflects it immediately.

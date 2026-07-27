@@ -221,4 +221,33 @@ To support schema updates in production without causing downtime or data loss, d
   uv run alembic downgrade -1
   ```
 
+---
+
+# PART 4: Vendor Flow (Outbound) — Planned Additive Schema
+
+**Status: fully unimplemented — spec-only.** Listed here for review before any migration is written; every column below is additive (nullable or defaulted) so no existing row or query is affected. Full detail: `apps/invoice-be/be_features/feature_2.1_vendor_flow_ingestion.md`, `feature_7.1_vendor_flow_auditor.md`, `feature_8.1_vendor_flow_dashboard.md`, `feature_16_settings.md`.
+
+### New columns on `invoices`
+| Field Name | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `flow_direction` | `VARCHAR(10)` | `NOT NULL`, Default: `'INBOUND'` | `'INBOUND'` (today's vendor→tenant flow, unaffected) or `'OUTBOUND'` (tenant→customer). |
+| `customer_name` | `VARCHAR(255)` | `NULL` | Extracted "bill to" name on outbound invoices only. |
+| `customer_id` | `UUID` | `NULL` | Reserved for future customer-record linking; unused in v1 (no customer portal exists). |
+| `sent_at` | `TIMESTAMPTZ` | `NULL` | Set when an outbound invoice transitions `VERIFIED → SENT`. Drives real `average_days_to_payment`. |
+| `paid_at` | `TIMESTAMPTZ` | `NULL` | Set when an outbound invoice transitions `SENT → PAID`. |
+
+### New columns on `extraction_templates`
+| Field Name | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `flow_direction` | `VARCHAR(10)` | `NOT NULL`, Default: `'INBOUND'` | An `'OUTBOUND'` row (always `vendor_name IS NULL`, Global-only) is a standing correction rule for the tenant's own outbound document format — no per-vendor equivalent, since outbound has no vendor-style format variability. |
+
+### New columns on `tenants`
+| Field Name | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `receive_invoices_enabled` | `BOOLEAN` | `NOT NULL`, Default: `true` | Admin-only toggle; `true` for every existing tenant, preserving current behavior exactly. |
+| `send_invoices_enabled` | `BOOLEAN` | `NOT NULL`, Default: `false` | Admin-only toggle; opt-in, gates every outbound screen/endpoint. |
+
+### Outbound invoice status values (new, not added to the existing `invoices.status` CHECK constraint's documented set above — tracked here pending implementation)
+`UPLOADED`, `PROCESSING_OCR`, `EXTRACTING_DATA`, `VERIFIED`, `NEEDS_REVIEW`, `SENT`, `PAID`, `OVERDUE` (the last computed at read-time in v1, not persisted — see `feature_7.1`).
+
 

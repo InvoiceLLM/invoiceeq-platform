@@ -17,6 +17,10 @@ This document tracks the implementation progress of all frontend features for th
 - `[ ]` [Feature 7: Third-Party Connectors & Explorer View](feature_7_connectors.md)
 - `[ ]` [Feature 8: Email Ingestion Settings](feature_8_email_ingestion.md) — spec only, added 2026-07-22; backend (`be_features/feature_14_email_ingestion.md`) blocked on a vendor decision before implementation starts
 - `[ ]` [Feature 9: Webhooks Settings](feature_9_webhooks.md) — spec only, added 2026-07-22
+- `[ ]` [Feature 10: Settings Screen](feature_10_settings.md) — spec only, added 2026-07-27; first-ever `/settings` route, houses Connectors/Email/Webhooks by reference plus the two new Vendor Flow toggles
+- `[ ]` [Feature 3.1: Vendor Flow — Send Invoices Tab](feature_3.1_vendor_flow_ingestion.md) — spec only, added 2026-07-27; extends Feature 3
+- `[ ]` [Feature 4.1: Vendor Flow — Outbound Auditor Tab](feature_4.1_vendor_flow_auditor.md) — spec only, added 2026-07-27; extends Feature 4
+- `[ ]` [Feature 2.1: Vendor Flow — Outbound Dashboard (Split-Screen)](feature_2.1_vendor_flow_dashboard.md) — spec only, added 2026-07-27; extends Feature 2
 
 ---
 

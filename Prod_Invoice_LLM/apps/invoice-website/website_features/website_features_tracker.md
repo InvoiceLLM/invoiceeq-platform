@@ -20,3 +20,4 @@ This document tracks the implementation progress of the marketing website, SSO p
 - `[ ]` [Feature 2: Multi-Tenant Workspace Showcase](feature_2_showcase.md)
 - `[ ]` [Feature 3: Pricing Table & Stripe Checkout Integration](feature_3_pricing_stripe.md)
 - `[ ]` [Feature 4: Clerk Auth Gateway & Company Provisioning](feature_4_auth_gateway.md)
+- `[ ]` [Feature 3.1: Vendor Flow Pricing Tier](feature_3.1_vendor_flow_pricing.md) — **OPEN DECISION**, added 2026-07-27; blocked entirely on which pricing option (bundled/Pro-gated/add-on) gets picked, no default given
