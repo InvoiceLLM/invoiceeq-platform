@@ -14,9 +14,13 @@ Construct the Bento-box analytics dashboard showing financial overview cards, cl
 * Client Performance Chart: [apps/invoice-fe/components/dashboard/ClientPerformanceChart.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/dashboard/ClientPerformanceChart.tsx)
 * Invoice Table: [apps/invoice-fe/components/dashboard/RecentInvoicesTable.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/dashboard/RecentInvoicesTable.tsx)
 * Metrics Proxy Route: [apps/invoice-fe/app/api/dashboard/metrics/route.ts](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/api/dashboard/metrics/route.ts) → forwards to `GET /dashboard/metrics` (`be_features/feature_8_dashboard.md`)
+* Trainer Impact Panel: [apps/invoice-fe/components/dashboard/TrainerImpactPanel.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/dashboard/TrainerImpactPanel.tsx) → `GET /api/dashboard/trainer-impact`
+* Actionable Insights Panel: [apps/invoice-fe/components/dashboard/ActionableInsightsPanel.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/dashboard/ActionableInsightsPanel.tsx) → `GET /api/dashboard/insights` (`be_features/feature_8_dashboard.md` Gap 30)
 
 ### Functionality
-`FilterBar.tsx` is fully client-side: `handleChange()` updates local `FilterState{vendorName, dateRange, tag, status}` and calls the parent's `onFilterChange` on every change (there's no server round-trip per filter — the page presumably re-filters the already-fetched invoice list); `handleSaveFilters()` persists it to `localStorage["invoice_dashboard_filters"]` and auto-restores it on mount. `MetricsGrid.tsx` renders 4 `KpiCard`s off the raw `feature_8_dashboard.md::get_dashboard_metrics()` response, draws the spend trendline as a hand-built interactive SVG polyline (no chart library), and computes "Extraction Accuracy" client-side as `99.4 - (active_alerts_count * 0.1)` clamped to `[90.0, 99.8]` — **this is a client-side approximation, not a real backend accuracy metric**. `ClientPerformanceChart.tsx` takes `vendors.slice(0, 5)` and renders horizontal bars scaled to the largest vendor's total — also no chart library, hand-built with `<div>` widths.
+`FilterBar.tsx` is fully client-side: `handleChange()` updates local `FilterState{vendorName, dateRange, tag, status}` and calls the parent's `onFilterChange` on every change (there's no server round-trip per filter — the page presumably re-filters the already-fetched invoice list); `handleSaveFilters()` persists it to `localStorage["invoice_dashboard_filters"]` and auto-restores it on mount. `MetricsGrid.tsx` renders 4 `KpiCard`s off the raw `feature_8_dashboard.md::get_dashboard_metrics()` response, draws the spend trendline as a hand-built interactive SVG polyline (no chart library), and reads `extraction_accuracy`/`average_processing_time` directly from that response — both are real backend-computed values now, not client-side approximations. `ClientPerformanceChart.tsx` takes `vendors.slice(0, 5)` and renders horizontal bars scaled to the largest vendor's total — also no chart library, hand-built with `<div>` widths.
+
+`ActionableInsightsPanel.tsx` (Gap 4) fetches its own `GET /dashboard/insights` independently of the main metrics call, same pattern as `TrainerImpactPanel.tsx`. Renders each returned insight (`title`/`detail`/`severity`) as a card with a severity-colored icon/border (`critical`=rose, `warning`=amber, `info`=blue). Shows a "not enough data yet" message when the list is empty (new tenant, or the backend's LLM call failed) rather than an error state — an empty insights list is a normal, expected response shape, not a failure.
 
 ### Tasks
 - [ ] **Task 2.1: Implement Filter Bar Controls**
@@ -30,9 +34,8 @@ Construct the Bento-box analytics dashboard showing financial overview cards, cl
 - [ ] **Task 2.4: Code Recent Invoices Table**
   - Code table binding columns: `Invoice #`, `Client` (Vendor Name), `Issue Date`, `Amount`, `AI Status` (Verified, Review Required, Processing), and `Actions`.
   - Bind the `...` actions button to navigate to the detailed Auditor Review tab or view details.
-- [ ] **Task 2.5: Trainer Impact Panel**
-  - Render `rules_trained_count`, `audit_rate_trend` (per-vendor before/after chart), and `vendors_needing_rules` from `GET /api/v1/dashboard/metrics` (or a dedicated `/dashboard/trainer-impact`), per `be_features/feature_8_dashboard.md` Task 8.3.
-  - Bind each `vendors_needing_rules` entry to open a pre-scoped Trainer sandbox session (Vendor scope) for that vendor.
+- [x] **Task 2.5: Trainer Impact Panel** — done as FE Gap 21 (2026-07-27). `TrainerImpactPanel.tsx` renders rule-count tiles, a weekly audit-rate bar trend, and a "Vendors Needing a Rule" list deep-linking into a pre-scoped Trainer sandbox session for that vendor.
+- [x] **Task 2.6: Actionable Insights Panel** *(Gap 4, 2026-07-27)* — `ActionableInsightsPanel.tsx`, described above. Backend: `be_features/feature_8_dashboard.md` Gap 30.
 
 ### Verification Plan
 * **Manual Verification**: Run Next.js dashboard view, toggle filters, and verify that mock details update accordingly. Check color contrast matches the dark layout.

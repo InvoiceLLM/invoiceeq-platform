@@ -78,7 +78,7 @@ Gaps below are grouped by the feature file whose target design they still need t
 - `[ ]` **Gap 26: "Report an issue" action on any invoice** — currently only `AUDIT_REQUIRED` invoices get a correction UI (`AlertConsole`); a wrong-but-confident extraction on a `COMPLETED` invoice has no way to be flagged. Needs a new action reachable from any invoice row, wired into the same correction-capture flow as the Auditor console. Backend: `be_features_tracker.md` Gap 53. *(Raised Jul 27, 2026.)*
 
 **Dashboard** ([feature_2_dashboard.md](feature_2_dashboard.md)):
-- `[ ]` **Gap 4: Actionable Insights Panel** — AI-generated text readout with strategic recommendations alongside the metric cards; blocked until the backend exposes a generation endpoint (see `be_features_tracker.md` Gap 30)
+- `[x]` **Gap 4: Actionable Insights Panel** — Fixed Jul 27, 2026. New `components/dashboard/ActionableInsightsPanel.tsx`, fetching its own `GET /dashboard/insights` (backend: `be_features_tracker.md` Gap 30) independently of the main metrics call, same pattern as the Trainer Impact Panel. Renders each AI-generated recommendation as a severity-colored card (critical/warning/info). Wired into `app/dashboard/page.tsx` below `ClientPerformanceChart`. Verified live against real Azure OpenAI + real invoice data.
 - `[ ]` **Gap 5: Status-Based Sub-Tabs** — tabs (All, Paid, Pending, Rejected) on the recent invoices table
 - `[ ]` **Gap 11: Scroll-Lock Container** — wrap the recent invoices table in a fixed-height card (`max-height: 320px`) with internal scroll
 - `[ ]` **Gap 12: Client-Side Pagination** — dynamic `◀ Previous` / `Next ▶` controls on the recent invoices table

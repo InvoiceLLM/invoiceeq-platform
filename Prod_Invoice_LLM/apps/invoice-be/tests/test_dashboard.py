@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from uuid import uuid4
 from datetime import date, datetime
 from sqlmodel import SQLModel, create_engine, Session
@@ -196,3 +197,82 @@ def test_trainer_impact(db_session):
     assert len(data["audit_rate_trend"]) >= 1
     week = data["audit_rate_trend"][0]
     assert set(week.keys()) == {"week", "audit_rate", "total_processed"}
+
+
+@pytest.fixture(autouse=True)
+def _clear_insights_cache():
+    """Gap 30's endpoint caches in real Redis keyed only on tenant_id, and every
+    test here shares MOCK_TENANT_ID -- without clearing it, one test's cached
+    LLM response leaks into the next and hides real failures."""
+    from routers.dashboard import _get_redis_client, _insights_cache_key
+    try:
+        _get_redis_client().delete(_insights_cache_key(MOCK_TENANT_ID))
+    except Exception:
+        pass
+    yield
+    try:
+        _get_redis_client().delete(_insights_cache_key(MOCK_TENANT_ID))
+    except Exception:
+        pass
+
+
+def test_dashboard_insights_empty(db_session):
+    """Gap 30: no invoices at all -> no LLM call, empty insights list."""
+    with patch("routers.dashboard.get_llm") as mock_get_llm:
+        response = client.get("/api/v1/dashboard/insights")
+        assert response.status_code == 200
+        assert response.json() == {"insights": []}
+        mock_get_llm.assert_not_called()
+
+
+def test_dashboard_insights_grounded(db_session):
+    """Gap 30: the LLM call happens and its structured output is returned verbatim;
+    also confirms the prompt context actually carries real computed numbers, not
+    placeholders, since that's the entire point of grounding this in real data."""
+    populate_mock_invoices(db_session)
+
+    from routers.dashboard import DashboardInsightsSchema, DashboardInsight
+
+    mock_schema = DashboardInsightsSchema(insights=[
+        DashboardInsight(title="Concentration risk", detail="ACME accounts for most spend.", severity="warning")
+    ])
+
+    captured_prompt = {}
+
+    class MockStructuredLLM:
+        def invoke(self, prompt):
+            captured_prompt["text"] = prompt
+            return mock_schema
+
+    class MockLLM:
+        def with_structured_output(self, schema):
+            return MockStructuredLLM()
+
+    with patch("routers.dashboard.get_llm") as mock_get_llm:
+        mock_get_llm.return_value = MockLLM()
+        response = client.get("/api/v1/dashboard/insights")
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {"insights": [
+            {"title": "Concentration risk", "detail": "ACME accounts for most spend.", "severity": "warning"}
+        ]}
+
+    # ACME's real combined spend (1000 + 250 = 1250) must actually be in what
+    # the LLM was shown, not a placeholder -- this is the grounding guarantee.
+    assert "1250" in captured_prompt["text"]
+    assert "ACME" in captured_prompt["text"]
+
+
+def test_dashboard_insights_llm_failure_returns_empty(db_session):
+    """Gap 30: an LLM/schema failure degrades to an empty list, not a 500."""
+    populate_mock_invoices(db_session)
+
+    class MockLLM:
+        def with_structured_output(self, schema):
+            raise RuntimeError("simulated LLM failure")
+
+    with patch("routers.dashboard.get_llm") as mock_get_llm:
+        mock_get_llm.return_value = MockLLM()
+        response = client.get("/api/v1/dashboard/insights")
+        assert response.status_code == 200
+        assert response.json() == {"insights": []}

@@ -6,6 +6,7 @@ import MetricsGrid from "../../components/dashboard/MetricsGrid";
 import ClientPerformanceChart from "../../components/dashboard/ClientPerformanceChart";
 import RecentInvoicesTable from "../../components/dashboard/RecentInvoicesTable";
 import TrainerImpactPanel from "../../components/dashboard/TrainerImpactPanel";
+import ActionableInsightsPanel from "../../components/dashboard/ActionableInsightsPanel";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
 
@@ -213,6 +214,7 @@ export default function DashboardPage() {
         {/* Vendors bar chart - takes 1 col on lg screens */}
         <div className="lg:col-span-1 space-y-6">
           <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isLoading} />
+          <ActionableInsightsPanel />
           <TrainerImpactPanel />
         </div>
       </div>
