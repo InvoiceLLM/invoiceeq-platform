@@ -182,7 +182,17 @@ def test_vector_metadata_tenant_isolation(db_session):
         assert len(chunks_b) >= 1
         assert all(c["metadata"]["tenant_id"] == str(tenant_b) for c in chunks_b)
         assert all(c["metadata"]["vendor_name"] == "Global Corp" for c in chunks_b)
-        
+
+        # Gap 55: isolation is now structural (separate collections), not just a metadata
+        # filter — confirm the two tenants actually landed in two distinct collections.
+        from chroma_client import get_chroma_client, _tenant_collection_name
+        client = get_chroma_client()
+        collection_a = client.get_or_create_collection(name=_tenant_collection_name(tenant_a))
+        collection_b = client.get_or_create_collection(name=_tenant_collection_name(tenant_b))
+        assert collection_a.name != collection_b.name
+        assert collection_a.get(ids=["inv-b2_page_1"])["ids"] == []
+        assert collection_b.get(ids=["inv-a1_page_1"])["ids"] == []
+
     finally:
         if os.path.exists(temp_pdf_path):
             os.remove(temp_pdf_path)

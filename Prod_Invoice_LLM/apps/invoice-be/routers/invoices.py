@@ -385,7 +385,7 @@ async def delete_invoice(
         logger.warning("Failed to delete PDF for invoice %s: %s", invoice_id, e)
 
     try:
-        await run_in_threadpool(delete_invoice_chunks, str(invoice_id))
+        await run_in_threadpool(delete_invoice_chunks, str(invoice_id), str(context.tenant_id))
     except Exception as e:
         logger.warning("Failed to delete vector chunks for invoice %s: %s", invoice_id, e)
 

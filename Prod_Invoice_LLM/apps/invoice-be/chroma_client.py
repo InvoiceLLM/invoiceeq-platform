@@ -45,6 +45,15 @@ def get_embedding_model():
                 _embedding_model = SentenceTransformer("BAAI/bge-m3")
     return _embedding_model
 
+def _tenant_collection_name(tenant_id: str) -> str:
+    """
+    Gap 55: one Chroma collection per tenant instead of a single shared
+    "invoice_chunks" collection filtered by a tenant_id metadata field.
+    Structural isolation instead of filter-based, and the seam a future
+    per-tenant Chroma instance/cluster router would plug into.
+    """
+    return f"invoice_chunks_{tenant_id}"
+
 def get_embeddings(texts: list[str]) -> list[list[float]]:
     """Calculates embedding vectors for a list of texts (1024-dimensional)."""
     model = get_embedding_model()
@@ -104,9 +113,9 @@ def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | N
         return
         
     embeddings = get_embeddings(chunks)
-    
+
     client = get_chroma_client()
-    collection = client.get_or_create_collection(name="invoice_chunks")
+    collection = client.get_or_create_collection(name=_tenant_collection_name(tenant_id))
     collection.upsert(
         ids=ids,
         embeddings=embeddings,
@@ -115,32 +124,34 @@ def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | N
     )
     logger.info("Successfully indexed %d page chunks for invoice %s", len(chunks), invoice_id)
 
-def delete_invoice_chunks(invoice_id: str) -> None:
+def delete_invoice_chunks(invoice_id: str, tenant_id: str) -> None:
     """
-    Deletes all indexed vector chunks for a given invoice from the invoice_chunks collection.
+    Deletes all indexed vector chunks for a given invoice from that tenant's collection.
     """
     client = get_chroma_client()
-    collection = client.get_or_create_collection(name="invoice_chunks")
+    collection = client.get_or_create_collection(name=_tenant_collection_name(tenant_id))
     collection.delete(where={"invoice_id": str(invoice_id)})
 
 def query_invoice_chunks(tenant_id: str, query_text: str, limit: int = 5) -> list[dict]:
     """
-    Query indexed invoice chunks, isolating results strictly by requesting tenant_id.
+    Query indexed invoice chunks. Isolation is structural (Gap 55) — each tenant has
+    its own Chroma collection, so no metadata `where` filter is needed to keep one
+    tenant's results out of another's, and this is also the seam a future per-tenant
+    Chroma instance/cluster router would plug into.
     Includes a hybrid keyword pass and local reranker (Gap 22), enforcing a distance
     relevance threshold (Gap 21).
     """
     import re
-    
+
     client = get_chroma_client()
-    collection = client.get_or_create_collection(name="invoice_chunks")
-    
+    collection = client.get_or_create_collection(name=_tenant_collection_name(tenant_id))
+
     query_embeddings = get_embeddings([query_text])
-    
+
     # Gap 22: Fetch a larger candidate pool for reranking
     candidate_limit = limit * 3
     results = collection.query(
         query_embeddings=query_embeddings,
-        where={"tenant_id": str(tenant_id)},
         n_results=candidate_limit
     )
     
