@@ -21,6 +21,7 @@ This document tracks the implementation progress of all frontend features for th
 - `[ ]` [Feature 3.1: Vendor Flow — Send Invoices Tab](feature_3.1_vendor_flow_ingestion.md) — spec only, added 2026-07-27; extends Feature 3
 - `[ ]` [Feature 4.1: Vendor Flow — Outbound Auditor Tab](feature_4.1_vendor_flow_auditor.md) — spec only, added 2026-07-27; extends Feature 4
 - `[ ]` [Feature 2.1: Vendor Flow — Outbound Dashboard (Split-Screen)](feature_2.1_vendor_flow_dashboard.md) — spec only, added 2026-07-27; extends Feature 2
+- `[x]` [Feature 11: System Flow Visualization](feature_11_flows_visualization.md) — backfilled 2026-07-27; found already built and undocumented at `app/flows/page.tsx`, a standalone animated demo/explainer diagram, not a functional screen or part of Vendor Flow's actual implementation (two of its four tabs visualize Vendor Flow's design, clearly marked spec-only)
 
 ---
 
