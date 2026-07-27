@@ -369,35 +369,52 @@ export default function AuditorReviewPage() {
               </div>
             )}
 
-            {/* Line Items */}
+            {/* Line Items (FE Gap 10): tabular view -- Description, Qty, Unit
+                Price, Total -- quantity/unit_price were already present on
+                LineItem but never rendered, only description + amount were. */}
             {invoice.items && invoice.items.length > 0 && (
-              <div className="rounded-xl border border-[#222D3D] bg-[#0F172A] p-4">
+              <div className="rounded-xl border border-[#222D3D] bg-[#0F172A] p-4 overflow-x-auto">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
                   Line Items
                 </p>
-                <div className="space-y-2">
-                  {invoice.items.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between rounded-lg border border-[#222D3D] bg-[#1E293B] px-3 py-2"
-                    >
-                      <span className="text-sm text-slate-300">
-                        {idx + 1}. {item.description}
-                      </span>
-                      <span className="text-sm font-medium text-slate-200">
-                        {fmt(item.amount)}
-                      </span>
-                    </div>
-                  ))}
-                  <div className="flex justify-between border-t border-[#222D3D] pt-2">
-                    <span className="text-xs text-slate-500">Subtotal</span>
-                    <span className="text-xs font-medium text-slate-300">
-                      {fmt(
-                        invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0)
-                      )}
-                    </span>
-                  </div>
-                </div>
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-[10px] text-slate-500 uppercase tracking-wide border-b border-[#222D3D]">
+                      <th className="pb-2 pr-3 font-medium">#</th>
+                      <th className="pb-2 pr-3 font-medium">Description</th>
+                      <th className="pb-2 pr-3 font-medium text-right">Qty</th>
+                      <th className="pb-2 pr-3 font-medium text-right">Unit Price</th>
+                      <th className="pb-2 font-medium text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#222D3D]/60">
+                    {invoice.items.map((item, idx) => (
+                      <tr key={idx} className="text-sm text-slate-300">
+                        <td className="py-2 pr-3 text-slate-500">{idx + 1}</td>
+                        <td className="py-2 pr-3">{item.description}</td>
+                        <td className="py-2 pr-3 text-right text-slate-400">
+                          {item.quantity ?? "—"}
+                        </td>
+                        <td className="py-2 pr-3 text-right text-slate-400">
+                          {item.unit_price != null ? fmt(item.unit_price) : "—"}
+                        </td>
+                        <td className="py-2 text-right font-medium text-slate-200">
+                          {fmt(item.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-[#222D3D]">
+                      <td colSpan={4} className="pt-2 text-xs text-slate-500">
+                        Subtotal
+                      </td>
+                      <td className="pt-2 text-right text-xs font-medium text-slate-300">
+                        {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )}
 

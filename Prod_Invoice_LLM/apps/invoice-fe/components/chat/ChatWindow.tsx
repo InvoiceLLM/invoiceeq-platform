@@ -188,6 +188,44 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 }
 
 // =============================================================================
+// SuggestionChips — FE Gap 6: clickable preset queries that auto-fill and
+// submit immediately (not just fill the input box), shown only in a fresh,
+// empty session -- once the conversation has any messages, the chips would
+// just be clutter competing with real chat history.
+// =============================================================================
+
+const SUGGESTION_CHIPS = [
+  "Total spend this month",
+  "Show flagged invoices",
+  "Which vendor do I spend the most with?",
+  "Any invoices overdue?",
+];
+
+function SuggestionChips({ onSelect, disabled }: { onSelect: (text: string) => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
+      <p className="text-xs text-slate-500">Try asking:</p>
+      <div className="flex flex-wrap justify-center gap-2 max-w-md">
+        {SUGGESTION_CHIPS.map((chip) => (
+          <button
+            key={chip}
+            onClick={() => onSelect(chip)}
+            disabled={disabled}
+            className="
+              px-3.5 py-2 text-xs text-slate-300 bg-[#1E293B] border border-[#222D3D]
+              rounded-full hover:border-blue-700/60 hover:text-white transition-colors
+              disabled:opacity-50 disabled:cursor-not-allowed
+            "
+          >
+            {chip}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // InputBar — auto-resizing textarea + Send button
 // REASON: A standard <input> cannot grow vertically for multi-line messages.
 //   A <textarea> with JavaScript height adjustment mimics the UX of modern
@@ -359,6 +397,11 @@ export default function ChatWindow({
               <Loader2 className="w-4 h-4 animate-spin" />
               Loading messages…
             </div>
+          ) : messages.length === 0 ? (
+            // FE Gap 6: a fresh, empty session shows suggestion chips instead
+            // of a blank area -- messages.length flips to 1 as soon as the
+            // optimistic user bubble is added, so this never flickers mid-send.
+            <SuggestionChips onSelect={onSendMessage} disabled={isSending} />
           ) : (
             <MessageStream messages={messages} isSending={isSending} />
           )}

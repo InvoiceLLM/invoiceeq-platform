@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   FileText,
@@ -10,7 +10,9 @@ import {
   Loader2,
   Eye,
   FileDown,
-  Trash2
+  Trash2,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { formatCurrency, formatDate } from "../../lib/utils";
 import { apiClient } from "../../lib/apiClient";
@@ -31,6 +33,30 @@ interface RecentInvoicesTableProps {
   onDelete?: (id: string) => void;
 }
 
+// FE Gap 5: status-based sub-tabs. "Pending" covers everything not yet
+// finalized as Paid/Rejected (Processing, Completed, Audit Required,
+// Duplicate) -- matches the AP mental model of "still in the pipeline"
+// vs. a closed-out invoice, rather than mapping 1:1 to every raw status enum.
+type StatusTab = "all" | "paid" | "pending" | "rejected";
+
+const STATUS_TABS: { key: StatusTab; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "paid", label: "Paid" },
+  { key: "pending", label: "Pending" },
+  { key: "rejected", label: "Rejected" },
+];
+
+function matchesStatusTab(status: string, tab: StatusTab): boolean {
+  if (tab === "all") return true;
+  const s = (status || "PROCESSING").toUpperCase();
+  if (tab === "paid") return s === "PAID";
+  if (tab === "rejected") return s === "REJECTED";
+  return s !== "PAID" && s !== "REJECTED";
+}
+
+// FE Gap 12: client-side pagination page size.
+const PAGE_SIZE = 8;
+
 export default function RecentInvoicesTable({
   invoices = [],
   isLoading,
@@ -38,6 +64,19 @@ export default function RecentInvoicesTable({
 }: RecentInvoicesTableProps) {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<StatusTab>("all");
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const filteredInvoices = invoices.filter((inv) => matchesStatusTab(inv.status, activeTab));
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / PAGE_SIZE));
+  const pageInvoices = filteredInvoices.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  // Reset to page 1 whenever the tab changes or the underlying data changes
+  // (e.g. a delete shrinks the list) -- otherwise a stale page number could
+  // point past the end of the newly-filtered/shrunk list.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, invoices.length]);
 
   const handleDelete = async (inv: InvoiceRecord, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -135,14 +174,30 @@ export default function RecentInvoicesTable({
             Audit history status and processing ledger.
           </p>
         </div>
-        
+
+        {/* FE Gap 5: status-based sub-tabs */}
+        <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1">
+          {STATUS_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === tab.key
+                  ? "bg-[#3B82F6] text-white"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Responsive Table Grid */}
-      <div className="overflow-x-auto">
+      {/* FE Gap 11: scroll-lock container -- fixed-height card with internal scroll */}
+      <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 320 }}>
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-[#222D3D] bg-slate-900/20 text-slate-400 text-[10px] font-bold uppercase tracking-wider select-none">
+            <tr className="sticky top-0 z-10 border-b border-[#222D3D] bg-[#0F172A] text-slate-400 text-[10px] font-bold uppercase tracking-wider select-none">
               <th className="px-6 py-3.5">Invoice #</th>
               <th className="px-6 py-3.5">Client / Vendor</th>
               <th className="px-6 py-3.5">Issue Date</th>
@@ -163,14 +218,14 @@ export default function RecentInvoicesTable({
                   <td className="px-6 py-4 text-right"><div className="h-4 bg-slate-800 rounded w-8 ml-auto"></div></td>
                 </tr>
               ))
-            ) : invoices.length === 0 ? (
+            ) : filteredInvoices.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                   No invoices matched the active filters.
                 </td>
               </tr>
             ) : (
-              invoices.map((inv) => (
+              pageInvoices.map((inv) => (
                 <tr 
                   key={inv.id}
                   className="hover:bg-slate-900/30 transition-colors duration-150 group"
@@ -266,6 +321,31 @@ export default function RecentInvoicesTable({
           </tbody>
         </table>
       </div>
+
+      {/* FE Gap 12: client-side pagination -- only shown once there's more than one page */}
+      {!isLoading && totalPages > 1 && (
+        <div className="flex items-center justify-between px-6 py-3 border-t border-[#222D3D] text-xs text-slate-400">
+          <span>
+            Page {currentPage} of {totalPages} ({filteredInvoices.length} invoices)
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#222D3D] text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" /> Previous
+            </button>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#222D3D] text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Next <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

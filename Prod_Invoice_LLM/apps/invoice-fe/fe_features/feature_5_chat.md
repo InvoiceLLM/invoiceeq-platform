@@ -49,6 +49,8 @@ Fixed all five in `useChatSession.ts`, `types/chat.ts`, and `CitationPill.tsx` �
   - Coded async submit hook (`useChatSession`) posting prompts via 3 Next.js proxy route handlers.
   - Includes optimistic user bubble insertion, error rollback, and session title auto-update.
   - Files: `useChatSession.ts`, 3 proxy `route.ts` files
+- [x] **Task 5.6: Suggestion Chips (Gap 6, 2026-07-27)**
+  - New `SuggestionChips` component inside `ChatWindow.tsx`, shown only when the active session has zero messages — clicking a chip calls `onSendMessage` directly (auto-submit, not just auto-fill). Not part of this feature's original scope, tracked as a separate enhancement.
 - [x] **Task 5.5: Per-answer feedback (Gap 27, 2026-07-27)**
   - New `FeedbackVote` component inside `MessageBubble.tsx` — a thumbs up/down pair shown only on assistant messages, next to the timestamp. Optimistic update with rollback on failure; clicking the currently-active thumb again clears the vote (`DELETE`) instead of re-sending it, giving a normal toggle interaction.
   - `types/chat.ts::ChatMessage` gained `feedback?: "up" | "down" | null`, populated by the backend on session reload (`be_features_tracker.md` Gap 54).

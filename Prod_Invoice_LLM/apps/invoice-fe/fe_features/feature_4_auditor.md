@@ -30,6 +30,8 @@ Develop the read-only verification console, visual PDF coordinate viewer, and al
   - Convert each `ReadOnlyField` into an editable input on click (drop `pointer-events-none` + `readOnly`; apply the Editable Field style above while dirty).
   - Track a `corrections: Record<string, any>` diff of fields changed from their original extracted values.
   - Include `corrections` in the `PUT /api/v1/audit/resolve/{id}` payload sent by Dismiss / `Mark Paid & Finalize` / `Reject Invoice`, per `be_features/feature_7_audit.md` Task 7.3.
+- [x] **Task 4.8: Line Items Table (Gap 10, 2026-07-27)**
+  - The line items section only ever rendered Description + Total in a plain list — `quantity`/`unit_price` were already present on the `LineItem` type and returned by the backend, just never rendered. Converted to a real table: Description, Qty, Unit Price, Total, plus a subtotal footer row.
 - [x] **Task 4.7: Rule Suggestion Prompt**
   - When the `PUT /audit/resolve` response includes a `suggested_rule: {scope, field, sample_correction}` object (per `be_features/feature_7_audit.md` Task 7.4), surface an inline "Want to save this as a rule?" banner.
   - Accepting it opens a Trainer sandbox session pre-seeded with the suggested scope (Global or Vendor) and the sample correction already in chat context — see `feature_6_trainer.md` Task 6.8 / `be_features/feature_10_trainer.md` Task 10.11 — instead of a blank session.

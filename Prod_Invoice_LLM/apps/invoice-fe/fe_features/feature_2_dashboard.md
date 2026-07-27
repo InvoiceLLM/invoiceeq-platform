@@ -31,9 +31,11 @@ Construct the Bento-box analytics dashboard showing financial overview cards, cl
   - Embed the linear trendline spend graph and circular progress gauge indicator for extraction accuracy.
 - [ ] **Task 2.3: Build Client Performance Bar Chart**
   - Integrate a bar graph (e.g. using Recharts or Chart.js) displaying the top 5 vendors by billing totals.
-- [ ] **Task 2.4: Code Recent Invoices Table**
+- [x] **Task 2.4: Code Recent Invoices Table**
   - Code table binding columns: `Invoice #`, `Client` (Vendor Name), `Issue Date`, `Amount`, `AI Status` (Verified, Review Required, Processing), and `Actions`.
-  - Bind the `...` actions button to navigate to the detailed Auditor Review tab or view details.
+  - Bind the `...` actions button to navigate to the detailed Auditor Review Console (`/invoices/review/{id}` — originally pointed at a nonexistent `/audit` route, fixed 2026-07-27 alongside FE Gap 26).
+- [x] **Task 2.4.1: Status sub-tabs, scroll-lock, pagination** *(FE Gaps 5/11/12, 2026-07-27)*
+  - All/Paid/Pending/Rejected tabs, client-side filtered. Table wrapped in a `max-height: 320px` scroll-locked container with a sticky header. Previous/Next pagination (8 rows/page) over the tab-filtered list.
 - [x] **Task 2.5: Trainer Impact Panel** — done as FE Gap 21 (2026-07-27). `TrainerImpactPanel.tsx` renders rule-count tiles, a weekly audit-rate bar trend, and a "Vendors Needing a Rule" list deep-linking into a pre-scoped Trainer sandbox session for that vendor.
 - [x] **Task 2.6: Actionable Insights Panel** *(Gap 4, 2026-07-27)* — `ActionableInsightsPanel.tsx`, described above. Backend: `be_features/feature_8_dashboard.md` Gap 30.
 

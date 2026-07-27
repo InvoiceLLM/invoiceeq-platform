@@ -18,7 +18,7 @@ export interface StatusItem {
   id: string;
   name: string;
   size: number;
-  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "FAILED";
+  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED";
   progress: number;
   alerts?: string[];
   vendorName?: string;
@@ -172,6 +172,14 @@ export default function StatusTable({
         statusVal = "AUDIT_REQUIRED";
         progressVal = 100;
         activePollsRef.current[jobId] = false; // Stop polling
+      } else if (rawStatus === "DUPLICATE") {
+        // FE Gap 14: this branch was missing entirely -- a duplicate upload
+        // (batches under 6 files, which use this polling path rather than
+        // SSE) silently stayed on "PROCESSING" forever since none of the
+        // other branches matched, and polling never stopped for it either.
+        statusVal = "DUPLICATE";
+        progressVal = 100;
+        activePollsRef.current[jobId] = false; // Stop polling
       } else if (rawStatus === "FAILED") {
         statusVal = "FAILED";
         progressVal = 100;
@@ -228,6 +236,16 @@ export default function StatusTable({
             Failed
           </span>
         );
+      case "DUPLICATE":
+        return (
+          <span
+            title="Duplicate file content detected. Copied details from previous upload."
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 border border-amber-500/20 text-amber-400 cursor-help"
+          >
+            <AlertTriangle className="w-3 h-3" />
+            Duplicate
+          </span>
+        );
       case "PROCESSING":
       default:
         return (
@@ -245,6 +263,17 @@ export default function StatusTable({
 
   if (items.length === 0) return null;
 
+  // FE Gap 14: live header counters. "Processed" means the pipeline reached
+  // a terminal state for that file, regardless of outcome -- Completed,
+  // Audit Required, Duplicate, and Failed are all "done", only Processing/
+  // Uploaded are still in flight.
+  const totalFound = items.length;
+  const processedCount = items.filter((i) =>
+    ["COMPLETED", "AUDIT_REQUIRED", "DUPLICATE", "FAILED"].includes(i.status)
+  ).length;
+  const duplicateCount = items.filter((i) => i.status === "DUPLICATE").length;
+  const failedCount = items.filter((i) => i.status === "FAILED").length;
+
   return (
     <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D] space-y-4">
       {/* Component Title */}
@@ -256,6 +285,26 @@ export default function StatusTable({
           <p className="text-xs text-slate-400">
             Live extraction ledger pipeline ({jobIds.length >= 6 ? "SSE Connection" : "Polling Mode"}).
           </p>
+        </div>
+
+        {/* FE Gap 14: live statistics counters */}
+        <div className="flex items-center gap-4 text-right">
+          <div>
+            <div className="text-sm font-bold text-white">{totalFound}</div>
+            <div className="text-[9px] text-slate-500 uppercase tracking-wide">Found</div>
+          </div>
+          <div>
+            <div className="text-sm font-bold text-emerald-400">{processedCount}</div>
+            <div className="text-[9px] text-slate-500 uppercase tracking-wide">Processed</div>
+          </div>
+          <div>
+            <div className="text-sm font-bold text-amber-400">{duplicateCount}</div>
+            <div className="text-[9px] text-slate-500 uppercase tracking-wide">Duplicates</div>
+          </div>
+          <div>
+            <div className="text-sm font-bold text-rose-400">{failedCount}</div>
+            <div className="text-[9px] text-slate-500 uppercase tracking-wide">Failed</div>
+          </div>
         </div>
       </div>
 

@@ -33,6 +33,9 @@ Develop the drag-and-drop file uploader, batch metadata tagger, and real-time pr
     - **Polling (1-5 files)**: Runs queries fetching status updates every 2 seconds via the status proxy route.
     - **SSE Connection (6+ files)**: Establishes a browser `EventSource` connection against the stream proxy route.
   - Render progress bars for active uploads and display an inline expandable yellow card displaying validation warnings if status is `AUDIT_REQUIRED`.
+- [x] **Task 3.5: Live Statistics Counters (Gap 14, 2026-07-27)**
+  - Header counters (Found/Processed/Duplicates/Failed) in `StatusTable.tsx`, derived from the same `items` state driving the table rows.
+  - Found and fixed a real bug along the way: `pollJobStatus()` (the 1-5 file path) had no branch for a `DUPLICATE` status — a duplicate upload silently stayed on "Processing" forever, polling never stopped, since none of the existing branches matched it. Added the missing branch, a `DUPLICATE` badge, and extended `StatusItem`'s status union.
 
 ### Verification Plan
 * **Manual Verification**: Drop multiple PDFs, check that tags are sent, and confirm the progress bars update based on SSE socket triggers.
