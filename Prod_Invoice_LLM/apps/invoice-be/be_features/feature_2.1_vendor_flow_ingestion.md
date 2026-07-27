@@ -36,7 +36,7 @@ Reusing the existing extraction schema (`InvoiceExtractionSchema` in `agents/ext
 
 ### Explicitly out of scope
 - Invoice generation/branding/templates (logo upload, layout picker) — separate feature, [feature_17_invoice_builder.md](feature_17_invoice_builder.md), not started.
-- Customer-facing delivery mechanism (email send, download link, portal access) — not yet decided; this feature stops at "the tenant tracks and verifies their own outbound invoice inside the app."
+- The actual email-send call — decided as email (via `Tenant.outbound_sender_email`, see [feature_16_settings.md](feature_16_settings.md)), reusing the ACS Email connection from [feature_14_email_ingestion.md](feature_14_email_ingestion.md) for sending. Wiring the confirm-send endpoint (Task 2.1.5) to actually place that call is part of this feature's build, not a separate one — listed here only to flag that the decision (email vs. download link vs. portal) is now made, closing what was previously an open question.
 - AI Trainer rule scope for outbound — confirmed not applicable; extraction rules are a vendor/document-shape concern, and outbound documents aren't run through the Trainer's rule-resolution stage.
 
 ### Tasks

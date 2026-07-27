@@ -10,7 +10,7 @@ New feature — the app's first `/settings` route. Confirmed via a full listing 
 
 ### Functionality
 
-**`VendorFlowToggles.tsx`:** two switches, *Receive Invoices* and *Send Invoices*, each independently toggleable. Disabled (not hidden) for non-Admin roles, with a tooltip explaining why — consistent with how the rest of the app surfaces role restrictions rather than silently hiding controls. Saving calls `PUT /settings/vendor-flow`; a `403` from a role check that changed mid-session (rare, but the BE enforces it too) shows an error toast rather than a silent failure.
+**`VendorFlowToggles.tsx`:** two switches, *Receive Invoices* and *Send Invoices*, each independently toggleable, plus a text input for *Outbound Sender Email* (shown once, above the *Send Invoices* switch, since the switch depends on it). Disabled (not hidden) for non-Admin roles, with a tooltip explaining why — consistent with how the rest of the app surfaces role restrictions rather than silently hiding controls. Saving calls `PUT /settings/vendor-flow`; a `403` from a role check that changed mid-session (rare, but the BE enforces it too) shows an error toast rather than a silent failure. Attempting to enable *Send Invoices* with the sender email field empty is blocked client-side before the call is even made (mirrors the BE's `400` rule, so the user sees the reason inline instead of via a round-trip toast).
 
 **Page shell for v1:** since Connectors/Email/Webhooks have no built FE pages yet, `page.tsx`'s v1 only needs to render `VendorFlowToggles.tsx`; the other three sections get their own component slots added when each of those features is actually implemented, not built as empty placeholders now.
 
@@ -29,3 +29,4 @@ New feature — the app's first `/settings` route. Confirmed via a full listing 
 * **Manual Verification:**
   - As Admin, toggle *Send Invoices* on; confirm Ingestion/Dashboard/Auditor immediately reflect the new tab/split behavior on next navigation.
   - As Auditor/Viewer role, confirm the toggles render disabled with an explanatory tooltip, and a direct `PUT` attempt (if somehow triggered) surfaces the `403` as a toast, not a silent no-op.
+  - As Admin, leave *Outbound Sender Email* empty and try to enable *Send Invoices*; confirm it's blocked client-side with an inline message, no network call made.
