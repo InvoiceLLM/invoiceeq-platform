@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     MOCK_EMBEDDINGS: bool = False
+    # Gap 12: directory watcher only accepts paths under this base dir (path-traversal
+    # guard against arbitrary server filesystem reads). Empty = feature disabled.
+    WATCHER_ALLOWED_BASE_DIR: str = ""
 
 
     # --- ADD THESE THREE LINES ---

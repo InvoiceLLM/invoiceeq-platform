@@ -25,6 +25,7 @@ interface MetricsGridProps {
     outstanding_amount: number;
     at_risk_amount: number;
     average_processing_time: number;
+    extraction_accuracy: number;
     active_alerts_count: number;
     spend_over_time: SpendPoint[];
     invoices_by_status: Record<string, number>;

@@ -28,6 +28,7 @@ Thumbs.db
 # Next.js
 .next/
 out/
+*.tsbuildinfo
 
 # Python
 venv/

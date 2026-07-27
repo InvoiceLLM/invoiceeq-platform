@@ -41,19 +41,20 @@ def test_upload_single_pdf(db_session):
     files = {"files": ("invoice1.pdf", io.BytesIO(pdf_content), "application/pdf")}
     
     with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
-         patch("routers.invoices.process_invoice_task.delay") as mock_celery:
-        
+         patch("routers.invoices.QueueClient") as mock_queue_client_cls:
+
         mock_storage.return_value = "mock/path/invoice1.pdf"
-        
+        mock_queue_client = mock_queue_client_cls.from_connection_string.return_value
+
         client = TestClient(app)
         response = client.post("/api/v1/invoices/upload", files=files)
-        
+
         assert response.status_code == 201
         data = response.json()
         assert "batch_id" in data
         assert "job_ids" in data
         assert len(data["job_ids"]) == 1
-        
+
         # Verify db entry
         invoice_id = UUID(data["job_ids"][0])
         invoice = db_session.get(Invoice, invoice_id)
@@ -61,9 +62,9 @@ def test_upload_single_pdf(db_session):
         assert invoice.status == "PROCESSING"
         assert invoice.file_path == "mock/path/invoice1.pdf"
         assert invoice.tenant_id == MOCK_TENANT_ID
-        
-        # Verify background Celery task dispatch
-        mock_celery.assert_called_once_with(data["batch_id"], "mock/path/invoice1.pdf", str(MOCK_TENANT_ID))
+
+        # Verify background task was queued via Azure Storage Queue (not Celery)
+        mock_queue_client.send_message.assert_called_once()
 
 def test_upload_multiple_pdfs(db_session):
     """Verify uploading multiple PDFs in a single request."""
@@ -75,18 +76,19 @@ def test_upload_multiple_pdfs(db_session):
     ]
     
     with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
-         patch("routers.invoices.process_invoice_task.delay") as mock_celery:
-         
+         patch("routers.invoices.QueueClient") as mock_queue_client_cls:
+
         mock_storage.side_effect = ["mock/path/1.pdf", "mock/path/2.pdf"]
-        
+        mock_queue_client = mock_queue_client_cls.from_connection_string.return_value
+
         client = TestClient(app)
         response = client.post("/api/v1/invoices/upload", files=files)
-        
+
         assert response.status_code == 201
         data = response.json()
         assert len(data["job_ids"]) == 2
         assert len(db_session.exec(select(Invoice)).all()) == 2
-        assert mock_celery.call_count == 2
+        assert mock_queue_client.send_message.call_count == 2
 
 def test_free_plan_quota_exhausted(db_session):
     """Verify that uploads are rejected once the free plan invoice quota is exhausted."""
@@ -125,8 +127,8 @@ def test_free_plan_quota_decrement(db_session):
     files = {"files": ("invoice1.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf")}
     
     with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
-         patch("routers.invoices.process_invoice_task.delay"):
-         
+         patch("routers.invoices.QueueClient"):
+
         mock_storage.return_value = "mock/path/1.pdf"
         
         client = TestClient(app)
@@ -137,3 +139,52 @@ def test_free_plan_quota_decrement(db_session):
         # Verify count decremented to 0 in database
         db_session.refresh(tenant)
         assert tenant.free_invoices_remaining == 0
+
+
+def test_directory_watcher_disabled_by_default(db_session):
+    """Gap 12: watcher endpoint returns 501 when WATCHER_ALLOWED_BASE_DIR is unset."""
+    client = TestClient(app)
+    response = client.post("/api/v1/invoices/watcher/start", json={"directory_path": "/tmp/anything"})
+    assert response.status_code == 501
+
+
+def test_directory_watcher_rejects_path_traversal(db_session, tmp_path, monkeypatch):
+    """Gap 12: a directory_path outside the configured base dir is rejected, not read."""
+    from config import get_settings
+    allowed_dir = tmp_path / "allowed"
+    allowed_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+
+    monkeypatch.setattr(get_settings(), "WATCHER_ALLOWED_BASE_DIR", str(allowed_dir))
+    client = TestClient(app)
+    response = client.post("/api/v1/invoices/watcher/start", json={"directory_path": str(outside_dir)})
+    assert response.status_code == 400
+
+
+def test_directory_watcher_ingests_pdfs(db_session, tmp_path, monkeypatch):
+    """Gap 12: a valid directory scan finds and ingests every PDF via the shared upload path."""
+    from config import get_settings
+    allowed_dir = tmp_path / "watched"
+    allowed_dir.mkdir()
+    (allowed_dir / "a.pdf").write_bytes(b"%PDF-1.4 watcher test a")
+    (allowed_dir / "b.pdf").write_bytes(b"%PDF-1.4 watcher test b")
+    (allowed_dir / "ignore.txt").write_text("not a pdf")
+
+    monkeypatch.setattr(get_settings(), "WATCHER_ALLOWED_BASE_DIR", str(allowed_dir))
+
+    with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
+         patch("routers.invoices.QueueClient") as mock_queue_client_cls:
+        mock_storage.side_effect = ["mock/path/a.pdf", "mock/path/b.pdf"]
+        mock_queue_client = mock_queue_client_cls.from_connection_string.return_value
+
+        client = TestClient(app)
+        response = client.post("/api/v1/invoices/watcher/start", json={"directory_path": str(allowed_dir)})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "completed"
+        assert data["files_found"] == 2
+        assert data["files_queued"] == 2
+        assert len(db_session.exec(select(Invoice)).all()) == 2
+        assert mock_queue_client.send_message.call_count == 2

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { UploadCloud, CheckCircle, AlertCircle, RefreshCw } from "lucide-react";
+import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch } from "lucide-react";
 import TagSelector from "../../components/ingestion/TagSelector";
 import DropZone from "../../components/ingestion/DropZone";
 import StatusTable from "../../components/ingestion/StatusTable";
@@ -18,6 +18,41 @@ export default function IngestionPage() {
   const [batchId, setBatchId] = useState<string | null>(null);
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [trackedFiles, setTrackedFiles] = useState<Array<{ name: string; size: number }>>([]);
+
+  // Gap 12/FE Gap 1: directory watcher — bulk-ingest a server-accessible folder
+  // in one pass, without per-file drag-and-drop.
+  const [directoryPath, setDirectoryPath] = useState("");
+  const [isScanning, setIsScanning] = useState(false);
+  const [watcherError, setWatcherError] = useState<string | null>(null);
+  const [watcherResult, setWatcherResult] = useState<{ files_found: number; files_queued: number } | null>(null);
+
+  const handleWatchDirectory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directoryPath.trim()) return;
+
+    setIsScanning(true);
+    setWatcherError(null);
+    setWatcherResult(null);
+
+    try {
+      const response = await apiClient.post("/invoices/watcher", { directory_path: directoryPath.trim() });
+      const { batch_id, job_ids, files_found, files_queued } = response.data;
+      setWatcherResult({ files_found, files_queued });
+      if (job_ids?.length > 0) {
+        setTrackedFiles(job_ids.map((id: string) => ({ name: id, size: 0 })));
+        setBatchId(batch_id);
+        setJobIds(job_ids);
+      }
+    } catch (err: any) {
+      if (err.response?.status === 501) {
+        setWatcherError("Directory watcher isn't enabled for this environment.");
+      } else {
+        setWatcherError(err.response?.data?.detail || "Failed to scan directory.");
+      }
+    } finally {
+      setIsScanning(false);
+    }
+  };
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,6 +153,59 @@ export default function IngestionPage() {
               </>
             )}
           </button>
+
+          {/* Directory Watcher (Gap 12 / FE Gap 1): bulk-ingest a server-accessible
+              folder in one pass, no per-file drag-and-drop. */}
+          <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+              <FolderSearch className="w-4 h-4 text-slate-500" />
+              Bulk Directory Scan
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Point at a folder the backend can read (e.g. a shared network drop
+              folder) to ingest every PDF inside in one pass.
+            </p>
+            <form onSubmit={handleWatchDirectory} className="flex flex-col gap-2">
+              <input
+                type="text"
+                value={directoryPath}
+                onChange={(e) => setDirectoryPath(e.target.value)}
+                placeholder="/path/to/watched/folder"
+                className="w-full bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-accent-blue/60"
+              />
+              <button
+                type="submit"
+                disabled={!directoryPath.trim() || isScanning}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
+                  !directoryPath.trim()
+                    ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
+                    : "bg-slate-800/60 border-[#222D3D] text-slate-200 hover:bg-slate-800"
+                }`}
+              >
+                {isScanning ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Scanning...
+                  </>
+                ) : (
+                  "Scan Directory"
+                )}
+              </button>
+            </form>
+            {watcherError && (
+              <div className="flex items-center gap-2 p-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{watcherError}</span>
+              </div>
+            )}
+            {watcherResult && (
+              <div className="flex items-center gap-2 p-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-[11px]">
+                <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>
+                  Found {watcherResult.files_found}, queued {watcherResult.files_queued} for processing.
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right Side: Status ledger tracking - takes 2 cols */}

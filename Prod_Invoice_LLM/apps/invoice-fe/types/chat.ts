@@ -92,4 +92,3 @@ export interface SendMessageRequest {
 /** POST /chat/sessions/{id}/message — response: the backend returns the
  *  assistant ChatMessage directly (MessageResponse), not wrapped in an envelope. */
 export type SendMessageResponse = ChatMessage;
-}

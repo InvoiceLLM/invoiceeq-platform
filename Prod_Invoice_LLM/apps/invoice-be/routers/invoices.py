@@ -1,10 +1,13 @@
 import logging
 import json
+import os
+import hashlib
 import asyncio
 from uuid import uuid4, UUID
 from datetime import date
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from redis.asyncio import Redis as AsyncRedis
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
@@ -20,6 +23,135 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
+
+
+async def _ingest_single_file(
+    file_bytes: bytes,
+    filename: str,
+    tags: list[str],
+    batch_id: UUID,
+    tenant: Tenant,
+    context: TenantContext,
+    db_session: Session,
+) -> str:
+    """
+    Shared per-file ingestion logic (dedup check, blob upload, DB row, queue
+    dispatch) used by both the direct upload endpoint and the directory
+    watcher (Gap 12) — one path, not two copies to keep in sync. Returns the
+    new invoice_id as a string.
+    """
+    invoice_id = uuid4()
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    existing_invoice = db_session.exec(
+        select(Invoice).where(
+            Invoice.tenant_id == context.tenant_id,
+            Invoice.file_hash == file_hash
+        )
+    ).first()
+
+    if existing_invoice:
+        db_invoice = Invoice(
+            id=invoice_id,
+            tenant_id=context.tenant_id,
+            batch_id=batch_id,
+            file_path=existing_invoice.file_path,
+            file_hash=file_hash,
+            vendor_name=existing_invoice.vendor_name,
+            grand_total=existing_invoice.grand_total,
+            invoice_number=existing_invoice.invoice_number,
+            invoice_date=existing_invoice.invoice_date,
+            due_date=existing_invoice.due_date,
+            tax_amount=existing_invoice.tax_amount,
+            po_number=existing_invoice.po_number,
+            status="DUPLICATE",
+            sa_alerts=[{
+                "type": "duplicate",
+                "message": f"This file is a duplicate of a previously uploaded invoice (ID: {existing_invoice.id})."
+            }],
+            tags=tags,
+            items=existing_invoice.items
+        )
+        db_session.add(db_invoice)
+        await run_in_threadpool(db_session.commit)
+        db_session.refresh(db_invoice)
+
+        try:
+            import redis
+            r = redis.Redis.from_url(settings.REDIS_URL)
+            event_data = {
+                "status": "DUPLICATE",
+                "message": "Duplicate invoice signature detected. Copied data from previous upload.",
+                "invoice_id": str(invoice_id),
+                "data": {
+                    "vendor_name": existing_invoice.vendor_name,
+                    "invoice_number": existing_invoice.invoice_number,
+                    "invoice_date": str(existing_invoice.invoice_date) if existing_invoice.invoice_date else None,
+                    "due_date": str(existing_invoice.due_date) if existing_invoice.due_date else None,
+                    "grand_total": existing_invoice.grand_total,
+                    "tax_amount": existing_invoice.tax_amount,
+                    "po_number": existing_invoice.po_number,
+                    "items": existing_invoice.items,
+                    "tags": tags
+                },
+                "alerts": [{
+                    "type": "duplicate",
+                    "message": f"Duplicate of invoice {existing_invoice.invoice_number or existing_invoice.id}."
+                }]
+            }
+            r.publish(f"invoice.update.{batch_id}", json.dumps(event_data))
+        except Exception as re:
+            logger.warning("Failed to publish SSE duplicate event: %s", re)
+        return str(invoice_id)
+
+    try:
+        file_path = await run_in_threadpool(
+            upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to store file {filename}: {str(e)}"
+        )
+
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=context.tenant_id,
+        batch_id=batch_id,
+        file_path=file_path,
+        file_hash=file_hash,
+        status="PROCESSING",
+        tags=tags
+    )
+    db_session.add(db_invoice)
+    await run_in_threadpool(db_session.commit)
+    db_session.refresh(db_invoice)
+
+    try:
+        watcher_settings = get_settings()
+        if watcher_settings.AZURE_STORAGE_CONNECTION_STRING:
+            queue_client = QueueClient.from_connection_string(
+                watcher_settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
+            )
+            payload = {
+                "task": "process_invoice",
+                "kwargs": {
+                    "batch_id": str(batch_id),
+                    "file_path": file_path,
+                    "tenant_id": str(context.tenant_id)
+                }
+            }
+            queue_client.send_message(json.dumps(payload))
+            print(f"SUCCESS: Dispatched Azure Storage Queue task for invoice {invoice_id}", flush=True)
+        else:
+            print("WARNING: AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.", flush=True)
+            logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
+    except Exception as e:
+        print(f"ERROR: Failed to dispatch Azure Storage Queue task: {str(e)}", flush=True)
+        logger.warning("Failed to dispatch Azure Storage Queue task: %s", e)
+
+    return str(invoice_id)
+
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_invoices(
@@ -70,8 +202,6 @@ async def upload_invoices(
     job_ids = []
 
     for file in files:
-        invoice_id = uuid4()
-        
         try:
             file_bytes = await file.read()
         except Exception as e:
@@ -79,130 +209,92 @@ async def upload_invoices(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to read file {file.filename}: {str(e)}"
             )
-
-        # Compute SHA-256 hash of file content
-        import hashlib
-        file_hash = hashlib.sha256(file_bytes).hexdigest()
-
-        # Check for duplicates
-        existing_invoice = db_session.exec(
-            select(Invoice).where(
-                Invoice.tenant_id == context.tenant_id,
-                Invoice.file_hash == file_hash
-            )
-        ).first()
-
-        if existing_invoice:
-            # Create duplicate database entry copying metadata
-            db_invoice = Invoice(
-                id=invoice_id,
-                tenant_id=context.tenant_id,
-                batch_id=batch_id,
-                file_path=existing_invoice.file_path,  # Reuse existing file path
-                file_hash=file_hash,
-                vendor_name=existing_invoice.vendor_name,
-                grand_total=existing_invoice.grand_total,
-                invoice_number=existing_invoice.invoice_number,
-                invoice_date=existing_invoice.invoice_date,
-                due_date=existing_invoice.due_date,
-                tax_amount=existing_invoice.tax_amount,
-                po_number=existing_invoice.po_number,
-                status="DUPLICATE",
-                sa_alerts=[{
-                    "type": "duplicate",
-                    "message": f"This file is a duplicate of a previously uploaded invoice (ID: {existing_invoice.id})."
-                }],
-                tags=tags,
-                items=existing_invoice.items
-            )
-            db_session.add(db_invoice)
-            await run_in_threadpool(db_session.commit)
-            db_session.refresh(db_invoice)
-            job_ids.append(str(invoice_id))
-
-            # Publish completed event instantly to SSE
-            try:
-                import redis
-                r = redis.Redis.from_url(settings.REDIS_URL)
-                event_data = {
-                    "status": "DUPLICATE",
-                    "message": "Duplicate invoice signature detected. Copied data from previous upload.",
-                    "invoice_id": str(invoice_id),
-                    "data": {
-                        "vendor_name": existing_invoice.vendor_name,
-                        "invoice_number": existing_invoice.invoice_number,
-                        "invoice_date": str(existing_invoice.invoice_date) if existing_invoice.invoice_date else None,
-                        "due_date": str(existing_invoice.due_date) if existing_invoice.due_date else None,
-                        "grand_total": existing_invoice.grand_total,
-                        "tax_amount": existing_invoice.tax_amount,
-                        "po_number": existing_invoice.po_number,
-                        "items": existing_invoice.items,
-                        "tags": tags
-                    },
-                    "alerts": [{
-                        "type": "duplicate",
-                        "message": f"Duplicate of invoice {existing_invoice.invoice_number or existing_invoice.id}."
-                    }]
-                }
-                r.publish(f"invoice.update.{batch_id}", json.dumps(event_data))
-            except Exception as re:
-                logger.warning("Failed to publish SSE duplicate event: %s", re)
-            continue
-
-        # Upload file to storage
-        try:
-            file_path = await run_in_threadpool(
-                upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to store file {file.filename}: {str(e)}"
-            )
-
-        # Create database entry
-        db_invoice = Invoice(
-            id=invoice_id,
-            tenant_id=context.tenant_id,
-            batch_id=batch_id,
-            file_path=file_path,
-            file_hash=file_hash,
-            status="PROCESSING",
-            tags=tags
-        )
-        db_session.add(db_invoice)
-        await run_in_threadpool(db_session.commit)
-        db_session.refresh(db_invoice)
-        
-        job_ids.append(str(invoice_id))
-
-        # Enqueue background tasks via Azure Storage Queue
-        try:
-            settings = get_settings()
-            if settings.AZURE_STORAGE_CONNECTION_STRING:
-                queue_client = QueueClient.from_connection_string(
-                    settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
-                )
-                payload = {
-                    "task": "process_invoice",
-                    "kwargs": {
-                        "batch_id": str(batch_id),
-                        "file_path": file_path,
-                        "tenant_id": str(context.tenant_id)
-                    }
-                }
-                queue_client.send_message(json.dumps(payload))
-                print(f"SUCCESS: Dispatched Azure Storage Queue task for invoice {invoice_id}", flush=True)
-            else:
-                print("WARNING: AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.", flush=True)
-                logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
-        except Exception as e:
-            print(f"ERROR: Failed to dispatch Azure Storage Queue task: {str(e)}", flush=True)
-            logger.warning("Failed to dispatch Azure Storage Queue task: %s", e)
+        job_id = await _ingest_single_file(file_bytes, file.filename, tags, batch_id, tenant, context, db_session)
+        job_ids.append(job_id)
 
     return {
         "batch_id": batch_id,
         "job_ids": job_ids
+    }
+
+
+class DirectoryWatchRequest(BaseModel):
+    directory_path: str
+
+
+@router.post("/watcher/start", status_code=status.HTTP_200_OK)
+async def start_directory_watcher(
+    payload: DirectoryWatchRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Gap 12: bulk-ingests every PDF found in a server-accessible directory in
+    one pass, through the same dedup/upload/queue path as a normal upload.
+
+    Deliberately a one-time scan, not a persistent background watch — there's
+    no stop endpoint to manage a long-running watcher's lifecycle, and most
+    cloud tenants have no persistent filesystem for the backend to watch
+    anyway. This targets local/on-prem bulk-ingestion (e.g. a shared network
+    drop folder), not continuous cloud monitoring.
+
+    Path-traversal guard: directory_path must resolve inside
+    settings.WATCHER_ALLOWED_BASE_DIR. Unconfigured (empty) disables the
+    feature entirely, since allowing arbitrary server filesystem reads from
+    tenant-supplied input is a real risk otherwise.
+    """
+    watcher_settings = get_settings()
+    allowed_base = watcher_settings.WATCHER_ALLOWED_BASE_DIR
+    if not allowed_base:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Directory watcher is not configured for this environment."
+        )
+
+    allowed_base_abs = os.path.realpath(allowed_base)
+    requested_abs = os.path.realpath(payload.directory_path)
+    if os.path.commonpath([allowed_base_abs, requested_abs]) != allowed_base_abs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="directory_path must be inside the configured watcher base directory."
+        )
+    if not os.path.isdir(requested_abs):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Directory not found: {payload.directory_path}"
+        )
+
+    pdf_filenames = sorted(f for f in os.listdir(requested_abs) if f.lower().endswith(".pdf"))
+    watcher_id = uuid4()
+    if not pdf_filenames:
+        return {"watcher_id": watcher_id, "status": "completed", "files_found": 0, "files_queued": 0}
+
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+
+    if tenant.billing_plan == "free" and tenant.free_invoices_remaining < len(pdf_filenames):
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="Limit reached")
+    if tenant.billing_plan == "free":
+        tenant.free_invoices_remaining -= len(pdf_filenames)
+        db_session.add(tenant)
+        await run_in_threadpool(db_session.commit)
+
+    batch_id = uuid4()
+    job_ids = []
+    for filename in pdf_filenames:
+        with open(os.path.join(requested_abs, filename), "rb") as f:
+            file_bytes = f.read()
+        job_id = await _ingest_single_file(file_bytes, filename, [], batch_id, tenant, context, db_session)
+        job_ids.append(job_id)
+
+    return {
+        "watcher_id": watcher_id,
+        "status": "completed",
+        "batch_id": batch_id,
+        "files_found": len(pdf_filenames),
+        "files_queued": len(job_ids),
+        "job_ids": job_ids,
     }
 
 

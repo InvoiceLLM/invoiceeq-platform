@@ -24,6 +24,7 @@ interface DashboardMetrics {
   outstanding_amount: number;
   at_risk_amount: number;
   average_processing_time: number;
+  extraction_accuracy: number;
   active_alerts_count: number;
   spend_over_time: SpendPoint[];
   top_vendors: VendorSpend[];
@@ -40,6 +41,7 @@ const defaultMetrics: DashboardMetrics = {
   outstanding_amount: 0,
   at_risk_amount: 0,
   average_processing_time: 0,
+  extraction_accuracy: 0,
   active_alerts_count: 0,
   spend_over_time: [],
   top_vendors: [],

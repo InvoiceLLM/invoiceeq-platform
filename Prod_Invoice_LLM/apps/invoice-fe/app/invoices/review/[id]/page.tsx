@@ -98,7 +98,11 @@ function EditableField({
     <div className="flex flex-col gap-1">
       <label className="text-xs font-medium text-slate-500 flex items-center gap-1.5">
         {label}
-        {isDirty && <Pencil size={10} className="text-blue-400" title="Corrected — will be saved on resolve/dismiss" />}
+        {isDirty && (
+          <span title="Corrected — will be saved on resolve/dismiss">
+            <Pencil size={10} className="text-blue-400" />
+          </span>
+        )}
         {isLowConfidence && !isDirty && (
           <span title={`OCR confidence ${Math.round((confidence ?? 0) * 100)}% — below the ${LOW_CONFIDENCE_THRESHOLD * 100}% review threshold`}>
             <AlertTriangle size={10} className="text-amber-400" />

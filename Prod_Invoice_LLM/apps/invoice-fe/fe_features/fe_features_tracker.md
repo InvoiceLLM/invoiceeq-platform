@@ -71,7 +71,7 @@ All 6 open gaps are now closed. Below is a summary of every file delivered:
 Gaps below are grouped by the feature file whose target design they still need to catch up to.
 
 **Ingestion portal** ([feature_3_ingestion.md](feature_3_ingestion.md)):
-- `[ ]` **Gap 1: Directory Watcher (Bulk Processing)** — input field for a local folder path to process thousands of files without per-file drag-and-drop
+- `[x]` **Gap 1: Directory Watcher (Bulk Processing)** — Fixed Jul 27, 2026. Added a "Bulk Directory Scan" card to `app/ingestion/page.tsx` — a folder-path text input + Scan button, calling the new `POST /api/invoices/watcher` proxy route (`be_features_tracker.md` Gap 12). Successful scans feed the found job_ids into the existing `StatusTable`, same as a normal upload; a `501` response (watcher not configured) and path-traversal `400` both surface clear inline error messages rather than a silent failure.
 - `[ ]` **Gap 2: Live Terminal Feed** — scrolling console window with colored status logs (Completed, Duplicate, Failed) alongside the ingestion queue table
 - `[ ]` **Gap 14: Live Statistics Counters** — header counters for Total Found, Processed, Duplicates, and Failed
 - `[ ]` **Gap 26: "Report an issue" action on any invoice** — currently only `AUDIT_REQUIRED` invoices get a correction UI (`AlertConsole`); a wrong-but-confident extraction on a `COMPLETED` invoice has no way to be flagged. Needs a new action reachable from any invoice row, wired into the same correction-capture flow as the Auditor console. Backend: `be_features_tracker.md` Gap 53. *(Raised Jul 27, 2026.)*
