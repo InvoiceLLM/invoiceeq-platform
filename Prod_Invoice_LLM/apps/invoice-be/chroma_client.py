@@ -3,6 +3,7 @@ import logging
 import fitz
 import chromadb
 import threading
+from typing import Callable, Optional
 from sentence_transformers import SentenceTransformer
 from config import get_settings
 from services.storage import download_pdf_from_storage
@@ -64,7 +65,13 @@ def get_embeddings(texts: list[str]) -> list[list[float]]:
         embeddings = model.encode(texts, convert_to_numpy=True)
     return embeddings.tolist()
 
-def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | None, file_path: str):
+def index_invoice_document(
+    invoice_id: str,
+    tenant_id: str,
+    vendor_name: str | None,
+    file_path: str,
+    on_log: Optional[Callable[[str], None]] = None,
+):
     """
     Load a PDF page-by-page, prepend structured context metadata headers,
     generate embedding vectors, and index chunks into the Chroma collection.
@@ -85,7 +92,10 @@ def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | N
     chunks = []
     metadata_list = []
     ids = []
-    
+
+    if on_log:
+        on_log("Chunking document pages...")
+
     try:
         for idx, page in enumerate(doc):
             text = page.get_text()
@@ -111,7 +121,9 @@ def index_invoice_document(invoice_id: str, tenant_id: str, vendor_name: str | N
     if not chunks:
         logger.info("No extractable text found in PDF for indexing.")
         return
-        
+
+    if on_log:
+        on_log("Generating page embeddings...")
     embeddings = get_embeddings(chunks)
 
     client = get_chroma_client()

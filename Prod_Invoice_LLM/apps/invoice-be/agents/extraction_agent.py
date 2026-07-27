@@ -1,7 +1,7 @@
 import base64
 import logging
 import time
-from typing import List, Dict, Any, TypedDict, Optional
+from typing import List, Dict, Any, TypedDict, Optional, Callable
 from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
 
@@ -488,13 +488,24 @@ builder.add_conditional_edges(
 )
 graph = builder.compile()
 
+# Gap 2: friendly log lines for each graph node, surfaced to the FE terminal
+# feed. Retries loop back through "extract"/"verify" again, which is fine —
+# seeing "Extracting..." / "Verifying..." repeat is itself useful signal.
+_NODE_LOG_MESSAGES = {
+    "classify": "Classifying invoice complexity...",
+    "dynamic_qa": "Running structural pre-analysis on complex invoice...",
+    "extract": "Extracting structured fields via LLM...",
+    "verify": "Running math and faithfulness verification checks...",
+}
+
 
 def run_extraction_agent(
     file_path: str,
     ocr_text: str,
     tenant_id: str,
     rules: Optional[Dict[str, Any]] = None,
-    ocr_result: Optional[Any] = None
+    ocr_result: Optional[Any] = None,
+    on_log: Optional[Callable[[str], None]] = None,
 ) -> dict:
     """
     Runs the multi-modal extraction agent graph over the given invoice file.
@@ -546,7 +557,17 @@ def run_extraction_agent(
         "dynamic_qa_context": None
     }
     
-    final_state = graph.invoke(initial_state)
+    if on_log:
+        # Gap 2: .stream() instead of .invoke() so each node transition can be
+        # surfaced as a real-time log line, not just the 4 coarse SSE stages.
+        final_state = dict(initial_state)
+        for update in graph.stream(initial_state, stream_mode="updates"):
+            for node_name, node_update in update.items():
+                final_state.update(node_update)
+                on_log(_NODE_LOG_MESSAGES.get(node_name, f"Running {node_name}..."))
+    else:
+        final_state = graph.invoke(initial_state)
+
     return {
         "status": final_state["status"],
         "alerts": final_state["alerts"],

@@ -230,13 +230,30 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
     3. Triggers multi-modal extraction/verification (agent block placeholder).
     """
     settings = get_settings()
-    
+
+    # Gap 2: real per-stage log lines for the FE terminal feed, replacing the
+    # 4 coarse SSE stages as the only visibility into what's happening.
+    with Session(engine) as _lookup_session:
+        _invoice_id_for_log = _lookup_session.exec(
+            select(Invoice.id).where(Invoice.file_path == file_path)
+        ).first()
+
+    def on_log(message: str) -> None:
+        _publish_sse_events(batch_id, {
+            "type": "log_line",
+            "invoice_id": str(_invoice_id_for_log) if _invoice_id_for_log else None,
+            "message": message,
+            "level": "info",
+        })
+
     # 1. Update status: processing OCR
     _publish_sse_events(batch_id, {"status": "PROCESSING_OCR", "message": "Extracting text from PDF invoice..."})
-    
+    on_log("Starting OCR (Azure Document Intelligence)...")
+
     try:
         # 2. Extract raw layout text and metadata
         ocr_result = _run_ocr(file_path, settings)
+        on_log("OCR complete.")
         if isinstance(ocr_result, dict):
             _extracted_text = ocr_result["content"]
             coordinates = ocr_result.get("coordinates", [])
@@ -262,7 +279,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
 
         first_pass_rules = {"constraints": global_constraints} if global_constraints else None
         agent_result = run_extraction_agent(
-            file_path, _extracted_text, tenant_id, rules=first_pass_rules, ocr_result=ocr_result
+            file_path, _extracted_text, tenant_id, rules=first_pass_rules, ocr_result=ocr_result, on_log=on_log
         )
         status = agent_result["status"]
         alerts = agent_result["alerts"]
@@ -280,8 +297,9 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     "Applying merged Global+vendor rules for vendor %s (%d constraints). Re-running extraction.",
                     vendor_name, len(merged)
                 )
+                on_log(f"Re-running extraction with {vendor_name}'s trained rules...")
                 agent_result = run_extraction_agent(
-                    file_path, _extracted_text, tenant_id, rules={"constraints": merged}, ocr_result=ocr_result
+                    file_path, _extracted_text, tenant_id, rules={"constraints": merged}, ocr_result=ocr_result, on_log=on_log
                 )
                 status = agent_result["status"]
                 alerts = agent_result["alerts"]
@@ -370,7 +388,8 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                         invoice_id=str(invoice.id),
                         tenant_id=str(invoice.tenant_id),
                         vendor_name=invoice.vendor_name,
-                        file_path=file_path
+                        file_path=file_path,
+                        on_log=on_log,
                     )
                 except Exception as ie:
                     logger.error("RAG indexing failed for invoice %s: %s", invoice.id, ie)

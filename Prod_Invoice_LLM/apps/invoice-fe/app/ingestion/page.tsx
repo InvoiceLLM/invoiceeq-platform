@@ -5,6 +5,7 @@ import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch } from "
 import TagSelector from "../../components/ingestion/TagSelector";
 import DropZone from "../../components/ingestion/DropZone";
 import StatusTable from "../../components/ingestion/StatusTable";
+import LogTerminal from "../../components/ingestion/LogTerminal";
 import { apiClient } from "../../lib/apiClient";
 
 export default function IngestionPage() {
@@ -209,13 +210,16 @@ export default function IngestionPage() {
         </div>
 
         {/* Right Side: Status ledger tracking - takes 2 cols */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-4">
           {jobIds.length > 0 ? (
-            <StatusTable
-              batchId={batchId}
-              jobIds={jobIds}
-              initialFiles={trackedFiles}
-            />
+            <>
+              <StatusTable
+                batchId={batchId}
+                jobIds={jobIds}
+                initialFiles={trackedFiles}
+              />
+              <LogTerminal batchId={batchId} />
+            </>
           ) : (
             <div className="glass-panel rounded-xl border border-[#222D3D] p-12 text-center h-full min-h-[300px] flex flex-col items-center justify-center gap-3">
               <div className="p-4 rounded-full bg-slate-900/50 border border-[#222D3D] text-slate-500">
