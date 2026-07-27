@@ -78,18 +78,24 @@ def test_get_invoices_list_and_filters(db_session):
     
     client = TestClient(app)
     
-    # 1. Test pagination limit
+    # 1. Test pagination limit. FE Gap 29: X-Total-Count reports the full
+    # matching count (3) regardless of the page-sized limit, so a caller can
+    # page through the whole result set rather than treating this batch as
+    # everything there is.
     response = client.get("/api/v1/invoices?limit=2")
     assert response.status_code == 200
+    assert response.headers["x-total-count"] == "3"
     data = response.json()
     assert len(data) == 2
     
-    # 2. Test pagination offset
+    # 2. Test pagination offset. FE Gap 29: list_invoices now orders by
+    # created_at desc (most recent first) rather than relying on incidental
+    # DB return order, so offset=2 lands on the first-created invoice.
     response = client.get("/api/v1/invoices?limit=2&offset=2")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
-    assert data[0]["vendor_name"] == "Vendor C"
+    assert data[0]["vendor_name"] == "Vendor A"
     
     # 3. Test status filter
     response = client.get("/api/v1/invoices?status=COMPLETED")

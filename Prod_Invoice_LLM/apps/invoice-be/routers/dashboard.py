@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import func, case
 from sqlmodel import Session, select
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
@@ -54,92 +55,119 @@ async def get_dashboard_metrics(
     """
     Exposes aggregated database statistics and multi-dimensional filtering for dashboard operations.
     Enforces strict tenant isolation.
+
+    FE Gap 29: this previously pulled every matching Invoice row into Python
+    (full ORM objects) just to sum/count/group them by hand. The dollar totals,
+    status breakdown, top vendors, and spend-over-time series below are now
+    real SQL SUM/COUNT/GROUP BY aggregates -- the DB does the work, and no
+    per-invoice row set is ever materialized in the API process for them.
+    average_processing_time/extraction_accuracy still need a per-row pass
+    (completed_at - created_at deltas and sa_alerts list lengths have no
+    portable cross-dialect SQL form in this codebase's Postgres/SQLite test
+    setup), so that pass fetches only the 4 narrow columns it needs instead of
+    full Invoice rows.
     """
-    # 1. Build filtered query scoped to the current tenant
-    query = select(Invoice).where(Invoice.tenant_id == context.tenant_id)
-    
+    # 1. Shared filter conditions, scoped to the current tenant
+    conditions = [Invoice.tenant_id == context.tenant_id]
     if start_date:
-        query = query.where(Invoice.invoice_date >= start_date)
+        conditions.append(Invoice.invoice_date >= start_date)
     if end_date:
-        query = query.where(Invoice.invoice_date <= end_date)
+        conditions.append(Invoice.invoice_date <= end_date)
     if vendor_name:
-        query = query.where(Invoice.vendor_name == vendor_name)
+        conditions.append(Invoice.vendor_name == vendor_name)
     if po_number:
-        query = query.where(Invoice.po_number == po_number)
+        conditions.append(Invoice.po_number == po_number)
     if status:
-        query = query.where(Invoice.status == status)
+        conditions.append(Invoice.status == status)
 
-    invoices = db_session.exec(query).all()
+    # 2. Dollar totals -- one aggregate query, computed entirely in SQL
+    totals_row = db_session.exec(
+        select(
+            func.coalesce(func.sum(Invoice.grand_total), 0.0),
+            func.coalesce(func.sum(case((Invoice.status == "PAID", Invoice.grand_total), else_=0.0)), 0.0),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Invoice.status.in_(["COMPLETED", "AUDIT_REQUIRED", "PROCESSING"]), Invoice.grand_total),
+                        else_=0.0,
+                    )
+                ),
+                0.0,
+            ),
+            func.coalesce(func.sum(case((Invoice.status == "AUDIT_REQUIRED", Invoice.grand_total), else_=0.0)), 0.0),
+        ).where(*conditions)
+    ).first()
+    total_invoiced, paid_amount, outstanding_amount, at_risk_amount = totals_row
 
-    # 2. Perform math aggregates
-    total_invoiced = 0.0
-    paid_amount = 0.0
-    outstanding_amount = 0.0
-    at_risk_amount = 0.0
+    # 3. Status breakdown -- GROUP BY status
+    status_counts = {
+        (inv_status or "PROCESSING"): count
+        for inv_status, count in db_session.exec(
+            select(Invoice.status, func.count(Invoice.id)).where(*conditions).group_by(Invoice.status)
+        ).all()
+    }
+
+    # 4. Top vendors by spend -- GROUP BY vendor, ordered by spend desc (full
+    # ranked list, not capped -- matches this endpoint's prior behavior)
+    vendor_expr = func.coalesce(Invoice.vendor_name, "Unknown Vendor")
+    top_vendors = [
+        {"vendor_name": v, "amount": round(amt or 0.0, 2)}
+        for v, amt in db_session.exec(
+            select(vendor_expr, func.sum(Invoice.grand_total))
+            .where(*conditions)
+            .group_by(vendor_expr)
+            .order_by(func.sum(Invoice.grand_total).desc())
+        ).all()
+    ]
+
+    # 5. Spend-over-time series -- GROUP BY date, falling back to created_at's
+    # date when invoice_date wasn't extracted
+    date_expr = func.coalesce(Invoice.invoice_date, func.date(Invoice.created_at))
+    spend_over_time = [
+        {"date": str(d), "amount": round(amt or 0.0, 2)}
+        for d, amt in db_session.exec(
+            select(date_expr, func.sum(Invoice.grand_total))
+            .where(*conditions)
+            .group_by(date_expr)
+            .order_by(date_expr)
+        ).all()
+    ]
+
+    # 6. average_processing_time / extraction_accuracy: narrow 4-column scan
+    # (status, sa_alerts, created_at, completed_at) instead of full ORM rows.
     active_alerts_count = 0
     invoices_with_alerts = 0
     total_processed = 0
     total_processing_time = 0.0
     timed_invoice_count = 0
-    
-    spend_by_date = {}
-    spend_by_vendor = {}
-    status_counts = {}
 
-    for inv in invoices:
-        grand_total = inv.grand_total or 0.0
-        
-        # Aggregate totals
-        total_invoiced += grand_total
-        
-        inv_status = (inv.status or "PROCESSING").upper()
-        if inv_status == "PAID":
-            paid_amount += grand_total
-        elif inv_status in ["COMPLETED", "AUDIT_REQUIRED", "PROCESSING"]:
-            outstanding_amount += grand_total
+    detail_rows = db_session.exec(
+        select(Invoice.status, Invoice.sa_alerts, Invoice.created_at, Invoice.completed_at).where(*conditions)
+    ).all()
+    for inv_status, sa_alerts, created_at, completed_at in detail_rows:
+        inv_status = (inv_status or "PROCESSING").upper()
 
-        if inv_status == "AUDIT_REQUIRED":
-            at_risk_amount += grand_total
-
-        if inv_status in ["COMPLETED", "PAID", "AUDIT_REQUIRED", "REJECTED"]:
+        if inv_status in ("COMPLETED", "PAID", "AUDIT_REQUIRED", "REJECTED"):
             total_processed += 1
             # Real elapsed time from queue pickup (created_at) to pipeline completion
             # (completed_at, set by handlers.py once when status is finalized). Invoices
             # processed before completed_at existed have it as None and are excluded
             # from the average rather than estimated.
-            if inv.completed_at:
-                elapsed_seconds = (inv.completed_at - inv.created_at).total_seconds()
+            if completed_at:
+                elapsed_seconds = (completed_at - created_at).total_seconds()
                 if elapsed_seconds >= 0:
                     total_processing_time += elapsed_seconds
                     timed_invoice_count += 1
 
-        # Alerts count
-        if inv.sa_alerts:
-            active_alerts_count += len(inv.sa_alerts)
+        if sa_alerts:
+            active_alerts_count += len(sa_alerts)
             invoices_with_alerts += 1
-
-        # Spend over time (series)
-        # Fallback to created_at date if invoice_date is not set
-        d_val = inv.invoice_date or inv.created_at.date()
-        d_str = d_val.isoformat()
-        spend_by_date[d_str] = spend_by_date.get(d_str, 0.0) + grand_total
-
-        # Top vendors (series)
-        v_name = inv.vendor_name or "Unknown Vendor"
-        spend_by_vendor[v_name] = spend_by_vendor.get(v_name, 0.0) + grand_total
-
-        # Group count by status
-        status_counts[inv_status] = status_counts.get(inv_status, 0) + 1
-
-    # Format series data
-    spend_over_time = [{"date": d, "amount": round(amt, 2)} for d, amt in sorted(spend_by_date.items())]
-    top_vendors = [{"vendor_name": v, "amount": round(amt, 2)} for v, amt in sorted(spend_by_vendor.items(), key=lambda x: x[1], reverse=True)]
 
     # Dynamic metrics based on data
     average_processing_time = (
         round(total_processing_time / timed_invoice_count, 1) if timed_invoice_count > 0 else 0.0
     )
-    
+
     # Calculate real accuracy (what % of invoices went through without alerts)
     extraction_accuracy = 100.0
     if total_processed > 0:

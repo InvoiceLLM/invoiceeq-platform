@@ -15,6 +15,11 @@ interface FlowNode {
   activities: Activity[];
   finalState?: "done" | "warn";
   isNew?: boolean;
+  // Gap 64: plain-language callout shown as a blinking bubble above this node
+  // while it's active -- only set on the "human-facing" nodes (user action /
+  // agent reply / terminal outcome), not the internal technical steps, which
+  // already have the (more technical) activity log in AgentPanel for that.
+  explainer?: string;
 }
 interface FlowEdge {
   id: string; from: string; to: string;
@@ -58,6 +63,7 @@ const INBOUND: FlowDef = {
   description: "Tenant receives a vendor invoice (PDF) → OCR → LangGraph classification → LLM extraction with Trainer rules → 6-check verification → COMPLETED or AUDIT_REQUIRED.",
   nodes: [
     { id: "upload", label: "PDF Upload", sublabel: "REST / Watcher / Email", icon: "⬆", x: 90, y: 30,
+      explainer: "👤 User uploads an invoice PDF",
       agentName: "Invoice Upload Handler", agentRole: "routers/invoices.py",
       activities: [
         { text: "Receiving multipart/form-data — 3.2 MB", type: "info" },
@@ -147,6 +153,7 @@ const INBOUND: FlowDef = {
       ],
     },
     { id: "completed", label: "COMPLETED", sublabel: "SSE → Dashboard", icon: "🟢", x: 90, y: 1110,
+      explainer: "✅ Done — invoice fully processed",
       agentName: "Finalization Handler", agentRole: "queue_worker/handlers.py",
       finalState: "done",
       activities: [
@@ -157,6 +164,7 @@ const INBOUND: FlowDef = {
       ],
     },
     { id: "audit_req", label: "AUDIT_REQUIRED", sublabel: "Auditor Console flagged", icon: "🟡", x: 320, y: 1110,
+      explainer: "⚠️ Flagged — a human needs to review this one",
       agentName: "Audit Router", agentRole: "queue_worker/handlers.py → routers/audit.py",
       finalState: "warn",
       activities: [
@@ -199,6 +207,7 @@ const OUTBOUND: FlowDef = {
   description: "Vendor Flow (Feature 2.1): tenant uploads their own invoice to a customer. Parallel pipeline — zero-touch isolation, separate schema/agent, shared OCR + verification_tools.",
   nodes: [
     { id: "ob_upload", label: "PDF Upload", sublabel: "Gated: 'Send Invoices' toggle", icon: "⬆", x: 90, y: 30,
+      explainer: "👤 User uploads an invoice to send",
       agentName: "Outbound Upload Handler", agentRole: "routers/outbound_invoices.py", isNew: true,
       activities: [
         { text: "Checking 'Send Invoices' toggle in Settings...", type: "info" },
@@ -260,6 +269,7 @@ const OUTBOUND: FlowDef = {
       ],
     },
     { id: "ob_verified", label: "VERIFIED", sublabel: "Tenant confirms → SENT", icon: "🟢", x: 90, y: 760,
+      explainer: "✅ Verified — ready for the tenant to send",
       agentName: "Send Confirmation Handler", agentRole: "routers/outbound_invoices.py::confirm_send()", isNew: true,
       finalState: "done",
       activities: [
@@ -280,6 +290,7 @@ const OUTBOUND: FlowDef = {
       ],
     },
     { id: "ob_needs", label: "NEEDS_REVIEW", sublabel: "Outbound Auditor Console", icon: "🟡", x: 330, y: 620,
+      explainer: "⚠️ Flagged — a human needs to review this one",
       agentName: "Outbound Audit Handler", agentRole: "routers/outbound_audit.py::resolve_outbound_alert()", isNew: true,
       finalState: "warn",
       activities: [
@@ -320,6 +331,7 @@ const CHAT: FlowDef = {
   description: "Natural-language question → Redis cache check → token-aware history → Trainer rule injection → LLM intent classification → SQL self-heal loop / hybrid RAG → answer synthesis.",
   nodes: [
     { id: "q_user", label: "User Question", sublabel: "Chat UI", icon: "💬", x: 90, y: 30,
+      explainer: "👤 User asks a question in plain English",
       agentName: "Chat Endpoint", agentRole: "routers/chat.py::post_chat_message()",
       activities: [
         { text: "POST /api/v1/chat/{session_id}/message", type: "info" },
@@ -390,6 +402,7 @@ const CHAT: FlowDef = {
       ],
     },
     { id: "q_resp", label: "Response to User", sublabel: "Markdown + saved to ChatMessage", icon: "📤", x: 90, y: 985,
+      explainer: "🤖 Agent replies with a clear answer",
       agentName: "Response Handler", agentRole: "routers/chat.py",
       finalState: "done",
       activities: [
@@ -428,6 +441,7 @@ const VENDOR_CHAT: FlowDef = {
   description: "Feature 6.1: Same query_agent.py, additive schema-description edit. Handles inbound-only, outbound-only, and combined net questions ('how much do I owe vs. how much is owed to me') in one screen.",
   nodes: [
     { id: "vc_user", label: "User Question", sublabel: "Any direction", icon: "💬", x: 90, y: 30,
+      explainer: "👤 User asks a question in plain English",
       agentName: "Chat Endpoint", agentRole: "routers/chat.py::post_chat_message()",
       activities: [
         { text: "Message: 'How much do I owe vs. how much is owed to me?'", type: "data" },
@@ -481,6 +495,7 @@ const VENDOR_CHAT: FlowDef = {
       ],
     },
     { id: "vc_resp", label: "Response to User", sublabel: "Combined net answer", icon: "📤", x: 90, y: 820,
+      explainer: "🤖 Agent replies with a clear answer",
       agentName: "Response Handler", agentRole: "routers/chat.py",
       finalState: "done",
       activities: [
@@ -624,7 +639,7 @@ function FlowCanvas({
         const x = tx(node.x); const y = ty(node.y);
         const accentColor = node.isNew ? "#F59E0B" : flow.color;
         return (
-          <g key={node.id} transform={`translate(${x},${y})`}
+          <g key={node.id} data-node-id={node.id} transform={`translate(${x},${y})`}
             onClick={() => onNodeClick(node.id)} style={{ cursor: "pointer" }}>
             {/* Pulse ring for active */}
             {isActive && (
@@ -664,6 +679,21 @@ function FlowCanvas({
               <circle cx={NW - 10} cy={10} r={4}
                 fill={state === "active" ? accentColor : state === "done" ? "#22C55E" : state === "warn" ? "#EAB308" : "#EF4444"}
                 style={isActive ? { animation: "blink 0.8s ease-in-out infinite" } : undefined} />
+            )}
+            {/* Gap 64: plain-language explainer bubble for human-facing
+                moments (user action / agent reply / terminal outcome) --
+                blinks above the node while it's active, so a non-technical
+                viewer gets "user uploaded a PDF" / "agent replied" without
+                having to parse the technical activity log on the right. */}
+            {isActive && node.explainer && (
+              <g transform="translate(0, -34)">
+                <rect x={0} y={0} width={270} height={24} rx={12}
+                  fill="#0B1220" stroke={accentColor} strokeWidth={1.5} />
+                <circle cx={14} cy={12} r={4} fill={accentColor} style={{ animation: "blink 0.9s ease-in-out infinite" }} />
+                <text x={26} y={16} fill="#E2E8F0" fontSize="10.5" fontFamily="Inter,sans-serif">
+                  {node.explainer.length > 38 ? node.explainer.slice(0, 37) + "…" : node.explainer}
+                </text>
+              </g>
             )}
           </g>
         );
@@ -761,6 +791,37 @@ export default function FlowsPage() {
   const flow = ALL_FLOWS.find((f) => f.id === flowId) ?? INBOUND;
   const nodeMap = Object.fromEntries(flow.nodes.map((n) => [n.id, n]));
   const timeoutRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+
+  // Gap 58/63: the canvas is much taller than its viewport (nodes run well
+  // past 1000px down), so during autoplay the active node walks off-screen
+  // with nothing telling the viewer to scroll -- it just looks like the
+  // animation stopped. Auto-scroll the wrapper to keep the active node
+  // roughly centered.
+  //
+  // Gap 63 fix: this originally computed the scroll target from each node's
+  // raw `x`/`y` coordinates (viewBox units), assuming 1 unit = 1 CSS pixel.
+  // But the SVG is `width="100%"` with no explicit `height`, so the browser
+  // auto-scales height to preserve the viewBox's aspect ratio against
+  // whatever width it's stretched to -- on this page that scale factor is
+  // ~1.9x, not 1x. The raw-coordinate math undershot every target
+  // proportionally more the further down the flow it was, so the last 1-2
+  // nodes (e.g. "COMPLETED") never scrolled into view at all, even after the
+  // Gap 58 fix. Reading the node's *rendered* position via
+  // getBoundingClientRect() is immune to that scale factor (or any future
+  // layout change) since it measures real pixels, not viewBox units.
+  useEffect(() => {
+    if (!isPlaying || !activeNodeId) return;
+    const container = canvasWrapRef.current;
+    if (!container) return;
+    const target = container.querySelector(`[data-node-id="${activeNodeId}"]`);
+    if (!target) return;
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const targetCenterWithinContent = (targetRect.top - containerRect.top) + container.scrollTop + targetRect.height / 2;
+    const scrollTo = targetCenterWithinContent - container.clientHeight / 2;
+    container.scrollTo({ top: Math.max(0, scrollTo), behavior: "smooth" });
+  }, [activeNodeId, isPlaying]);
 
   function clearTimeouts() {
     timeoutRefs.current.forEach(clearTimeout);
@@ -781,6 +842,7 @@ export default function FlowsPage() {
     setActivities([]);
     setStepIndex(0);
     setIsPlaying(false);
+    canvasWrapRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function fireEdges(edgeIds: string[]) {
@@ -844,6 +906,14 @@ export default function FlowsPage() {
 
   function handlePlay() {
     if (isPlaying) return;
+    // Gap 60: the canvas wrapper sits below a ~230px header/toolbar, so on a
+    // typical viewport its bottom portion starts below the fold even before
+    // playback begins -- bring it fully into view the moment Play is
+    // pressed, instead of relying on the viewer to notice and scroll down
+    // themselves. "nearest" only moves as far as needed, so the toolbar
+    // (Pause/Reset/speed controls) stays visible rather than being scrolled
+    // off the top.
+    canvasWrapRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     // If finished, restart
     const allDone = flow.sequence.every((s) => nodeStates[s.nodeId] === "done" || nodeStates[s.nodeId] === "warn");
     if (allDone) { resetFlow(); addTimeout(() => { setIsPlaying(true); runStep(0); }, 100); return; }
@@ -878,6 +948,7 @@ export default function FlowsPage() {
         @keyframes pulse-ring { 0%,100%{opacity:0.5;transform:scale(1)} 50%{opacity:0.8;transform:scale(1.015)} }
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
         @keyframes slide-in { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes hint-glow { 0%,100%{box-shadow:0 0 0 0 var(--glow-color)} 50%{box-shadow:0 0 12px 2px var(--glow-color)} }
         .flow-canvas-wrap { overflow-y: auto; }
         .flow-canvas-wrap::-webkit-scrollbar { width: 4px; }
         .flow-canvas-wrap::-webkit-scrollbar-thumb { background: #1E293B; border-radius: 2px; }
@@ -909,7 +980,22 @@ export default function FlowsPage() {
                 </div>
                 <button onClick={handleReset} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #1E293B", background: "transparent", color: "#475569", fontSize: 12, cursor: "pointer" }}>⟳</button>
                 <button onClick={isPlaying ? handlePause : handlePlay}
-                  style={{ padding: "7px 18px", borderRadius: 7, border: `1px solid ${isPlaying ? "#EF4444" : flow.color}`, background: isPlaying ? "#2D0A0A" : `${flow.color}1a`, color: isPlaying ? "#F87171" : flow.color, fontSize: 12.5, fontWeight: 700, cursor: "pointer", minWidth: 70 }}>
+                  style={{
+                    padding: "7px 18px", borderRadius: 7, border: `1px solid ${isPlaying ? "#EF4444" : flow.color}`,
+                    background: isPlaying ? "#2D0A0A" : `${flow.color}1a`, color: isPlaying ? "#F87171" : flow.color,
+                    fontSize: 12.5, fontWeight: 700, cursor: "pointer", minWidth: 70,
+                    // Gap 65: the hint banner alone wasn't enough -- glow the
+                    // actual button being pointed at too, so the eye lands on
+                    // the real target, not just the sentence about it. Uses a
+                    // box-shadow pulse (not a transform:scale one) since a
+                    // resizing hit-box is jumpy to click and, concretely,
+                    // broke Playwright's element-stability check during
+                    // verification -- a real, if narrow, signal that it's not
+                    // a great interaction pattern for a clickable button.
+                    ...(!isPlaying && Object.keys(nodeStates).length === 0
+                      ? ({ "--glow-color": `${flow.color}90`, animation: "hint-glow 1.4s ease-in-out infinite" } as React.CSSProperties)
+                      : {}),
+                  }}>
                   {isPlaying ? "⏸ Pause" : "▶ Play"}
                 </button>
               </div>
@@ -942,6 +1028,17 @@ export default function FlowsPage() {
                 </div>
               )}
             </div>
+
+            {/* Gap 61: first-time guidance -- nothing on this page previously
+                told a new visitor what to do; the only hint was buried in the
+                AgentPanel's empty state on the right, easy to miss. Shown
+                until the current flow has been played at least once. */}
+            {!isPlaying && Object.keys(nodeStates).length === 0 && (
+              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: `${flow.color}12`, border: `1px solid ${flow.color}30`, fontSize: 12, color: "#94A3B8", display: "flex", alignItems: "center", gap: 8, "--glow-color": `${flow.color}80`, animation: "hint-glow 1.6s ease-in-out infinite" } as React.CSSProperties}>
+                <span style={{ fontSize: 14, animation: "blink 1s ease-in-out infinite" }}>👆</span>
+                <span>Pick one of the 4 flows above, then press <strong style={{ color: flow.color }}>▶ Play</strong> to watch the agents work through it step by step.</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -949,7 +1046,7 @@ export default function FlowsPage() {
         <div style={{ flex: 1, maxWidth: 1480, margin: "0 auto", width: "100%", padding: "16px 24px", display: "grid", gridTemplateColumns: "1fr 340px", gap: 16, alignItems: "start" }}>
 
           {/* Canvas */}
-          <div className="flow-canvas-wrap" style={{ background: "rgba(8,13,24,0.6)", border: `1px solid ${flow.color}28`, borderRadius: 12, padding: "16px 20px", backdropFilter: "blur(6px)", maxHeight: "calc(100vh - 160px)", overflowY: "auto" }}>
+          <div ref={canvasWrapRef} className="flow-canvas-wrap" style={{ background: "rgba(8,13,24,0.6)", border: `1px solid ${flow.color}28`, borderRadius: 12, padding: "16px 20px", backdropFilter: "blur(6px)", maxHeight: "calc(100vh - 160px)", overflowY: "auto" }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
               <span style={{ padding: "2px 8px", borderRadius: 5, background: `${flow.color}1a`, color: flow.color, fontSize: 10.5, fontWeight: 700 }}>{flow.id === "outbound" || flow.id === "vendor_chat" ? "VENDOR FLOW" : "EXISTING"}</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#E2E8F0" }}>{flow.name}</span>

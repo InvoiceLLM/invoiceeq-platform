@@ -13,18 +13,28 @@ Prod_Invoice_LLM/
 │
 ├── apps/
 │   ├── invoice-website/        # Marketing site, Pricing, SSO Auth (Next.js)
+│   │   └── website_features/   # Feature specs + tracker (app-specific docs)
 │   ├── invoice-fe/             # Dashboard, Auditor Tab, Semantic Chat (Next.js)
+│   │   ├── tests/manual/       # Ad hoc Playwright verification scripts (not CI)
+│   │   └── docs/               # Feature specs + tracker (app-specific docs)
 │   └── invoice-be/             # FastAPI API, Queue Workers, AI Agents (Python)
+│       ├── tests/              # Automated pytest suite
+│       ├── alembic/            # DB migrations (live — migrations/ is not used)
+│       └── docs/               # Feature specs + tracker (app-specific docs)
 │
-├── infra/                      # Infrastructure as Code (Azure Bicep / Terraform)
+├── infra/                      # Infrastructure as Code (Azure Bicep, live IaC)
 │   └── modules/                # VNet, PostgreSQL, Storage, AI, Security, Monitoring
 │
-├── docker/                     # Dockerfiles for all services
+├── docker/                     # Dockerfiles for all services (compose file stays at root)
+├── scripts/                    # One-off dev/ops scripts (run-local.ps1, queue debug scripts)
 ├── .github/workflows/          # CI/CD Pipeline configurations (GitHub Actions)
-├── docs/                       # Architecture docs, blueprints, feature backlog
+├── docs/                       # Repo-wide docs (not app-specific)
+│   ├── architecture/           # Technical/Cloud/Database architecture docs + diagrams
+│   ├── guides/                 # Setup, secrets-sync, workflow, onboarding guides
+│   ├── test_cases/             # Manual QA test case references
+│   └── screenshots/            # UI reference screenshots
 │
-├── Technical_Architecture_Document.md
-├── Cloud_Architecture_Document.md
+├── docker-compose.yml          # Local dev stack (Postgres/Redis/Chroma/Azurite)
 └── README.md                   # ← You are here
 ```
 
@@ -97,8 +107,8 @@ main          ← Production (manual approval required)
 
 ## Documentation
 
-- [Technical Architecture Document](./Technical_Architecture_Document.md)
-- [Cloud Architecture Document](./Cloud_Architecture_Document.md)
+- [Technical Architecture Document](./docs/architecture/Technical_Architecture_Document.md)
+- [Cloud Architecture Document](./docs/architecture/Cloud_Architecture_Document.md)
 
 ## License
 

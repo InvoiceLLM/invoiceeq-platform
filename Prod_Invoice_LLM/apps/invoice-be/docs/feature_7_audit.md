@@ -1,0 +1,25 @@
+# Feature 7: Audit Resolution & Finalization
+
+Enable human auditor overrides, update database transaction states, and save template learning rules.
+
+### File Coordinates
+* Router: [apps/invoice-be/routers/audit.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/audit.py) → `PUT /audit/resolve/{invoice_id}` → `resolve_audit_invoice()`
+
+### Functionality
+`resolve_audit_invoice()` fetches the tenant-scoped `Invoice` row by id (no status filter — this works on an invoice in any status, not just `AUDIT_REQUIRED`; see Gap 53 below), then: (1) filters `invoice.sa_alerts` down to whatever wasn't named in `payload.dismissed_alerts` (matching by string, `id`, `type`, or `message` — alerts can be stored as either plain strings or dicts, so both shapes are handled); (2) if `payload.status` is present, validates it's `PAID`/`REJECTED` and writes it — `status` is optional, so a call can dismiss alerts and/or save corrections without finalizing the invoice at all; (3) if `payload.corrections` is present, persists each corrected field onto the `Invoice` row via `_apply_corrections()`, producing a before/after diff (Task 7.3). It inserts one `AuditLog` row (`action="RESOLVE_INVOICE"`, `details` = target status, dismissed/remaining alerts, and the correction diff) capturing `actor_user_id`/`actor_role` from the JWT context, and commits everything in one transaction. If a correction was made, `_detect_correction_pattern()` checks whether that field has recurred often enough (≥3 times for one vendor, or ≥3 distinct vendors) to suggest a Trainer rule (Task 7.4), returned as `suggested_rule` on the response.
+
+### Tasks
+- [x] **Task 7.1: Code Audit Resolution Endpoint** — `PUT /api/v1/audit/resolve/{invoice_id}`, dismisses warnings, updates status to `PAID`/`REJECTED`. Fields are no longer strictly read-only — superseded/extended by Task 7.3.
+- [x] **Task 7.2: Implement Audit Logging** — every resolve call writes one `AuditLog` row with actor/action/timestamp/details.
+- [x] **Task 7.3: Accept field corrections on resolve** — `corrections: dict[str, Any]` payload (field name → corrected value), persisted onto the `Invoice` row with a before/after diff logged in `audit_logs.details` — the raw training signal for what the AI got wrong and what a human said instead. FE: `docs/feature_4_auditor.md` Task 4.6.
+- [x] **Task 7.4: Detect correction patterns and suggest a trainer rule** — after a correction, checks whether the same field recurred ≥3 times (per-vendor or across vendors) and returns `suggested_rule: {scope, field, vendor_name, sample_correction} | null` so the FE can prompt "Want to save this as a rule?" (`feature_4_auditor.md` Task 4.7). Threshold and lookback window (`_RULE_SUGGESTION_THRESHOLD`, `_RULE_SUGGESTION_LOOKBACK_DAYS` in `routers/audit.py`) are hardcoded per-tenant-uniform constants today, not per-tenant configurable — flagged as a known simplification, not revisited since no false-positive-suggestion complaints have surfaced.
+
+### Gaps
+- `[x]` **Gap 53: "Report an issue" only reachable from `AUDIT_REQUIRED` invoices** — Fixed Jul 27, 2026. Turned out `resolve_audit_invoice()` already worked on any invoice regardless of status (no gate was ever added) — `status` and `dismissed_alerts` are both optional, so a correction-only payload (`{"corrections": {...}}`) on a `COMPLETED` invoice with zero alerts already persisted the field, logged it, and left status untouched. No backend change was needed; what was actually missing was the FE entry point (`fe_features_tracker.md` FE Gap 26) — the review page had no button to save a correction without also forcing `PAID`/`REJECTED`, and the review page itself was unreachable from anywhere in the app due to a separate, larger bug found in the same pass (every nav link pointed at a `/audit` route that never existed). Added `test_resolve_correction_only_on_completed_invoice` to `tests/test_audit.py`; also fixed a stale assertion in `test_resolve_invoice_paid` left over from before Task 7.3/7.4 added fields to the response. Verified live: a real `PUT /audit/resolve/{id}` correction-only call against a real `COMPLETED` invoice in the running dev DB, confirmed the value persisted and status stayed `COMPLETED`, then reverted it.
+
+### Recent Fixes
+* **P0 Bug - AlertConsole 400 Error**: Fixed Jul 25, 2026. The `status` field was previously required on every resolve call, causing `AlertConsole.tsx`'s "Dismiss" button (which sent `status: currentStatus`, e.g., `"AUDIT_REQUIRED"`) to always fail with a 400 error since the backend only accepted `PAID`/`REJECTED`. Made `status` optional on the backend so omitting it correctly dismisses/corrects without finalizing the invoice.
+
+### Verification Plan
+* **Automated Tests**: Run `uv run pytest tests/test_audit.py` testing resolution overrides and status updates.
+* **Manual Verification**: Correct a mock invoice in the Auditor UI tab, click Approve, and verify that the alerts are removed and status changes in the database.

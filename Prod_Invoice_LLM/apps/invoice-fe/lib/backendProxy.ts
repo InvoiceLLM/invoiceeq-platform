@@ -35,8 +35,14 @@ export async function proxyJson(request: NextRequest, path: string): Promise<Nex
   });
 
   const data = await response.text();
-  return new NextResponse(data, {
-    status: response.status,
-    headers: { "Content-Type": response.headers.get("content-type") || "application/json" },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": response.headers.get("content-type") || "application/json",
+  };
+  // FE Gap 29: GET /invoices reports its full matching count here so callers
+  // can page through the tenant's full result set instead of client-slicing
+  // one fetched batch -- forward it through untouched when present.
+  const totalCount = response.headers.get("x-total-count");
+  if (totalCount) headers["X-Total-Count"] = totalCount;
+
+  return new NextResponse(data, { status: response.status, headers });
 }

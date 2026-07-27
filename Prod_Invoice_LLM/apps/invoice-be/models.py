@@ -53,6 +53,14 @@ class Invoice(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = Field(default=None)
 
+    # FE Gap 29: dashboard/list filters are always tenant-scoped plus one of
+    # status/date/vendor, so composite indexes led by tenant_id (rather than
+    # single-column ones) are what the query planner actually uses here.
+    __table_args__ = (
+        sa.Index("ix_invoice_tenant_status", "tenant_id", "status"),
+        sa.Index("ix_invoice_tenant_invoice_date", "tenant_id", "invoice_date"),
+        sa.Index("ix_invoice_tenant_vendor_name", "tenant_id", "vendor_name"),
+    )
 
 
 class TenantConnection(SQLModel, table=True):

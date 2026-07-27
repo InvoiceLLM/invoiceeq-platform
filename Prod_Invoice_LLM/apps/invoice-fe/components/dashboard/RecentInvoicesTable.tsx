@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import {
   FileText,
@@ -27,17 +27,23 @@ export interface InvoiceRecord {
   tags?: string[];
 }
 
-interface RecentInvoicesTableProps {
-  invoices: InvoiceRecord[];
-  isLoading: boolean;
-  onDelete?: (id: string) => void;
-}
-
 // FE Gap 5: status-based sub-tabs. "Pending" covers everything not yet
 // finalized as Paid/Rejected (Processing, Completed, Audit Required,
 // Duplicate) -- matches the AP mental model of "still in the pipeline"
 // vs. a closed-out invoice, rather than mapping 1:1 to every raw status enum.
-type StatusTab = "all" | "paid" | "pending" | "rejected";
+export type StatusTab = "all" | "paid" | "pending" | "rejected";
+
+interface RecentInvoicesTableProps {
+  invoices: InvoiceRecord[];
+  isLoading: boolean;
+  onDelete?: (id: string) => void;
+  activeTab: StatusTab;
+  onTabChange: (tab: StatusTab) => void;
+  currentPage: number;
+  totalPages: number;
+  totalCount: number;
+  onPageChange: (page: number) => void;
+}
 
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "all", label: "All" },
@@ -46,37 +52,24 @@ const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "rejected", label: "Rejected" },
 ];
 
-function matchesStatusTab(status: string, tab: StatusTab): boolean {
-  if (tab === "all") return true;
-  const s = (status || "PROCESSING").toUpperCase();
-  if (tab === "paid") return s === "PAID";
-  if (tab === "rejected") return s === "REJECTED";
-  return s !== "PAID" && s !== "REJECTED";
-}
-
-// FE Gap 12: client-side pagination page size.
-const PAGE_SIZE = 8;
-
 export default function RecentInvoicesTable({
   invoices = [],
   isLoading,
   onDelete,
+  activeTab,
+  onTabChange,
+  currentPage,
+  totalPages,
+  totalCount,
+  onPageChange,
 }: RecentInvoicesTableProps) {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<StatusTab>("all");
-  const [currentPage, setCurrentPage] = useState(1);
 
-  const filteredInvoices = invoices.filter((inv) => matchesStatusTab(inv.status, activeTab));
-  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / PAGE_SIZE));
-  const pageInvoices = filteredInvoices.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-
-  // Reset to page 1 whenever the tab changes or the underlying data changes
-  // (e.g. a delete shrinks the list) -- otherwise a stale page number could
-  // point past the end of the newly-filtered/shrunk list.
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [activeTab, invoices.length]);
+  // FE Gap 29: `invoices` is now a single real server-paginated page (already
+  // filtered by activeTab and limited/offset by currentPage on the backend),
+  // not a client-fetched batch that gets re-sliced/re-filtered here.
+  const pageInvoices = invoices;
 
   const handleDelete = async (inv: InvoiceRecord, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -180,7 +173,7 @@ export default function RecentInvoicesTable({
           {STATUS_TABS.map((tab) => (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => onTabChange(tab.key)}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                 activeTab === tab.key
                   ? "bg-[#3B82F6] text-white"
@@ -218,7 +211,7 @@ export default function RecentInvoicesTable({
                   <td className="px-6 py-4 text-right"><div className="h-4 bg-slate-800 rounded w-8 ml-auto"></div></td>
                 </tr>
               ))
-            ) : filteredInvoices.length === 0 ? (
+            ) : pageInvoices.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                   No invoices matched the active filters.
@@ -322,22 +315,25 @@ export default function RecentInvoicesTable({
         </table>
       </div>
 
-      {/* FE Gap 12: client-side pagination -- only shown once there's more than one page */}
+      {/* FE Gap 29: real server-backed pagination -- Previous/Next now fetch the
+          next limit/offset page from the backend rather than re-slicing an
+          already-fetched fixed batch, so invoices past the first page are
+          actually reachable. */}
       {!isLoading && totalPages > 1 && (
         <div className="flex items-center justify-between px-6 py-3 border-t border-[#222D3D] text-xs text-slate-400">
           <span>
-            Page {currentPage} of {totalPages} ({filteredInvoices.length} invoices)
+            Page {currentPage} of {totalPages} ({totalCount} invoices)
           </span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              onClick={() => onPageChange(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#222D3D] text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft className="w-3.5 h-3.5" /> Previous
             </button>
             <button
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#222D3D] text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >

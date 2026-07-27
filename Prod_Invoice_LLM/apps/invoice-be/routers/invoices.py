@@ -5,10 +5,11 @@ import hashlib
 import asyncio
 from uuid import uuid4, UUID
 from datetime import date
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from redis.asyncio import Redis as AsyncRedis
+from sqlalchemy import func
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 from config import settings
@@ -359,35 +360,59 @@ async def get_invoice_status(
 
 @router.get("", response_model=list[Invoice])
 async def list_invoices(
+    response: Response,
     limit: int = Query(10, ge=1, le=100),
     offset: int = Query(0, ge=0),
     start_date: date | None = None,
     end_date: date | None = None,
     status: str | None = None,
+    status_in: str | None = None,
     tag: str | None = None,
+    vendor_name: str | None = None,
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Fetches a list of matching records for the requesting tenant.
-    Supports pagination, date ranges, status filters, and search tags.
+    Fetches a page of matching records for the requesting tenant, most recent
+    first. Supports pagination, date ranges, status/vendor filters, and search
+    tags.
+
+    FE Gap 29: the total matching count (ignoring limit/offset) is returned in
+    the X-Total-Count header so a caller can page through the tenant's full
+    result set via repeated limit/offset calls, instead of fetching one fixed
+    batch and re-slicing it client-side. `status_in` (comma-separated) exists
+    alongside the single-value `status` filter so the FE's "Pending" tab --
+    which spans several raw statuses (Processing/Completed/Audit Required/
+    Duplicate) rather than one -- can still be a real server-side filter
+    compatible with this pagination, instead of a client-side re-filter of an
+    already-paginated page.
     """
-    query = select(Invoice).where(Invoice.tenant_id == context.tenant_id)
-    
+    conditions = [Invoice.tenant_id == context.tenant_id]
     if start_date:
-        query = query.where(Invoice.invoice_date >= start_date)
+        conditions.append(Invoice.invoice_date >= start_date)
     if end_date:
-        query = query.where(Invoice.invoice_date <= end_date)
+        conditions.append(Invoice.invoice_date <= end_date)
     if status:
-        query = query.where(Invoice.status == status)
+        conditions.append(Invoice.status == status)
+    if status_in:
+        conditions.append(Invoice.status.in_([s.strip() for s in status_in.split(",") if s.strip()]))
+    if vendor_name:
+        conditions.append(Invoice.vendor_name == vendor_name)
+
+    query = select(Invoice).where(*conditions)
     if tag:
         # Check DB dialect to use correct JSON query syntax
         if db_session.bind.dialect.name == "postgresql":
             query = query.where(Invoice.tags.contains([tag]))
         else:
             query = query.where(Invoice.tags.like(f'%"{tag}"%'))
-            
-    query = query.offset(offset).limit(limit)
+
+    total = db_session.exec(
+        select(func.count()).select_from(query.with_only_columns(Invoice.id).subquery())
+    ).one()
+    response.headers["X-Total-Count"] = str(total)
+
+    query = query.order_by(Invoice.created_at.desc()).offset(offset).limit(limit)
     return db_session.exec(query).all()
 
 

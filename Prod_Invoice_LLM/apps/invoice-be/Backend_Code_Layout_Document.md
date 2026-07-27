@@ -1,6 +1,6 @@
 # API Flow Directory & Code Mapping
 
-This document maps each system API to its sequential file and function execution path, reconciled against the actual `apps/invoice-be` implementation (last verified 2026-07-12). Steps marked **[Not yet implemented]** describe intended/roadmap behavior that does not exist in code yet — see the corresponding `be_features/*.md` file for tracked status.
+This document maps each system API to its sequential file and function execution path, reconciled against the actual `apps/invoice-be` implementation (last verified 2026-07-12). Steps marked **[Not yet implemented]** describe intended/roadmap behavior that does not exist in code yet — see the corresponding `docs/*.md` file for tracked status.
 
 ---
 

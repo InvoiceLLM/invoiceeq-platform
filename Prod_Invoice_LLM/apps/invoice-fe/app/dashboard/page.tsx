@@ -1,14 +1,30 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import FilterBar, { FilterState } from "../../components/dashboard/FilterBar";
 import MetricsGrid from "../../components/dashboard/MetricsGrid";
 import ClientPerformanceChart from "../../components/dashboard/ClientPerformanceChart";
-import RecentInvoicesTable from "../../components/dashboard/RecentInvoicesTable";
+import RecentInvoicesTable, { StatusTab } from "../../components/dashboard/RecentInvoicesTable";
 import TrainerImpactPanel from "../../components/dashboard/TrainerImpactPanel";
 import ActionableInsightsPanel from "../../components/dashboard/ActionableInsightsPanel";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
+
+// FE Gap 29: real server-side page size for the Recent Invoices table (was
+// previously a client-side re-slice of one already-fetched 20-row batch,
+// which could never reach invoices past that fixed window).
+const PAGE_SIZE = 8;
+
+// "Pending" spans several raw statuses (matches the AP mental model of
+// "still in the pipeline" vs. closed-out, same reasoning as the original
+// Gap 5 tabs) so it needs the backend's status_in filter rather than the
+// single-value status param used by "paid"/"rejected"/the FilterBar dropdown.
+function tabToStatusParams(tab: StatusTab): { status?: string; status_in?: string } {
+  if (tab === "paid") return { status: "PAID" };
+  if (tab === "rejected") return { status: "REJECTED" };
+  if (tab === "pending") return { status_in: "PROCESSING,COMPLETED,AUDIT_REQUIRED,DUPLICATE" };
+  return {};
+}
 
 interface SpendPoint {
   date: string;
@@ -62,7 +78,14 @@ export default function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics>(defaultMetrics);
   const [invoices, setInvoices] = useState([]);
   const [allInvoices, setAllInvoices] = useState([]); // Kept to dynamically extract vendors/tags
-  const [isLoading, setIsLoading] = useState(true);
+  const [isMetricsLoading, setIsMetricsLoading] = useState(true);
+
+  // FE Gap 29: pagination state now lives here (server-backed) rather than
+  // inside RecentInvoicesTable re-slicing one fixed fetched batch.
+  const [activeTab, setActiveTab] = useState<StatusTab>("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [isInvoicesLoading, setIsInvoicesLoading] = useState(true);
 
   // Dynamically extract date range values
   const getDatesForRange = (range: string) => {
@@ -104,66 +127,92 @@ export default function DashboardPage() {
     fetchAllData();
   }, [authLoading]);
 
-  // 2. Fetch metrics & invoices when filters change
+  // 2. Fetch dashboard metrics whenever filters change. Independent of
+  // pagination -- these are tenant-wide aggregates, not tied to a page.
   useEffect(() => {
     if (authLoading) return;
 
-    const fetchData = async () => {
-      setIsLoading(true);
+    const fetchMetrics = async () => {
+      setIsMetricsLoading(true);
       const { startDate, endDate } = getDatesForRange(filters.dateRange);
 
-      const commonParams = {
-        start_date: startDate,
-        end_date: endDate,
-        status: filters.status || undefined,
-      };
-
       try {
-        // Query /dashboard/metrics
         const metricsRes = await apiClient.get("/dashboard/metrics", {
           params: {
-            ...commonParams,
+            start_date: startDate,
+            end_date: endDate,
+            status: filters.status || undefined,
             vendor_name: filters.vendorName || undefined,
           },
         });
-
-        // Query /invoices list
-        const invoicesRes = await apiClient.get("/invoices", {
-          params: {
-            ...commonParams,
-            limit: 20,
-            tag: filters.tag || undefined,
-          },
-        });
-
-        // Filter invoices locally by vendorName if set (backend /invoices has limit/offset/date parameters, local filtering adds extra safety)
-        let filteredInvoices = invoicesRes.data || [];
-        if (filters.vendorName) {
-          filteredInvoices = filteredInvoices.filter(
-            (inv: any) => inv.vendor_name === filters.vendorName
-          );
-        }
-
         setMetrics(metricsRes.data || defaultMetrics);
-        setInvoices(filteredInvoices);
       } catch (err) {
-        console.error("Error loading dashboard data", err);
+        console.error("Error loading dashboard metrics", err);
       } finally {
-        setIsLoading(false);
+        setIsMetricsLoading(false);
       }
     };
 
-    fetchData();
+    fetchMetrics();
   }, [filters, authLoading]);
+
+  // 3. Fetch one real server-paginated page of invoices for the Recent
+  // Invoices table. FE Gap 29: previously fetched one fixed batch (limit 20)
+  // and re-sliced/re-filtered it entirely client-side, so invoices past that
+  // fixed window were unreachable no matter how many times "Next" was
+  // clicked. Now every page turn and every tab switch is a real backend call
+  // with the matching limit/offset/status, and X-Total-Count drives the
+  // page count instead of the length of whatever happened to be fetched.
+  const fetchInvoicesPage = useCallback(async () => {
+    if (authLoading) return;
+    setIsInvoicesLoading(true);
+    const { startDate, endDate } = getDatesForRange(filters.dateRange);
+
+    try {
+      const invoicesRes = await apiClient.get("/invoices", {
+        params: {
+          start_date: startDate,
+          end_date: endDate,
+          vendor_name: filters.vendorName || undefined,
+          tag: filters.tag || undefined,
+          limit: PAGE_SIZE,
+          offset: (currentPage - 1) * PAGE_SIZE,
+          ...(activeTab === "all" ? { status: filters.status || undefined } : tabToStatusParams(activeTab)),
+        },
+      });
+
+      setInvoices(invoicesRes.data || []);
+      const totalHeader = invoicesRes.headers?.["x-total-count"];
+      setTotalCount(totalHeader ? parseInt(totalHeader, 10) : (invoicesRes.data || []).length);
+    } catch (err) {
+      console.error("Error loading invoices page", err);
+    } finally {
+      setIsInvoicesLoading(false);
+    }
+  }, [filters, activeTab, currentPage, authLoading]);
+
+  useEffect(() => {
+    fetchInvoicesPage();
+  }, [fetchInvoicesPage]);
 
   const handleFilterChange = (newFilters: FilterState) => {
     setFilters(newFilters);
+    setCurrentPage(1);
+  };
+
+  const handleTabChange = (tab: StatusTab) => {
+    setActiveTab(tab);
+    setCurrentPage(1);
   };
 
   const handleInvoiceDeleted = (id: string) => {
-    setInvoices((prev) => prev.filter((inv: any) => inv.id !== id));
+    // Re-fetch the current page rather than splicing the local array --
+    // totalCount/totalPages need to reflect the backend's new count too.
     setAllInvoices((prev) => prev.filter((inv: any) => inv.id !== id));
+    fetchInvoicesPage();
   };
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   // Build unique lists of client/vendor names and tags from historical data
   const uniqueVendors = Array.from(
@@ -202,18 +251,28 @@ export default function DashboardPage() {
       />
 
       {/* Bento box metrics panel */}
-      <MetricsGrid metrics={metrics} isLoading={isLoading} />
+      <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />
 
       {/* Analytics chart and invoice list ledger grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Table list - takes 2 cols on lg screens */}
         <div className="lg:col-span-2">
-          <RecentInvoicesTable invoices={invoices} isLoading={isLoading} onDelete={handleInvoiceDeleted} />
+          <RecentInvoicesTable
+            invoices={invoices}
+            isLoading={isInvoicesLoading}
+            onDelete={handleInvoiceDeleted}
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalCount={totalCount}
+            onPageChange={setCurrentPage}
+          />
         </div>
 
         {/* Vendors bar chart - takes 1 col on lg screens */}
         <div className="lg:col-span-1 space-y-6">
-          <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isLoading} />
+          <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isMetricsLoading} />
           <ActionableInsightsPanel />
           <TrainerImpactPanel />
         </div>

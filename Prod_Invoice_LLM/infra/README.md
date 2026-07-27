@@ -76,4 +76,4 @@ To configure the automated GitHub Actions CI/CD pipeline and synchronize secrets
 3. **Secrets Synchronization**:
    * The repository uses a daily automated sync workflow (`.github/workflows/sync-secrets.yml`) to sync secrets from Azure Key Vault directly to GitHub Repository Secrets (e.g. `DB_ADMIN_PASSWORD`, `CLERK_SECRET_KEY`, etc.).
    * To trigger a sync manually, go to the **Actions** tab on GitHub, select **"Sync Azure Key Vault Secrets to GitHub"**, and click **"Run workflow"**.
-   * *For more details, see the parent directory's `SECRETS_SYNC_GUIDE.md`.*
+   * *For more details, see `docs/guides/SECRETS_SYNC_GUIDE.md`.*
