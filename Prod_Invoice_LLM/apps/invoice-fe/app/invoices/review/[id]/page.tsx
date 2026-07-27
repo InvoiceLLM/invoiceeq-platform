@@ -132,6 +132,7 @@ export default function AuditorReviewPage() {
   const [corrections, setCorrections] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | null>(null);
+  const [savingCorrection, setSavingCorrection] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestedRule, setSuggestedRule] = useState<SuggestedRule | null>(null);
 
@@ -162,7 +163,18 @@ export default function AuditorReviewPage() {
 
   const handleResolve = async (targetStatus?: "PAID" | "REJECTED") => {
     if (!invoice) return;
-    if (targetStatus) setActionLoading(targetStatus === "PAID" ? "paid" : "rejected");
+    // Gap 53/FE 26: this can now also be called with no targetStatus and no
+    // dismissed alerts -- just persisting a field correction on an invoice
+    // that isn't AUDIT_REQUIRED (e.g. a COMPLETED invoice found to be
+    // factually wrong despite passing every automated check). The backend's
+    // PUT /audit/resolve already supported this (status/dismissed_alerts are
+    // both optional) -- the "Save Correction" button below was the missing
+    // entry point, not a new endpoint.
+    if (targetStatus) {
+      setActionLoading(targetStatus === "PAID" ? "paid" : "rejected");
+    } else {
+      setSavingCorrection(true);
+    }
     try {
       const res = await apiClient.put(`/audit/resolve/${invoice.id}`, {
         ...(targetStatus ? { status: targetStatus } : {}),
@@ -179,6 +191,7 @@ export default function AuditorReviewPage() {
       console.error("Resolve failed:", err);
     } finally {
       setActionLoading(null);
+      setSavingCorrection(false);
     }
   };
 
@@ -341,9 +354,18 @@ export default function AuditorReviewPage() {
             </div>
 
             {hasUnsavedCorrections && !isResolved && (
-              <div className="flex items-center gap-2 rounded-lg border border-blue-600/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
-                <Pencil size={12} />
-                {Object.keys(corrections).length} field(s) corrected — will be saved when you dismiss an alert or finalize below.
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-blue-600/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
+                <span className="flex items-center gap-2">
+                  <Pencil size={12} />
+                  {Object.keys(corrections).length} field(s) corrected
+                </span>
+                <button
+                  onClick={() => handleResolve()}
+                  disabled={!!actionLoading || savingCorrection}
+                  className="shrink-0 rounded-md border border-blue-500/50 bg-blue-600/20 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/40 disabled:opacity-50"
+                >
+                  {savingCorrection ? "Saving..." : "Save Correction"}
+                </button>
               </div>
             )}
 

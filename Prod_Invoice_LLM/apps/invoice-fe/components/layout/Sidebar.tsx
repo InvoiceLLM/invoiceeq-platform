@@ -3,10 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { 
-  LayoutDashboard, 
-  UploadCloud, 
-  ClipboardList, 
-  MessageSquare, 
+  LayoutDashboard,
+  UploadCloud,
+  MessageSquare,
   GraduationCap,
   Settings, 
   HelpCircle,
@@ -22,7 +21,14 @@ export default function Sidebar() {
   const menuItems = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Ingest", href: "/ingestion", icon: UploadCloud },
-    { name: "Invoices", href: "/audit", icon: ClipboardList },
+    // A separate "Invoices" nav item used to point at "/audit", which never
+    // existed as a route (the review page has always lived at
+    // /invoices/review/[id], reachable per-invoice from Dashboard/Ingestion's
+    // row actions, not as a standalone queue view). Removed rather than
+    // repointed at "/dashboard" -- two nav items for the same route would
+    // both show active at once. A dedicated invoices-queue list page is a
+    // real, separate gap; see be_features_tracker.md / fe_features_tracker.md
+    // new entry logged alongside Gap 53/FE 26 (2026-07-27).
     // AI Trainer link for rule scope fine-tuning & sandbox evaluation (Feature 6)
     { name: "AI Trainer", href: "/trainer", icon: GraduationCap },
     { name: "Chat", href: "/chat", icon: MessageSquare },

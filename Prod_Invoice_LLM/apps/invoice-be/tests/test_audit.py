@@ -53,7 +53,7 @@ def test_resolve_invoice_paid(db_session):
     }
     response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
     assert response.status_code == 200
-    assert response.json() == {"success": True}
+    assert response.json() == {"success": True, "corrections_applied": {}, "suggested_rule": None}
 
     # Verify updates in database
     db_session.refresh(db_invoice)
@@ -145,3 +145,40 @@ def test_resolve_tenant_isolation(db_session):
     # Context headers will default to MOCK_TENANT_ID (which doesn't match other_tenant_id)
     response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
     assert response.status_code == 404
+
+
+def test_resolve_correction_only_on_completed_invoice(db_session):
+    """Gap 53: a wrong-but-confident COMPLETED invoice (zero alerts, never flagged)
+    needs a correction path too, not just AUDIT_REQUIRED ones. PUT /audit/resolve
+    already supports this generically -- status and dismissed_alerts are both
+    optional -- so this confirms it end-to-end rather than adding a new endpoint:
+    a correction-only payload (no status, no dismissed_alerts) must persist the
+    field, log it, and leave the invoice's status untouched."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp",
+        status="COMPLETED",
+        grand_total=100.0,
+        sa_alerts=[]
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    payload = {"corrections": {"grand_total": 150.0}}
+    response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["corrections_applied"] == {"grand_total": {"old": 100.0, "new": 150.0}}
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "COMPLETED"  # untouched -- no status was requested
+    assert db_invoice.grand_total == 150.0
+
+    audit_logs = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id)).all()
+    assert len(audit_logs) == 1
+    assert audit_logs[0].details["target_status"] is None
+    assert audit_logs[0].details["corrections"] == {"grand_total": {"old": 100.0, "new": 150.0}}

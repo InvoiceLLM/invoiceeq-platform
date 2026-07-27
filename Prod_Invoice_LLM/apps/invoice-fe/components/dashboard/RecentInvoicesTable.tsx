@@ -4,7 +4,6 @@ import React, { useState } from "react";
 import Link from "next/link";
 import {
   FileText,
-  ExternalLink,
   MoreHorizontal,
   AlertCircle,
   CheckCircle,
@@ -137,13 +136,6 @@ export default function RecentInvoicesTable({
           </p>
         </div>
         
-        <Link 
-          href="/audit"
-          className="text-xs text-[#3B82F6] hover:text-[#3B82F6]/80 flex items-center gap-1 font-semibold transition-colors"
-        >
-          View all ledger
-          <ExternalLink className="w-3.5 h-3.5" />
-        </Link>
       </div>
 
       {/* Responsive Table Grid */}
@@ -237,7 +229,7 @@ export default function RecentInvoicesTable({
                         onClick={(e) => e.stopPropagation()}
                       >
                         <Link
-                          href={`/audit?id=${inv.id}`}
+                          href={`/invoices/review/${inv.id}`}
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300 hover:bg-[#1E293B] hover:text-white transition-colors"
                         >
                           <Eye className="w-3.5 h-3.5 text-[#3B82F6]" />

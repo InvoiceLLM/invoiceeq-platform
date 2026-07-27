@@ -6,9 +6,13 @@
 //   invoice and page number that was retrieved from ChromaDB to build the
 //   assistant answer.  This component renders each citation as a compact
 //   clickable pill so users can immediately verify the source material.
-//   Clicking navigates to /audit?invoice_id=...&page=... so the full PDF
-//   viewer can open on the correct page (rather than opening a modal here,
-//   which would block the chat flow).
+//   Clicking navigates to /invoices/review/{invoice_id}?page=... so the full
+//   PDF viewer can open on the correct page (rather than opening a modal here,
+//   which would block the chat flow). NOTE: /audit?invoice_id=...&page=... was
+//   the original target here, but no /audit route has ever existed in this app
+//   (the review page has always lived at /invoices/review/[id]) -- fixed
+//   2026-07-27 alongside Gap 53/FE 26, which found the same dead link pattern
+//   in RecentInvoicesTable.tsx and StatusTable.tsx.
 //   Styling matches the exact spec in feature_5_chat.md:
 //     bg-[#1E293B] border border-[#222D3D] text-slate-300 hover:text-white
 //     cursor-pointer px-3 py-1 rounded-full text-xs
@@ -31,7 +35,7 @@ export default function CitationPill({ citation }: CitationPillProps) {
   //   router.push is cleaner here than constructing an href string in JSX.
   const handleClick = () => {
     router.push(
-      `/audit?invoice_id=${citation.invoice_id}&page=${citation.page}`
+      `/invoices/review/${citation.invoice_id}?page=${citation.page}`
     );
   };
 

@@ -364,7 +364,7 @@ export default function StatusTable({
                                 Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? `$${item.total.toFixed(2)}` : "Pending"}
                               </span>
                               <Link
-                                href={`/audit?id=${item.id}`}
+                                href={`/invoices/review/${item.id}`}
                                 className="inline-flex items-center gap-1 text-xs text-[#3B82F6] hover:text-[#3B82F6]/80 font-bold transition-colors"
                               >
                                 Open Auditor Console
