@@ -17,11 +17,69 @@
 
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Bot, User } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bot, User, ThumbsUp, ThumbsDown } from "lucide-react";
 import CitationPill from "./CitationPill";
 import SqlAuditDrawer from "./SqlAuditDrawer";
+import { apiClient } from "@/lib/apiClient";
 import type { ChatMessage } from "@/types/chat";
+
+// =============================================================================
+// FeedbackVote — Gap 54: per-answer thumbs up/down, tied to that turn's
+// generated_sql/citations via message id (be_features_tracker.md Gap 54).
+// Signal-only: this records a vote, it never triggers any auto-fix. Clicking
+// the currently-active thumb again clears the vote (DELETE) rather than
+// re-sending the same vote, giving a normal toggle interaction.
+// =============================================================================
+function FeedbackVote({ messageId, initialVote }: { messageId: string; initialVote: "up" | "down" | null | undefined }) {
+  const [vote, setVote] = useState<"up" | "down" | null>(initialVote ?? null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleVote = async (next: "up" | "down") => {
+    if (submitting) return;
+    setSubmitting(true);
+    const clearing = vote === next;
+    const previous = vote;
+    setVote(clearing ? null : next); // optimistic
+    try {
+      if (clearing) {
+        await apiClient.delete(`/chat/messages/${messageId}/feedback`);
+      } else {
+        await apiClient.put(`/chat/messages/${messageId}/feedback`, { vote: next });
+      }
+    } catch (err) {
+      console.error("Failed to save chat feedback:", err);
+      setVote(previous); // roll back on failure
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1 px-1">
+      <button
+        onClick={() => handleVote("up")}
+        disabled={submitting}
+        title="Good answer"
+        className={`p-1 rounded transition-colors disabled:opacity-50 ${
+          vote === "up" ? "text-emerald-400 bg-emerald-500/10" : "text-slate-600 hover:text-slate-400"
+        }`}
+      >
+        <ThumbsUp className="w-3 h-3" />
+      </button>
+      <button
+        onClick={() => handleVote("down")}
+        disabled={submitting}
+        title="Bad answer"
+        className={`p-1 rounded transition-colors disabled:opacity-50 ${
+          vote === "down" ? "text-rose-400 bg-rose-500/10" : "text-slate-600 hover:text-slate-400"
+        }`}
+      >
+        <ThumbsDown className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
 
 // =============================================================================
 // renderMarkdown — lightweight inline markdown processor
@@ -183,8 +241,11 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Timestamp — secondary metadata, de-emphasised with small/muted style */}
-        <span className="text-[10px] text-slate-500 px-1">{formattedTime}</span>
+        {/* Timestamp + feedback vote row */}
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-slate-500 px-1">{formattedTime}</span>
+          {!isUser && <FeedbackVote messageId={message.id} initialVote={message.feedback} />}
+        </div>
       </div>
     </div>
   );

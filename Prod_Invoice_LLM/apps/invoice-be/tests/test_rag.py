@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from uuid import uuid4
 from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, create_engine, Session
+from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
 
 # Mock embeddings before importing chroma client or query agent
@@ -118,6 +118,72 @@ def test_chat_message_routing_and_history_saving(db_session):
         assert history_list[0]["content"] == "Hi there"
         assert history_list[1]["role"] == "assistant"
         assert history_list[1]["content"] == "Hello! I am your assistant."
+
+def test_message_feedback_upsert_and_clear(db_session):
+    """Gap 54: per-answer thumbs up/down. Voting is idempotent per message (a
+    second vote overwrites, not duplicates), the vote survives a reload via
+    GET /chat/sessions/{id}, and DELETE clears it -- all signal-only, no
+    side effect on the message/session/invoice data itself."""
+    client = TestClient(app)
+
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Feedback Test"))
+    db_session.commit()
+
+    from models import ChatMessage
+    message_id = uuid4()
+    db_session.add(ChatMessage(
+        id=message_id, session_id=session_id, role="assistant",
+        content="The grand total is $500.", generated_sql="SELECT ...", citations=[]
+    ))
+    db_session.commit()
+
+    # 1. Invalid vote value rejected
+    bad = client.put(f"/api/v1/chat/messages/{message_id}/feedback", json={"vote": "sideways"})
+    assert bad.status_code == 400
+
+    # 2. Cast a downvote
+    down = client.put(f"/api/v1/chat/messages/{message_id}/feedback", json={"vote": "down"})
+    assert down.status_code == 200
+    assert down.json() == {"success": True, "vote": "down"}
+
+    # 3. Survives a reload via session history, and doesn't touch message content
+    history = client.get(f"/api/v1/chat/sessions/{session_id}").json()
+    assert history[0]["feedback"] == "down"
+    assert history[0]["content"] == "The grand total is $500."
+
+    # 4. Changing the vote overwrites rather than duplicating
+    up = client.put(f"/api/v1/chat/messages/{message_id}/feedback", json={"vote": "up"})
+    assert up.status_code == 200
+    from models import ChatFeedback
+    rows = db_session.exec(select(ChatFeedback).where(ChatFeedback.message_id == message_id)).all()
+    assert len(rows) == 1
+    assert rows[0].vote == "up"
+
+    # 5. Clearing removes the row; re-fetch shows feedback=None again
+    clear = client.delete(f"/api/v1/chat/messages/{message_id}/feedback")
+    assert clear.status_code == 200
+    assert clear.json() == {"success": True, "vote": None}
+    history_after_clear = client.get(f"/api/v1/chat/sessions/{session_id}").json()
+    assert history_after_clear[0]["feedback"] is None
+
+
+def test_message_feedback_tenant_isolation(db_session):
+    """Gap 54: voting on a message that belongs to another tenant's session is forbidden."""
+    client = TestClient(app)
+    from models import ChatMessage
+    from dependencies import get_tenant_context, TenantContext
+
+    other_tenant_id = uuid4()
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=other_tenant_id, title="Other Tenant"))
+    message_id = uuid4()
+    db_session.add(ChatMessage(id=message_id, session_id=session_id, role="assistant", content="Some answer"))
+    db_session.commit()
+
+    response = client.put(f"/api/v1/chat/messages/{message_id}/feedback", json={"vote": "up"})
+    assert response.status_code == 403
+
 
 def test_sql_guardrail_safety_enforcement(db_session):
     """Verify that dangerous or cross-tenant SQL generations raise validation exceptions."""

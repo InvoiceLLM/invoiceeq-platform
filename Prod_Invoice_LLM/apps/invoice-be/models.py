@@ -80,6 +80,19 @@ class ChatMessage(SQLModel, table=True):
     citations: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+class ChatFeedback(SQLModel, table=True):
+    __tablename__ = "chat_feedback"
+    # Gap 54: signal-only per-answer thumbs up/down, tied to that turn's
+    # generated_sql/citations via message_id. One vote per message -- voting
+    # again overwrites rather than accumulating, so `message_id` is unique.
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    session_id: UUID = Field(index=True)
+    message_id: UUID = Field(index=True, unique=True)
+    vote: str = Field(max_length=10)  # "up" or "down"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class User(SQLModel, table=True):
     __tablename__ = "users"
     id: UUID = Field(default_factory=uuid4, primary_key=True)

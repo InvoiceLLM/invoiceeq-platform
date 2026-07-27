@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from datetime import datetime
 
 from dependencies import get_db_session, get_tenant_context, TenantContext
-from models import ChatSession, ChatMessage
+from models import ChatSession, ChatMessage, ChatFeedback
 from agents.query_agent import run_query_agent
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,9 @@ class SessionResponse(BaseModel):
 class MessageCreate(BaseModel):
     content: str
 
+class FeedbackCreate(BaseModel):
+    vote: str = Field(description="Must be exactly 'up' or 'down'")
+
 class CitationResponse(BaseModel):
     invoice_id: str | None = None
     vendor_name: str | None = None
@@ -41,6 +44,7 @@ class MessageResponse(BaseModel):
     generated_sql: str | None = None
     citations: list[CitationResponse] = []
     created_at: datetime
+    feedback: str | None = None  # Gap 54: "up" / "down" / None, so votes survive a reload
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -108,7 +112,18 @@ def get_session_messages(
         .order_by(ChatMessage.created_at.asc())
     )
     messages = db_session.exec(message_statement).all()
-    return messages
+
+    # Gap 54: attach each message's current vote (if any) so it survives a
+    # reload -- one query for the whole session rather than N+1 per message.
+    feedback_rows = db_session.exec(
+        select(ChatFeedback).where(ChatFeedback.session_id == session_id)
+    ).all()
+    feedback_by_message = {f.message_id: f.vote for f in feedback_rows}
+
+    return [
+        MessageResponse.model_validate(m).model_copy(update={"feedback": feedback_by_message.get(m.id)})
+        for m in messages
+    ]
 
 @router.post("/sessions/{session_id}/message", response_model=MessageResponse)
 def post_chat_message(
@@ -178,5 +193,71 @@ def post_chat_message(
     db_session.add(assistant_msg)
     db_session.commit()
     db_session.refresh(assistant_msg)
-    
+
     return assistant_msg
+
+
+def _get_owned_message(message_id: UUID, db_session: Session, tenant_context: TenantContext) -> ChatMessage:
+    """Gap 54 helper: fetch a message and confirm it belongs to the requesting
+    tenant via its parent session -- same ownership-check shape used by the
+    two handlers above, just entered from a message id instead of a session id."""
+    message = db_session.exec(select(ChatMessage).where(ChatMessage.id == message_id)).first()
+    if not message:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+
+    chat_session = db_session.exec(select(ChatSession).where(ChatSession.id == message.session_id)).first()
+    if not chat_session or chat_session.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access forbidden to this message.")
+
+    return message
+
+
+@router.put("/messages/{message_id}/feedback")
+def set_message_feedback(
+    message_id: UUID,
+    payload: FeedbackCreate,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context)
+):
+    """
+    Gap 54: per-answer thumbs up/down, tied to that turn's generated_sql/
+    citations via message_id. Deliberately signal-only -- this just records
+    the vote, it never triggers any auto-fix or retraining. Voting again
+    on the same message overwrites the previous vote (upsert on message_id)
+    rather than accumulating duplicate rows.
+    """
+    if payload.vote not in ("up", "down"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="vote must be 'up' or 'down'.")
+
+    message = _get_owned_message(message_id, db_session, tenant_context)
+
+    existing = db_session.exec(select(ChatFeedback).where(ChatFeedback.message_id == message_id)).first()
+    if existing:
+        existing.vote = payload.vote
+        db_session.add(existing)
+    else:
+        db_session.add(ChatFeedback(
+            tenant_id=tenant_context.tenant_id,
+            session_id=message.session_id,
+            message_id=message_id,
+            vote=payload.vote,
+        ))
+    db_session.commit()
+    return {"success": True, "vote": payload.vote}
+
+
+@router.delete("/messages/{message_id}/feedback")
+def clear_message_feedback(
+    message_id: UUID,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context)
+):
+    """Gap 54: clears a previously-cast vote (e.g. clicking the same thumb
+    again to un-vote). No-op, not an error, if there was nothing to clear."""
+    _get_owned_message(message_id, db_session, tenant_context)
+
+    existing = db_session.exec(select(ChatFeedback).where(ChatFeedback.message_id == message_id)).first()
+    if existing:
+        db_session.delete(existing)
+        db_session.commit()
+    return {"success": True, "vote": None}

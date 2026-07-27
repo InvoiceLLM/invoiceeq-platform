@@ -3,7 +3,7 @@
 Construct document indexers and semantic chat clients utilizing vector similarity models and thread state controllers.
 
 ### File Coordinates
-* RAG Router: [apps/invoice-be/routers/chat.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/chat.py) → `list_sessions()`, `create_session()`, `get_session_messages()`, `post_chat_message()`
+* RAG Router: [apps/invoice-be/routers/chat.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/chat.py) → `list_sessions()`, `create_session()`, `get_session_messages()`, `post_chat_message()`, `set_message_feedback()`, `clear_message_feedback()` (Gap 54)
 * Query Agent: [apps/invoice-be/agents/query_agent.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/agents/query_agent.py) → `run_query_agent()`, `classify_query()`, `execute_generated_sql()`, `get_chat_history()`
 * Chroma Client: [apps/invoice-be/chroma_client.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/chroma_client.py) → `query_invoice_chunks()`
 
@@ -65,6 +65,8 @@ Construct document indexers and semantic chat clients utilizing vector similarit
   - Cache answers keyed on `(tenant_id, normalized_query)` in Azure Cache for Redis, serving repeated/near-identical questions instantly instead of re-running retrieval + LLM synthesis. (Replaces the `chat_qa_shortcuts` PostgreSQL table approach).
 - [ ] **Task 6.12: Real conversational memory**
   - Replace `get_chat_history()`'s raw "last 10 messages" SQL fetch with a token-aware, `PostgresSaver`-backed LangGraph checkpointer.
+- [x] **Task 6.13: Per-answer chat feedback (Gap 54, 2026-07-27)**
+  - New `chat_feedback` table (migration `b2c3d4e5f6a7`): `tenant_id`, `session_id`, `message_id` (unique — one vote per message), `vote` ("up"/"down"). `PUT /chat/messages/{message_id}/feedback` upserts a vote (overwrites, doesn't accumulate); `DELETE` clears it. Both validate message ownership via the parent `ChatSession`'s `tenant_id`, same pattern as `get_session_messages()`. Signal-only — no auto-fix from a vote, mirrors the "correction is a signal, Trainer commit is the action" pattern from the Auditor loop (Gap 26/27). `GET /chat/sessions/{id}` now attaches each message's current vote (`feedback: "up" | "down" | null`) so it survives a reload, via one extra query for the whole session rather than N+1 per message.
 
 ### Verification Plan
 * **Automated Tests**: Run `uv run pytest tests/test_rag.py` verifying that cross-tenant queries return empty context responses.

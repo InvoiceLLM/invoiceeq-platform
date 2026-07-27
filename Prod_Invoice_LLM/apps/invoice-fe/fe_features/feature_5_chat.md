@@ -18,7 +18,7 @@ Build the conversational invoice analyst RAG chat box, document citation connect
 - SQL Audit Drawer: `apps/invoice-fe/components/chat/SqlAuditDrawer.tsx` ✅ _(created 2026-07-22)_
 - State Hook: `apps/invoice-fe/hooks/useChatSession.ts` ✅ _(created 2026-07-22)_
 - Types: `apps/invoice-fe/types/chat.ts` ✅ _(created 2026-07-22)_
-- Proxy Routes: `app/api/chat/sessions/route.ts`, `app/api/chat/sessions/[sessionId]/route.ts`, `app/api/chat/sessions/[sessionId]/message/route.ts` ✅ _(all created 2026-07-22)_
+- Proxy Routes: `app/api/chat/sessions/route.ts`, `app/api/chat/sessions/[sessionId]/route.ts`, `app/api/chat/sessions/[sessionId]/message/route.ts` ✅ _(all created 2026-07-22)_, `app/api/chat/messages/[messageId]/feedback/route.ts` ✅ _(created 2026-07-27, Gap 27)_
 
 ### P0 Fix: Chat never actually worked through the real UI (Gap 22, Jul 24, 2026)
 Everything above was built and marked complete on 2026-07-22, but never actually exercised against a live backend until real end-to-end browser testing on Jul 24 — the benchmark harness that reported "95.2% RAG chat passed" calls the backend directly, bypassing this entire FE layer, so this class of bug was invisible to it.
@@ -39,7 +39,7 @@ Fixed all five in `useChatSession.ts`, `types/chat.ts`, and `CitationPill.tsx` �
   - Files: `ChatWindow.tsx`, `MessageBubble.tsx`
 - [x] **Task 5.2: Integrate Interactive Citations**
   - Parsed `citations[]` from the chat API response and rendered as interactive pills.
-  - Bound pills to navigate to `/audit?invoice_id={id}&page={n}`.
+  - Bound pills to navigate to `/invoices/review/{invoice_id}?page={n}` — originally coded as `/audit?invoice_id=...`, a route that never existed; fixed 2026-07-27 alongside Gap 26/`be_features_tracker.md` Gap 53 (see `feature_4_auditor.md`).
   - File: `CitationPill.tsx`
 - [x] **Task 5.3: Build Expandable SQL Drawer**
   - Created a collapsible accordion container titled `Executed SQL Query & Data Sources`.
@@ -49,6 +49,10 @@ Fixed all five in `useChatSession.ts`, `types/chat.ts`, and `CitationPill.tsx` �
   - Coded async submit hook (`useChatSession`) posting prompts via 3 Next.js proxy route handlers.
   - Includes optimistic user bubble insertion, error rollback, and session title auto-update.
   - Files: `useChatSession.ts`, 3 proxy `route.ts` files
+- [x] **Task 5.5: Per-answer feedback (Gap 27, 2026-07-27)**
+  - New `FeedbackVote` component inside `MessageBubble.tsx` — a thumbs up/down pair shown only on assistant messages, next to the timestamp. Optimistic update with rollback on failure; clicking the currently-active thumb again clears the vote (`DELETE`) instead of re-sending it, giving a normal toggle interaction.
+  - `types/chat.ts::ChatMessage` gained `feedback?: "up" | "down" | null`, populated by the backend on session reload (`be_features_tracker.md` Gap 54).
+  - Calls `PUT`/`DELETE /api/chat/messages/{id}/feedback` via the new proxy route.
 
 ### Verification Plan
 

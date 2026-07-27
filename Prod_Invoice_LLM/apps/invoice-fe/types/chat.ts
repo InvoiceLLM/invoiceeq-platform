@@ -45,6 +45,10 @@ export interface ChatMessage {
   citations?: Citation[];
 
   created_at: string; // ISO-8601 — formatted to HH:MM for display
+
+  // Gap 54: this turn's recorded vote, if any. "up" | "down" | null — null
+  // (not just absent) is a real, meaningful state: no vote cast yet.
+  feedback?: "up" | "down" | null;
 }
 
 // -----------------------------------------------------------------------------
