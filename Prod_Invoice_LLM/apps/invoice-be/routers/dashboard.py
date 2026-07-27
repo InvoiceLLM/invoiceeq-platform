@@ -1,11 +1,11 @@
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
-from models import Invoice
+from models import Invoice, ExtractionTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -127,4 +127,76 @@ async def get_dashboard_metrics(
         "spend_over_time": spend_over_time,
         "top_vendors": top_vendors,
         "invoices_by_status": status_counts
+    }
+
+
+@router.get("/trainer-impact")
+async def get_trainer_impact(
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Gap 28: makes the Trainer's payoff visible — how many rules exist, whether
+    the audit rate is trending down, and which vendors still have no rule
+    despite recurring alerts. Deliberately reports a trend, not a single
+    "% improvement" figure — claiming the rules *caused* a specific
+    improvement percentage from this data would be overclaiming causation;
+    showing the real weekly series lets the reader judge that themselves.
+    """
+    # 1. Rules trained — real count from extraction_templates, split by scope.
+    templates = db_session.exec(
+        select(ExtractionTemplate).where(ExtractionTemplate.tenant_id == context.tenant_id)
+    ).all()
+    global_rules = sum(1 for t in templates if t.vendor_name is None)
+    vendor_rules = sum(1 for t in templates if t.vendor_name is not None)
+    vendor_names_with_rules = {t.vendor_name for t in templates if t.vendor_name is not None}
+
+    # 2. Vendors still needing a rule — vendors with a recurring alert pattern
+    # (>=2 flagged invoices) that have no ExtractionTemplate row yet. Same
+    # "recurring, not a one-off" reasoning as the Gap 27 suggested-rule
+    # threshold, just applied at the vendor level instead of per-field.
+    invoices = db_session.exec(
+        select(Invoice).where(Invoice.tenant_id == context.tenant_id)
+    ).all()
+
+    flagged_counts: dict[str, int] = {}
+    for inv in invoices:
+        if inv.sa_alerts and inv.vendor_name:
+            flagged_counts[inv.vendor_name] = flagged_counts.get(inv.vendor_name, 0) + 1
+
+    vendors_needing_rules = sorted(
+        [
+            {"vendor_name": v, "flagged_invoice_count": c}
+            for v, c in flagged_counts.items()
+            if v not in vendor_names_with_rules and c >= 2
+        ],
+        key=lambda x: x["flagged_invoice_count"],
+        reverse=True,
+    )
+
+    # 3. Audit-rate trend — weekly, over the real created_at/status history,
+    # same "processed" status set as extraction_accuracy uses above.
+    processed = [inv for inv in invoices if (inv.status or "").upper() in ("COMPLETED", "PAID", "AUDIT_REQUIRED", "REJECTED")]
+    weekly: dict[str, dict[str, int]] = {}
+    for inv in processed:
+        week_start = (inv.created_at - timedelta(days=inv.created_at.weekday())).date()
+        key = week_start.isoformat()
+        bucket = weekly.setdefault(key, {"total": 0, "audit_required": 0})
+        bucket["total"] += 1
+        if (inv.status or "").upper() == "AUDIT_REQUIRED":
+            bucket["audit_required"] += 1
+
+    audit_rate_trend = [
+        {
+            "week": week,
+            "audit_rate": round(100.0 * counts["audit_required"] / counts["total"], 1),
+            "total_processed": counts["total"],
+        }
+        for week, counts in sorted(weekly.items())
+    ]
+
+    return {
+        "rules_trained": {"global": global_rules, "vendor_specific": vendor_rules, "total": len(templates)},
+        "vendors_needing_rules": vendors_needing_rules,
+        "audit_rate_trend": audit_rate_trend,
     }

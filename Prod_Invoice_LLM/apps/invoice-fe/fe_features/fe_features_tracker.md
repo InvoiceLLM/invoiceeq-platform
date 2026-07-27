@@ -81,7 +81,7 @@ Gaps below are grouped by the feature file whose target design they still need t
 - `[ ]` **Gap 5: Status-Based Sub-Tabs** — tabs (All, Paid, Pending, Rejected) on the recent invoices table
 - `[ ]` **Gap 11: Scroll-Lock Container** — wrap the recent invoices table in a fixed-height card (`max-height: 320px`) with internal scroll
 - `[ ]` **Gap 12: Client-Side Pagination** — dynamic `◀ Previous` / `Next ▶` controls on the recent invoices table
-- `[ ]` **Gap 21: Trainer Impact Panel** — Task 2.5; render rules-trained count, audit-rate trend, and vendors-needing-rules from the dashboard metrics endpoint, once the backend ships it (see `be_features_tracker.md` Gap 28)
+- `[x]` **Gap 21: Trainer Impact Panel** — Task 2.5; Fixed Jul 27, 2026. New `components/dashboard/TrainerImpactPanel.tsx`, fetching its own `GET /dashboard/trainer-impact` (backend: `be_features_tracker.md` Gap 28) independently of the main metrics call. Renders 3 rule-count tiles (Global/Vendor/Total), a hand-built weekly audit-rate bar trend (no chart library, matching the rest of this dashboard), and a "Vendors Needing a Rule" list with deep-links straight into Trainer (`/trainer?from=audit&scope=existing_vendor&vendor_name=X`, reusing the existing Task 6.8 deep-link handler). Wired into `app/dashboard/page.tsx` below `ClientPerformanceChart`. Verified live: real data from this session's actual Trainer commits rendered correctly.
 
 > Note: `RecentInvoicesTable.tsx`'s duplicate badge, vendor-name fallback, and hover-only tag row CSS (`be_features/feature_3.1_fix_ftr2_3.md` Task 3.1.3) are already implemented — verified directly against the component source 2026-07-13, not just tracker bookkeeping.
 

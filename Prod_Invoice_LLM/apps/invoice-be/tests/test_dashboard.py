@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
-from models import Invoice
+from models import Invoice, ExtractionTemplate
 
 sqlite_url = "sqlite:///:memory:"
 engine = create_engine(
@@ -150,3 +150,49 @@ def test_metrics_filters(db_session):
     assert response.status_code == 200
     data = response.json()
     assert data["total_invoiced"] == 1000.0
+
+
+def test_trainer_impact(db_session):
+    """Gap 28: rules-trained count, audit-rate trend, vendors still needing a rule."""
+    # Globex has 2 flagged invoices and no rule yet -> should surface as needing one.
+    # ACME has a rule already, so even if flagged it should be excluded.
+    db_session.add(ExtractionTemplate(
+        tenant_id=MOCK_TENANT_ID, vendor_name="ACME", rules={"constraints": ["some rule"]}
+    ))
+    db_session.add(ExtractionTemplate(
+        tenant_id=MOCK_TENANT_ID, vendor_name=None, rules={"constraints": ["a global rule"]}
+    ))
+    db_session.add(Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="mock/a1.pdf",
+        vendor_name="ACME", status="AUDIT_REQUIRED", sa_alerts=[{"type": "x", "message": "m"}]
+    ))
+    db_session.add(Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="mock/g1.pdf",
+        vendor_name="Globex", status="AUDIT_REQUIRED", sa_alerts=[{"type": "x", "message": "m"}]
+    ))
+    db_session.add(Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="mock/g2.pdf",
+        vendor_name="Globex", status="AUDIT_REQUIRED", sa_alerts=[{"type": "x", "message": "m"}]
+    ))
+    # A one-off flagged vendor (only 1 flagged invoice) should NOT surface - below threshold.
+    db_session.add(Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="mock/o1.pdf",
+        vendor_name="OneOff Co", status="AUDIT_REQUIRED", sa_alerts=[{"type": "x", "message": "m"}]
+    ))
+    db_session.commit()
+
+    response = client.get("/api/v1/dashboard/trainer-impact")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["rules_trained"] == {"global": 1, "vendor_specific": 1, "total": 2}
+
+    vendors = {v["vendor_name"]: v["flagged_invoice_count"] for v in data["vendors_needing_rules"]}
+    assert vendors == {"Globex": 2}
+    assert "ACME" not in vendors
+    assert "OneOff Co" not in vendors
+
+    assert isinstance(data["audit_rate_trend"], list)
+    assert len(data["audit_rate_trend"]) >= 1
+    week = data["audit_rate_trend"][0]
+    assert set(week.keys()) == {"week", "audit_rate", "total_processed"}
