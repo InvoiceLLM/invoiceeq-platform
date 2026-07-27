@@ -14,6 +14,7 @@ from utils.verification_tools import (
     verify_line_item_amounts_in_source_text,
     verify_subtotal_in_source_text,
     verify_unit_prices_in_source_text,
+    verify_tax_amount_in_source_text,  # Gap 46: tax_amount source-text verification
     verify_field_confidence,
 )
 from utils.token_management import check_token_guardrails
@@ -22,6 +23,14 @@ from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
 
 logger = logging.getLogger(__name__)
+
+# Gap 46: Directive instructing LLM to extract figures 100% verbatim without auto-correcting vendor math flaws
+GAP_46_VERBATIM_DIRECTIVE = (
+    "CRITICAL VERBATIM EXTRACTION DIRECTIVE: You are a strict document transcriber, NOT a calculator. "
+    "Transcribe all numerical figures (subtotal, tax_amount, grand_total, line-item amounts, unit prices) 100% verbatim "
+    "as printed on the document. Do NOT recalculate, smooth, balance, or auto-correct any math, even if vendor arithmetic "
+    "is blatantly incorrect on the document. Downstream audit tools need to see exact printed numbers to flag vendor flaws.\n\n"
+)
 
 # 1. Structured Output Schema
 # NOTE: every model below sets model_config = {"extra": "forbid"}. Azure/OpenAI structured
@@ -35,7 +44,7 @@ class InvoiceLineItem(BaseModel):
     description: str = Field(description="Description of the item or service")
     quantity: Optional[float] = Field(default=None, description="Quantity of the item")
     unit_price: Optional[float] = Field(default=None, description="Unit price of the item")
-    amount: float = Field(description="Total amount for this line item")
+    amount: float = Field(description="Total amount for this line item. Transcribe printed figure verbatim; do not recalculate quantity * unit_price or auto-correct bad vendor math.")
     hsn_sac_code: Optional[str] = Field(default=None, description="HSN/SAC code (mandatory for Indian GST)")
     uom: Optional[str] = Field(default=None, description="Unit of measure (e.g., each, kg, hours)")
     discount_percent: Optional[float] = Field(default=None, description="Discount percentage applied to this line item")
@@ -93,9 +102,10 @@ class InvoiceExtractionSchema(BaseModel):
     invoice_number: Optional[str] = Field(default=None, description="Invoice number")
     invoice_date: Optional[str] = Field(default=None, description="Date of the invoice (YYYY-MM-DD format if possible)")
     due_date: Optional[str] = Field(default=None, description="Due date of the invoice (YYYY-MM-DD format if possible)")
-    subtotal: Optional[float] = Field(default=None, description="Subtotal before taxes/discounts. On invoices with a 'Subtotal (Taxable Value)' line (common on Indian GST invoices) that is already net of discount, use that printed value as-is rather than adding the discount back.")
-    tax_amount: Optional[float] = Field(default=None, description="Tax amount. On invoices with a CGST + SGST (or IGST) split, sum them into this single field.")
+    subtotal: Optional[float] = Field(default=None, description="Subtotal before taxes/discounts. Transcribe printed figure verbatim. On invoices with a 'Subtotal (Taxable Value)' line (common on Indian GST invoices) that is already net of discount, use that printed value as-is rather than adding the discount back. Do not auto-correct math.")
+    tax_amount: Optional[float] = Field(default=None, description="Tax amount. Transcribe printed figure verbatim. On invoices with a CGST + SGST (or IGST) split, sum them into this single field. Do not recalculate or auto-correct bad vendor tax math.")
     grand_total: Optional[float] = Field(default=None, description="Grand total amount. Transcribe the printed figure exactly as it appears (e.g. the 'TOTAL DUE' or 'Grand Total' line) — even if it does not appear to reconcile with the subtotal and tax. Do not calculate, correct, or override it yourself; a mismatch between the printed total and the arithmetic is a real finding the downstream verification step needs to see, not something to fix here.")
+
     round_off: Optional[float] = Field(default=None, description="Small rounding adjustment line (e.g. 'Round Off'), positive or negative, common on Indian GST invoices. Leave null if the invoice has no such line.")
     po_number: Optional[str] = Field(default=None, description="Purchase order (PO) number")
     items: List[InvoiceLineItem] = Field(default=[], description="List of line items in the invoice")
@@ -163,6 +173,7 @@ def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Di
         "You are an expert invoice processing agent. Analyze the following OCR text "
         "and visual representations of the invoice. Extract structured data aligning "
         "with the schema.\n\n"
+        + GAP_46_VERBATIM_DIRECTIVE
     )
     if rules and "constraints" in rules:
         prompt_text += "You MUST respect the following layout extraction constraints/rules:\n"
@@ -252,19 +263,24 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
                 prompt = (
                     "You are analyzing a COMPLEX invoice. This invoice contains complex layouts, multi-tax tables (like GST/VAT), "
                     "or item-level discount structures. Please perform a deep dynamic extraction. Do not restrict yourself to standard fields; "
-                    "extract all taxes, discounts, deductions, compliance metadata, and banking references into the appropriate list structures.\n"
+                    "extract all taxes, discounts, deductions, compliance metadata, and banking references into the appropriate list structures.\n\n"
+                    + GAP_46_VERBATIM_DIRECTIVE
                 )
                 if dynamic_qa_context:
                     prompt += f"\nDYNAMIC LAYOUT PRE-ANALYSIS FINDINGS (Gap 4 Targeted Q&A):\n{dynamic_qa_context}\n"
                 prompt += f"\nExtract structured details from the following invoice OCR text:\n\n{state['ocr_text']}"
             else:
-                prompt = "Extract structured details from the following standard invoice OCR text:\n\n"
+                prompt = (
+                    "Extract structured details from the following standard invoice OCR text:\n\n"
+                    + GAP_46_VERBATIM_DIRECTIVE
+                )
                 if rules and "constraints" in rules:
                     prompt += "You MUST respect the following layout extraction constraints/rules:\n"
                     for rule in rules["constraints"]:
                         prompt += f"- {rule}\n"
                     prompt += "\n"
                 prompt += f"{state['ocr_text']}"
+
 
             if feedback:
                 prompt += (
@@ -352,7 +368,14 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     if unit_price_source_text_alert:
         alerts.append(unit_price_source_text_alert)
 
-    # 7. Gap 3 (Critic Node): confidence-driven audit routing.
+    # 7. Gap 46: tax_amount faithfulness check, independent of arithmetic.
+    # Catches silent LLM tax auto-correction when vendor printed tax calculation is flawed.
+    tax_source_text_alert = verify_tax_amount_in_source_text(tax_amount, state.get("ocr_text"))
+    if tax_source_text_alert:
+        alerts.append(tax_source_text_alert)
+
+    # 8. Gap 3 (Critic Node): confidence-driven audit routing.
+
     # Azure Document Intelligence attaches a confidence score (0.0–1.0) to
     # every field it reads from the document. If a critical field (like
     # vendor_name or grand_total) has a low confidence score, the document
@@ -379,6 +402,14 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
 
 
 # 4. LangGraph Nodes
+def classify_node(state: ExtractionState) -> Dict[str, Any]:
+    """Node state for classifying invoice complexity."""
+    from services.invoice_classifier import classify_invoice_complexity
+    ocr_result = state.get("ocr_result") or state["ocr_text"]
+    complexity = classify_invoice_complexity(ocr_result)
+    return {"complexity": complexity}
+
+
 def dynamic_qa_node(state: ExtractionState) -> Dict[str, Any]:
     """
     Gap 4: Dynamic QA Node — targeted pre-extraction Q&A for COMPLEX invoices.

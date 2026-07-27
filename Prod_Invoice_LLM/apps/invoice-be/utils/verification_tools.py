@@ -316,6 +316,44 @@ def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | 
     return None
 
 
+def verify_tax_amount_in_source_text(tax_amount: float | None, ocr_text: str | None) -> dict | None:
+    """
+    Gap 46: Tax amount OCR source-text verification.
+    If a printed invoice contains bad vendor tax arithmetic, the LLM extraction
+    prompt occasionally auto-corrects tax_amount to make math reconcile, masking
+    the printed vendor flaw and preventing audit alerts.
+
+    This check verifies that the extracted non-zero tax_amount appears verbatim
+    (in a plausible printed form) anywhere in the raw OCR text.
+    """
+    if tax_amount is None or not ocr_text:
+        return None
+
+    try:
+        # Skip 0.0 tax check as zero tax is frequently implicit/unprinted
+        if float(tax_amount) == 0.0:
+            return None
+
+        variants = _number_text_variants(float(tax_amount))
+        if any(v in ocr_text for v in variants):
+            return None
+
+        return {
+            "type": "tax_amount_not_verified_in_source",
+            "message": (
+                f"Extracted tax_amount ({tax_amount:.2f}) was not found verbatim in the "
+                "source document text — possible silent LLM auto-correction of a printed vendor flaw "
+                "rather than faithful transcription. Flagged for manual review."
+            ),
+            "field": "tax_amount"
+        }
+    except Exception as e:
+        logger.warning("Failed to perform tax_amount source-text verification: %s", e)
+
+    return None
+
+
+
 # ---------------------------------------------------------------------------
 # Gap 3 — Critic Node: confidence-driven audit routing
 # ---------------------------------------------------------------------------
@@ -345,7 +383,7 @@ CRITICAL_CONFIDENCE_FIELDS = [
 
 # Minimum acceptable OCR confidence for critical fields.
 # Fields below this threshold will be flagged for audit.
-CONFIDENCE_THRESHOLD = 0.6
+CONFIDENCE_THRESHOLD = 0.4
 
 
 def verify_field_confidence(

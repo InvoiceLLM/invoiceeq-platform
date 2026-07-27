@@ -155,3 +155,25 @@ def test_successful_extraction_pipeline(db_session):
         assert invoice.tags == ["it", "hardware"]
         assert len(invoice.items) == 1
         assert invoice.sa_alerts == []
+
+
+def test_gap_46_tax_amount_source_text_verification():
+    """Gap 46: Verify that tax_amount OCR source-text check catches silent auto-corrections."""
+    from utils.verification_tools import verify_tax_amount_in_source_text
+
+    # 1. Tax amount is printed on OCR text -> passes (returns None)
+    ocr_text_with_tax = "Subtotal: $100.00  Tax: $15.00  Total: $115.00"
+    alert = verify_tax_amount_in_source_text(15.00, ocr_text_with_tax)
+    assert alert is None
+
+    # 2. Zero tax amount -> passes (returns None)
+    alert_zero = verify_tax_amount_in_source_text(0.00, "Subtotal: $100.00 Total: $100.00")
+    assert alert_zero is None
+
+    # 3. LLM auto-corrected tax_amount (10.00) not present in raw OCR text -> triggers alert
+    ocr_text_flawed = "Subtotal: $100.00  Tax: $25.00  Total: $125.00"  # Vendor printed tax is 25.00, not 10.00
+    alert_flawed = verify_tax_amount_in_source_text(10.00, ocr_text_flawed)
+    assert alert_flawed is not None
+    assert alert_flawed["type"] == "tax_amount_not_verified_in_source"
+    assert "tax_amount" in alert_flawed["field"]
+
