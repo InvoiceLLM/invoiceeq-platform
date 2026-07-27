@@ -82,7 +82,7 @@ def test_token_guardrails_limit_exceeded(db_session):
         mock_check.return_value = (False, 150000, 128000) # (is_safe, input_tokens, limit)
         mock_ocr.return_value = "Extracted OCR text payload"
         
-        # Invoke celery task sync for testing
+        # Invoke queue-worker handler synchronously for testing
         handle_process_invoice("mock-batch-id", file_path, str(MOCK_TENANT_ID))
         
         # Verify database record updated to AUDIT_REQUIRED and contains token_limit_exceeded alert
@@ -147,7 +147,7 @@ def test_successful_extraction_pipeline(db_session):
                 
         mock_get_llm.return_value = MockLLM()
         
-        # Execute Celery task
+        # Execute queue-worker handler
         handle_process_invoice("mock-batch-id", file_path, str(MOCK_TENANT_ID))
         
         # Assert database updates

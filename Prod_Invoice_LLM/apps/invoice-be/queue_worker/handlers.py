@@ -224,7 +224,7 @@ def _enqueue_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> b
 
 def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dict:
     """
-    Asynchronous Celery task to process an uploaded invoice PDF:
+    Queue-worker job to process an uploaded invoice PDF:
     1. Runs OCR/Text extraction via _run_ocr.
     2. Sends progress updates to client via SSE.
     3. Triggers multi-modal extraction/verification (agent block placeholder).

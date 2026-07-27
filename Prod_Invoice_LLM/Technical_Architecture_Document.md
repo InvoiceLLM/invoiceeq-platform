@@ -83,7 +83,7 @@ The Invoice AI SaaS platform is a **multi-tenant, AI-powered invoice processing 
 │         ▼                   ▼                   ▼                          │
 │  ┌─────────────┐   ┌───────────────┐   ┌───────────────────┐              │
 │  │  PostgreSQL  │   │  Redis /      │   │  Azure Blob       │              │
-│  │  (Tenant-    │   │  Celery       │   │  Storage (PDFs)   │              │
+│  │  (Tenant-    │   │  Azure Queue  │   │  Storage (PDFs)   │              │
 │  │   Isolated)  │   │  Workers      │   │                   │              │
 │  └─────────────┘   └───────────────┘   └───────────────────┘              │
 │                                                                            │
@@ -110,7 +110,7 @@ All services reside in a single monolithic repository to provide full context fo
 ├── /apps
 │   ├── /invoice-website    # Marketing, Pricing, SSO Auth
 │   ├── /invoice-fe         # Dashboard, Auditor Tab, Semantic Chat
-│   └── /invoice-be         # FastAPI, Celery Workers, AI Agents
+│   └── /invoice-be         # FastAPI, Queue Workers, AI Agents
 ├── /bicep                  # Infrastructure as Code: VNet, PostgreSQL, Storage
 ├── /docker                 # Container definitions for FE, BE, Redis
 ├── /.github/workflows      # CI/CD Pipeline configurations
@@ -267,7 +267,7 @@ Frontend                              Backend                        Queue Worke
 
 ### 5.3 FE-BE Communication Rule
 
-> **The Golden Rule**: The Frontend **never** interacts with the queue (Redis/Celery) directly. It only communicates with the FastAPI Backend.
+> **The Golden Rule**: The Frontend **never** interacts with the queue (Redis/Azure Storage Queues) directly. It only communicates with the FastAPI Backend.
 
 The browser never calls `invoice-be` directly — the backend has no public ingress (§2, §4.1 of `Cloud_Architecture_Document.md`). All calls are same-origin (`/api/**`) against Next.js Route Handlers running inside the `invoice-fe` container, which forward to the backend server-side using a runtime-only `BACKEND_API_URL` env var. This is also what makes the internal-only backend reachable at all: Route Handlers run inside the same Container Apps Environment as `invoice-be` and can reach it over the internal network regardless of its external-ingress setting, whereas a public user's browser could not.
 
@@ -667,7 +667,7 @@ This allows the Query Agent to **filter by `tenant_id` and `vendor_name`** befor
 
 | Method | Endpoint                               | Description                                           | Returns                         |
 |--------|----------------------------------------|-------------------------------------------------------|---------------------------------|
-| `POST` | `/api/v1/invoices/upload`              | Accept PDF(s) + tags, dedup by SHA-256 hash, dispatch Celery task | `{ batch_id, job_ids[] }`   |
+| `POST` | `/api/v1/invoices/upload`              | Accept PDF(s) + tags, dedup by SHA-256 hash, dispatch queue-worker job | `{ batch_id, job_ids[] }`   |
 | `GET`  | `/api/v1/invoices/status/{job_id}`     | Polling endpoint for single invoice status (1–5 PDFs)  | `{ status, vendor_name, grand_total, alerts }` |
 | `GET`  | `/api/v1/invoices/stream/{batch_id}`   | **SSE stream** for bulk upload status (6+ PDFs)        | `text/event-stream` (real-time) |
 | `GET`  | `/api/v1/invoices`                     | Paginated list with date/status/tag filters             | `Invoice[]`                     |
@@ -684,7 +684,7 @@ This allows the Query Agent to **filter by `tenant_id` and `vendor_name`** befor
 | `GET`  | `/api/v1/connectors/auth-url/{provider}` | OAuth consent URL                                      | `{ auth_url }`                  |
 | `GET`  | `/api/v1/connectors/callback/{provider}` | OAuth token exchange                                   | `{ success }`                   |
 | `GET`  | `/api/v1/connectors/files/{provider}`  | Browse remote files                                       | `{ files[] }`                   |
-| `POST` | `/api/v1/connectors/import/{provider}` | Trigger background import Celery task                    | `{ success }`                   |
+| `POST` | `/api/v1/connectors/import/{provider}` | Trigger background import queue-worker job                | `{ success }`                   |
 | `POST` | `/api/v1/trainer/upload`               | Transient PDF parse for the training sandbox (not saved to `invoices`) | `{ session_id, extracted_data }` |
 | `POST` | `/api/v1/trainer/sessions/{session_id}/chat` | Submit a correction, re-extract with updated constraints | `{ constraints, extracted_data, status, alerts }` |
 | `POST` | `/api/v1/trainer/sessions/{session_id}/commit` | Save rules to `extraction_templates` or `default_templates.json`, trigger re-audit | `{ status, vendor_name, rules }` |
@@ -776,7 +776,7 @@ main          ← Production-ready code ONLY (manual merge approval required)
 |----------------------|----------------------------|-----------------------------------------------------|
 | **Website Dev**      | `/apps/invoice-website`    | Marketing site, Pricing pages, SSO Auth integration  |
 | **Frontend Dev**     | `/apps/invoice-fe`         | Dashboard, File Ingestion, Auditor Tab, Semantic Chat|
-| **Backend Dev (x2)** | `/apps/invoice-be`         | Extraction agents, Celery workers, API contracts, Vector DB |
+| **Backend Dev (x2)** | `/apps/invoice-be`         | Extraction agents, Queue workers, API contracts, Vector DB |
 | **DevOps Engineer**  | `/bicep`, `/.github/workflows` | Terraform/Bicep, CI/CD pipelines, WAF, Cloud Security |
 
 ---

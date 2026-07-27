@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
 from models import Invoice
-from workers.tasks import process_invoice_task
+from queue_worker.handlers import handle_process_invoice
 
 # Setup an in-memory SQLite database for testing isolation
 sqlite_url = "sqlite:///:memory:"
@@ -76,8 +76,12 @@ def test_get_invoice_status_foreign_tenant(db_session):
     response = client.get(f"/api/v1/invoices/status/{invoice_id}")
     assert response.status_code == 404
 
-def test_celery_task_updates_database(db_session):
-    """Verify Celery task synchronously updates PostgreSQL with completion details."""
+def test_queue_worker_updates_database(db_session):
+    """Verify the queue worker's handle_process_invoice synchronously updates
+    PostgreSQL with completion details. Renamed 2026-07-27 -- was patching a
+    workers.tasks module deleted during the legacy task-queue -> Azure Storage
+    Queue migration, so this whole file failed to even collect
+    (ModuleNotFoundError) until this fix."""
     batch_id = uuid4()
     invoice_id = uuid4()
     db_invoice = Invoice(
@@ -88,10 +92,10 @@ def test_celery_task_updates_database(db_session):
     )
     db_session.add(db_invoice)
     db_session.commit()
-    
-    with patch("workers.tasks._run_ocr") as mock_ocr, \
-         patch("workers.tasks._publish_sse_events"), \
-         patch("workers.tasks.run_extraction_agent") as mock_agent:
+
+    with patch("queue_worker.handlers._run_ocr") as mock_ocr, \
+         patch("queue_worker.handlers._publish_sse_events"), \
+         patch("queue_worker.handlers.run_extraction_agent") as mock_agent:
         mock_ocr.return_value = "ocr layout content text"
         mock_agent.return_value = {
             "status": "COMPLETED",
@@ -112,11 +116,11 @@ def test_celery_task_updates_database(db_session):
                 "tags": ["ACME", "hardware"]
             }
         }
-        
-        # Patch engine inside workers.tasks to point to our test engine
-        with patch("workers.tasks.engine", engine):
-            process_invoice_task(str(batch_id), "mock/invoice_standard.pdf", str(MOCK_TENANT_ID))
-            
+
+        # Patch engine inside queue_worker.handlers to point to our test engine
+        with patch("queue_worker.handlers.engine", engine):
+            handle_process_invoice(str(batch_id), "mock/invoice_standard.pdf", str(MOCK_TENANT_ID))
+
             # Verify record updated
             db_session.refresh(db_invoice)
             assert db_invoice.status == "COMPLETED"
@@ -124,8 +128,10 @@ def test_celery_task_updates_database(db_session):
             assert db_invoice.grand_total == 165.00
             assert db_invoice.sa_alerts == []
 
-def test_celery_task_audit_anomalies(db_session):
-    """Verify Celery task sets status to AUDIT_REQUIRED and adds alerts if warnings are hit."""
+def test_queue_worker_audit_anomalies(db_session):
+    """Verify handle_process_invoice sets status to AUDIT_REQUIRED and adds
+    alerts if warnings are hit. Renamed 2026-07-27, see the note on
+    test_queue_worker_updates_database above."""
     batch_id = uuid4()
     invoice_id = uuid4()
     db_invoice = Invoice(
@@ -136,10 +142,10 @@ def test_celery_task_audit_anomalies(db_session):
     )
     db_session.add(db_invoice)
     db_session.commit()
-    
-    with patch("workers.tasks._run_ocr") as mock_ocr, \
-         patch("workers.tasks._publish_sse_events"), \
-         patch("workers.tasks.run_extraction_agent") as mock_agent:
+
+    with patch("queue_worker.handlers._run_ocr") as mock_ocr, \
+         patch("queue_worker.handlers._publish_sse_events"), \
+         patch("queue_worker.handlers.run_extraction_agent") as mock_agent:
         mock_ocr.return_value = "ocr layout content text"
         mock_agent.return_value = {
             "status": "AUDIT_REQUIRED",
@@ -160,10 +166,10 @@ def test_celery_task_audit_anomalies(db_session):
                 "tags": ["ACME", "hardware"]
             }
         }
-        
-        with patch("workers.tasks.engine", engine):
-            process_invoice_task(str(batch_id), "mock/invoice_audit.pdf", str(MOCK_TENANT_ID))
-            
+
+        with patch("queue_worker.handlers.engine", engine):
+            handle_process_invoice(str(batch_id), "mock/invoice_audit.pdf", str(MOCK_TENANT_ID))
+
             # Verify status is AUDIT_REQUIRED and alerts are populated
             db_session.refresh(db_invoice)
             assert db_invoice.status == "AUDIT_REQUIRED"

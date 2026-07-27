@@ -200,17 +200,17 @@ All secrets are stored in **Azure Key Vault** and injected into Container Apps a
 
 | Secret Name                  | Description                          | Used By                    |
 |------------------------------|--------------------------------------|----------------------------|
-| `DATABASE_URL`               | PostgreSQL connection string         | `invoice-be`, `celery-worker` |
-| `REDIS_URL`                  | Redis connection string              | `invoice-be`, `celery-worker` |
-| `AZURE_OPENAI_API_KEY`       | OpenAI API key                       | `invoice-be`, `celery-worker` |
-| `AZURE_OPENAI_ENDPOINT`      | OpenAI endpoint URL                  | `invoice-be`, `celery-worker` |
-| `AZURE_STORAGE_CONNECTION`   | Blob Storage connection string       | `invoice-be`, `celery-worker` |
+| `DATABASE_URL`               | PostgreSQL connection string         | `invoice-be`, `queue-worker` |
+| `REDIS_URL`                  | Redis connection string              | `invoice-be`, `queue-worker` |
+| `AZURE_OPENAI_API_KEY`       | OpenAI API key                       | `invoice-be`, `queue-worker` |
+| `AZURE_OPENAI_ENDPOINT`      | OpenAI endpoint URL                  | `invoice-be`, `queue-worker` |
+| `AZURE_STORAGE_CONNECTION`   | Blob Storage connection string       | `invoice-be`, `queue-worker` |
 | `STRIPE_SECRET_KEY`          | Stripe API secret key                | `invoice-website`           |
 | `STRIPE_WEBHOOK_SECRET`      | Stripe webhook signing secret        | `invoice-website`           |
 | `CLERK_SECRET_KEY`           | Clerk/Auth0 backend key              | `invoice-be`, `invoice-website` |
 | `NEXT_PUBLIC_CLERK_KEY`      | Clerk/Auth0 publishable key          | `invoice-fe`, `invoice-website` |
-| `CHROMA_HOST`                | ChromaDB connection host             | `invoice-be`, `celery-worker` |
-| `TOKEN_ENCRYPTION_KEY`       | AES-256 key for encrypting OAuth tokens | `invoice-be`, `celery-worker` |
+| `CHROMA_HOST`                | ChromaDB connection host             | `invoice-be`, `queue-worker` |
+| `TOKEN_ENCRYPTION_KEY`       | AES-256 key for encrypting OAuth tokens | `invoice-be`, `queue-worker` |
 
 ### 4.5 Extraction Concurrency & Scale-Out (added Jul 2026, Gap 41/42)
 
@@ -484,7 +484,7 @@ We maintain separate `Dockerfiles` inside the `/docker` directory to containeriz
 #### Why separate Dockerfiles?
 1. **Isolation of Concerns**: The website, frontend, and backend use different runtimes (Node.js vs. Python). 
 2. **Security**: Keeping the backend dependencies separate from frontend UI assets minimizes the attack surface area of the individual containers.
-3. **Optimized Scaling**: Azure Container Apps scales each container independently. For example, `celery-worker` can scale up to 5 instances under heavy background jobs without duplicating memory footprints of the web frontends.
+3. **Optimized Scaling**: Azure Container Apps scales each container independently. For example, `queue-worker` can scale up to 5 instances under heavy background jobs without duplicating memory footprints of the web frontends.
 
 ---
 
@@ -627,7 +627,7 @@ Before automating deployments with Bicep, you can provision the cloud workspace 
 | Alert                                | Severity | Threshold                          | Notification          |
 |--------------------------------------|----------|------------------------------------|-----------------------|
 | High error rate (FastAPI 5xx)         | Sev 1    | > 5% of requests in 5 min window  | Email + Teams webhook |
-| High error rate (Celery worker)       | Sev 1    | > 3 task failures in 10 min       | Email + Teams webhook |
+| High error rate (Queue worker)        | Sev 1    | > 3 task failures in 10 min       | Email + Teams webhook |
 | Anomalous DB connection spikes        | Sev 2    | > 80% connection pool utilization  | Email                 |
 | VNet security group violations        | Sev 1    | Any denied flow log               | Email + Teams webhook |
 | Container App restart loop            | Sev 1    | > 3 restarts in 5 minutes         | Email + Teams webhook |
@@ -653,7 +653,7 @@ The DevOps engineer produces a weekly report covering:
 │                   OPERATIONS DASHBOARD                          │
 │                                                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ Container    │  │ API Latency  │  │ Celery Queue Depth   │  │
+│  │ Container    │  │ API Latency  │  │ Storage Queue Depth  │  │
 │  │ Health (FE/  │  │ P50/P95/P99  │  │ (Pending/Active/     │  │
 │  │ BE/Worker)   │  │              │  │  Failed)             │  │
 │  └──────────────┘  └──────────────┘  └──────────────────────┘  │
@@ -809,7 +809,7 @@ Layer 9: AUDIT            Git-tracked IaC changes, Azure Activity Log
 │   │   ├── invoice-website.bicep # Website Container App
 │   │   ├── invoice-fe.bicep      # Frontend Container App
 │   │   ├── invoice-be.bicep      # Backend Container App
-│   │   └── celery-worker.bicep   # Worker Container App
+│   │   └── queue-worker.bicep    # Worker Container App
 │   │
 │   ├── data/
 │   │   ├── postgresql.bicep      # PostgreSQL Flexible Server
@@ -902,7 +902,7 @@ The following tasks should be assigned to the DevOps engineer to kick off the cl
 > "Implement the Service Principal credentials for GitHub Actions. Ensure no developer has direct access to the Production Resource Group secrets."
 
 ### Task 4: Observability
-> "Set up Azure Monitor and Log Analytics. Create a dashboard that shows the health of the container apps and the queue depth of the Redis/Celery background workers."
+> "Set up Azure Monitor and Log Analytics. Create a dashboard that shows the health of the container apps and the queue depth of the Azure Storage Queue background workers."
 
 ### Task 5: UAT Gate
 > "Define the approval policy for the UAT and Production environments in GitHub. No code reaches UAT without a PR review, and no code reaches Production without your sign-off."
@@ -949,7 +949,5 @@ The following tasks should be assigned to the DevOps engineer to kick off the cl
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`| FE, Website               | App Setting         |
 | `CLERK_SECRET_KEY`                 | BE, Website               | Key Vault           |
 | `BACKEND_API_URL`                  | FE (server-only, no `NEXT_PUBLIC_` prefix) | App Setting |
-| `CELERY_BROKER_URL`                | Worker                    | Key Vault (= REDIS_URL) |
-| `CELERY_RESULT_BACKEND`            | Worker                    | Key Vault (= REDIS_URL) |
 | `AZURE_DOC_INTEL_ENDPOINT`         | Worker                    | Key Vault           |
 | `AZURE_DOC_INTEL_KEY`              | Worker                    | Key Vault           |

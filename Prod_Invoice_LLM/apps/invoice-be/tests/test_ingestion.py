@@ -63,7 +63,7 @@ def test_upload_single_pdf(db_session):
         assert invoice.file_path == "mock/path/invoice1.pdf"
         assert invoice.tenant_id == MOCK_TENANT_ID
 
-        # Verify background task was queued via Azure Storage Queue (not Celery)
+        # Verify background task was queued via Azure Storage Queue
         mock_queue_client.send_message.assert_called_once()
 
 def test_upload_multiple_pdfs(db_session):

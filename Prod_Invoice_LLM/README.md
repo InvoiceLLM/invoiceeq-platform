@@ -14,7 +14,7 @@ Prod_Invoice_LLM/
 ├── apps/
 │   ├── invoice-website/        # Marketing site, Pricing, SSO Auth (Next.js)
 │   ├── invoice-fe/             # Dashboard, Auditor Tab, Semantic Chat (Next.js)
-│   └── invoice-be/             # FastAPI API, Celery Workers, AI Agents (Python)
+│   └── invoice-be/             # FastAPI API, Queue Workers, AI Agents (Python)
 │
 ├── infra/                      # Infrastructure as Code (Azure Bicep / Terraform)
 │   └── modules/                # VNet, PostgreSQL, Storage, AI, Security, Monitoring
@@ -32,12 +32,12 @@ Prod_Invoice_LLM/
 
 | Layer            | Technology                                     |
 |------------------|------------------------------------------------|
-| **Backend**      | FastAPI, Python, Celery, SQLAlchemy             |
+| **Backend**      | FastAPI, Python, Azure Storage Queues, SQLAlchemy |
 | **Frontend**     | Next.js, TypeScript, Shadcn/UI, Tailwind CSS   |
 | **Website**      | Next.js, Tailwind CSS, Stripe Checkout          |
 | **Database**     | PostgreSQL (Azure Flexible Server)              |
 | **Vector DB**    | ChromaDB                                        |
-| **Task Queue**   | Redis + Celery                                  |
+| **Task Queue**   | Redis (caching) + Azure Storage Queues (background jobs) |
 | **AI/LLM**      | Azure OpenAI (GPT-4) + Hugging Face `BAAI/bge-m3` (Local) |
 | **OCR**          | Azure Document Intelligence                     |
 | **Auth**         | Clerk / Auth0 (Google + Microsoft SSO)          |

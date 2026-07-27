@@ -97,12 +97,12 @@ invoice-fe/
 | **SSE vs Polling** | Decided at upload time by file count. `useSSEStream.ts` for 6+ files, `usePolling.ts` for 1–5 files. |
 | **Shadcn base isolation** | Components inside `components/ui/` are never modified directly. Feature-specific wrappers live in their own folders. |
 | **Form validation** | All audit form fields validated client-side via Zod schemas before calling `PUT /audit/resolve`. |
-| **Connector Integration** | 1-time OAuth authorization stores refresh tokens on the backend; subsequent folder browses load instantly without re-authentication. Ingestion triggers a background Celery task, allowing the UI to remain responsive. |
+| **Connector Integration** | 1-time OAuth authorization stores refresh tokens on the backend; subsequent folder browses load instantly without re-authentication. Ingestion triggers a background queue-worker job, allowing the UI to remain responsive. |
 
 ---
 
 ## Golden Rule
-> The Frontend **never** interacts with Redis/Celery directly. It only speaks to the FastAPI Backend.
+> The Frontend **never** interacts with Redis or the queue worker directly. It only speaks to the FastAPI Backend.
 
 ---
 
