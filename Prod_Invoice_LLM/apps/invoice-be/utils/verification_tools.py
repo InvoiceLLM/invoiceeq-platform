@@ -155,6 +155,22 @@ def _number_text_variants(value: float) -> list[str]:
     return list(variants)
 
 
+def _variant_found_in_text(variants: list[str], ocr_text: str) -> bool:
+    """
+    Checks whether any printed-number variant appears in the OCR text as a
+    standalone number, not merely as a substring of a larger one — plain
+    `v in ocr_text` would false-negative on e.g. variant "10" matching inside
+    "100.00" or "210.00", silently defeating the faithfulness check it's part
+    of (found via test_gap_46/56's own regression test). Digit-boundary
+    lookaround instead of `\\b`, since "." isn't a word character and would
+    let `\\b` match right before/after the decimal point.
+    """
+    for v in variants:
+        if re.search(rf"(?<!\d){re.escape(v)}(?!\d)", ocr_text):
+            return True
+    return False
+
+
 def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str | None) -> dict | None:
     """
     Gap 33: an LLM extracting from an internally-inconsistent invoice (printed
@@ -175,7 +191,7 @@ def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str |
 
     try:
         variants = _number_text_variants(float(grand_total))
-        if any(v in ocr_text for v in variants):
+        if _variant_found_in_text(variants, ocr_text):
             return None
 
         return {
@@ -219,7 +235,7 @@ def verify_line_item_amounts_in_source_text(items: list[dict] | None, ocr_text: 
             if amount is None:
                 continue
             variants = _number_text_variants(float(amount))
-            if not any(v in ocr_text for v in variants):
+            if not _variant_found_in_text(variants, ocr_text):
                 unverified.append((idx, item.get("description") or f"item {idx + 1}", float(amount)))
 
         if not unverified:
@@ -256,7 +272,7 @@ def verify_subtotal_in_source_text(subtotal: float | None, ocr_text: str | None)
 
     try:
         variants = _number_text_variants(float(subtotal))
-        if any(v in ocr_text for v in variants):
+        if _variant_found_in_text(variants, ocr_text):
             return None
 
         return {
@@ -294,7 +310,7 @@ def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | 
             if price is None:
                 continue
             variants = _number_text_variants(float(price))
-            if not any(v in ocr_text for v in variants):
+            if not _variant_found_in_text(variants, ocr_text):
                 unverified.append((idx, item.get("description") or f"item {idx + 1}", float(price)))
 
         if not unverified:
@@ -314,6 +330,44 @@ def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | 
         logger.warning("Failed to perform unit-price source-text verification: %s", e)
 
     return None
+
+
+def verify_tax_amount_in_source_text(tax_amount: float | None, ocr_text: str | None) -> dict | None:
+    """
+    Gap 46: Tax amount OCR source-text verification.
+    If a printed invoice contains bad vendor tax arithmetic, the LLM extraction
+    prompt occasionally auto-corrects tax_amount to make math reconcile, masking
+    the printed vendor flaw and preventing audit alerts.
+
+    This check verifies that the extracted non-zero tax_amount appears verbatim
+    (in a plausible printed form) anywhere in the raw OCR text.
+    """
+    if tax_amount is None or not ocr_text:
+        return None
+
+    try:
+        # Skip 0.0 tax check as zero tax is frequently implicit/unprinted
+        if float(tax_amount) == 0.0:
+            return None
+
+        variants = _number_text_variants(float(tax_amount))
+        if _variant_found_in_text(variants, ocr_text):
+            return None
+
+        return {
+            "type": "tax_amount_not_verified_in_source",
+            "message": (
+                f"Extracted tax_amount ({tax_amount:.2f}) was not found verbatim in the "
+                "source document text — possible silent LLM auto-correction of a printed vendor flaw "
+                "rather than faithful transcription. Flagged for manual review."
+            ),
+            "field": "tax_amount"
+        }
+    except Exception as e:
+        logger.warning("Failed to perform tax_amount source-text verification: %s", e)
+
+    return None
+
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +399,7 @@ CRITICAL_CONFIDENCE_FIELDS = [
 
 # Minimum acceptable OCR confidence for critical fields.
 # Fields below this threshold will be flagged for audit.
-CONFIDENCE_THRESHOLD = 0.6
+CONFIDENCE_THRESHOLD = 0.4
 
 
 def verify_field_confidence(

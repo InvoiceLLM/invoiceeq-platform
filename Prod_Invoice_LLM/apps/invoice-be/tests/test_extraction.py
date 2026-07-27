@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
 from models import Invoice
-from workers.tasks import process_invoice_task
+from queue_worker.handlers import handle_process_invoice
 
 # Setup isolated in-memory test database session
 sqlite_url = "sqlite:///:memory:"
@@ -32,7 +32,7 @@ def override_db_session(db_session):
     def get_db_session_override():
         yield db_session
     app.dependency_overrides[get_db_session] = get_db_session_override
-    with patch("workers.tasks.engine", engine):
+    with patch("queue_worker.handlers.engine", engine):
         yield
     app.dependency_overrides.clear()
 
@@ -76,14 +76,14 @@ def test_token_guardrails_limit_exceeded(db_session):
     
     # Mock check_token_guardrails to return False (limit exceeded)
     with patch("agents.extraction_agent.check_token_guardrails") as mock_check, \
-         patch("workers.tasks._run_ocr") as mock_ocr, \
-         patch("workers.tasks._publish_sse_events"):
+         patch("queue_worker.handlers._run_ocr") as mock_ocr, \
+         patch("queue_worker.handlers._publish_sse_events"):
         
         mock_check.return_value = (False, 150000, 128000) # (is_safe, input_tokens, limit)
         mock_ocr.return_value = "Extracted OCR text payload"
         
         # Invoke celery task sync for testing
-        process_invoice_task("mock-batch-id", file_path, str(MOCK_TENANT_ID))
+        handle_process_invoice("mock-batch-id", file_path, str(MOCK_TENANT_ID))
         
         # Verify database record updated to AUDIT_REQUIRED and contains token_limit_exceeded alert
         db_session.refresh(invoice)
@@ -107,11 +107,19 @@ def test_successful_extraction_pipeline(db_session):
     
     with patch("agents.extraction_agent.check_token_guardrails") as mock_check, \
          patch("agents.extraction_agent.get_llm") as mock_get_llm, \
-         patch("workers.tasks._run_ocr") as mock_ocr, \
-         patch("workers.tasks._publish_sse_events"):
+         patch("queue_worker.handlers._run_ocr") as mock_ocr, \
+         patch("queue_worker.handlers._publish_sse_events"):
          
         mock_check.return_value = (True, 100, 128000)
-        mock_ocr.return_value = "Extracted OCR text"
+        # Gap 46/56's verify_tax_amount_in_source_text() (and the sibling faithfulness
+        # checks) now cross-check every extracted number against the raw OCR text, so
+        # the mock OCR text must actually contain every number the schema below
+        # extracts, verbatim, not just be a placeholder string.
+        mock_ocr.return_value = (
+            "INVOICE\nVendor: ACME Corp\nInvoice #: INV-2026\n"
+            "Line 1   1   100.00   100.00\n"
+            "Subtotal: 100.00\nTax: 10.00\nTotal: 110.00"
+        )
         
         # Mock structured output schema model instance returned by LLM
         from agents.extraction_agent import InvoiceExtractionSchema, InvoiceLineItem
@@ -140,7 +148,7 @@ def test_successful_extraction_pipeline(db_session):
         mock_get_llm.return_value = MockLLM()
         
         # Execute Celery task
-        process_invoice_task("mock-batch-id", file_path, str(MOCK_TENANT_ID))
+        handle_process_invoice("mock-batch-id", file_path, str(MOCK_TENANT_ID))
         
         # Assert database updates
         db_session.refresh(invoice)
@@ -155,3 +163,25 @@ def test_successful_extraction_pipeline(db_session):
         assert invoice.tags == ["it", "hardware"]
         assert len(invoice.items) == 1
         assert invoice.sa_alerts == []
+
+
+def test_gap_46_tax_amount_source_text_verification():
+    """Gap 46: Verify that tax_amount OCR source-text check catches silent auto-corrections."""
+    from utils.verification_tools import verify_tax_amount_in_source_text
+
+    # 1. Tax amount is printed on OCR text -> passes (returns None)
+    ocr_text_with_tax = "Subtotal: $100.00  Tax: $15.00  Total: $115.00"
+    alert = verify_tax_amount_in_source_text(15.00, ocr_text_with_tax)
+    assert alert is None
+
+    # 2. Zero tax amount -> passes (returns None)
+    alert_zero = verify_tax_amount_in_source_text(0.00, "Subtotal: $100.00 Total: $100.00")
+    assert alert_zero is None
+
+    # 3. LLM auto-corrected tax_amount (10.00) not present in raw OCR text -> triggers alert
+    ocr_text_flawed = "Subtotal: $100.00  Tax: $25.00  Total: $125.00"  # Vendor printed tax is 25.00, not 10.00
+    alert_flawed = verify_tax_amount_in_source_text(10.00, ocr_text_flawed)
+    assert alert_flawed is not None
+    assert alert_flawed["type"] == "tax_amount_not_verified_in_source"
+    assert "tax_amount" in alert_flawed["field"]
+
