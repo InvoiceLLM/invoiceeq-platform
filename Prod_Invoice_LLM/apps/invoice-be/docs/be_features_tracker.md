@@ -11,16 +11,16 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` **MAJOR REFACTOR**: Replace the legacy task-queue broker/worker system with Azure Storage Queues, retain Redis for caching. *(Jul 19, 2026 — closed the last loose end: `main.py` was also running an embedded copy of the queue poller alongside the dedicated `queue-worker` Container App; removed, see `feature_2_pipeline_extraction.md`.)*
 
 - `[x]` [Feature 1: Multi-Tenant Authentication & Security Scoping](feature_1_auth.md)
-- `[x]` [Feature 2: Ingestion, Storage & Extraction Pipeline](feature_2_pipeline_extraction.md) *(merged with former Feature 5 — see doc header)*
+- `[x]` [Feature 2: Ingestion, Storage & Extraction Pipeline — **NOVA**](feature_2_pipeline_extraction.md) *(merged with former Feature 5 — see doc header)*
 - `[x]` [Feature 3: Status Tracking & Real-Time SSE Streams](feature_3_sse.md)
 - `[x]` [Feature 3.1: Duplicate Detection & Ingestion UI Refinements](feature_3.1_fix_ftr2_3.md) — Layer 1 SHA-256 binary hash match + Layer 2 post-extraction vendor/number match fully implemented and UI badges wired
 
 - `[x]` [Feature 4: Invoice Queries & PDF Delivery API](feature_4_queries_pdf.md)
-- `[x]` [Feature 6: Conversational RAG & Thread Management](feature_6_rag.md)
-- `[x]` [Feature 7: Audit Resolution & finalization](feature_7_audit.md)
+- `[x]` [Feature 6: Conversational RAG & Thread Management — **SAGE**](feature_6_rag.md)
+- `[x]` [Feature 7: Audit Resolution & finalization — **SENTINEL**](feature_7_audit.md)
 - `[x]` [Feature 8: Dashboard Metrics & Analytics API](feature_8_dashboard.md)
 - `[x]` [Feature 9: Third-Party Connectors & Ingestion](feature_9_connectors.md)
-- `[x]` [Feature 10: AI Trainer Sandbox & Rules Registry](feature_10_trainer.md) *(redesigned 2026-07-13 into Global / existing-production-vendor / new-vendor rule scopes — see doc header)*
+- `[x]` [Feature 10: AI Trainer Sandbox & Rules Registry — **EVOLVE**](feature_10_trainer.md) *(redesigned 2026-07-13 into Global / existing-production-vendor / new-vendor rule scopes — see doc header)*
 - `[ ]` [Feature 11: Stripe Billing & Subscriptions API](feature_11_billing.md) — `routers/billing.py` not yet implemented at all; the whole feature is the gap, no dedicated Gap number
 - `[x]` [Feature 12: Alembic Database Migrations](feature_12_alembic.md) — verified against a throwaway local Postgres; local/Azure dev DBs still need manual reconciliation before their first `alembic upgrade head`, see doc
 - `[x]` [Feature 13: Automated Test & Benchmark Suite](feature_13_test_benchmark_suite.md) — test tooling spanning Feature 2 (extraction) + Feature 6 (RAG chat); Tier 1 regression suite is built and CI-wired, Tier 2 daily benchmark harness is fully verified, resolving Key Vault permissions, model name configuration, missing queue creation, and ThreadPoolExecutor SentenceTransformer concurrency crashes (86.7% extraction, 95.2% RAG chat passed on Day 2).
@@ -28,10 +28,10 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[ ]` [Feature 15: Outbound Webhooks](feature_15_webhooks.md) — spec only, added 2026-07-22
 - `[x]` [Feature 16: Settings](feature_16_settings.md) — implemented 2026-07-28: `models.py::Tenant` gained `receive_invoices_enabled` (default `True`), `send_invoices_enabled` (default `False`), `outbound_sender_email` (nullable); Alembic migration `e1f2a3b4c5d6`; `routers/settings.py` — `GET /api/v1/settings/vendor-flow` (any role) + `PUT /api/v1/settings/vendor-flow` (Admin-only, 403 for others, 400 if enabling send without email, 402 if not `pro_combined` plan); registered in `main.py`; 7/7 tests passing in `tests/test_settings.py`.
 - `[ ]` [Feature 17: Invoice Builder](feature_17_invoice_builder.md) — placeholder only, deliberately decoupled from Service Flow, not scoped
-- `[ ]` [Feature 2.1: Service Flow — Outbound Ingestion](feature_2.1_vendor_flow_ingestion.md) — spec only, added 2026-07-27; extends Feature 2
-- `[ ]` [Feature 7.1: Service Flow — Outbound Auditor & Standing Rules](feature_7.1_vendor_flow_auditor.md) — spec only, added 2026-07-27; extends Feature 7
+- `[ ]` [Feature 2.1: Service Flow — Outbound Ingestion — **NOVA**](feature_2.1_vendor_flow_ingestion.md) — spec only, added 2026-07-27; extends Feature 2
+- `[ ]` [Feature 7.1: Service Flow — Outbound Auditor & Standing Rules — **SENTINEL**](feature_7.1_vendor_flow_auditor.md) — spec only, added 2026-07-27; extends Feature 7
 - `[ ]` [Feature 8.1: Service Flow — Outbound Dashboard](feature_8.1_vendor_flow_dashboard.md) — spec only, added 2026-07-27; extends Feature 8
-- `[ ]` [Feature 6.1: Service Flow — Direction-Aware Chat](feature_6.1_vendor_flow_chat.md) — spec only, added 2026-07-27; extends Feature 6, the one narrow sanctioned edit to `query_agent.py` in the whole Service Flow effort
+- `[ ]` [Feature 6.1: Service Flow — Direction-Aware Chat — **SAGE**](feature_6.1_vendor_flow_chat.md) — spec only, added 2026-07-27; extends Feature 6, the one narrow sanctioned edit to `query_agent.py` in the whole Service Flow effort
 
 > Note: Features 4, 5, 6, 7, 8, 9, 10 are marked `[x]` because the corresponding routers/agents are implemented and functioning — the per-task checkboxes inside those individual files were simply never ticked off after the work landed. That's cosmetic bookkeeping, not a real gap, and has been left as-is rather than backfilled.
 
@@ -127,6 +127,9 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 
 **Email Ingestion** ([feature_14_email_ingestion.md](feature_14_email_ingestion.md)):
 - `[ ]` **Gap 59: Email Provider Decision Block** — Inbound email ingestion is blocked on a vendor decision between **Azure Communication Services (ACS) Email** (native Azure resource but less mature inbound MIME parsing) and **SendGrid Inbound Parse** (mature parsing webhook, but requires an external vendor relationship).
+
+**Auth** (full Clerk auth gateway feature is website-tracked — see `apps/invoice-website/website_features/feature_4_auth_gateway.md` and its tracker; this is the backend piece of that same reconciliation):
+- `[x]` **Gap 60: `Tenant` had no `clerk_org_id`, and JWT tenant resolution mis-parsed Clerk's `org_id` claim as a UUID** — Reconciled Jul 28, 2026 from the `auth-feature-4` branch (which forked 6 days / 43 commits before current master and couldn't be merged as-is without regressing everything since) onto current master instead. Real bug found and fixed in `dependencies.py::get_tenant_context()`: `payload.get("tenant_id") or payload.get("org_id")` fed a Clerk `org_id` string (e.g. `"org_2abc..."`, never a UUID) into `UUID(...)`, which would 401 on any real Clerk-organization token that lacked a separate custom `tenant_id` claim. Fixed by resolving `clerk_org_id` and `tenant_id` independently, with `clerk_org_id` taking lookup priority (over `tenant_id`, then email domain) and backfilling onto tenants found via the older paths. Added `Tenant.clerk_org_id` (migration `b3c4d5e6f7a8`, based on the actual current head `71d18e2c3349` — not the source branch's stale `7504f993dd7e`, which would have recreated the multi-head problem from Gap 3/4 above) plus `routers/auth.py`'s `POST /auth/provision` (idempotent tenant creation from a Clerk org) and `POST /auth/logout`. Verified: `alembic upgrade head` applies cleanly with a single head; full existing pytest suite (78 tests) passes with no regressions. **Blocked on real Clerk keys before this is live-testable** — see `website_features_tracker.md` Gap 2 (this backend piece works correctly against a real JWT, but no real Clerk account/keys exist yet in this repo to generate one).
 
 ---
 
