@@ -1,12 +1,16 @@
 # Feature 11: Stripe Billing & Subscriptions API
 
-Implement Stripe checkout subscriptions redirects and integrate webhook event processors to auto-manage tenant plan upgrades and payment lockouts.
+Implement Stripe checkout subscriptions redirects and integrate webhook event processors to auto-manage tenant plan upgrades, downgrades, and payment lockouts.
 
 ### File Coordinates
-* Router (not yet created — see Gap 14 in `be_features_tracker.md`): [apps/invoice-be/routers/billing.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/billing.py) → planned `POST /billing/create-checkout-session` → `create_checkout_session()`, `POST /webhooks/stripe` → `stripe_webhook_handler()`
+* Router: [apps/invoice-be/routers/billing.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/billing.py) → planned `POST /billing/create-checkout-session` → `create_checkout_session()`, `POST /webhooks/stripe` → `stripe_webhook_handler()`
 
-### Functionality (planned — nothing in this file exists in code yet)
-`create_checkout_session()` will initiate a Stripe Checkout session (`mode="subscription"`, the monthly Pro price ID) for the tenant and return the redirect URL to the FE/marketing site. `stripe_webhook_handler()` will verify the `Stripe-Signature` header against `STRIPE_WEBHOOK_SECRET`, then branch on event type: `checkout.session.completed` looks up the tenant by Stripe customer ID and sets `Tenant.billing_plan = 'pro'`; `invoice.payment_failed` / `customer.subscription.deleted` set it to `'unpaid'`, which `dependencies.py::get_tenant_context()` (see `feature_1_auth.md`) already checks and blocks on with `402` — that enforcement path exists today even though nothing sets `'unpaid'` yet.
+### Functionality (planned)
+* `create_checkout_session()`: Initiates a Stripe Checkout session (`mode="subscription"`). It accepts a target plan parameter (`pro_standard` or `pro_combined`). If upgrading from standard `pro` to `pro_combined`, Stripe computes and processes the prorated difference (additional ₹4,000/month delta) for the current billing cycle.
+* `stripe_webhook_handler()`: Verifies `Stripe-Signature` against `STRIPE_WEBHOOK_SECRET`.
+  * `checkout.session.completed` / `customer.subscription.updated`: Resolves the tenant ID and updates `Tenant.billing_plan` to either `'pro'` or `'pro_combined'`.
+  * `invoice.payment_failed` / `customer.subscription.deleted`: Updates `Tenant.billing_plan = 'unpaid'`.
+  * Note: The auth middleware `dependencies.py::get_tenant_context()` already checks for `'unpaid'` and blocks access with a `402 Payment Required` exception.
 
 ### Tasks
 - [ ] **Task 11.1: Code Checkout Session Endpoint**

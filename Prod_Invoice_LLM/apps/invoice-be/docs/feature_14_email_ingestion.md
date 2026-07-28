@@ -1,8 +1,8 @@
-# Feature 14: Email-In Invoice Ingestion
+# Feature 14: Email-Based Invoice Ingestion & Outbound Delivery
 
-Accept invoices sent directly to a per-tenant inbound email alias, so a
-tenant can forward/CC invoices to a fixed address instead of using the
-upload UI — attachments land in the same pipeline as a manual upload.
+Symmetric email capability:
+1. **Inbound Email Ingestion**: Accept invoices sent directly to a per-tenant inbound email alias (forward/CC invoices to a fixed address).
+2. **Outbound Email Delivery**: Send verified outbound invoices automatically to customer emails via the tenant's configured outbound sender email.
 
 ### Decision point — flagged for sign-off before Task 1 starts
 **Azure Communication Services Email vs. SendGrid Inbound Parse** for

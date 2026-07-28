@@ -6,6 +6,11 @@ class Settings(BaseSettings):
     REDIS_URL: str
     CHROMA_HOST: str
     CHROMA_PORT: int
+    # ChromaDB's Container App ingress is HTTPS-only when reached over its
+    # external hostname (needed since its internal-only ingress rejected the
+    # client's plain-HTTP calls outright) -- local/dev Chroma over docker-compose
+    # has no TLS, so this defaults off and is only set true for that deployment.
+    CHROMA_USE_SSL: bool = False
     CLERK_SECRET_KEY: str
     TOKEN_ENCRYPTION_KEY: str
     CLERK_JWT_ISSUER: str = ""

@@ -1,6 +1,6 @@
 # Feature 16: Settings
 
-New feature — this is the first time "Settings" exists as a formal BE feature. No `feature_*_settings.md` existed before this; there's also no live `/settings` route on the frontend yet (confirmed by listing `apps/invoice-fe/app/**/page.tsx`). Consolidates, by reference only (no content duplication), what already conceptually belongs under a Settings screen — [feature_9_connectors.md](feature_9_connectors.md), [feature_14_email_ingestion.md](feature_14_email_ingestion.md), [feature_15_webhooks.md](feature_15_webhooks.md) — plus the two new Vendor Flow toggles.
+New feature — this is the first time "Settings" exists as a formal BE feature. No `feature_*_settings.md` existed before this; there's also no live `/settings` route on the frontend yet (confirmed by listing `apps/invoice-fe/app/**/page.tsx`). Consolidates, by reference only (no content duplication), what already conceptually belongs under a Settings screen — [feature_9_connectors.md](feature_9_connectors.md), [feature_14_email_ingestion.md](feature_14_email_ingestion.md), [feature_15_webhooks.md](feature_15_webhooks.md) — plus the two new Service Flow toggles.
 
 ### File Coordinates (planned)
 * New router: `apps/invoice-be/routers/settings.py` — `GET /settings/vendor-flow`, `PUT /settings/vendor-flow`.
@@ -9,11 +9,14 @@ New feature — this is the first time "Settings" exists as a formal BE feature.
 
 ### Functionality
 
-**Toggles:** `Tenant.receive_invoices_enabled: bool` (default `True` — every existing tenant already uses this flow, so the default preserves current behavior exactly) and `Tenant.send_invoices_enabled: bool` (default `False` — new capability, opt-in).
+**Toggles:** `Tenant.receive_invoices_enabled: bool` (default `True` — preserves current behavior) and `Tenant.send_invoices_enabled: bool` (default `False` — new capability, opt-in).
 
-**Outbound sender email:** `Tenant.outbound_sender_email: str | None` (default `None`) — the "from" address used when a confirmed outbound invoice ([feature_2.1](feature_2.1_vendor_flow_ingestion.md)'s `SENT` step) is actually emailed to the customer. This resolves that feature's previously-open "delivery mechanism not yet decided" question: it's email, reusing the same ACS Email connection [feature_14_email_ingestion.md](feature_14_email_ingestion.md) already brings into the project, just configured for sending instead of receiving. Format-validated on save (not verified against ACS at save time — actual send-time failures surface as an alert on the invoice, same pattern as any other outbound alert).
+**Outbound sender email:** `Tenant.outbound_sender_email: str | None` (default `None`) — the "from" address used when sending verified outbound invoices via email.
 
-**Validation rule:** `PUT /settings/vendor-flow` rejects `send_invoices_enabled=True` if `outbound_sender_email` is null (`400`) — you can't turn on sending with nowhere to send from. Turning `send_invoices_enabled` off does not clear `outbound_sender_email`, so re-enabling later doesn't require re-entering it.
+**Validation rules on `PUT /settings/vendor-flow`**:
+1. Rejects `send_invoices_enabled=True` if `outbound_sender_email` is null (`400 Bad Request`).
+2. Rejects `send_invoices_enabled=True` if `Tenant.billing_plan` is not `'pro_combined'` (`402 Payment Required`). This ensures the tenant is subscribed to the Combined Pro tier (₹8,999/month) before activating outbound flows.
+3. Turning `send_invoices_enabled` off does not clear `outbound_sender_email` or downgrade the billing plan automatically.
 
 **Admin-only enforcement:** `PUT /settings/vendor-flow` checks the requesting user's `role == "Admin"` (via the existing, unmodified `get_tenant_context()`); Auditor/Viewer roles get `403`. `GET /settings/vendor-flow` is readable by any authenticated role, since the FE needs it just to decide which tabs to render, not to change anything.
 

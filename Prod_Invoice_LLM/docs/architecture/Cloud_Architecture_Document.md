@@ -155,7 +155,7 @@ The cloud architecture is governed by five non-negotiable principles derived fro
 | Azure Service               | Private Endpoint DNS Zone                     | Connected Subnet |
 |-----------------------------|-----------------------------------------------|-------------------|
 | PostgreSQL Flexible Server   | `privatelink.postgres.database.azure.com`    | `data-subnet`     |
-| Azure Cache for Redis        | `privatelink.redis.cache.windows.net`        | `data-subnet`     |
+| Azure Managed Redis (Redis Enterprise) | `privatelink.redisenterprise.cache.azure.net` | `data-subnet`     |
 | Azure Blob Storage           | `privatelink.blob.core.windows.net`          | `data-subnet`     |
 | Azure OpenAI                 | `privatelink.openai.azure.com`               | `ai-subnet`       |
 | Azure Document Intelligence  | `privatelink.cognitiveservices.azure.com`    | `ai-subnet`       |
@@ -242,16 +242,19 @@ A load test (150 PDFs) is planned to validate this design under real concurrent 
 | **Encryption**           | TLS 1.2 in-transit, AES-256 at-rest (Microsoft-managed keys) |
 | **Tenant Isolation**     | Row-level via `tenant_id` column on all tables      |
 
-### 5.2 Azure Cache for Redis
+### 5.2 Azure Managed Redis (Redis Enterprise)
+
+> Classic Azure Cache for Redis (`Microsoft.Cache/Redis`, Basic/Standard/Premium SKUs) is retired by Azure and can no longer be created — `infra/modules/data/redis.bicep` deploys `Microsoft.Cache/redisEnterprise` (branded "Azure Managed Redis") instead. This replaces the Standard C1/Premium P1 SKU language from earlier drafts of this document.
 
 | Parameter                | Value                                    |
 |--------------------------|------------------------------------------|
-| **SKU**                  | Standard C1 (Dev/UAT), Premium P1 (Prod) |
-| **Use Case 1**           | Chat conversational memory, Rate Limiting, Metrics caching |
-| **Use Case 2**           | **Pub/Sub channel** for SSE real-time notifications (bulk upload status) |
-| **Access**               | Private Endpoint only (EnterpriseCluster Policy for single node behavior) |
-| **Persistence**          | AOF enabled (Production)                 |
-| **Eviction Policy**      | `volatile-lru`                           |
+| **SKU**                  | `Balanced_B0` (Dev/UAT) — smallest available Enterprise tier, roughly comparable to the old Standard C1; scale `sku.name`/`capacity` up for Prod |
+| **Use Case 1**           | Chat answer caching, dashboard insights caching (both degrade gracefully — a cache miss/failure never breaks the feature, see `agents/query_agent.py::get_cached_answer()`) |
+| **Use Case 2**           | **Pub/Sub channel** for SSE real-time notifications (bulk upload status, `queue_worker/handlers.py::_publish_sse_events()`) |
+| **Access**               | Private Endpoint only in the target design (`clusteringPolicy: OSSCluster`, `clientProtocol: Encrypted`, port `10000`) |
+| **Persistence**          | Not configured (Redis Enterprise's persistence options differ from classic AOF/RDB — revisit if Prod needs durability beyond cache/pub-sub) |
+| **Eviction Policy**      | `NoEviction` (per `redis.bicep`) |
+| **Auth**                 | Access-key authentication (`accessKeysAuthentication: Enabled`), connection string built manually as `rediss://:<primaryKey>@<host>:10000` — **not currently wired into any bicep file**; `REDIS_URL` is set by hand via `az containerapp secret set` on `ca-invoice-be-dev`/`ca-queue-worker-dev` after each (re)create. |
 
 > **SSE Integration**: When Queue workers finish processing an invoice, they publish a completion event to a Redis Pub/Sub channel (`batch:{batch_id}`). The FastAPI SSE endpoint subscribes to this channel and streams events to the browser in real-time. This avoids excessive polling when users upload 50–100 PDFs in bulk.
 
@@ -444,7 +447,7 @@ acr.azurecr.io/invoice-be:uat           ← Current UAT revision
 | **Subscription**        | Shared dev subscription    | Shared dev subscription    | Client's own subscription  |
 | **IaC Templates**       | Same Bicep/Terraform       | Same Bicep/Terraform       | Same Bicep/Terraform       |
 | **PostgreSQL SKU**      | Burstable B2s              | Burstable B2s              | General Purpose D4s (HA)   |
-| **Redis SKU**           | Standard C1                | Standard C1                | Premium P1                 |
+| **Redis SKU**           | Balanced_B0                | Balanced_B0                | Balanced (larger tier)     |
 | **Blob Redundancy**     | LRS                        | LRS                        | ZRS                        |
 | **Min Replicas**        | 0 (scale-to-zero)          | 0 (scale-to-zero)          | 1 (always-on)              |
 | **Access Control**      | Developers (Reader)        | DevOps (Contributor)       | DevOps only (Contributor)  |
@@ -524,7 +527,7 @@ graph TD
     subgraph Private VNet [Azure Private Virtual Network]
         FE -->|Private HTTP: 8000| BE[invoice-be Container App]
         
-        BE -->|Cache & Pub/Sub| Redis[(Azure Cache for Redis)]
+        BE -->|Cache & Pub/Sub| Redis[(Azure Managed Redis)]
         Worker[queue-worker Container App] -->|Pub/Sub| Redis
         
         BE -->|Relational Data| Postgres[(Azure DB for PostgreSQL)]
@@ -585,11 +588,12 @@ Before automating deployments with Bicep, you can provision the cloud workspace 
   2. Server name: `db-invoiceai-prod`. Configure Compute: **General Purpose D4s**.
   3. Under **Networking**: Select **Private Access** $\rightarrow$ Associate with `vnet-invoiceai-prod` and subnet `snet-pe`.
   4. Click **Review + create** $\rightarrow$ **Create**.
-* **Azure Cache for Redis**:
-  1. Search for **Azure Cache for Redis** $\rightarrow$ **+ Create**.
-  2. DNS Name: `redis-invoiceai-prod`. SKU: **Premium P1**.
+* **Azure Managed Redis** (classic "Azure Cache for Redis" is retired and no longer offered — this is the current portal name for the same Redis Enterprise resource type `infra/modules/data/redis.bicep` deploys):
+  1. Search for **Azure Managed Redis** $\rightarrow$ **+ Create**.
+  2. Cluster name: `redis-invoiceai-prod`. SKU: start from the **Balanced** tier family, size up from `B0` for Prod (Dev/UAT can stay on `B0`, the smallest).
   3. Under **Networking**: Set Connectivity to **Private Endpoint** and attach to subnet `snet-pe`.
   4. Click **Review + create** $\rightarrow$ **Create**.
+  5. After creation, manually build `REDIS_URL` (`rediss://:<primary-key>@<hostname>:10000`) from the cluster's Access Keys blade and Overview page, and set it as a secret on `ca-invoice-be-{env}`/`ca-queue-worker-{env}` — this connection string is not generated by any bicep file.
 * **Azure Blob Storage Account**:
   1. Search for **Storage Accounts** $\rightarrow$ **+ Create**.
   2. Name: `stinvoiceaiprod`. SKU: **Standard LRS**.
@@ -722,7 +726,7 @@ Layer 9: AUDIT            Git-tracked IaC changes, Azure Activity Log
 |--------------------|-----------------------|-----------------------|
 | PostgreSQL         | < 5 minutes (WAL)     | < 30 minutes (HA)     |
 | Blob Storage       | 0 (ZRS, synchronous)  | < 15 minutes          |
-| Redis              | < 1 minute (AOF)      | < 10 minutes          |
+| Redis              | N/A — no persistence configured, acceptable since it's cache/pub-sub only (see §5.2), never source-of-truth data | < 10 minutes (recreate cluster) |
 | Container Apps     | N/A (stateless)       | < 5 minutes (re-deploy) |
 | ChromaDB           | < 1 hour (disk snapshot) | < 30 minutes       |
 
@@ -732,7 +736,7 @@ Layer 9: AUDIT            Git-tracked IaC changes, Azure Activity Log
 |---------------------------|--------------------------------------|--------------------|-----------------|
 | PostgreSQL                | Azure Automated Backup               | 35 days            | Daily + continuous WAL |
 | Blob Storage              | Soft Delete + Versioning             | 14 days            | Continuous      |
-| Redis                     | AOF Persistence + Snapshots          | 7 days             | Every 1 hour    |
+| Redis                     | None — not backed up (cache/pub-sub only, see §13.1) | N/A       | N/A             |
 | ChromaDB                  | Azure Managed Disk Snapshots          | 14 days            | Daily           |
 | IaC State                 | Git repository                        | Infinite           | Every commit    |
 | Container Images          | ACR with retention policy             | 30 tagged images   | Per build       |
@@ -757,7 +761,7 @@ Layer 9: AUDIT            Git-tracked IaC changes, Azure Activity Log
 |-----------------------------------|----------------------|----------------------|
 | Azure Container Apps (4 apps)     | $50 – $100           | $200 – $500          |
 | PostgreSQL Flexible Server        | $30 (B2s)            | $250 (D4s HA)        |
-| Azure Cache for Redis             | $25 (Standard C1)    | $250 (Premium P1)    |
+| Azure Managed Redis (Balanced_B0)  | *re-verify — Enterprise-tier pricing differs meaningfully from the old classic SKU this row used to quote* | *re-verify* |
 | Azure Blob Storage                | $5 – $10             | $20 – $50            |
 | Azure OpenAI (GPT-4 + Embeddings) | $50 – $150           | $200 – $800          |
 | Azure Document Intelligence       | $10 – $30            | $50 – $200           |
@@ -813,7 +817,7 @@ Layer 9: AUDIT            Git-tracked IaC changes, Azure Activity Log
 │   │
 │   ├── data/
 │   │   ├── postgresql.bicep      # PostgreSQL Flexible Server
-│   │   ├── redis.bicep           # Azure Cache for Redis
+│   │   ├── redis.bicep           # Azure Managed Redis (Redis Enterprise)
 │   │   ├── storage.bicep         # Blob Storage Account
 │   │   └── chromadb.bicep        # ChromaDB Container App
 │   │

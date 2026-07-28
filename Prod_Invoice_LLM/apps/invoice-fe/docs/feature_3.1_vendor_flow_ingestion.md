@@ -1,6 +1,6 @@
-# Feature 3.1: Vendor Flow — Send Invoices Tab
+# Feature 3.1: Service Flow — Send Invoices Tab
 
-Extends [feature_3_ingestion.md](feature_3_ingestion.md). Spec only — no implementation yet, pending approval of the full Vendor Flow document set.
+Extends [feature_3_ingestion.md](feature_3_ingestion.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
 Adds the outbound counterpart to today's upload flow: a tab for uploading the tenant's own pre-made invoice PDFs for verification before send, visible only when the *Send Invoices* Settings toggle is on ([feature_16_settings.md](feature_16_settings.md) BE / [feature_10_settings.md](feature_10_settings.md) FE).
 

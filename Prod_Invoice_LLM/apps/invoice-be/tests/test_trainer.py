@@ -54,6 +54,11 @@ def reset_trainer_sessions():
     trainer_sessions._memory_store.clear()
     yield
     trainer_sessions._memory_store.clear()
+@pytest.fixture(autouse=True)
+def mock_queue_client():
+    with patch("routers.trainer.QueueClient") as mock_qc:
+        yield mock_qc
+
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
-# Feature 4.1: Vendor Flow — Outbound Auditor Tab
+# Feature 4.1: Service Flow — Outbound Auditor Tab
 
-Extends [feature_4_auditor.md](feature_4_auditor.md). Spec only — no implementation yet, pending approval of the full Vendor Flow document set.
+Extends [feature_4_auditor.md](feature_4_auditor.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
 Adds the pre-send validation console for outbound invoices, plus the "apply as standing rule" checkbox from [feature_7.1_vendor_flow_auditor.md](../../invoice-be/docs/feature_7.1_vendor_flow_auditor.md).
 

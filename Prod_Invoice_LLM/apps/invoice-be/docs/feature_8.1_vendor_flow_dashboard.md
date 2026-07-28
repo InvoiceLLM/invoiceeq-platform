@@ -1,6 +1,6 @@
-# Feature 8.1: Vendor Flow — Outbound Dashboard
+# Feature 8.1: Service Flow — Outbound Dashboard
 
-Extends [feature_8_dashboard.md](feature_8_dashboard.md). Spec only — no implementation yet, pending approval of the full Vendor Flow document set.
+Extends [feature_8_dashboard.md](feature_8_dashboard.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
 AR mirror of the existing AP metrics endpoint: total invoiced to customers, amount collected, outstanding receivables, top customers, verification accuracy, real average time-to-payment.
 

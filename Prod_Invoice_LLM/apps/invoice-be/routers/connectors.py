@@ -128,18 +128,26 @@ async def oauth_callback(
 @router.get("/files/{provider}")
 async def list_connector_files(
     provider: str,
+    direction: str = "inbound",
     folder_id: Optional[str] = None,
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Browse directories and list files in Google Drive or Salesforce documents.
+    Browse directories and list files in Google Drive or Salesforce.
+    direction: 'inbound' (AP supplier PDFs) or 'outbound' (AR verified exports).
     """
     prov = provider.lower()
     if prov not in ["google_drive", "salesforce"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid connector provider '{provider}'."
+        )
+    direction = direction.lower()
+    if direction not in ["inbound", "outbound"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="direction must be 'inbound' or 'outbound'."
         )
 
     # Retrieve connection state
@@ -182,17 +190,26 @@ async def list_connector_files(
 async def trigger_file_import(
     provider: str,
     payload: ImportPayload,
+    direction: str = "inbound",
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Manually triggers background ingestion task for a file/object.
+    Manually triggers a background import task for a connector file.
+    direction: 'inbound' feeds the AP extraction pipeline;
+               'outbound' stores the file for AR record-keeping only.
     """
     prov = provider.lower()
     if prov not in ["google_drive", "salesforce"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid connector provider '{provider}'."
+        )
+    direction = direction.lower()
+    if direction not in ["inbound", "outbound"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="direction must be 'inbound' or 'outbound'."
         )
 
     # Verify active connection
@@ -214,18 +231,19 @@ async def trigger_file_import(
             queue_client = QueueClient.from_connection_string(
                 settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
             )
-            payload = {
+            msg_payload = {
                 "task": "import_connector_file",
                 "kwargs": {
                     "provider": prov,
                     "file_id": payload.file_id,
-                    "tenant_id": str(context.tenant_id)
+                    "tenant_id": str(context.tenant_id),
+                    "direction": direction,
                 }
             }
-            queue_client.send_message(json.dumps(payload))
+            queue_client.send_message(json.dumps(msg_payload))
         else:
             logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
     except Exception as e:
         logger.warning("Failed to dispatch Azure Storage Queue import task: %s", e)
 
-    return {"success": True, "message": f"Queued background import for file {payload.file_id}"}
+    return {"success": True, "message": f"Queued {direction} import for file {payload.file_id}"}
