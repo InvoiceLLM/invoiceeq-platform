@@ -9,17 +9,17 @@ Configure the visual entry point, shared design system styling, header navigatio
 * Buttons: Primary actions styled in vibrant emerald green (`bg-[#10B981] hover:bg-[#059669] text-white`). Secondary buttons styled in transparent ghost borders (`border border-[#222D3D] hover:bg-slate-900`).
 
 ### File Coordinates
-* Main Page: [apps/invoice-website/app/page.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-website/app/page.tsx)
-* Layout Settings: [apps/invoice-website/app/layout.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-website/app/layout.tsx)
-* Stylesheet: [apps/invoice-website/app/globals.css](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-website/app/globals.css)
+* Main Page: [apps/invoice-website/app/page.tsx](file:///d:/Invoice-LLM/Invoice-LLM-SOLO-Dev/Prod_Invoice_LLM/apps/invoice-website/app/page.tsx)
+* Layout Settings: [apps/invoice-website/app/layout.tsx](file:///d:/Invoice-LLM/Invoice-LLM-SOLO-Dev/Prod_Invoice_LLM/apps/invoice-website/app/layout.tsx)
+* Stylesheet: [apps/invoice-website/app/globals.css](file:///d:/Invoice-LLM/Invoice-LLM-SOLO-Dev/Prod_Invoice_LLM/apps/invoice-website/app/globals.css)
 
 ### Tasks
-- [ ] **Task 1.1: Configure Global Tailwind CSS stylesheet**
+- [x] **Task 1.1: Configure Global Tailwind CSS stylesheet**
   - Match theme variables inside `globals.css` with dashboard variables to maintain complete design system consistency.
-- [ ] **Task 1.2: Build Landing Navigation Header**
+- [x] **Task 1.2: Build Landing Navigation Header**
   - Code headers linking to: Features, Pricing, How It Works, and Login.
   - Implement a `Get Started Free` button routing directly to SSO signup page.
-- [ ] **Task 1.3: Code Hero Text & Call-To-Action**
+- [x] **Task 1.3: Code Hero Text & Call-To-Action**
   - Implement the title: *"AI-Powered Invoice Processing — Built for Every Business"*.
   - Add descriptions: *"Your own private, secure workspace. Your invoices, your team, your rules."*
   - Build `Start Free` and `Book a Demo` landing action buttons.

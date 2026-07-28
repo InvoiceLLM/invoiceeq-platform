@@ -25,16 +25,16 @@ invoice-website/
 │       └── stripe/route.ts     # Stripe webhook handler
 ├── components/
 │   ├── ui/                     # Shadcn/UI components
-│   └── marketing/              # HeroSection, FeatureTeaser, PricingTable
+│   └── marketing/              # Header, Hero, WorkspaceShowcase, Footer
 ├── lib/
 │   ├── stripe.ts               # Stripe SDK init
 │   └── utils.ts                # Tailwind class merger
 └── middleware.ts               # Auth guard
 ```
 
-## Key Pages
+## Key Pages & Sections
 - **Hero Section** — Value proposition + "Start Free Trial" CTA
-- **Feature Teaser** — 3-column grid (Extraction, Verification, Auditor)
+- **Workspace Showcase** — Interactive 3-column tenant isolation widget (Acme Corp, TechFirm, GlobalTrade) & Privacy Seal
 - **Security & Trust** — Azure AI Foundry, VNet, RBAC callouts
 - **Pricing Plans** — Free Trial (50 invoices) / Pro ($99/mo) / Enterprise
 - **Auth/SSO Gateway** — Google & Microsoft sign-in via Clerk/Auth0

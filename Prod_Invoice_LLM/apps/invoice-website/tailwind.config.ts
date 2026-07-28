@@ -2,9 +2,9 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: [
-    "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
@@ -58,18 +58,21 @@ const config: Config = {
         'badge-weight': '600',
       },
       colors: {
-        "bg-main": "#0B0F19",
-        "bg-panel": "rgba(21, 27, 38, 0.75)",
-        "border-default": "#222D3D",
-        "accent-green": "#10B981",
-        "accent-red": "#EF4444",
-        "accent-blue": "#3B82F6",
-        "accent-yellow": "#F59E0B",
-        "page-title": "#1F2937",
-        "section-title": "#374151",
-        "body-text": "#4B5563",
-        "table-data": "#2C2C2C",
-        "placeholder-text": "#9CA3AF",
+        canvas: "#0B0F19",
+        panel: "#111827",
+        panelBorder: "#222D3D",
+        brandPrimary: "#10B981",
+        brandPrimaryHover: "#059669",
+        pageTitle: "#1F2937",
+        sectionTitle: "#374151",
+        bodyText: "#4B5563",
+        tableData: "#2C2C2C",
+        placeholderText: "#9CA3AF",
+      },
+      backgroundImage: {
+        "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
+        "gradient-conic":
+          "conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))",
       },
     },
   },

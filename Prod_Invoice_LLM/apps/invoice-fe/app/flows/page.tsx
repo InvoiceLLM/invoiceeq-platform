@@ -788,6 +788,21 @@ export default function FlowsPage() {
   const [speed, setSpeed] = useState(1);
   const [stepIndex, setStepIndex] = useState(0);
 
+  // Read URL search params (e.g. ?flow=chat or ?flow=outbound) on load
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const flowParam = params.get("flow") || params.get("tab") || params.get("type");
+      if (flowParam) {
+        const normalized = flowParam.toLowerCase().replace("-", "_");
+        if (normalized === "chat" || normalized === "rag") setFlowId("chat");
+        else if (normalized === "outbound" || normalized === "vendor") setFlowId("outbound");
+        else if (normalized === "vendor_chat" || normalized === "direction_aware" || normalized === "direction") setFlowId("vendor_chat");
+        else if (normalized === "inbound") setFlowId("inbound");
+      }
+    }
+  }, []);
+
   const flow = ALL_FLOWS.find((f) => f.id === flowId) ?? INBOUND;
   const nodeMap = Object.fromEntries(flow.nodes.map((n) => [n.id, n]));
   const timeoutRefs = useRef<ReturnType<typeof setTimeout>[]>([]);

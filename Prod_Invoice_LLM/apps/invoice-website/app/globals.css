@@ -1,0 +1,347 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&family=Open+Sans:wght@400;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Enterprise ERP / Banking Typography Stack */
+  --font-enterprise: "Segoe UI", "Aptos", "Helvetica Neue", "Roboto", "Open Sans", "Arial", sans-serif;
+  --font-mono: "Cascadia Code", "Consolas", "Courier New", monospace;
+
+  /* ERP Design Tokens */
+  --page-title-weight: 700;
+  --page-title-size: 32px;
+  --page-title-spacing: -0.5px;
+  --page-title-color: #1F2937;
+
+  --section-title-weight: 600;
+  --section-title-size: 24px;
+  --section-title-color: #374151;
+
+  --card-title-weight: 600;
+  --card-title-size: 18px;
+
+  --body-text-weight: 400;
+  --body-text-size: 14px;
+  --body-text-lh: 1.6;
+  --body-text-color: #4B5563;
+
+  --button-weight: 600;
+  --button-size: 14px;
+  --button-spacing: 0.2px;
+
+  --nav-weight: 600;
+  --nav-size: 15px;
+
+  --sidebar-weight: 500;
+  --sidebar-size: 14px;
+
+  --th-weight: 600;
+  --th-size: 13px;
+  --th-spacing: 0.3px;
+
+  --td-weight: 400;
+  --td-size: 13px;
+  --td-lh: 1.5;
+  --td-color: #2C2C2C;
+
+  --label-weight: 500;
+  --label-size: 14px;
+
+  --input-weight: 400;
+  --input-size: 14px;
+  --placeholder-color: #9CA3AF;
+
+  --badge-weight: 600;
+  --badge-size: 12px;
+
+  --modal-title-weight: 700;
+  --modal-title-size: 22px;
+
+  --tooltip-size: 12px;
+
+  /* Theme Backgrounds & Accents */
+  --background-top: #050816;
+  --background-middle: #0a1124;
+  --background-bottom: #050816;
+
+  --primary-blue: #4f8cff;
+  --azure-blue: #3b82f6;
+  --electric-cyan: #22d3ee;
+  --purple: #8b5cf6;
+  --indigo: #6366f1;
+  --emerald: #10b981;
+  --white: #ffffff;
+  --light-gray: #cbd5e1;
+  --muted-gray: #94a3b8;
+}
+
+*, html, body, button, input, select, textarea {
+  font-family: "Segoe UI", "Aptos", "Helvetica Neue", "Roboto", "Open Sans", "Arial", sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: linear-gradient(180deg, var(--background-top) 0%, var(--background-middle) 50%, var(--background-bottom) 100%);
+  color: var(--white);
+  font-size: var(--body-text-size);
+  line-height: var(--body-text-lh);
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+/* Reusable Enterprise Typography Classes */
+.page-title {
+  font-family: var(--font-enterprise);
+  font-weight: var(--page-title-weight);
+  font-size: var(--page-title-size);
+  letter-spacing: var(--page-title-spacing);
+  line-height: 1.25;
+}
+
+.section-title {
+  font-family: var(--font-enterprise);
+  font-weight: var(--section-title-weight);
+  font-size: var(--section-title-size);
+  line-height: 1.3;
+}
+
+.card-title {
+  font-family: var(--font-enterprise);
+  font-weight: var(--card-title-weight);
+  font-size: var(--card-title-size);
+  line-height: 1.4;
+}
+
+.modal-title {
+  font-family: var(--font-enterprise);
+  font-weight: var(--modal-title-weight);
+  font-size: var(--modal-title-size);
+  line-height: 1.3;
+}
+
+.nav-link {
+  font-family: var(--font-enterprise);
+  font-weight: var(--nav-weight);
+  font-size: var(--nav-size);
+  line-height: 1.4;
+}
+
+.sidebar-item {
+  font-family: var(--font-enterprise);
+  font-weight: var(--sidebar-weight);
+  font-size: var(--sidebar-size);
+  line-height: 1.5;
+}
+
+.form-label {
+  font-family: var(--font-enterprise);
+  font-weight: var(--label-weight);
+  font-size: var(--label-size);
+}
+
+.form-input {
+  font-family: var(--font-enterprise);
+  font-weight: var(--input-weight);
+  font-size: var(--input-size);
+}
+
+.form-input::placeholder {
+  color: var(--placeholder-color);
+}
+
+.badge {
+  font-family: var(--font-enterprise);
+  font-weight: var(--badge-weight);
+  font-size: var(--badge-size);
+}
+
+.tooltip {
+  font-family: var(--font-enterprise);
+  font-size: var(--tooltip-size);
+}
+
+/* ERP Table Formatting */
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, .table-header {
+  font-family: var(--font-enterprise);
+  font-weight: var(--th-weight);
+  font-size: var(--th-size);
+  letter-spacing: var(--th-spacing);
+  vertical-align: middle;
+  text-align: left;
+}
+
+td, .table-cell {
+  font-family: var(--font-enterprise);
+  font-weight: var(--td-weight);
+  font-size: var(--td-size);
+  line-height: var(--td-lh);
+  vertical-align: middle;
+}
+
+/* Tabular Nums for Financial Data Alignment */
+.financial-data, .tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  text-align: right;
+}
+
+/* 3D & Perspective Utilities */
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+/* Continuous Animated Hero Gradient Heading */
+@keyframes text-gradient-loop {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animated-hero-heading {
+  font-family: "Cambria", "Georgia", "Times New Roman", serif !important;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  display: inline-block;
+  padding-bottom: 0.15em;
+  background: linear-gradient(
+    135deg,
+    #ffffff 0%,
+    #f8fafc 35%,
+    #60a5fa 70%,
+    #38bdf8 100%
+  );
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-gradient-loop 8s linear infinite;
+  filter: drop-shadow(0 4px 20px rgba(59, 130, 246, 0.25));
+}
+
+/* Buttons */
+.btn-primary-gradient {
+  background: linear-gradient(135deg, #3b82f6 0%, #22d3ee 100%);
+  color: #ffffff;
+  font-weight: 600;
+  padding: 0.75rem 1.75rem;
+  border-radius: 0.75rem;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.35);
+}
+
+.btn-primary-gradient:hover {
+  transform: scale(1.03);
+  box-shadow: 0 0 35px rgba(34, 211, 238, 0.5);
+}
+
+.btn-primary-gradient:active {
+  transform: scale(0.95);
+}
+
+.btn-secondary-glass {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #cbd5e1;
+  font-weight: 600;
+  padding: 0.75rem 1.75rem;
+  border-radius: 0.75rem;
+  backdrop-filter: blur(12px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-secondary-glass:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+  color: #ffffff;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+}
+
+.btn-secondary-glass:active {
+  transform: scale(0.95);
+}
+
+/* Glassmorphism Enterprise Card */
+.glass-card-enterprise {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card-enterprise:hover {
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 40px rgba(59, 130, 246, 0.25);
+  transform: translateY(-6px);
+}
+
+/* Section Divider */
+.glowing-divider-line {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(59, 130, 246, 0.6) 35%,
+    rgba(34, 211, 238, 0.8) 50%,
+    rgba(59, 130, 246, 0.6) 65%,
+    transparent 100%
+  );
+}
+
+/* Flowing Light Beam Connector */
+@keyframes flow-beam {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.flowing-beam {
+  background: linear-gradient(
+    90deg,
+    rgba(59, 130, 246, 0.2) 0%,
+    rgba(34, 211, 238, 0.9) 50%,
+    rgba(59, 130, 246, 0.2) 100%
+  );
+  background-size: 200% 100%;
+  animation: flow-beam 3s linear infinite;
+}
+
+/* Aurora & Background Animations */
+@keyframes aurora-pulse {
+  0%, 100% {
+    opacity: 0.12;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.22;
+    transform: scale(1.08);
+  }
+}
+
+.animate-aurora {
+  animation: aurora-pulse 6s ease-in-out infinite;
+}
