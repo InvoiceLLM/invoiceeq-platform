@@ -19,13 +19,19 @@ Configure the visual entry point, shared design system styling, header navigatio
 ### Tasks
 - [x] **Task 1.1: Configure Global Tailwind CSS stylesheet**
   - Match theme variables inside `globals.css` with dashboard variables to maintain complete design system consistency.
-- [x] **Task 1.2: Build Landing Navigation Header**
-  - Code headers linking to: Features, Pricing, How It Works, and Login.
-  - Implement a `Get Started Free` button routing directly to SSO signup page.
-- [x] **Task 1.3: Code Hero Text & Call-To-Action**
-  - Implement the title: *"AI-Powered Invoice Processing — Built for Every Business"*.
-  - Add descriptions: *"Your own private, secure workspace. Your invoices, your team, your rules."*
-  - Build `Start Free` and `Book a Demo` landing action buttons.
+- [x] **Task 1.2: Build Landing Navigation Header** — re-documented 2026-07-28 with the actual implementation detail (original text described only static nav links; the real component is more interactive).
+  - `Header({ onOpenFlowsModal })` in `components/marketing/Header.tsx`: a sticky header that darkens (`scrolled` state, toggled on a `window.scroll` listener past 20px) as the page scrolls.
+  - Nav links: **Architecture Flow** (styled with a "Live" badge — calls `onOpenFlowsModal()` if provided, else falls through to its `#architecture-flows` anchor href), **Features** (`#features` anchor), **Pricing** (`#pricing` anchor), **How It Works** (`#how-it-works` anchor), **Login** (`/login`).
+  - `Get Started Free` CTA button → `/login`.
+  - Mobile: hamburger toggle (`mobileMenuOpen` state) opens a full-width drawer with the same links plus the CTA button, each closing the drawer on click.
+- [x] **Task 1.3: Code Hero Text & Call-To-Action** — re-documented 2026-07-28; the actual `Hero.tsx` is a substantially larger interactive component than the original text implied (title/subtitle/two buttons) — it's a full simulated live-demo console, not just static hero copy.
+  - `Hero({ onOpenFlowsModal })` in `components/marketing/Hero.tsx`. Heading: *"Automated Invoice Intelligence"*; subheading: *"Extract, verify and understand every invoice using intelligent AI agents — inside your own secure enterprise workspace."*
+  - **4 animated agent capability pills** (NOVA/SENTINEL/SAGE/EVOLVE, `HERO_CAPABILITIES` array) below the heading, auto-cycling a highlighted state every 1.5s (`highlightedPillIndex` state + `setInterval`), each with a hover tooltip describing what that agent does; clicking a pill manually re-targets the highlight.
+  - **3 CTA buttons**: `Start Free Trial` (`/login`), `Simulate Pipeline` (scrolls to `#pipeline-demo`), `Architecture Flow` (calls `onOpenFlowsModal()`, falling back to scrolling to `#architecture-flows`).
+  - **Interactive pipeline demo console** (`#pipeline-demo`): a 3D-tilting card (`cardRef`, mouse-move handler `handleMouseMove`/`handleMouseLeave` computing `rotateX`/`rotateY`, plus a separate scroll-driven parallax tilt/scale effect) containing:
+    - A sample-invoice switcher (3 hardcoded samples in `SAMPLE_INVOICES`: `INV-9842`/TechCorp, `FRT-1048`/Global Freight Logistics, `SUB-7721`/Azure Cloud Enterprise Services) — clicking one calls `runLiveSimulation(invoice)`, which resets and animates through a 4-stage progression every 600ms: *Secure Upload → NOVA Extraction → SENTINEL Review → Verified Result* (`activeStep` state, `0`-`3`).
+    - An "Inspector" panel with two tabs (`inspectorTab` state): **Line Items Breakdown** (renders `selectedInvoice.taxBreakdown` rows) and **Agent JSON Consensus** (renders `selectedInvoice.rawJson`, a pretty-printed mock extraction result).
+    - A "Re-Run Extraction Test" button that re-triggers `runLiveSimulation` on the currently selected invoice.
 - [x] **Task 1.4: Build Benefits Strip** — backfilled 2026-07-28, found already built and undocumented.
   - `BenefitsStrip()` renders a row of benefit callouts (title/icon/accent color per item — e.g. "Less Manual Data Entry" with a `Zap` icon) below the hero section.
 - [x] **Task 1.5: Add Cursor Spotlight Effect** — backfilled 2026-07-28, found already built and undocumented.

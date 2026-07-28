@@ -16,15 +16,12 @@ Implement the interactive multi-tenant workspace showcase widget to visualize da
 * Flows Modal: `apps/invoice-website/components/marketing/FlowsModal.tsx`
 
 ### Tasks
-- [x] **Task 2.1: Implement Workspace Showcase Container Layout**
-  - Create the layout section: *"Every Company Gets Their Own Private Workspace"*.
-  - Add text detailing: *"Your data never mixes with another company. Think of it as your own private office — just on the cloud."*
-- [x] **Task 2.2: Render Interactive Tenant Profile Cards**
-  - Render three mock cards side-by-side representing Acme Corp, TechFirm, and GlobalTrade.
-  - Display simulated user lists with specific roles: `Admin`, `Auditor`, `Loader`.
-  - Embed dynamic metrics counters for each (e.g. `1,240 invoices processed`).
-- [x] **Task 2.3: Build Privacy Seal Banner**
-  - Place a bottom notification banner: `🔒 Data between companies is completely sealed — no crossover, ever.` styled in a dark teal glassmorphic border.
+- [x] **Task 2.1: Implement Workspace Showcase Container Layout** — re-documented 2026-07-28 with the actual implementation.
+  - `WorkspaceShowcase()` in `components/marketing/WorkspaceShowcase.tsx`, mounted at `id="features"`. Heading: *"Every Company Gets Their Own Private Workspace"*; subtext: *"Your invoices, users and AI context remain isolated from every other company."*
+  - A row of 3 company-selector tab buttons (Acme Corp / TechFirm Ltd / GlobalTrade Inc) driving `activeTenantId` state, which highlights both the matching tab and the matching profile card below.
+- [x] **Task 2.2: Render Interactive Tenant Profile Cards** — re-documented 2026-07-28 with the actual implementation.
+  - 3 glassmorphism cards (`TENANT_DATA` array), each clickable to set `activeTenantId` (syncs with the tab row above). Each card shows: company name/domain, a mock `Tenant ID Key` (e.g. `t_acme_881920`) and `Invoices Processed` counter (e.g. `1,240`), and a 3-person member list with color-coded role badges (`getRoleBadgeStyle()`: `Admin`=indigo, `Auditor`=cyan, `Loader`=emerald).
+- [x] **Task 2.3: Build Privacy Seal Banner** — re-documented 2026-07-28; **the actual implementation is materially different from this task's original description**. The original text described a static bottom banner (`🔒 Data between companies is completely sealed — no crossover, ever.`) — what's actually built instead is an **interactive "Live Data Isolation Probe Simulator"**: a card with a "Run Security Probe Test" button (`runSecurityProbe()`) that simulates testing whether a `@techfirm.io` user can query `@acme.com`'s invoices, shows a ~700ms loading state (`isTestingProbe`), then renders a terminal-styled result message confirming the (simulated) cross-tenant query was blocked with a `403 Forbidden`. No static banner text exists anywhere in the component.
 - [x] **Task 2.4: Build AI Team Section** — backfilled 2026-07-28, found already built and undocumented.
   - `AITeamSection()` showcases the four branded AI agents this platform is built around: **NOVA** (Smart Invoice Extraction), **SENTINEL** (Invoice Risk Detection), **SAGE** (Invoice Intelligence Chat), **EVOLVE** (Continuous Learning).
 - [x] **Task 2.5: Build Flows Showcase Section** — backfilled 2026-07-28, found already built and undocumented. Also closes Gap 1 below (the "See it in action" CTA).
