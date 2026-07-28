@@ -12,6 +12,9 @@ Configure the visual entry point, shared design system styling, header navigatio
 * Main Page: `apps/invoice-website/app/page.tsx`
 * Layout Settings: `apps/invoice-website/app/layout.tsx`
 * Stylesheet: `apps/invoice-website/app/globals.css`
+* Benefits Strip: `apps/invoice-website/components/marketing/BenefitsStrip.tsx`
+* Cursor Spotlight Effect: `apps/invoice-website/components/marketing/MouseSpotlight.tsx`
+* Site Footer: `apps/invoice-website/components/marketing/Footer.tsx`
 
 ### Tasks
 - [x] **Task 1.1: Configure Global Tailwind CSS stylesheet**
@@ -23,6 +26,12 @@ Configure the visual entry point, shared design system styling, header navigatio
   - Implement the title: *"AI-Powered Invoice Processing — Built for Every Business"*.
   - Add descriptions: *"Your own private, secure workspace. Your invoices, your team, your rules."*
   - Build `Start Free` and `Book a Demo` landing action buttons.
+- [x] **Task 1.4: Build Benefits Strip** — backfilled 2026-07-28, found already built and undocumented.
+  - `BenefitsStrip()` renders a row of benefit callouts (title/icon/accent color per item — e.g. "Less Manual Data Entry" with a `Zap` icon) below the hero section.
+- [x] **Task 1.5: Add Cursor Spotlight Effect** — backfilled 2026-07-28, found already built and undocumented.
+  - `MouseSpotlight()` (`"use client"`) tracks cursor position via a `mousemove` listener and renders a following glow effect. Wired once into `app/layout.tsx`, so it applies site-wide across every page, not just the landing page.
+- [x] **Task 1.6: Build Site Footer** — backfilled 2026-07-28, found already built and undocumented.
+  - `Footer()` renders the shared site footer (brand mark, nav links) via `lucide-react` icons (`FileText`, `Shield`, `Lock`, `ExternalLink`); mounted once in `app/layout.tsx` beneath `{children}`, so it appears on every page.
 
 ### Verification Plan
 * **Manual Verification**: Run Next.js marketing site (`npm run dev` in `apps/invoice-website`) and check browser page loading, responsive menu wraps, and styling details.
