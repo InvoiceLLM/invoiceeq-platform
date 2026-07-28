@@ -12,6 +12,7 @@ class Tenant(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(max_length=255)
     domain: str = Field(max_length=255, unique=True, index=True)
+    clerk_org_id: str | None = Field(default=None, max_length=255, unique=True, index=True)
     billing_plan: str = Field(default="free", max_length=50)
     free_invoices_remaining: int = Field(default_factory=lambda: settings.DEFAULT_FREE_INVOICES_LIMIT)
     stripe_customer_id: str | None = Field(default=None, max_length=255)

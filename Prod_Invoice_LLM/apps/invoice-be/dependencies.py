@@ -83,15 +83,17 @@ def get_tenant_context(
         email = "test@example.com"
         first_name = "Test"
         last_name = "User"
+        clerk_org_id = None
     else:
         token = authorization.split(" ")[1]
-        
+
         # Check for mock test token format (e.g. 'test_', 'test_unpaid')
         if token.startswith("test_"):
             plan = "unpaid" if "unpaid" in token else MOCK_BILLING_PLAN
             role = "Viewer" if "viewer" in token else MOCK_ROLE
-            
+
             tenant_id = MOCK_TENANT_ID
+            clerk_org_id = None
             # Extract UUID if provided in test token
             for part in token.split("_"):
                 try:
@@ -135,17 +137,19 @@ def get_tenant_context(
                 )
             
             # 3. Extract tenant parameters from JWT claims
-            tenant_id_str = payload.get("tenant_id") or payload.get("org_id")
+            # clerk_org_id (e.g. "org_2abc...") is a Clerk-assigned string, not a UUID --
+            # kept separate from tenant_id (only ever populated from a custom "tenant_id"
+            # claim) so it can't be mistakenly parsed as one.
+            clerk_org_id = payload.get("org_id")
             tenant_id = None
+
+            tenant_id_str = payload.get("tenant_id")
             if tenant_id_str:
                 try:
                     tenant_id = UUID(tenant_id_str)
                 except ValueError:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="tenant_id in token claims is not a valid UUID."
-                    )
-                
+                    pass  # Not a valid UUID, ignore
+
             user_id = payload.get("sub", MOCK_USER_ID)
             role = payload.get("role") or payload.get("org_role", "Viewer")
             plan = payload.get("billing_plan", "free")
@@ -158,14 +162,23 @@ def get_tenant_context(
     
     if not user:
         domain = email.split("@")[-1]
-        
+
         tenant = None
-        if tenant_id:
+
+        # Priority 1: look up by clerk_org_id (Clerk Organizations flow)
+        if clerk_org_id:
+            tenant = db_session.exec(
+                select(Tenant).where(Tenant.clerk_org_id == clerk_org_id)
+            ).first()
+
+        # Priority 2: look up by internal tenant_id UUID (custom JWT template)
+        if not tenant and tenant_id:
             tenant = db_session.get(Tenant, tenant_id)
-            
+
+        # Priority 3: look up by email domain (legacy fallback)
         if not tenant:
             tenant = db_session.exec(select(Tenant).where(Tenant.domain == domain)).first()
-            
+
         if not tenant:
             if not tenant_id:
                 import uuid
@@ -174,6 +187,7 @@ def get_tenant_context(
                 id=tenant_id,
                 name=f"{domain.split('.')[0].title()} Workspace" if "." in domain else "Tenant Account",
                 domain=domain,
+                clerk_org_id=clerk_org_id,
                 billing_plan=plan
             )
             db_session.add(tenant)
@@ -181,6 +195,12 @@ def get_tenant_context(
             db_session.refresh(tenant)
         else:
             tenant_id = tenant.id
+            if clerk_org_id and not tenant.clerk_org_id:
+                # Backfill clerk_org_id onto a tenant found via tenant_id/domain
+                tenant.clerk_org_id = clerk_org_id
+                db_session.add(tenant)
+                db_session.commit()
+                db_session.refresh(tenant)
             
         user = User(
             clerk_user_id=user_id,
@@ -210,25 +230,44 @@ def get_tenant_context(
                     id=tenant_id,
                     name="Tenant Account",
                     domain=f"domain-{tenant_id}.com",
+                    clerk_org_id=clerk_org_id,
                     billing_plan=plan
                 )
+                db_session.add(tenant)
+                db_session.commit()
+                db_session.refresh(tenant)
+            elif clerk_org_id and not tenant.clerk_org_id:
+                # Backfill clerk_org_id on an existing tenant if missing
+                tenant.clerk_org_id = clerk_org_id
                 db_session.add(tenant)
                 db_session.commit()
                 db_session.refresh(tenant)
         else:
-            if not tenant_id:
-                tenant_id = MOCK_TENANT_ID
-            tenant = db_session.get(Tenant, tenant_id)
+            # User has no tenant -- try to find one by clerk_org_id first
+            tenant = None
+            if clerk_org_id:
+                tenant = db_session.exec(
+                    select(Tenant).where(Tenant.clerk_org_id == clerk_org_id)
+                ).first()
+
+            if not tenant:
+                if not tenant_id:
+                    tenant_id = MOCK_TENANT_ID
+                tenant = db_session.get(Tenant, tenant_id)
+
             if not tenant:
                 tenant = Tenant(
-                    id=tenant_id,
+                    id=tenant_id or MOCK_TENANT_ID,
                     name="Tenant Account",
                     domain=f"domain-{tenant_id}.com",
+                    clerk_org_id=clerk_org_id,
                     billing_plan=plan
                 )
                 db_session.add(tenant)
                 db_session.commit()
                 db_session.refresh(tenant)
+
+            tenant_id = tenant.id
             user.tenant_id = tenant_id
             db_session.add(user)
             db_session.commit()
