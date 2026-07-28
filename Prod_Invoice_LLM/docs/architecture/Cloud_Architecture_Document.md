@@ -207,10 +207,14 @@ All secrets are stored in **Azure Key Vault** and injected into Container Apps a
 | `AZURE_STORAGE_CONNECTION`   | Blob Storage connection string       | `invoice-be`, `queue-worker` |
 | `STRIPE_SECRET_KEY`          | Stripe API secret key                | `invoice-website`           |
 | `STRIPE_WEBHOOK_SECRET`      | Stripe webhook signing secret        | `invoice-website`           |
-| `CLERK_SECRET_KEY`           | Clerk/Auth0 backend key              | `invoice-be`, `invoice-website` |
-| `NEXT_PUBLIC_CLERK_KEY`      | Clerk/Auth0 publishable key          | `invoice-fe`, `invoice-website` |
+| `CLERK_SECRET_KEY`           | Clerk backend key                    | `invoice-be`, `invoice-website` |
+| `CLERK_JWT_ISSUER`           | Clerk JWT issuer URL, for verifying incoming session tokens | `invoice-be` |
+| `CLERK_JWKS_URL`             | Clerk JWKS endpoint, for verifying incoming session tokens | `invoice-be` |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key          | `invoice-fe`, `invoice-website` |
 | `CHROMA_HOST`                | ChromaDB connection host             | `invoice-be`, `queue-worker` |
 | `TOKEN_ENCRYPTION_KEY`       | AES-256 key for encrypting OAuth tokens | `invoice-be`, `queue-worker` |
+
+> **Note on `NEXT_PUBLIC_*` variables:** Next.js inlines these into the client JS bundle at `next build` time, not at container runtime. Setting them as a Container App environment variable/secret (as the Bicep currently does for `invoice-fe`) has no effect on what actually ships to the browser — they must be passed as a Docker `--build-arg` during the image build instead, consumed via `ARG`/`ENV` in the Dockerfile before `RUN npm run build`. This applies to `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` on both `invoice-fe` and `invoice-website`, and to `NEXT_PUBLIC_FE_URL` on `invoice-website`.
 
 ### 4.5 Extraction Concurrency & Scale-Out (added Jul 2026, Gap 41/42)
 

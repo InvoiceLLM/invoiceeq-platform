@@ -17,11 +17,15 @@ Clerk manages user authentication, role assignment, and multi-tenant profiles.
 4. **JWT Templates (Scoping)**:
    * Go to **JWT Templates** > **New Template** > **FastAPI / Custom**.
    * Add claims for `tenant_id` and `role` under the user metadata payload so the backend can automatically parse tenant scopes from incoming request headers.
+   * Copy the **Issuer URL** and **JWKS URL** shown for this template — the backend needs these to verify incoming session tokens: `CLERK_JWT_ISSUER` and `CLERK_JWKS_URL` (`apps/invoice-be/config.py`). Not yet wired into the Bicep/Key Vault setup — add alongside `CLERK_SECRET_KEY` in `05-secrets.bicep` when the auth work lands.
 5. **Redirect Configurations**:
    * Set your sign-in, sign-up, and dashboard redirects matching your production domain:
      * Sign-in: `https://<frontend-domain>/sign-in`
      * Sign-up: `https://<frontend-domain>/sign-up`
      * Post-Auth Redirect: `https://<frontend-domain>/dashboard`
+   * (Exact route names are pending the `auth-feature-4` reconciliation — current in-repo routes are `/login`/`/admin/login`/`/admin/signup`, not `/sign-in`/`/sign-up`; update this once finalized.)
+
+> **Container Apps deployment note:** `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is a Next.js client-side variable — it's inlined into the JS bundle at `next build` time, not read at container runtime. The current `invoice-fe.bicep` sets it as a plain Container App environment variable, which has **no effect** on the deployed app's actual client bundle. It must instead be passed as a Docker `--build-arg` when building the image (`az acr build --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...`), with the Dockerfile declaring `ARG`/`ENV` before its `RUN npm run build` step. Same applies to `invoice-website` once its Dockerfile exists.
 
 ---
 
