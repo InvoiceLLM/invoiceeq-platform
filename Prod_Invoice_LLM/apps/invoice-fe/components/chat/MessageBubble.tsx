@@ -194,6 +194,10 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       {/* max-w-[75%] prevents very long messages from spanning the full width,
           which would make them hard to read. */}
       <div className={`flex flex-col gap-1 max-w-[75%] ${isUser ? "items-end" : "items-start"}`}>
+        {/* SAGE agent label for AI messages */}
+        {!isUser && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 font-mono font-semibold mb-0.5">SAGE</span>
+        )}
 
         {/* Main chat bubble — spec-exact styling */}
         <div

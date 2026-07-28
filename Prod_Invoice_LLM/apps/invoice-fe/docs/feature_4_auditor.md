@@ -1,6 +1,6 @@
-# Feature 4: Split-Screen Auditor Review Console
+# Feature 4: Split-Screen Auditor Review Console — **SENTINEL Agent**
 
-Develop the read-only verification console, visual PDF coordinate viewer, and alert override dismiss handlers.
+**SENTINEL** (Invoice Risk Detection) powers this screen. Develop the read-only verification console, visual PDF coordinate viewer, and alert override dismiss handlers.
 
 ### Theme & Styling Specifications
 * Bounding Box Overlays: `border border-[#10B981] bg-[#10B981] bg-opacity-10 shadow-[0_0_10px_rgba(16,185,129,0.4)]`.

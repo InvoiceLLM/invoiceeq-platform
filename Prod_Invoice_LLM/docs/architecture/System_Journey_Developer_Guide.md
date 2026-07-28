@@ -19,7 +19,7 @@ A user uploads a PDF on the Ingestion screen. `routers/invoices.py`'s upload end
 ### 3. OCR
 `handlers.py::_run_ocr()` calls Azure Document Intelligence's `prebuilt-invoice` model (or local `pypdf` text extraction in Ollama/dev mode). Real-world transient connection errors get a bounded retry with exponential backoff, rotating across all 3 configured Doc Intelligence resources on each retry. The result includes raw text, per-field OCR confidence scores, and bounding-box coordinates for the PDF viewer overlay.
 
-### 4. The extraction agent graph
+### 4. The extraction agent graph — **NOVA**
 `agents/extraction_agent.py` runs a LangGraph state machine:
 - `classify_node` — STANDARD vs COMPLEX, via `services/invoice_classifier.py` (keyword/field-presence heuristics).
 - `dynamic_qa_node` — COMPLEX invoices only. A pre-analysis LLM pass asking document-specific questions (multi-rate tax, holdbacks, e-invoicing identifiers) before the main extraction call, to ground it.
@@ -38,17 +38,17 @@ Back in `handlers.py`, the `Invoice` row is updated with every extracted field, 
 ### 8. RAG indexing
 If `status == "COMPLETED"`, `chroma_client.index_invoice_document()` chunks and embeds the document into ChromaDB, scoped by `tenant_id`, so it becomes answerable from Chat.
 
-### 9. Chat
+### 9. Chat — **SAGE**
 A user asks a question. `agents/query_agent.py::run_query_agent()`:
 - `classify_query()` routes to **SQL** (any structured-field lookup — vendor, dates, totals, status), **RAG** (semantic content search over indexed chunks, with hybrid keyword-boosted reranking and a 0.4 distance relevance threshold), or **CHAT** (casual).
 - SQL generation runs through a bounded 3-attempt self-repair loop, a hardened tenant-isolation regex validation, and a schema prompt that explicitly forbids hallucinating non-existent columns like `audit_flags`.
 - Both SQL and RAG answer-synthesis prompts get the tenant's committed Trainer rules injected (Global always; vendor-specific ones when the question names a known vendor) — so "how is tax calculated on this invoice" answers consistently with how it was actually extracted.
 - Repeated questions are served from a Redis answer cache (1hr TTL), invalidated on any Trainer commit/rollback.
 
-### 10. Auditor
+### 10. Auditor — **SENTINEL**
 For `AUDIT_REQUIRED` invoices, `routers/audit.py::resolve_alert()` lets a user dismiss alerts and/or submit field corrections. Corrections are persisted with a before/after diff logged to `AuditLog`. If the same field gets corrected ≥3 times (same vendor, or across vendors for a global pattern), the response includes a `suggested_rule` that deep-links straight into the Trainer sandbox, pre-scoped.
 
-### 11. Trainer
+### 11. Trainer — **EVOLVE**
 `routers/trainer.py` manages 3 rule scopes against the `ExtractionTemplate`/`ExtractionTemplateVersion` tables: **Global** (tenant-wide), **Existing Vendor** (seeded from that vendor's real production data), and **New Vendor** (blank sandbox). Sessions live in Redis (TTL-bound). Committing a rule triggers a `reaudit_templates` background re-run of matching invoices (Global → all vendors; vendor scope → that vendor only; skips anything already `PAID`/`REJECTED`), and bumps a version row for history/rollback.
 
 ### 12. Dashboard

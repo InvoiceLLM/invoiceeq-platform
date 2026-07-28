@@ -77,6 +77,7 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
       <div className="px-4 py-3 border-b border-[#222D3D] flex items-center gap-2">
         <Terminal className="w-4 h-4 text-slate-500" />
         <span className="text-xs font-semibold text-slate-300">Live Processing Log</span>
+        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-[#22D3EE]/10 text-[#22D3EE] border border-[#22D3EE]/30 font-mono font-semibold">NOVA</span>
       </div>
       <div className="bg-[#0B0F19] p-3 h-40 overflow-y-auto font-mono text-[11px] leading-relaxed">
         {lines.length === 0 ? (

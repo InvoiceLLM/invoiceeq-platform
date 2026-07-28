@@ -64,8 +64,9 @@ export default function AlertConsole({
   return (
     <div className="space-y-2">
       <div className="rounded-lg border border-yellow-700/50 bg-yellow-950/20 px-4 py-2">
-        <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-yellow-500">
+        <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-yellow-500 flex items-center gap-2">
           Discrepancy Warnings
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30 font-mono font-semibold normal-case tracking-normal">SENTINEL</span>
         </p>
       </div>
 

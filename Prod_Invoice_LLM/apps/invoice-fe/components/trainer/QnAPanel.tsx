@@ -145,10 +145,7 @@ export default function QnAPanel({
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>Chat Assistant</span>
-            {/* Message count badge */}
-            <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-mono leading-none">
-              {chatHistory.length}
-            </span>
+            <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-[#6366F1]/15 text-[#6366F1] border border-[#6366F1]/30 text-[10px] font-mono font-semibold leading-none">EVOLVE</span>
           </button>
 
           {/* Variables & Rules tab */}

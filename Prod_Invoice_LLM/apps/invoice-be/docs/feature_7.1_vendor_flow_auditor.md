@@ -1,6 +1,6 @@
-# Feature 7.1: Service Flow — Outbound Auditor (pre-send validation + standing rules)
+# Feature 7.1: Service Flow — Outbound Auditor (pre-send validation + standing rules) — **SENTINEL Agent**
 
-Extends [feature_7_audit.md](feature_7_audit.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
+**SENTINEL** (Invoice Risk Detection) powers this flow. Extends [feature_7_audit.md](feature_7_audit.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
 Reviews `NEEDS_REVIEW` outbound invoices (produced by [feature_2.1_vendor_flow_ingestion.md](feature_2.1_vendor_flow_ingestion.md)'s verify step) before they can be marked `SENT`, surfaces `SENT` invoices past their `due_date` for follow-up, and — new, folded in during design review — lets a correction be taught back as a standing rule for all future outbound invoices.
 

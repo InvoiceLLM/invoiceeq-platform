@@ -40,10 +40,11 @@
 The Invoice AI SaaS platform is a **multi-tenant, AI-powered invoice processing system** built on Microsoft Azure. It provides automated invoice extraction, verification, audit workflows, and semantic search capabilities powered by LLM agents. The system is designed for **enterprise-grade data isolation**, where every tenant's data is strictly segregated at both the application and database layers.
 
 **Core Value Proposition:**
-- **Automated Extraction** — AI agents parse PDF invoices into structured JSON.
-- **Verification Engine** — Math validation checks automatically flag arithmetic discrepancies.
-- **Auditor Control** — Human-in-the-loop approval/rejection workflow.
-- **Semantic Chat** — RAG-based natural language queries over ingested invoice data with source citations.
+- **Automated Extraction** — **NOVA** (Smart Invoice Extraction agent) parses PDF invoices into structured JSON.
+- **Verification Engine** — **SENTINEL** (Invoice Risk Detection agent) automatically flags arithmetic discrepancies, duplicate invoices, and low-confidence fields.
+- **Auditor Control** — **SENTINEL** drives human-in-the-loop approval/rejection workflow with suggested Trainer rules.
+- **Semantic Chat** — **SAGE** (Invoice Intelligence Chat agent) answers natural language queries over ingested invoice data with source citations.
+- **Continuous Learning** — **EVOLVE** (Continuous Learning agent) learns from approved corrections and improves extraction for similar vendor invoices.
 
 ---
 

@@ -1,6 +1,6 @@
-# Feature 3: File Ingestion Portal & Active Tagging
+# Feature 3: File Ingestion Portal & Active Tagging — **NOVA Agent**
 
-Develop the drag-and-drop file uploader, batch metadata tagger, and real-time processing queue status table.
+**NOVA** (Smart Invoice Extraction) powers this screen. Develop the drag-and-drop file uploader, batch metadata tagger, and real-time processing queue status table.
 
 ### Theme & Styling Specifications
 * Dashed drop zone: `border-2 border-dashed border-[#222D3D] hover:border-[#3B82F6] bg-opacity-30 rounded-xl`.

@@ -1,6 +1,6 @@
-# Feature 2: Ingestion, Storage & Extraction Pipeline
+# Feature 2: Ingestion, Storage & Extraction Pipeline — **NOVA Agent**
 
-Accept PDF uploads, persist them to Azure Blob Storage, queue background processing, and run the multi-modal LLM extraction + math verification agent to produce structured invoice data.
+**NOVA** is the Smart Invoice Extraction agent. Accept PDF uploads, persist them to Azure Blob Storage, queue background processing, and run the multi-modal LLM extraction + math verification agent to produce structured invoice data.
 
 *(Merged 2026-07-13 from the former "Feature 2: Ingestion & Storage Pipeline" and "Feature 5: Multi-Modal Extraction & Verification Agent" docs — upload → OCR → extraction → verification → indexing is one continuous request-to-completion flow with no natural seam between them; see Pipeline Flow below.)*
 

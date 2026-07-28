@@ -162,8 +162,9 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
         <BotMessageSquare className="w-8 h-8 text-blue-400" />
       </div>
       <div>
-        <h2 className="text-lg font-semibold text-slate-200 mb-1">
+        <h2 className="text-lg font-semibold text-slate-200 mb-1 flex items-center gap-2">
           Invoice AI Chat
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 font-mono font-semibold tracking-widest">SAGE</span>
         </h2>
         <p className="text-sm text-slate-500 max-w-xs">
           Ask anything about your invoices — totals, vendors, flagged items, or

@@ -1,6 +1,6 @@
-# Feature 6: Conversational RAG & Thread Management
+# Feature 6: Conversational RAG & Thread Management — **SAGE Agent**
 
-Construct document indexers and semantic chat clients utilizing vector similarity models and thread state controllers.
+**SAGE** is the Invoice Intelligence Chat agent. Construct document indexers and semantic chat clients utilizing vector similarity models and thread state controllers.
 
 ### File Coordinates
 * RAG Router: [apps/invoice-be/routers/chat.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/chat.py) → `list_sessions()`, `create_session()`, `get_session_messages()`, `post_chat_message()`, `set_message_feedback()`, `clear_message_feedback()` (Gap 54)

@@ -4,6 +4,7 @@
 
 ## Invoice AI SaaS Platform — Azure Cloud Infrastructure
 
+> **AI Agent Architecture:** This platform is powered by four named AI agents — **NOVA** (Smart Invoice Extraction), **SENTINEL** (Invoice Risk Detection), **SAGE** (Invoice Intelligence Chat), and **EVOLVE** (Continuous Learning) — each corresponding to a distinct processing layer in the Azure backend.
 | Attribute         | Detail                                          |
 |-------------------|-------------------------------------------------|
 | **Project**       | Invoice AI SaaS (Multi-Tenant LLM Platform)     |

@@ -1,5 +1,5 @@
-# Feature 5: Semantic Chat Assistant & SQL Audit Drawer
-Build the conversational invoice analyst RAG chat box, document citation connectors, and database query inspection drawers.
+# Feature 5: Semantic Chat Assistant & SQL Audit Drawer — **SAGE Agent**
+**SAGE** (Invoice Intelligence Chat) powers this screen. Build the conversational invoice analyst RAG chat box, document citation connectors, and database query inspection drawers.
 
 ### Theme & Styling Specifications
 

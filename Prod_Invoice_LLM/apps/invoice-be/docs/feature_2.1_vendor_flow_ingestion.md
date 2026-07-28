@@ -1,6 +1,6 @@
-# Feature 2.1: Service Flow — Outbound Invoice Ingestion ("Send Invoices")
+# Feature 2.1: Service Flow — Outbound Invoice Ingestion ("Send Invoices") — **NOVA Agent**
 
-Extends [feature_2_pipeline_extraction.md](feature_2_pipeline_extraction.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
+**NOVA** (Smart Invoice Extraction) powers this flow. Extends [feature_2_pipeline_extraction.md](feature_2_pipeline_extraction.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
 Adds the outbound half of invoice processing: instead of ingesting a vendor's invoice addressed *to* the tenant, this ingests the tenant's own invoice addressed *to their customer*. Upload-only — there is no in-app invoice creation/generation (that's a deliberately separate, deferred concern, see [feature_17_invoice_builder.md](feature_17_invoice_builder.md)) — and gated entirely behind the *Send Invoices* Admin-only toggle in [feature_16_settings.md](feature_16_settings.md).
 

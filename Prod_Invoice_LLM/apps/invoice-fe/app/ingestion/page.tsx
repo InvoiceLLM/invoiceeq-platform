@@ -101,7 +101,12 @@ export default function IngestionPage() {
     <div className="space-y-6">
       {/* Title Header */}
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-white tracking-wide">File Ingestion Portal</h1>
+        <h1 className="text-2xl font-bold text-white tracking-wide flex items-center gap-3">
+          File Ingestion Portal
+          <span className="text-[11px] px-2.5 py-1 rounded-full bg-[#22D3EE]/10 text-[#22D3EE] border border-[#22D3EE]/30 font-mono font-semibold tracking-widest">
+            NOVA
+          </span>
+        </h1>
         <p className="text-xs text-slate-400">
           Upload multi-page invoices, assign metadata tags, and queue AI parsing.
         </p>

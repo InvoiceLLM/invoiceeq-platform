@@ -16,16 +16,16 @@ Marking convention:
 - **Viewer** — read-only access to Dashboard and Chat.
 
 ### A typical Monday
-Priya, an AP clerk, receives a stack of vendor invoices by email. She opens **Ingestion**, drags in five PDFs, and watches each one move through a live status bar — *Extracting text → Reading fields → Done* — usually inside a minute per invoice, since real OCR and AI extraction are running behind the scenes, not a canned demo. Most land as **Completed**; a couple get flagged **Needs Review**, usually because a field was low-confidence or a total didn't match what's printed on the page.
+Priya, an AP clerk, receives a stack of vendor invoices by email. She opens **Ingestion**, drags in five PDFs, and watches each one move through a live status bar — *Extracting text → Reading fields → Done* — usually inside a minute per invoice, since real OCR and AI extraction are running behind the scenes (**NOVA** — Smart Invoice Extraction agent), not a canned demo. Most land as **Completed**; a couple get flagged **Needs Review**, because **SENTINEL** (Invoice Risk Detection agent) automatically caught a field that was low-confidence or a total that didn't match what's printed on the page.
 
 She opens the **Auditor** screen for the first flagged invoice. The PDF sits on one side, the extracted fields on the other — she can see exactly where the AI read the tax amount from, click any field to correct it, and save. If she happens to fix the same kind of mistake three times for the same vendor, the system quietly notices and offers: *"Want to save this as a rule?"* — one click sends her straight into the **Trainer** screen with that correction pre-filled, so the AI stops making the same mistake on that vendor's future invoices.
 
-Later, her manager Raj wants a quick answer and opens **Chat**: *"What's the total from Northwind Manufacturing this month, and is anything flagged?"* — a real answer comes back in seconds, citing the specific invoice, because the system already indexed everything Priya processed.
+Later, her manager Raj wants a quick answer and opens **Chat**: *"What's the total from Northwind Manufacturing this month, and is anything flagged?"* — **SAGE** (Invoice Intelligence Chat agent) returns a real answer in seconds, citing the specific invoice, because it already indexed everything Priya processed.
 
 At the end of the day, the **Dashboard** shows the numbers that matter: total invoiced, what's been paid, what's outstanding, which vendors cost the most, and — as of a recent fix — a genuinely real average processing time (previously this number was a rough estimate; it now reflects actual measured time).
 
 ### What Trainer is for
-Trainer is the "teach the AI" screen: three modes — one set of rules that apply to every vendor (**Global**), rules specific to a vendor you already have invoices from (**Existing Vendor**, seeded from their real data), and rules for a brand-new vendor you're about to start working with (**New Vendor**, blank slate). Corrections made in Auditor can feed straight into this screen; commits here immediately re-check any of that vendor's existing invoices against the new rule.
+The **Trainer** screen powers **EVOLVE** (Continuous Learning agent): three modes — one set of rules that apply to every vendor (**Global**), rules specific to a vendor you already have invoices from (**Existing Vendor**, seeded from their real data), and rules for a brand-new vendor you're about to start working with (**New Vendor**, blank slate). Corrections made in Auditor can feed straight into this screen; commits here immediately re-check any of that vendor's existing invoices against the new rule.
 
 ---
 

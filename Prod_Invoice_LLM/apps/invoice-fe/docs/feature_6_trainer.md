@@ -1,6 +1,6 @@
-# Feature 6: AI Trainer Interactive Sandbox
+# Feature 6: AI Trainer Interactive Sandbox — **EVOLVE Agent**
 
-Develop the rule-scope selector, training document loader, chat verification panel, and registry commit workflows.
+**EVOLVE** (Continuous Learning) powers this screen. Develop the rule-scope selector, training document loader, chat verification panel, and registry commit workflows.
 
 *(Redesigned 2026-07-13 to match `docs/feature_10_trainer.md` — supersedes the previous flat "one uploader, one commit button" design. See Rule Scope Selector below.)*
 

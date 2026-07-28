@@ -1,6 +1,6 @@
-# Feature 7: Audit Resolution & Finalization
+# Feature 7: Audit Resolution & Finalization — **SENTINEL Agent**
 
-Enable human auditor overrides, update database transaction states, and save template learning rules.
+**SENTINEL** is the Invoice Risk Detection agent. Enable human auditor overrides, update database transaction states, and save template learning rules.
 
 ### File Coordinates
 * Router: [apps/invoice-be/routers/audit.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/audit.py) → `PUT /audit/resolve/{invoice_id}` → `resolve_audit_invoice()`

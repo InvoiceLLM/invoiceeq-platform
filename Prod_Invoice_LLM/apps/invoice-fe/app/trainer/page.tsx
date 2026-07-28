@@ -343,6 +343,9 @@ function TrainerContent() {
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                 Interactive Fine-Tuning
               </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold">
+                EVOLVE
+              </span>
             </h1>
             <p className="text-xs text-slate-400">
               Refine extraction rules & constraints through natural language chat.

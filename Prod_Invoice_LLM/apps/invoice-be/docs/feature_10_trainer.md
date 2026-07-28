@@ -1,6 +1,6 @@
-# Feature 10: AI Trainer Sandbox & Rules Registry
+# Feature 10: AI Trainer Sandbox & Rules Registry — **EVOLVE Agent**
 
-Interactive sandbox for teaching the extraction agent rules, structured into three distinct rule-template scopes rather than one flat per-vendor registry.
+**EVOLVE** is the Continuous Learning agent. Interactive sandbox for teaching the extraction agent rules, structured into three distinct rule-template scopes rather than one flat per-vendor registry.
 
 *(Redesigned 2026-07-13 — supersedes the previous flat "one `ExtractionTemplate` per vendor + platform-wide `default_templates.json`" design. See Rule Template Scopes below.)*
 
