@@ -1,0 +1,398 @@
+"use client";
+
+import React, { useState } from "react";
+import { useSignIn, useClerk, useUser } from "@clerk/nextjs";
+
+// invoice-fe is a separate deployment -- full origin needed, not an internal route.
+const FE_URL = process.env.NEXT_PUBLIC_FE_URL || "http://localhost:3001";
+
+/* Design tokens (match invoice-fe/invoice-website globals) */
+const T = {
+  bg: "#0B0F19",
+  panel: "rgba(21, 27, 38, 0.80)",
+  border: "#222D3D",
+  textPrimary: "#E2E8F0",
+  textMuted: "#94A3B8",
+  textDim: "#64748B",
+  green: "#10B981",
+  blue: "#3B82F6",
+  red: "#EF4444",
+  font: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+};
+
+const S: Record<string, React.CSSProperties> = {
+  root: { minHeight: "100vh", background: T.bg, display: "flex", fontFamily: T.font, color: T.textPrimary, overflow: "hidden", position: "relative" },
+  orbTL: { position: "absolute", top: "-120px", left: "-120px", width: "520px", height: "520px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
+  orbBR: { position: "absolute", bottom: "-150px", right: "-100px", width: "620px", height: "620px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.09) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
+  brandPanel: { flex: "1 1 45%", display: "flex", flexDirection: "column", justifyContent: "center", padding: "64px 56px", position: "relative", zIndex: 1 },
+  logoRow: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "56px" },
+  logoIcon: { width: "40px", height: "40px", borderRadius: "10px", background: "linear-gradient(135deg, #10B981 0%, #3B82F6 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px", fontWeight: 700, color: "#fff", flexShrink: 0 },
+  logoText: { fontSize: "20px", fontWeight: 700, letterSpacing: "-0.3px", background: "linear-gradient(90deg, #E2E8F0 0%, #94A3B8 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" },
+  headline: { fontSize: "40px", fontWeight: 800, lineHeight: 1.15, letterSpacing: "-1px", marginBottom: "20px", color: T.textPrimary },
+  headlineAccent: { background: "linear-gradient(90deg, #3B82F6 0%, #10B981 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" },
+  subtext: { fontSize: "16px", color: T.textMuted, lineHeight: 1.65, maxWidth: "380px", marginBottom: "48px" },
+  statRow: { display: "flex", gap: "32px" },
+  stat: { display: "flex", flexDirection: "column", gap: "4px" },
+  statNum: { fontSize: "28px", fontWeight: 800, letterSpacing: "-1px", background: "linear-gradient(90deg, #10B981 0%, #3B82F6 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" },
+  statLabel: { fontSize: "13px", color: T.textDim },
+  vDivider: { width: "1px", flexShrink: 0, zIndex: 1, background: "linear-gradient(to bottom, transparent, #222D3D 20%, #222D3D 80%, transparent)" },
+  formPanel: { flex: "1 1 55%", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 48px", zIndex: 1 },
+  card: { width: "100%", maxWidth: "420px", background: T.panel, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", border: `1px solid ${T.border}`, borderRadius: "20px", padding: "40px", boxShadow: "0 24px 64px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)" },
+  cardHeader: { marginBottom: "28px", textAlign: "center" },
+  avatarIcon: { width: "56px", height: "56px", borderRadius: "14px", background: "linear-gradient(135deg, rgba(59,130,246,0.15) 0%, rgba(16,185,129,0.15) 100%)", border: "1px solid rgba(59,130,246,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", margin: "0 auto 16px" },
+  cardTitle: { fontSize: "26px", fontWeight: 700, color: T.textPrimary, letterSpacing: "-0.5px", marginBottom: "6px" },
+  cardSubtitle: { fontSize: "14px", color: T.textDim },
+  roleRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "20px" },
+  roleIcon: { display: "block", fontSize: "20px", marginBottom: "4px" },
+  sectionLabel: { fontSize: "11px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#475569", marginBottom: "10px", marginTop: "4px" },
+  inputWrap: { position: "relative", marginBottom: "10px" },
+  inputIcon: { position: "absolute", left: "13px", top: "50%", transform: "translateY(-50%)", fontSize: "14px", opacity: 0.5, pointerEvents: "none" },
+  input: { width: "100%", boxSizing: "border-box", background: "rgba(15, 20, 30, 0.60)", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 14px 12px 38px", fontSize: "14px", color: T.textPrimary, outline: "none", transition: "border-color 0.2s, box-shadow 0.2s" },
+  inputFocusBlue: { borderColor: T.blue, boxShadow: "0 0 0 3px rgba(59,130,246,0.13)" },
+  errorBox: { display: "flex", alignItems: "flex-start", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "10px", padding: "10px 14px", fontSize: "13px", color: T.red, marginTop: "6px", marginBottom: "6px" },
+  accessDenied: { display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "12px", padding: "16px", fontSize: "13px", color: T.red, marginTop: "8px", textAlign: "center" },
+  btn: { width: "100%", background: "linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: "20px", letterSpacing: "0.2px", transition: "opacity 0.2s", boxShadow: "0 4px 20px rgba(59,130,246,0.25)" },
+  dividerRow: { display: "flex", alignItems: "center", gap: "12px", margin: "20px 0" },
+  dividerLine: { flex: 1, height: "1px", background: T.border },
+  dividerText: { fontSize: "12px", color: T.textDim, flexShrink: 0 },
+  signupRow: { textAlign: "center", marginTop: "20px", fontSize: "13px", color: T.textDim },
+  signupLink: { color: T.green, textDecoration: "none", fontWeight: 600 },
+  sessionBanner: { display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "10px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.textPrimary },
+};
+
+const roleBtnStyle = (active: boolean, color: string): React.CSSProperties => ({
+  padding: "10px 8px", borderRadius: "10px", border: `1px solid ${active ? color : T.border}`,
+  background: active ? `${color}15` : "rgba(15,20,30,0.4)",
+  color: active ? color : T.textDim, cursor: "pointer",
+  fontFamily: T.font, fontSize: "13px", fontWeight: 600,
+  transition: "all 0.2s", textAlign: "center", outline: "none",
+});
+
+const STATS = [
+  { num: "10K+", label: "Invoices processed" },
+  { num: "200+", label: "Organisations" },
+  { num: "99.9%", label: "Uptime SLA" },
+];
+
+// invoice-fe currently has one dashboard for all authenticated users, no
+// distinct admin/user route split yet -- both roles land on /dashboard for
+// now. Revisit if/when that split gets built.
+const ROLE_REDIRECT: Record<string, string> = {
+  admin: `${FE_URL}/dashboard`,
+  user: `${FE_URL}/dashboard`,
+};
+
+export default function LoginPage() {
+  const { isLoaded, signIn, setActive } = useSignIn();
+  const { signOut } = useClerk();
+  const { user: currentUser } = useUser();
+
+  const [selectedRole, setSelectedRole] = useState("admin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [needsOtp, setNeedsOtp] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
+
+  const inputStyle = (id: string) => ({ ...S.input, ...(focused === id ? S.inputFocusBlue : {}) });
+
+  const processSignIn = async (activeSignIn: any, targetRole: string) => {
+    if (activeSignIn.status === "complete" || activeSignIn.createdSessionId) {
+      const session = activeSignIn.createdSessionId;
+      if (session) await setActive({ session });
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
+      const clerkUser = window.Clerk?.session?.user || window.Clerk?.user;
+      const metadata = clerkUser?.unsafeMetadata || {};
+      const registeredRoles = metadata.role || (metadata.orgName ? "admin" : "user");
+      const userRoles = registeredRoles.split(",").map((r: string) => r.trim().toLowerCase());
+      const targetRoleLower = targetRole.toLowerCase();
+
+      if (!userRoles.includes(targetRoleLower)) {
+        setAccessDenied(true);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const orgId = metadata.orgId;
+        const memberships = clerkUser?.organizationMemberships || [];
+        let selectedOrgId: string | null = null;
+
+        if (targetRole === "admin") {
+          if (orgId) {
+            selectedOrgId = orgId;
+          } else if (memberships.length > 0) {
+            const adminMembership = memberships.find((m: any) => m.role === "org:admin");
+            selectedOrgId = adminMembership ? adminMembership.organization.id : memberships[0].organization.id;
+          }
+        } else if (memberships.length > 0) {
+          selectedOrgId = memberships[0].organization.id;
+        }
+
+        if (selectedOrgId) {
+          // @ts-expect-error -- see above
+          await window.Clerk.setActive({ organization: selectedOrgId });
+        }
+      } catch (orgErr) {
+        console.error("Could not set active org:", orgErr);
+      }
+
+      window.location.href = ROLE_REDIRECT[targetRole];
+    } else {
+      setError(`Sign-in status: ${activeSignIn.status}. Re-creating the user from Admin Console will fix this.`);
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isLoaded) return;
+
+    setLoading(true);
+    setError(null);
+    setAccessDenied(false);
+
+    try {
+      // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
+      if (currentUser || window.Clerk?.session) {
+        await signOut();
+      }
+
+      const result = await signIn.create({ identifier: email, password });
+
+      if (result.status === "needs_second_factor") {
+        try {
+          await result.prepareSecondFactor({ strategy: "email_code" });
+          setNeedsOtp(true);
+          setError("📧 Enter the 6-digit verification code sent to your email.");
+          setLoading(false);
+          return;
+        } catch {
+          setError("⚠️ This unverified account requires email verification. Please create a new account or re-create from Admin Console.");
+          setLoading(false);
+          return;
+        }
+      }
+
+      await processSignIn(result, selectedRole);
+    } catch (err: any) {
+      if (err?.errors?.[0]?.code === "form_identifier_not_found") {
+        setError("Couldn't find your account. Please check the email address or create an account.");
+      } else if (err?.errors?.[0]?.code === "session_exists" || err?.message?.includes("already signed in")) {
+        try {
+          await signOut();
+          const retryResult = await signIn.create({ identifier: email, password });
+          await processSignIn(retryResult, selectedRole);
+          return;
+        } catch (retryErr: any) {
+          setError(retryErr?.errors?.[0]?.longMessage || retryErr?.message || "Invalid email or password.");
+        }
+      } else {
+        setError(err?.errors?.[0]?.longMessage || err?.message || "Invalid email or password.");
+      }
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isLoaded || !otpCode) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await signIn.attemptSecondFactor({ strategy: "email_code", code: otpCode });
+      await processSignIn(result, selectedRole);
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.longMessage || err?.message || "Invalid verification code. Please try again.");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={S.root}>
+      <div style={S.orbTL} />
+      <div style={S.orbBR} />
+
+      <div style={S.brandPanel}>
+        <div style={S.logoRow}>
+          <div style={S.logoIcon}>I</div>
+          <span style={S.logoText}>InvoiceAI</span>
+        </div>
+        <h1 style={S.headline}>
+          Welcome back to <span style={S.headlineAccent}>your workspace.</span>
+        </h1>
+        <p style={S.subtext}>
+          Sign in to access your organisation&apos;s AI-powered invoice processing dashboard, approval workflows, and real-time analytics.
+        </p>
+        <div style={S.statRow}>
+          {STATS.map((s) => (
+            <div key={s.label} style={S.stat}>
+              <span style={S.statNum}>{s.num}</span>
+              <span style={S.statLabel}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={S.vDivider} />
+
+      <div style={S.formPanel}>
+        <div style={S.card}>
+          {currentUser && (
+            <div style={S.sessionBanner}>
+              <span>Signed in as <strong>{currentUser.primaryEmailAddress?.emailAddress || "active user"}</strong></span>
+              <button
+                type="button"
+                onClick={async () => { await signOut(); window.location.href = "/login"; }}
+                style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontWeight: 600, fontSize: "12px" }}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
+
+          <div style={S.cardHeader}>
+            <div style={S.avatarIcon}>🔐</div>
+            <h2 style={S.cardTitle}>Sign in</h2>
+            <p style={S.cardSubtitle}>Select your role and enter credentials</p>
+          </div>
+
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ ...S.sectionLabel, marginTop: 0 }}>I am signing in as</div>
+            <div style={S.roleRow}>
+              <button
+                type="button"
+                onClick={() => { setSelectedRole("admin"); setAccessDenied(false); setError(null); }}
+                style={roleBtnStyle(selectedRole === "admin", T.blue)}
+              >
+                <span style={S.roleIcon}>🛡️</span>
+                Admin
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectedRole("user"); setAccessDenied(false); setError(null); }}
+                style={roleBtnStyle(selectedRole === "user", T.green)}
+              >
+                <span style={S.roleIcon}>👤</span>
+                User
+              </button>
+            </div>
+          </div>
+
+          {!needsOtp ? (
+            <form onSubmit={handleLogin}>
+              <div style={S.sectionLabel}>Credentials</div>
+
+              <div style={S.inputWrap}>
+                <span style={S.inputIcon}>✉️</span>
+                <input
+                  type="email"
+                  placeholder="Work email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onFocus={() => setFocused("email")}
+                  onBlur={() => setFocused(null)}
+                  style={inputStyle("email")}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div style={S.inputWrap}>
+                <span style={S.inputIcon}>🔒</span>
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onFocus={() => setFocused("password")}
+                  onBlur={() => setFocused(null)}
+                  style={inputStyle("password")}
+                  required
+                />
+              </div>
+
+              {error && (
+                <div style={S.errorBox}>
+                  <span>⚠️</span><span>{error}</span>
+                </div>
+              )}
+
+              {accessDenied && (
+                <div style={S.accessDenied}>
+                  <span style={{ fontSize: "28px" }}>🚫</span>
+                  <strong>Access Denied</strong>
+                  <span>
+                    Your account is not registered as <strong>{selectedRole}</strong>. Please select the correct role and try again.
+                  </span>
+                </div>
+              )}
+
+              <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
+                {loading ? "⏳ Signing in…" : `→ Sign In as ${selectedRole === "admin" ? "Admin" : "User"}`}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyOtp}>
+              <div style={S.sectionLabel}>Verification Code</div>
+              <div style={{ fontSize: "13px", color: T.textMuted, marginBottom: "12px" }}>
+                We sent a 6-digit code to <strong>{email}</strong>.
+              </div>
+
+              <div style={S.inputWrap}>
+                <span style={S.inputIcon}>🔑</span>
+                <input
+                  type="text"
+                  placeholder="Enter 6-digit code"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                  onFocus={() => setFocused("otp")}
+                  onBlur={() => setFocused(null)}
+                  style={inputStyle("otp")}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              {error && (
+                <div style={S.errorBox}>
+                  <span>⚠️</span><span>{error}</span>
+                </div>
+              )}
+
+              <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
+                {loading ? "⏳ Verifying…" : "✓ Verify & Sign In"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setNeedsOtp(false)}
+                style={{ background: "none", border: "none", color: T.textDim, fontSize: "13px", marginTop: "12px", width: "100%", cursor: "pointer" }}
+              >
+                ← Back to Login
+              </button>
+            </form>
+          )}
+
+          <div style={S.dividerRow}>
+            <div style={S.dividerLine} />
+            <span style={S.dividerText}>New to InvoiceAI?</span>
+            <div style={S.dividerLine} />
+          </div>
+
+          <div style={S.signupRow}>
+            <a href="/signup" style={S.signupLink}>Create your organisation →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
