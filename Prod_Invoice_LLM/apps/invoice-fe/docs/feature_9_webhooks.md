@@ -19,7 +19,7 @@ Lives under the **Settings** sidebar tab as a sub-section (`Settings → Webhook
 
 ### Tasks
 - [ ] **Task 9.1: Add/Edit Webhook Endpoint**
-  - Form: target URL, event checkboxes (`invoice.completed`, `invoice.audit_required`, `invoice.paid`, `invoice.rejected`).
+  - Form: target URL, event checkboxes (Inbound: `invoice.completed`, `invoice.audit_required`, `invoice.paid`, `invoice.rejected` / Outbound: `outbound_invoice.sent`, `outbound_invoice.overdue`, `outbound_invoice.paid`).
   - Secret shown once at creation only (matches backend never returning it again).
 - [ ] **Task 9.2: Subscription List + Status**
   - Show Healthy/Disabled state per subscription; manual re-enable action for a Disabled one.

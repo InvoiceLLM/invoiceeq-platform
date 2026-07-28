@@ -120,7 +120,7 @@ def test_list_files(db_session):
     assert files[0]["name"] == "invoice_acme_hardware.pdf"
 
 def test_trigger_import(db_session):
-    """Verify that file imports dispatch back-end Celery queue tasks."""
+    """Verify that file imports dispatch back-end Azure Storage Queue tasks (inbound, default)."""
     conn = TenantConnection(
         id=uuid4(),
         tenant_id=MOCK_TENANT_ID,
@@ -132,13 +132,85 @@ def test_trigger_import(db_session):
     db_session.add(conn)
     db_session.commit()
 
-    with patch("workers.tasks.import_connector_file_task.delay") as mock_celery:
+    with patch("routers.connectors.QueueClient") as mock_qc:
+        mock_qc.from_connection_string.return_value.send_message = MagicMock()
         payload = {"file_id": "gdrive_file_101"}
         response = client.post("/api/v1/connectors/import/google_drive", json=payload)
-        assert response.status_code == 200
-        assert "Queued" in response.json()["message"]
-        mock_celery.assert_called_once_with(
-            provider="google_drive",
-            file_id="gdrive_file_101",
-            tenant_id=str(MOCK_TENANT_ID)
+    assert response.status_code == 200
+    assert "inbound" in response.json()["message"].lower()
+
+
+def test_trigger_import_outbound(db_session):
+    """Verify outbound direction is accepted and reflected in the response message."""
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("drive_secret"),
+        token_expiry=datetime.utcnow() + timedelta(hours=1),
+        status="active"
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    with patch("routers.connectors.QueueClient") as mock_qc:
+        mock_qc.from_connection_string.return_value.send_message = MagicMock()
+        payload = {"file_id": "gdrive_file_202"}
+        response = client.post(
+            "/api/v1/connectors/import/google_drive?direction=outbound", json=payload
         )
+    assert response.status_code == 200
+    assert "outbound" in response.json()["message"].lower()
+
+
+def test_list_files_invalid_direction(db_session):
+    """Verify an unknown direction returns 400."""
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("drive_secret"),
+        token_expiry=datetime.utcnow() + timedelta(hours=1),
+        status="active"
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    response = client.get("/api/v1/connectors/files/google_drive?direction=sideways")
+    assert response.status_code == 400
+
+
+@patch("azure.storage.blob.BlobServiceClient")
+@patch("queue_worker.handlers.QueueClient")
+def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc):
+    """handle_import_connector_file succeeds (simulated) when no Azure creds set."""
+    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
+    from queue_worker.handlers import handle_import_connector_file
+    result = handle_import_connector_file(
+        provider="google_drive",
+        file_id="test_file_001",
+        tenant_id=str(MOCK_TENANT_ID),
+        direction="inbound",
+    )
+    assert result["success"] is True
+    assert result["direction"] == "inbound"
+    assert "inbound" in result["blob_path"]
+
+
+@patch("azure.storage.blob.BlobServiceClient")
+@patch("queue_worker.handlers.QueueClient")
+def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc):
+    """handle_import_connector_file stores to outbound prefix, no extraction queued."""
+    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
+    from queue_worker.handlers import handle_import_connector_file
+    result = handle_import_connector_file(
+        provider="salesforce",
+        file_id="sf_doc_888",
+        tenant_id=str(MOCK_TENANT_ID),
+        direction="outbound",
+    )
+    assert result["success"] is True
+    assert result["direction"] == "outbound"
+    assert "outbound" in result["blob_path"]

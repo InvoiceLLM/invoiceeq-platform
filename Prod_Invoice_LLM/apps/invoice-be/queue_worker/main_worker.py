@@ -132,7 +132,8 @@ def _process_message(queue_client: QueueClient, msg) -> None:
             handle_import_connector_file(
                 provider=kwargs.get("provider"),
                 file_id=kwargs.get("file_id"),
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
+                direction=kwargs.get("direction", "inbound"),
             )
         elif task_name == "reaudit_templates":
             handle_reaudit_templates(

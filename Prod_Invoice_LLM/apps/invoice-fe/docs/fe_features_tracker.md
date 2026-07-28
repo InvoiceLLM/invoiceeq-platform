@@ -14,14 +14,14 @@ This document tracks the implementation progress of all frontend features for th
 - `[x]` [Feature 4: Split-Screen Auditor Review Console](feature_4_auditor.md)
 - `[x]` [Feature 5: Semantic Chat Assistant & SQL Audit Drawer](feature_5_chat.md)
 - `[x]` [Feature 6: AI Trainer Interactive Sandbox](feature_6_trainer.md)
-- `[ ]` [Feature 7: Third-Party Connectors & Explorer View](feature_7_connectors.md)
-- `[ ]` [Feature 8: Email Ingestion Settings](feature_8_email_ingestion.md) — spec only, added 2026-07-22; backend (`docs/feature_14_email_ingestion.md`) blocked on a vendor decision before implementation starts
+- `[x]` [Feature 7: Third-Party Connectors & Explorer View](feature_7_connectors.md) — implemented 2026-07-28: API proxy routes under `/api/connectors/*`; `IntegrationCard.tsx` (provider states, connect/disconnect OAuth redirects, folder mappings); `FolderTreeExplorer.tsx` (expandable mock paths, multiselect, background queue bulk import triggers); sub-page at `/settings/connectors`; settings main page links successfully. TypeScript: 0 errors.
+- `[x]` [Feature 8: Email Ingestion Settings](feature_8_email_ingestion.md) — implemented 2026-07-28: Next.js API proxy routes under `/api/email/settings/email-senders/*`; `/settings/email` configuration subpage; `EmailSendersList` CRUDallowed senders manager; `OutboundEmailSettings` configuration component saving to Service Flow API; Settings page linked successfully. TypeScript: 0 errors.
 - `[ ]` [Feature 9: Webhooks Settings](feature_9_webhooks.md) — spec only, added 2026-07-22
-- `[ ]` [Feature 10: Settings Screen](feature_10_settings.md) — spec only, added 2026-07-27; first-ever `/settings` route, houses Connectors/Email/Webhooks by reference plus the two new Vendor Flow toggles
-- `[ ]` [Feature 3.1: Vendor Flow — Send Invoices Tab](feature_3.1_vendor_flow_ingestion.md) — spec only, added 2026-07-27; extends Feature 3
-- `[ ]` [Feature 4.1: Vendor Flow — Outbound Auditor Tab](feature_4.1_vendor_flow_auditor.md) — spec only, added 2026-07-27; extends Feature 4
-- `[ ]` [Feature 2.1: Vendor Flow — Outbound Dashboard (Split-Screen)](feature_2.1_vendor_flow_dashboard.md) — spec only, added 2026-07-27; extends Feature 2
-- `[x]` [Feature 11: System Flow Visualization](feature_11_flows_visualization.md) — backfilled 2026-07-27; found already built and undocumented at `app/flows/page.tsx`, a standalone animated demo/explainer diagram, not a functional screen or part of Vendor Flow's actual implementation (two of its four tabs visualize Vendor Flow's design, clearly marked spec-only)
+- `[x]` [Feature 10: Settings Screen](feature_10_settings.md) — implemented 2026-07-28: `app/api/settings/service-flow/route.ts` (GET+PUT proxy → BE `/settings/vendor-flow`); `components/settings/ServiceFlowToggles.tsx` (Receive/Send switches, outbound sender email, Admin-only enforcement, Combined Pro upgrade modal, client-side email guard); `app/settings/page.tsx` (v1: Service Flow toggles + coming-soon chips for Connectors/Email/Webhooks); Sidebar `/settings` link was already present. Manual tests: `tests/manual/test_settings_service_flow.md` (8 cases). TypeScript: 0 errors.
+- `[ ]` [Feature 3.1: Service Flow — Send Invoices Tab](feature_3.1_vendor_flow_ingestion.md) — spec only, added 2026-07-27; extends Feature 3
+- `[ ]` [Feature 4.1: Service Flow — Outbound Auditor Tab](feature_4.1_vendor_flow_auditor.md) — spec only, added 2026-07-27; extends Feature 4
+- `[ ]` [Feature 2.1: Service Flow — Outbound Dashboard (Split-Screen)](feature_2.1_vendor_flow_dashboard.md) — spec only, added 2026-07-27; extends Feature 2
+- `[x]` [Feature 11: System Flow Visualization](feature_11_flows_visualization.md) — backfilled 2026-07-27; found already built and undocumented at `app/flows/page.tsx`, a standalone animated demo/explainer diagram, not a functional screen or part of Service Flow's actual implementation (two of its four tabs visualize Service Flow's design, clearly marked spec-only)
 
 ---
 

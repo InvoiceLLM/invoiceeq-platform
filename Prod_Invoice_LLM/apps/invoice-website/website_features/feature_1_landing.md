@@ -9,9 +9,9 @@ Configure the visual entry point, shared design system styling, header navigatio
 * Buttons: Primary actions styled in vibrant emerald green (`bg-[#10B981] hover:bg-[#059669] text-white`). Secondary buttons styled in transparent ghost borders (`border border-[#222D3D] hover:bg-slate-900`).
 
 ### File Coordinates
-* Main Page: [apps/invoice-website/app/page.tsx](file:///d:/Invoice-LLM/Invoice-LLM-SOLO-Dev/Prod_Invoice_LLM/apps/invoice-website/app/page.tsx)
-* Layout Settings: [apps/invoice-website/app/layout.tsx](file:///d:/Invoice-LLM/Invoice-LLM-SOLO-Dev/Prod_Invoice_LLM/apps/invoice-website/app/layout.tsx)
-* Stylesheet: [apps/invoice-website/app/globals.css](file:///d:/Invoice-LLM/Invoice-LLM-SOLO-Dev/Prod_Invoice_LLM/apps/invoice-website/app/globals.css)
+* Main Page: `apps/invoice-website/app/page.tsx`
+* Layout Settings: `apps/invoice-website/app/layout.tsx`
+* Stylesheet: `apps/invoice-website/app/globals.css`
 
 ### Tasks
 - [x] **Task 1.1: Configure Global Tailwind CSS stylesheet**

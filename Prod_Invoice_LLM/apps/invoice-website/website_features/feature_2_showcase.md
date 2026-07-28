@@ -10,7 +10,7 @@ Implement the interactive multi-tenant workspace showcase widget to visualize da
 * Privacy badges: `bg-emerald-950/20 text-emerald-400 border border-emerald-800/40 rounded px-2 py-0.5 text-xs`.
 
 ### File Coordinates
-* Component: [apps/invoice-website/components/marketing/WorkspaceShowcase.tsx](file:///d:/Invoice-LLM/Invoice-LLM-SOLO-Dev/Prod_Invoice_LLM/apps/invoice-website/components/marketing/WorkspaceShowcase.tsx)
+* Component: `apps/invoice-website/components/marketing/WorkspaceShowcase.tsx`
 
 ### Tasks
 - [x] **Task 2.1: Implement Workspace Showcase Container Layout**

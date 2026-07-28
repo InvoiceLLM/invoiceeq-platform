@@ -1,6 +1,6 @@
 # Feature 10: Settings Screen
 
-New feature — the app's first `/settings` route. Confirmed via a full listing of `apps/invoice-fe/app/**/page.tsx` that no Settings, Connectors, Email Ingestion, or Webhooks page exists today. Consolidates those three spec-only features ([feature_7_connectors.md](feature_7_connectors.md), [feature_8_email_ingestion.md](feature_8_email_ingestion.md), [feature_9_webhooks.md](feature_9_webhooks.md)) as sections of one screen, by reference — none of their specs change here — plus the two new Vendor Flow toggles.
+New feature — the app's first `/settings` route. Confirmed via a full listing of `apps/invoice-fe/app/**/page.tsx` that no Settings, Connectors, Email Ingestion, or Webhooks page exists today. Consolidates those three spec-only features ([feature_7_connectors.md](feature_7_connectors.md), [feature_8_email_ingestion.md](feature_8_email_ingestion.md), [feature_9_webhooks.md](feature_9_webhooks.md)) as sections of one screen, by reference — none of their specs change here — plus the two new Service Flow toggles.
 
 ### File Coordinates (planned)
 * New page: `apps/invoice-fe/app/settings/page.tsx`.
@@ -10,7 +10,14 @@ New feature — the app's first `/settings` route. Confirmed via a full listing 
 
 ### Functionality
 
-**`VendorFlowToggles.tsx`:** two switches, *Receive Invoices* and *Send Invoices*, each independently toggleable, plus a text input for *Outbound Sender Email* (shown once, above the *Send Invoices* switch, since the switch depends on it). Disabled (not hidden) for non-Admin roles, with a tooltip explaining why — consistent with how the rest of the app surfaces role restrictions rather than silently hiding controls. Saving calls `PUT /settings/vendor-flow`; a `403` from a role check that changed mid-session (rare, but the BE enforces it too) shows an error toast rather than a silent failure. Attempting to enable *Send Invoices* with the sender email field empty is blocked client-side before the call is even made (mirrors the BE's `400` rule, so the user sees the reason inline instead of via a round-trip toast).
+**`VendorFlowToggles.tsx`:** two switches, *Receive Invoices* and *Send Invoices*, each independently toggleable, plus a text input for *Outbound Sender Email* (shown once, above the *Send Invoices* switch, since the switch depends on it). Disabled (not hidden) for non-Admin roles, with a tooltip explaining why. 
+
+**Upgrade Verification Gate**:
+* When an Admin toggles *Send Invoices* ON:
+  * The component checks the current tenant's `billing_plan` (fetched from session context or `/api/settings/vendor-flow`).
+  * If the plan is `'pro_combined'`, the toggle behaves normally.
+  * If the plan is `'free'` or `'pro'` (standard), the toggle remains off and opens the **Combined Pro Upgrade Modal**. The modal prompts the user to upgrade to the ₹8,999/month Combined Pro plan (calculating proration delta if on standard Pro) and provides a checkout redirection button.
+* Attempting to save the toggle state with the sender email field empty is blocked client-side before any save call is made. Saving calls `PUT /settings/vendor-flow`.
 
 **Page shell for v1:** since Connectors/Email/Webhooks have no built FE pages yet, `page.tsx`'s v1 only needs to render `VendorFlowToggles.tsx`; the other three sections get their own component slots added when each of those features is actually implemented, not built as empty placeholders now.
 

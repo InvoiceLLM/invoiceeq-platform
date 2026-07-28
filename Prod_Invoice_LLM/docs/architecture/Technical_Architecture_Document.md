@@ -31,7 +31,7 @@
 14. [Testing & Quality Assurance](#14-testing--quality-assurance)
 15. [Operational & Licensing Costs](#15-operational--licensing-costs)
 16. [Glossary](#16-glossary)
-17. [Vendor Flow (Outbound) — Planned](#17-vendor-flow-outbound--planned)
+17. [Service Flow (Outbound) — Planned](#17-vendor-flow-outbound--planned)
 
 ---
 
@@ -819,12 +819,12 @@ main          ← Production-ready code ONLY (manual merge approval required)
 
 ---
 
-## 17. Vendor Flow (Outbound) — Planned
+## 17. Service Flow (Outbound) — Planned
 
 **Status: fully unimplemented — spec-only.** Full detail lives in the 11 feature docs listed below; this section is an architecture-level summary, added additively without altering any section above.
 
 ### 17.1 What it is
-The bidirectional counterpart to everything in §7-9 above. Today the platform only handles invoices coming *into* the tenant (inbound/AP). Vendor Flow adds the outbound/AR side: the tenant uploads their own pre-made invoice PDFs addressed to their customers, verified through a parallel pipeline before being marked sent and tracked to payment. Upload-only in v1 — no in-app invoice generation/branding (that's a separately deferred feature).
+The bidirectional counterpart to everything in §7-9 above. Today the platform only handles invoices coming *into* the tenant (inbound/AP). Service Flow adds the outbound/AR side: the tenant uploads their own pre-made invoice PDFs addressed to their customers, verified through a parallel pipeline before being marked sent and tracked to payment. Upload-only in v1 — no in-app invoice generation/branding (that's a separately deferred feature).
 
 ### 17.2 Design principle: new files, one narrow exception
 Every new capability is built as new routers/agents/components, importing existing pure logic (`verification_tools.py`, `_run_ocr()`, `PdfViewerCanvas.tsx`) rather than editing it. The one deliberate exception is `agents/query_agent.py`, which gets a small additive edit so Chat remains one screen able to answer inbound, outbound, and combined/net questions.

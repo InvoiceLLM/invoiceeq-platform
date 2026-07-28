@@ -223,7 +223,7 @@ To support schema updates in production without causing downtime or data loss, d
 
 ---
 
-# PART 4: Vendor Flow (Outbound) — Planned Additive Schema
+# PART 4: Service Flow (Outbound) — Planned Additive Schema
 
 **Status: fully unimplemented — spec-only.** Listed here for review before any migration is written; every column below is additive (nullable or defaulted) so no existing row or query is affected. Full detail: `apps/invoice-be/docs/feature_2.1_vendor_flow_ingestion.md`, `feature_7.1_vendor_flow_auditor.md`, `feature_8.1_vendor_flow_dashboard.md`, `feature_16_settings.md`.
 

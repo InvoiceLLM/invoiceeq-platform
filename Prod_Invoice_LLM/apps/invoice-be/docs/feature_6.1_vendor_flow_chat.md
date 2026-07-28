@@ -1,8 +1,8 @@
-# Feature 6.1: Vendor Flow — Direction-Aware Chat
+# Feature 6.1: Service Flow — Direction-Aware Chat
 
-Extends [feature_6_rag.md](feature_6_rag.md). Spec only — no implementation yet, pending approval of the full Vendor Flow document set.
+Extends [feature_6_rag.md](feature_6_rag.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
-The one deliberate, narrow exception to "new files only" in Vendor Flow: a small additive edit to `agents/query_agent.py`, so Chat stays a single screen capable of answering inbound-only, outbound-only, *and* combined/net questions ("how much do I owe vs. how much is owed to me"). A fully separate Vendor Chat was considered and rejected — it would forfeit combined/net questions and split one smart screen into two duller ones.
+The one deliberate, narrow exception to "new files only" in Service Flow: a small additive edit to `agents/query_agent.py`, so Chat stays a single screen capable of answering inbound-only, outbound-only, *and* combined/net questions ("how much do I owe vs. how much is owed to me"). A fully separate Vendor Chat was considered and rejected — it would forfeit combined/net questions and split one smart screen into two duller ones.
 
 ### File Coordinates
 * Edited (narrow, additive only): `apps/invoice-be/agents/query_agent.py` — the SQL-generation schema-description text, `_get_global_business_rules()`/`_get_vendor_business_rules()`.

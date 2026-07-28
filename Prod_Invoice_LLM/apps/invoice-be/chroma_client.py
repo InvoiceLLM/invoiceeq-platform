@@ -20,10 +20,11 @@ def get_chroma_client():
     if _chroma_client is None:
         settings = get_settings()
         try:
-            logger.info("Initializing Chroma HttpClient at %s:%s", settings.CHROMA_HOST, settings.CHROMA_PORT)
+            logger.info("Initializing Chroma HttpClient at %s:%s (ssl=%s)", settings.CHROMA_HOST, settings.CHROMA_PORT, settings.CHROMA_USE_SSL)
             _chroma_client = chromadb.HttpClient(
                 host=settings.CHROMA_HOST,
-                port=settings.CHROMA_PORT
+                port=settings.CHROMA_PORT,
+                ssl=settings.CHROMA_USE_SSL
             )
             # Verify connection
             _chroma_client.heartbeat()

@@ -1,10 +1,10 @@
 # System Journey — Developer Guide
 
-Purpose: a single narrative walkthrough of how an invoice actually moves through this codebase, module by module — for review before the Vendor Flow build starts, not a replacement for `Technical_Architecture_Document.md` or the per-feature `feature_N_*.md` specs (which remain the source of truth for exact task numbers and status).
+Purpose: a single narrative walkthrough of how an invoice actually moves through this codebase, module by module — for review before the Service Flow build starts, not a replacement for `Technical_Architecture_Document.md` or the per-feature `feature_N_*.md` specs (which remain the source of truth for exact task numbers and status).
 
 Marking convention used throughout:
 - **[LIVE]** — exists, running, verified in this repo today.
-- **[PLANNED]** — part of the Vendor Flow design discussed but not yet built; included here so the target end-state can be reviewed as one continuous journey, not two disconnected documents.
+- **[PLANNED]** — part of the Service Flow design discussed but not yet built; included here so the target end-state can be reviewed as one continuous journey, not two disconnected documents.
 
 ---
 
@@ -56,7 +56,7 @@ For `AUDIT_REQUIRED` invoices, `routers/audit.py::resolve_alert()` lets a user d
 
 ---
 
-## Part 2 — What Vendor Flow adds [PLANNED]
+## Part 2 — What Service Flow adds [PLANNED]
 
 Same journey, opposite direction: instead of the tenant *receiving* invoices from their vendors, the tenant *sends* invoices to their own customers. All 11 feature docs are now written and cross-referenced below; this section reflects the final, locked design — not an earlier draft.
 
@@ -79,7 +79,7 @@ Full 3-scope Trainer (Global/Existing Vendor/New Vendor) doesn't fit here — th
 `routers/outbound_dashboard.py` [PLANNED] mirrors the AP metrics shape for AR (amount collected, outstanding/at-risk receivables, top customers, real `average_days_to_payment` via new `sent_at`/`paid_at` columns). Screen behavior differs deliberately from Ingestion/Auditor: when both services are active, Dashboard shows **both halves simultaneously, side by side** — Dashboard is a passive overview where a tenant running both services wants to see totality at a glance, whereas Ingestion/Auditor are action screens (uploading one invoice, resolving one alert at a time) where a tab to pick which queue you're in is more natural. No combined/net figure appears on Dashboard anywhere — that stays Chat-only.
 
 ### 7. Chat — the one narrow, sanctioned edit to shipped code
-`agents/query_agent.py` gains: `flow_direction`/`customer_name`/`customer_id` added to its SQL-generation schema description, one example SQL pattern for combined/net questions (conditional aggregation in a single query — no structural change to the existing single-query architecture, isolation regex, or retry loop), and `_get_global_business_rules()` extended to also fetch the outbound Global standing-rule template. This is the sole exception to "new files only" in the entire Vendor Flow effort — a fully separate Vendor Chat was considered and rejected, since it would forfeit combined/net questions and split one smart screen into two duller ones.
+`agents/query_agent.py` gains: `flow_direction`/`customer_name`/`customer_id` added to its SQL-generation schema description, one example SQL pattern for combined/net questions (conditional aggregation in a single query — no structural change to the existing single-query architecture, isolation regex, or retry loop), and `_get_global_business_rules()` extended to also fetch the outbound Global standing-rule template. This is the sole exception to "new files only" in the entire Service Flow effort — a fully separate Vendor Chat was considered and rejected, since it would forfeit combined/net questions and split one smart screen into two duller ones.
 
 ### 8. Trainer — genuinely unaffected
 No changes. The outbound standing-rule mechanism (step 3) deliberately lives in the new outbound Auditor, not in `routers/trainer.py` or `ScopeSelector.tsx` — zero touch confirmed.

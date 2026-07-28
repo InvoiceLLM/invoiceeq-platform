@@ -1,6 +1,6 @@
-# Feature 7.1: Vendor Flow — Outbound Auditor (pre-send validation + standing rules)
+# Feature 7.1: Service Flow — Outbound Auditor (pre-send validation + standing rules)
 
-Extends [feature_7_audit.md](feature_7_audit.md). Spec only — no implementation yet, pending approval of the full Vendor Flow document set.
+Extends [feature_7_audit.md](feature_7_audit.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
 Reviews `NEEDS_REVIEW` outbound invoices (produced by [feature_2.1_vendor_flow_ingestion.md](feature_2.1_vendor_flow_ingestion.md)'s verify step) before they can be marked `SENT`, surfaces `SENT` invoices past their `due_date` for follow-up, and — new, folded in during design review — lets a correction be taught back as a standing rule for all future outbound invoices.
 
@@ -16,7 +16,7 @@ Reviews `NEEDS_REVIEW` outbound invoices (produced by [feature_2.1_vendor_flow_i
 
 **Overdue detection (v1 choice):** computed at read-time — `status == "SENT" and due_date < today()` surfaces the invoice as needing follow-up in the outbound Auditor list. Not persisted via a new scheduled job; a `main_worker.py`-driven periodic sweep can be added later if a truly persisted `OVERDUE` status turns out to be needed for reporting.
 
-**Resolve endpoint:** `PUT /outbound-audit/resolve/{id}` in a new file, not importing from `routers/audit.py` — that file's resolve logic isn't factored into reusable pieces, and extracting a shared helper would itself be an edit to shipped code. The corrections-dict → update `Invoice` → `AuditLog` diff logic is duplicated in the new file; accepted price for zero-touch, consistent with the rest of Vendor Flow.
+**Resolve endpoint:** `PUT /outbound-audit/resolve/{id}` in a new file, not importing from `routers/audit.py` — that file's resolve logic isn't factored into reusable pieces, and extracting a shared helper would itself be an edit to shipped code. The corrections-dict → update `Invoice` → `AuditLog` diff logic is duplicated in the new file; accepted price for zero-touch, consistent with the rest of Service Flow.
 
 **Deliberately not included:** the Gap 27-style "detect a recurring pattern → suggest a rule → deep-link to Trainer" flow. That exists inbound because Trainer's Existing/New Vendor scopes can act on the suggestion; outbound has no such scope (see below for what it gets instead).
 

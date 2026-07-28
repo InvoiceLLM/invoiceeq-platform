@@ -16,8 +16,13 @@ class Tenant(SQLModel, table=True):
     free_invoices_remaining: int = Field(default_factory=lambda: settings.DEFAULT_FREE_INVOICES_LIMIT)
     stripe_customer_id: str | None = Field(default=None, max_length=255)
     stripe_subscription_id: str | None = Field(default=None, max_length=255)
+    # Feature 16: Service Flow toggles
+    receive_invoices_enabled: bool = Field(default=True)   # Inbound (AP) — on by default, preserves existing behaviour
+    send_invoices_enabled: bool = Field(default=False)     # Outbound (AR) — opt-in, requires pro_combined plan
+    outbound_sender_email: str | None = Field(default=None, max_length=255)  # "From" address for outbound delivery
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
 
 class Invoice(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -168,5 +173,17 @@ class ExtractionTemplateVersion(SQLModel, table=True):
     rules: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
     changed_by: str | None = Field(default=None, max_length=255)
     changed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TenantEmailSender(SQLModel, table=True):
+    """Allow-list of email addresses permitted to submit invoices for a given tenant (Task 14.3)."""
+    __tablename__ = "tenant_email_senders"
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", "email", name="uq_tenant_email_senders_tenant_email"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True, foreign_key="tenant.id")
+    email: str = Field(index=True, max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

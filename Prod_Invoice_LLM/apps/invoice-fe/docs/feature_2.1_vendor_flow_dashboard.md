@@ -1,8 +1,8 @@
-# Feature 2.1: Vendor Flow — Outbound Dashboard (Split-Screen)
+# Feature 2.1: Service Flow — Outbound Dashboard (Split-Screen)
 
-Extends [feature_2_dashboard.md](feature_2_dashboard.md). Spec only — no implementation yet, pending approval of the full Vendor Flow document set.
+Extends [feature_2_dashboard.md](feature_2_dashboard.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
 
-Adds the AR mirror of the existing metrics grid, consuming [feature_8.1_vendor_flow_dashboard.md](../../invoice-be/docs/feature_8.1_vendor_flow_dashboard.md)'s new endpoint. The one screen in Vendor Flow that splits rather than tabs — see the design reasoning in the BE doc.
+Adds the AR mirror of the existing metrics grid, consuming [feature_8.1_vendor_flow_dashboard.md](../../invoice-be/docs/feature_8.1_vendor_flow_dashboard.md)'s new endpoint. The one screen in Service Flow that splits rather than tabs — see the design reasoning in the BE doc.
 
 ### File Coordinates (planned)
 * Edited (small, additive): `apps/invoice-fe/app/dashboard/page.tsx` — wraps the existing content in a conditional split-layout container.

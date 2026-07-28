@@ -1,6 +1,6 @@
 # System Journey — User & Admin Guide
 
-Purpose: a plain-language walkthrough of what this product actually does for the people who use it day to day — no code, no file names. Written as a set of journeys through the screens, so you can sanity-check the whole picture (what's live today, and what Vendor Flow will add) before any of it is built.
+Purpose: a plain-language walkthrough of what this product actually does for the people who use it day to day — no code, no file names. Written as a set of journeys through the screens, so you can sanity-check the whole picture (what's live today, and what Service Flow will add) before any of it is built.
 
 Marking convention:
 - **Today** — live, working right now.
@@ -11,7 +11,7 @@ Marking convention:
 ## Part 1 — Today: receiving and paying your vendors' invoices
 
 ### The people
-- **Admin** — full control, including the one Settings screen that will exist once Vendor Flow ships.
+- **Admin** — full control, including the one Settings screen that will exist once Service Flow ships.
 - **Auditor** — reviews and fixes flagged invoices, teaches the system corrections.
 - **Viewer** — read-only access to Dashboard and Chat.
 
