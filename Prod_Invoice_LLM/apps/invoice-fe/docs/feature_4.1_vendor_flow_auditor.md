@@ -9,6 +9,9 @@ Adds the pre-send validation console for outbound invoices, plus the "apply as s
 * New component: `apps/invoice-fe/components/audit/OutboundAlertConsole.tsx` — not a fork of `AlertConsole.tsx`'s file, but the same visual language (Theme & Styling Specifications below carry over unchanged).
 * Existing, imported-not-edited: `apps/invoice-fe/components/audit/PdfViewerCanvas.tsx` — reused as-is; rendering a PDF and its bounding boxes is direction-agnostic.
 * New proxy route: `apps/invoice-fe/app/api/outbound-audit/resolve/[id]/route.ts` → `PUT /outbound-audit/resolve/{id}`.
+* New component: `apps/invoice-fe/components/audit/OutboundInvoicesTable.tsx` — the outbound tab/half of the new unified Invoices/Audit queue screen built in `feature_4_auditor.md` Task 4.9. Mirrors that screen's server-pagination pattern (8 rows/page, `limit`/`offset`/`X-Total-Count`), reading `GET /outbound-dashboard/invoices` (see `feature_8.1_vendor_flow_dashboard.md`, BE) instead of `GET /invoices`. Status tabs use outbound's real lifecycle (`Verified`/`Needs Review`/`Sent`/`Paid`/`Overdue`), not inbound's.
+* New component: `apps/invoice-fe/components/audit/OutboundFilterBar.tsx` — customer-name dropdown (mirrors inbound's vendor dropdown, built from distinct `customer_name` values) + date range. No tag filter — outbound invoices don't carry `tags`.
+* Not on Dashboard: **correction (2026-07-29)** — an earlier pass of `feature_2.1_vendor_flow_dashboard.md` placed this table on Dashboard, split-screen with the metrics grid. Moved here instead, per the Dashboard/Audit split decision (Dashboard is overview-only; the queue lives here, alongside inbound's own tab).
 
 ### Functionality
 
@@ -29,6 +32,7 @@ Adds the pre-send validation console for outbound invoices, plus the "apply as s
 - [ ] **Task 4.1.2:** Build `app/invoices/outbound-review/[id]/page.tsx`, reusing `PdfViewerCanvas.tsx`.
 - [ ] **Task 4.1.3:** Build the new resolve proxy route.
 - [ ] **Task 4.1.4:** Add the *Receiving*/*Sending* tab header (shared implementation with `feature_3.1`'s tab, if built as one small shared piece — decide at implementation time).
+- [ ] **Task 4.1.5:** Build `OutboundInvoicesTable.tsx` + `OutboundFilterBar.tsx` as the outbound tab of the new unified Invoices/Audit queue screen (`feature_4_auditor.md` Task 4.9), reading `GET /outbound-dashboard/invoices`.
 
 ### Verification Plan
 * **Manual Verification:**

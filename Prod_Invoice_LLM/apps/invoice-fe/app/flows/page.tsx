@@ -316,7 +316,6 @@ const OUTBOUND: FlowDef = {
     { nodeId: "ob_upload", edgeIds: ["oe-upload-blob"] },
     { nodeId: "ob_blob_q", edgeIds: ["oe-blob-ocr"] },
     { nodeId: "ob_ocr", edgeIds: ["oe-rules-extract", "oe-ocr-extract"] },
-    { nodeId: "ob_rules", edgeIds: [] },
     { nodeId: "ob_extract", edgeIds: ["oe-extract-verify"] },
     { nodeId: "ob_verify", edgeIds: ["oe-verify-ok"] },
     { nodeId: "ob_verified", edgeIds: ["oe-verified-rag"] },

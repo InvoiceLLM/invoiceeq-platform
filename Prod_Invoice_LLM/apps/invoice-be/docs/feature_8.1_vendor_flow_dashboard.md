@@ -8,6 +8,8 @@ AR mirror of the existing AP metrics endpoint: total invoiced to customers, amou
 * New router: `apps/invoice-be/routers/outbound_dashboard.py` — `get_outbound_dashboard_metrics()`.
 * Model: `apps/invoice-be/models.py::Invoice` — two new additive columns.
 * Existing, unmodified: `apps/invoice-be/routers/dashboard.py` — not imported from, not edited. Filtering logic is duplicated against `flow_direction == "OUTBOUND"` rather than adding a direction parameter to the existing endpoint.
+* New: `routers/outbound_dashboard.py::list_outbound_invoices()` — `GET /outbound-dashboard/invoices`, its own paginated list endpoint (limit/offset/`X-Total-Count`, `customer_name`/`start_date`/`end_date`/`status` filters), duplicating `routers/invoices.py`'s pagination pattern rather than editing it. **Correction (2026-07-29):** an earlier pass proposed adding a `flow_direction` param directly to the existing `GET /invoices`, but that contradicts this whole effort's own stated rule (`docs/architecture/System_Journey_Developer_Guide.md` Part 3: "Zero edits to `routers/invoices.py`, `audit.py`, `dashboard.py`") — reverted in favor of a genuinely separate endpoint, consistent with how the metrics endpoint above is already built.
+* Feeds `invoice-fe`'s unified Invoices/Audit queue screen (see `feature_4.1_vendor_flow_auditor.md`, FE) — **not** the Dashboard. The Dashboard/Audit split (2026-07-29) moved all invoice-list UI off Dashboard entirely; only the metrics grid split remains there.
 
 ### Functionality
 
@@ -30,6 +32,7 @@ AR mirror of the existing AP metrics endpoint: total invoiced to customers, amou
 - [ ] **Task 8.1.1:** Add `sent_at`, `paid_at` columns to `Invoice` (Alembic migration, additive).
 - [ ] **Task 8.1.2:** Build `routers/outbound_dashboard.py::get_outbound_dashboard_metrics()`.
 - [ ] **Task 8.1.3:** Wire `sent_at`/`paid_at` writes into the confirm-send and mark-paid endpoints (`feature_2.1`/`feature_7.1`).
+- [ ] **Task 8.1.4:** Build `routers/outbound_dashboard.py::list_outbound_invoices()` — `GET /outbound-dashboard/invoices`, own pagination/filter logic (`customer_name`/`start_date`/`end_date`/`status`), zero edits to `routers/invoices.py`. Feeds `invoice-fe`'s outbound Auditor tab (see `feature_4.1_vendor_flow_auditor.md`, FE), not Dashboard.
 
 ### Verification Plan
 * **Manual Verification:**
@@ -37,3 +40,4 @@ AR mirror of the existing AP metrics endpoint: total invoiced to customers, amou
   - Send-only tenant: confirm only outbound metrics render, no empty inbound half.
   - Both active: confirm both halves render simultaneously with correct, independent data; confirm no combined/net figure appears anywhere on the page.
   - Mark an outbound invoice `PAID`; confirm `average_days_to_payment` reflects the real `paid_at - sent_at` elapsed time, not a placeholder.
+  - `GET /outbound-dashboard/invoices`: confirm it paginates correctly via `X-Total-Count`, `customer_name` narrows to one customer, and `routers/invoices.py`'s existing `GET /invoices` behavior is completely unaffected (regression check — same file, zero edits).
