@@ -197,21 +197,34 @@ def _get_global_business_rules(tenant_id: str, db_session) -> list[str]:
     resolved after the SQL/RAG route actually runs — so there's no reliable way to
     pick the right vendor template ahead of time. The Global template applies
     tenant-wide unconditionally, so it's always safe to include.
+
+    Feature 6.1 (Task 6.1.2): a tenant can now have up to two Global rows --
+    one INBOUND, one OUTBOUND (both vendor_name IS NULL, distinguished by the
+    new flow_direction column) -- so this always fetches both and returns the
+    union, same "always safe to include" reasoning as the original INBOUND-only
+    behavior, rather than trying to detect which direction the question is
+    about (that detection would be a fragile heuristic; Chat explaining an
+    outbound invoice correctly matters regardless of how confidently we can
+    guess intent up front).
     """
     from models import ExtractionTemplate
     from sqlmodel import select
     from uuid import UUID
+    rules: list[str] = []
     try:
         stmt = select(ExtractionTemplate).where(
             ExtractionTemplate.tenant_id == UUID(str(tenant_id)),
             ExtractionTemplate.vendor_name.is_(None),
         )
-        template = db_session.exec(stmt).first()
-        if template and isinstance(template.rules, dict):
-            return template.rules.get("constraints", []) or []
+        templates = db_session.exec(stmt).all()
+        for template in templates:
+            if isinstance(template.rules, dict):
+                for rule in template.rules.get("constraints", []) or []:
+                    if rule not in rules:
+                        rules.append(rule)
     except Exception as e:
         logger.warning("Failed to load Global trainer rules for tenant %s: %s", tenant_id, e)
-    return []
+    return rules
 
 def _get_vendor_business_rules(tenant_id: str, user_message: str, db_session) -> list[str]:
     """Fetch vendor-specific rules by checking if any vendor name from the templates 
@@ -469,22 +482,31 @@ Given the 'invoice' table schema:
 - tenant_id: UUID
 - batch_id: UUID
 - file_path: VARCHAR(1024)
-- vendor_name: VARCHAR
+- vendor_name: VARCHAR (the vendor who sent this tenant an INBOUND invoice; NULL for OUTBOUND rows)
 - grand_total: FLOAT
 - invoice_number: VARCHAR
 - invoice_date: DATE
 - due_date: DATE
 - tax_amount: FLOAT
 - po_number: VARCHAR
-- status: VARCHAR (e.g. 'COMPLETED', 'AUDIT_REQUIRED', 'PROCESSING')
+- status: VARCHAR (e.g. 'COMPLETED', 'AUDIT_REQUIRED', 'PROCESSING' for INBOUND; 'VERIFIED', 'NEEDS_REVIEW', 'SENT', 'PAID' for OUTBOUND)
 - sa_alerts: JSONB
 - created_at: DATETIME
+- flow_direction: VARCHAR ('INBOUND' = a vendor's invoice sent to this tenant; 'OUTBOUND' = this tenant's own invoice sent to a customer)
+- customer_name: VARCHAR (the customer this tenant sent an OUTBOUND invoice to; NULL for INBOUND rows)
+- customer_id: UUID (reserved, currently unused)
 
-Write a SQL query to answer the user's question. 
+Write a SQL query to answer the user's question.
 CRITICAL RULES:
 1. You MUST filter by tenant_id = '{tenant_id}'.
 2. You MUST only generate a read-only SELECT statement.
 3. IMPORTANT: Audit status lives exclusively in the `status` enum and `sa_alerts` column. There is no `audit_flags`, `audit_logs`, or `audit_reasons` table. Do not hallucinate columns like `is_flagged_for_audit`.
+4. IMPORTANT: a question about a vendor/bill received ("who do I owe", "what did I pay X") means flow_direction='INBOUND', filtered by vendor_name. A question about a customer/invoice sent ("who owes me", "what did I bill X") means flow_direction='OUTBOUND', filtered by customer_name. Never mix the two columns for the wrong direction.
+5. For a combined/net question comparing both directions in one answer (e.g. "how much do I owe vs. how much is owed to me"), use conditional aggregation in one query rather than two separate ones, for example:
+SELECT
+  SUM(CASE WHEN flow_direction='INBOUND'  THEN grand_total ELSE 0 END) AS total_owed_by_us,
+  SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_owed_to_us
+FROM invoice WHERE tenant_id = '{tenant_id}'
 
 {tenant_stats}
 {rules_block}

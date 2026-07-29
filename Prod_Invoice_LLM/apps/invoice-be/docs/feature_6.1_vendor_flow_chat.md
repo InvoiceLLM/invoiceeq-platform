@@ -1,6 +1,6 @@
 # Feature 6.1: Service Flow — Direction-Aware Chat — **SAGE Agent**
 
-**SAGE** (Invoice Intelligence Chat) powers this flow. Extends [feature_6_rag.md](feature_6_rag.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
+**SAGE** (Invoice Intelligence Chat) powers this flow. Extends [feature_6_rag.md](feature_6_rag.md). **Built 2026-07-29** — see Tasks below.
 
 The one deliberate, narrow exception to "new files only" in Service Flow: a small additive edit to `agents/query_agent.py`, so Chat stays a single screen capable of answering inbound-only, outbound-only, *and* combined/net questions ("how much do I owe vs. how much is owed to me"). A fully separate Vendor Chat was considered and rejected — it would forfeit combined/net questions and split one smart screen into two duller ones.
 
@@ -31,12 +31,13 @@ This keeps the existing single-query architecture completely intact — the LLM 
 - A persisted "net position" view anywhere outside Chat — stays a Chat-only capability, consistent with the Dashboard split-screen decision.
 
 ### Tasks
-- [ ] **Task 6.1.1:** Add `flow_direction`/`customer_name`/`customer_id` to the SQL-generation schema description + combined-question example pattern.
-- [ ] **Task 6.1.2:** Extend `_get_global_business_rules()` to include the tenant's `OUTBOUND` Global template.
-- [ ] **Task 6.1.3:** Wire `index_invoice_document()` into `outbound_handlers.py` on `VERIFIED`.
+- [x] **Task 6.1.1:** Done 2026-07-29 — schema description in `run_query_agent()`'s SQL prompt now lists `flow_direction`/`customer_name`/`customer_id`, plus the combined-question conditional-aggregation example and an explicit rule telling the LLM never to mix vendor/customer filters for the wrong direction.
+- [x] **Task 6.1.2:** Done 2026-07-29 — `_get_global_business_rules()` now unions both the `INBOUND` and `OUTBOUND` Global templates. **Found and fixed a real bug along the way**: the old query used `.first()` with no `flow_direction` filter, which was correct only because a tenant could never have more than one Global row before this feature. Now that two can coexist, `.first()` would have non-deterministically returned either one — fixed by fetching all matching rows and returning the union.
+- [x] **Task 6.1.3:** Done 2026-07-29 — `queue_worker/outbound_handlers.py` calls the imported `index_invoice_document()` when status reaches `VERIFIED` (not `NEEDS_REVIEW`), passing `customer_name` through the function's `vendor_name` parameter. **Known cosmetic gap**: `chroma_client.py`'s chunk header literally prints `"[Vendor: {name}]"`, so outbound chunks will show `"Vendor: <customer name>"` — left as-is since the doc explicitly forbids editing `chroma_client.py`.
 
 ### Verification Plan
-* **Manual Verification:**
+* **Automated Tests**: `uv run pytest tests/test_direction_aware_chat.py` — 8 new tests (Global rules union, INBOUND-only regression check, OUTBOUND-only, dedup, empty case, schema-prompt content assertion confirming the new columns/pattern actually reach the LLM call, RAG indexing fires on `VERIFIED`/skips on `NEEDS_REVIEW`). Re-ran the full existing `tests/test_rag.py` suite (9 tests, including `test_sql_guardrail_safety_enforcement` — Gap 20's tenant-isolation regex check) to confirm zero regression to the security-critical execution path, which this feature never touches. Also confirmed live connectivity to real Azure OpenAI (`gpt-5-mini`) from this dev environment, though the automated tests above still run against a mocked LLM.
+* **Manual Verification** (not yet done — no live DB/real invoice data seeded in this pass):
   - Ask an inbound-only question ("who is the vendor on invoice X"); confirm identical behavior to today, no regression.
   - Ask an outbound-only question ("what's the total on the invoice I sent to Acme"); confirm it correctly filters `flow_direction='OUTBOUND'` and uses `customer_name`.
   - Ask a combined question ("how much do I owe vs. how much is owed to me"); confirm the generated SQL uses the conditional-aggregation pattern and the synthesized answer correctly separates both figures.

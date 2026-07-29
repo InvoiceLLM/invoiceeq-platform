@@ -114,6 +114,22 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 session.add(invoice)
                 session.commit()
 
+                # Feature 6.1 (Task 6.1.3): index on VERIFIED, mirroring inbound's
+                # COMPLETED trigger, so outbound documents are searchable through
+                # the same RAG path Chat already uses -- imported call, zero
+                # changes to chroma_client.py itself.
+                if status == "VERIFIED":
+                    try:
+                        from chroma_client import index_invoice_document
+                        index_invoice_document(
+                            invoice_id=str(invoice.id),
+                            tenant_id=str(invoice.tenant_id),
+                            vendor_name=invoice.customer_name,
+                            file_path=file_path,
+                        )
+                    except Exception as ie:
+                        logger.error("RAG indexing failed for outbound invoice %s: %s", invoice.id, ie)
+
             _publish_sse_events(batch_id, {
                 "status": status,
                 "message": f"Outbound processing finished with status: {status}",
