@@ -31,8 +31,8 @@ AR mirror of the existing AP metrics endpoint: total invoiced to customers, amou
 ### Tasks
 - [x] **Task 8.1.1:** Add `sent_at`, `paid_at` columns to `Invoice` — done 2026-07-29, bundled into Feature 2.1's migration (`c4d5e6f7a8b9`) since that feature's own confirm-send endpoint needed `sent_at` immediately.
 - [ ] **Task 8.1.2:** Build `routers/outbound_dashboard.py::get_outbound_dashboard_metrics()`.
-- [ ] **Task 8.1.3:** Wire `sent_at`/`paid_at` writes into the confirm-send and mark-paid endpoints (`feature_2.1`/`feature_7.1`).
-- [ ] **Task 8.1.4:** Build `routers/outbound_dashboard.py::list_outbound_invoices()` — `GET /outbound-dashboard/invoices`, own pagination/filter logic (`customer_name`/`start_date`/`end_date`/`status`), zero edits to `routers/invoices.py`. Feeds `invoice-fe`'s outbound Auditor tab (see `feature_4.1_vendor_flow_auditor.md`, FE), not Dashboard.
+- [x] **Task 8.1.3:** Done 2026-07-29 as part of Feature 2.1's build — `routers/outbound_invoices.py::confirm_send_outbound_invoice()` stamps `sent_at` (`VERIFIED`/`NEEDS_REVIEW` → `SENT`), and `mark_outbound_invoice_paid()` (a new endpoint written into `feature_2.1_vendor_flow_ingestion.md`'s scope since Mark Paid wasn't concretely speced anywhere until this pass) stamps `paid_at` (`SENT` → `PAID`). Both tested in `tests/test_outbound_ingestion.py`.
+- [x] **Task 8.1.4 (list-endpoint half only) — done 2026-07-29, bundled into Feature 7.1's build.** `routers/outbound_dashboard.py::list_outbound_invoices()` — `GET /outbound-dashboard/invoices`, pagination/filter logic (`customer_name`/`start_date`/`end_date`/`status`/`status_in`), zero edits to `routers/invoices.py`. Built here (not by Dev 2) since Feature 7.1's Task 7.1.4 (overdue computation) needed a real list query to attach to immediately. **Still open**: `get_outbound_dashboard_metrics()` (the aggregate-metrics endpoint feeding `OutboundMetricsGrid.tsx`) is a separate function in this same router file, not built yet — that's still Dev 2's remaining work for this feature.
 
 ### Verification Plan
 * **Manual Verification:**

@@ -134,6 +134,33 @@ def test_confirm_send_tenant_isolation(db_session):
     assert response.status_code == 404
 
 
+# ── Mark-paid endpoint ─────────────────────────────────────────────────────────
+
+def test_mark_paid_from_sent(db_session):
+    _seed_tenant(db_session)
+    invoice_id = uuid4()
+    db_session.add(Invoice(id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/out.pdf", flow_direction="OUTBOUND", status="SENT"))
+    db_session.commit()
+
+    response = client.put(f"/api/v1/outbound-invoices/{invoice_id}/mark-paid")
+    assert response.status_code == 200
+    assert response.json()["status"] == "PAID"
+
+    invoice = db_session.get(Invoice, invoice_id)
+    assert invoice.status == "PAID"
+    assert invoice.paid_at is not None
+
+
+def test_mark_paid_rejects_wrong_status(db_session):
+    _seed_tenant(db_session)
+    invoice_id = uuid4()
+    db_session.add(Invoice(id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/out.pdf", flow_direction="OUTBOUND", status="VERIFIED"))
+    db_session.commit()
+
+    response = client.put(f"/api/v1/outbound-invoices/{invoice_id}/mark-paid")
+    assert response.status_code == 400
+
+
 # ── Queue handler ──────────────────────────────────────────────────────────────
 
 def test_handle_process_outbound_invoice_clean_reaches_verified(db_session):

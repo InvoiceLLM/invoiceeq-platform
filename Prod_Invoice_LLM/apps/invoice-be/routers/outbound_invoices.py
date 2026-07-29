@@ -114,3 +114,37 @@ async def confirm_send_outbound_invoice(
     db_session.refresh(invoice)
 
     return {"success": True, "status": invoice.status, "sent_at": invoice.sent_at.isoformat()}
+
+
+@router.put("/{invoice_id}/mark-paid", status_code=status.HTTP_200_OK)
+async def mark_outbound_invoice_paid(
+    invoice_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session),
+):
+    """Manual close-out, per the Task 4.1/7.1 write-up: outbound has no
+    payment-webhook integration in v1, so a human confirms payment arrived
+    (mirroring inbound's manual 'Mark Paid & Finalize'). SENT -> PAID only --
+    there's no Reject for outbound (it's the tenant's own invoice, not a
+    vendor's to dispute), so this is the only other terminal transition
+    besides confirm-send's SENT."""
+    statement = select(Invoice).where(
+        Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND",
+    )
+    invoice = db_session.exec(statement).first()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbound invoice not found or access denied.")
+
+    if invoice.status != "SENT":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot mark an invoice with status '{invoice.status}' as paid. Must be SENT.",
+        )
+
+    invoice.status = "PAID"
+    invoice.paid_at = datetime.utcnow()
+    db_session.add(invoice)
+    db_session.commit()
+    db_session.refresh(invoice)
+
+    return {"success": True, "status": invoice.status, "paid_at": invoice.paid_at.isoformat()}
