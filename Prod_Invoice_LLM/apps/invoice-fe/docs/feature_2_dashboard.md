@@ -41,11 +41,11 @@ The invoice-level table + filters below are moving off this page entirely, onto 
   - All/Paid/Pending/Rejected tabs, client-side filtered. Table wrapped in a `max-height: 320px` scroll-locked container with a sticky header. Previous/Next pagination (8 rows/page) over the tab-filtered list.
 - [x] **Task 2.5: Trainer Impact Panel** — done as FE Gap 21 (2026-07-27). `TrainerImpactPanel.tsx` renders rule-count tiles, a weekly audit-rate bar trend, and a "Vendors Needing a Rule" list deep-linking into a pre-scoped Trainer sandbox session for that vendor.
 - [x] **Task 2.6: Actionable Insights Panel** *(Gap 4, 2026-07-27)* — `ActionableInsightsPanel.tsx`, described above. Backend: `docs/feature_8_dashboard.md` Gap 30.
-- [ ] **Task 2.7 (Gap 28, Dashboard/Audit split):**
-  - Build `NeedsAttentionWidget.tsx` (top flagged rows, both directions once outbound ships) and add it to `page.tsx`.
-  - **Redundant-code removal**: after `feature_4_auditor.md` Task 4.9's `/invoices` page ships, remove `dashboard/page.tsx`'s invoice-pagination state/fetch logic (`activeTab`, `currentPage`, `totalCount`, `fetchInvoicesPage`, `PAGE_SIZE`, `tabToStatusParams`, the `StatusTab` import) and its `RecentInvoicesTable`/`FilterBar` imports/JSX — this logic is fully superseded, not duplicated, once the new page exists.
+- [x] **Task 2.7 (Gap 28, Dashboard/Audit split) — done 2026-07-29:**
+  - Built `NeedsAttentionWidget.tsx` (top 8 `AUDIT_REQUIRED` rows, direction-agnostic — ready for outbound rows once that ships) and added it to `page.tsx`.
+  - **Redundant-code removal done**: `dashboard/page.tsx` no longer has `activeTab`/`currentPage`/`totalCount`/`isInvoicesLoading`/`fetchInvoicesPage`/`PAGE_SIZE`/`tabToStatusParams` or the `RecentInvoicesTable` import/JSX. **`FilterBar.tsx` was kept** (correction from the original task wording) — it still filters `MetricsGrid`/the chart, just no longer an invoice list alongside it.
   - Tasks 2.4/2.4.1 above stay checked as historical record of what was built, but their described behavior physically relocates per this task — not a regression, a move.
 
 ### Verification Plan
 * **Manual Verification**: Run Next.js dashboard view, toggle filters, and verify that mock details update accordingly. Check color contrast matches the dark layout.
-* **Task 2.7 verification**: confirm `NeedsAttentionWidget` renders and links correctly; after the redundant-code removal step, confirm `dashboard/page.tsx` has zero references to `RecentInvoicesTable`/`FilterBar`/the pagination state above (grep clean), and confirm `/invoices` (the new page) is unaffected by anything removed here.
+* **Task 2.7 verification**: `npx tsc --noEmit` clean; real dev server confirmed `/dashboard` returns 200 with "Needs Attention" rendering and zero console errors; grep confirms `dashboard/page.tsx` has no `RecentInvoicesTable` reference and no leftover pagination state. **Not yet verified**: real metrics/filter behavior against live backend data (no BE running in this pass).
