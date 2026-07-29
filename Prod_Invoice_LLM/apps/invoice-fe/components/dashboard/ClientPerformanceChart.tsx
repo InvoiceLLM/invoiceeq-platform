@@ -12,11 +12,24 @@ interface VendorSpend {
 interface ClientPerformanceChartProps {
   vendors: VendorSpend[];
   isLoading: boolean;
+  /**
+   * Feature 2.1, Task 2.1.4: optional heading override so the outbound half of
+   * the Dashboard split can label its own top_customers ranking. Additive and
+   * defaulted -- every existing caller renders exactly as before. The doc
+   * listed this component as imported-not-edited on the assumption it carried
+   * no vendor-specific wording, but the heading below is hardcoded, and two
+   * identically-titled ranking panels side by side would be ambiguous (and
+   * indistinguishable to a screen reader), so this is the smaller evil.
+   */
+  title?: string;
+  subtitle?: string;
 }
 
 export default function ClientPerformanceChart({
   vendors = [],
   isLoading,
+  title = "Top Clients & Vendors",
+  subtitle = "Ranking by aggregated billing volumes.",
 }: ClientPerformanceChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -34,10 +47,10 @@ export default function ClientPerformanceChart({
           <BarChart3 className="w-5 h-5 text-accent-blue" />
           <div>
             <h3 className="text-sm font-semibold text-white tracking-wide">
-              Top Clients & Vendors
+              {title}
             </h3>
             <p className="text-xs text-slate-400">
-              Ranking by aggregated billing volumes.
+              {subtitle}
             </p>
           </div>
         </div>
