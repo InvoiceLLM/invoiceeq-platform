@@ -59,6 +59,23 @@ class Invoice(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = Field(default=None)
 
+    # Feature 2.1 (Outbound Invoice Ingestion, Task 2.1.1): flow_direction
+    # distinguishes a vendor's invoice addressed to this tenant (INBOUND,
+    # every existing row's default -- unaffected) from this tenant's own
+    # invoice addressed to their customer (OUTBOUND). customer_name is the AR
+    # mirror of vendor_name, populated only for OUTBOUND rows. customer_id is
+    # reserved for future customer-record linking -- unused in v1, no
+    # customer-facing portal exists yet.
+    flow_direction: str = Field(default="INBOUND", max_length=20)
+    customer_name: str | None = Field(default=None)
+    customer_id: UUID | None = Field(default=None)
+    # Feature 8.1 (Outbound Dashboard) Task 8.1.1, bundled in here since
+    # Feature 2.1's own confirm-send endpoint needs sent_at immediately --
+    # set when the outbound confirm-send/mark-paid endpoints actually fire
+    # those transitions, never estimated.
+    sent_at: datetime | None = Field(default=None)
+    paid_at: datetime | None = Field(default=None)
+
     # FE Gap 29: dashboard/list filters are always tenant-scoped plus one of
     # status/date/vendor, so composite indexes led by tenant_id (rather than
     # single-column ones) are what the query planner actually uses here.
@@ -66,6 +83,7 @@ class Invoice(SQLModel, table=True):
         sa.Index("ix_invoice_tenant_status", "tenant_id", "status"),
         sa.Index("ix_invoice_tenant_invoice_date", "tenant_id", "invoice_date"),
         sa.Index("ix_invoice_tenant_vendor_name", "tenant_id", "vendor_name"),
+        sa.Index("ix_invoice_tenant_flow_direction", "tenant_id", "flow_direction"),
     )
 
 
@@ -136,14 +154,17 @@ class ExtractionTemplate(SQLModel, table=True):
     # Two scopes share this table (feature_10_trainer.md):
     #   - vendor_name IS NULL  -> the tenant's single "Global" template (scope #1)
     #   - vendor_name set       -> a per-vendor template (scope #2 / #3)
-    # A composite unique keeps one row per (tenant, vendor); a partial unique index
-    # keeps at most one Global (NULL-vendor) row per tenant, since SQL treats NULLs
-    # as distinct and would otherwise allow many.
+    # Feature 7.1 (Outbound Auditor) Task 7.1.1 adds flow_direction so an
+    # outbound Global rule (vendor_name IS NULL, flow_direction="OUTBOUND")
+    # can coexist with the tenant's existing inbound Global rule without
+    # colliding on the old tenant-only partial unique index -- both
+    # constraints below now include flow_direction for that reason.
     __table_args__ = (
-        sa.UniqueConstraint("tenant_id", "vendor_name", name="uq_extraction_templates_tenant_vendor"),
+        sa.UniqueConstraint("tenant_id", "vendor_name", "flow_direction", name="uq_extraction_templates_tenant_vendor"),
         sa.Index(
             "uq_extraction_templates_tenant_global",
             "tenant_id",
+            "flow_direction",
             unique=True,
             postgresql_where=sa.text("vendor_name IS NULL"),
             sqlite_where=sa.text("vendor_name IS NULL"),
@@ -152,6 +173,7 @@ class ExtractionTemplate(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(index=True)
     vendor_name: str | None = Field(default=None, max_length=255)
+    flow_direction: str = Field(default="INBOUND", max_length=20)
     rules: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
     version: int = Field(default=1)
     created_at: datetime = Field(default_factory=datetime.utcnow)

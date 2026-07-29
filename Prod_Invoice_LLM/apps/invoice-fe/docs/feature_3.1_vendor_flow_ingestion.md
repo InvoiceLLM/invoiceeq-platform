@@ -1,15 +1,16 @@
 # Feature 3.1: Service Flow — Send Invoices Tab — **NOVA Agent**
 
-**NOVA** (Smart Invoice Extraction) powers this tab. Extends [feature_3_ingestion.md](feature_3_ingestion.md). Spec only — no implementation yet, pending approval of the full Service Flow document set.
+**NOVA** (Smart Invoice Extraction) powers this tab. Extends [feature_3_ingestion.md](feature_3_ingestion.md). **Built 2026-07-29** — see Tasks below for exactly what shipped, including two deliberate deviations from this doc's original plan.
 
 Adds the outbound counterpart to today's upload flow: a tab for uploading the tenant's own pre-made invoice PDFs for verification before send, visible only when the *Send Invoices* Settings toggle is on ([feature_16_settings.md](feature_16_settings.md) BE / [feature_10_settings.md](feature_10_settings.md) FE).
 
-### File Coordinates (planned)
-* Edited (small, additive): `apps/invoice-fe/app/ingestion/page.tsx` — gains a tab header, conditionally rendered.
+### File Coordinates (as built)
+* Edited: `apps/invoice-fe/app/ingestion/page.tsx` — gains the tab header + outbound upload form + state, conditionally rendered.
 * New component: `apps/invoice-fe/components/ingestion/SendInvoiceStatusTable.tsx` — new status set, not `StatusTable.tsx`'s.
-* Existing, imported-not-edited: `apps/invoice-fe/components/ingestion/DropZone.tsx` — reused as-is for the outbound dropzone; its drag/validate logic (reject non-PDF, >25MB, duplicate names) is direction-agnostic, so it's imported directly rather than forked.
-* New proxy routes: `apps/invoice-fe/app/api/invoices-outbound/upload/route.ts`, `apps/invoice-fe/app/api/invoices-outbound/status/[jobId]/route.ts`.
-* New settings read: `apps/invoice-fe/app/api/settings/vendor-flow/route.ts` — proxies `GET /settings/vendor-flow`, used by `page.tsx` to decide tab visibility.
+* **Deviation from plan**: did *not* reuse `DropZone.tsx` — that component is built for multi-file batch drag-and-drop with tags, but the BE upload endpoint (`routers/outbound_invoices.py::upload_outbound_invoice`) deliberately takes exactly one file (`file: UploadFile`, not a list), matching this doc's own "upload-only, one invoice at a time" framing. A plain `<input type="file">` matches the actual endpoint contract; forcing `DropZone.tsx`'s multi-file UI onto a single-file backend would have been a mismatch, not a genuine reuse.
+* New proxy routes: `apps/invoice-fe/app/api/outbound-invoices/upload/route.ts`, `apps/invoice-fe/app/api/outbound-invoices/[id]/confirm-send/route.ts` (named to match the BE router's actual path, `routers/outbound_invoices.py`'s `/outbound-invoices` prefix, rather than the originally-sketched `invoices-outbound` naming).
+* **Deviation from plan**: no new status-polling proxy route was built. `SendInvoiceStatusTable.tsx` polls the existing `GET /api/invoices/[id]/route.ts` instead — that proxy is already flow-direction-agnostic (returns the full `Invoice` row, including `customer_name`/`flow_direction`, for any invoice ID) and reusing it avoids a redundant new endpoint doing the same lookup.
+* Settings read: reuses the existing `GET /api/settings/service-flow` route (already built by Feature 10) directly via `fetch()` — no new settings proxy needed, since that endpoint already returns exactly `receive_invoices_enabled`/`send_invoices_enabled`.
 
 ### Functionality
 
@@ -27,13 +28,11 @@ Adds the outbound counterpart to today's upload flow: a tab for uploading the te
 - Tag input / batch metadata tagging (`TagSelector.tsx`) — not carried over to the Sending tab in v1; outbound invoices are self-describing (customer name, invoice number already on the document).
 
 ### Tasks
-- [ ] **Task 3.1.1:** Add the *Receiving*/*Sending* tab header to `page.tsx`, gated on `GET /settings/vendor-flow`.
-- [ ] **Task 3.1.2:** Build `SendInvoiceStatusTable.tsx` for the new status set.
-- [ ] **Task 3.1.3:** Build the two new proxy routes (upload, status poll/stream).
-- [ ] **Task 3.1.4:** Wire `NEEDS_REVIEW` rows to the outbound Auditor deep-link.
+- [x] **Task 3.1.1:** Added the *Receiving*/*Sending* tab header to `page.tsx`, gated on `GET /api/settings/service-flow`. Matches the doc's visibility rule exactly: Receive-only shows the page unchanged (no tab header), Send-only shows the outbound uploader as the sole content, both-enabled shows the tab switcher (defaults to Receiving).
+- [x] **Task 3.1.2:** Built `SendInvoiceStatusTable.tsx` — single-invoice status card (not a multi-row ledger, since outbound upload is one file at a time), polls every 2s until `VERIFIED`/`NEEDS_REVIEW`/`SENT`, shows customer name + total once extracted, and a "Confirm & Send" button on `VERIFIED`/`NEEDS_REVIEW`.
+- [x] **Task 3.1.3:** Built the two proxy routes named above; reused the existing invoice-detail proxy for status polling instead of a third new route (see deviation note above).
+- [x] **Task 3.1.4:** `NEEDS_REVIEW` rows show a "Open Outbound Auditor Console" link to `/invoices/outbound-review/{id}` — that page doesn't exist yet (it's `feature_4.1_vendor_flow_auditor.md`'s Task 4.1.2, not built as of this pass), so the link is wired ahead of its target, same forward-reference pattern used elsewhere in this doc set.
 
 ### Verification Plan
-* **Manual Verification:**
-  - Receive-only tenant: confirm `/ingestion` is pixel-identical to today, no tab header.
-  - Both enabled: confirm the tab switches correctly and each side's status table shows the right status set.
-  - Upload a PDF on the Sending tab; confirm it reaches `VERIFIED` or `NEEDS_REVIEW` correctly and that the existing Receiving tab's uploads are entirely unaffected in the same session.
+* **Automated**: `npx tsc --noEmit` clean across the whole FE app after these changes.
+* **Manual Verification** (partially done): started a real dev server and confirmed `/ingestion` renders 200 with zero console errors with the new tab logic in place (Send disabled by default in this pass, so only the Receiving-only view was actually exercised — the tab-switching/Sending-view behavior itself has **not** been manually clicked through against a live backend). Full manual pass (both toggles on, real upload, real VERIFIED/NEEDS_REVIEW/SENT transition) still needs a live `docker compose` stack with a tenant that has `send_invoices_enabled=true`.

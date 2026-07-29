@@ -10,6 +10,7 @@ from queue_worker.handlers import (
     handle_import_connector_file,
     handle_reaudit_templates,
 )
+from queue_worker.outbound_handlers import handle_process_outbound_invoice
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,12 @@ def _process_message(queue_client: QueueClient, msg) -> None:
 
         if task_name == "process_invoice":
             handle_process_invoice(
+                batch_id=kwargs.get("batch_id"),
+                file_path=kwargs.get("file_path"),
+                tenant_id=tenant_id
+            )
+        elif task_name == "process_outbound_invoice":
+            handle_process_outbound_invoice(
                 batch_id=kwargs.get("batch_id"),
                 file_path=kwargs.get("file_path"),
                 tenant_id=tenant_id

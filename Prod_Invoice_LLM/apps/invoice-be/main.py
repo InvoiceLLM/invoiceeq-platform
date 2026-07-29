@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import get_settings
-from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion
+from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion, outbound_invoices
 from routers import settings as settings_router
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ app.include_router(connectors.router, prefix="/api/v1")
 app.include_router(trainer.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(email_ingestion.router, prefix="/api/v1")
+app.include_router(outbound_invoices.router, prefix="/api/v1")
 
 @app.get("/")
 def read_root():

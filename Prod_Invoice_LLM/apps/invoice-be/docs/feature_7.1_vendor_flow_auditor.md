@@ -36,7 +36,7 @@ Rather than reuse Trainer's sandbox UI (which would mean editing `trainer.py`/`S
 - Persisted `OVERDUE` status / scheduled sweep job — deferred, v1 computes it at read-time only.
 
 ### Tasks
-- [ ] **Task 7.1.1:** Add `flow_direction` column to `ExtractionTemplate` (Alembic migration, additive).
+- [x] **Task 7.1.1:** Add `flow_direction` column to `ExtractionTemplate` — done 2026-07-29, bundled into Feature 2.1's migration (`c4d5e6f7a8b9`) since that feature's `extract_node` wiring needed the outbound Global template lookup immediately. Not purely additive: the existing tenant-only partial unique index (one Global row per tenant) had to be reworked to `(tenant_id, flow_direction)` so an `OUTBOUND` Global row can coexist with the tenant's existing `INBOUND` one — every current row defaults to `INBOUND`, so this is a no-op for existing data.
 - [ ] **Task 7.1.2:** Build `routers/outbound_audit.py::resolve_outbound_alert()` — corrections capture, `AuditLog` diff, no pattern-detection/suggestion logic.
 - [ ] **Task 7.1.3:** Add the "apply as standing rule" checkbox path — on check, upsert the tenant's `OUTBOUND` Global `ExtractionTemplate` row and write an `ExtractionTemplateVersion` entry.
 - [ ] **Task 7.1.4:** Read-time overdue computation in the outbound Auditor list query.

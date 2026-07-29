@@ -29,7 +29,7 @@ AR mirror of the existing AP metrics endpoint: total invoiced to customers, amou
 - Persisted `OVERDUE` status — reuses `feature_7.1`'s read-time computation, no new scheduled job.
 
 ### Tasks
-- [ ] **Task 8.1.1:** Add `sent_at`, `paid_at` columns to `Invoice` (Alembic migration, additive).
+- [x] **Task 8.1.1:** Add `sent_at`, `paid_at` columns to `Invoice` — done 2026-07-29, bundled into Feature 2.1's migration (`c4d5e6f7a8b9`) since that feature's own confirm-send endpoint needed `sent_at` immediately.
 - [ ] **Task 8.1.2:** Build `routers/outbound_dashboard.py::get_outbound_dashboard_metrics()`.
 - [ ] **Task 8.1.3:** Wire `sent_at`/`paid_at` writes into the confirm-send and mark-paid endpoints (`feature_2.1`/`feature_7.1`).
 - [ ] **Task 8.1.4:** Build `routers/outbound_dashboard.py::list_outbound_invoices()` — `GET /outbound-dashboard/invoices`, own pagination/filter logic (`customer_name`/`start_date`/`end_date`/`status`), zero edits to `routers/invoices.py`. Feeds `invoice-fe`'s outbound Auditor tab (see `feature_4.1_vendor_flow_auditor.md`, FE), not Dashboard.
