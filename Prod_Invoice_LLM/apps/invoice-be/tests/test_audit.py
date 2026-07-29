@@ -1,12 +1,13 @@
 import pytest
 from uuid import uuid4
+from unittest.mock import patch
 from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID, MOCK_USER_ID, MOCK_ROLE
-from models import Invoice, AuditLog
+from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion
 
 sqlite_url = "sqlite:///:memory:"
 engine = create_engine(
@@ -53,7 +54,9 @@ def test_resolve_invoice_paid(db_session):
     }
     response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
     assert response.status_code == 200
-    assert response.json() == {"success": True, "corrections_applied": {}, "suggested_rule": None}
+    assert response.json() == {
+        "success": True, "corrections_applied": {}, "suggested_rule": None, "standing_rule_result": None,
+    }
 
     # Verify updates in database
     db_session.refresh(db_invoice)
@@ -182,3 +185,101 @@ def test_resolve_correction_only_on_completed_invoice(db_session):
     assert len(audit_logs) == 1
     assert audit_logs[0].details["target_status"] is None
     assert audit_logs[0].details["corrections"] == {"grand_total": {"old": 100.0, "new": 150.0}}
+
+
+# ── Gap 62 / Task 7.5: standing-rule checkbox with safety re-extraction ──────
+
+def test_standing_rule_applied_when_safety_check_passes(db_session):
+    """Re-extraction with the candidate rule reflects the correction -> rule is written."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("routers.audit._run_ocr", return_value="Mock OCR Text"), \
+         patch("routers.audit.run_extraction_agent", return_value={
+             "extracted_data": {"grand_total": 150.0}, "status": "COMPLETED", "alerts": [],
+         }):
+        payload = {"corrections": {"grand_total": 150.0}, "apply_as_standing_rule": True}
+        response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["standing_rule_result"]["applied"] is True
+
+    templates = db_session.exec(
+        select(ExtractionTemplate).where(ExtractionTemplate.vendor_name == "ACME Corp")
+    ).all()
+    assert len(templates) == 1
+    assert "grand total" in templates[0].rules["constraints"][0]
+
+    versions = db_session.exec(select(ExtractionTemplateVersion)).all()
+    assert len(versions) == 1 and versions[0].version == 1
+
+
+def test_standing_rule_rejected_when_safety_check_fails(db_session):
+    """Re-extraction with the candidate rule still doesn't match the correction ->
+    rule is rejected, but the invoice correction itself still succeeds."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("routers.audit._run_ocr", return_value="Mock OCR Text"), \
+         patch("routers.audit.run_extraction_agent", return_value={
+             "extracted_data": {"grand_total": 999.0}, "status": "COMPLETED", "alerts": [],
+         }):
+        payload = {"corrections": {"grand_total": 150.0}, "apply_as_standing_rule": True}
+        response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["standing_rule_result"]["applied"] is False
+    assert "Safety check failed" in data["standing_rule_result"]["reason"]
+    assert data["corrections_applied"] == {"grand_total": {"old": 100.0, "new": 150.0}}  # correction still applied
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.grand_total == 150.0  # correction persisted despite rejected rule
+
+    templates = db_session.exec(select(ExtractionTemplate)).all()
+    assert templates == []  # no rule was written
+
+
+def test_standing_rule_skipped_without_vendor_name(db_session):
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name=None, status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    payload = {"corrections": {"grand_total": 150.0}, "apply_as_standing_rule": True}
+    response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+    assert response.status_code == 200
+    assert response.json()["standing_rule_result"]["applied"] is False
+
+
+def test_standing_rule_not_attempted_when_checkbox_unset(db_session):
+    """Default behavior -- apply_as_standing_rule omitted -- must not call the LLM at all."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("routers.audit.run_extraction_agent") as m_extract:
+        payload = {"corrections": {"grand_total": 150.0}}
+        response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+        m_extract.assert_not_called()
+
+    assert response.status_code == 200
+    assert response.json()["standing_rule_result"] is None

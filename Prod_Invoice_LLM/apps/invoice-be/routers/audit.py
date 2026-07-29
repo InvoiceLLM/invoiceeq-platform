@@ -1,12 +1,15 @@
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
+from config import get_settings
 from dependencies import get_tenant_context, get_db_session, TenantContext
-from models import Invoice, AuditLog
+from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
+from queue_worker.handlers import _run_ocr
+from agents.extraction_agent import run_extraction_agent
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,12 @@ class AuditResolutionPayload(BaseModel):
         default=None,
         description="Field name -> corrected value, for fields the auditor edited "
                      f"in the metadata inspector. Allowed fields: {sorted(_CORRECTABLE_FIELDS)}.",
+    )
+    apply_as_standing_rule: bool = Field(
+        default=False,
+        description="Gap 62/Task 7.5: if true and corrections are present, teach the "
+                     "correction back as a vendor-scoped ExtractionTemplate rule, gated "
+                     "on a safety re-extraction check (see _apply_standing_rule below).",
     )
 
 
@@ -147,6 +156,128 @@ def _detect_correction_pattern(
     return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap 62 / Task 7.5: let Audit teach a standing rule directly, gated on a
+# safety re-extraction check. Deliberately duplicated from routers/trainer.py's
+# equivalent small helpers (_run_ocr_split, template fetch, changed_by
+# resolution) rather than imported -- this codebase's established convention
+# for parallel audit/trainer mechanisms is to accept a small amount of
+# duplication in exchange for never editing the other's shipped code.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_ocr_split(file_path: str) -> str:
+    """Run OCR and return just the raw text -- `_run_ocr` returns a dict on
+    Azure (content + coordinates + field_confidence) and a plain string in
+    local/Ollama mode."""
+    settings = get_settings()
+    ocr_result = _run_ocr(file_path, settings)
+    if isinstance(ocr_result, dict):
+        return ocr_result.get("content", "")
+    return ocr_result
+
+
+def _get_vendor_template(db_session: Session, tenant_id: UUID, vendor_name: str) -> ExtractionTemplate | None:
+    """Fetch this vendor's template row. Vendor-scoped only -- this gap is
+    deliberately not Global-scope, since a single invoice correction is a
+    weak signal for a tenant-wide rule (see feature_7_audit.md Task 7.5)."""
+    stmt = select(ExtractionTemplate).where(
+        ExtractionTemplate.tenant_id == tenant_id,
+        ExtractionTemplate.vendor_name == vendor_name,
+    )
+    return db_session.exec(stmt).first()
+
+
+def _resolve_changed_by(db_session: Session, context: TenantContext) -> str:
+    if context.db_user_id:
+        user = db_session.get(User, context.db_user_id)
+        if user and user.email:
+            return user.email
+    return context.user_id
+
+
+def _apply_standing_rule(
+    db_session: Session,
+    invoice: Invoice,
+    correction_diff: Dict[str, dict],
+    tenant_context: TenantContext,
+) -> dict:
+    """Auto-re-run extraction with the candidate rule applied; only commit the
+    rule if the re-extraction actually reflects the correction for every
+    corrected field. This is the safety gate inbound needs that outbound
+    doesn't -- every vendor can have a different layout, so a rule taught
+    from one correction risks being a one-off anomaly if applied blind."""
+    vendor_name = invoice.vendor_name
+    if not vendor_name:
+        return {"applied": False, "reason": "No vendor name on this invoice -- standing rules are vendor-scoped."}
+
+    candidate_rules = [
+        f"For {field.replace('_', ' ')}, extract the value as {diff['new']!r}, not {diff['old']!r}."
+        for field, diff in correction_diff.items()
+    ]
+
+    existing_template = _get_vendor_template(db_session, tenant_context.tenant_id, vendor_name)
+    existing_constraints = (
+        existing_template.rules.get("constraints", [])
+        if existing_template and isinstance(existing_template.rules, dict)
+        else []
+    )
+    merged_constraints = existing_constraints + candidate_rules
+
+    try:
+        ocr_text = _run_ocr_split(invoice.file_path)
+        result = run_extraction_agent(
+            invoice.file_path, ocr_text, str(tenant_context.tenant_id),
+            rules={"constraints": merged_constraints},
+        )
+    except Exception as e:
+        logger.warning("Standing-rule safety re-extraction failed for invoice %s: %s", invoice.id, e)
+        return {"applied": False, "reason": "Safety re-extraction failed -- rule not applied."}
+
+    re_extracted = result.get("extracted_data") or {}
+    for field, diff in correction_diff.items():
+        old_comparable = diff["new"]
+        new_comparable = re_extracted.get(field)
+        if hasattr(new_comparable, "isoformat"):
+            new_comparable = new_comparable.isoformat()
+        if str(new_comparable) != str(old_comparable):
+            return {
+                "applied": False,
+                "reason": (
+                    f"Safety check failed: re-extraction with the candidate rule still didn't "
+                    f"produce '{field}' = {diff['new']!r} (got {new_comparable!r}). Rule not applied."
+                ),
+            }
+
+    changed_by = _resolve_changed_by(db_session, tenant_context)
+    if existing_template:
+        existing_template.rules = {"constraints": merged_constraints}
+        existing_template.version = (existing_template.version or 1) + 1
+        existing_template.updated_at = datetime.utcnow()
+        db_session.add(existing_template)
+        template = existing_template
+    else:
+        template = ExtractionTemplate(
+            id=uuid4(),
+            tenant_id=tenant_context.tenant_id,
+            vendor_name=vendor_name,
+            rules={"constraints": merged_constraints},
+            version=1,
+        )
+        db_session.add(template)
+
+    db_session.flush()  # need template.id for the version row below
+    db_session.add(ExtractionTemplateVersion(
+        template_id=template.id,
+        tenant_id=tenant_context.tenant_id,
+        vendor_name=vendor_name,
+        version=template.version,
+        rules={"constraints": merged_constraints},
+        changed_by=changed_by,
+    ))
+
+    return {"applied": True, "rules_added": candidate_rules}
+
+
 @router.put("/resolve/{invoice_id}")
 async def resolve_audit_invoice(
     invoice_id: UUID,
@@ -210,6 +341,15 @@ async def resolve_audit_invoice(
 
     db_session.add(invoice)
 
+    # 3c. Gap 62/Task 7.5: teach the correction back as a standing rule, gated
+    # on the safety re-extraction check. Runs before commit so a passing rule
+    # writes land in the same transaction as the invoice correction itself;
+    # a failing/skipped rule never touches the session, so the invoice
+    # correction always succeeds regardless of this check's outcome.
+    standing_rule_result = None
+    if payload.apply_as_standing_rule and correction_diff:
+        standing_rule_result = _apply_standing_rule(db_session, invoice, correction_diff, context)
+
     # 4. Save audit log record — corrections included so Task 7.4 can detect
     # recurring patterns across resolves, and so there's a durable record of
     # exactly what a human changed and why.
@@ -219,6 +359,7 @@ async def resolve_audit_invoice(
         "previous_alerts": previous_alerts,
         "remaining_alerts": new_alerts,
         "corrections": correction_diff,
+        "standing_rule_result": standing_rule_result,
     }
 
     audit_log = AuditLog(
@@ -243,4 +384,9 @@ async def resolve_audit_invoice(
             db_session, context.tenant_id, vendor_name_for_pattern, list(correction_diff.keys())
         )
 
-    return {"success": True, "corrections_applied": correction_diff, "suggested_rule": suggested_rule}
+    return {
+        "success": True,
+        "corrections_applied": correction_diff,
+        "suggested_rule": suggested_rule,
+        "standing_rule_result": standing_rule_result,
+    }

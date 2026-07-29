@@ -18,6 +18,9 @@ interface AlertConsoleProps {
    * so an auditor doesn't lose an edit just because they dismissed an alert
    * instead of clicking a finalize button. */
   corrections?: Record<string, string>;
+  /** Task 4.10 (Gap 67 / BE Gap 62): teach this correction back as a standing
+   * rule for the vendor, gated on the backend's safety re-extraction check. */
+  applyAsStandingRule?: boolean;
   onDismissed?: (response: any) => void;
 }
 
@@ -27,6 +30,7 @@ export default function AlertConsole({
   currentStatus,
   onAlertsChange,
   corrections,
+  applyAsStandingRule,
   onDismissed,
 }: AlertConsoleProps) {
   const [dismissing, setDismissing] = useState<string | null>(null);
@@ -41,6 +45,7 @@ export default function AlertConsole({
       const res = await apiClient.put(`/audit/resolve/${invoiceId}`, {
         dismissed_alerts: [alert.message],
         corrections: corrections && Object.keys(corrections).length > 0 ? corrections : undefined,
+        apply_as_standing_rule: applyAsStandingRule || undefined,
       });
       const remaining = alerts.filter((a) => a.message !== alert.message);
       onAlertsChange(remaining);

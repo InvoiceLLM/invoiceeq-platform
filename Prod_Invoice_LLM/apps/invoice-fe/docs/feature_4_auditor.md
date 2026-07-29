@@ -54,11 +54,11 @@ Dashboard's embedded `RecentInvoicesTable`/`FilterBar` (today's only invoice-lis
 * If Service Flow (outbound) has shipped by the time this is built: the same page also hosts `OutboundInvoicesTable.tsx`/`OutboundFilterBar.tsx` (`feature_4.1_vendor_flow_auditor.md`) as a second tab/toggle (Receiving/Sending) — not side-by-side, since this screen's job is depth per direction, not glance-ability across both at once (that's what Dashboard's `NeedsAttentionWidget` is for).
 
 ### Tasks
-- [ ] **Task 4.10 (Gap 67 / BE Gap 62): "Apply as standing rule" checkbox on the correction UI.**
-  - Add a checkbox to the invoice correction flow (wherever `PUT /audit/resolve/{id}` is called from — `AlertConsole.tsx`'s Dismiss / `Mark Paid & Finalize` / `Reject Invoice` actions, per Task 4.6) offering "apply this correction as a standing rule for this vendor?".
-  - Send it as a new field in the existing `PUT /audit/resolve/{id}` payload; backend piece (new param + safety re-extraction gate before committing) is `be_features_tracker.md` Gap 62, not part of this FE task.
-  - Surface the result the backend returns: rule applied, or rule rejected because the safety re-extraction check failed — do not assume success client-side.
-  - Depends on BE Gap 62 landing first (the endpoint has to accept/act on the new field before this has anything to call).
+- [x] **Task 4.10 (Gap 67 / BE Gap 62): "Apply as standing rule" checkbox on the correction UI — done 2026-07-29.**
+  - Checkbox added to `app/invoices/review/[id]/page.tsx`, shown alongside the existing corrections banner (only when the invoice has a resolved `vendor_name` — standing rules are vendor-scoped, nothing to attach to otherwise). Passed through to both call sites: the page's own `handleResolve()` (Mark Paid/Reject/Save Correction) and `AlertConsole.tsx`'s Dismiss action (new `applyAsStandingRule` prop), as `apply_as_standing_rule` in the `PUT /audit/resolve/{id}` payload — one shared checkbox state, not duplicated per button.
+  - Result banner (green "Standing rule applied" + the rule text, or amber with the backend's rejection reason) renders after any of those calls return a `standing_rule_result`; checkbox resets after each save regardless of outcome.
+  - Backend piece: `feature_7_audit.md` Task 7.5.
+  - Verified: `npx tsc --noEmit` clean; dev server confirmed `/invoices/review/[id]` still renders 200 with no console errors after the change.
 - [x] **Task 4.9 (Gap 28): Build the unified Invoices/Audit queue screen — done 2026-07-29.**
   - Built `app/invoices/page.tsx` — imports `RecentInvoicesTable.tsx` + `FilterBar.tsx` unchanged (same pagination/filter/tab props, same components, not forked), with its own copy of the fetch/pagination state (the state itself doesn't move as a file, since it lived inside `dashboard/page.tsx`'s component body — only the *usage* relocates).
   - Re-added Sidebar's "Invoices" nav item (`ListChecks` icon), pointed at `/invoices`.

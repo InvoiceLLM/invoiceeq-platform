@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle, XCircle, Loader2, Pencil, AlertTriangle, Sparkles } from "lucide-react";
+import { ArrowLeft, CheckCircle, XCircle, Loader2, Pencil, AlertTriangle, Sparkles, ShieldCheck, X } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import Shell from "@/components/layout/Shell";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
@@ -36,6 +36,12 @@ interface SuggestedRule {
   field: string;
   vendor_name: string | null;
   sample_correction: string;
+}
+
+interface StandingRuleResult {
+  applied: boolean;
+  reason?: string;
+  rules_added?: string[];
 }
 
 // Task 7.3's correctable field set, each mapped to the Azure prebuilt-invoice
@@ -135,6 +141,11 @@ export default function AuditorReviewPage() {
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestedRule, setSuggestedRule] = useState<SuggestedRule | null>(null);
+  // Task 4.10: "apply as standing rule" checkbox state + the backend's
+  // safety-gated result (rule applied, or rejected because the re-extraction
+  // check failed).
+  const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
+  const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -180,12 +191,17 @@ export default function AuditorReviewPage() {
         ...(targetStatus ? { status: targetStatus } : {}),
         dismissed_alerts: alerts.map((a) => a.message),
         corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
+        apply_as_standing_rule: applyAsStandingRule || undefined,
       });
       setInvoice((prev) => (prev ? { ...prev, status: targetStatus ?? prev.status, ...corrections } : prev));
       setAlerts([]);
       setCorrections({});
+      setApplyAsStandingRule(false);
       if (res.data?.suggested_rule) {
         setSuggestedRule(res.data.suggested_rule);
+      }
+      if (res.data?.standing_rule_result) {
+        setStandingRuleResult(res.data.standing_rule_result);
       }
     } catch (err) {
       console.error("Resolve failed:", err);
@@ -320,12 +336,15 @@ export default function AuditorReviewPage() {
               currentStatus={invoice.status}
               onAlertsChange={setAlerts}
               corrections={corrections}
+              applyAsStandingRule={applyAsStandingRule}
               onDismissed={(res) => {
                 if (Object.keys(corrections).length > 0) {
                   setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
                   setCorrections({});
                 }
+                setApplyAsStandingRule(false);
                 if (res?.suggested_rule) setSuggestedRule(res.suggested_rule);
+                if (res?.standing_rule_result) setStandingRuleResult(res.standing_rule_result);
               }}
             />
 
@@ -354,17 +373,65 @@ export default function AuditorReviewPage() {
             </div>
 
             {hasUnsavedCorrections && !isResolved && (
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-blue-600/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
-                <span className="flex items-center gap-2">
-                  <Pencil size={12} />
-                  {Object.keys(corrections).length} field(s) corrected
-                </span>
+              <div className="flex flex-col gap-2 rounded-lg border border-blue-600/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    <Pencil size={12} />
+                    {Object.keys(corrections).length} field(s) corrected
+                  </span>
+                  <button
+                    onClick={() => handleResolve()}
+                    disabled={!!actionLoading || savingCorrection}
+                    className="shrink-0 rounded-md border border-blue-500/50 bg-blue-600/20 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/40 disabled:opacity-50"
+                  >
+                    {savingCorrection ? "Saving..." : "Save Correction"}
+                  </button>
+                </div>
+                {/* Task 4.10 (Gap 67 / BE Gap 62): vendor-scoped only -- no
+                    vendor name resolved on this invoice means there's nothing
+                    to scope the rule to. */}
+                {invoice.vendor_name && (
+                  <label className="flex items-center gap-2 cursor-pointer text-blue-300/90">
+                    <input
+                      type="checkbox"
+                      checked={applyAsStandingRule}
+                      onChange={(e) => setApplyAsStandingRule(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-blue-500/50 bg-transparent accent-blue-500"
+                    />
+                    Apply this correction as a standing rule for {invoice.vendor_name}?
+                  </label>
+                )}
+              </div>
+            )}
+
+            {/* Task 4.10 result banner -- surfaced after any Dismiss / Save
+                Correction / Mark Paid / Reject call made with the box checked. */}
+            {standingRuleResult && (
+              <div
+                className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                  standingRuleResult.applied
+                    ? "border-emerald-600/40 bg-emerald-950/20 text-emerald-200"
+                    : "border-amber-600/40 bg-amber-950/20 text-amber-200"
+                }`}
+              >
+                <ShieldCheck size={14} className="mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  {standingRuleResult.applied ? (
+                    <>
+                      <p className="font-medium">Standing rule applied.</p>
+                      {standingRuleResult.rules_added?.map((r, i) => (
+                        <p key={i} className="text-emerald-300/80 mt-0.5">{r}</p>
+                      ))}
+                    </>
+                  ) : (
+                    <p>{standingRuleResult.reason || "Rule not applied."}</p>
+                  )}
+                </div>
                 <button
-                  onClick={() => handleResolve()}
-                  disabled={!!actionLoading || savingCorrection}
-                  className="shrink-0 rounded-md border border-blue-500/50 bg-blue-600/20 px-2.5 py-1 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/40 disabled:opacity-50"
+                  onClick={() => setStandingRuleResult(null)}
+                  className="shrink-0 text-current opacity-60 hover:opacity-100"
                 >
-                  {savingCorrection ? "Saving..." : "Save Correction"}
+                  <X size={12} />
                 </button>
               </div>
             )}
