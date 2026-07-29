@@ -142,6 +142,7 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
 
     coordinates_list = []
     confidence_dict = {}
+    tax_details_sum = None
 
     if hasattr(result, "documents") and result.documents:
         doc = result.documents[0]
@@ -149,7 +150,7 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
             for field_name, field in doc.fields.items():
                 if hasattr(field, "confidence") and field.confidence is not None:
                     confidence_dict[field_name] = field.confidence
-                
+
                 if hasattr(field, "bounding_regions") and field.bounding_regions:
                     for region in field.bounding_regions:
                         if hasattr(region, "polygon") and region.polygon:
@@ -168,10 +169,44 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
                                     "page": region.page_number or 1
                                 })
 
+            # Doc Intelligence anchor: TaxDetails is a per-tax-line breakdown (e.g.
+            # separate CGST/SGST entries) that Doc Intelligence itself isolates
+            # deterministically, independent of the LLM extraction step. Sum it here
+            # so extract_node can backfill a missing tax_amount without asking the
+            # LLM to remember to add up a multi-row tax split. This is a *fallback*
+            # only (used solely when the LLM's own tax_amount comes back null) —
+            # extract_node never lets this override a value the LLM did transcribe,
+            # and every existing faithfulness/arithmetic check still runs against
+            # the final value either way, so this doesn't bypass Gap 31/33/36/40/46.
+            tax_details_field = doc.fields.get("TaxDetails")
+            if tax_details_field is not None and getattr(tax_details_field, "value_array", None):
+                try:
+                    amounts = []
+                    for entry in tax_details_field.value_array:
+                        entry_obj = getattr(entry, "value_object", None) or {}
+                        amount_field = entry_obj.get("Amount")
+                        if amount_field is None:
+                            continue
+                        currency_val = getattr(amount_field, "value_currency", None)
+                        # CurrencyValue may come back as a dict or an object depending
+                        # on SDK version — handle both rather than assuming one shape.
+                        amount_num = None
+                        if isinstance(currency_val, dict):
+                            amount_num = currency_val.get("amount")
+                        elif currency_val is not None:
+                            amount_num = getattr(currency_val, "amount", None)
+                        if amount_num is not None:
+                            amounts.append(float(amount_num))
+                    if amounts:
+                        tax_details_sum = sum(amounts)
+                except Exception as e:
+                    logger.warning("Failed to sum Doc Intelligence TaxDetails for %s: %s", file_path, e)
+
     return {
         "content": result.content or "",
         "coordinates": coordinates_list,
-        "field_confidence": confidence_dict
+        "field_confidence": confidence_dict,
+        "tax_details_sum": tax_details_sum
     }
 
 

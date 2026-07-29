@@ -332,7 +332,11 @@ def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | 
     return None
 
 
-def verify_tax_amount_in_source_text(tax_amount: float | None, ocr_text: str | None) -> dict | None:
+def verify_tax_amount_in_source_text(
+    tax_amount: float | None,
+    ocr_text: str | None,
+    tax_components: list[dict] | None = None,
+) -> dict | None:
     """
     Gap 46: Tax amount OCR source-text verification.
     If a printed invoice contains bad vendor tax arithmetic, the LLM extraction
@@ -341,6 +345,18 @@ def verify_tax_amount_in_source_text(tax_amount: float | None, ocr_text: str | N
 
     This check verifies that the extracted non-zero tax_amount appears verbatim
     (in a plausible printed form) anywhere in the raw OCR text.
+
+    Gap 69: on invoices that split tax across multiple printed lines (e.g. India's
+    CGST + SGST convention), the *summed* tax_amount never appears as one printed
+    figure by construction — every genuine India GST invoice would otherwise
+    guaranteed-fail this check regardless of vendor, forcing manual dismissal on
+    every single one. Rather than weaken the check, make it component-aware: if
+    the combined figure isn't found, fall back to verifying each individual tax
+    component (e.g. `taxes[]` — CGST, SGST) appears verbatim on its own AND that
+    they sum to tax_amount. This is not a weaker check — every component still
+    has to be independently grounded in the printed text, so a genuinely
+    fabricated tax_amount (not backed by real printed components) still gets
+    caught; only a faithfully-transcribed multi-line split now passes.
     """
     if tax_amount is None or not ocr_text:
         return None
@@ -353,6 +369,24 @@ def verify_tax_amount_in_source_text(tax_amount: float | None, ocr_text: str | N
         variants = _number_text_variants(float(tax_amount))
         if _variant_found_in_text(variants, ocr_text):
             return None
+
+        # Gap 69: combined figure not found — check if it's a faithful sum of
+        # individually-verbatim tax components instead of a silent correction.
+        if tax_components:
+            component_amounts = []
+            for component in tax_components:
+                amount = component.get("amount") if isinstance(component, dict) else None
+                if amount is None:
+                    component_amounts = []
+                    break
+                component_variants = _number_text_variants(float(amount))
+                if not _variant_found_in_text(component_variants, ocr_text):
+                    component_amounts = []
+                    break
+                component_amounts.append(float(amount))
+
+            if component_amounts and _within_tolerance(sum(component_amounts), float(tax_amount)):
+                return None
 
         return {
             "type": "tax_amount_not_verified_in_source",

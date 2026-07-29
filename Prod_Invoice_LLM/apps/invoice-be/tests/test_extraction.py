@@ -185,3 +185,31 @@ def test_gap_46_tax_amount_source_text_verification():
     assert alert_flawed["type"] == "tax_amount_not_verified_in_source"
     assert "tax_amount" in alert_flawed["field"]
 
+
+def test_gap_69_tax_amount_component_sum_faithful():
+    """Gap 69: a summed tax_amount that never appears as one printed figure (e.g.
+    India's CGST + SGST split) should pass when each individual component is
+    verbatim in the OCR text and they sum to tax_amount — not be guaranteed-flagged
+    on every real India GST invoice regardless of vendor."""
+    from utils.verification_tools import verify_tax_amount_in_source_text
+
+    ocr_text = "Subtotal: 100.00  Total CGST: 6,411.95  Total SGST: 6,411.96  Grand Total: 112,823.91"
+
+    # 1. Combined tax_amount (12823.91) never printed as one figure, but both
+    # components are individually verbatim and sum correctly -> faithful, no alert.
+    taxes = [{"tax_type": "CGST", "amount": 6411.95}, {"tax_type": "SGST", "amount": 6411.96}]
+    alert = verify_tax_amount_in_source_text(12823.91, ocr_text, tax_components=taxes)
+    assert alert is None
+
+    # 2. A component that was never actually printed (fabricated) still gets caught,
+    # even though the sum happens to match tax_amount.
+    fabricated_taxes = [{"tax_type": "CGST", "amount": 6411.95}, {"tax_type": "SGST", "amount": 9999.99}]
+    alert_fabricated = verify_tax_amount_in_source_text(16411.94, ocr_text, tax_components=fabricated_taxes)
+    assert alert_fabricated is not None
+    assert alert_fabricated["type"] == "tax_amount_not_verified_in_source"
+
+    # 3. Components are individually real but don't actually sum to tax_amount
+    # (a genuine mismatch) -> still flagged, not silently accepted.
+    alert_bad_sum = verify_tax_amount_in_source_text(20000.00, ocr_text, tax_components=taxes)
+    assert alert_bad_sum is not None
+

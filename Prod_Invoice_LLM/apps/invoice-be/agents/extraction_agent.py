@@ -307,7 +307,26 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
             "type": "extraction_failed",
             "message": f"Structured extraction failed due to error: {str(e)}."
         })
-        
+
+    # Doc Intelligence tax-anchor backfill: Doc Intelligence isolates each printed
+    # tax line (e.g. separate CGST/SGST rows) deterministically, independent of the
+    # LLM. If the LLM extracted the individual tax components into `taxes[]` but
+    # never summed them into the scalar `tax_amount` field, fall back to Doc
+    # Intelligence's own sum rather than leaving tax_amount null. This ONLY fires
+    # when the LLM's tax_amount is missing — it never overrides a value the LLM did
+    # transcribe, and verify_totals_math / verify_tax_amount_in_source_text (Gap 46)
+    # still run against the final value unchanged either way, so no existing
+    # faithfulness/arithmetic check is bypassed.
+    if extracted_data.get("tax_amount") is None:
+        ocr_result = state.get("ocr_result")
+        di_tax_sum = ocr_result.get("tax_details_sum") if isinstance(ocr_result, dict) else None
+        if di_tax_sum is not None:
+            logger.info(
+                "Backfilling null tax_amount from Doc Intelligence TaxDetails sum (%.2f) for %s",
+                di_tax_sum, state.get("file_path")
+            )
+            extracted_data["tax_amount"] = di_tax_sum
+
     return {"extracted_data": extracted_data, "alerts": alerts, "retry_count": retry_count + 1}
 
 
@@ -370,7 +389,7 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
 
     # 7. Gap 46: tax_amount faithfulness check, independent of arithmetic.
     # Catches silent LLM tax auto-correction when vendor printed tax calculation is flawed.
-    tax_source_text_alert = verify_tax_amount_in_source_text(tax_amount, state.get("ocr_text"))
+    tax_source_text_alert = verify_tax_amount_in_source_text(tax_amount, state.get("ocr_text"), tax_components=data.get("taxes"))
     if tax_source_text_alert:
         alerts.append(tax_source_text_alert)
 
