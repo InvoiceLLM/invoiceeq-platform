@@ -39,28 +39,28 @@ Scopes #2 and #3 both write to the same per-vendor `ExtractionTemplate` row — 
 3. `trainer_commit()` (`POST /trainer/sessions/{id}/commit`) — takes a `CommitPayload{global_mode: bool}`. If `global_mode=True`, it writes `{vendor_name: {constraints}}` straight into `config/default_templates.json` on local disk — **shared across every tenant**, with no permission check on who can flip that flag; this is exactly the cross-tenant leak Task 10.6 retires. Otherwise it upserts the tenant+vendor's `ExtractionTemplate` row. Either way, `vendor_name` is required (pulled from the session's `extracted_data`) — there is no path for a vendor-agnostic rule today, which is the whole reason for the Global-scope redesign above.
 
 ### Tasks
-- [ ] **Task 10.1: Migrate `ExtractionTemplate` to nullable `vendor_name`**
+- [x] **Task 10.1: Migrate `ExtractionTemplate` to nullable `vendor_name`**
   - Make `vendor_name` nullable; add a partial unique index enforcing one `NULL`-vendor (Global) row per `tenant_id`.
   - Write the migration; existing per-vendor rows are unaffected.
-- [ ] **Task 10.2: Global-scope sandbox session route**
-  - `POST /trainer/sessions/global` — starts a sandbox session with no vendor binding. Optionally seeded from a sample PDF (for grounding) or chat-only (a rule like "VAT is a tax item" doesn't strictly need a source document).
-- [ ] **Task 10.3: "Initialize from Production" session route** *(scope #2 entry point)*
-  - `POST /trainer/sessions/from-production?vendor_name=X` — loads an existing production `Invoice` row for that vendor (reusing its already-stored `extracted_data`; re-run OCR only if raw text wasn't retained) into the sandbox instead of requiring a fresh upload.
-- [ ] **Task 10.4: Upload sandbox session route** *(scope #3 entry point — carried over from the prior design)*
+- [x] **Task 10.2: Global-scope sandbox session route**
+  - `POST /trainer/sessions/global` — starts a sandbox session with no vendor binding. Optionally seeded from a sample PDF (for grounding) or chat-only (a rule like "VAT is a tax item" doesn't strictly need a source document). Implemented as `routers/trainer.py::start_global_session()`.
+- [x] **Task 10.3: "Initialize from Production" session route** *(scope #2 entry point)*
+  - `POST /trainer/sessions/from-production?vendor_name=X` — loads an existing production `Invoice` row for that vendor (reusing its already-stored `extracted_data`; re-run OCR only if raw text wasn't retained) into the sandbox instead of requiring a fresh upload. Implemented as `start_from_production_session()`.
+- [x] **Task 10.4: Upload sandbox session route** *(scope #3 entry point — carried over from the prior design)*
   - `POST /trainer/upload` — unchanged mechanism: accepts a fresh PDF, runs OCR + Extraction Agent, returns a transient `session_id`. Used for vendors with no production history.
-- [ ] **Task 10.5: Scope-aware trainer chat**
-  - `run_trainer_agent()` needs to know the session's scope (Global vs Vendor). For Vendor-scope sessions, pass the tenant's current Global constraints in as read-only context so the LLM doesn't propose a vendor rule that silently duplicates or contradicts a global one — it should be told to prefer editing the global rule instead when a correction is actually general-purpose.
-- [ ] **Task 10.6: Scope-based commit route**
-  - `POST /trainer/sessions/{id}/commit` upserts into the Global row (`vendor_name IS NULL`) for Global-scope sessions, or the vendor's row for Vendor-scope sessions. Remove the `global_mode` flag and the `default_templates.json` write path entirely (see Data Model above).
-- [ ] **Task 10.7: Re-audit trigger on commit** *(scope #2 only)*
-  - Committing an "Initialize from Production" (scope #2) session queues a background re-evaluation of that vendor's existing production invoices against the updated (merged global+vendor) rules. Scope #3 commits skip this — there's no production history yet. Scope #1 (Global) commits should also queue this across *all* vendors' recent invoices for the tenant, since a global rule change can affect every vendor.
-- [ ] **Task 10.8: Two-stage rule resolution in the pipeline**
+- [x] **Task 10.5: Scope-aware trainer chat**
+  - `run_trainer_agent()` needs to know the session's scope (Global vs Vendor). For Vendor-scope sessions, pass the tenant's current Global constraints in as read-only context so the LLM doesn't propose a vendor rule that silently duplicates or contradicts a global one — it should be told to prefer editing the global rule instead when a correction is actually general-purpose. `trainer_chat()` passes `scope` and `global_constraints` through to `run_trainer_agent()`.
+- [x] **Task 10.6: Scope-based commit route**
+  - `POST /trainer/sessions/{id}/commit` upserts into the Global row (`vendor_name IS NULL`) for Global-scope sessions, or the vendor's row for Vendor-scope sessions. Remove the `global_mode` flag and the `default_templates.json` write path entirely (see Data Model above). Confirmed: `trainer.py` has no `global_mode`/`default_templates.json` references left.
+- [x] **Task 10.7: Re-audit trigger on commit** *(scope #2 only)*
+  - Committing an "Initialize from Production" (scope #2) session queues a background re-evaluation of that vendor's existing production invoices against the updated (merged global+vendor) rules. Scope #3 commits skip this — there's no production history yet. Scope #1 (Global) commits also queue this across *all* vendors' recent invoices for the tenant. Implemented via `_enqueue_reaudit()`.
+- [x] **Task 10.8: Two-stage rule resolution in the pipeline**
   - Update `queue_worker/handlers.py::handle_process_invoice()` to fetch and apply the tenant's Global template on the *first* extraction pass (not just the vendor-specific second pass, which today only fires after `vendor_name` is known).
-- [ ] **Task 10.9: Move session storage to Redis**
-  - Store active sandbox sessions in Redis (TTL-bound) instead of the in-process `TRAINER_SESSIONS` dict, so sessions survive across the multi-replica `invoice-be` deployment.
-- [ ] **Task 10.10: Rule versioning and rollback** *(new — safety net once trainer is a frequently-used core feature, not a rare sandbox visit)*
+- [x] **Task 10.9: Move session storage to Redis**
+  - Store active sandbox sessions in Redis (TTL-bound) instead of the in-process `TRAINER_SESSIONS` dict, so sessions survive across the multi-replica `invoice-be` deployment. Implemented in `services/trainer_sessions.py` (1-hour TTL, falls back to an in-process dict only when Redis is unreachable, e.g. local dev without Redis).
+- [x] **Task 10.10: Rule versioning and rollback** *(new — safety net once trainer is a frequently-used core feature, not a rare sandbox visit)*
   - Add a `version: int` and a history table (`extraction_template_versions`, or an append-only JSONB log on `ExtractionTemplate`) capturing every committed rule change with `changed_by`, `changed_at`, and the prior `rules` value.
-  - A bad Global rule affects every vendor's invoices going forward; a bad vendor rule affects only that vendor — either way, someone needs to be able to see what changed and revert it without re-deriving the rule from scratch. Add `POST /trainer/templates/{id}/rollback/{version}`.
+  - A bad Global rule affects every vendor's invoices going forward; a bad vendor rule affects only that vendor — either way, someone needs to be able to see what changed and revert it without re-deriving the rule from scratch. Implemented: `ExtractionTemplateVersion` table, `GET /trainer/templates/history` and `POST /trainer/templates/{id}/rollback/{version}` (`get_template_history()`/`rollback_template()`).
 - [ ] **Task 10.11: Accept sessions seeded from an audit correction** *(new — closes the loop from `feature_7_audit.md` Task 7.4)*
   - When the FE surfaces a "Want to save this as a rule?" prompt (triggered by a detected correction pattern), it opens a trainer session pre-populated with the suggested scope (Global or Vendor) and the sample correction already in the chat context, instead of the user starting a blank sandbox session and re-describing what they just fixed.
 

@@ -1,11 +1,12 @@
 # Feature 16: Settings
 
-New feature — this is the first time "Settings" exists as a formal BE feature. No `feature_*_settings.md` existed before this; there's also no live `/settings` route on the frontend yet (confirmed by listing `apps/invoice-fe/app/**/page.tsx`). Consolidates, by reference only (no content duplication), what already conceptually belongs under a Settings screen — [feature_9_connectors.md](feature_9_connectors.md), [feature_14_email_ingestion.md](feature_14_email_ingestion.md), [feature_15_webhooks.md](feature_15_webhooks.md) — plus the two new Service Flow toggles.
+**Implemented 2026-07-28.** First time "Settings" exists as a formal BE feature — there was no `feature_*_settings.md` before this. Consolidates, by reference only (no content duplication), what already conceptually belongs under a Settings screen — [feature_9_connectors.md](feature_9_connectors.md), [feature_14_email_ingestion.md](feature_14_email_ingestion.md), [feature_15_webhooks.md](feature_15_webhooks.md) — plus the two new Service Flow toggles.
 
-### File Coordinates (planned)
-* New router: `apps/invoice-be/routers/settings.py` — `GET /settings/vendor-flow`, `PUT /settings/vendor-flow`.
-* Model: `apps/invoice-be/models.py::Tenant` — two new additive columns.
+### File Coordinates
+* Router: [apps/invoice-be/routers/settings.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/settings.py) → `get_vendor_flow_settings()` (`GET /settings/vendor-flow`), `update_vendor_flow_settings()` (`PUT /settings/vendor-flow`).
+* Model: `apps/invoice-be/models.py::Tenant` — the three additive columns below (migration `e1f2a3b4c5d6`).
 * Existing, unmodified: `apps/invoice-be/dependencies.py::get_tenant_context()` — read from, not edited, to get the current user's role for the Admin-only check.
+* Tests: `apps/invoice-be/tests/test_settings.py` — 7/7 passing.
 
 ### Functionality
 
@@ -33,8 +34,8 @@ New feature — this is the first time "Settings" exists as a formal BE feature.
 - Any UI — covered in the FE counterpart, [feature_10_settings.md](feature_10_settings.md).
 
 ### Tasks
-- [ ] **Task 16.1:** Add `receive_invoices_enabled`, `send_invoices_enabled`, `outbound_sender_email` columns to `Tenant` (Alembic migration, additive, matching defaults above).
-- [ ] **Task 16.2:** Build `routers/settings.py` — `GET`/`PUT /settings/vendor-flow`, Admin-only enforcement on the `PUT`, `outbound_sender_email` format validation + the "can't enable send without a sender email" rule.
+- [x] **Task 16.1:** Add `receive_invoices_enabled`, `send_invoices_enabled`, `outbound_sender_email` columns to `Tenant` (Alembic migration `e1f2a3b4c5d6`, additive, matching defaults above).
+- [x] **Task 16.2:** Build `routers/settings.py` — `GET`/`PUT /settings/vendor-flow`, Admin-only enforcement on the `PUT`, `outbound_sender_email` format validation + the "can't enable send without a sender email" rule.
 
 ### Verification Plan
 * **Manual Verification:**

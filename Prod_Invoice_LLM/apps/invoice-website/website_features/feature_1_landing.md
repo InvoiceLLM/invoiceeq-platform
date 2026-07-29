@@ -19,11 +19,11 @@ Configure the visual entry point, shared design system styling, header navigatio
 ### Tasks
 - [x] **Task 1.1: Configure Global Tailwind CSS stylesheet**
   - Match theme variables inside `globals.css` with dashboard variables to maintain complete design system consistency.
-- [x] **Task 1.2: Build Landing Navigation Header** — re-documented 2026-07-28 with the actual implementation detail (original text described only static nav links; the real component is more interactive).
+- [x] **Task 1.2: Build Landing Navigation Header** — re-documented 2026-07-28 with the actual implementation detail (original text described only static nav links; the real component is more interactive); nav-link list corrected 2026-07-29 after `#pricing`/`#how-it-works` dead links (no matching sections ever existed on the page) were removed from `Header.tsx`.
   - `Header({ onOpenFlowsModal })` in `components/marketing/Header.tsx`: a sticky header that darkens (`scrolled` state, toggled on a `window.scroll` listener past 20px) as the page scrolls.
-  - Nav links: **Architecture Flow** (styled with a "Live" badge — calls `onOpenFlowsModal()` if provided, else falls through to its `#architecture-flows` anchor href), **Features** (`#features` anchor), **Pricing** (`#pricing` anchor), **How It Works** (`#how-it-works` anchor), **Login** (`/login`).
+  - Nav links: **Architecture Flow** (styled with a "Live" badge — calls `onOpenFlowsModal()` if provided, else falls through to its `#architecture-flows` anchor href), **Features** (`#features` anchor, matches `WorkspaceShowcase.tsx`'s `id="features"`), **Login** (`/login`).
   - `Get Started Free` CTA button → `/login`.
-  - Mobile: hamburger toggle (`mobileMenuOpen` state) opens a full-width drawer with the same links plus the CTA button, each closing the drawer on click.
+  - Mobile: hamburger toggle (`mobileMenuOpen` state) opens a full-width drawer with the same links (Features, Login) plus the CTA button, each closing the drawer on click.
 - [x] **Task 1.3: Code Hero Text & Call-To-Action** — re-documented 2026-07-28; the actual `Hero.tsx` is a substantially larger interactive component than the original text implied (title/subtitle/two buttons) — it's a full simulated live-demo console, not just static hero copy.
   - `Hero({ onOpenFlowsModal })` in `components/marketing/Hero.tsx`. Heading: *"Automated Invoice Intelligence"*; subheading: *"Extract, verify and understand every invoice using intelligent AI agents — inside your own secure enterprise workspace."*
   - **4 animated agent capability pills** (NOVA/SENTINEL/SAGE/EVOLVE, `HERO_CAPABILITIES` array) below the heading, auto-cycling a highlighted state every 1.5s (`highlightedPillIndex` state + `setInterval`), each with a hover tooltip describing what that agent does; clicking a pill manually re-targets the highlight.
