@@ -17,6 +17,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/outbound-invoices", tags=["Outbound Invoices"])
 
 
+def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type: str) -> None:
+    """Feature 15 (Task 15.4): fires right after the commit that actually
+    changed the status. `outbound_invoice.overdue` has no call site here --
+    overdue is a virtual, read-time-only computation (Feature 7.1/8.1), not
+    a real status transition, so there's no single moment to fire it from
+    without a new scheduled job -- deliberately out of scope for this pass,
+    same as the rest of this codebase's OVERDUE-status deferrals."""
+    try:
+        from services.webhooks import dispatch_webhook_event
+        dispatch_webhook_event(db_session, invoice.tenant_id, event_type, {
+            "invoice_id": str(invoice.id),
+            "status": invoice.status,
+            "customer_name": invoice.customer_name,
+            "grand_total": invoice.grand_total,
+        })
+    except Exception as we:
+        logger.error("Webhook dispatch failed for outbound invoice %s: %s", invoice.id, we)
+
+
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_outbound_invoice(
     file: UploadFile = File(...),
@@ -113,6 +132,8 @@ async def confirm_send_outbound_invoice(
     db_session.commit()
     db_session.refresh(invoice)
 
+    _dispatch_outbound_webhook(db_session, invoice, "outbound_invoice.sent")
+
     return {"success": True, "status": invoice.status, "sent_at": invoice.sent_at.isoformat()}
 
 
@@ -146,5 +167,7 @@ async def mark_outbound_invoice_paid(
     db_session.add(invoice)
     db_session.commit()
     db_session.refresh(invoice)
+
+    _dispatch_outbound_webhook(db_session, invoice, "outbound_invoice.paid")
 
     return {"success": True, "status": invoice.status, "paid_at": invoice.paid_at.isoformat()}

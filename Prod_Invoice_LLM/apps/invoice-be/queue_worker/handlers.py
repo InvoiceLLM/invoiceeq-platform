@@ -493,8 +493,24 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 session.add(invoice)
                 session.commit()
 
+                # Feature 15 (Task 15.4): fire right after the commit that
+                # actually changed the status -- never before, so a webhook
+                # is never sent for a status the DB doesn't durably reflect yet.
+                if status in ("COMPLETED", "AUDIT_REQUIRED"):
+                    try:
+                        from services.webhooks import dispatch_webhook_event
+                        event_type = "invoice.completed" if status == "COMPLETED" else "invoice.audit_required"
+                        dispatch_webhook_event(session, invoice.tenant_id, event_type, {
+                            "invoice_id": str(invoice.id),
+                            "status": status,
+                            "vendor_name": invoice.vendor_name,
+                            "grand_total": invoice.grand_total,
+                        })
+                    except Exception as we:
+                        logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
 
-            
+
+
             # If successfully completed, run page-level RAG indexing
             if status == "COMPLETED":
                 try:

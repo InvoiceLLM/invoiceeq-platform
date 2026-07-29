@@ -210,3 +210,27 @@ class TenantEmailSender(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class WebhookSubscription(SQLModel, table=True):
+    """Feature 15 (Task 15.1): a tenant-registered HTTP endpoint that receives
+    real-time invoice status-change notifications instead of polling the API.
+
+    `secret` is generated server-side on create and used to HMAC-sign every
+    delivery (`X-Webhook-Signature`) -- never returned by the API after
+    creation. `subscribed_events` is a subset of: invoice.completed,
+    invoice.audit_required, invoice.paid, invoice.rejected,
+    outbound_invoice.sent, outbound_invoice.overdue, outbound_invoice.paid.
+    `consecutive_failures` drives Task 15.5's auto-disable-after-10 rule;
+    reset to 0 on any successful delivery.
+    """
+    __tablename__ = "webhook_subscriptions"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    target_url: str = Field(max_length=2048)
+    secret: str = Field(max_length=255)
+    subscribed_events: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    enabled: bool = Field(default=True)
+    consecutive_failures: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+

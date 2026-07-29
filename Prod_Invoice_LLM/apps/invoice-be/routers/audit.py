@@ -376,6 +376,23 @@ async def resolve_audit_invoice(
     # 5. Commit transaction
     db_session.commit()
 
+    # Feature 15 (Task 15.4): only fires on an actual PAID/REJECTED
+    # finalization -- a plain alert-dismiss/correction (target_status=None)
+    # doesn't change the invoice's terminal outcome and isn't one of this
+    # feature's subscribable event types.
+    if target_status is not None:
+        try:
+            from services.webhooks import dispatch_webhook_event
+            event_type = "invoice.paid" if target_status == "PAID" else "invoice.rejected"
+            dispatch_webhook_event(db_session, invoice.tenant_id, event_type, {
+                "invoice_id": str(invoice.id),
+                "status": target_status,
+                "vendor_name": invoice.vendor_name,
+                "grand_total": invoice.grand_total,
+            })
+        except Exception as we:
+            logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
+
     # 6. Task 7.4: suggest a Trainer rule if a correction just made recurred often
     # enough to be worth automating instead of fixing by hand every time.
     suggested_rule = None
