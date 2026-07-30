@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle, XCircle, Loader2, Pencil, AlertTriangle, Sparkles, ShieldCheck, X } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
-import Shell from "@/components/layout/Shell";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import AlertConsole from "@/components/audit/AlertConsole";
 
@@ -225,22 +224,18 @@ export default function AuditorReviewPage() {
   /* ── Loading / Error states ── */
   if (loading) {
     return (
-      <Shell>
-        <div className="flex h-96 items-center justify-center text-slate-400">
-          <Loader2 size={28} className="animate-spin" />
-        </div>
-      </Shell>
+      <div className="flex h-96 items-center justify-center text-slate-400">
+        <Loader2 size={28} className="animate-spin" />
+      </div>
     );
   }
 
   if (error || !invoice) {
     return (
-      <Shell>
-        <div className="flex h-96 flex-col items-center justify-center gap-3 text-slate-400">
-          <XCircle size={32} className="text-red-400" />
-          <p>{error ?? "Something went wrong."}</p>
-        </div>
-      </Shell>
+      <div className="flex h-96 flex-col items-center justify-center gap-3 text-slate-400">
+        <XCircle size={32} className="text-red-400" />
+        <p>{error ?? "Something went wrong."}</p>
+      </div>
     );
   }
 
@@ -248,7 +243,6 @@ export default function AuditorReviewPage() {
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
 
   return (
-    <Shell>
       <div className="flex h-full flex-col gap-4 p-6">
         {/* Page Header */}
         <div className="flex items-center gap-3">
@@ -317,8 +311,14 @@ export default function AuditorReviewPage() {
             coordinates={invoice.coordinates ?? []}
           />
 
-          {/* RIGHT — Details Panel */}
-          <div className="flex flex-col gap-4 overflow-y-auto">
+          {/* RIGHT — Details Panel. min-h-0 is required here: without it, a
+              flex child's default min-height:auto lets it grow to its full
+              content height instead of respecting the grid row's bounds, so
+              overflow-y-auto never actually engages -- the overflow (in this
+              case, the Mark Paid/Reject buttons at the very bottom) gets
+              silently clipped by the grid parent's overflow-hidden instead
+              of becoming scrollable. */}
+          <div className="flex flex-col gap-4 overflow-y-auto min-h-0">
             {/* Section Header */}
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
@@ -524,6 +524,5 @@ export default function AuditorReviewPage() {
           </div>
         </div>
       </div>
-    </Shell>
   );
 }

@@ -7,6 +7,7 @@ import ClientPerformanceChart from "../../components/dashboard/ClientPerformance
 import NeedsAttentionWidget from "../../components/dashboard/NeedsAttentionWidget";
 import TrainerImpactPanel from "../../components/dashboard/TrainerImpactPanel";
 import ActionableInsightsPanel from "../../components/dashboard/ActionableInsightsPanel";
+import PageHeader from "../../components/layout/PageHeader";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
 
@@ -154,36 +155,58 @@ export default function DashboardPage() {
     ])
   );
 
-  return (
-    <div className="space-y-6">
-      {/* Dashboard Top Header Title */}
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-white tracking-wide">Command Center</h1>
-        <p className="text-xs text-slate-400">
-          Real-time metrics and client rankings overview. For the full invoice queue, see Invoices.
-        </p>
-      </div>
+  const TABS = [
+    { id: "attention", label: "Needs Attention" },
+    { id: "vendors", label: "Top Vendors" },
+    { id: "insights", label: "Insights" },
+    { id: "trainer", label: "Trainer Impact" },
+  ] as const;
+  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]["id"]>("attention");
 
-      {/* Filter Control Bar -- filters the metrics/chart below, not an invoice list */}
-      <FilterBar
-        onFilterChange={handleFilterChange}
-        availableVendors={uniqueVendors}
-        availableTags={uniqueTags}
+  return (
+    <div className="space-y-4">
+      {/* Title + filters share one row -- no subtitle line, no separate filter panel */}
+      <PageHeader
+        title="Command Center"
+        actions={
+          <FilterBar
+            compact
+            onFilterChange={handleFilterChange}
+            availableVendors={uniqueVendors}
+            availableTags={uniqueTags}
+          />
+        }
       />
 
       {/* Bento box metrics panel */}
       <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />
 
-      {/* Analytics chart, needs-attention teaser, and insight panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <NeedsAttentionWidget />
+      {/* Tabbed panel: one wide view at a time instead of 4 panels squeezed
+          into a 3-column grid -- fits on screen without scrolling, and each
+          panel gets the full page width when it's the one showing. */}
+      <div className="glass-panel rounded-xl">
+        <div className="flex items-center gap-1 border-b border-[#222D3D] px-3 pt-2">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-2 text-xs font-medium rounded-t-lg transition-colors ${
+                activeTab === tab.id
+                  ? "bg-[#1E293B] text-white border-b-2 border-[#3B82F6]"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
-
-        <div className="lg:col-span-1 space-y-6">
-          <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isMetricsLoading} />
-          <ActionableInsightsPanel />
-          <TrainerImpactPanel />
+        <div className="p-4">
+          {activeTab === "attention" && <NeedsAttentionWidget />}
+          {activeTab === "vendors" && (
+            <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isMetricsLoading} />
+          )}
+          {activeTab === "insights" && <ActionableInsightsPanel />}
+          {activeTab === "trainer" && <TrainerImpactPanel />}
         </div>
       </div>
     </div>

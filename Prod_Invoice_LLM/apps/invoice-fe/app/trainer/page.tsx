@@ -339,17 +339,13 @@ function TrainerContent() {
           </div>
           <div>
             <h1 className="text-base font-semibold text-white tracking-wide flex items-center gap-2">
-              <span>AI Trainer Interactive Sandbox</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                Interactive Fine-Tuning
-              </span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold">
+              <span>AI Trainer</span>
+              <span className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold">
+                <span className="text-xs leading-none not-italic">🧬</span>
                 EVOLVE
+                <span className="text-slate-400 font-normal font-sans normal-case ml-1">— Rules Trainer</span>
               </span>
             </h1>
-            <p className="text-xs text-slate-400">
-              Refine extraction rules & constraints through natural language chat.
-            </p>
           </div>
         </div>
 

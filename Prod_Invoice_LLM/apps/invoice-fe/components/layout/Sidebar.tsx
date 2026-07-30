@@ -26,7 +26,7 @@ export default function Sidebar() {
     // removed because it pointed at "/audit", which never existed as a
     // route -- there was nowhere real to land. Now points at the real
     // /invoices queue screen.
-    { name: "Invoices", href: "/invoices", icon: ListChecks },
+    { name: "Audit Queue", href: "/invoices", icon: ListChecks },
     // AI Trainer link for rule scope fine-tuning & sandbox evaluation (Feature 6)
     { name: "AI Trainer", href: "/trainer", icon: GraduationCap },
     { name: "Chat", href: "/chat", icon: MessageSquare },

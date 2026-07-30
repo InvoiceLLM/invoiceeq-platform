@@ -380,6 +380,16 @@ export default function ChatWindow({
 
       {/* Right: Chat Area — flex column so input bar is always pinned to bottom */}
       <div className="flex flex-col flex-1 overflow-hidden">
+        {/* Slim agent strip -- deliberately not a full PageHeader: this layout
+            fills the entire viewport with no outer gutters (see page.tsx's
+            -m-8 comment), so anything taller than one compact row would eat
+            directly into message-area space. */}
+        <div className="px-4 py-1.5 border-b border-[#222D3D] flex items-center gap-1.5 shrink-0">
+          <span className="text-xs leading-none not-italic">🧙</span>
+          <span className="text-[10px] font-mono font-semibold text-[#6366F1] tracking-wide">SAGE</span>
+          <span className="text-[10px] text-slate-500">— Conversational Insights</span>
+        </div>
+
         {/* Error Banner — shown when the hook sets a non-null error string */}
         {error && (
           <div className="px-4 py-2.5 bg-red-950/40 border-b border-red-800/40 text-xs text-red-300 flex items-center gap-2">

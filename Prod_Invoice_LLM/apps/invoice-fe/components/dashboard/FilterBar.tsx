@@ -14,6 +14,8 @@ interface FilterBarProps {
   onFilterChange: (filters: FilterState) => void;
   availableVendors: string[];
   availableTags: string[];
+  /** Compact variant: no outer panel/label, meant to share a row with a PageHeader title. */
+  compact?: boolean;
 }
 
 const LOCAL_STORAGE_KEY = "invoice_dashboard_filters";
@@ -38,6 +40,7 @@ export default function FilterBar({
   onFilterChange,
   availableVendors = [],
   availableTags = [],
+  compact = false,
 }: FilterBarProps) {
   const [filters, setFilters] = useState<FilterState>({
     vendorName: "",
@@ -75,15 +78,26 @@ export default function FilterBar({
   };
 
   return (
-    <div className="glass-panel p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-      {/* Title / Controls Header */}
-      <div className="flex items-center gap-2 text-white">
-        <SlidersHorizontal className="w-5 h-5 text-accent-blue" />
-        <span className="font-semibold text-sm tracking-wide">Filters</span>
-      </div>
+    <div
+      className={
+        compact
+          ? "flex items-center gap-2"
+          : "glass-panel p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4"
+      }
+    >
+      {/* Title / Controls Header -- omitted in compact mode: the dropdowns
+          ("All Clients/Vendors", "All Time", etc.) already say what they are,
+          and compact mode shares a row with the page title, where a second
+          "Filters" label would be redundant. */}
+      {!compact && (
+        <div className="flex items-center gap-2 text-white">
+          <SlidersHorizontal className="w-5 h-5 text-accent-blue" />
+          <span className="font-semibold text-sm tracking-wide">Filters</span>
+        </div>
+      )}
 
       {/* Select Controls */}
-      <div className="flex flex-wrap items-center gap-3 flex-1 justify-end">
+      <div className={compact ? "flex flex-wrap items-center gap-2" : "flex flex-wrap items-center gap-3 flex-1 justify-end"}>
         {/* Vendor Selector */}
         <div className="flex flex-col gap-1 min-w-[140px]">
           <select

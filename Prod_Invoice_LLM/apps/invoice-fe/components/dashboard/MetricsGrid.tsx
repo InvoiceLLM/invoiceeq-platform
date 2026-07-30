@@ -55,9 +55,9 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
 
   // SVG Chart Dimensions
   const svgWidth = 600;
-  const svgHeight = 160;
+  const svgHeight = 100;
   const paddingX = 20;
-  const paddingY = 20;
+  const paddingY = 14;
 
   // Calculate coordinates for Spend Trendline SVG
   let pointsStr = "";
@@ -82,17 +82,19 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
                     ` ${chartPoints[chartPoints.length - 1].x},${svgHeight - paddingY}`;
   }
 
-  // Circular gauge settings
-  const gaugeRadius = 52;
+  // Circular gauge settings -- shrunk from a 112px/radius-52 gauge to fit a
+  // more compact metrics strip; center/radius picked so the ring stays fully
+  // inside a 96px (w-24 h-24) box with a 6px stroke.
+  const gaugeRadius = 40;
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
   const strokeDashoffset = gaugeCircumference - (extractionAccuracy / 100) * gaugeCircumference;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
       {/* KPI Cards & Spend Graph Container */}
-      <div className="lg:col-span-3 space-y-6">
+      <div className="lg:col-span-3 space-y-3">
         {/* KPI Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <KpiCard
             title="Total Invoiced"
             value={isLoading ? "$0.00" : formatCurrency(totalInvoiced)}
@@ -129,17 +131,12 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
         </div>
 
         {/* Spend Graph Panel */}
-        <div className="glass-panel p-6 rounded-xl flex flex-col gap-4 relative overflow-hidden">
+        <div className="glass-panel p-4 rounded-xl flex flex-col gap-2 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-white tracking-wide">
-                Invoice Spend Trend
-              </h3>
-              <p className="text-xs text-slate-400">
-                Daily invoiced billing trends mapped over time.
-              </p>
-            </div>
-            
+            <h3 className="text-xs font-semibold text-white tracking-wide">
+              Invoice Spend Trend
+            </h3>
+
             {/* Tooltip detail display */}
             {hoveredPoint && (
               <div className="text-right text-xs bg-slate-800/80 border border-[#222D3D] px-2.5 py-1 rounded-lg animate-fade-in">
@@ -149,7 +146,7 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
             )}
           </div>
 
-          <div className="w-full relative h-[160px] select-none">
+          <div className="w-full relative h-[100px] select-none">
             {isLoading || spendOverTime.length <= 1 ? (
               <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-xs">
                 {isLoading ? "Loading spend trend analytics..." : "Insufficient transaction history to build trend graph"}
@@ -240,78 +237,60 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
         </div>
       </div>
 
-      {/* Accuracy & Processing Time Column */}
-      <div className="lg:col-span-1 flex flex-col gap-6">
-        {/* Accuracy Circular Gauge */}
-        <div className="glass-panel p-6 rounded-xl flex flex-col items-center justify-between flex-1 min-h-[220px]">
-          <div className="text-center w-full">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Extraction Accuracy
-            </h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              LLM parsing verified checks vs failures
-            </p>
-          </div>
-
-          {/* Dynamic Circular SVG Gauge */}
-          <div className="relative w-28 h-28 my-2 flex items-center justify-center">
-            <svg className="w-full h-full transform -rotate-90">
-              {/* Background circle track */}
-              <circle
-                cx="56"
-                cy="56"
-                r={gaugeRadius}
-                className="stroke-[#222D3D]"
-                strokeWidth="7"
-                fill="transparent"
-              />
-              {/* Foreground progress circle */}
-              <circle
-                cx="56"
-                cy="56"
-                r={gaugeRadius}
-                className="stroke-[#3B82F6] transition-all duration-1000 ease-out"
-                strokeWidth="7"
-                fill="transparent"
-                strokeDasharray={gaugeCircumference}
-                strokeDashoffset={isLoading ? gaugeCircumference : strokeDashoffset}
-                strokeLinecap="round"
-                style={{
-                  filter: "drop-shadow(0px 0px 4px rgba(59, 130, 246, 0.4))"
-                }}
-              />
-            </svg>
-            <div className="absolute flex flex-col items-center justify-center">
-              <span className="text-lg font-bold text-white tracking-tight">
-                {isLoading ? "0.0%" : `${extractionAccuracy.toFixed(1)}%`}
-              </span>
-              <span className="text-[8px] uppercase tracking-wider text-slate-400">
-                Confidence
-              </span>
+      {/* Accuracy & Processing Time -- combined into one compact card
+          (previously two separate glass panels totaling ~320px tall for two
+          numbers) */}
+      <div className="lg:col-span-1">
+        <div className="glass-panel p-4 rounded-xl flex flex-col gap-3 h-full">
+          <div className="flex items-center gap-3">
+            {/* Dynamic Circular SVG Gauge -- shrunk from 112px to 96px */}
+            <div className="relative w-24 h-24 shrink-0 flex items-center justify-center">
+              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 96 96">
+                <circle cx="48" cy="48" r={gaugeRadius} className="stroke-[#222D3D]" strokeWidth="6" fill="transparent" />
+                <circle
+                  cx="48"
+                  cy="48"
+                  r={gaugeRadius}
+                  className="stroke-[#3B82F6] transition-all duration-1000 ease-out"
+                  strokeWidth="6"
+                  fill="transparent"
+                  strokeDasharray={gaugeCircumference}
+                  strokeDashoffset={isLoading ? gaugeCircumference : strokeDashoffset}
+                  strokeLinecap="round"
+                  style={{ filter: "drop-shadow(0px 0px 4px rgba(59, 130, 246, 0.4))" }}
+                />
+              </svg>
+              <div className="absolute flex flex-col items-center justify-center">
+                <span className="text-sm font-bold text-white tracking-tight">
+                  {isLoading ? "0.0%" : `${extractionAccuracy.toFixed(1)}%`}
+                </span>
+              </div>
+            </div>
+            <div>
+              <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                Extraction Accuracy
+              </h3>
+              <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-medium mt-0.5">
+                <Target className="w-3 h-3" />
+                <span>Above 95% target</span>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-medium">
-            <Target className="w-3.5 h-3.5" />
-            <span>Target benchmark exceeded (95.0%)</span>
-          </div>
-        </div>
+          <div className="h-px bg-[#222D3D]" />
 
-        {/* Processing Efficiency KPI */}
-        <div className="glass-panel p-6 rounded-xl flex items-center gap-4 h-24">
-          <div className="p-3 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/20 text-accent-yellow">
-            <Clock className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-              Avg Processing Time
-            </span>
-            <span className="text-xl font-bold text-white mt-0.5">
-              {isLoading ? "0.0s" : `${avgProcessingTime.toFixed(1)}s`}
-            </span>
-            <span className="text-[9px] text-slate-500">
-              API roundtrip OCR extraction latency
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/20 text-accent-yellow shrink-0">
+              <Clock className="w-4 h-4" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                Avg Processing Time
+              </span>
+              <span className="text-lg font-bold text-white leading-tight">
+                {isLoading ? "0.0s" : `${avgProcessingTime.toFixed(1)}s`}
+              </span>
+            </div>
           </div>
         </div>
       </div>

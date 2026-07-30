@@ -5,6 +5,7 @@ import FilterBar, { FilterState } from "../../components/dashboard/FilterBar";
 import RecentInvoicesTable, { StatusTab } from "../../components/dashboard/RecentInvoicesTable";
 import OutboundFilterBar, { OutboundFilterState } from "../../components/dashboard/OutboundFilterBar";
 import OutboundInvoicesTable, { OutboundStatusTab } from "../../components/dashboard/OutboundInvoicesTable";
+import PageHeader from "../../components/layout/PageHeader";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
 
@@ -250,12 +251,7 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-white tracking-wide">Invoices</h1>
-        <p className="text-xs text-slate-400">
-          Full invoice queue -- browse, filter, and open any invoice for audit review.
-        </p>
-      </div>
+      <PageHeader title="Audit Queue" agentIcon="🛡️" agentName="SENTINEL" agentRole="Audit & Compliance" />
 
       {showTabs && (
         <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">

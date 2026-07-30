@@ -26,7 +26,7 @@ export default function KpiCard({
   return (
     <div
       className={cn(
-        "glass-panel p-6 rounded-xl relative overflow-hidden flex flex-col justify-between h-32 transition-all duration-300 hover:shadow-lg hover:shadow-accent-blue/5 hover:translate-y-[-2px] group",
+        "glass-panel p-3.5 rounded-xl relative overflow-hidden flex flex-col justify-between h-[84px] transition-all duration-300 hover:shadow-lg hover:shadow-accent-blue/5 hover:translate-y-[-2px] group",
         className
       )}
     >
@@ -46,13 +46,13 @@ export default function KpiCard({
       </div>
 
       {/* Value & Trend Row */}
-      <div className="flex items-end justify-between mt-2 z-10">
+      <div className="flex items-end justify-between mt-1 z-10">
         <div className="flex flex-col">
-          <span className="text-2xl md:text-3xl font-bold text-white tracking-tight leading-none">
+          <span className="text-xl md:text-2xl font-bold text-white tracking-tight leading-none">
             {value}
           </span>
           {subtext && (
-            <span className="text-[10px] text-slate-400 mt-1 font-medium">
+            <span className="text-[9px] text-slate-400 mt-1 font-medium truncate max-w-[140px]">
               {subtext}
             </span>
           )}
