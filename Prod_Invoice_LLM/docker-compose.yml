@@ -59,8 +59,8 @@ services:
     container_name: invoice-azurite-local
     restart: always
     ports:
-      - "10000:10000"
-      - "10001:10001"
+      - "0.0.0.0:10000:10000"
+      - "0.0.0.0:10001:10001"
     volumes:
       - azurite_data:/data
     command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --location /data --skipApiVersionCheck"

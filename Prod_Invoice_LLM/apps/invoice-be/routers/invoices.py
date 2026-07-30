@@ -387,7 +387,10 @@ async def list_invoices(
     compatible with this pagination, instead of a client-side re-filter of an
     already-paginated page.
     """
-    conditions = [Invoice.tenant_id == context.tenant_id]
+    conditions = [
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "INBOUND"
+    ]
     if start_date:
         conditions.append(Invoice.invoice_date >= start_date)
     if end_date:
