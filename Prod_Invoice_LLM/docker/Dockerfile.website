@@ -1,0 +1,54 @@
+# invoice-website (marketing site + Clerk auth pages)
+#
+# Spec: Cloud_Architecture_Document.md section 10 -- node:20-alpine, multi-stage.
+# Mirrors docker/Dockerfile.fe so both Next.js apps build and run identically.
+# Written for the App Router layout (app/ + components/), not the old pages/ one.
+
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY apps/invoice-website/package*.json ./
+RUN npm ci
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY apps/invoice-website/ .
+
+# Gap 6: NEXT_PUBLIC_* values are inlined into the client-side JS bundle by
+# `next build`, so they must be present HERE, at image build time. Supplying them
+# as Container App runtime env vars has no effect on the browser bundle -- that
+# was the original bug: the deployed app shipped `publishableKey: undefined` and
+# Clerk threw "Missing publishableKey" no matter what bicep set at runtime.
+#
+# .dockerignore excludes **/.env.local, so these build args are the only source.
+# The backend URL is deliberately NOT a build arg. The backend Container App is
+# internal-only (ingress.external=false), so it is never called from the browser
+# -- app/api/auth/provision/route.ts reaches it server-side via the runtime
+# BACKEND_API_URL env var that invoice-website.bicep supplies (Gap 7).
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_FE_URL
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_FE_URL=$NEXT_PUBLIC_FE_URL
+
+# Fail loudly instead of shipping a broken image: a missing publishable key only
+# surfaces as a white screen in the browser, which is expensive to debug.
+# Clerk also validates the key format during static prerender, so a malformed
+# key fails the build here rather than at runtime.
+RUN test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" || \
+      (echo "ERROR: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY build-arg is required" && exit 1)
+
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY apps/invoice-website/package*.json ./
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/app ./app
+COPY --from=builder /app/components ./components
+COPY --from=builder /app/lib ./lib
+EXPOSE 3000
+ENV PORT=3000
+CMD ["npm", "start"]

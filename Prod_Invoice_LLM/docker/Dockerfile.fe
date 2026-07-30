@@ -8,6 +8,28 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY apps/invoice-fe/ .
+
+# Gap 6: NEXT_PUBLIC_* values are inlined into the client-side JS bundle by
+# `next build`, so they must be present HERE, at image build time. Supplying
+# them as Container App runtime env vars has no effect on the browser bundle --
+# that was the original bug: the deployed app shipped `publishableKey: undefined`
+# and Clerk threw "Missing publishableKey" no matter what bicep set at runtime.
+#
+# .dockerignore excludes **/.env.local, so these build args are the only source.
+# NOTE: the backend URL is deliberately NOT a build-arg. The backend Container
+# App is internal-only (ingress.external=false), so it is never called from the
+# browser -- server-side route handlers reach it via the runtime BACKEND_API_URL
+# env var that bicep supplies.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_WEBSITE_URL
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_WEBSITE_URL=$NEXT_PUBLIC_WEBSITE_URL
+
+# Fail loudly instead of shipping a broken image: a missing publishable key
+# only surfaces as a white screen in the browser, which is expensive to debug.
+RUN test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" || \
+      (echo "ERROR: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY build-arg is required" && exit 1)
+
 RUN npm run build
 
 FROM node:20-alpine AS runner

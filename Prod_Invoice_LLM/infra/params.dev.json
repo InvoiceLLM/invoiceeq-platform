@@ -37,6 +37,9 @@
     },
     "frontendImage": {
       "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "websiteImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
     }
   }
 }

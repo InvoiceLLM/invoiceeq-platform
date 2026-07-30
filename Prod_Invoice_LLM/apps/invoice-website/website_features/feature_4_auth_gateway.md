@@ -2,7 +2,9 @@
 
 Manage organisation sign-up, Clerk-based authentication, role-scoped login, and redirect users to the `invoice-fe` dashboard.
 
-**Implementation note (2026-07-28):** built via Clerk **Organizations** (one Clerk org per tenant, explicitly created at signup) rather than the domain-auto-detection flow originally spec'd below in Tasks 4.1-4.3 — email-domain matching is kept only as a legacy fallback for tenants that predate Clerk. Reconciled from the `auth-feature-4` branch onto current master; see `website_features_tracker.md` Gap 2/3 for what's still open (real Clerk keys, `/forgot-password`).
+**Implementation note (2026-07-28):** built via Clerk **Organizations** (one Clerk org per tenant, explicitly created at signup) rather than the domain-auto-detection flow originally spec'd below in Tasks 4.1-4.3 — email-domain matching is kept only as a legacy fallback for tenants that predate Clerk. Reconciled from the `auth-feature-4` branch onto current master; see `website_features_tracker.md` Gap 2/4/9/10 for what's still open (real Clerk keys, auth enforcement, the real-key verification run, admin route auth).
+
+**Further cherry-pick (2026-07-30):** forgot-password, an admin console, and the Docker/infra to actually deploy `invoice-website` were pulled from the same `auth-feature-4` branch (see Functionality items 6-7 below and `website_features_tracker.md` Gaps 3/5/6/7/8). Scratch/session docs from that branch (fix summaries, troubleshooting notes, duplicate implementation-plan docs) were deliberately left out — their real content was mined into this doc and the tracker instead.
 
 ### File Coordinates
 * Website signup page: `apps/invoice-website/app/signup/page.tsx` — `SignupPage()`, org creation form + `handleSignup()`
@@ -12,6 +14,11 @@ Manage organisation sign-up, Clerk-based authentication, role-scoped login, and 
 * Backend auth router: `apps/invoice-be/routers/auth.py` — `GET /auth/me`, `POST /auth/provision`, `POST /auth/logout`
 * Backend JWT/tenant resolution: `apps/invoice-be/dependencies.py` — `get_tenant_context()`
 * Tenant schema: `apps/invoice-be/models.py` — `Tenant.clerk_org_id`
+* Forgot password: `apps/invoice-website/app/forgot-password/page.tsx` — `ForgotPasswordPage()`
+* Server-side provision proxy: `apps/invoice-website/app/api/auth/provision/route.ts`
+* Admin console: `apps/invoice-fe/app/admin/page.tsx` — org member list + `CreateUserModal`
+* Admin create-user route: `apps/invoice-fe/app/api/admin/create-user/route.js` — calls Clerk's REST API directly (not the SDK, to sidestep an SDK-version email-verification incompatibility)
+* Org debug tool: `apps/invoice-fe/app/debug-org/page.tsx` — raw JSON dump of the current user/org/membership state, built while diagnosing a Clerk v5 API change (`membershipList` → paginated `memberships`) that was failing `next build`'s type-check
 
 ### Functionality
 1. **Signup** (`SignupPage`/`handleSignup`): admin fills org name/type/country + email/password → `signUp.create()` → Clerk session activated → `window.Clerk.createOrganization()` creates the Clerk org → org metadata (`orgId`, `orgName`, `orgType`, `country`, `role: "admin,user"`) written to the user → backend `POST /auth/provision` called to create the matching `Tenant` row (`clerk_org_id` linked) → redirect to `/login`. Org creation and the provision call are both best-effort/non-fatal — a failure there doesn't block the Clerk account itself from existing.
@@ -19,6 +26,8 @@ Manage organisation sign-up, Clerk-based authentication, role-scoped login, and 
 3. **Backend provisioning** (`POST /auth/provision`): idempotent — repeat calls with the same `clerk_org_id` return the existing tenant rather than duplicating. Falls back to linking an existing domain-matched tenant (pre-Clerk-org tenants) before creating a new one.
 4. **JWT tenant resolution** (`get_tenant_context`): every authenticated backend request decodes the Clerk session JWT, resolves `clerk_org_id`/`tenant_id` claims to a `Tenant` row (priority: `clerk_org_id` → `tenant_id` → email domain), and backfills `clerk_org_id` onto tenants found via the older lookup paths. Falls back to `MOCK_TENANT_ID` when no `Authorization` header is present (local dev / no-auth-yet callers).
 5. **Sign-out** (`invoice-fe` `Header.tsx`): calls the backend `POST /auth/logout` (via `invoice-fe`'s own `/api/auth/logout` proxy route) for server-side cleanup, then Clerk's `signOut()`, then redirects to `${NEXT_PUBLIC_WEBSITE_URL}/login`.
+6. **Forgot password** (`ForgotPasswordPage`): two-step Clerk reset — `signIn.create({strategy: "reset_password_email_code"})` sends a code to the user's email, then `signIn.attemptFirstFactor()` verifies the code and sets a new password in the same call. Matches the login/signup page's visual design.
+7. **Admin console** (`app/admin/page.tsx` + `CreateUserModal`): lists the current org's members and lets an admin create a new user directly (name/email/password → `POST /api/admin/create-user`). That route calls Clerk's REST API directly (bypassing the SDK to avoid a version-compatibility issue with email verification), creates the user with `unsafe_metadata: {role: "user"}`, and immediately marks their email verified so they can sign in right away without a confirmation step. **Security gap, not yet closed**: the route has no server-side check on who's allowed to call it — see `website_features_tracker.md` Gap 10.
 
 ### Verification Plan
 * **Automated**: full existing `invoice-be` pytest suite (78 tests) passes with these changes; `alembic upgrade head` applies the `clerk_org_id` migration cleanly on top of current head.

@@ -4,10 +4,10 @@ import React, { useState } from "react";
 import { useSignUp } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 
-// Backend is a separate deployment -- needs the full origin, not an internal
-// Next.js route. This page calls it directly (client-side) since /auth/provision
-// runs right after signup, before any session/Authorization header exists to forward.
-const BACKEND_API_URL = process.env.NEXT_PUBLIC_BACKEND_API_URL || "http://localhost:8000";
+// Gap 7: the backend is called through this app's own server-side route handler
+// at /api/auth/provision, not directly from the browser. The backend Container
+// App runs with ingress.external=false, so the browser cannot reach it in Azure.
+// See app/api/auth/provision/route.ts.
 
 /* Design tokens (match invoice-fe/invoice-website globals) */
 const T = {
@@ -129,7 +129,7 @@ export default function SignupPage() {
 
         if (orgId && result.createdUserId) {
           try {
-            const provisionResponse = await fetch(`${BACKEND_API_URL}/auth/provision`, {
+            const provisionResponse = await fetch("/api/auth/provision", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({

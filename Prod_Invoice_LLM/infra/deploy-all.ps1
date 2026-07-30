@@ -169,10 +169,10 @@ if ([int]$roleCount -lt 5) {
 Write-Host "RBAC: $roleCount role assignments confirmed" -ForegroundColor Green
 
 # ---------- Stage 8: Application container apps ----------
-Write-Host "`nStage 8/10: Backend, queue-worker, frontend container apps..." -ForegroundColor Cyan
+Write-Host "`nStage 8/10: Backend, queue-worker, frontend, website container apps..." -ForegroundColor Cyan
 az deployment group create --template-file "$PSScriptRoot/08-apps.bicep" @commonParams
 Assert-Stage "Stage 8 (apps)" $LASTEXITCODE
-foreach ($app in @("ca-invoice-be-$Environment", "ca-queue-worker-$Environment", "ca-invoice-fe-$Environment")) {
+foreach ($app in @("ca-invoice-be-$Environment", "ca-queue-worker-$Environment", "ca-invoice-fe-$Environment", "ca-invoice-website-$Environment")) {
     Wait-ForState -Description $app -ExpectedState "Running" -Check {
         az containerapp show -g $ResourceGroup -n $app --query properties.runningStatus -o tsv 2>$null
     }

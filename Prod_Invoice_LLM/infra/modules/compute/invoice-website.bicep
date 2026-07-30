@@ -1,3 +1,8 @@
+// invoice-website Container App (marketing site + SSO auth pages)
+//
+// Spec: Cloud_Architecture_Document.md section 4.2 -- External ingress (443),
+// 0/3 replicas, 0.5 vCPU / 1Gi. Section 4.3 -- scale to zero when idle.
+
 param location string
 param caeId string
 param appName string
@@ -6,19 +11,15 @@ param userAssignedIdentityClientId string
 param keyVaultName string
 
 // App configurations
+@description('Backend Container App FQDN. Used server-side only (internal ingress).')
 param backendApiUrl string
-
-// Retained for caller compatibility (main-step4.bicep / deploy-all.ps1 still
-// pass it) but intentionally unused: see the Gap 6 note on the env block below.
-@description('Unused. NEXT_PUBLIC_* must be a Docker build-arg, not a runtime env var.')
-param nextPublicClerkPublishableKey string = ''
 
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
-resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
   identity: {
@@ -38,7 +39,7 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       ingress: {
-        external: true // Exposed to public traffic for Dev
+        external: true // Public marketing site + login/signup entry point
         targetPort: 3000
         transport: 'http'
       }
@@ -53,7 +54,7 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: 'invoice-fe'
+          name: 'invoice-website'
           image: image
           resources: {
             cpu: json('0.5')
@@ -61,15 +62,11 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: [
             {
-              // Server-side proxy env var — must use http:// for internal Container Apps traffic
+              // Server-side only, used by pages/api/auth/provision.js.
+              // Must be http:// -- internal Container Apps traffic is not TLS.
               name: 'BACKEND_API_URL'
               value: 'http://${backendApiUrl}'
             }
-            // Gap 6: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is deliberately NOT set
-            // here. Next.js inlines NEXT_PUBLIC_* into the client bundle during
-            // `next build`, so a runtime Container App env var arrives too late
-            // and has zero effect on the browser. It is passed as a Docker
-            // build-arg in .github/workflows/deploy-dev.yml instead.
             {
               name: 'CLERK_SECRET_KEY'
               secretRef: 'clerk-secret-secret'
@@ -78,15 +75,21 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedIdentityClientId
             }
+            // Gap 6: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and NEXT_PUBLIC_FE_URL are
+            // deliberately NOT set here. Next.js inlines NEXT_PUBLIC_* into the
+            // client bundle during `next build`, so a runtime env var arrives too
+            // late and has zero effect on the browser. They are passed as Docker
+            // build-args in .github/workflows/deploy-dev.yml instead.
           ]
         }
       ]
       scale: {
-        minReplicas: 1
-        maxReplicas: 2
+        // Section 4.3: scale to zero when idle (marketing site, bursty traffic).
+        minReplicas: 0
+        maxReplicas: 3
       }
     }
   }
 }
 
-output fqdn string = frontendApp.properties.configuration.ingress.fqdn
+output fqdn string = websiteApp.properties.configuration.ingress.fqdn

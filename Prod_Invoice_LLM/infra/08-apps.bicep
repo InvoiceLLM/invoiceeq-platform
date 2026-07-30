@@ -32,6 +32,15 @@ param queueWorkerImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:late
 @description('Image tag for frontend container')
 param frontendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('Image tag for website container')
+param websiteImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
+
+@description('Clerk JWT issuer URL (public) -- see invoice-be.bicep for why this is not a secret')
+param clerkJwtIssuer string = ''
+
+@description('Clerk JWKS endpoint URL (public)')
+param clerkJwksUrl string = ''
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
@@ -60,6 +69,17 @@ resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' exist
   name: docIntelName
 }
 
+// FE/website FQDNs, computed rather than read from backendApp/frontendApp
+// module outputs. Container App FQDNs are `<app-name>.<cae-default-domain>`,
+// and the CAE (an `existing` reference, already deployed by an earlier stage)
+// exposes that domain directly -- so both names are knowable before either
+// app deploys. This matters because backendApp needs the FE/website origins
+// for ALLOWED_ORIGINS, and frontendApp needs backendApp's fqdn for
+// BACKEND_API_URL -- a real circular dependency if either side tried to read
+// the other's module output instead.
+var frontendFqdn = 'ca-invoice-fe-${environment}.${cae.properties.defaultDomain}'
+var websiteFqdn = 'ca-invoice-website-${environment}.${cae.properties.defaultDomain}'
+
 module backendApp './modules/compute/invoice-be.bicep' = {
   name: 'backend-deploy'
   params: {
@@ -75,6 +95,9 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: acrName
     image: backendImage
+    clerkJwtIssuer: clerkJwtIssuer
+    clerkJwksUrl: clerkJwksUrl
+    allowedOrigins: 'https://${frontendFqdn},https://${websiteFqdn}'
   }
 }
 
@@ -113,6 +136,22 @@ module frontendApp './modules/compute/invoice-fe.bicep' = {
   }
 }
 
+module websiteApp './modules/compute/invoice-website.bicep' = {
+  name: 'website-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    appName: 'ca-invoice-website-${environment}'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    backendApiUrl: backendApp.outputs.fqdn
+    acrName: acrName
+    image: websiteImage
+  }
+}
+
 // ================= Outputs =================
 output frontendUrl string = frontendApp.outputs.fqdn
 output backendUrl string = backendApp.outputs.fqdn
+output websiteUrl string = websiteApp.outputs.fqdn

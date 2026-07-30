@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Gap 2: falls back to the standard local backend port so a fresh clone runs
+// without env setup, matching app/api/auth/logout/route.ts which already does
+// this. Previously this threw, turning a missing env var into an opaque 500 on
+// every proxied API call. Deployed environments set BACKEND_API_URL explicitly
+// via infra/modules/compute/invoice-fe.bicep.
+const DEFAULT_LOCAL_BACKEND_URL = "http://localhost:8000";
+
 function backendBaseUrl(): string {
-  const url = process.env.BACKEND_API_URL;
-  if (!url) {
-    throw new Error("BACKEND_API_URL is not set");
-  }
+  const url = process.env.BACKEND_API_URL || DEFAULT_LOCAL_BACKEND_URL;
   return `${url.replace(/\/$/, "")}/api/v1`;
 }
 

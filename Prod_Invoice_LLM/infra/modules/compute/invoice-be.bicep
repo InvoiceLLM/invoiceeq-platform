@@ -10,6 +10,28 @@ param chromaHost string
 param azureOpenAiEndpoint string
 param azureOpenAiDeploymentName string
 param azureDocIntelEndpoint string
+
+// Gap 8: required for Clerk JWT verification. Without CLERK_JWKS_URL,
+// dependencies.py -> get_jwk() raises HTTP 500 on every real token. Without
+// CLERK_JWT_ISSUER, issuer validation is silently skipped and a correctly signed
+// token from ANY Clerk tenant would be accepted.
+//
+// Not secrets: the JWKS endpoint is public and unauthenticated by design, and the
+// issuer is a public URL present in every token's `iss` claim.
+@description('Clerk JWT issuer URL (public, no trailing slash)')
+param clerkJwtIssuer string = ''
+
+@description('Clerk JWKS endpoint URL (public)')
+param clerkJwksUrl string = ''
+
+// config.py's ALLOWED_ORIGINS default is localhost-only (dev fallback) --
+// nothing previously set a real value here, so CORS would silently reject
+// every real deployed frontend origin. Not currently exploitable (ingress
+// below is external:false, so a browser can never reach this app directly),
+// but wrong-by-default is worth fixing before anyone flips that to true.
+@description('Comma-separated allowed CORS origins (real FE/website FQDNs, computed by the orchestrator)')
+param allowedOrigins string = ''
+
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -106,6 +128,18 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'CLERK_SECRET_KEY'
               secretRef: 'clerk-secret-secret'
+            }
+            {
+              name: 'CLERK_JWT_ISSUER'
+              value: clerkJwtIssuer
+            }
+            {
+              name: 'CLERK_JWKS_URL'
+              value: clerkJwksUrl
+            }
+            {
+              name: 'ALLOWED_ORIGINS'
+              value: allowedOrigins
             }
             {
               name: 'TOKEN_ENCRYPTION_KEY'

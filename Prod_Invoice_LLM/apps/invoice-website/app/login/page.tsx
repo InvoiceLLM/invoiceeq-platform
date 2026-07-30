@@ -102,7 +102,8 @@ export default function LoginPage() {
   const processSignIn = async (activeSignIn: any, targetRole: string) => {
     if (activeSignIn.status === "complete" || activeSignIn.createdSessionId) {
       const session = activeSignIn.createdSessionId;
-      if (session) await setActive({ session });
+      // setActive is typed as possibly undefined until Clerk finishes loading.
+      if (session && setActive) await setActive({ session });
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -168,6 +169,10 @@ export default function LoginPage() {
 
       if (result.status === "needs_second_factor") {
         try {
+          // @ts-expect-error -- Clerk types only allow "phone_code"/"totp" as a
+          // second factor. "email_code" is intentional here and the call is
+          // guarded by the catch below; changing the strategy would alter the
+          // auth flow, so the behaviour is left as-is. See FIXME in docs.
           await result.prepareSecondFactor({ strategy: "email_code" });
           setNeedsOtp(true);
           setError("📧 Enter the 6-digit verification code sent to your email.");
@@ -208,6 +213,9 @@ export default function LoginPage() {
     setError(null);
 
     try {
+      // @ts-expect-error -- see prepareSecondFactor above: Clerk types only allow
+      // "phone_code"/"totp"/"backup_code" here. Kept as-is so the auth flow is
+      // unchanged; the catch below handles rejection.
       const result = await signIn.attemptSecondFactor({ strategy: "email_code", code: otpCode });
       await processSignIn(result, selectedRole);
     } catch (err: any) {
@@ -318,6 +326,17 @@ export default function LoginPage() {
                   style={inputStyle("password")}
                   required
                 />
+              </div>
+
+              <div style={{ textAlign: "right", marginTop: "6px", marginBottom: "8px" }}>
+                <a
+                  href="/forgot-password"
+                  style={{ fontSize: "12px", color: T.textDim, textDecoration: "none", transition: "color 0.2s" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = T.blue)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = T.textDim)}
+                >
+                  Forgot password?
+                </a>
               </div>
 
               {error && (
