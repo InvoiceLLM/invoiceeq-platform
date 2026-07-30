@@ -3,6 +3,10 @@
 import React, { useState, useEffect } from "react";
 import FilterBar, { FilterState } from "../../components/dashboard/FilterBar";
 import MetricsGrid from "../../components/dashboard/MetricsGrid";
+import OutboundMetricsGrid, {
+  OutboundMetrics,
+  defaultOutboundMetrics,
+} from "../../components/dashboard/OutboundMetricsGrid";
 import ClientPerformanceChart from "../../components/dashboard/ClientPerformanceChart";
 import NeedsAttentionWidget from "../../components/dashboard/NeedsAttentionWidget";
 import TrainerImpactPanel from "../../components/dashboard/TrainerImpactPanel";
@@ -64,6 +68,30 @@ export default function DashboardPage() {
   const [allInvoices, setAllInvoices] = useState([]); // Kept to dynamically extract vendors/tags for FilterBar
   const [isMetricsLoading, setIsMetricsLoading] = useState(true);
 
+  // Feature 2.1 (Task 2.1.2): Service Flow gating. Defaults match the Tenant
+  // model's own defaults (receive on, send off), so a tenant that never
+  // touched Settings -- or a failed settings fetch -- renders exactly today's
+  // inbound-only Dashboard rather than flashing an empty outbound half.
+  const [receiveEnabled, setReceiveEnabled] = useState(true);
+  const [sendEnabled, setSendEnabled] = useState(false);
+  const [outboundMetrics, setOutboundMetrics] = useState<OutboundMetrics>(defaultOutboundMetrics);
+  const [isOutboundMetricsLoading, setIsOutboundMetricsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/settings/service-flow")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setReceiveEnabled(data.receive_invoices_enabled ?? true);
+        setSendEnabled(data.send_invoices_enabled ?? false);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Dynamically extract date range values
   const getDatesForRange = (range: string) => {
     const today = new Date();
@@ -89,7 +117,7 @@ export default function DashboardPage() {
 
   // 1. Initial Load of all invoices to extract drop-down filter options
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || !receiveEnabled) return;
 
     const fetchAllData = async () => {
       try {
@@ -102,11 +130,11 @@ export default function DashboardPage() {
       }
     };
     fetchAllData();
-  }, [authLoading]);
+  }, [authLoading, receiveEnabled]);
 
-  // 2. Fetch dashboard metrics whenever filters change.
+  // 2. Fetch inbound dashboard metrics whenever filters change.
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || !receiveEnabled) return;
 
     const fetchMetrics = async () => {
       setIsMetricsLoading(true);
@@ -130,7 +158,34 @@ export default function DashboardPage() {
     };
 
     fetchMetrics();
-  }, [filters, authLoading]);
+  }, [filters, authLoading, receiveEnabled]);
+
+  // 3. Fetch outbound (AR) metrics -- only when Send is actually enabled, so a
+  // receive-only tenant makes no extra request at all. Only the date range is
+  // shared with the inbound half: FilterBar's vendor/status/tag values are
+  // inbound vocabulary (vendor_name, PAID/REJECTED/AUDIT_REQUIRED) and would
+  // silently mis-filter or zero out the outbound aggregates.
+  useEffect(() => {
+    if (authLoading || !sendEnabled) return;
+
+    const fetchOutboundMetrics = async () => {
+      setIsOutboundMetricsLoading(true);
+      const { startDate, endDate } = getDatesForRange(filters.dateRange);
+
+      try {
+        const res = await apiClient.get("/dashboard/outbound-metrics", {
+          params: { start_date: startDate, end_date: endDate },
+        });
+        setOutboundMetrics(res.data || defaultOutboundMetrics);
+      } catch (err) {
+        console.error("Error loading outbound dashboard metrics", err);
+      } finally {
+        setIsOutboundMetricsLoading(false);
+      }
+    };
+
+    fetchOutboundMetrics();
+  }, [filters.dateRange, authLoading, sendEnabled]);
 
   const handleFilterChange = (newFilters: FilterState) => {
     setFilters(newFilters);
@@ -155,35 +210,110 @@ export default function DashboardPage() {
     ])
   );
 
+  // Only Insights/Trainer Impact are tab-gated -- Needs Attention and the
+  // vendor/customer rankings stay always-visible (no tab, no click), per the
+  // split-screen design's own stated rule ("no tab, no click needed") and
+  // e2e/dashboard-outbound-split.spec.ts's expectations, both of which
+  // assume those two panels render immediately regardless of tab state.
   const TABS = [
-    { id: "attention", label: "Needs Attention" },
-    { id: "vendors", label: "Top Vendors" },
     { id: "insights", label: "Insights" },
     { id: "trainer", label: "Trainer Impact" },
   ] as const;
-  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]["id"]>("attention");
+  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]["id"]>("insights");
+
+  // Task 2.1.4: ClientPerformanceChart already renders any {name, amount}
+  // ranking, so top_customers is mapped onto its existing prop shape rather
+  // than forking the component.
+  const topCustomersAsVendorShape: VendorSpend[] = (outboundMetrics?.top_customers ?? []).map(
+    (c: { customer_name: string; amount: number }) => ({
+      vendor_name: c.customer_name,
+      amount: c.amount,
+    })
+  );
+
+  // Split-screen, not a tab: when both services are on, both halves are
+  // visible at once (feature_8.1's design note -- Dashboard is a passive
+  // overview, so seeing both totals together is the useful default).
+  const showSplit = receiveEnabled && sendEnabled;
+  const showInboundMetrics = receiveEnabled;
+  const showOutboundMetrics = sendEnabled;
 
   return (
     <div className="space-y-4">
-      {/* Title + filters share one row -- no subtitle line, no separate filter panel */}
+      {/* Title + filters share one row -- no subtitle line, no separate
+          filter panel. Filters are inbound-only vocabulary (vendor_name,
+          PAID/REJECTED/AUDIT_REQUIRED), so hidden entirely for a send-only
+          tenant rather than silently mis-filtering/zeroing the outbound half. */}
       <PageHeader
         title="Command Center"
         actions={
-          <FilterBar
-            compact
-            onFilterChange={handleFilterChange}
-            availableVendors={uniqueVendors}
-            availableTags={uniqueTags}
-          />
+          receiveEnabled ? (
+            <FilterBar
+              compact
+              onFilterChange={handleFilterChange}
+              availableVendors={uniqueVendors}
+              availableTags={uniqueTags}
+            />
+          ) : undefined
         }
       />
 
-      {/* Bento box metrics panel */}
-      <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />
+      {/* Metrics half. One undivided grid when only one service is active;
+          two side-by-side halves when both are. No combined/net figure in
+          any branch -- that comparison is Chat-only. */}
+      {showSplit ? (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6" data-testid="dashboard-metrics-split">
+          <section aria-labelledby="receiving-metrics-heading" className="space-y-3">
+            <h2
+              id="receiving-metrics-heading"
+              className="text-sm font-semibold text-white tracking-wide"
+            >
+              Receiving
+            </h2>
+            <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />
+          </section>
 
-      {/* Tabbed panel: one wide view at a time instead of 4 panels squeezed
-          into a 3-column grid -- fits on screen without scrolling, and each
-          panel gets the full page width when it's the one showing. */}
+          <section aria-labelledby="sending-metrics-heading" className="space-y-3">
+            <h2
+              id="sending-metrics-heading"
+              className="text-sm font-semibold text-white tracking-wide"
+            >
+              Sending
+            </h2>
+            <OutboundMetricsGrid metrics={outboundMetrics} isLoading={isOutboundMetricsLoading} />
+          </section>
+        </div>
+      ) : (
+        <>
+          {showInboundMetrics && <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />}
+          {showOutboundMetrics && !showInboundMetrics && (
+            <OutboundMetricsGrid metrics={outboundMetrics} isLoading={isOutboundMetricsLoading} />
+          )}
+        </>
+      )}
+
+      {/* Always visible, no tab/click needed -- direction-aware: merges
+          inbound+outbound flagged rows, shows whichever ranking(s) are
+          enabled. */}
+      <NeedsAttentionWidget receiveEnabled={receiveEnabled} sendEnabled={sendEnabled} />
+
+      <div className="space-y-3">
+        {showInboundMetrics && (
+          <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isMetricsLoading} />
+        )}
+        {showOutboundMetrics && (
+          <ClientPerformanceChart
+            vendors={topCustomersAsVendorShape}
+            isLoading={isOutboundMetricsLoading}
+            title="Top Customers"
+            subtitle="Ranking by aggregated invoiced-out value."
+          />
+        )}
+      </div>
+
+      {/* Tabbed panel: only the genuinely supplementary panels share space
+          here -- fits on screen without scrolling, and each gets the full
+          page width when it's the one showing. */}
       <div className="glass-panel rounded-xl">
         <div className="flex items-center gap-1 border-b border-[#222D3D] px-3 pt-2">
           {TABS.map((tab) => (
@@ -201,10 +331,6 @@ export default function DashboardPage() {
           ))}
         </div>
         <div className="p-4">
-          {activeTab === "attention" && <NeedsAttentionWidget />}
-          {activeTab === "vendors" && (
-            <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isMetricsLoading} />
-          )}
           {activeTab === "insights" && <ActionableInsightsPanel />}
           {activeTab === "trainer" && <TrainerImpactPanel />}
         </div>

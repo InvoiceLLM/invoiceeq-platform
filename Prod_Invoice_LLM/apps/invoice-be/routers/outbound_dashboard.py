@@ -1,145 +1,32 @@
 from datetime import date
-from typing import Optional
 from fastapi import APIRouter, Depends, Query, Response
 from sqlmodel import Session, select
-from sqlalchemy import func, case
+from sqlalchemy import func, case, and_
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice
 
 router = APIRouter(prefix="/outbound-dashboard", tags=["Outbound Dashboard"])
 
+# The outbound lifecycle's actually-persisted Invoice.status values, from
+# routers/outbound_invoices.py (UPLOADED on upload, SENT on confirm-send, PAID
+# on mark-paid) and queue_worker/outbound_handlers.py (VERIFIED or
+# NEEDS_REVIEW after extraction). PROCESSING_OCR/EXTRACTING_DATA/FAILED are
+# SSE progress events only -- they are never written to Invoice.status, so
+# they deliberately don't appear in any set below.
+#
+# feature_8.1_vendor_flow_dashboard.md specifies outstanding_receivables as
+# "SENT/NEEDS_REVIEW/UPLOADED", written before Feature 2.1 existed and so
+# before VERIFIED was a real status. VERIFIED is included here anyway: it's a
+# genuine in-flight state (extracted cleanly, awaiting confirm-send), and
+# leaving it out would mean total_invoiced_out != amount_collected +
+# outstanding_receivables, i.e. money that silently belongs to no bucket.
+_OUTSTANDING_STATUSES = ["UPLOADED", "VERIFIED", "NEEDS_REVIEW", "SENT"]
 
-@router.get("/metrics")
-async def get_outbound_dashboard_metrics(
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    customer_name: Optional[str] = None,
-    status: Optional[str] = None,
-    context: TenantContext = Depends(get_tenant_context),
-    db_session: Session = Depends(get_db_session),
-):
-    """Feature 8.1 Task 8.1.2: AR mirror of dashboard.py's get_dashboard_metrics().
-    Same SQL-aggregate approach (real SUM/COUNT/GROUP BY, no full-row
-    materialization for the totals/breakdown/top-customers queries) -- only
-    verification_accuracy/average_days_to_payment need a per-row pass, same
-    as inbound's average_processing_time/extraction_accuracy, since neither
-    has a portable cross-dialect SQL form in this codebase's Postgres/SQLite
-    setup. Zero edits to dashboard.py itself -- filtering logic duplicated
-    against flow_direction == "OUTBOUND" rather than adding a direction
-    parameter to the existing endpoint (see feature_8.1's own File
-    Coordinates note on this)."""
-    conditions = [Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND"]
-    if start_date:
-        conditions.append(Invoice.invoice_date >= start_date)
-    if end_date:
-        conditions.append(Invoice.invoice_date <= end_date)
-    if customer_name:
-        conditions.append(Invoice.customer_name == customer_name)
-    if status:
-        conditions.append(Invoice.status == status.upper())
-
-    # 1. Dollar totals -- one aggregate query.
-    # outstanding_receivables per feature_8.1's spec: SENT/NEEDS_REVIEW/UPLOADED
-    # (money not yet collected, whether or not it's out the door to the
-    # customer yet). at_risk_receivables reuses Feature 7.1's read-time
-    # overdue definition (SENT + due_date < today) -- no persisted OVERDUE
-    # status, so this is expressed directly as a SQL condition, not a status
-    # equality check.
-    today = date.today()
-    totals_row = db_session.exec(
-        select(
-            func.coalesce(func.sum(Invoice.grand_total), 0.0),
-            func.coalesce(func.sum(case((Invoice.status == "PAID", Invoice.grand_total), else_=0.0)), 0.0),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (Invoice.status.in_(["SENT", "NEEDS_REVIEW", "UPLOADED"]), Invoice.grand_total),
-                        else_=0.0,
-                    )
-                ),
-                0.0,
-            ),
-            func.coalesce(
-                func.sum(
-                    case(
-                        ((Invoice.status == "SENT") & (Invoice.due_date < today), Invoice.grand_total),
-                        else_=0.0,
-                    )
-                ),
-                0.0,
-            ),
-        ).where(*conditions)
-    ).first()
-    total_invoiced_out, amount_collected, outstanding_receivables, at_risk_receivables = totals_row
-
-    # 2. Status breakdown -- GROUP BY status.
-    status_counts = {
-        (inv_status or "UPLOADED"): count
-        for inv_status, count in db_session.exec(
-            select(Invoice.status, func.count(Invoice.id)).where(*conditions).group_by(Invoice.status)
-        ).all()
-    }
-
-    # 3. Top customers by spend -- GROUP BY customer, mirrors top_vendors.
-    customer_expr = func.coalesce(Invoice.customer_name, "Unknown Customer")
-    top_customers = [
-        {"customer_name": c, "amount": round(amt or 0.0, 2)}
-        for c, amt in db_session.exec(
-            select(customer_expr, func.sum(Invoice.grand_total))
-            .where(*conditions)
-            .group_by(customer_expr)
-            .order_by(func.sum(Invoice.grand_total).desc())
-        ).all()
-    ]
-
-    # 4. verification_accuracy / average_days_to_payment -- narrow column scan
-    # (status, sa_alerts, sent_at, paid_at) instead of full ORM rows.
-    processed_statuses = {"VERIFIED", "NEEDS_REVIEW", "SENT", "PAID"}
-    total_processed = 0
-    invoices_with_alerts = 0
-    total_days_to_payment = 0.0
-    paid_invoice_count = 0
-
-    detail_rows = db_session.exec(
-        select(Invoice.status, Invoice.sa_alerts, Invoice.sent_at, Invoice.paid_at).where(*conditions)
-    ).all()
-    for inv_status, sa_alerts, sent_at, paid_at in detail_rows:
-        inv_status = (inv_status or "UPLOADED").upper()
-
-        if inv_status in processed_statuses:
-            total_processed += 1
-            if sa_alerts:
-                invoices_with_alerts += 1
-
-        # Real elapsed time, same honest-average rule as
-        # dashboard.py's average_processing_time: excluded from the average
-        # if either timestamp is missing, never estimated.
-        if sent_at and paid_at:
-            elapsed_seconds = (paid_at - sent_at).total_seconds()
-            if elapsed_seconds >= 0:
-                total_days_to_payment += elapsed_seconds / 86400.0
-                paid_invoice_count += 1
-
-    verification_accuracy = 100.0
-    if total_processed > 0:
-        verification_accuracy = round(100.0 * (1.0 - (invoices_with_alerts / total_processed)), 1)
-        verification_accuracy = max(0.0, min(100.0, verification_accuracy))
-
-    average_days_to_payment = (
-        round(total_days_to_payment / paid_invoice_count, 1) if paid_invoice_count > 0 else 0.0
-    )
-
-    return {
-        "total_invoiced_out": round(total_invoiced_out, 2),
-        "amount_collected": round(amount_collected, 2),
-        "outstanding_receivables": round(outstanding_receivables, 2),
-        "at_risk_receivables": round(at_risk_receivables, 2),
-        "verification_accuracy": verification_accuracy,
-        "average_days_to_payment": average_days_to_payment,
-        "top_customers": top_customers,
-        "invoices_by_status": status_counts,
-    }
+# Reached a verification decision -- the denominator for verification_accuracy.
+# Anything still at UPLOADED hasn't been judged yet and would otherwise drag
+# the percentage down for no reason.
+_VERIFICATION_DECIDED_STATUSES = ("VERIFIED", "NEEDS_REVIEW", "SENT", "PAID")
 
 
 @router.get("/invoices")
@@ -204,3 +91,173 @@ async def list_outbound_invoices(
         }
         for inv in invoices
     ]
+
+
+@router.get("/metrics")
+async def get_outbound_dashboard_metrics(
+    start_date: date | None = None,
+    end_date: date | None = None,
+    customer_name: str | None = None,
+    status: str | None = None,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session),
+):
+    """Feature 8.1, Task 8.1.2: the AR mirror of GET /dashboard/metrics.
+
+    routers/dashboard.py is neither imported from nor edited (the zero-touch
+    rule in docs/architecture/System_Journey_Developer_Guide.md Part 3) -- the
+    filter/aggregate shape is duplicated here against
+    ``flow_direction == "OUTBOUND"`` instead. Same division of labour as the
+    inbound endpoint after FE Gap 29: the dollar totals, status breakdown, top
+    customers and revenue series are real SQL SUM/COUNT/GROUP BY aggregates,
+    and only the two derived metrics that have no portable cross-dialect SQL
+    form here (verification_accuracy's sa_alerts list lengths,
+    average_days_to_payment's timestamp deltas) take a per-row pass -- and
+    that pass fetches 4 narrow columns, never full Invoice rows.
+    """
+    # 1. Shared filter conditions. tenant_id + flow_direction are not
+    # optional: without the direction predicate this would aggregate the
+    # tenant's inbound AP invoices and report them as receivables.
+    conditions = [
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "OUTBOUND",
+    ]
+    if start_date:
+        conditions.append(Invoice.invoice_date >= start_date)
+    if end_date:
+        conditions.append(Invoice.invoice_date <= end_date)
+    if customer_name:
+        conditions.append(Invoice.customer_name == customer_name)
+    if status:
+        conditions.append(Invoice.status == status.upper())
+
+    today = date.today()
+
+    # 2. Dollar totals -- one aggregate query, computed entirely in SQL.
+    # at_risk_receivables reuses feature_7.1's read-time overdue rule (SENT
+    # past its due_date), the same predicate list_outbound_invoices() applies
+    # for its virtual `status=overdue` filter, so the two can never disagree.
+    # No persisted OVERDUE status, no scheduled job.
+    totals_row = db_session.exec(
+        select(
+            func.coalesce(func.sum(Invoice.grand_total), 0.0),
+            func.coalesce(func.sum(case((Invoice.status == "PAID", Invoice.grand_total), else_=0.0)), 0.0),
+            func.coalesce(
+                func.sum(case((Invoice.status.in_(_OUTSTANDING_STATUSES), Invoice.grand_total), else_=0.0)),
+                0.0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Invoice.status == "SENT",
+                                Invoice.due_date.is_not(None),
+                                Invoice.due_date < today,
+                            ),
+                            Invoice.grand_total,
+                        ),
+                        else_=0.0,
+                    )
+                ),
+                0.0,
+            ),
+        ).where(*conditions)
+    ).first()
+    total_invoiced_out, amount_collected, outstanding_receivables, at_risk_receivables = totals_row
+
+    # 3. Status breakdown -- GROUP BY status
+    status_counts = {
+        (inv_status or "UPLOADED"): count
+        for inv_status, count in db_session.exec(
+            select(Invoice.status, func.count(Invoice.id)).where(*conditions).group_by(Invoice.status)
+        ).all()
+    }
+
+    # 4. Top customers by billed value -- the AR mirror of inbound's
+    # top_vendors, full ranked list rather than capped, matching that
+    # endpoint's behaviour.
+    customer_expr = func.coalesce(Invoice.customer_name, "Unknown Customer")
+    top_customers = [
+        {"customer_name": c, "amount": round(amt or 0.0, 2)}
+        for c, amt in db_session.exec(
+            select(customer_expr, func.sum(Invoice.grand_total))
+            .where(*conditions)
+            .group_by(customer_expr)
+            .order_by(func.sum(Invoice.grand_total).desc())
+        ).all()
+    ]
+
+    # 5. Revenue-over-time series -- mirror of inbound's spend_over_time,
+    # falling back to created_at's date when invoice_date wasn't extracted.
+    date_expr = func.coalesce(Invoice.invoice_date, func.date(Invoice.created_at))
+    revenue_over_time = [
+        {"date": str(d), "amount": round(amt or 0.0, 2)}
+        for d, amt in db_session.exec(
+            select(date_expr, func.sum(Invoice.grand_total))
+            .where(*conditions)
+            .group_by(date_expr)
+            .order_by(date_expr)
+        ).all()
+    ]
+
+    # 6. verification_accuracy / average_days_to_payment: narrow 4-column scan.
+    active_alerts_count = 0
+    invoices_with_alerts = 0
+    total_decided = 0
+    total_days_to_payment = 0.0
+    timed_invoice_count = 0
+
+    detail_rows = db_session.exec(
+        select(Invoice.status, Invoice.sa_alerts, Invoice.sent_at, Invoice.paid_at).where(*conditions)
+    ).all()
+    for inv_status, sa_alerts, sent_at, paid_at in detail_rows:
+        inv_status = (inv_status or "UPLOADED").upper()
+
+        if inv_status in _VERIFICATION_DECIDED_STATUSES:
+            total_decided += 1
+            if sa_alerts:
+                invoices_with_alerts += 1
+
+        if sa_alerts:
+            active_alerts_count += len(sa_alerts)
+
+        # Real elapsed time only. An invoice missing either timestamp is
+        # excluded from the average rather than estimated from anything else --
+        # same honesty rule as the inbound average_processing_time fix. Rows
+        # predating these columns have them as NULL and simply don't count.
+        if sent_at and paid_at:
+            elapsed_days = (paid_at - sent_at).total_seconds() / 86400.0
+            if elapsed_days >= 0:
+                total_days_to_payment += elapsed_days
+                timed_invoice_count += 1
+
+    average_days_to_payment = (
+        round(total_days_to_payment / timed_invoice_count, 1) if timed_invoice_count > 0 else 0.0
+    )
+
+    # % of outbound invoices that got through verification with zero alerts.
+    # sa_alerts is the first-pass signal rather than the status itself: status
+    # is mutable, so an invoice corrected out of NEEDS_REVIEW and sent would
+    # otherwise look like it was clean all along. Mirrors how inbound's
+    # extraction_accuracy reads the same field.
+    verification_accuracy = 100.0
+    if total_decided > 0:
+        verification_accuracy = round(100.0 * (1.0 - (invoices_with_alerts / total_decided)), 1)
+        verification_accuracy = max(0.0, min(100.0, verification_accuracy))
+
+    # No combined/net figure is returned anywhere here (no inbound+outbound
+    # total, no net cash position) -- that comparison stays Chat-only, per the
+    # design decision recorded in both feature docs.
+    return {
+        "total_invoiced_out": round(total_invoiced_out, 2),
+        "amount_collected": round(amount_collected, 2),
+        "outstanding_receivables": round(outstanding_receivables, 2),
+        "at_risk_receivables": round(at_risk_receivables, 2),
+        "average_days_to_payment": average_days_to_payment,
+        "verification_accuracy": verification_accuracy,
+        "active_alerts_count": active_alerts_count,
+        "revenue_over_time": revenue_over_time,
+        "top_customers": top_customers,
+        "invoices_by_status": status_counts,
+    }
