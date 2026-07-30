@@ -27,6 +27,9 @@ Adds the outbound counterpart to today's upload flow: a tab for uploading the te
 - Any invoice creation/generation UI — that's [feature_17_invoice_builder.md](../../invoice-be/docs/feature_17_invoice_builder.md), deferred.
 - Tag input / batch metadata tagging (`TagSelector.tsx`) — not carried over to the Sending tab in v1; outbound invoices are self-describing (customer name, invoice number already on the document).
 
+### Connector-sourced files (Gap 98, added 2026-07-30)
+Both tabs now also offer "Load from Google Drive / Salesforce" via `components/ingestion/ConnectorBrowseBar.tsx` — an icon per provider with an Active connection (set up once by an admin in `Settings → Connectors`, tenant-wide, not per-user), opening the existing `FolderTreeExplorer.tsx` in a modal. Receiving passes `direction="inbound"` (imported files feed the extraction pipeline like a normal upload); Sending passes `direction="outbound"` (files store for AR record-keeping, no extraction queued) — same `direction` semantics `trigger_file_import()`/`handle_import_connector_file()` already used for the manual-upload path. See `feature_7_connectors.md` for the connector-side detail.
+
 ### Tasks
 - [x] **Task 3.1.1:** Added the *Receiving*/*Sending* tab header to `page.tsx`, gated on `GET /api/settings/service-flow`. Matches the doc's visibility rule exactly: Receive-only shows the page unchanged (no tab header), Send-only shows the outbound uploader as the sole content, both-enabled shows the tab switcher (defaults to Receiving).
 - [x] **Task 3.1.2:** Built `SendInvoiceStatusTable.tsx` — single-invoice status card (not a multi-row ledger, since outbound upload is one file at a time), polls every 2s until `VERIFIED`/`NEEDS_REVIEW`/`SENT`, shows customer name + total once extracted, and a "Confirm & Send" button on `VERIFIED`/`NEEDS_REVIEW`.

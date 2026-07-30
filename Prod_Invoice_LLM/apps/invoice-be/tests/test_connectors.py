@@ -1,6 +1,7 @@
 import pytest
 from uuid import uuid4
 from datetime import datetime, timedelta
+from urllib.parse import urlparse, parse_qs
 from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
@@ -82,11 +83,65 @@ def test_get_auth_url():
     assert "auth_url" in response.json()
     assert "google" in response.json()["auth_url"]
 
-def test_oauth_callback(db_session):
-    """Verify code redirect callback performs token encryption and updates table."""
-    response = client.get("/api/v1/connectors/callback/salesforce?code=auth_code_9928")
+def test_salesforce_pkce_flow(db_session):
+    """Some Salesforce Connected Apps require PKCE on the authorization flow
+    (real-world error hit: 'invalid_request: missing required code challenge').
+    get_auth_url() must attach a code_challenge/state and stash the matching
+    code_verifier server-side; oauth_callback() must retrieve it by state and
+    include it in the token exchange payload.
+    """
+    response = client.get("/api/v1/connectors/auth-url/salesforce")
     assert response.status_code == 200
-    assert response.json() == {"success": True, "message": "Successfully connected to salesforce"}
+    auth_url = response.json()["auth_url"]
+    assert "code_challenge=" in auth_url
+    assert "code_challenge_method=S256" in auth_url
+    assert "state=" in auth_url
+
+    query = parse_qs(urlparse(auth_url).query)
+    state = query["state"][0]
+
+    captured_payload = {}
+
+    class FakeTokenResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "access_token": "sf_real_token",
+                "refresh_token": "sf_real_refresh",
+                "instance_url": "https://example.my.salesforce.com",
+            }
+
+    async def fake_post(self, url, data=None, **kwargs):
+        captured_payload.update(data or {})
+        return FakeTokenResponse()
+
+    with patch("httpx.AsyncClient.post", new=fake_post):
+        response = client.get(
+            f"/api/v1/connectors/callback/salesforce?code=real_code_123&state={state}",
+            follow_redirects=False,
+        )
+
+    assert response.status_code in (302, 307)
+    assert "code_verifier" in captured_payload
+    assert len(captured_payload["code_verifier"]) >= 43  # RFC 7636 minimum length
+
+def test_oauth_callback(db_session):
+    """Verify code redirect callback performs token encryption, updates table,
+    and redirects the browser back into the FE (Google/Salesforce land the
+    browser here as a full-page navigation, not a fetch call -- see
+    routers/connectors.py::oauth_callback).
+
+    Forces the mock path via patching rather than relying on salesforce
+    lacking real credentials -- both providers may have real creds configured
+    in this environment's .env now, so ambient state can't be assumed.
+    """
+    with patch("routers.connectors._has_real_credentials", return_value=False):
+        response = client.get(
+            "/api/v1/connectors/callback/salesforce?code=auth_code_9928",
+            follow_redirects=False,
+        )
+    assert response.status_code in (302, 307)
+    assert "connected=salesforce" in response.headers["location"]
 
     # Verify db entry
     statement = select(TenantConnection).where(
@@ -103,11 +158,9 @@ def test_oauth_callback(db_session):
 def test_list_files(db_session):
     """Verify explorer routes list files and handle decryption verification.
 
-    Uses salesforce (not google_drive) deliberately: salesforce has no real
-    Connected App configured, so this deterministically exercises the mock
-    file-list path regardless of whatever real Google credentials happen to
-    be set in the environment's .env. See test_list_files_real_google_drive
-    for the real-API path.
+    Forces the mock path via patching -- both providers may have real
+    credentials configured in this environment's .env now, so this can't
+    rely on either one being the "safe" mocked provider by default.
     """
     conn = TenantConnection(
         id=uuid4(),
@@ -120,7 +173,8 @@ def test_list_files(db_session):
     db_session.add(conn)
     db_session.commit()
 
-    response = client.get("/api/v1/connectors/files/salesforce")
+    with patch("routers.connectors._has_real_credentials", return_value=False):
+        response = client.get("/api/v1/connectors/files/salesforce")
     assert response.status_code == 200
     files = response.json()["files"]
     assert len(files) > 0

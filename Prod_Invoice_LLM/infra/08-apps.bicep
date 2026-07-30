@@ -115,6 +115,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     googleRedirectUri: googleRedirectUri
     salesforceClientId: salesforceClientId
     salesforceRedirectUri: salesforceRedirectUri
+    frontendUrl: 'https://${frontendFqdn}'
   }
 }
 

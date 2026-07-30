@@ -7,6 +7,7 @@ import DropZone from "../../components/ingestion/DropZone";
 import StatusTable from "../../components/ingestion/StatusTable";
 import LogTerminal from "../../components/ingestion/LogTerminal";
 import SendInvoiceStatusTable from "../../components/ingestion/SendInvoiceStatusTable";
+import ConnectorBrowseBar from "../../components/ingestion/ConnectorBrowseBar";
 import PageHeader from "../../components/layout/PageHeader";
 import { apiClient } from "../../lib/apiClient";
 
@@ -200,6 +201,7 @@ export default function IngestionPage() {
                 onChange={(e) => setOutboundFile(e.target.files?.[0] || null)}
                 className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-800 file:text-slate-200 file:text-xs"
               />
+              <ConnectorBrowseBar direction="outbound" />
               {outboundError && (
                 <div className="flex items-center gap-2 p-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-[11px]">
                   <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
@@ -253,6 +255,10 @@ export default function IngestionPage() {
 
           {/* Files Selector */}
           <DropZone files={files} onChange={setFiles} />
+
+          {/* Connector-sourced files (Gap 98): only renders once an admin has
+              an active Google Drive/Salesforce connection in Settings. */}
+          <ConnectorBrowseBar direction="inbound" />
 
           {/* Form Status Notification Banner */}
           {error && (

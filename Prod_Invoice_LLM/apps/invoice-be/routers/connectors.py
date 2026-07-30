@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
 from pydantic import BaseModel
 
@@ -14,17 +15,25 @@ from utils.encryption import encrypt_token, decrypt_token
 from utils.connector_oauth import (
     has_real_credentials as _has_real_credentials,
     get_valid_access_token,
+    generate_pkce_pair,
     GOOGLE_TOKEN_URL,
     SALESFORCE_TOKEN_URL,
 )
 from utils.connector_files import list_google_drive_files, list_salesforce_files
 import json
+import redis
 from azure.storage.queue import QueueClient
 from config import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/connectors", tags=["Connectors"])
+
+# PKCE code_verifiers are short-lived, single-use, and irrelevant to any
+# other feature -- Redis with a TTL is a better fit than a DB table (no
+# migration, auto-expires if a user abandons the flow mid-login).
+PKCE_REDIS_PREFIX = "oauth_pkce:"
+PKCE_TTL_SECONDS = 600  # 10 minutes to complete the Salesforce login screen
 
 class ImportPayload(BaseModel):
     file_id: str
@@ -87,10 +96,22 @@ async def get_auth_url(
             }
             return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
         else:  # salesforce
+            # Some Salesforce orgs require PKCE on the Connected App's
+            # authorization flow -- generate a verifier/challenge pair and
+            # stash the verifier server-side (keyed by a one-time `state`)
+            # so oauth_callback() can attach it to the token exchange.
+            code_verifier, code_challenge = generate_pkce_pair()
+            state = uuid4().hex
+            redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+            redis_client.setex(f"{PKCE_REDIS_PREFIX}{state}", PKCE_TTL_SECONDS, code_verifier)
+
             params = {
                 "client_id": settings.SALESFORCE_CLIENT_ID,
                 "redirect_uri": settings.SALESFORCE_REDIRECT_URI,
                 "response_type": "code",
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                "state": state,
             }
             return {"auth_url": f"https://login.salesforce.com/services/oauth2/authorize?{urlencode(params)}"}
 
@@ -106,6 +127,7 @@ async def get_auth_url(
 async def oauth_callback(
     provider: str,
     code: str = Query(..., description="Authorization code from OAuth redirection flow"),
+    state: Optional[str] = Query(None, description="PKCE state, present when auth-url attached a code_challenge (Salesforce)"),
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session)
 ):
@@ -142,6 +164,23 @@ async def oauth_callback(
                 "redirect_uri": settings.SALESFORCE_REDIRECT_URI,
                 "grant_type": "authorization_code",
             }
+            # Retrieve the PKCE code_verifier stashed by get_auth_url(), if
+            # this org's Connected App required PKCE (see generate_pkce_pair).
+            # One-time use: deleted immediately so a replayed callback can't
+            # reuse it.
+            if state:
+                redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+                pkce_key = f"{PKCE_REDIS_PREFIX}{state}"
+                code_verifier = redis_client.get(pkce_key)
+                if code_verifier:
+                    token_payload["code_verifier"] = code_verifier
+                    redis_client.delete(pkce_key)
+                else:
+                    logger.warning(
+                        "No stored PKCE code_verifier found for state=%s (expired or already used); "
+                        "token exchange will fail if this org's Connected App requires PKCE.",
+                        state,
+                    )
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as http_client:
@@ -216,7 +255,11 @@ async def oauth_callback(
     db_session.add(connection)
     db_session.commit()
 
-    return {"success": True, "message": f"Successfully connected to {provider}"}
+    # Google/Salesforce redirect the browser here directly (a full-page
+    # navigation, not a fetch call) -- so this endpoint must send the user
+    # back into the app rather than leaving them on a bare JSON response.
+    frontend_url = settings.FRONTEND_URL.rstrip("/")
+    return RedirectResponse(url=f"{frontend_url}/settings/connectors?connected={prov}")
 
 @router.get("/files/{provider}")
 async def list_connector_files(

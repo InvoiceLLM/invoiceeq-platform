@@ -48,6 +48,9 @@ param salesforceClientId string = ''
 @description('OAuth redirect URI registered with Salesforce for this environment')
 param salesforceRedirectUri string = ''
 
+@description('Real FE origin (https://...) -- oauth_callback() redirects the browser here once a connector OAuth flow completes, since Google/Salesforce hit this backend directly')
+param frontendUrl string = ''
+
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -230,6 +233,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'SALESFORCE_REDIRECT_URI'
               value: salesforceRedirectUri
+            }
+            {
+              name: 'FRONTEND_URL'
+              value: frontendUrl
             }
           ]
         }

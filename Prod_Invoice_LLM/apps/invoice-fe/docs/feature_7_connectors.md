@@ -2,8 +2,10 @@
 
 Build integration connection toggles, folder navigation trees, and bulk file import controls.
 
+**Corrected 2026-07-30**: this doc previously claimed Tasks 7.1/7.2 and all their files were "not yet created" — that was stale. All three files already existed on master (landed in an earlier commit, `7cc9186`) and are now functionally correct end-to-end after two real fixes (see Task 7.1 below and Gap 98 in `fe_features_tracker.md`).
+
 ### Navigation
-Lives under the **Settings** sidebar tab as a sub-section (`Settings → Connectors`), not as its own top-level nav item — consistent with Email Ingestion (`feature_8_email_ingestion.md`) and Webhooks (`feature_9_webhooks.md`), which are also Settings sub-pages. The sidebar itself only ever exposes a single "Settings" entry; these three features are what live inside it.
+The **admin connects once** under **Settings → Connectors** (`IntegrationCard.tsx` grid) — this is a tenant-wide connection (`TenantConnection` has no per-user column), not something each user sets up individually. A **normal user then browses/imports from the Ingestion tab**, not Settings — `components/ingestion/ConnectorBrowseBar.tsx` shows an icon per provider that's Active, on both the Receiving and Sending sub-tabs, and opens `FolderTreeExplorer.tsx` in a modal scoped to that tab's direction (`inbound`/`outbound`). This resolves an earlier open question in this doc about which screen owns file-browsing.
 
 ### Theme & Styling Specifications
 * Connector cards: `bg-[#151B26] border border-[#222D3D] rounded-xl p-4`.
@@ -11,23 +13,18 @@ Lives under the **Settings** sidebar tab as a sub-section (`Settings → Connect
 * File Tree node folder rows: `hover:bg-[#1E293B] cursor-pointer rounded px-2 py-1 text-slate-300 transition-colors`.
 
 ### File Coordinates
-* Connectors Page: [apps/invoice-fe/app/settings/connectors/page.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/settings/connectors/page.tsx) *(not yet created — moved under `settings/` to match Tasks 8/9's convention; was previously planned as a standalone `/connectors` route)*
-* Integration Card Grid: [apps/invoice-fe/components/connectors/IntegrationCard.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/connectors/IntegrationCard.tsx) *(not yet created — Task 7.1 has no component file today)*
-* Explorer Component: [apps/invoice-fe/components/connectors/FolderTreeExplorer.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/connectors/FolderTreeExplorer.tsx) *(not yet created)*
-* Proxy Routes: none exist yet under `app/api/connectors/`. Backend endpoints are already live: `get_connectors_status()`, `get_auth_url()`, `oauth_callback()`, `list_connector_files()`, `trigger_file_import()` — all currently mock data, see `docs/feature_9_connectors.md`
+* Connectors Page (admin, one-time setup): [apps/invoice-fe/app/settings/connectors/page.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/settings/connectors/page.tsx)
+* Integration Card Grid: [apps/invoice-fe/components/connectors/IntegrationCard.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/connectors/IntegrationCard.tsx)
+* Explorer Component (reused by both Settings and Ingestion): [apps/invoice-fe/components/connectors/FolderTreeExplorer.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/connectors/FolderTreeExplorer.tsx)
+* Ingestion Browse Bar (normal user, per-tab): [apps/invoice-fe/components/ingestion/ConnectorBrowseBar.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/ingestion/ConnectorBrowseBar.tsx)
+* Proxy Routes: `app/api/connectors/{status,auth-url,callback,files,import}/route.ts` — all present. `callback/[provider]/route.ts` needed a redirect-aware rewrite (2026-07-30): it used to proxy via `proxyJson`, which follows redirects server-side and would have relayed the wrong response; now uses `redirect: "manual"` and forwards the Location header as a real browser redirect.
+* Backend endpoints: `get_connectors_status()`, `get_auth_url()`, `oauth_callback()`, `list_connector_files()`, `trigger_file_import()` — Google Drive does real OAuth + real file listing/download as of 2026-07-30, see `docs/feature_9_connectors.md`.
 
 ### Tasks
-- [ ] **Task 7.1: Build Integration Cards Grid**
-  - Render configuration modules for Google Drive and Salesforce.
-  - Support configuration settings to select default import/export directories, mapped independently for Inbound (AP) and Outbound (AR) operations.
-  - Implement active connection toggles calling oauth redirection routes.
-  - Display active status states based on `/api/v1/connectors/status`.
-- [ ] **Task 7.2: Code Directory Folder Explorer**
-  - Fetch folders and contents from `/api/v1/connectors/files/{provider}`.
-  - Render an interactive tree node list with checkboxes to select items.
-- [ ] **Task 7.3: Implement Bulk Import Trigger**
-  - Implement a `Import Selected Files` action button.
-  - Post list of chosen documents to `/api/v1/connectors/import/{provider}` and show progress toasts.
+- `[x]` **Task 7.1: Build Integration Cards Grid** — done, plus one real bug found and fixed 2026-07-30: `handleConnect()` never redirected the browser to the real OAuth consent screen — it faked the authorization code client-side (`mock_code_for_${provider}`) and called the callback directly. Harmless while the backend was also fully mocked; would have actively broken the moment the backend started doing real token exchange (Feature 9, Gap 98), since Google/Salesforce would reject a fabricated code. Fixed: `handleConnect` now does `window.location.href = auth_url`; a confirmation banner reads `?connected=` after the round trip.
+- `[x]` **Task 7.2: Code Directory Folder Explorer** — done; already correctly wired to the real endpoints, no bug found here. Now also mounted from the Ingestion tab (`ConnectorBrowseBar`), not just Settings.
+- `[x]` **Task 7.3: Implement Bulk Import Trigger** — done (`FolderTreeExplorer`'s "Import Selected Files" button).
 
 ### Verification Plan
-* **Manual Verification**: Open the connectors view, click connect on a card, browse the remote mock folder structure, and click import.
+* **Manual Verification**: Settings → Connectors → Connect (real Google login now required — no more fake-code shortcut) → status flips Active → go to Ingestion (Receiving or Sending) → the Google Drive icon appears under "Load from:" → browse/select/import.
+* **Automated**: FE `npx tsc --noEmit` and `npm run build` both clean as of 2026-07-30; backend contract covered by `tests/test_connectors.py` (14 tests).

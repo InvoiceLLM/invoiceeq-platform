@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     DEFAULT_FREE_INVOICES_LIMIT: int = 50
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+    # Where oauth_callback() redirects the browser back to after a connector
+    # OAuth flow completes -- Google/Salesforce hit this backend directly
+    # (see GOOGLE_REDIRECT_URI), so the backend itself must send the user
+    # back into the app rather than leaving them on a bare JSON response.
+    FRONTEND_URL: str = "http://localhost:3000"
     MOCK_EMBEDDINGS: bool = False
     # Gap 12: directory watcher only accepts paths under this base dir (path-traversal
     # guard against arbitrary server filesystem reads). Empty = feature disabled.

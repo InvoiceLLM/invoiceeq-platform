@@ -8,7 +8,8 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, HardDrive, Cpu, Loader2 } from "lucide-react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { ArrowLeft, HardDrive, Cpu, Loader2, CheckCircle } from "lucide-react";
 import IntegrationCard from "@/components/connectors/IntegrationCard";
 import FolderTreeExplorer from "@/components/connectors/FolderTreeExplorer";
 
@@ -24,6 +25,10 @@ interface ConnectionStatuses {
 }
 
 export default function ConnectorsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const justConnected = searchParams.get("connected");
+
   const [statuses, setStatuses] = useState<ConnectionStatuses | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnecting, setIsConnecting] = useState<Record<string, boolean>>({});
@@ -73,28 +78,62 @@ export default function ConnectorsPage() {
         },
       });
     }
+
+    // Strip ?connected= from the URL after reading it, so a refresh doesn't
+    // keep re-showing the confirmation banner.
+    if (justConnected) {
+      router.replace("/settings/connectors");
+    }
+
+    // This page is also what renders inside the OAuth popup itself once
+    // Google/Salesforce redirects back (see handleConnect below) -- if we're
+    // running inside a popup (window.opener set) and just connected
+    // successfully, show the banner briefly then close automatically so the
+    // user lands back on the main app window without an extra manual step.
+    if (justConnected && typeof window !== "undefined" && window.opener) {
+      const timer = setTimeout(() => window.close(), 1200);
+      return () => clearTimeout(timer);
+    }
   }, []);
 
-  // --- OAuth trigger & callback loop simulation ---
+  // --- OAuth trigger: opens the provider's real consent screen in a popup
+  // instead of navigating the main window away, so the user never loses
+  // their place in the app. A true <iframe> embed isn't possible here --
+  // Google/Salesforce both block being framed (X-Frame-Options/CSP) to
+  // prevent clickjacking on their login pages -- a popup is the closest
+  // equivalent that still keeps the main window in place. ---
   const handleConnect = async (provider: string) => {
     setIsConnecting((prev) => ({ ...prev, [provider]: true }));
     try {
-      // 1. Fetch authorization consent URL
       const resUrl = await fetch(`/api/connectors/auth-url/${provider}`);
       if (!resUrl.ok) throw new Error("Failed to get auth URL");
       const { auth_url } = await resUrl.json();
-      console.log(`OAuth consent screen URL for ${provider}: ${auth_url}`);
 
-      // 2. Simulate user consenting and returning to callback route
-      const mockCode = `mock_code_for_${provider}`;
-      const resCallback = await fetch(`/api/connectors/callback/${provider}?code=${mockCode}`);
-      if (!resCallback.ok) throw new Error("OAuth callback failed");
-      
-      // Reload statuses
-      await loadStatuses();
+      const popup = window.open(
+        auth_url,
+        "connector_oauth",
+        "width=520,height=680,menubar=no,toolbar=no,location=yes,status=no"
+      );
+
+      if (!popup) {
+        // Popup blocked by the browser -- fall back to a full-page redirect
+        // rather than silently failing with no way to connect at all.
+        window.location.href = auth_url;
+        return;
+      }
+
+      // Poll for the popup closing (either the user cancelled, or it
+      // auto-closed itself after a successful connect -- see the effect
+      // above) and refresh this window's status either way.
+      const pollInterval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(pollInterval);
+          setIsConnecting((prev) => ({ ...prev, [provider]: false }));
+          loadStatuses();
+        }
+      }, 500);
     } catch (err) {
       console.error("Connection failed", err);
-    } finally {
       setIsConnecting((prev) => ({ ...prev, [provider]: false }));
     }
   };
@@ -169,9 +208,18 @@ export default function ConnectorsPage() {
         </div>
       </header>
 
+      {justConnected && (
+        <div className="max-w-4xl w-full mx-auto px-6 pt-4">
+          <div className="flex items-center gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-xs">
+            <CheckCircle className="w-4 h-4 flex-shrink-0" />
+            <span>Connected to {justConnected.replace("_", " ")}.</span>
+          </div>
+        </div>
+      )}
+
       {/* Main Grid */}
       <main className="flex-1 px-6 py-8 max-w-4xl w-full mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        
+
         {/* Google Drive Card */}
         <IntegrationCard
           provider="google_drive"

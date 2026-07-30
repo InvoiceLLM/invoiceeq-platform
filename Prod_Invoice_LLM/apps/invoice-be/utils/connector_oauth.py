@@ -7,7 +7,10 @@ populates a TenantConnection row; this module covers what happens after --
 keeping that connection's access token valid for as long as the refresh
 token remains good, without asking the user to log in again.
 """
+import base64
+import hashlib
 import logging
+import secrets
 from datetime import datetime, timedelta
 
 import httpx
@@ -20,6 +23,19 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 SALESFORCE_TOKEN_URL = "https://login.salesforce.com/services/oauth2/token"
+
+
+def generate_pkce_pair() -> tuple[str, str]:
+    """Generates a PKCE code_verifier/code_challenge pair (RFC 7636, S256).
+
+    Salesforce Connected Apps can require PKCE on the authorization code
+    flow (some orgs enforce it by default) -- this is only ever needed for
+    the initial auth-url/callback exchange, never for a refresh_token grant.
+    """
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(40)).rstrip(b"=").decode("ascii")
+    challenge_bytes = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(challenge_bytes).rstrip(b"=").decode("ascii")
+    return code_verifier, code_challenge
 
 
 def has_real_credentials(provider: str, settings) -> bool:
