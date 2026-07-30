@@ -96,6 +96,11 @@ class TenantConnection(SQLModel, table=True):
     token_expiry: datetime
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Salesforce's REST API base is per-org (unlike Google Drive's fixed
+    # www.googleapis.com) -- Salesforce returns this in every token response
+    # (initial exchange and refresh alike), so it must be stored per-connection
+    # to make any later API call. Unused by google_drive.
+    instance_url: str | None = Field(default=None)
 
 class ChatSession(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)

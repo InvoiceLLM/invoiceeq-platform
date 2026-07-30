@@ -31,6 +31,14 @@ param clerkSecretKey string
 @secure()
 param tokenEncryptionKey string
 
+@description('Our company Google Cloud OAuth app Client Secret (connectors: Drive)')
+@secure()
+param googleClientSecret string
+
+@description('Our company Salesforce Connected App Consumer Secret (connectors)')
+@secure()
+param salesforceClientSecret string
+
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
 var postgresServerName = 'psql-${namingPrefix}-${environment}'
@@ -168,4 +176,25 @@ resource secretEncryptionKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-output secretsSeeded int = 7
+// Connectors (Feature 9): one shared platform-level OAuth app per provider,
+// owned by us -- individual tenants authenticate their own Drive/Salesforce
+// account through it (see routers/connectors.py::_has_real_credentials).
+// Client IDs/redirect URIs are not secret (they're public in the browser
+// redirect URL) and are passed as plain params in 08-apps.bicep instead.
+resource secretGoogleClientSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'GOOGLE-CLIENT-SECRET'
+  properties: {
+    value: googleClientSecret
+  }
+}
+
+resource secretSalesforceClientSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'SALESFORCE-CLIENT-SECRET'
+  properties: {
+    value: salesforceClientSecret
+  }
+}
+
+output secretsSeeded int = 9

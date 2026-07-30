@@ -142,11 +142,11 @@ Write-Host "`nStage 5/10: Seeding Key Vault secrets..." -ForegroundColor Cyan
 az deployment group create --template-file "$PSScriptRoot/05-secrets.bicep" @commonParams --parameters $SecretsFile
 Assert-Stage "Stage 5 (secrets)" $LASTEXITCODE
 $secretCount = az keyvault secret list --vault-name "kv-$NamingPrefix-$Environment" --query "length(@)" -o tsv
-if ($secretCount -ne "7") {
-    Write-Host "Expected 7 secrets in Key Vault, found $secretCount - stopping." -ForegroundColor Red
+if ($secretCount -ne "9") {
+    Write-Host "Expected 9 secrets in Key Vault, found $secretCount - stopping." -ForegroundColor Red
     exit 1
 }
-Write-Host "Key Vault has all 7 expected secrets" -ForegroundColor Green
+Write-Host "Key Vault has all 9 expected secrets" -ForegroundColor Green
 
 # ---------- Stage 6: Compute environment (CAE + ChromaDB) ----------
 Write-Host "`nStage 6/10: Container Apps Environment + ChromaDB..." -ForegroundColor Cyan

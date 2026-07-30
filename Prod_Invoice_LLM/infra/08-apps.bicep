@@ -41,6 +41,12 @@ param clerkJwtIssuer string = ''
 @description('Clerk JWKS endpoint URL (public)')
 param clerkJwksUrl string = ''
 
+@description('Our company Google Cloud OAuth Client ID (connectors: Drive) -- public value, see invoice-be.bicep')
+param googleClientId string = ''
+
+@description('Our company Salesforce Connected App Consumer Key (connectors) -- public value, see invoice-be.bicep')
+param salesforceClientId string = ''
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
@@ -80,6 +86,13 @@ resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' exist
 var frontendFqdn = 'ca-invoice-fe-${environment}.${cae.properties.defaultDomain}'
 var websiteFqdn = 'ca-invoice-website-${environment}.${cae.properties.defaultDomain}'
 
+// OAuth redirect URIs must be the FE's public origin, not the backend's --
+// backendApp's ingress is external:false (internal-only), so Google/Salesforce
+// redirect the browser back to the FE, whose own /api/connectors/callback/
+// [provider] route proxies through to the backend's real callback endpoint.
+var googleRedirectUri = 'https://${frontendFqdn}/api/connectors/callback/google_drive'
+var salesforceRedirectUri = 'https://${frontendFqdn}/api/connectors/callback/salesforce'
+
 module backendApp './modules/compute/invoice-be.bicep' = {
   name: 'backend-deploy'
   params: {
@@ -98,6 +111,10 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     clerkJwtIssuer: clerkJwtIssuer
     clerkJwksUrl: clerkJwksUrl
     allowedOrigins: 'https://${frontendFqdn},https://${websiteFqdn}'
+    googleClientId: googleClientId
+    googleRedirectUri: googleRedirectUri
+    salesforceClientId: salesforceClientId
+    salesforceRedirectUri: salesforceRedirectUri
   }
 }
 

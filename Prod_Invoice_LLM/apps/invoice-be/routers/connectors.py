@@ -1,7 +1,9 @@
 import logging
+from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 from typing import Optional
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import Session, select
 from pydantic import BaseModel
@@ -9,6 +11,13 @@ from pydantic import BaseModel
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import TenantConnection, Invoice
 from utils.encryption import encrypt_token, decrypt_token
+from utils.connector_oauth import (
+    has_real_credentials as _has_real_credentials,
+    get_valid_access_token,
+    GOOGLE_TOKEN_URL,
+    SALESFORCE_TOKEN_URL,
+)
+from utils.connector_files import list_google_drive_files, list_salesforce_files
 import json
 from azure.storage.queue import QueueClient
 from config import get_settings
@@ -61,8 +70,32 @@ async def get_auth_url(
             detail=f"Invalid connector provider '{provider}'."
         )
 
-    # In production, construct URL using developer settings.
-    # Fallback to standard mock OAuth consent URL for testing/development.
+    settings = get_settings()
+
+    if _has_real_credentials(prov, settings):
+        if prov == "google_drive":
+            # access_type=offline + prompt=consent: Google only issues a
+            # refresh_token when consent is freshly granted, so without these
+            # a re-connect would silently stop returning one after the first time.
+            params = {
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+                "response_type": "code",
+                "access_type": "offline",
+                "prompt": "consent",
+                "scope": "https://www.googleapis.com/auth/drive.readonly",
+            }
+            return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
+        else:  # salesforce
+            params = {
+                "client_id": settings.SALESFORCE_CLIENT_ID,
+                "redirect_uri": settings.SALESFORCE_REDIRECT_URI,
+                "response_type": "code",
+            }
+            return {"auth_url": f"https://login.salesforce.com/services/oauth2/authorize?{urlencode(params)}"}
+
+    # No real credentials configured yet for this provider -- fall back to a
+    # mock consent URL so local/dev testing still works end-to-end.
     mock_auth_urls = {
         "google_drive": "https://accounts.google.com/o/oauth2/v2/auth?client_id=mock_google_id&response_type=code&scope=https://www.googleapis.com/auth/drive.readonly",
         "salesforce": "https://login.salesforce.com/services/oauth2/authorize?client_id=mock_salesforce_id&response_type=code"
@@ -86,15 +119,72 @@ async def oauth_callback(
             detail=f"Invalid connector provider '{provider}'."
         )
 
-    # In production, make HTTP client POST exchange to Google/Salesforce token endpoints.
-    # For now, simulate exchange of authorization code for credentials.
-    mock_access_token = f"mock_access_token_{prov}_{uuid4().hex[:6]}"
-    mock_refresh_token = f"mock_refresh_token_{prov}_{uuid4().hex[:6]}"
-    expiry_time = datetime.utcnow() + timedelta(hours=1)
+    settings = get_settings()
+    access_token: str
+    refresh_token: Optional[str]
+
+    if _has_real_credentials(prov, settings):
+        if prov == "google_drive":
+            token_url = GOOGLE_TOKEN_URL
+            token_payload = {
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            }
+        else:  # salesforce
+            token_url = SALESFORCE_TOKEN_URL
+            token_payload = {
+                "code": code,
+                "client_id": settings.SALESFORCE_CLIENT_ID,
+                "client_secret": settings.SALESFORCE_CLIENT_SECRET,
+                "redirect_uri": settings.SALESFORCE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                token_response = await http_client.post(token_url, data=token_payload)
+        except httpx.HTTPError as e:
+            logger.error("Token exchange request to %s failed for provider %s: %s", token_url, prov, e)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Could not reach {provider}'s token endpoint."
+            )
+
+        if token_response.status_code != 200:
+            logger.error(
+                "Token exchange rejected by %s for provider %s: %s %s",
+                token_url, prov, token_response.status_code, token_response.text,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"{provider} rejected the authorization code."
+            )
+
+        token_data = token_response.json()
+        access_token = token_data["access_token"]
+        # Google only returns a refresh_token on fresh consent (see
+        # access_type=offline/prompt=consent above); Salesforce always
+        # returns one for the web-server OAuth flow used here.
+        refresh_token = token_data.get("refresh_token")
+        expiry_time = datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 3600))
+        # Salesforce's API base is per-org and comes back as instance_url on
+        # every token response; Google never returns this key.
+        instance_url = token_data.get("instance_url")
+    else:
+        # No real credentials configured yet for this provider -- keep the
+        # simulated exchange so local/dev testing without a registered OAuth
+        # app still works end-to-end.
+        access_token = f"mock_access_token_{prov}_{uuid4().hex[:6]}"
+        refresh_token = f"mock_refresh_token_{prov}_{uuid4().hex[:6]}"
+        expiry_time = datetime.utcnow() + timedelta(hours=1)
+        instance_url = None
 
     # Encrypt the tokens using AES-256 Fernet helper
-    enc_access = encrypt_token(mock_access_token)
-    enc_refresh = encrypt_token(mock_refresh_token)
+    enc_access = encrypt_token(access_token)
+    enc_refresh = encrypt_token(refresh_token) if refresh_token else None
 
     # Check if connection already exists
     statement = select(TenantConnection).where(
@@ -112,13 +202,16 @@ async def oauth_callback(
             encrypted_refresh_token=enc_refresh,
             token_expiry=expiry_time,
             status="active",
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
+            instance_url=instance_url,
         )
     else:
         connection.encrypted_access_token = enc_access
         connection.encrypted_refresh_token = enc_refresh
         connection.token_expiry = expiry_time
         connection.status = "active"
+        if instance_url:
+            connection.instance_url = instance_url
 
     db_session.add(connection)
     db_session.commit()
@@ -162,16 +255,45 @@ async def list_connector_files(
             detail=f"Integration '{provider}' is not connected for this tenant."
         )
 
-    # Decrypt key to check access validity
+    settings = get_settings()
+
+    if _has_real_credentials(prov, settings):
+        # Real listing (Gap 98): stays inert for a provider until that
+        # provider's real Client ID is configured (Google today; Salesforce
+        # once a real Connected App exists to test against).
+        try:
+            access_token = get_valid_access_token(connection, settings, db_session)
+        except RuntimeError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
+        try:
+            if prov == "google_drive":
+                files = list_google_drive_files(access_token, folder_id)
+            else:  # salesforce
+                if not connection.instance_url:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Salesforce connection is missing instance_url; reconnect this integration."
+                    )
+                files = list_salesforce_files(access_token, connection.instance_url)
+        except httpx.HTTPError as e:
+            logger.error("Real %s file listing failed: %s", prov, e)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Could not list files from {provider}."
+            )
+        return {"files": files}
+
+    # No real credentials configured yet for this provider -- fall back to a
+    # mock file list so local/dev testing still works end-to-end.
     try:
-        access_token = decrypt_token(connection.encrypted_access_token)
+        decrypt_token(connection.encrypted_access_token)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to decrypt API credentials credentials."
         )
 
-    # Mock file metadata list representing drive files
     if prov == "google_drive":
         mock_files = [
             {"id": "gdrive_file_101", "name": "invoice_acme_hardware.pdf", "type": "file", "size_bytes": 104857},

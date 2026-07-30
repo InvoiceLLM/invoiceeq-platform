@@ -2,13 +2,14 @@ import json
 import logging
 import time
 from datetime import datetime
+from typing import Optional
 import redis
 from config import get_settings, Settings
 from sqlmodel import Session, select
 from database import engine
 from uuid import UUID, uuid4
 from azure.storage.queue import QueueClient
-from models import Invoice, ExtractionTemplate
+from models import Invoice, ExtractionTemplate, TenantConnection
 from agents.extraction_agent import run_extraction_agent
 
 
@@ -262,11 +263,14 @@ def handle_import_connector_file(
     file_id: str,
     tenant_id: str,
     direction: str = "inbound",
+    db_session: Optional[Session] = None,
 ) -> dict:
-    """Task 9.4 — Queue-worker job for connector file imports.
+    """Task 9.4 / Gap 98 — Queue-worker job for connector file imports.
 
     Flow (inbound / AP):
-      1. Download file bytes from provider (mock in dev; real token call in prod).
+      1. Download file bytes from provider (real Drive API call once a real
+         TenantConnection + company OAuth app exist for this provider;
+         stub bytes otherwise -- see Gap 98 in be_features_tracker.md).
       2. Upload to Azure Blob Storage or Local Storage under the tenant's prefix.
       3. Enqueue a ``process_invoice`` task to feed the extraction pipeline.
 
@@ -274,16 +278,54 @@ def handle_import_connector_file(
       1. Same download step.
       2. Upload to Azure Blob Storage or Local Storage under the tenant's prefix.
       3. No extraction queued — file is stored for AR record-keeping only.
+
+    ``db_session`` is injectable for tests; production (queue-worker) calls
+    leave it as None and get a real, short-lived ``Session(engine)``.
     """
     import os
     from services.storage import LOCAL_STORAGE_DIR
+    from utils.connector_oauth import has_real_credentials, get_valid_access_token
+    from utils.connector_files import download_google_drive_file, download_salesforce_file
+
     settings = get_settings()
     batch_id = str(uuid4())
 
-    mock_pdf_bytes = (
-        b"%PDF-1.4 stub content for connector import "
-        + f"provider={provider} file_id={file_id}".encode()
-    )
+    owns_session = db_session is None
+    if owns_session:
+        db_session = Session(engine)
+
+    file_bytes = None
+    try:
+        connection = db_session.exec(
+            select(TenantConnection).where(
+                TenantConnection.tenant_id == UUID(tenant_id),
+                TenantConnection.provider == provider,
+            )
+        ).first()
+
+        if connection and connection.status == "active" and has_real_credentials(provider, settings):
+            access_token = get_valid_access_token(connection, settings, db_session)
+            if provider == "google_drive":
+                file_bytes = download_google_drive_file(access_token, file_id)
+            elif provider == "salesforce" and connection.instance_url:
+                file_bytes = download_salesforce_file(access_token, connection.instance_url, file_id)
+            if file_bytes is not None:
+                logger.info(
+                    "Downloaded real file from %s: file_id=%s size=%d bytes",
+                    provider, file_id, len(file_bytes),
+                )
+    finally:
+        if owns_session:
+            db_session.close()
+
+    if file_bytes is None:
+        # No active real connection for this tenant/provider (or provider
+        # not yet on a real OAuth app) -- keep the simulated content so
+        # local/dev testing without a registered connection still works.
+        file_bytes = (
+            b"%PDF-1.4 stub content for connector import "
+            + f"provider={provider} file_id={file_id}".encode()
+        )
     file_name = f"connector_{provider}_{file_id}.pdf"
     direction_prefix = "outbound" if direction == "outbound" else "inbound"
     blob_path = f"tenants/{tenant_id}/{direction_prefix}/{batch_id}/{file_name}"
@@ -304,7 +346,7 @@ def handle_import_connector_file(
                 pass
                 
             blob_client = blob_service.get_blob_client(container=container_name, blob=blob_path)
-            blob_client.upload_blob(mock_pdf_bytes, overwrite=True)
+            blob_client.upload_blob(file_bytes, overwrite=True)
             uploaded_path = f"azure://{container_name}/{blob_path}"
             logger.info(
                 "Connector import uploaded to Azure: provider=%s file_id=%s direction=%s path=%s",
@@ -318,7 +360,7 @@ def handle_import_connector_file(
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         logger.info("Writing connector PDF file locally for offline fallback: %s", local_path)
         with open(local_path, "wb") as f:
-            f.write(mock_pdf_bytes)
+            f.write(file_bytes)
         uploaded_path = local_path
 
     if direction == "inbound":

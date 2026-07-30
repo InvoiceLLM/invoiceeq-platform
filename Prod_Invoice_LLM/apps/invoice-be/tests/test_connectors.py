@@ -101,23 +101,60 @@ def test_oauth_callback(db_session):
     assert decrypt_token(conn.encrypted_access_token).startswith("mock_access_token_salesforce")
 
 def test_list_files(db_session):
-    """Verify explorer routes list files and handle decryption verification."""
+    """Verify explorer routes list files and handle decryption verification.
+
+    Uses salesforce (not google_drive) deliberately: salesforce has no real
+    Connected App configured, so this deterministically exercises the mock
+    file-list path regardless of whatever real Google credentials happen to
+    be set in the environment's .env. See test_list_files_real_google_drive
+    for the real-API path.
+    """
     conn = TenantConnection(
         id=uuid4(),
         tenant_id=MOCK_TENANT_ID,
-        provider="google_drive",
-        encrypted_access_token=encrypt_token("drive_secret"),
+        provider="salesforce",
+        encrypted_access_token=encrypt_token("sf_secret"),
         token_expiry=datetime.utcnow() + timedelta(hours=1),
         status="active"
     )
     db_session.add(conn)
     db_session.commit()
 
-    response = client.get("/api/v1/connectors/files/google_drive")
+    response = client.get("/api/v1/connectors/files/salesforce")
     assert response.status_code == 200
     files = response.json()["files"]
     assert len(files) > 0
-    assert files[0]["name"] == "invoice_acme_hardware.pdf"
+    assert files[0]["name"] == "Attachment_ACME_PO_99.pdf"
+
+def test_list_files_real_google_drive(db_session):
+    """Gap 98: once a provider has a real Client ID configured (google_drive,
+    via the dev's personal GCP app standing in as the company's), the files
+    endpoint must call the real Drive API instead of returning the mock list.
+    """
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("real_access_token"),
+        encrypted_refresh_token=encrypt_token("real_refresh_token"),
+        token_expiry=datetime.utcnow() + timedelta(hours=1),
+        status="active"
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    with patch("routers.connectors.list_google_drive_files") as mock_list:
+        mock_list.return_value = [
+            {"id": "real_drive_1", "name": "real_supplier_invoice.pdf", "type": "file", "size_bytes": 5000},
+        ]
+        response = client.get("/api/v1/connectors/files/google_drive")
+
+    assert response.status_code == 200
+    files = response.json()["files"]
+    assert files == [{"id": "real_drive_1", "name": "real_supplier_invoice.pdf", "type": "file", "size_bytes": 5000}]
+    mock_list.assert_called_once()
+    called_access_token = mock_list.call_args[0][0]
+    assert called_access_token == "real_access_token"
 
 def test_trigger_import(db_session):
     """Verify that file imports dispatch back-end Azure Storage Queue tasks (inbound, default)."""
@@ -182,8 +219,15 @@ def test_list_files_invalid_direction(db_session):
 
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
-def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc):
-    """handle_import_connector_file succeeds (simulated) when no Azure creds set."""
+def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc, db_session):
+    """handle_import_connector_file succeeds (simulated) when no Azure creds set.
+
+    Passes the isolated in-memory db_session explicitly -- with no
+    TenantConnection row seeded, the lookup finds nothing and the handler
+    falls back to the stub bytes, deterministically, regardless of whatever
+    real connections happen to exist in this environment's actual database
+    (the handler defaults to a real Session(engine) when none is passed).
+    """
     mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
     mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
     from queue_worker.handlers import handle_import_connector_file
@@ -192,6 +236,7 @@ def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc):
         file_id="test_file_001",
         tenant_id=str(MOCK_TENANT_ID),
         direction="inbound",
+        db_session=db_session,
     )
     assert result["success"] is True
     assert result["direction"] == "inbound"
@@ -200,7 +245,7 @@ def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc):
 
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
-def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc):
+def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc, db_session):
     """handle_import_connector_file stores to outbound prefix, no extraction queued."""
     mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
     mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
@@ -210,7 +255,98 @@ def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc):
         file_id="sf_doc_888",
         tenant_id=str(MOCK_TENANT_ID),
         direction="outbound",
+        db_session=db_session,
     )
     assert result["success"] is True
     assert result["direction"] == "outbound"
     assert "outbound" in result["blob_path"]
+
+
+@patch("utils.connector_files.download_google_drive_file")
+@patch("azure.storage.blob.BlobServiceClient")
+@patch("queue_worker.handlers.QueueClient")
+def test_handle_import_connector_file_google_drive_real_download(mock_qc, mock_bsc, mock_download, db_session):
+    """Gap 98: with a real, active google_drive TenantConnection, the handler
+    must download the file's real bytes via the Drive API instead of writing
+    the stub PDF marker.
+    """
+    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
+    mock_download.return_value = b"%PDF-1.4 real bytes downloaded from drive"
+
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("real_access_token_xyz"),
+        encrypted_refresh_token=encrypt_token("real_refresh_token_xyz"),
+        token_expiry=datetime.utcnow() + timedelta(hours=1),
+        status="active",
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    from queue_worker.handlers import handle_import_connector_file
+    result = handle_import_connector_file(
+        provider="google_drive",
+        file_id="real_drive_file_999",
+        tenant_id=str(MOCK_TENANT_ID),
+        direction="inbound",
+        db_session=db_session,
+    )
+
+    assert result["success"] is True
+    mock_download.assert_called_once_with("real_access_token_xyz", "real_drive_file_999")
+    with open(result["blob_path"], "rb") as f:
+        content = f.read()
+    assert content == b"%PDF-1.4 real bytes downloaded from drive"
+    assert b"stub content" not in content
+
+
+@patch("utils.connector_oauth.httpx.post")
+@patch("azure.storage.blob.BlobServiceClient")
+@patch("queue_worker.handlers.QueueClient")
+@patch("utils.connector_files.download_google_drive_file")
+def test_handle_import_connector_file_refreshes_expired_token(mock_download, mock_qc, mock_bsc, mock_post, db_session):
+    """Gap 98 / 'connect once': an expired access token with a stored
+    refresh_token must be silently refreshed (real POST to Google's token
+    endpoint) rather than requiring the user to reconnect.
+    """
+    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
+    mock_download.return_value = b"%PDF-1.4 downloaded after refresh"
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "refreshed_access_token", "expires_in": 3600}
+    mock_post.return_value = mock_response
+
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("stale_access_token"),
+        encrypted_refresh_token=encrypt_token("real_refresh_token_abc"),
+        token_expiry=datetime.utcnow() - timedelta(minutes=5),  # already expired
+        status="active",
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    from queue_worker.handlers import handle_import_connector_file
+    result = handle_import_connector_file(
+        provider="google_drive",
+        file_id="drive_file_after_refresh",
+        tenant_id=str(MOCK_TENANT_ID),
+        direction="inbound",
+        db_session=db_session,
+    )
+
+    assert result["success"] is True
+    mock_post.assert_called_once()
+    mock_download.assert_called_once_with("refreshed_access_token", "drive_file_after_refresh")
+
+    # The refreshed token must be persisted back onto the connection row.
+    db_session.refresh(conn)
+    assert decrypt_token(conn.encrypted_access_token) == "refreshed_access_token"
+    assert conn.token_expiry > datetime.utcnow()

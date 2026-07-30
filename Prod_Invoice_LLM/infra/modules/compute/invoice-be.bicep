@@ -32,6 +32,22 @@ param clerkJwksUrl string = ''
 @description('Comma-separated allowed CORS origins (real FE/website FQDNs, computed by the orchestrator)')
 param allowedOrigins string = ''
 
+// Connectors (Feature 9): one shared platform-level OAuth app per provider
+// (our company's), not per-tenant -- see routers/connectors.py. Client IDs
+// and redirect URIs are public (visible in the browser's OAuth redirect),
+// so they're plain params here; only the client secrets come from Key Vault.
+@description('Our company Google Cloud OAuth Client ID (connectors: Drive)')
+param googleClientId string = ''
+
+@description('OAuth redirect URI registered with Google for this environment')
+param googleRedirectUri string = ''
+
+@description('Our company Salesforce Connected App Consumer Key (connectors)')
+param salesforceClientId string = ''
+
+@description('OAuth redirect URI registered with Salesforce for this environment')
+param salesforceRedirectUri string = ''
+
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -95,6 +111,16 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'storage-conn-secret'
           keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'google-client-secret-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/GOOGLE-CLIENT-SECRET'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'salesforce-client-secret-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/SALESFORCE-CLIENT-SECRET'
           identity: userAssignedIdentityId
         }
       ]
@@ -180,6 +206,30 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_STORAGE_CONNECTION_STRING'
               secretRef: 'storage-conn-secret'
+            }
+            {
+              name: 'GOOGLE_CLIENT_ID'
+              value: googleClientId
+            }
+            {
+              name: 'GOOGLE_CLIENT_SECRET'
+              secretRef: 'google-client-secret-secret'
+            }
+            {
+              name: 'GOOGLE_REDIRECT_URI'
+              value: googleRedirectUri
+            }
+            {
+              name: 'SALESFORCE_CLIENT_ID'
+              value: salesforceClientId
+            }
+            {
+              name: 'SALESFORCE_CLIENT_SECRET'
+              secretRef: 'salesforce-client-secret-secret'
+            }
+            {
+              name: 'SALESFORCE_REDIRECT_URI'
+              value: salesforceRedirectUri
             }
           ]
         }

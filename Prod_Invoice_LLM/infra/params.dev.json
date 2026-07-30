@@ -40,6 +40,12 @@
     },
     "websiteImage": {
       "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "googleClientId": {
+      "value": "462421932899-l4l5oesadqrmfrbm2i6er3a6gpfmsm3m.apps.googleusercontent.com"
+    },
+    "salesforceClientId": {
+      "value": "your_salesforce_consumer_key_placeholder"
     }
   }
 }
