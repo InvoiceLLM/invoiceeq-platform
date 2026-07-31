@@ -68,6 +68,12 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
             Features
           </Link>
           <Link
+            href="#pricing"
+            className="hover:text-white hover:drop-shadow-[0_0_8px_rgba(59,130,246,0.5)] transition-all duration-200"
+          >
+            Pricing
+          </Link>
+          <Link
             href="/login"
             className="hover:text-white hover:drop-shadow-[0_0_8px_rgba(59,130,246,0.5)] transition-all duration-200"
           >
@@ -109,6 +115,13 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
               className="px-3 py-2 rounded-lg hover:bg-white/5 hover:text-white"
             >
               Features
+            </Link>
+            <Link
+              href="#pricing"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-white/5 hover:text-white"
+            >
+              Pricing
             </Link>
             <Link
               href="/login"

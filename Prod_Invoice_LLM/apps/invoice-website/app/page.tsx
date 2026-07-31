@@ -6,6 +6,7 @@ import { Hero } from "@/components/marketing/Hero";
 import { FlowsShowcaseSection } from "@/components/marketing/FlowsShowcaseSection";
 import { AITeamSection } from "@/components/marketing/AITeamSection";
 import { WorkspaceShowcase } from "@/components/marketing/WorkspaceShowcase";
+import { PricingTable } from "@/components/marketing/PricingTable";
 import { BenefitsStrip } from "@/components/marketing/BenefitsStrip";
 import { FlowsModal } from "@/components/marketing/FlowsModal";
 
@@ -31,6 +32,7 @@ export default function Home() {
         <FlowsShowcaseSection onOpenModal={(flowId) => handleOpenModal(flowId)} />
         <AITeamSection />
         <WorkspaceShowcase />
+        <PricingTable />
         <BenefitsStrip />
       </main>
       <FlowsModal

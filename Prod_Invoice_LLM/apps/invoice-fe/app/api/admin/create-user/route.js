@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 
 /**
  * POST /api/admin/create-user
@@ -7,9 +8,42 @@ import { NextResponse } from 'next/server';
  * with email verification.
  *
  * Body: { firstName, lastName, email, password }
+ *
+ * Gap 10: this route had no auth check at all -- anyone who found the URL,
+ * signed in or not, could create arbitrary Clerk accounts using this app's
+ * own CLERK_SECRET_KEY. Fixed by requiring a real signed-in session AND
+ * verifying Admin role via the backend's GET /auth/me (the authoritative,
+ * DB-backed role resolution `dependencies.py::get_tenant_context()` already
+ * does) -- not Clerk's client-editable unsafe_metadata, which a user could
+ * set on themselves via the client SDK and is not a real authorization
+ * boundary.
  */
 export async function POST(request) {
   try {
+    const { userId, getToken } = auth();
+    if (!userId) {
+      return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 });
+    }
+
+    const backendApiUrl = process.env.BACKEND_API_URL;
+    if (!backendApiUrl) {
+      throw new Error('BACKEND_API_URL is not set');
+    }
+
+    const sessionToken = await getToken();
+    const meRes = await fetch(`${backendApiUrl.replace(/\/$/, '')}/auth/me`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    });
+
+    if (!meRes.ok) {
+      return NextResponse.json({ error: 'Could not verify caller identity.' }, { status: 401 });
+    }
+
+    const callerContext = await meRes.json();
+    if (callerContext.role !== 'Admin') {
+      return NextResponse.json({ error: 'Admin role required to create users.' }, { status: 403 });
+    }
+
     const body = await request.json();
     const { firstName, lastName, email, password } = body;
 

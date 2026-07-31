@@ -12,19 +12,13 @@ Build the pricing tables and submit users into PayU's hosted checkout flow for p
 * PayU Router: [apps/invoice-be/routers/billing.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/routers/billing.py)
 
 ### Tasks
-- [ ] **Task 3.1: Build Pricing Cards Layout**
-  - Implement two pricing plans:
-    - **FREE**: `₹0 / month` - 50 invoices/month, Dashboard + Ingest + Auditor, 1 user limit.
-    - **PRO**: `₹4,999 / month` - Unlimited invoices, All screens, Up to 10 users, ERP connectors.
-- [ ] **Task 3.2: Connect PayU Checkout Form**
-  - Set up a Next.js action on the "Start Pro Trial" button calling backend route `/api/v1/billing/create-checkout-session`.
-  - Backend returns hash-signed form fields (`key`, `txnid`, `amount`, `productinfo`, `hash`, `surl`, `furl`, `action_url`).
-  - Frontend renders a hidden form with those fields and submits it — this is a **full-page redirect** to PayU's hosted payment page, not a JS overlay (unlike Stripe/Razorpay's Checkout widget models considered earlier).
-- [ ] **Task 3.3: Implement PayU Success/Failure Result Pages**
-  - `surl`/`furl` point at backend routes (`/api/v1/billing/payu/success`, `/api/v1/billing/payu/failure`), which verify the transaction (response hash + `verify_payment` API cross-check) and then redirect the browser to a friendly website result page (e.g. `/billing/success`, `/billing/failed`) — the website itself never receives or trusts PayU's raw POST directly.
-- [ ] **Task 3.4: Implement past-due lockouts**
-  - Ensure the auth middleware (`get_tenant_context()`) raises a `402 Payment Required` exception if tenant's status is `'unpaid'`, blocking all API operations.
+- [x] **Task 3.1: Build Pricing Cards Layout** — Built 2026-07-31. `components/marketing/PricingTable.tsx` — 3 cards (Free/Pro/Pro Combined, see Feature 3.1 below for the third), matching the spec's border/badge styling exactly (Free: `border-[#222D3D] hover:border-slate-700`; Pro: `border-indigo-600 shadow-[0_0_20px_rgba(99,102,241,0.3)]` + `bg-indigo-600` "Most Popular" badge). Wired into `app/page.tsx` between `WorkspaceShowcase` and `BenefitsStrip`; added a "Pricing" nav link (`#pricing` anchor) to `Header.tsx`, desktop + mobile.
+- [x] **Task 3.2: Connect PayU Checkout Form** — Built 2026-07-31. New proxy route `app/api/billing/create-checkout-session/route.ts` (same shape as the existing `/api/auth/provision` proxy) — requires a real signed-in Clerk session (`auth()`), forwards the caller's token to the backend so `routers/billing.py`'s Admin-role gate can verify it, then relays the hash-signed field set back to the browser. `PricingTable.tsx` builds a hidden form from those fields and submits it — confirmed via Playwright that a signed-out click correctly redirects to `/signup?plan=pro`/`/signup?plan=pro_combined` first (checkout requires an authenticated Admin tenant context, so an anonymous visitor has to create an account before paying — same pattern as this site's existing "Get Started Free" CTA).
+- [x] **Task 3.3: Implement PayU Success/Failure Result Pages** — Already built as part of `routers/billing.py` (`payu_success()`/`payu_failure()`, 2026-07-31 — see `feature_11_billing.md`). No additional website-side work needed; PayU never lands on `invoice-website` directly.
+- [x] **Task 3.4: Implement past-due lockouts** — Already built (`dependencies.py`'s `402` block, pre-existing). **Caveat found while finishing this feature: see new Gap 71 in `be_features_tracker.md`** — the block is real but nothing currently ever sets `billing_plan = "unpaid"`, so it's presently unreachable in practice. Tracked separately, not blocking this feature's completion.
 
 ### Verification Plan
-* **Automated Tests**: Mock PayU response hashes and `verify_payment` responses in `pytest`, verifying that only a fully-verified success updates `billing_plan`, and that a lapsed renewal locks the tenant.
-* **Manual Verification**: Submit a real sandbox checkout end-to-end using PayU's test card details (already confirmed reachable and hash-valid against the real PayU test environment — see `feature_11_billing.md`), and confirm the frontend correctly reflects the resulting plan/lockout state.
+* **Automated Tests**: Mock PayU response hashes and `verify_payment` responses in `pytest`, verifying that only a fully-verified success updates `billing_plan`, and that a lapsed renewal locks the tenant. **Not yet built.**
+* **Manual Verification**: 
+  * Visual + signed-out click flow verified live via Playwright screenshot + navigation assertion (2026-07-31) — pricing cards render correctly at 1280×900, "Start Pro Trial"/"Start Combined Pro Trial" correctly redirect to `/signup?plan=...` when signed out.
+  * **Not yet done**: an actual signed-in checkout run all the way to PayU's hosted page and back through `payu_success()` — needs a real Clerk-authenticated Admin session, which the automated Playwright pass didn't have. `tsc --noEmit` clean throughout.

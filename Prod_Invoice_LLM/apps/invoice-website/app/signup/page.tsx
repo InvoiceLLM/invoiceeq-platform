@@ -298,6 +298,17 @@ export default function SignupPage() {
               </div>
             )}
 
+            {/* Gap 9 (real-key verification): this Clerk instance has Smart
+                CAPTCHA / bot sign-up protection enabled. Without this element,
+                Clerk can't mount the managed CAPTCHA challenge and silently
+                falls back to an invisible Cloudflare Turnstile challenge that
+                also fails in this environment -- signUp.create() then hangs
+                forever with no error ever surfacing to the catch block. Found
+                by actually running signup against real Clerk keys, not
+                visible with placeholder keys since Clerk never attempts a
+                real challenge against those. */}
+            <div id="clerk-captcha" />
+
             <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
               {loading ? "⏳ Creating organisation…" : "🚀 Create Organisation"}
             </button>

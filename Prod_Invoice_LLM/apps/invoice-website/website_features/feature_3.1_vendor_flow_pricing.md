@@ -3,9 +3,11 @@
 Decided option: **Option D — Three-Tier Plan Structure (Standard Pro vs. Combined Pro)**.
 
 ### Tiers
-* **FREE** — ₹0/month, 50 invoices/month, Dashboard + Ingest + Auditor (Inbound only), 1 user.
-* **PRO STANDARD** — ₹4,999/month, unlimited invoices (Inbound only), up to 10 users, ERP connectors.
-* **PRO COMBINED** — ₹8,999/month, unlimited invoices (Inbound + Outbound), up to 10 users, ERP connectors.
+* **FREE** — ₹0/month, 50 invoices/month, full platform access (Dashboard, Chat, Auditor, Trainer, Connectors), Inbound only, 1 user.
+* **PRO STANDARD** — ₹4,999/month, unlimited invoices, same full platform access as Free, Inbound only, up to 10 users.
+* **PRO COMBINED** — ₹8,999/month, unlimited invoices, Inbound + Outbound, up to 10 users.
+
+> **Correction, 2026-07-31**: earlier drafts of this doc (and the original pricing page copy) implied Chat/Trainer/Connectors were Pro-exclusive "screens." Checked directly against the code: `routers/chat.py`, `trainer.py`, `connectors.py`, `dashboard.py`, and `audit.py` have **zero** `billing_plan` checks. The only real plan enforcement anywhere in the system is (1) the Free tier's 50-invoice quota and (2) the outbound Send toggle requiring `pro_combined` (`routers/settings.py`, real `402` + a pre-emptive FE upgrade modal in `ServiceFlowToggles.tsx`). So the actual tier differentiators are invoice volume, user count, and outbound access — not feature/screen access. Pricing copy corrected to match reality rather than building new gates to match the old (inaccurate) copy — see `be_features_tracker.md`/`fe_features_tracker.md` if screen-level gating is wanted later; not currently planned.
 
 ### Functionality
 
@@ -22,14 +24,11 @@ Decided option: **Option D — Three-Tier Plan Structure (Standard Pro vs. Combi
    * The upgrade checkout's `surl`/`furl` land on the same `payu_success()`/`payu_failure()` handlers as any other checkout (see `feature_11_billing.md`) — on verified success, `Tenant.billing_plan` is set to `'pro_combined'` and the cycle start date reset.
 
 ### Tasks
-- [ ] **Task 3.1.1: Add Combined Pro card to Pricing Table**
-  - Render the third tier on the pricing page (₹8,999/month, features: Inbound + Outbound, unlimited volume).
-- [ ] **Task 3.1.2: Support Upgrade Checkout**
-  - "Upgrade" button on the `pro` (standard) plan triggers `create_checkout_session(plan='pro_combined')` for the full ₹8,999 — same endpoint as a fresh signup, no special upgrade-specific API needed.
-- [ ] **Task 3.1.3: Confirm Plan Promotion on Success**
-  - No separate handler needed — `payu_success()` already promotes `billing_plan` to whatever plan the checkout was created for (see `feature_11_billing.md` Task 11.2/11.3).
+- [x] **Task 3.1.1: Add Combined Pro card to Pricing Table** — Built 2026-07-31. Third card in `PricingTable.tsx` (₹8,999/month, emerald `border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]` styling with a "Receiving + Sending" badge to visually distinguish it from the indigo "Most Popular" Pro card). Verified live via Playwright screenshot at 1280×900.
+- [x] **Task 3.1.2: Support Upgrade Checkout** — Built 2026-07-31. The Combined Pro card's button calls the same `handleSelectPlan('pro_combined')` → `create_checkout_session(plan='pro_combined')` path as any other plan selection — no separate upgrade-specific endpoint needed, matching the spec's reasoning. **Known cosmetic gap, not functional**: the pricing page doesn't yet know or display the signed-in user's *current* plan, so an existing `pro` tenant sees the same "Start Combined Pro Trial" wording a new visitor would, rather than "Upgrade to Combined" — the checkout itself works correctly either way (it's the same call, same result), this is purely a copy/UX polish item for later, not blocking.
+- [x] **Task 3.1.3: Confirm Plan Promotion on Success** — Already satisfied by `payu_success()` (built 2026-07-31, see `feature_11_billing.md`) — it promotes `billing_plan` to whatever plan the checkout was created for, no plan-specific branching needed.
 
 ### Verification Plan
 * **Manual Verification**:
-  * Verify the upgrade checkout charges the full ₹8,999 (not a prorated delta) and completes through PayU's real hosted page.
-  * Verify that a successful upgrade updates the database field `billing_plan` to `'pro_combined'` and resets the cycle start date.
+  * Card rendering, styling, and signed-out redirect behavior verified live (Playwright, 2026-07-31).
+  * **Not yet done**: an actual upgrade checkout run by a signed-in `pro` tenant through to a verified `pro_combined` promotion — needs a real Clerk-authenticated session with an existing paid plan to test, which wasn't available in this pass. Cycle-start-date reset also depends on the `paid_through`-style field proposed in the new `be_features_tracker.md` Gap 71 — that field doesn't exist yet, so "resets the cycle start date" isn't literally true today; `billing_plan` promotion itself is confirmed working.
