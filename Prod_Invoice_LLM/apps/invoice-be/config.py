@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     TOKEN_ENCRYPTION_KEY: str
     CLERK_JWT_ISSUER: str = ""
     CLERK_JWKS_URL: str = ""
+    # Gap 4: gates the mock/test tenant fallback in dependencies.py.
+    # Defaults False so an unconfigured or production deployment enforces real
+    # Clerk auth. Set true ONLY for local dev and the test suite -- when true, a
+    # request with no Authorization header resolves to a mock Admin context on
+    # the all-zero tenant, which is a full auth bypass.
+    ALLOW_MOCK_AUTH: bool = False
     DEFAULT_FREE_INVOICES_LIMIT: int = 50
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
@@ -64,6 +70,19 @@ class Settings(BaseSettings):
     SALESFORCE_CLIENT_ID: str = ""
     SALESFORCE_CLIENT_SECRET: str = ""
     SALESFORCE_REDIRECT_URI: str = ""
+
+    # Feature 11: PayU Billing
+    PAYU_MERCHANT_KEY: str = ""
+    PAYU_MERCHANT_SALT: str = ""
+    PAYU_MODE: str = "test"  # "test" or "live"
+    # invoice-be's own ingress is internal-only (external: false), so PayU
+    # (an external third party) can't POST surl/furl directly at it in
+    # production -- those must go through invoice-website's public FQDN,
+    # which proxies through internally, mirroring the existing OAuth
+    # callback proxy pattern (see routers/connectors.py's oauth_callback()
+    # / apps/invoice-fe's /api/connectors/callback/[provider] route).
+    # Empty default = local dev only, where invoice-be is directly reachable.
+    BACKEND_PUBLIC_URL: str = "http://localhost:8000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

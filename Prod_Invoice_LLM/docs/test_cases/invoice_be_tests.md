@@ -154,5 +154,5 @@ This document details the manual/QA test suite for the FastAPI backend, reconcil
 * **Goal**: Block all API access for tenants marked `unpaid`.
 * **Automated**: `tests/test_auth.py::test_auth_me_unpaid_payment_required`
 
-### TC-BE-30: Stripe Checkout & Webhooks
+### TC-BE-30: PayU Checkout & Callbacks
 * **Goal**: Not testable yet — `routers/billing.py` does not exist in code despite `feature_11_billing.md` describing it. No automated coverage possible until the router is built.

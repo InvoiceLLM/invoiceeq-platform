@@ -33,7 +33,13 @@ def override_db_session(db_session):
 client = TestClient(app)
 
 def test_auth_me_fallback():
-    """Verify auth fallback when no authorization header is passed (local development fallback)."""
+    """
+    Mock fallback still works when ALLOW_MOCK_AUTH is enabled.
+
+    Gap 4: this is now conditional behaviour -- conftest.py enables the flag for
+    the suite. With it disabled this same request is a 401
+    (see test_no_header_is_401_when_mock_auth_disabled).
+    """
     response = client.get("/auth/me")
     assert response.status_code == 200
     data = response.json()
@@ -66,6 +72,114 @@ def test_auth_me_custom_tenant_uuid():
     assert response.status_code == 200
     data = response.json()
     assert data["tenant_id"] == custom_uuid
+
+# ---------------------------------------------------------------------------
+# Gap 4 — auth enforcement
+#
+# The mock/test fallback is gated behind settings.ALLOW_MOCK_AUTH (default
+# False). These cover both sides of that gate plus the fail-closed config path.
+# ---------------------------------------------------------------------------
+
+def test_no_header_is_401_when_mock_auth_disabled(mock_auth_disabled):
+    """No Authorization header must be rejected, not downgraded to mock Admin."""
+    response = client.get("/auth/me")
+    assert response.status_code == 401
+    assert "authorization header" in response.json()["detail"].lower()
+    # A 401 must advertise the scheme.
+    assert response.headers.get("www-authenticate") == "Bearer"
+
+
+def test_malformed_header_is_401_when_mock_auth_disabled(mock_auth_disabled):
+    """A header that isn't 'Bearer <token>' takes the same rejection path."""
+    response = client.get("/auth/me", headers={"Authorization": "Basic abc123"})
+    assert response.status_code == 401
+
+
+def test_test_token_is_401_when_mock_auth_disabled(mock_auth_disabled):
+    """'Bearer test_*' must not be a backdoor once enforcement is on."""
+    response = client.get("/auth/me", headers={"Authorization": "Bearer test_token"})
+    assert response.status_code == 401
+    assert "test tokens are rejected" in response.json()["detail"].lower()
+
+
+def test_test_token_with_admin_role_is_401_when_mock_auth_disabled(mock_auth_disabled):
+    """The privileged variants are rejected too -- no role escalation via test_."""
+    for token in ("test_admin", f"test_{MOCK_TENANT_ID}", "test_viewer"):
+        response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401, f"{token} was not rejected"
+
+
+def test_invalid_jwt_is_401(clerk_jwt_configured):
+    """A syntactically invalid token is rejected by JWT verification."""
+    response = client.get(
+        "/auth/me", headers={"Authorization": "Bearer not.a.real.jwt"}
+    )
+    assert response.status_code == 401
+    assert "invalid token" in response.json()["detail"].lower()
+
+
+def test_invalid_jwt_is_401_with_mock_auth_disabled(mock_auth_disabled, clerk_jwt_configured):
+    """Same rejection with enforcement on -- no fallback to mock on bad tokens."""
+    response = client.get(
+        "/auth/me", headers={"Authorization": "Bearer not.a.real.jwt"}
+    )
+    assert response.status_code == 401
+
+
+def test_missing_clerk_config_fails_closed(clerk_jwt_unconfigured):
+    """
+    Gap 4 fail-closed: with Clerk JWT config missing, a real-looking token must
+    error rather than fall through to a mock context.
+
+    ALLOW_MOCK_AUTH is enabled here (conftest default) precisely to prove the
+    request is NOT silently downgraded -- incomplete config denies access.
+    """
+    response = client.get(
+        "/auth/me", headers={"Authorization": "Bearer some.real.looking.token"}
+    )
+    assert response.status_code == 500
+    detail = response.json()["detail"].lower()
+    assert "misconfigured" in detail
+    assert "clerk_jwks_url" in detail
+    assert "clerk_jwt_issuer" in detail
+
+
+def test_missing_issuer_alone_fails_closed(monkeypatch):
+    """
+    An empty issuer with a populated JWKS URL must also fail closed.
+
+    This is the specific pre-Gap-4 hole: `verify_iss` was
+    `bool(settings.CLERK_JWT_ISSUER)`, so a blank issuer disabled the check and
+    a correctly signed token from ANY Clerk instance would have been accepted.
+    """
+    import dependencies
+
+    monkeypatch.setattr(
+        dependencies.settings,
+        "CLERK_JWKS_URL",
+        "https://example.clerk.accounts.dev/.well-known/jwks.json",
+    )
+    monkeypatch.setattr(dependencies.settings, "CLERK_JWT_ISSUER", "")
+
+    response = client.get(
+        "/auth/me", headers={"Authorization": "Bearer some.real.looking.token"}
+    )
+    assert response.status_code == 500
+    assert "clerk_jwt_issuer" in response.json()["detail"].lower()
+
+
+def test_mock_auth_defaults_to_disabled():
+    """
+    The shipped default must be secure.
+
+    Asserts the declared field default rather than an instantiated Settings,
+    so the result doesn't depend on the developer's local `.env` (which is
+    expected to set ALLOW_MOCK_AUTH=true) or on conftest's env var.
+    """
+    from config import Settings
+
+    assert Settings.model_fields["ALLOW_MOCK_AUTH"].default is False
+
 
 def test_get_db_session():
     """Verify that get_db_session dependency correctly yields a session."""

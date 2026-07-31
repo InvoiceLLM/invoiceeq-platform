@@ -15,7 +15,7 @@
       "value": "dbadmin"
     },
     "nextPublicClerkPublishableKey": {
-      "value": "pk_test_mock_clerk_publishable_key_here"
+      "value": "pk_test_cmVhbC1zdGFsbGlvbi0yMS5jbGVyay5hY2NvdW50cy5kZXYk"
     },
     "azureOpenAiDeploymentName": {
       "value": "gpt-5-mini"
@@ -46,6 +46,12 @@
     },
     "salesforceClientId": {
       "value": "3MVG9.Houp75EVdZiPnzAXP1ly3NOyDA1TAh7PFpBvzsf6qxIjwVSJoxyMRmkvNbfU4twmqALTJ_SZtlRrylg"
+    },
+    "clerkJwtIssuer": {
+      "value": "https://real-stallion-21.clerk.accounts.dev"
+    },
+    "clerkJwksUrl": {
+      "value": "https://real-stallion-21.clerk.accounts.dev/.well-known/jwks.json"
     }
   }
 }

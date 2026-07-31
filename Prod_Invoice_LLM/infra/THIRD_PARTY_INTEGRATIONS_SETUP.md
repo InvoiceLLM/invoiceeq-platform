@@ -1,4 +1,4 @@
-# Third-Party Integrations & Credentials Setup Guide (Stripe, Clerk, Google, Salesforce)
+# Third-Party Integrations & Credentials Setup Guide (PayU, Clerk, Google, Salesforce)
 
 This document describes how to configure the official company credentials for all third-party integrations (Authentication, Billing, and Storage Connectors) in your production Azure deployments using the Bicep infrastructure configuration.
 
@@ -29,29 +29,27 @@ Clerk manages user authentication, role assignment, and multi-tenant profiles.
 
 ---
 
-## 2. Stripe Billing & Subscription Setup
+## 2. PayU Billing Setup
 
-Stripe manages plans (Free, Pro, and Combined Pro), invoice quotas, and customer checkout portals.
+PayU manages plans (Free, Pro, and Combined Pro), invoice quotas, and customer checkout. Chosen after Razorpay's signup also turned out to require PAN even for basic account creation (not just for going live) — PayU's **classic hash-based integration** was selected specifically because it ships publicly-documented sandbox test credentials that work without any account at all, letting the integration be built and verified before KYC is done.
 
-### Setup Steps:
-1. **Register/Login**: Create a company account on the [Stripe Dashboard](https://dashboard.stripe.com/).
-2. **Generate API Key**: Go to **Developers** > **API Keys** and copy the **Secret key** (starts with `sk_live_` or `sk_test_`).
-3. **Create Products and Prices**:
-   * Navigate to **Product Catalog** > **Add Product** and create your plans:
-     * **Combined Pro**: Plan price configured at ₹8,999/month.
-     * **Pro**: Inbound-only or basic tier plan.
-     * Copy the generated **Price IDs** (starts with `price_...`) to configure in your billing logic.
-4. **Webhook Setup (Syncing Subscriptions)**:
-   * Go to **Developers** > **Webhooks** > **Add Endpoint**.
-   * Set the URL to your production endpoint: `https://<backend-domain>/api/v1/billing/webhook`.
-   * Under **Select Events**, subscribe to:
-     * `customer.subscription.created`
-     * `customer.subscription.updated`
-     * `customer.subscription.deleted`
-     * `checkout.session.completed`
-   * Save the endpoint and copy the **Signing Secret** (starts with `whsec_...`).
-5. **Customer Portal**:
-   * Go to **Settings** > **Customer Portal** and customize branding. Enable features allowing users to cancel or upgrade/downgrade their plans.
+### Setup Steps (verified working end-to-end, 2026-07-31):
+1. **Register/Login**: Create an account on the [PayU Dashboard](https://onboarding.payu.in/). Business Type **"Individual"** or **"Proprietorship"** accepts your own personal PAN — no registered company/GST needed to get started. Bank account + full KYC is only required later, to move from test to live mode.
+2. **Get Merchant Key + Salt**: After login, go to your account/profile menu → **Settings** → **Payment Gateway** / **Integration Details**. Copy the **Merchant Key** and the **Salt** (PayU issues two salt versions — v1/SHA256 legacy, v2/SHA512 current; use the **v2/SHA512** salt).
+3. **Confirm the environment (Test vs Live)**: there's a Test/Live toggle near the top of the dashboard — Key/Salt differ per environment. Pre-KYC, only Test-mode keys are active.
+4. **Verify the credentials work** (no code needed — pure `curl`):
+   ```bash
+   TXNID="conn_test_$(date +%s)"
+   HASH=$(printf '%s' "${MERCHANT_KEY}|verify_payment|${TXNID}|${SALT}" | openssl dgst -sha512 -hex | sed 's/^.* //')
+   curl -s -X POST "https://test.payu.in/merchant/postservice.php?form=2" \
+     --data-urlencode "key=${MERCHANT_KEY}" \
+     --data-urlencode "command=verify_payment" \
+     --data-urlencode "var1=${TXNID}" \
+     --data-urlencode "hash=${HASH}"
+   ```
+   A response like `{"status":0,"msg":"...Fetched Successfully",...}` (even reporting the fake txnid as "Not Found") confirms the key/salt pair authenticates correctly — an invalid pair gets rejected outright instead.
+5. **No webhook registration needed** — PayU's classic flow doesn't use dashboard-configured webhooks. Payment confirmation happens via `surl`/`furl` (success/failure return URLs) that your backend passes on every checkout request, POSTed to directly by PayU after payment completes. See `feature_11_billing.md` for the response-hash + `verify_payment` server-to-server cross-check pattern used to trust that POST.
+6. **Checkout Integration Note**: PayU Checkout is a **full-page redirect** to PayU's hosted payment page (`test.payu.in/_payment` / `secure.payu.in/_payment`), not a client-side JS overlay — the frontend renders a hidden auto-submitting HTML form with the backend's hash-signed fields. No customer-portal-style self-service upgrade/cancel UI exists; the classic API is also **one-time-payment only** (no native recurring/subscription object) — this MVP re-runs the checkout flow each billing cycle rather than auto-debiting, see `feature_11_billing.md`'s renewal-model note.
 
 ---
 
@@ -94,8 +92,8 @@ Add the credentials directly to your local, Git-ignored `infra/params.<env>.secr
     "dbAdminPassword": { "value": "..." },
     "clerkSecretKey": { "value": "sk_live_clerkSecret..." },
     "tokenEncryptionKey": { "value": "..." },
-    "stripeSecretKey": { "value": "sk_live_stripeSecret..." },
-    "stripeWebhookSecret": { "value": "whsec_..." },
+    "payuMerchantKey": { "value": "..." },
+    "payuMerchantSalt": { "value": "..." },
     "googleClientSecret": { "value": "..." },
     "salesforceClientSecret": { "value": "..." }
   }

@@ -7,7 +7,17 @@ Ensure secure, isolated access for multiple tenant organizations and support use
 * Dependency Injection: [apps/invoice-be/dependencies.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/dependencies.py) → `get_tenant_context()`, `get_db_session()`, `TenantContext` schema
 
 ### Functionality
-Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to decode the bearer JWT (Clerk/Auth0 JWKS) into a `TenantContext{tenant_id, user_id, role, billing_plan}`, and blocks with `402` if `billing_plan == 'unpaid'`. **Local/test fallback**: a missing/invalid header, or one starting `Bearer test_`, yields a mock context (`tenant_id: 00000000-...`, `role: Admin`, `billing_plan: active`) instead of failing — this is why `Sidebar.tsx` in the FE hardcodes the same all-zero tenant UUID. `get_current_user_context()` in `routers/auth.py` just echoes that resolved context back for the FE's `/auth/me` call. `get_db_session()` yields a scoped SQLModel `Session`; every router is expected to filter its own queries by `context.tenant_id` — there is no query-level enforcement, it's a per-router convention. See "Detailed Implementation Plan" below for the full walkthrough.
+Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to decode the bearer JWT (Clerk/Auth0 JWKS) into a `TenantContext{tenant_id, user_id, role, billing_plan}`, and blocks with `402` if `billing_plan == 'unpaid'`. **Local/test fallback** *(gated since Clerk-list Gap 4 — see below)*: a missing/invalid header, or one starting `Bearer test_`, yields a mock context (`tenant_id: 00000000-...`, `role: Admin`, `billing_plan: active`) instead of failing — this is why `Sidebar.tsx` in the FE hardcodes the same all-zero tenant UUID.
+
+> **Gap 4 update (2026-07-29):** that fallback is no longer unconditional. It now
+> requires `ALLOW_MOCK_AUTH=true`, which defaults to `false`, so a deployed
+> backend returns `401` instead of a mock Admin context. Set `ALLOW_MOCK_AUTH=true`
+> in `apps/invoice-be/.env` to keep the zero-config local workflow described here;
+> the pytest suite enables it itself via `tests/conftest.py`. Incomplete Clerk JWT
+> config (`CLERK_JWKS_URL` / `CLERK_JWT_ISSUER` unset) now fails closed with a
+> `500` rather than skipping issuer validation. Full detail, including why
+> enforcement cannot yet be switched on in Azure, is in
+> [GAP_4_AUTH_ENFORCEMENT.md](GAP_4_AUTH_ENFORCEMENT.md). `get_current_user_context()` in `routers/auth.py` just echoes that resolved context back for the FE's `/auth/me` call. `get_db_session()` yields a scoped SQLModel `Session`; every router is expected to filter its own queries by `context.tenant_id` — there is no query-level enforcement, it's a per-router convention. See "Detailed Implementation Plan" below for the full walkthrough.
 
 ### Tasks
 - [x] **Task 1.1: Setup Auth JWT Decoding**
@@ -17,6 +27,7 @@ Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to
   - Extract `tenant_id`, `user_id`, `role`, and `billing_plan` from the decoded JWT.
   - Return a structured schema representing the current request's tenant/user context.
   - Raise `401 Unauthorized` if the token is invalid, and `403 Forbidden` if permissions do not match.
+  - *Gap 4 (2026-07-29): the mock fallback below is now gated behind `ALLOW_MOCK_AUTH` (default `false`), so a missing/invalid header raises `401` in deployed environments rather than returning a mock Admin context.*
 - [x] **Task 1.3: Enforce Tenant-Isolated Database Queries**
   - Create a FastAPI dependency `get_db_session()` in `dependencies.py` that yields a session.
   - Ensure all database queries in backend routers automatically filter by `tenant_id` context parameter.
@@ -46,7 +57,7 @@ Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to
 - Implement FastAPI dependency `get_tenant_context()`:
   - Try to retrieve the Authorization header bearer token.
   - Decode and verify the JWT (using Clerk certificate keys if available).
-  - **Local Development / Test Fallback**: If the header is missing, is invalid, or begins with `Bearer test_`, yield a mock test context (e.g., `tenant_id: 00000000-0000-0000-0000-000000000000`, `user_id: user_test_default`, `role: Admin`, `billing_plan: active`).
+  - **Local Development / Test Fallback** *(requires `ALLOW_MOCK_AUTH=true` since Gap 4; default is `false`)*: If the header is missing, is invalid, or begins with `Bearer test_`, yield a mock test context (e.g., `tenant_id: 00000000-0000-0000-0000-000000000000`, `user_id: user_test_default`, `role: Admin`, `billing_plan: active`). With the flag disabled, all three cases raise `401` instead.
   - Block with HTTP `402 Payment Required` if the `billing_plan` is `'unpaid'`.
 - Implement `get_db_session()` dependency yielding a session.
 

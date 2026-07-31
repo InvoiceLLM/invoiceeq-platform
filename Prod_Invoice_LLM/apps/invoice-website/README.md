@@ -1,7 +1,7 @@
 # Invoice AI — Marketing Website (`/apps/invoice-website`)
 
 ## Purpose
-Public-facing marketing site for the Invoice AI platform. Handles visitor-facing marketing content and Clerk-based sign-up/login/org provisioning. There is no payments/billing functionality yet (see `website_features/feature_3_pricing_stripe.md` — planned, not built).
+Public-facing marketing site for the Invoice AI platform. Handles visitor-facing marketing content and Clerk-based sign-up/login/org provisioning. There is no payments/billing functionality yet (see `website_features/feature_3_pricing_payu.md` — planned, not built).
 
 ## Tech Stack
 | Layer          | Technology                        |
@@ -22,12 +22,12 @@ invoice-website/
 │   ├── forgot-password/page.tsx # Two-step password reset using Clerk reset_password_email_code (Gap 3)
 │   ├── api/
 │   │   └── auth/provision/route.ts  # Server-side proxy for backend /auth/provision (Gap 7)
-│   └── webhooks/stripe/        # empty (.gitkeep only) — no Stripe integration exists
+│   └── api/webhooks/payu/      # empty (.gitkeep only) — unused; PayU's surl/furl callbacks land on invoice-be directly, not here
 ├── components/
 │   ├── ui/                     # empty (.gitkeep only) — no Shadcn/UI components exist
 │   └── marketing/              # Header, Hero, WorkspaceShowcase, AITeamSection, FlowsShowcaseSection, FlowsModal, BenefitsStrip, MouseSpotlight, Footer
 ├── lib/
-│   └── utils.ts                # Tailwind class merger (no stripe.ts)
+│   └── utils.ts                # Tailwind class merger (no payu.ts)
 ├── middleware.ts               # bare clerkMiddleware() — makes Clerk auth context available; no route protection enforced
 └── website_features/           # Implementation documentation for Gaps 3 & 7
 ```
@@ -40,7 +40,7 @@ invoice-website/
 - **Benefits Strip** — row of benefit callouts below the hero
 - **Auth** — Clerk-based signup (`/signup`) and login (`/login`, with admin/user role toggle + OTP second factor)
 - **Password Reset** — Two-step forgot password flow (`/forgot-password`) using Clerk's `reset_password_email_code` strategy (Gap 3)
-- **No pricing page** — no Stripe checkout exists yet (see `website_features/feature_3_pricing_stripe.md` — planned, not built)
+- **No pricing page** — no PayU checkout exists yet (see `website_features/feature_3_pricing_payu.md` — planned, not built)
 
 ## Recent Changes (auth-feature-4)
 - **Gap 3:** Added `/forgot-password` page with two-step Clerk password reset flow
@@ -62,4 +62,4 @@ BACKEND_API_URL=http://localhost:8000  # Server-side only (Gap 7)
 
 **Note:** `BACKEND_API_URL` is server-side only (no `NEXT_PUBLIC_` prefix) — used by the `/api/auth/provision` route handler. The backend URL never ships to the browser (Gap 7 fix).
 
-There are no Stripe-related environment variables — no Stripe integration is implemented in this app.
+There are no PayU-related environment variables — no PayU integration is implemented in this app (billing lives entirely in `invoice-be`, see its README/`feature_11_billing.md`).

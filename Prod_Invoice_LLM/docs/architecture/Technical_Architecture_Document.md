@@ -95,7 +95,7 @@ The Invoice AI SaaS platform is a **multi-tenant, AI-powered invoice processing 
 │  └─────────────────┘   └───────────────────┘   └────────────────────┘     │
 │                                                                            │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │  Stripe (Payment Gateway — External, via Webhooks)                  │   │
+│  │  PayU (Payment Gateway — External, hosted checkout redirect)        │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -308,7 +308,7 @@ For bulk uploads, SSE avoids excessive polling:
 | **Framework**   | Next.js (App Router, SSR enabled)      |
 | **Styling**     | Tailwind CSS                           |
 | **Components**  | Shadcn/UI (shared with dashboard)      |
-| **Payment**     | Stripe Checkout                        |
+| **Payment**     | PayU (hosted checkout redirect)        |
 | **Auth**        | Clerk / Auth0 (SSO)                    |
 
 ### 6.2 Directory Structure
@@ -331,7 +331,7 @@ For bulk uploads, SSE avoids excessive polling:
 └── middleware.ts                     # Auth guard (redirects logged-in users to app)
 ```
 
-> Billing is owned entirely by the backend (`/apps/invoice-be/routers/billing.py`) since it needs direct write access to `tenants.billing_plan`. The website has no Stripe SDK or webhook route of its own — it calls the backend's checkout-session endpoint and redirects.
+> Billing is owned entirely by the backend (`/apps/invoice-be/routers/billing.py`) since it needs direct write access to `tenants.billing_plan`. The website has no PayU SDK of its own — it calls the backend's checkout-session endpoint, which returns a fully hash-signed set of form fields; the website renders these as a hidden auto-submitting HTML form POSTing directly to PayU's hosted payment page (`_payment`) — a **full-page redirect**, not a client-side overlay (this is the one meaningful UX difference from the Stripe/Razorpay model considered earlier).
 
 ### 6.3 Functional Sections
 
@@ -344,28 +344,35 @@ For bulk uploads, SSE avoids excessive polling:
 | **Auth/SSO Gateway**  | Seamless transition to the app                    | Google & Microsoft SSO via Clerk/Auth0                                           |
 | **Footer**            | Compliance                                        | Privacy Policy, Terms of Service, Contact Sales                                  |
 
-### 6.4 Payment Flow (Stripe)
+### 6.4 Payment Flow (PayU)
 
 ```
 User clicks "Upgrade"
        │
        ▼
 POST /api/v1/billing/create-checkout-session   (invoice-be)
+       │      generates txnid + SHA-512 hash: key|txnid|amount|productinfo|firstname|email|<5 udf>||||||salt
+       ▼
+Receive signed form fields (key, txnid, amount, productinfo, hash, surl, furl, ...)
        │
        ▼
-Receive Stripe Checkout URL
+Browser full-page redirect: hidden form auto-POSTs to PayU's hosted /_payment page
        │
        ▼
-Redirect → Stripe Hosted Payment Page
+User completes payment on PayU's page (card/UPI/netbanking + any 3DS/OTP step)
        │
        ▼
-Stripe fires Webhook → POST /api/v1/webhooks/stripe   (invoice-be)
+PayU POSTs the result to surl (success) or furl (failure)   (invoice-be)
        │
        ▼
-Backend updates Tenant billing_plan in PostgreSQL
+Backend verifies the response hash AND cross-checks server-to-server via
+PayU's verify_payment API (defends against a spoofed client-side POST to
+surl/furl) — then updates Tenant billing_plan in PostgreSQL
 ```
 
-> **Key**: The website **never** stores credit card info. The backend's Stripe webhook handler acts as the "source of truth" for subscription state.
+> **Key**: The website **never** stores credit card/UPI info. The backend's `surl`/`furl` handler — cross-verified against PayU's `verify_payment` API rather than trusted on its own — acts as the "source of truth" for payment state, since a bare POST to a public return URL can't be trusted by itself.
+>
+> **Recurring billing note**: PayU's classic hash-based flow (verified working end-to-end against PayU's own sandbox as of 2026-07-31) is a **one-time payment** mechanism, not a native subscription API like Stripe/Razorpay. The MVP therefore re-runs this same one-time flow each billing cycle (tenant re-pays monthly, prompted by the app) rather than true auto-debit recurring. PayU does offer a separate Standing Instruction (SI) / recurring-payments product for real auto-renewal — deliberately out of scope until this manual-renewal MVP is live and that product's setup is separately researched.
 
 ---
 
@@ -504,8 +511,8 @@ CREATE TABLE tenants (
     domain                  VARCHAR UNIQUE NOT NULL,   -- company email domain, used for SSO auto-provisioning
     billing_plan            VARCHAR NOT NULL DEFAULT 'free',
     free_invoices_remaining INTEGER NOT NULL DEFAULT 50,
-    stripe_customer_id      VARCHAR,
-    stripe_subscription_id  VARCHAR,
+    payu_customer_id      VARCHAR,
+    payu_subscription_id  VARCHAR,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -689,8 +696,9 @@ This allows the Query Agent to **filter by `tenant_id` and `vendor_name`** befor
 | `POST` | `/api/v1/trainer/upload`               | Transient PDF parse for the training sandbox (not saved to `invoices`) | `{ session_id, extracted_data }` |
 | `POST` | `/api/v1/trainer/sessions/{session_id}/chat` | Submit a correction, re-extract with updated constraints | `{ constraints, extracted_data, status, alerts }` |
 | `POST` | `/api/v1/trainer/sessions/{session_id}/commit` | Save rules to `extraction_templates` or `default_templates.json`, trigger re-audit | `{ status, vendor_name, rules }` |
-| `POST` | `/api/v1/billing/create-checkout-session` | Creates a Stripe Checkout session (`mode=subscription`) | `{ checkout_url }`           |
-| `POST` | `/api/v1/webhooks/stripe`              | Stripe webhook — updates `tenants.billing_plan` on checkout/payment-failure/cancellation events | `{ received: boolean }` |
+| `POST` | `/api/v1/billing/create-checkout-session` | Generates a PayU hash-signed payment form | `{ key, txnid, amount, productinfo, hash, surl, furl, action_url }` |
+| `POST` | `/api/v1/billing/payu/success`          | PayU `surl` callback — verifies response hash + `verify_payment` API, updates `tenants.billing_plan` | Redirects browser to a friendly result page |
+| `POST` | `/api/v1/billing/payu/failure`          | PayU `furl` callback — logs the failed attempt, no plan change | Redirects browser to a friendly result page |
 | `GET`  | `/auth/me`                             | Returns the current JWT-derived tenant/user context      | `TenantContext`                 |
 
 ---
@@ -738,12 +746,13 @@ A **FastAPI Dependency** extracts `tenant_id` from the JWT on every request. **E
 
 | Aspect              | Implementation                                                 |
 |---------------------|----------------------------------------------------------------|
-| **Provider**        | Stripe Checkout                                                |
-| **Card Storage**    | None — fully offloaded to Stripe's hosted page                 |
-| **Webhook**         | `POST /api/v1/webhooks/stripe` (invoice-be) — source of truth for payments |
-| **Plans**           | Free Trial (50 invoices), Pro ($99/mo + pay-per-invoice), Enterprise |
+| **Provider**        | PayU (hash-based hosted checkout, classic integration)          |
+| **Card/UPI Storage**| None — fully offloaded to PayU's hosted payment page             |
+| **Confirmation**    | `POST /api/v1/billing/payu/success`\|`/failure` (`surl`/`furl`) — response hash + `verify_payment` server-to-server cross-check acts as source of truth for payments |
+| **Plans**           | Free Trial (50 invoices), Pro Standard (₹4,999/mo), Pro Combined (₹8,999/mo) |
 | **Billing Toggle**  | Monthly vs Yearly on pricing page                              |
-| **Env Variables**   | `STRIPE_TEST_KEY`, `STRIPE_WEBHOOK_SECRET`                     |
+| **Renewal model**   | Manual monthly re-payment (MVP) — PayU's classic API is one-time-payment, not native recurring; see §6.4 note |
+| **Env Variables**   | `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, `PAYU_MODE` (`test`/`live`) |
 
 ---
 

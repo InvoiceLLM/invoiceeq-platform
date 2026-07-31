@@ -24,10 +24,10 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Unique identifier for the tenant. |
 | `name` | `VARCHAR(255)` | `NOT NULL` | The company name or workspace title. |
 | `domain` | `VARCHAR(255)` | `UNIQUE`, `NOT NULL` | Company email domain (e.g. `acme.com`) used for automatic SSO provisioning. |
-| `billing_plan` | `VARCHAR(50)` | `NOT NULL`, Default: `'free'` | Active pricing tier: `'free'`, `'pro'`, `'enterprise'`. |
+| `billing_plan` | `VARCHAR(50)` | `NOT NULL`, Default: `'free'` | Active pricing tier: `'free'`, `'pro'`, `'pro_combined'`, `'unpaid'`. |
 | `free_invoices_remaining` | `INTEGER` | `NOT NULL`, Default: `50` | Ingestion quota limit remaining for the current billing cycle. |
-| `stripe_customer_id` | `VARCHAR(255)` | `NULL` | Link to Stripe billing profile. |
-| `stripe_subscription_id` | `VARCHAR(255)` | `NULL` | Link to Stripe active subscription status. |
+| `payu_customer_id` | `VARCHAR(255)` | `NULL` | Reference identifier for the tenant on PayU's side (email used as the customer key — PayU's classic API has no stored customer object). |
+| `payu_subscription_id` | `VARCHAR(255)` | `NULL` | The most recent successful `txnid`/`mihpayid` that renewed this tenant's plan. Not a native subscription object — PayU's classic hash-based API is one-time-payment; "subscription" here just tracks the last renewal transaction that set the current `billing_plan`, since billing is a manual monthly re-payment flow, not auto-debit. |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Timestamp when the tenant workspace was created. |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Timestamp of the last workspace update. |
 

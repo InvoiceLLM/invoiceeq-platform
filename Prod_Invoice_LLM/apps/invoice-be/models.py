@@ -15,8 +15,8 @@ class Tenant(SQLModel, table=True):
     clerk_org_id: str | None = Field(default=None, max_length=255, unique=True, index=True)
     billing_plan: str = Field(default="free", max_length=50)
     free_invoices_remaining: int = Field(default_factory=lambda: settings.DEFAULT_FREE_INVOICES_LIMIT)
-    stripe_customer_id: str | None = Field(default=None, max_length=255)
-    stripe_subscription_id: str | None = Field(default=None, max_length=255)
+    payu_customer_id: str | None = Field(default=None, max_length=255)
+    payu_subscription_id: str | None = Field(default=None, max_length=255)
     # Feature 16: Service Flow toggles
     receive_invoices_enabled: bool = Field(default=True)   # Inbound (AP) — on by default, preserves existing behaviour
     send_invoices_enabled: bool = Field(default=False)     # Outbound (AR) — opt-in, requires pro_combined plan

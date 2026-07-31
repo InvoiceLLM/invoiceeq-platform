@@ -1,45 +1,19 @@
-# Website (invoice-website) Test Cases
+# Website (invoice-website) Test Suite — Index
 
-This document details the test suite for the public marketing website, billing, and auth gateway pages.
+This document is an index into the per-feature test suites for the public marketing website, billing, and auth gateway pages. Each linked file follows the same 4-part structure:
 
-## Feature 1: Landing Page & Core Shell
-### TC-WEB-01: Visual Layout & Navigation Links
-* **Goal**: Validate canvas theme styles (`#0B0F19`), hero text styling, and active navigation headers.
-* **How to Test**: Load `/`. Verify header links are clickable. Assert background and gradient heading styles.
+1. **Screen Alignment Check** — visual/spec conformance (colors, layout, responsive behavior).
+2. **Functionality Check** — user actions and their expected UI/API behavior.
+3. **Database Validation** — what should (and should not) change in Postgres as a result of each flow.
+4. **Flow Validation via Log Files** — what `invoice-be` should log, and at what level, for each flow. Note: `invoice-be` has no file-based log handler configured yet (`main.py` only calls `logging.getLogger(__name__)`, stdout only) — every suite below flags this and treats log checks as console/stdout checks, not literal file tails.
 
-### TC-WEB-02: Call-to-Action Routes
-* **Goal**: Verify that landing buttons lead to correct destination pages.
-* **How to Test**: Click the "Get Started Free" button. Assert browser redirects to the Clerk sign-up wizard.
+## Suites
 
----
+| Feature | Suite | Build status |
+|---|---|---|
+| 1: Landing Page & Core Shell | [feature_1_landing_tests.md](website/feature_1_landing_tests.md) | Built |
+| 2: Multi-Tenant Workspace Showcase | [feature_2_showcase_tests.md](website/feature_2_showcase_tests.md) | Built |
+| 3 / 3.1: Pricing Table & PayU Checkout (incl. Combined Pro upgrade) | [feature_3_pricing_payu_tests.md](website/feature_3_pricing_payu_tests.md) | **Backend router exists (uncommitted); frontend pricing page not built** — see suite for what's actually runnable today |
+| 4: Clerk Auth Gateway & Company Provisioning | [feature_4_auth_gateway_tests.md](website/feature_4_auth_gateway_tests.md) | Built, on placeholder Clerk keys (Gap 2/9 open) |
 
-## Feature 2: Multi-Tenant Workspace Showcase
-### TC-WEB-03: Video Demonstration & Interactive Mockups
-* **Goal**: Ensure the visual demo video or mockups play/render properly.
-* **How to Test**: Navigate to the Showcase section. Assert video container initializes and play actions work.
-
-### TC-WEB-04: Feature Carousel Interaction
-* **Goal**: Verify carousel tabs switch layout screens.
-* **How to Test**: Click on "Extraction Sandbox" tab. Assert showcase screenshot updates and description changes.
-
----
-
-## Feature 3: Pricing Table & Stripe Checkout Integration
-### TC-WEB-05: Dynamic Pricing Toggle
-* **Goal**: Verify monthly/annual price billing toggle updates price cards.
-* **How to Test**: Click the Monthly/Annual toggle. Assert card text price changes dynamically.
-
-### TC-WEB-06: Stripe Checkout Session Dispatch
-* **Goal**: Verify that clicking a plan redirects to Stripe Checkout.
-* **How to Test**: Click "Upgrade" on a paid tier. Assert call triggers backend session creation and redirects to a `checkout.stripe.com` page.
-
----
-
-## Feature 4: Clerk Auth Gateway & Company Provisioning
-### TC-WEB-07: Clerk SSO Gateway Render
-* **Goal**: Verify email and passwordless social login boxes display.
-* **How to Test**: Click "Login" on the website. Verify Clerk authentication modal loads.
-
-### TC-WEB-08: Tenant Company Organization Creation
-* **Goal**: Verify workspace settings initialize after first-time login.
-* **How to Test**: Perform initial signup. Assert that workspace creation form requests company name and redirects user to dashboard upon completion.
+See `apps/invoice-website/website_features/website_features_tracker.md` for the underlying feature build status and open gaps referenced throughout these suites (Gap 2, 4, 9, 10, 11 in particular are cited directly in test cases above).

@@ -59,7 +59,7 @@ The cloud architecture is governed by five non-negotiable principles derived fro
 │                                INTERNET / USERS                                    │
 │                                                                                     │
 │   ┌──────────────┐    ┌──────────────┐    ┌────────────────┐    ┌──────────────┐    │
-│   │  Clerk/Auth0 │    │   Stripe     │    │  GitHub        │    │  End Users   │    │
+│   │  Clerk/Auth0 │    │     PayU     │    │  GitHub        │    │  End Users   │    │
 │   │  (SSO IdP)   │    │  (Payments)  │    │  (Source/CI)   │    │  (Browser)   │    │
 │   └──────┬───────┘    └──────┬───────┘    └───────┬────────┘    └──────┬───────┘    │
 └──────────┼───────────────────┼────────────────────┼─────────────────────┼────────────┘
@@ -206,8 +206,9 @@ All secrets are stored in **Azure Key Vault** and injected into Container Apps a
 | `AZURE_OPENAI_API_KEY`       | OpenAI API key                       | `invoice-be`, `queue-worker` |
 | `AZURE_OPENAI_ENDPOINT`      | OpenAI endpoint URL                  | `invoice-be`, `queue-worker` |
 | `AZURE_STORAGE_CONNECTION`   | Blob Storage connection string       | `invoice-be`, `queue-worker` |
-| `STRIPE_SECRET_KEY`          | Stripe API secret key                | `invoice-website`           |
-| `STRIPE_WEBHOOK_SECRET`      | Stripe webhook signing secret        | `invoice-website`           |
+| `PAYU_MERCHANT_KEY`          | PayU merchant key                    | `invoice-be`                |
+| `PAYU_MERCHANT_SALT`         | PayU merchant salt (SHA-512 hash signing) | `invoice-be`           |
+| `PAYU_MODE`                  | `test` or `live` — selects `test.payu.in` vs `secure.payu.in` | `invoice-be` |
 | `CLERK_SECRET_KEY`           | Clerk backend key                    | `invoice-be`, `invoice-website` |
 | `CLERK_JWT_ISSUER`           | Clerk JWT issuer URL, for verifying incoming session tokens | `invoice-be` |
 | `CLERK_JWKS_URL`             | Clerk JWKS endpoint, for verifying incoming session tokens | `invoice-be` |
@@ -794,7 +795,7 @@ Layer 9: AUDIT            Git-tracked IaC changes, Azure Activity Log
 | Cursor IDE (5 developers)     | $100 USD (~₹8,400)       |
 | GitHub Teams / Enterprise     | $20 – $40 USD             |
 | Clerk/Auth0 (Developer Plan)  | $0 – $25 USD              |
-| Stripe (per-transaction)      | 2.9% + $0.30 per charge  |
+| PayU (per-transaction)        | ~2% domestic cards/UPI/netbanking |
 
 ---
 
@@ -917,7 +918,7 @@ The following tasks should be assigned to the DevOps engineer to kick off the cl
 > "Define the approval policy for the UAT and Production environments in GitHub. No code reaches UAT without a PR review, and no code reaches Production without your sign-off."
 
 ### Task 6: Key Vault & Secrets
-> "Provision Azure Key Vault. Migrate all environment variables (database URLs, API keys, Stripe secrets) to Key Vault references. Ensure Container Apps pull secrets from Key Vault at runtime."
+> "Provision Azure Key Vault. Migrate all environment variables (database URLs, API keys, PayU secrets) to Key Vault references. Ensure Container Apps pull secrets from Key Vault at runtime."
 
 ---
 
@@ -953,8 +954,9 @@ The following tasks should be assigned to the DevOps engineer to kick off the cl
 | `AZURE_STORAGE_CONNECTION_STRING`  | BE, Worker                | Key Vault           |
 | `CHROMA_HOST`                      | BE, Worker                | App Setting         |
 | `CHROMA_PORT`                      | BE, Worker                | App Setting         |
-| `STRIPE_SECRET_KEY`                | Website                   | Key Vault           |
-| `STRIPE_WEBHOOK_SECRET`            | Website                   | Key Vault           |
+| `PAYU_MERCHANT_KEY`                | BE                        | Key Vault           |
+| `PAYU_MERCHANT_SALT`               | BE                        | Key Vault           |
+| `PAYU_MODE`                        | BE                        | App Setting         |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`| FE, Website               | App Setting         |
 | `CLERK_SECRET_KEY`                 | BE, Website               | Key Vault           |
 | `BACKEND_API_URL`                  | FE (server-only, no `NEXT_PUBLIC_` prefix) | App Setting |

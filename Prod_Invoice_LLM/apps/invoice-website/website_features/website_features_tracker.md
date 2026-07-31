@@ -12,7 +12,7 @@ This document tracks the implementation progress of the marketing website, SSO p
 - Feature 4: Clerk Auth Gateway & Company Provisioning — Signup/login/org provisioning built (see Gap 2 below for what's still needed before it's production-usable)
 
 **Critical Missing Features:**
-- Feature 3: Pricing Table & Stripe Integration - Required for monetization
+- Feature 3: Pricing Table & PayU Integration - Required for monetization
 
 ---
 
@@ -20,9 +20,9 @@ This document tracks the implementation progress of the marketing website, SSO p
 
 - `[x]` [Feature 1: Landing Page & Core Shell](feature_1_landing.md)
 - `[x]` [Feature 2: Multi-Tenant Workspace Showcase](feature_2_showcase.md) — includes **AITeamSection** showcasing the four AI agents: **NOVA** (Smart Invoice Extraction), **SENTINEL** (Invoice Risk Detection), **SAGE** (Invoice Intelligence Chat), **EVOLVE** (Continuous Learning)
-- `[ ]` [Feature 3: Pricing Table & Stripe Checkout Integration](feature_3_pricing_stripe.md)
+- `[ ]` [Feature 3: Pricing Table & PayU Checkout Integration](feature_3_pricing_payu.md)
 - `[x]` [Feature 4: Clerk Auth Gateway & Company Provisioning](feature_4_auth_gateway.md) — reconciled from the `auth-feature-4` branch onto current master (2026-07-28); further real code (forgot-password, admin console, Docker/infra) cherry-picked from the same branch 2026-07-30, closing Gaps 3/5/6/7/8. See Gap 2/4/9 below for what's still open (real Clerk keys, auth enforcement, the real-key verification run) — **plus a new Gap 10 (admin create-user route has no auth check)** found during the 2026-07-30 cherry-pick.
-- [ ] [Feature 3.1: Service Flow Pricing Tier](feature_3.1_vendor_flow_pricing.md) — **DECIDED** (Combined Pro at ₹8,999/month), upgrading and proration flows mapped.
+- [ ] [Feature 3.1: Service Flow Pricing Tier](feature_3.1_vendor_flow_pricing.md) — **DECIDED** (Combined Pro at ₹8,999/month). Upgrade flow mapped as a fresh full-price checkout, not prorated — PayU's classic API has no subscription/proration engine to build against.
 
 ## Open Items / Gaps
 

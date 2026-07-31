@@ -48,7 +48,7 @@ This document serves as the high-level milestone roadmap for the **Invoice AI Sa
   * **Week 9 (Days 41–45)**: Loading local `BAAI/bge-m3` embedding calculations and implementing ChromaDB collections and RAG chat.
 
 ### Phase 4: UI Dashboards & Production Deployment (Weeks 10–12)
-* **Goal**: Build React dashboards, configure user authorization and Stripe payments, run integration tests, and release to Production.
+* **Goal**: Build React dashboards, configure user authorization and PayU payments, run integration tests, and release to Production.
   * **Week 10 (Days 46–50)**: Building Next.js Frontend Dashboard pages, SSE progress bars, split-screen review layouts, and chat sidebars.
-  * **Week 11 (Days 51–55)**: Setting up the Marketing Website, Clerk SSO logins, Stripe billing tables, and webhooks processing.
+  * **Week 11 (Days 51–55)**: Setting up the Marketing Website, Clerk SSO logins, PayU billing tables, and success/failure callback processing.
   * **Week 12 (Days 56–60)**: Writing Playwright integration tests, setting up Azure Web Application Firewall (WAF) rules, and deploying to the Production environment.

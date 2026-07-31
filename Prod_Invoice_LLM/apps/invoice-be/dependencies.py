@@ -32,6 +32,34 @@ def get_db_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
 
+def require_clerk_jwt_config() -> None:
+    """
+    Gap 4 (fail closed): refuse to verify a token unless BOTH Clerk JWT settings
+    are present.
+
+    Previously an empty CLERK_JWT_ISSUER made `verify_iss` evaluate to False, so
+    a correctly signed token from ANY Clerk instance was accepted. Treating
+    incomplete config as a hard 500 means a misconfigured deployment denies
+    every request instead of silently widening who it trusts.
+    """
+    missing = [
+        name
+        for name, value in (
+            ("CLERK_JWKS_URL", settings.CLERK_JWKS_URL),
+            ("CLERK_JWT_ISSUER", settings.CLERK_JWT_ISSUER),
+        )
+        if not value
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Authentication is misconfigured: "
+                f"{', '.join(missing)} not set. Refusing to verify tokens."
+            ),
+        )
+
+
 def get_jwk(kid: str) -> dict:
     """Fetch public keys dynamically from the configured JWKS URL."""
     global _jwks_cache
@@ -70,12 +98,22 @@ def get_tenant_context(
 ) -> TenantContext:
     """
     Decodes and validates the Clerk JWT token.
-    Falls back to a mock context if no header is present or if using a 'test_' token.
     Blocks any request with an 'unpaid' billing plan with HTTP 402.
     Provisions Tenant and User rows in the database if they do not exist.
+
+    Gap 4: the mock/test fallback is gated behind settings.ALLOW_MOCK_AUTH,
+    which defaults False. With it disabled, a missing/malformed header or a
+    'test_' token is a 401 -- there is no path that downgrades an
+    unauthenticated request to a mock Admin context.
     """
-    # 1. Local Development / Test Fallback
+    # 1. Local Development / Test Fallback -- only when explicitly enabled
     if not authorization or not authorization.startswith("Bearer "):
+        if not settings.ALLOW_MOCK_AUTH:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or malformed Authorization header. Expected 'Bearer <token>'.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         tenant_id = MOCK_TENANT_ID
         user_id = MOCK_USER_ID
         role = MOCK_ROLE
@@ -89,6 +127,12 @@ def get_tenant_context(
 
         # Check for mock test token format (e.g. 'test_', 'test_unpaid')
         if token.startswith("test_"):
+            if not settings.ALLOW_MOCK_AUTH:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Test tokens are rejected when ALLOW_MOCK_AUTH is disabled.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             plan = "unpaid" if "unpaid" in token else MOCK_BILLING_PLAN
             role = "Viewer" if "viewer" in token else MOCK_ROLE
 
@@ -106,6 +150,9 @@ def get_tenant_context(
             last_name = "User"
         else:
             # 2. Live JWT Decoding & Verification
+            # Gap 4: fail closed before touching the token -- incomplete config
+            # must never soften verification (see require_clerk_jwt_config).
+            require_clerk_jwt_config()
             try:
                 header = jwt.get_unverified_header(token)
                 kid = header.get("kid")
@@ -118,12 +165,16 @@ def get_tenant_context(
                 jwk_dict = get_jwk(kid)
                 public_key = RSAAlgorithm.from_jwk(jwk_dict)
                 
+                # Gap 4: issuer verification is now unconditional. It was
+                # previously `bool(settings.CLERK_JWT_ISSUER)`, which silently
+                # disabled the check whenever the setting was empty.
+                # require_clerk_jwt_config() above guarantees it is non-empty.
                 payload = jwt.decode(
                     token,
                     public_key,
                     algorithms=["RS256"],
-                    issuer=settings.CLERK_JWT_ISSUER or None,
-                    options={"verify_iss": bool(settings.CLERK_JWT_ISSUER)}
+                    issuer=settings.CLERK_JWT_ISSUER,
+                    options={"verify_iss": True}
                 )
             except jwt.ExpiredSignatureError:
                 raise HTTPException(
