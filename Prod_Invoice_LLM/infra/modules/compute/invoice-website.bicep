@@ -14,6 +14,9 @@ param keyVaultName string
 @description('Backend Container App FQDN. Used server-side only (internal ingress).')
 param backendApiUrl string
 
+@description('Frontend (invoice-fe) Container App FQDN. Used server-side only (internal ingress) to reverse-proxy FE pages -- Gap 12 Multi-Zone fix.')
+param frontendApiUrl string
+
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -74,6 +77,20 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedIdentityClientId
+            }
+            {
+              // Gap 12: turns on next.config.js's rewrites() so invoice-website
+              // transparently reverse-proxies FE's pages server-side, avoiding the
+              // cross-subdomain Clerk cookie handshake (PSL rejects
+              // Set-Cookie Domain=azurecontainerapps.io).
+              name: 'ENABLE_FE_PROXY'
+              value: 'true'
+            }
+            {
+              // Server-side only, read by next.config.js's rewrites(). Must be
+              // http:// -- internal Container Apps traffic is not TLS.
+              name: 'FE_INTERNAL_URL'
+              value: 'http://${frontendApiUrl}'
             }
             // Gap 6: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and NEXT_PUBLIC_FE_URL are
             // deliberately NOT set here. Next.js inlines NEXT_PUBLIC_* into the

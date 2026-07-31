@@ -164,6 +164,7 @@ module websiteApp './modules/compute/invoice-website.bicep' = {
     userAssignedIdentityClientId: identity.properties.clientId
     keyVaultName: keyVaultName
     backendApiUrl: backendApp.outputs.fqdn
+    frontendApiUrl: frontendApp.outputs.fqdn
     acrName: acrName
     image: websiteImage
   }

@@ -11,6 +11,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` **MAJOR REFACTOR**: Replace the legacy task-queue broker/worker system with Azure Storage Queues, retain Redis for caching. *(Jul 19, 2026 — closed the last loose end: `main.py` was also running an embedded copy of the queue poller alongside the dedicated `queue-worker` Container App; removed, see `feature_2_pipeline_extraction.md`.)*
 
 - `[x]` [Feature 1: Multi-Tenant Authentication & Security Scoping](feature_1_auth.md)
+- `[ ]` [Feature 1.1: Granular Role-Based Access Control](feature_1.1_rbac.md) — flagged 2026-07-31, completes the role set (Admin, Auditor, Loader, Trainer, Viewer) `feature_1_auth.md` named from the start but never enforced. Default-nothing permission model (Dashboard/Chat/Help universal; Trainer/Auditor/Loader individually admin-granted). Not started — blocked in part on Clerk-list Gap 4's B1 (FE has no real token to carry permissions on) landing first for the FE half.
 - `[x]` [Feature 2: Ingestion, Storage & Extraction Pipeline — **NOVA**](feature_2_pipeline_extraction.md) *(merged with former Feature 5 — see doc header)*
 - `[x]` [Feature 3: Status Tracking & Real-Time SSE Streams](feature_3_sse.md)
 - `[x]` [Feature 3.1: Duplicate Detection & Ingestion UI Refinements](feature_3.1_fix_ftr2_3.md) — Layer 1 SHA-256 binary hash match + Layer 2 post-extraction vendor/number match fully implemented and UI badges wired

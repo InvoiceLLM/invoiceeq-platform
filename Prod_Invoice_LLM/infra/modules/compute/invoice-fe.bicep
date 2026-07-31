@@ -38,7 +38,7 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       ingress: {
-        external: true // Exposed to public traffic for Dev
+        external: false // Internal-only: invoice-website reverse-proxies FE server-side (Multi-Zone), avoiding cross-subdomain cookie handshake (Gap 12)
         targetPort: 3000
         transport: 'http'
       }
