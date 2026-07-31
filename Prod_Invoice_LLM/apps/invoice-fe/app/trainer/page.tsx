@@ -302,7 +302,13 @@ function TrainerContent() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-[#0B0F19] text-slate-100 overflow-hidden font-sans">
+    // FE Gap 76: h-full, not h-screen. This page renders inside Shell.tsx's
+    // <main className="flex-1 overflow-y-auto p-8">, which has already spent
+    // the global Header's 64px plus 32px of padding top and bottom. h-screen
+    // (100vh) here made the page ~128px taller than the space it actually has,
+    // pushing its own header row -- Rule History / Commit to Template Registry
+    // -- out of view. h-full sizes to the container instead of the viewport.
+    <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-hidden font-sans">
       {/* Toast Notification Bar */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 animate-in slide-in-from-top duration-300">
@@ -332,15 +338,20 @@ function TrainerContent() {
       )}
 
       {/* Top Application Page Header */}
-      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-[#3B82F6]">
+      {/* FE Gap 76: min-w-0 on the title side and shrink-0 on the actions side.
+          Without them, the title + EVOLVE badge (whitespace-nowrap) could grow
+          past the row and push the Commit button out horizontally at narrower
+          widths, which is the same symptom as the vertical clipping above but a
+          different cause -- both were reported as "Commit button not visible". */}
+      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-[#3B82F6] shrink-0">
             <GraduationCap className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-base font-semibold text-white tracking-wide flex items-center gap-2">
-              <span>AI Trainer</span>
-              <span className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold">
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold text-white tracking-wide flex items-center gap-2 min-w-0">
+              <span className="truncate">AI Trainer</span>
+              <span className="hidden sm:flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold whitespace-nowrap">
                 <span className="text-xs leading-none not-italic">🧬</span>
                 EVOLVE
                 <span className="text-slate-400 font-normal font-sans normal-case ml-1">— Rules Trainer</span>
@@ -350,7 +361,7 @@ function TrainerContent() {
         </div>
 
         {/* Header Action Buttons (Rule History & Commit to Registry) */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={handleOpenHistory}

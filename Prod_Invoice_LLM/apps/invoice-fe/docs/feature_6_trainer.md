@@ -56,5 +56,24 @@ This trainer code was only merged from a feature branch the day before (Jul 24) 
 
 See `be_features_tracker.md` Gaps 50/51 and `fe_features_tracker.md` Gaps 23-25 for the full writeups.
 
+### Gap 76 — Commit button clipped out of view (fixed 2026-07-31)
+
+Reported live as "the Commit to Template Registry button appears clipped/not visible." Root cause was a container-sizing conflict, not anything in the header markup itself: `app/trainer/page.tsx`'s root was `h-screen` (100vh), but this page renders inside `Shell.tsx`'s `<main className="flex-1 overflow-y-auto p-8">`, which has already spent the global Header's 64px plus 32px of padding top and bottom. A 100vh child inside a container ~128px shorter than the viewport is taller than the space it actually has, so its own contents get pushed past the bottom edge.
+
+Fixed by three changes in `app/trainer/page.tsx`:
+1. Root `h-screen` → `h-full`, so the page sizes to its container rather than the viewport.
+2. `min-w-0` on the title side and `shrink-0` on the actions side of the trainer's own `<header>`, plus `truncate` on the title text. The EVOLVE badge is `whitespace-nowrap`, so without these the title block could grow past the row and push the Commit button out *horizontally* — a second, independent path to the same reported symptom.
+3. The EVOLVE badge is now `hidden sm:flex`, dropping it on very narrow viewports rather than letting decoration compete with an action button for space.
+
+Measured before → after: Shell `<main>`'s scroll overflow on `/trainer` went from **178px to 1px** at 1280×720.
+
+Worth recording how the symptom actually presents, because the obvious test for it doesn't catch it: at `scrollTop=0` the Commit button is on screen *even on the pre-fix code*, so a plain "is the button visible" assertion passes on the bug and proves nothing. The defect is that the page was taller than its container, making Shell's `<main>` scrollable on a screen designed not to scroll — so any scroll at all (wheel over the page frame, keyboard, or a browser restoring a prior scroll position) carries the header and its Commit button off the top. That intermittency is consistent with it being reported as "appears clipped" rather than as a reliably reproducible layout break.
+
+**Left open deliberately:** this page still renders its own `<header>` even though `Shell`'s global `Header` sits directly above it, so `/trainer` shows two stacked header bars. That's arguably intentional (page-specific actions like Commit/Rule History don't belong in a global header), so it was not removed as part of a layout fix — flagged for a product decision instead. Related: Gap 88's broader IA critique of this screen.
+
+Regression coverage: `e2e/group-a-layout-overflow.spec.ts`, 4 tests. Two are the load-bearing ones, deterministically failing pre-fix: *"Commit stays on screen after scrolling the page frame to the bottom"* (scrolls `<main>` to its end, then asserts the button is still fully in the viewport) and *"the page frame itself does not scroll"* (asserts `main.scrollHeight - main.clientHeight <= 2`). The other two check Commit/Rule History are fully inside the viewport on both axes at 1280×720 and 1024×768 — useful post-fix invariants, but weak as proof of *this* bug, since pre-fix they pass or fail depending on whether `<main>` happens to have been scrolled.
+
+Note on the horizontal part of the fix (`min-w-0`/`shrink-0`/`hidden sm:flex`): the buttons were *not* measured overflowing the right edge at either tested width, so that change is defensive hardening against a second path to the same symptom, not a fix for a reproduced defect.
+
 ### Verification Plan
 * **Manual Verification**: Create a Global rule with no vendor context and confirm it applies to a brand-new vendor's next upload. Load an Existing Vendor session, submit a correction, commit, and confirm the re-audit toast appears. Open the Rule History drawer and roll back a version.

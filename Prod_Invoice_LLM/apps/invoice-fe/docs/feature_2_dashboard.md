@@ -46,6 +46,18 @@ The invoice-level table + filters below are moving off this page entirely, onto 
   - **Redundant-code removal done**: `dashboard/page.tsx` no longer has `activeTab`/`currentPage`/`totalCount`/`isInvoicesLoading`/`fetchInvoicesPage`/`PAGE_SIZE`/`tabToStatusParams` or the `RecentInvoicesTable` import/JSX. **`FilterBar.tsx` was kept** (correction from the original task wording) — it still filters `MetricsGrid`/the chart, just no longer an invoice list alongside it.
   - Tasks 2.4/2.4.1 above stay checked as historical record of what was built, but their described behavior physically relocates per this task — not a regression, a move.
 
+### Gap 85 — "Command Center" title crowding the filter row: NOT reproduced (2026-07-31)
+
+Investigated as part of Group A (the planning doc this cited, `docs/guides/fe_gap_plan_group_a_layout_overflow.md`, was never committed — see `e2e/group-a-layout-overflow.spec.ts` for the surviving width-sweep assertions). **No fix applied — the gap stays open, but is now open with evidence rather than open with a guess.**
+
+Reported live as the title squeezing the filter dropdowns after the Gap 68 title+filters merge. Attempted reproduction across a width sweep (1024 / 1152 / 1280 / 1440 / 1600 px at 900px height) measuring two things per width:
+* whether the title is actually being truncated (`scrollWidth > clientWidth`, i.e. showing an ellipsis because it was squeezed below its natural width),
+* whether any filter `<select>` overflows either edge of the viewport.
+
+**Neither occurred at any tested width.** The existing markup already defends against this: `PageHeader` is `flex-wrap items-center justify-between gap-3` with `min-w-0` + `truncate` on the title and `flex-wrap justify-end` on the actions slot, and `FilterBar`'s compact variant wraps its own controls. Below roughly 1150px of available row width the filter group wraps to its own line, which is graceful degradation rather than the reported crowding.
+
+Blocked on information, not effort: needs the reporter's actual window size (and ideally a screenshot), since the symptom may be specific to a width, zoom level, or OS font scaling not covered by the sweep. The five width assertions are kept in `e2e/group-a-layout-overflow.spec.ts` so that if the row ever does start truncating or overflowing, it fails as a regression instead of being re-reported as a mystery.
+
 ### Verification Plan
 * **Manual Verification**: Run Next.js dashboard view, toggle filters, and verify that mock details update accordingly. Check color contrast matches the dark layout.
 * **Task 2.7 verification**: `npx tsc --noEmit` clean; real dev server confirmed `/dashboard` returns 200 with "Needs Attention" rendering and zero console errors; grep confirms `dashboard/page.tsx` has no `RecentInvoicesTable` reference and no leftover pagination state. **Not yet verified**: real metrics/filter behavior against live backend data (no BE running in this pass).

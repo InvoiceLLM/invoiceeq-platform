@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send } from "lucide-react";
+import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send, ChevronDown } from "lucide-react";
 import TagSelector from "../../components/ingestion/TagSelector";
 import DropZone from "../../components/ingestion/DropZone";
 import StatusTable from "../../components/ingestion/StatusTable";
@@ -86,6 +86,12 @@ export default function IngestionPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [watcherError, setWatcherError] = useState<string | null>(null);
   const [watcherResult, setWatcherResult] = useState<{ files_found: number; files_queued: number } | null>(null);
+  // FE Gap 69: collapsed by default so the left column fits the viewport
+  // without scrolling. Bulk Directory Scan is the least-used control in this
+  // column (a shared-drop-folder path, not the normal drag-and-drop path), so
+  // it's the right one to fold away -- the header row stays visible so it's
+  // still discoverable, unlike being pushed below the fold entirely.
+  const [isDirectoryScanOpen, setIsDirectoryScanOpen] = useState(false);
 
   const handleWatchDirectory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,33 +169,46 @@ export default function IngestionPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="File Ingestion" agentIcon="🤖" agentName="NOVA" agentRole="Extraction & Validation" />
-
-      {/* Task 3.1.1: Receiving/Sending tab header, only when both flows enabled */}
-      {showTabs && (
-        <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
-          <button
-            onClick={() => setActiveTab("receiving")}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Receiving
-          </button>
-          <button
-            onClick={() => setActiveTab("sending")}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Sending
-          </button>
-        </div>
-      )}
+      {/* FE Gap 86: the Receiving/Sending toggle used to render as its own
+          block below the title, spending a whole row on one control and
+          compounding Gap 69's left-column overflow. It now shares the title's
+          row via PageHeader's existing `actions` slot -- the same mechanism
+          the Dashboard already uses for its FilterBar (Gap 68). Still gated on
+          showTabs, so a single-service tenant sees exactly what it did before. */}
+      <PageHeader
+        title="File Ingestion"
+        agentIcon="🤖"
+        agentName="NOVA"
+        agentRole="Extraction & Validation"
+        actions={
+          showTabs ? (
+            <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
+              <button
+                onClick={() => setActiveTab("receiving")}
+                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Receiving
+              </button>
+              <button
+                onClick={() => setActiveTab("sending")}
+                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Sending
+              </button>
+            </div>
+          ) : undefined
+        }
+      />
 
       {showSending && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-6">
+          {/* FE Gap 69: space-y-4 (was space-y-6) -- tighter vertical rhythm so
+              the column fits the viewport without scrolling. */}
+          <div className="lg:col-span-1 space-y-4">
             <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-3">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
                 <Send className="w-4 h-4 text-slate-500" />
@@ -248,8 +267,9 @@ export default function IngestionPage() {
 
       {showReceiving && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Side: Tagging & Files Drag-Drop - takes 1 col */}
-        <div className="lg:col-span-1 space-y-6">
+        {/* Left Side: Tagging & Files Drag-Drop - takes 1 col.
+            FE Gap 69: space-y-4 (was space-y-6). */}
+        <div className="lg:col-span-1 space-y-4">
           {/* Metadata tagging */}
           <TagSelector tags={tags} onChange={setTags} />
 
@@ -300,12 +320,28 @@ export default function IngestionPage() {
           </button>
 
           {/* Directory Watcher (Gap 12 / FE Gap 1): bulk-ingest a server-accessible
-              folder in one pass, no per-file drag-and-drop. */}
+              folder in one pass, no per-file drag-and-drop.
+              FE Gap 69: collapsed into a disclosure so it stops pushing itself
+              off-screen. Header row is always rendered and always clickable. */}
           <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
-              <FolderSearch className="w-4 h-4 text-slate-500" />
-              Bulk Directory Scan
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsDirectoryScanOpen((open) => !open)}
+              aria-expanded={isDirectoryScanOpen}
+              aria-controls="bulk-directory-scan-body"
+              className="w-full flex items-center gap-2 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+            >
+              <FolderSearch className="w-4 h-4 text-slate-500 shrink-0" />
+              <span>Bulk Directory Scan</span>
+              <ChevronDown
+                className={`w-4 h-4 text-slate-500 ml-auto shrink-0 transition-transform duration-200 ${
+                  isDirectoryScanOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {isDirectoryScanOpen && (
+            <div id="bulk-directory-scan-body" className="space-y-3">
             <p className="text-[11px] text-slate-500">
               Point at a folder the backend can read (e.g. a shared network drop
               folder) to ingest every PDF inside in one pass.
@@ -349,6 +385,8 @@ export default function IngestionPage() {
                   Found {watcherResult.files_found}, queued {watcherResult.files_queued} for processing.
                 </span>
               </div>
+            )}
+            </div>
             )}
           </div>
         </div>

@@ -39,5 +39,22 @@
   - Header counters (Found/Processed/Duplicates/Failed) in `StatusTable.tsx`, derived from the same `items` state driving the table rows.
   - Found and fixed a real bug along the way: `pollJobStatus()` (the 1-5 file path) had no branch for a `DUPLICATE` status — a duplicate upload silently stayed on "Processing" forever, polling never stopped, since none of the existing branches matched it. Added the missing branch, a `DUPLICATE` badge, and extended `StatusItem`'s status union.
 
+### Layout fixes from Group A (2026-07-31) — Gaps 86 & 69
+
+Both gaps were the same underlying complaint ("the page doesn't fit, I have to scroll to find things") with two separate causes, fixed together since they compound each other. (The planning doc this originally cited, `docs/guides/fe_gap_plan_group_a_layout_overflow.md`, was never committed — this section is the surviving writeup.)
+
+* **Gap 86 — title and Receiving/Sending toggle were stacked on separate rows.** `PageHeader` already had an `actions` slot (added for the Dashboard's FilterBar merge, Gap 68) — Ingestion just never used it, rendering the toggle as its own sibling block below the title. Fixed by passing the toggle into `actions`; no new prop was needed. Still gated on `showTabs`, so a single-service tenant's view is unchanged (covered by its own regression test).
+* **Gap 69 — left column overflowed the viewport, pushing Bulk Directory Scan off-screen.** Two changes: `space-y-6` → `space-y-4` on both the Receiving and Sending left columns, and the Bulk Directory Scan card became a collapsed-by-default disclosure (`aria-expanded`/`aria-controls`, chevron rotation). Bulk Directory Scan was chosen as the thing to fold because it's the least-used control in that column — a shared-drop-folder path, not the normal drag-and-drop route — and its header row stays visible, so it's more discoverable collapsed than it was below the fold.
+
+**Measured at 1280×720, before → after** (captured via a throwaway Playwright measurement harness, since "it overflows" needed a number rather than an impression):
+
+| Metric | Before | After |
+|---|---|---|
+| Shell `<main>` overflow | 178 px | 1 px (sub-pixel) |
+| Left column height | 718 px | 541 px |
+| Bulk Directory Scan bottom edge vs. fold | 146 px **below** | 31 px **above** |
+
+Regression coverage: `e2e/group-a-layout-overflow.spec.ts` — geometry assertions (`boundingBox()` vs. viewport), not visibility assertions, because an element pushed below the fold still counts as "visible" to Playwright's default definition, which is exactly why this shipped unnoticed. Confirmed failing against the pre-fix code before being confirmed passing against the fix.
+
 ### Verification Plan
 * **Manual Verification**: Drop multiple PDFs, check that tags are sent, and confirm the progress bars update based on SSE socket triggers.
