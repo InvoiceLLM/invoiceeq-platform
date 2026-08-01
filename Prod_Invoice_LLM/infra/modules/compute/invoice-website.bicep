@@ -20,6 +20,18 @@ param frontendApiUrl string
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('vCPU allocation, e.g. \'0.5\'.')
+param cpu string = '0.5'
+
+@description('Memory allocation, e.g. \'1.0Gi\'.')
+param memory string = '1.0Gi'
+
+@description('Minimum replica count. Dev default is 0 (scale-to-zero, per section 4.3). Prod should be >=1 -- this is the public marketing/login entry point, and scale-from-zero cold starts are user-visible there in a way they are not for internal-only apps.')
+param minReplicas int = 0
+
+@description('Maximum replica count.')
+param maxReplicas int = 3
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -60,8 +72,8 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'invoice-website'
           image: image
           resources: {
-            cpu: json('0.5')
-            memory: '1.0Gi'
+            cpu: json(cpu)
+            memory: memory
           }
           env: [
             {
@@ -101,9 +113,10 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        // Section 4.3: scale to zero when idle (marketing site, bursty traffic).
-        minReplicas: 0
-        maxReplicas: 3
+        // Section 4.3: scale to zero when idle (marketing site, bursty
+        // traffic) -- dev default only; prod overrides minReplicas to >=1.
+        minReplicas: minReplicas
+        maxReplicas: maxReplicas
       }
     }
   }

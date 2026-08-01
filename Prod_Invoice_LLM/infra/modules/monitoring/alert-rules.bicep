@@ -262,7 +262,7 @@ resource storageEgressAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
     enabled: true
     scopes: [ resourceId('Microsoft.Storage/storageAccounts', storageAccountName) ]
     evaluationFrequency: 'PT1H'
-    windowSize: 'PT24H'
+    windowSize: 'P1D' // was 'PT24H' - not a valid Azure Monitor windowSize value (max granularity is ISO 8601 with day units, not 24 hour units); this was the actual reason Stage 9 never deployed successfully (confirmed via `az deployment group what-if`)
     criteria: {
       'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
       allOf: [

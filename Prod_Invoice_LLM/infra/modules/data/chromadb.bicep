@@ -5,6 +5,18 @@ param storageAccountName string
 @secure()
 param storageAccountKey string
 
+@description('vCPU allocation, e.g. \'0.5\'.')
+param cpu string = '0.5'
+
+@description('Memory allocation, e.g. \'1.0Gi\'.')
+param memory string = '1.0Gi'
+
+@description('Minimum replica count. ChromaDB is stateful (single AzureFile-backed volume) so this stays at 1 for both envs -- more than 1 replica would need a different persistence story.')
+param minReplicas int = 1
+
+@description('Maximum replica count.')
+param maxReplicas int = 1
+
 // ================= Variables =================
 var fileShareName = 'chromadb-data'
 var storageResourceName = 'chromadb-storage'
@@ -73,8 +85,8 @@ resource chromaDbApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'chromadb'
           image: 'chromadb/chroma:latest'
           resources: {
-            cpu: json('0.5')
-            memory: '1.0Gi'
+            cpu: json(cpu)
+            memory: memory
           }
           volumeMounts: [
             {
@@ -85,8 +97,8 @@ resource chromaDbApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 1
-        maxReplicas: 1
+        minReplicas: minReplicas
+        maxReplicas: maxReplicas
       }
     }
   }

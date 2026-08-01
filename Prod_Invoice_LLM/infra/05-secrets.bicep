@@ -39,6 +39,11 @@ param googleClientSecret string
 @secure()
 param salesforceClientSecret string
 
+@description('Number of Document Intelligence resources deployed in Stage 4 (must match). Dev=1, prod=3 -- gates whether the DOC-INTEL-KEY-2/3 and DOC-INTEL-ENDPOINT-2/3 secrets are seeded.')
+@minValue(1)
+@maxValue(3)
+param docIntelInstanceCount int = 1
+
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
 var postgresServerName = 'psql-${namingPrefix}-${environment}'
@@ -77,11 +82,11 @@ resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' exist
   name: docIntelName
 }
 
-resource docIntelAccount2 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+resource docIntelAccount2 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = if (docIntelInstanceCount >= 2) {
   name: docIntelName2
 }
 
-resource docIntelAccount3 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+resource docIntelAccount3 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = if (docIntelInstanceCount >= 3) {
   name: docIntelName3
 }
 
@@ -128,7 +133,7 @@ resource secretDocIntelKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
 // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence resources, each
 // with its own independent rate limit, round-robined across in code
 // (utils/doc_intel_client.py) - see feature_2_pipeline_extraction.md.
-resource secretDocIntelKey2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretDocIntelKey2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (docIntelInstanceCount >= 2) {
   parent: keyVault
   name: 'AZURE-DOC-INTEL-KEY-2'
   properties: {
@@ -136,7 +141,7 @@ resource secretDocIntelKey2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource secretDocIntelEndpoint2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretDocIntelEndpoint2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (docIntelInstanceCount >= 2) {
   parent: keyVault
   name: 'AZURE-DOC-INTEL-ENDPOINT-2'
   properties: {
@@ -144,7 +149,7 @@ resource secretDocIntelEndpoint2 'Microsoft.KeyVault/vaults/secrets@2023-07-01' 
   }
 }
 
-resource secretDocIntelKey3 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretDocIntelKey3 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (docIntelInstanceCount >= 3) {
   parent: keyVault
   name: 'AZURE-DOC-INTEL-KEY-3'
   properties: {
@@ -152,7 +157,7 @@ resource secretDocIntelKey3 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource secretDocIntelEndpoint3 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretDocIntelEndpoint3 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (docIntelInstanceCount >= 3) {
   parent: keyVault
   name: 'AZURE-DOC-INTEL-ENDPOINT-3'
   properties: {
@@ -197,4 +202,13 @@ resource secretSalesforceClientSecret 'Microsoft.KeyVault/vaults/secrets@2023-07
   }
 }
 
-output secretsSeeded int = 9
+// Computed, not hardcoded: 9 always-seeded secrets (DATABASE-URL, REDIS-URL,
+// AZURE-STORAGE-CONNECTION-STRING, AZURE-OPENAI-API-KEY, AZURE-DOC-INTEL-KEY,
+// CLERK-SECRET-KEY, TOKEN-ENCRYPTION-KEY, GOOGLE-CLIENT-SECRET,
+// SALESFORCE-CLIENT-SECRET) + 2 more per additional Doc Intelligence
+// instance beyond the first (KEY + ENDPOINT, gated on docIntelInstanceCount).
+// This was hardcoded to 9 and went stale the moment Gap 41/42 added the
+// docintel-2/3 secrets (actual count today, with docIntelInstanceCount=3,
+// is 13) -- deploy-all.ps1's Stage 5 gate now reads this output instead of
+// asserting a literal number, so it can't go stale the same way again.
+output secretsSeeded int = 9 + (2 * (docIntelInstanceCount - 1))

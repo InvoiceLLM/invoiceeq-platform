@@ -3,6 +3,9 @@ param keyVaultName string
 param subnetId string
 param privateDnsZoneId string
 
+@description('Whether to provision private networking. false = public network access enabled, RBAC-auth still required (dev); true = private-endpoint-only (prod).')
+param networkIsolation bool = false
+
 // Target state: private-endpoint-only, matching Cloud_Architecture_Document.md's
 // "Private by Default" principle. Secret *values* are seeded separately in
 // 05-secrets.bicep, once the data/AI resources this vault stores connection
@@ -21,15 +24,15 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enabledForDeployment: true
     enabledForTemplateDeployment: true
     enabledForDiskEncryption: true
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: networkIsolation ? 'Disabled' : 'Enabled'
     networkAcls: {
-      defaultAction: 'Deny'
+      defaultAction: networkIsolation ? 'Deny' : 'Allow'
       bypass: 'AzureServices'
     }
   }
 }
 
-resource keyVaultPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+resource keyVaultPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (networkIsolation) {
   name: '${keyVaultName}-pe'
   location: location
   properties: {
@@ -50,7 +53,7 @@ resource keyVaultPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01'
   }
 }
 
-resource keyVaultPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+resource keyVaultPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (networkIsolation) {
   parent: keyVaultPrivateEndpoint
   name: 'default'
   properties: {

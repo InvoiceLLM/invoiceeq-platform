@@ -64,7 +64,7 @@ paths — you don't touch it.
 | 5 | `05-secrets.bicep` | Seeds the 7 Key Vault secrets from Stages 2-4's resources |
 | 6 | `06-compute-env.bicep` | Container Apps Environment, ChromaDB |
 | 7 | `07-rbac.bicep` | Role assignments for the managed identity |
-| 8 | `08-apps.bicep` | Backend, queue-worker, frontend container apps |
+| 8 | `08-apps.bicep` | Backend, queue-worker, frontend, and website container apps |
 | 9 | `09-monitoring.bicep` | Log Analytics, App Insights, action group, diagnostics, health alerts |
 | 10 | `10-budget.bicep` | Monthly consumption budget + cost alerts |
 

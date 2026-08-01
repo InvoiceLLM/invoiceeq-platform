@@ -1,0 +1,102 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "prod"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "namingPrefix": {
+      "value": "invoice-llm"
+    },
+    "networkIsolation": {
+      "value": true
+    },
+    "dbAdminLogin": {
+      "value": "dbadmin"
+    },
+    "postgresSkuName": {
+      "value": "Standard_D2ds_v5"
+    },
+    "postgresSkuTier": {
+      "value": "GeneralPurpose"
+    },
+    "postgresStorageSizeGB": {
+      "value": 128
+    },
+    "postgresBackupRetentionDays": {
+      "value": 14
+    },
+    "postgresGeoRedundantBackup": {
+      "value": "Enabled"
+    },
+    "postgresHighAvailabilityMode": {
+      "value": "Disabled"
+    },
+    "storageSkuName": {
+      "value": "Standard_ZRS"
+    },
+    "deployAcr": {
+      "value": false
+    },
+    "sharedAcrName": {
+      "value": "acrinvoicellmdev"
+    },
+    "sharedAcrResourceGroup": {
+      "value": "invoice-llm-dev"
+    },
+    "azureOpenAiDeploymentName": {
+      "value": "gpt-5-mini"
+    },
+    "azureOpenAiModelVersion": {
+      "value": "2025-08-07"
+    },
+    "openAiCapacity": {
+      "value": 500
+    },
+    "docIntelInstanceCount": {
+      "value": 3
+    },
+    "logRetentionInDays": {
+      "value": 90
+    },
+    "alertEmail": {
+      "value": "sbanerji@admsofttech.com"
+    },
+    "monthlyBudgetAmount": {
+      "value": 300
+    },
+    "backendImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "queueWorkerImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "frontendImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "websiteImage": {
+      "value": "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
+    },
+    "websiteMinReplicas": {
+      "value": 1
+    },
+    "nextPublicClerkPublishableKey": {
+      "value": "REPLACE_WITH_PROD_CLERK_PUBLISHABLE_KEY"
+    },
+    "clerkJwtIssuer": {
+      "value": "REPLACE_WITH_PROD_CLERK_JWT_ISSUER"
+    },
+    "clerkJwksUrl": {
+      "value": "REPLACE_WITH_PROD_CLERK_JWKS_URL"
+    },
+    "googleClientId": {
+      "value": "REPLACE_WITH_PROD_GOOGLE_OAUTH_CLIENT_ID"
+    },
+    "salesforceClientId": {
+      "value": "REPLACE_WITH_PROD_SALESFORCE_CONNECTED_APP_CONSUMER_KEY"
+    }
+  }
+}

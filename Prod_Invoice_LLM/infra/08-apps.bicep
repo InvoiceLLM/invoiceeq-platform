@@ -47,10 +47,55 @@ param googleClientId string = ''
 @description('Our company Salesforce Connected App Consumer Key (connectors) -- public value, see invoice-be.bicep')
 param salesforceClientId string = ''
 
+@description('Number of Document Intelligence resources deployed (must match Stage 4/5). Threaded into queue-worker.bicep so it only wires up the docintel-2/-3 Key Vault secretRefs that Stage 5 actually seeded.')
+@minValue(1)
+@maxValue(3)
+param docIntelInstanceCount int = 1
+
+@description('Name of the shared ACR registry this environment pulls images from. Defaults to this environment\'s own computed name (dev, which owns it); prod must set this explicitly -- see 03-data.bicep.')
+param sharedAcrName string = 'acr${replace(namingPrefix, '-', '')}${environment}'
+
+@description('Backend Container App vCPU allocation.')
+param backendCpu string = '1.0'
+@description('Backend Container App memory allocation.')
+param backendMemory string = '2.0Gi'
+@description('Backend Container App minimum replica count.')
+param backendMinReplicas int = 1
+@description('Backend Container App maximum replica count.')
+param backendMaxReplicas int = 5
+
+@description('Queue-worker Container App vCPU allocation.')
+param workerCpu string = '2.0'
+@description('Queue-worker Container App memory allocation.')
+param workerMemory string = '4.0Gi'
+@description('Queue-worker Container App minimum replica count.')
+param workerMinReplicas int = 0
+@description('Queue-worker Container App maximum replica count.')
+param workerMaxReplicas int = 10
+@description('Queue-worker KEDA queue-length scale trigger threshold.')
+param workerQueueScaleLength string = '15'
+
+@description('Frontend Container App vCPU allocation.')
+param frontendCpu string = '0.5'
+@description('Frontend Container App memory allocation.')
+param frontendMemory string = '1.0Gi'
+@description('Frontend Container App minimum replica count.')
+param frontendMinReplicas int = 1
+@description('Frontend Container App maximum replica count.')
+param frontendMaxReplicas int = 2
+
+@description('Website Container App vCPU allocation.')
+param websiteCpu string = '0.5'
+@description('Website Container App memory allocation.')
+param websiteMemory string = '1.0Gi'
+@description('Website Container App minimum replica count. Dev default 0 (scale-to-zero); prod should set >=1 to avoid cold-starts on the public entry point.')
+param websiteMinReplicas int = 0
+@description('Website Container App maximum replica count.')
+param websiteMaxReplicas int = 3
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
-var acrName = 'acr${replace(namingPrefix, '-', '')}${environment}'
 var openaiName = 'openai-${namingPrefix}-${environment}'
 var docIntelName = 'docintel-${namingPrefix}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
@@ -106,7 +151,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
-    acrName: acrName
+    acrName: sharedAcrName
     image: backendImage
     clerkJwtIssuer: clerkJwtIssuer
     clerkJwksUrl: clerkJwksUrl
@@ -116,6 +161,10 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     salesforceClientId: salesforceClientId
     salesforceRedirectUri: salesforceRedirectUri
     frontendUrl: 'https://${frontendFqdn}'
+    cpu: backendCpu
+    memory: backendMemory
+    minReplicas: backendMinReplicas
+    maxReplicas: backendMaxReplicas
   }
 }
 
@@ -132,9 +181,15 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
-    acrName: acrName
+    acrName: sharedAcrName
     storageAccountName: storageAccountName
     image: queueWorkerImage
+    docIntelInstanceCount: docIntelInstanceCount
+    cpu: workerCpu
+    memory: workerMemory
+    minReplicas: workerMinReplicas
+    maxReplicas: workerMaxReplicas
+    queueScaleLength: workerQueueScaleLength
   }
 }
 
@@ -149,8 +204,12 @@ module frontendApp './modules/compute/invoice-fe.bicep' = {
     keyVaultName: keyVaultName
     backendApiUrl: backendApp.outputs.fqdn
     nextPublicClerkPublishableKey: nextPublicClerkPublishableKey
-    acrName: acrName
+    acrName: sharedAcrName
     image: frontendImage
+    cpu: frontendCpu
+    memory: frontendMemory
+    minReplicas: frontendMinReplicas
+    maxReplicas: frontendMaxReplicas
   }
 }
 
@@ -165,8 +224,12 @@ module websiteApp './modules/compute/invoice-website.bicep' = {
     keyVaultName: keyVaultName
     backendApiUrl: backendApp.outputs.fqdn
     frontendApiUrl: frontendApp.outputs.fqdn
-    acrName: acrName
+    acrName: sharedAcrName
     image: websiteImage
+    cpu: websiteCpu
+    memory: websiteMemory
+    minReplicas: websiteMinReplicas
+    maxReplicas: websiteMaxReplicas
   }
 }
 

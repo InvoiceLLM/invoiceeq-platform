@@ -54,6 +54,18 @@ param frontendUrl string = ''
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('vCPU allocation, e.g. \'1.0\'. Passed to json() below since Container Apps requires cpu as a decimal, not a string.')
+param cpu string = '1.0'
+
+@description('Memory allocation, e.g. \'2.0Gi\'.')
+param memory string = '2.0Gi'
+
+@description('Minimum replica count.')
+param minReplicas int = 1
+
+@description('Maximum replica count.')
+param maxReplicas int = 5
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -134,8 +146,8 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'invoice-be'
           image: image
           resources: {
-            cpu: json('1.0')
-            memory: '2.0Gi'
+            cpu: json(cpu)
+            memory: memory
           }
           env: [
             {
@@ -242,8 +254,8 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 1
-        maxReplicas: 5
+        minReplicas: minReplicas
+        maxReplicas: maxReplicas
       }
     }
   }

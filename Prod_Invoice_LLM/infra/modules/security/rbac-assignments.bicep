@@ -3,21 +3,23 @@ param storageAccountName string
 param openaiName string
 param docIntelName string
 param keyVaultName string
-param acrName string
 
 // Role Definition IDs (Azure Standard Roles)
 var storageBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var cognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 var keyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
-var acrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+
+// ACR's AcrPull assignment is NOT here -- ACR is a shared resource that may
+// live in a different resource group than this deployment (prod pulling
+// dev's registry), and a cross-RG role assignment cannot be an inline
+// resource in a template whose targetScope is this deployment's own
+// resource group. See modules/security/acr-rbac.bicep + this stage's
+// acrRbac module invocation (07-rbac.bicep), which handles both the
+// same-RG (dev) and cross-RG (prod) cases via `scope: resourceGroup(...)`.
 
 // Reference existing resources
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
   name: storageAccountName
-}
-
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrName
 }
 
 resource openaiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
@@ -77,13 +79,3 @@ resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
   }
 }
 
-// RBAC for Azure Container Registry (AcrPull — allows Container Apps to pull images)
-resource acrRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(identityPrincipalId, acr.id, acrPull)
-  scope: acr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPull)
-    principalId: identityPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}

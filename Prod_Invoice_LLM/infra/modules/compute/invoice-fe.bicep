@@ -16,6 +16,18 @@ param nextPublicClerkPublishableKey string = ''
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('vCPU allocation, e.g. \'0.5\'.')
+param cpu string = '0.5'
+
+@description('Memory allocation, e.g. \'1.0Gi\'.')
+param memory string = '1.0Gi'
+
+@description('Minimum replica count.')
+param minReplicas int = 1
+
+@description('Maximum replica count.')
+param maxReplicas int = 2
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -56,8 +68,8 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'invoice-fe'
           image: image
           resources: {
-            cpu: json('0.5')
-            memory: '1.0Gi'
+            cpu: json(cpu)
+            memory: memory
           }
           env: [
             {
@@ -82,8 +94,8 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 1
-        maxReplicas: 2
+        minReplicas: minReplicas
+        maxReplicas: maxReplicas
       }
     }
   }

@@ -4,18 +4,38 @@ param subnetId string
 param privateDnsZoneId string
 param queueDnsZoneId string
 
+@description('Whether to provision private networking. false = public network access (dev); true = private-endpoint-only, blob + queue (prod).')
+param networkIsolation bool = false
+
+@description('Storage account replication SKU. Dev default (Standard_LRS) is cheapest -- single-region, no redundancy beyond in-datacenter. Standard_ZRS is recommended for prod since invoice PDFs have no other copy (source-of-truth, not a cache), but it is a real cost delta (roughly +25% on storage) over LRS -- left as an explicit param rather than silently upgraded so the tradeoff is a conscious choice at deploy time, not a bicep default.')
+param skuName string = 'Standard_LRS'
+
+@description('Public network access for the storage account. Only meaningful when networkIsolation=false.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param publicNetworkAccess string = 'Enabled'
+
+@description('Network ACL default action. Only meaningful when networkIsolation=false.')
+@allowed([
+  'Allow'
+  'Deny'
+])
+param networkAclsDefaultAction string = 'Allow'
+
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location
   sku: {
-    name: 'Standard_LRS'
+    name: skuName
   }
   kind: 'StorageV2'
   properties: {
     accessTier: 'Hot'
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: networkIsolation ? 'Disabled' : publicNetworkAccess
     networkAcls: {
-      defaultAction: 'Deny'
+      defaultAction: networkIsolation ? 'Deny' : networkAclsDefaultAction
       bypass: 'AzureServices'
     }
   }
@@ -36,7 +56,7 @@ resource invoicesContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
 }
 
 // Private Endpoint for Storage Account (Blob service)
-resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (networkIsolation) {
   name: '${storageAccountName}-pe'
   location: location
   properties: {
@@ -57,7 +77,7 @@ resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' 
   }
 }
 
-resource storagePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+resource storagePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (networkIsolation) {
   parent: storagePrivateEndpoint
   name: 'default'
   properties: {
@@ -73,7 +93,7 @@ resource storagePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateD
 }
 
 // Private Endpoint for Storage Account (Queue service)
-resource storageQueuePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+resource storageQueuePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (networkIsolation) {
   name: '${storageAccountName}-queue-pe'
   location: location
   properties: {
@@ -94,7 +114,7 @@ resource storageQueuePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09
   }
 }
 
-resource storageQueuePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+resource storageQueuePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (networkIsolation) {
   parent: storageQueuePrivateEndpoint
   name: 'default'
   properties: {

@@ -14,7 +14,113 @@ param acrName string
 param storageAccountName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('vCPU allocation, e.g. \'2.0\'.')
+param cpu string = '2.0'
+
+@description('Memory allocation, e.g. \'4.0Gi\'.')
+param memory string = '4.0Gi'
+
+@description('Minimum replica count.')
+param minReplicas int = 0
+
+@description('Maximum replica count.')
+param maxReplicas int = 10
+
+@description('KEDA queue-length scale trigger threshold.')
+param queueScaleLength string = '15'
+
+@description('Number of Document Intelligence resources deployed (must match Stage 4/5). Gates whether the DOC-INTEL-KEY-2/3 and DOC-INTEL-ENDPOINT-2/3 Key Vault secretRefs are wired in -- those Key Vault secrets only exist when docIntelInstanceCount >= 2/3 (see 05-secrets.bicep), so referencing them unconditionally would fail deployment in dev (docIntelInstanceCount=1).')
+@minValue(1)
+@maxValue(3)
+param docIntelInstanceCount int = 1
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
+
+var baseSecrets = [
+  {
+    name: 'db-url-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/DATABASE-URL'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'redis-url-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/REDIS-URL'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'clerk-secret-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/CLERK-SECRET-KEY'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'token-encryption-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/TOKEN-ENCRYPTION-KEY'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'openai-key-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-OPENAI-API-KEY'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'docintel-key-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'storage-conn-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
+    identity: userAssignedIdentityId
+  }
+]
+
+var docIntel2Secrets = docIntelInstanceCount >= 2 ? [
+  {
+    name: 'docintel-key-secret-2'
+    keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY-2'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'docintel-endpoint-secret-2'
+    keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-ENDPOINT-2'
+    identity: userAssignedIdentityId
+  }
+] : []
+
+var docIntel3Secrets = docIntelInstanceCount >= 3 ? [
+  {
+    name: 'docintel-key-secret-3'
+    keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY-3'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'docintel-endpoint-secret-3'
+    keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-ENDPOINT-3'
+    identity: userAssignedIdentityId
+  }
+] : []
+
+var docIntel2Env = docIntelInstanceCount >= 2 ? [
+  {
+    name: 'AZURE_DOC_INTEL_ENDPOINT_2'
+    secretRef: 'docintel-endpoint-secret-2'
+  }
+  {
+    name: 'AZURE_DOC_INTEL_KEY_2'
+    secretRef: 'docintel-key-secret-2'
+  }
+] : []
+
+var docIntel3Env = docIntelInstanceCount >= 3 ? [
+  {
+    name: 'AZURE_DOC_INTEL_ENDPOINT_3'
+    secretRef: 'docintel-endpoint-secret-3'
+  }
+  {
+    name: 'AZURE_DOC_INTEL_KEY_3'
+    secretRef: 'docintel-key-secret-3'
+  }
+] : []
 
 resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
@@ -36,63 +142,7 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       ingress: null // No HTTP endpoints needed for task runner
-      secrets: [
-        {
-          name: 'db-url-secret'
-          keyVaultUrl: '${keyVaultUrl}/secrets/DATABASE-URL'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'redis-url-secret'
-          keyVaultUrl: '${keyVaultUrl}/secrets/REDIS-URL'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'clerk-secret-secret'
-          keyVaultUrl: '${keyVaultUrl}/secrets/CLERK-SECRET-KEY'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'token-encryption-secret'
-          keyVaultUrl: '${keyVaultUrl}/secrets/TOKEN-ENCRYPTION-KEY'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'openai-key-secret'
-          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-OPENAI-API-KEY'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'docintel-key-secret'
-          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'docintel-key-secret-2'
-          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY-2'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'docintel-endpoint-secret-2'
-          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-ENDPOINT-2'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'docintel-key-secret-3'
-          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-KEY-3'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'docintel-endpoint-secret-3'
-          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-DOC-INTEL-ENDPOINT-3'
-          identity: userAssignedIdentityId
-        }
-        {
-          name: 'storage-conn-secret'
-          keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
-          identity: userAssignedIdentityId
-        }
-      ]
+      secrets: concat(baseSecrets, docIntel2Secrets, docIntel3Secrets)
     }
     template: {
       containers: [
@@ -108,10 +158,10 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // Raised from 1.0/2.0Gi (Gap 41/42, Jul 2026) to support up to
             // 10 concurrent threads (main_worker.py MAX_WORKERS) holding
             // PDF bytes + OCR output + LLM responses in memory at once.
-            cpu: json('2.0')
-            memory: '4.0Gi'
+            cpu: json(cpu)
+            memory: memory
           }
-          env: [
+          env: concat([
             {
               name: 'DATABASE_URL'
               secretRef: 'db-url-secret'
@@ -165,26 +215,6 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               secretRef: 'docintel-key-secret'
             }
             {
-              // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence
-              // resources, round-robined in code (utils/doc_intel_client.py).
-              // Each Key Vault secret needs its own env var - Container Apps
-              // can't join multiple secretRefs into one comma-separated value.
-              name: 'AZURE_DOC_INTEL_ENDPOINT_2'
-              secretRef: 'docintel-endpoint-secret-2'
-            }
-            {
-              name: 'AZURE_DOC_INTEL_KEY_2'
-              secretRef: 'docintel-key-secret-2'
-            }
-            {
-              name: 'AZURE_DOC_INTEL_ENDPOINT_3'
-              secretRef: 'docintel-endpoint-secret-3'
-            }
-            {
-              name: 'AZURE_DOC_INTEL_KEY_3'
-              secretRef: 'docintel-key-secret-3'
-            }
-            {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedIdentityClientId
             }
@@ -192,16 +222,23 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AZURE_STORAGE_CONNECTION_STRING'
               secretRef: 'storage-conn-secret'
             }
-          ]
+          ], docIntel2Env, docIntel3Env)
+          // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence
+          // resources, round-robined in code (utils/doc_intel_client.py).
+          // Each Key Vault secret needs its own env var - Container Apps
+          // can't join multiple secretRefs into one comma-separated value.
+          // Wired in above via docIntel2Env/docIntel3Env, gated on
+          // docIntelInstanceCount so dev (=1) doesn't reference Key Vault
+          // secrets that Stage 5 never seeded.
         }
       ]
       scale: {
-        minReplicas: 0
+        minReplicas: minReplicas
         // Reconciled to match the live value (Jul 2026) - this bicep
         // previously said 5 while the deployed resource was actually 10,
         // provisioned out-of-band at some point (see Gap 41 in
         // be_features_tracker.md for the drift this caused).
-        maxReplicas: 10
+        maxReplicas: maxReplicas
         rules: [
           {
             // Live rule is actually named 'queue-depth-scaler', not this -
@@ -217,7 +254,7 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 // MAX_WORKERS) instead of 1, so the old queueLength=2
                 // would trigger a new replica almost immediately even
                 // though a single replica has far more headroom now.
-                queueLength: '15'
+                queueLength: queueScaleLength
               }
               auth: [
                 {

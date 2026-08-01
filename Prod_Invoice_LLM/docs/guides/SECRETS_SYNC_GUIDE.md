@@ -1,173 +1,87 @@
-# Azure Key Vault to GitHub Secrets Synchronization
+# Azure Key Vault & GitHub Actions Secrets — How It Actually Works
+
+## Correction (2026-08-01)
+
+This document previously described an automated daily GitHub Actions
+workflow (`sync-secrets.yml`) that synced secrets from Azure Key Vault to
+GitHub Repository Secrets. **That workflow does not exist and never has** —
+`.github/workflows/` contains only `deploy-dev.yml` and
+`e2e-regression.yml`. The section below describes the process that is
+actually in place.
 
 ## Overview
 
-This document explains how to synchronize secrets between Azure Key Vault and GitHub Secrets for the Invoice-LLM project. This ensures that GitHub Actions has access to the latest secrets without manual updates.
+There is no automated secret synchronization between Azure Key Vault and
+GitHub. Application secrets are seeded into Key Vault manually, once, via
+the staged bicep deployment; CI never touches them.
 
-## Architecture
-
-```
-Azure Key Vault (Source) → GitHub Actions → GitHub Secrets (Destination)
-```
-
-**Flow:**
-1. Azure Key Vault stores all application secrets (DB passwords, API keys, etc.)
-2. GitHub Actions workflow runs daily or on-demand
-3. Workflow downloads secrets from Azure Key Vault
-4. Workflow updates corresponding GitHub Secrets
-5. GitHub Actions workflows use GitHub Secrets for deployments
-
-## Secret Mapping
-
-| Azure Key Vault Secret | GitHub Secret | Description |
-|------------------------|---------------|-------------|
-| DATABASE-PASSWORD | DB_ADMIN_PASSWORD | PostgreSQL admin password |
-| CLERK-SECRET-KEY | CLERK_SECRET_KEY | Clerk SSO secret key |
-| TOKEN-ENCRYPTION-KEY | TOKEN_ENCRYPTION_KEY | Fernet encryption key for tokens |
-| AZURE-OPENAI-API-KEY | AZURE_OPENAI_API_KEY | Azure OpenAI API key |
-| AZURE-DOC-INTEL-KEY | AZURE_DOC_INTEL_KEY | Azure Document Intelligence API key |
-
-## Setup Instructions
-
-### 1. Prerequisites
-
-- Azure Service Principal with Key Vault access
-- GitHub repository with Actions enabled
-- `AZURE_CREDENTIALS` secret already configured in GitHub
-
-### 2. Configure GitHub Permissions
-
-The sync workflow requires `contents: write` permission to update secrets. Add this to your repository:
-
-**Settings → Actions → General → Workflow permissions:**
-- Select "Read and write permissions"
-
-### 3. Initial GitHub Secrets Setup
-
-Configure these secrets in GitHub (Settings → Secrets and variables → Actions):
-
-**Required:**
-- `AZURE_CREDENTIALS` - Azure service principal credentials (JSON format)
-
-**Optional (will be synced from Azure):**
-- `DB_ADMIN_PASSWORD` - PostgreSQL password
-- `CLERK_SECRET_KEY` - Clerk secret key
-- `TOKEN_ENCRYPTION_KEY` - Token encryption key
-- `AZURE_OPENAI_API_KEY` - OpenAI API key
-- `AZURE_DOC_INTEL_KEY` - Document Intelligence API key
-
-### 4. Grant Service Principal Key Vault Access
-
-Ensure your Azure Service Principal has these permissions on Key Vault:
-
-```bash
-# Get your service principal object ID
-SP_ID=$(az ad sp show --id <your-client-id> --query objectId -o tsv)
-
-# Grant Key Vault access
-az keyvault set-policy --name <keyvault-name> \
-  --object-id $SP_ID \
-  --secret-permissions get list
-```
-
-## Usage
-
-### Automatic Sync (Daily)
-
-The workflow runs automatically daily at 2 AM UTC to sync any secret changes.
-
-### Manual Sync
-
-1. Go to GitHub Actions tab in your repository
-2. Select "Sync Azure Key Vault Secrets to GitHub" workflow
-3. Click "Run workflow"
-4. Enter your Key Vault name (or leave blank for auto-detection)
-5. Click "Run workflow"
-
-### View Sync Status
-
-After sync completes, check the `SECRETS.md` file in your repository root for:
-- Last sync timestamp
-- List of all secrets in Key Vault
-- Secret mapping reference
-
-## Troubleshooting
-
-### Workflow Fails with "No Key Vault found"
-
-**Solution:** Provide the Key Vault name manually when triggering the workflow, or ensure the resource group name matches your deployment.
-
-### Secrets Not Updating
-
-**Solution:** 
-1. Check that your Service Principal has Key Vault access
-2. Verify GitHub Actions has write permissions
-3. Check workflow logs for specific error messages
-
-### GitHub CLI Authentication Error
-
-**Solution:** The workflow uses GitHub CLI internally. Ensure your repository has the correct permissions enabled.
-
-## Security Considerations
-
-- **Single Source of Truth:** Azure Key Vault remains the source of truth
-- **Read-Only Sync:** GitHub Secrets are only updated from Azure, never the reverse
-- **Audit Trail:** All secret syncs are logged in GitHub Actions
-- **Least Privilege:** Service Principal only needs Key Vault read access
-
-## Deployment Integration
-
-The main deployment workflow (`.github/workflows/deploy-dev.yml`) uses GitHub Secrets for:
-
-```yaml
-- name: Deploy to Azure Container Apps
-  uses: azure/arm-deploy@v2
-  with:
-    parameters: >
-      dbAdminPassword=${{ secrets.DB_ADMIN_PASSWORD }}
-      clerkSecretKey=${{ secrets.CLERK_SECRET_KEY }}
-      # ... other secrets
-```
-
-**Note:** With the new staged deployment approach using `deploy-all.ps1`, these GitHub Secrets are not used since the Bicep files handle secret seeding directly from parameters. However, keeping them in sync provides a backup and enables other workflows that might need them.
-
-## File Structure
+## How secrets actually flow
 
 ```
-.github/
-  workflows/
-    sync-secrets.yml          # Secret sync workflow
-    deploy-dev.yml            # Main deployment workflow
-
-SECRETS.md                   # Auto-generated secret documentation
+infra/params.dev.secrets.json (local, gitignored)
+        │
+        │  manually run once (or on rotation)
+        ▼
+Stage 5 (infra/05-secrets.bicep) via deploy-all.ps1 or a direct
+`az deployment group create --template-file 05-secrets.bicep ...`
+        │
+        ▼
+Azure Key Vault (kv-invoice-llm-dev) — persists independently after this;
+container apps (08-apps.bicep) read secrets from Key Vault at runtime via
+managed identity, not from GitHub.
 ```
 
-## Next Steps After Deployment
+`.github/workflows/deploy-dev.yml` never runs bicep and never re-syncs Key
+Vault secrets. The only secret it reads from GitHub is `AZURE_CREDENTIALS`,
+used for `az login` against Azure. The single non-secret exception is
+`nextPublicClerkPublishableKey`, which the workflow reads straight from the
+committed `infra/params.dev.json` (it's a public browser-bundle value, not
+a secret, so it doesn't need Key Vault or GitHub Secrets at all).
 
-After running the staged deployment:
+## Secret Mapping (for reference — seeded into Key Vault by Stage 5, not GitHub)
 
-1. **Verify Key Vault Secrets:**
+| Azure Key Vault Secret | Source (local file) | Description |
+|------------------------|----------------------|-------------|
+| DATABASE-PASSWORD | `infra/params.dev.secrets.json` | PostgreSQL admin password |
+| CLERK-SECRET-KEY | `infra/params.dev.secrets.json` | Clerk SSO secret key |
+| TOKEN-ENCRYPTION-KEY | `infra/params.dev.secrets.json` | Fernet encryption key for tokens |
+| AZURE-OPENAI-API-KEY | `infra/params.dev.secrets.json` | Azure OpenAI API key |
+| AZURE-DOC-INTEL-KEY | `infra/params.dev.secrets.json` | Azure Document Intelligence API key |
+
+(See `infra/params.dev.secrets.json.example` for the full parameter shape —
+Stage 5 seeds 7 secrets total per `infra/README.md`'s Stage 5 verification
+step.)
+
+## Rotating a secret
+
+1. Update the value in `infra/params.dev.secrets.json` locally (this file
+   is gitignored — never commit real secrets).
+2. Re-run Stage 5 only:
    ```bash
-   az keyvault secret list --vault-name <kv-name> -o table
+   az deployment group create \
+     --resource-group invoice-llm-dev \
+     --template-file infra/05-secrets.bicep \
+     --parameters @infra/params.dev.json --parameters @infra/params.dev.secrets.json
    ```
+3. Verify the update landed:
+   ```bash
+   az keyvault secret list --vault-name kv-invoice-llm-dev -o table
+   ```
+4. Restart/revision any container app that caches the old value in-process,
+   if applicable.
 
-2. **Run Initial Sync:**
-   - Trigger the sync workflow manually
-   - Verify GitHub Secrets are updated
+## GitHub repository secrets that do exist
 
-3. **Test Deployment:**
-   - Ensure GitHub Actions can access secrets
-   - Run a test deployment
+Only `AZURE_CREDENTIALS` (Azure Service Principal credentials, JSON format)
+is required in **Settings → Secrets and variables → Actions**, for
+`deploy-dev.yml`'s `az login` step. No other GitHub repository secret is
+required or synced — there's no GitHub-Secrets mirror of Key Vault to keep
+in sync.
 
-## Maintenance
+## If automated sync is wanted in the future
 
-- **Rotate Secrets:** Update in Azure Key Vault, then run sync workflow
-- **Add New Secrets:** Add to Key Vault, update mapping in `sync-secrets.yml`, run sync
-- **Remove Secrets:** Remove from Key Vault, remove from GitHub Secrets manually
-
-## Support
-
-For issues with:
-- **Azure Key Vault:** Check Azure Portal → Key Vault → Access policies
-- **GitHub Actions:** Check Actions tab → Workflow runs → Logs
-- **Service Principal:** Check Azure AD → App registrations → Certificates & secrets
+Nothing here prevents building a real `sync-secrets.yml` workflow later,
+but as of this writing it doesn't exist. If you add one, update this guide
+and `infra/README.md`'s "GitHub CI/CD & Secrets Synchronization" section
+to match, rather than leaving them describing aspirational tooling as if
+it were live (this is exactly the drift that prompted this correction).

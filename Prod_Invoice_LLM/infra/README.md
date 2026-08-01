@@ -17,7 +17,7 @@ verified before the next one starts:
 | 5 | `05-secrets.bicep` | Seeds the 7 Key Vault secrets from Stages 2-4's resources | `az keyvault secret list --vault-name kv-invoice-llm-dev --query "length(@)" -o tsv` (expect `7`) |
 | 6 | `06-compute-env.bicep` | Container Apps Environment, ChromaDB | `az containerapp env show -g invoice-llm-dev -n cae-invoice-llm-dev --query properties.provisioningState -o tsv` |
 | 7 | `07-rbac.bicep` | 5 role assignments for the managed identity | `az role assignment list --assignee <principalId> -g invoice-llm-dev -o table` (expect 5 rows) |
-| 8 | `08-apps.bicep` | Backend, queue-worker, frontend container apps | `az containerapp show -g invoice-llm-dev -n ca-invoice-be-dev --query properties.runningStatus -o tsv` |
+| 8 | `08-apps.bicep` | Backend, queue-worker, frontend, and website container apps | `az containerapp show -g invoice-llm-dev -n ca-invoice-be-dev --query properties.runningStatus -o tsv` |
 | 9 | `09-monitoring.bicep` | Log Analytics, App Insights, action group, diagnostic settings, ~16 alert rules | `az monitor metrics alert list -g invoice-llm-dev -o table` |
 | 10 | `10-budget.bicep` | $150/month consumption budget, 80%/100% notifications | `az consumption budget list -o table` |
 
@@ -63,17 +63,29 @@ Vault.
 
 ## GitHub CI/CD & Secrets Synchronization
 
-To configure the automated GitHub Actions CI/CD pipeline and synchronize secrets between Azure Key Vault and GitHub:
+`.github/workflows/` currently contains only `deploy-dev.yml` and
+`e2e-regression.yml` — there is no `sync-secrets.yml` workflow, automated
+or otherwise, despite an earlier version of this doc describing one.
 
-1. **GitHub Workflow Permissions**:
-   * Navigate to **Settings → Actions → General → Workflow permissions**.
-   * Select **"Read and write permissions"** and click Save (this is required for the sync workflow to update secrets).
-
-2. **Add Azure Credentials**:
+1. **Add Azure Credentials**:
    * Navigate to **Settings → Secrets and variables → Actions**.
-   * Create a new repository secret named `AZURE_CREDENTIALS` containing your Azure Service Principal credentials (in JSON format).
+   * Create a repository secret named `AZURE_CREDENTIALS` containing your
+     Azure Service Principal credentials (in JSON format). This is the
+     only secret CI itself reads directly (used for `az login` in
+     `deploy-dev.yml`).
 
-3. **Secrets Synchronization**:
-   * The repository uses a daily automated sync workflow (`.github/workflows/sync-secrets.yml`) to sync secrets from Azure Key Vault directly to GitHub Repository Secrets (e.g. `DB_ADMIN_PASSWORD`, `CLERK_SECRET_KEY`, etc.).
-   * To trigger a sync manually, go to the **Actions** tab on GitHub, select **"Sync Azure Key Vault Secrets to GitHub"**, and click **"Run workflow"**.
-   * *For more details, see `docs/guides/SECRETS_SYNC_GUIDE.md`.*
+2. **Application secrets stay manual, Key-Vault-side**:
+   * Stage 5 (`05-secrets.bicep`) seeds Key Vault secrets (`DB_ADMIN_PASSWORD`,
+     `CLERK_SECRET_KEY`, `TOKEN_ENCRYPTION_KEY`, etc.) from the local,
+     gitignored `infra/params.dev.secrets.json` the one time someone runs
+     the full manual `deploy-all.ps1`. Key Vault secrets persist
+     independently after that — CI never re-syncs them, and `deploy-dev.yml`
+     never runs bicep.
+   * The one non-secret exception is `nextPublicClerkPublishableKey`, which
+     `deploy-dev.yml` reads straight from the committed `params.dev.json`
+     (it's a public browser-bundle value, not a secret).
+   * To rotate a secret: update `infra/params.dev.secrets.json` locally,
+     then re-run Stage 5 directly (`az deployment group create
+     --template-file 05-secrets.bicep ...`) — no GitHub Actions workflow
+     is involved.
+   * *For more detail, see `docs/guides/SECRETS_SYNC_GUIDE.md`.*

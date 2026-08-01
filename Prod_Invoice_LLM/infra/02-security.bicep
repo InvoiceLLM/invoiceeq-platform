@@ -14,6 +14,9 @@ param location string = resourceGroup().location
 @description('Prefix for resource naming')
 param namingPrefix string = 'invoice-llm'
 
+@description('Whether to provision private networking. false = Key Vault is public/RBAC-auth only (dev); true = private-endpoint-only (prod). Must match Stage 1.')
+param networkIsolation bool = false
+
 var vnetName = 'vnet-${namingPrefix}-${environment}'
 // Fixed name, matching the vault actually wired into the live Container
 // Apps today — the old main-step1/2.bicep computed a random-suffixed name
@@ -22,9 +25,10 @@ var vnetName = 'vnet-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
 
 // Subnet + DNS zone IDs are deterministic ARM resource IDs — computed
-// directly rather than by re-invoking Stage 1's creating module.
-var peSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, 'snet-pe')
-var keyVaultDnsZoneId = resourceId('Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net')
+// directly rather than by re-invoking Stage 1's creating module. Empty
+// when networkIsolation=false since Stage 1 never created them.
+var peSubnetId = networkIsolation ? resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, 'snet-pe') : ''
+var keyVaultDnsZoneId = networkIsolation ? resourceId('Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net') : ''
 
 module identities './modules/security/managed-identities.bicep' = {
   name: 'managed-identities-deploy'
@@ -39,6 +43,7 @@ module keyVault './modules/security/keyvault.bicep' = {
   params: {
     location: location
     keyVaultName: keyVaultName
+    networkIsolation: networkIsolation
     subnetId: peSubnetId
     privateDnsZoneId: keyVaultDnsZoneId
   }

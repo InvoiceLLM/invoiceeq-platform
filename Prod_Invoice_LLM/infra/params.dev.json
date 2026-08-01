@@ -11,6 +11,21 @@
     "namingPrefix": {
       "value": "invoice-llm"
     },
+    "networkIsolation": {
+      "value": false
+    },
+    "docIntelInstanceCount": {
+      "value": 1
+    },
+    "openAiCapacity": {
+      "value": 100
+    },
+    "logRetentionInDays": {
+      "value": 30
+    },
+    "deployAcr": {
+      "value": true
+    },
     "dbAdminLogin": {
       "value": "dbadmin"
     },

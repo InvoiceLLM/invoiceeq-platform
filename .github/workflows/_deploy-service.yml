@@ -1,0 +1,126 @@
+name: Reusable - Build, Push & Deploy One Container App
+
+# Shared by deploy-dev.yml and deploy-prod.yml. Builds one Docker image,
+# pushes it to the shared ACR under an explicit tag (never :latest for
+# prod -- see also_tag_latest below), and updates the matching Container
+# App in place (no Bicep). FQDN resolution for the FE/website build-args
+# happens in the CALLER before this workflow is invoked (see deploy-dev.yml/
+# deploy-prod.yml's resolve-fqdns job) -- this workflow only builds/pushes/
+# deploys, it doesn't know about Clerk keys or cross-app URLs.
+
+on:
+  workflow_call:
+    inputs:
+      resource_group:
+        description: 'Azure resource group the Container App lives in'
+        required: true
+        type: string
+      acr_name:
+        description: 'ACR registry name (without .azurecr.io)'
+        required: true
+        type: string
+      service:
+        description: 'Image repository name in ACR, e.g. invoice-be, queue-worker, invoice-fe, invoice-website'
+        required: true
+        type: string
+      dockerfile:
+        description: 'Path to the Dockerfile, relative to Prod_Invoice_LLM/'
+        required: true
+        type: string
+      container_app_name:
+        description: 'Azure Container App resource name to update'
+        required: true
+        type: string
+      image_tag:
+        description: 'Immutable tag to build, push, and deploy (e.g. github.sha, or a release tag for prod). Never "latest".'
+        required: true
+        type: string
+      also_tag_latest:
+        description: 'Also push/tag :latest alongside image_tag. Dev only -- prod must never publish or pull :latest (shared-ACR tag discipline: dev already pushes :latest with dev secrets baked into the fe/website image, so prod pulling :latest would silently ship a dev-configured image).'
+        required: false
+        type: boolean
+        default: false
+      build_args:
+        description: 'Newline-separated KEY=VALUE Docker build-args (only used by invoice-fe/invoice-website, whose NEXT_PUBLIC_* vars must be baked in at build time).'
+        required: false
+        type: string
+        default: ''
+      gh_environment:
+        description: 'GitHub Environment to run this job under (for required-reviewer gating). Empty for dev.'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      azure_credentials:
+        required: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.gh_environment }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Frees ~20-30 GB -- same as the original single-job workflow; each
+      # service now runs in its own job/runner, so this repeats per job,
+      # not just once, but each runner starts from the same constrained
+      # default image regardless.
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.azure_credentials }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ inputs.acr_name }}
+
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAGS="${{ inputs.acr_name }}.azurecr.io/${{ inputs.service }}:${{ inputs.image_tag }}"
+          if [ "${{ inputs.also_tag_latest }}" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${{ inputs.acr_name }}.azurecr.io/${{ inputs.service }}:latest"
+          fi
+          {
+            echo "tags<<TAGSEOF"
+            echo "$TAGS"
+            echo "TAGSEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./Prod_Invoice_LLM
+          file: ./Prod_Invoice_LLM/${{ inputs.dockerfile }}
+          push: true
+          build-args: ${{ inputs.build_args }}
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update Container App image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${{ inputs.acr_name }}.azurecr.io/${{ inputs.service }}:${{ inputs.image_tag }}"
+          echo "Updating ${{ inputs.container_app_name }} -> $image"
+          az containerapp update --name "${{ inputs.container_app_name }}" \
+            --resource-group "${{ inputs.resource_group }}" \
+            --image "$image"
+          az containerapp show --name "${{ inputs.container_app_name }}" \
+            --resource-group "${{ inputs.resource_group }}" \
+            --query "properties.template.containers[0].image" -o tsv

@@ -10,6 +10,9 @@ param privateDnsZoneId string
 ])
 param publicNetworkAccess string = 'Enabled'
 
+@description('Whether to also provision a private endpoint into this deployment\'s VNet (requires Stage 1 to have run, i.e. networkIsolation=true for whichever environment owns this ACR). false = no PE is created; the registry is reachable only via its public endpoint (still auth-gated by AcrPull RBAC / admin credentials), which is also what CI push always uses regardless of this setting.')
+param deployPrivateEndpoint bool = false
+
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
   location: location
@@ -23,7 +26,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
 }
 
 // Private Endpoint for Azure Container Registry
-resource acrPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+resource acrPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (deployPrivateEndpoint) {
   name: '${acrName}-pe'
   location: location
   properties: {
@@ -45,7 +48,7 @@ resource acrPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
 }
 
 // Private DNS Zone Group config for the PE
-resource acrPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+resource acrPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (deployPrivateEndpoint) {
   parent: acrPrivateEndpoint
   name: 'default'
   properties: {

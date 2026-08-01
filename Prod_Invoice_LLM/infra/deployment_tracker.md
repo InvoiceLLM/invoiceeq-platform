@@ -42,7 +42,8 @@ completed a clean end-to-end run.
 - **[x] Stage 7: RBAC** (`07-rbac.bicep`) — 5 role assignments for the
   managed identity. Live.
 - **[x] Stage 8: Application Containers** (`08-apps.bicep`) — Backend,
-  queue-worker, frontend. Live.
+  queue-worker, frontend, and website (`ca-invoice-website-dev`, added
+  Jul 30, 2026). Live.
   **Update (Jul 23, 2026, Gap 41 scaling work)**: `ca-queue-worker-dev`
   updated live and reconciled in `queue-worker.bicep` — CPU/memory
   1vCPU/2Gi→2vCPU/4Gi, scale rule `queueLength` 2→15 (bicep previously

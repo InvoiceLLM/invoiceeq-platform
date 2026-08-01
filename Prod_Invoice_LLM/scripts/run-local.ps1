@@ -23,10 +23,13 @@ function Start-Services {
     Write-Host "3. Starting Queue Worker..." -ForegroundColor Cyan
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd apps/invoice-be; .venv\Scripts\python -m queue_worker.main_worker"
 
-    Write-Host "4. Starting Next.js Frontend Server on port 3000..." -ForegroundColor Cyan
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd apps/invoice-fe; npm run dev"
+    Write-Host "4. Starting Next.js Marketing Site (invoice-website) on port 3000..." -ForegroundColor Cyan
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd apps/invoice-website; npm run dev -- --port 3000"
 
-    Write-Host "`nAll components started! You can access the UI at http://localhost:3000" -ForegroundColor Green
+    Write-Host "5. Starting Next.js Frontend Server (invoice-fe) on port 3001..." -ForegroundColor Cyan
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd apps/invoice-fe; npm run dev -- --port 3001"
+
+    Write-Host "`nAll components started! Marketing site at http://localhost:3000, app at http://localhost:3001" -ForegroundColor Green
 }
 
 function Stop-Services {

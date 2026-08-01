@@ -15,75 +15,85 @@ permissions:
   contents: read
   id-token: write
 
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    env:
-      RESOURCE_GROUP: invoice-llm-dev
-      ACR_NAME: acrinvoicellmdev
+env:
+  RESOURCE_GROUP: invoice-llm-dev
+  ACR_NAME: acrinvoicellmdev
 
+jobs:
+  # Path-filtered so each service only rebuilds/redeploys when its own
+  # files changed, instead of the old single job that rebuilt all 4
+  # containers on every push regardless of what changed.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      be: ${{ steps.decide.outputs.be }}
+      worker: ${{ steps.decide.outputs.worker }}
+      fe: ${{ steps.decide.outputs.fe }}
+      website: ${{ steps.decide.outputs.website }}
     steps:
-      # 1. Checkout repository
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Free up disk space (removes .NET, Android SDK, Haskell — frees ~20-30 GB)
-      - name: Free Disk Space
+      - name: Detect changed paths
+        id: filter
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            be:
+              - 'Prod_Invoice_LLM/apps/invoice-be/**'
+              - 'Prod_Invoice_LLM/docker/Dockerfile.be'
+            worker:
+              - 'Prod_Invoice_LLM/apps/invoice-be/**'
+              - 'Prod_Invoice_LLM/docker/Dockerfile.worker'
+            fe:
+              - 'Prod_Invoice_LLM/apps/invoice-fe/**'
+              - 'Prod_Invoice_LLM/docker/Dockerfile.fe'
+            website:
+              - 'Prod_Invoice_LLM/apps/invoice-website/**'
+              - 'Prod_Invoice_LLM/docker/Dockerfile.website'
+
+      # dorny/paths-filter has no meaningful "before" commit to diff against
+      # on workflow_dispatch (no push event => no base sha), so a manual run
+      # deploys everything rather than silently deploying nothing.
+      - name: Decide what to deploy
+        id: decide
+        shell: bash
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          docker system prune -af
-          df -h
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "be=true" >> "$GITHUB_OUTPUT"
+            echo "worker=true" >> "$GITHUB_OUTPUT"
+            echo "fe=true" >> "$GITHUB_OUTPUT"
+            echo "website=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "be=${{ steps.filter.outputs.be }}" >> "$GITHUB_OUTPUT"
+            echo "worker=${{ steps.filter.outputs.worker }}" >> "$GITHUB_OUTPUT"
+            echo "fe=${{ steps.filter.outputs.fe }}" >> "$GITHUB_OUTPUT"
+            echo "website=${{ steps.filter.outputs.website }}" >> "$GITHUB_OUTPUT"
+          fi
 
-      # 3. Set up Docker Buildx (enables layer caching)
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+  # Resolves Azure FQDNs + the (public) Clerk publishable key needed as
+  # Docker build-args for the FE/website images (NEXT_PUBLIC_* vars are
+  # inlined into the client bundle by `next build`, so they must be known
+  # BEFORE those images build -- a runtime Container App env var arrives
+  # too late). Only runs when fe and/or website actually changed.
+  resolve-fqdns:
+    needs: changes
+    if: needs.changes.outputs.fe == 'true' || needs.changes.outputs.website == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      pub_key: ${{ steps.resolve.outputs.pub_key }}
+      fe_url: ${{ steps.resolve.outputs.fe_url }}
+      website_url: ${{ steps.resolve.outputs.website_url }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      # 4. Authenticate with Azure (Service Principal)
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # 5. Log in to Azure Container Registry (ACR)
-      - name: Login to ACR
-        run: az acr login --name $ACR_NAME
-
-      # 6. Build and Push Backend API Image
-      - name: Build & Push Backend API
-        uses: docker/build-push-action@v5
-        with:
-          context: ./Prod_Invoice_LLM
-          file: ./Prod_Invoice_LLM/docker/Dockerfile.be
-          push: true
-          tags: |
-            ${{ env.ACR_NAME }}.azurecr.io/invoice-be:${{ github.sha }}
-            ${{ env.ACR_NAME }}.azurecr.io/invoice-be:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # 7. Build and Push Queue Worker Image
-      - name: Build & Push Queue Worker
-        uses: docker/build-push-action@v5
-        with:
-          context: ./Prod_Invoice_LLM
-          file: ./Prod_Invoice_LLM/docker/Dockerfile.worker
-          push: true
-          tags: |
-            ${{ env.ACR_NAME }}.azurecr.io/queue-worker:${{ github.sha }}
-            ${{ env.ACR_NAME }}.azurecr.io/queue-worker:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # 7b. Resolve Azure values needed at IMAGE BUILD TIME (Gap 6)
-      #
-      # NEXT_PUBLIC_* vars are baked into the client JS bundle by `next build`,
-      # so the real Azure hostnames must be known before the image is built --
-      # they cannot be injected later as Container App env vars. Container App
-      # FQDNs contain a random environment suffix, so they are queried here
-      # rather than hardcoded or guessed.
       - name: Resolve Azure FQDNs and Clerk key
         id: resolve
         shell: bash
@@ -93,7 +103,7 @@ jobs:
           params="Prod_Invoice_LLM/infra/params.dev.json"
 
           fe_fqdn=$(az containerapp show --name ca-invoice-fe-dev \
-            --resource-group "$RESOURCE_GROUP" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
             --query properties.configuration.ingress.fqdn -o tsv)
 
           # Clerk publishable keys are public by design (they already ship inside
@@ -101,19 +111,13 @@ jobs:
           # rather than a GitHub secret.
           pub_key=$(python3 -c "import json;print(json.load(open('$params'))['parameters']['nextPublicClerkPublishableKey']['value'])")
 
-          if [ -z "$pub_key" ] || [[ "$pub_key" == *mock* ]]; then
+          if [ -z "$pub_key" ] || [[ "$pub_key" == *mock* ]] || [[ "$pub_key" == *REPLACE_WITH* ]]; then
             echo "ERROR: nextPublicClerkPublishableKey in $params is empty or still a placeholder." >&2
             exit 1
           fi
 
-          # invoice-website.bicep now exists (infra/08-apps.bicep wires it in as
-          # of 2026-07-30), so its real FQDN is resolved the same way as the
-          # FE's. `|| true` + fallback: this step must not fail a deploy just
-          # because the website app hasn't been provisioned in this
-          # environment yet (e.g. bicep hasn't been (re-)run since it was
-          # added) -- falls back to the FE origin in that case, same as before.
           website_fqdn=$(az containerapp show --name ca-invoice-website-dev \
-            --resource-group "$RESOURCE_GROUP" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
             --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
 
           if [ -z "$website_fqdn" ]; then
@@ -128,96 +132,80 @@ jobs:
           echo "Resolved FE FQDN: ${fe_fqdn}"
           echo "Resolved website FQDN: ${website_fqdn}"
 
-      # Note: CLERK_SECRET_KEY is NOT synced to Key Vault here. infra/05-secrets.bicep
-      # (Stage 5 of deploy-all.ps1) already seeds it from the local, gitignored
-      # infra/params.dev.secrets.json the one time someone runs the full manual
-      # deploy -- Key Vault secrets persist independently after that, and this
-      # workflow never runs bicep, so there's nothing for CI to re-sync on every
-      # push. If the key ever needs to rotate, update params.dev.secrets.json
-      # locally and re-run Stage 5 (`az deployment group create --template-file
-      # 05-secrets.bicep ...`), not this pipeline.
+  # Note: CLERK_SECRET_KEY is NOT synced to Key Vault by this workflow.
+  # infra/05-secrets.bicep (Stage 5 of deploy-all.ps1) already seeds it from
+  # the local, gitignored infra/params.dev.secrets.json the one time someone
+  # runs the full manual deploy -- Key Vault secrets persist independently
+  # after that, and this workflow never runs bicep, so there's nothing for
+  # CI to re-sync on every push. If the key ever needs to rotate, update
+  # params.dev.secrets.json locally and re-run Stage 5.
 
-      # 8. Build and Push Frontend UI Image
-      - name: Build & Push Frontend UI
-        uses: docker/build-push-action@v5
-        with:
-          context: ./Prod_Invoice_LLM
-          file: ./Prod_Invoice_LLM/docker/Dockerfile.fe
-          push: true
-          build-args: |
-            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ steps.resolve.outputs.pub_key }}
-            NEXT_PUBLIC_WEBSITE_URL=${{ steps.resolve.outputs.website_url }}
-          tags: |
-            ${{ env.ACR_NAME }}.azurecr.io/invoice-fe:${{ github.sha }}
-            ${{ env.ACR_NAME }}.azurecr.io/invoice-fe:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+  deploy-backend:
+    needs: changes
+    if: needs.changes.outputs.be == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-dev
+      acr_name: acrinvoicellmdev
+      service: invoice-be
+      dockerfile: docker/Dockerfile.be
+      container_app_name: ca-invoice-be-dev
+      image_tag: ${{ github.sha }}
+      also_tag_latest: true
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # 8b. Build and Push Website Image
-      #
-      # invoice-website's own NEXT_PUBLIC_FE_URL points back at the FE app (for
-      # post-login redirects), not at itself -- hence `fe_url` here rather than
-      # `website_url`, unlike the FE build above which points at the website
-      # for its own post-sign-out redirect.
-      - name: Build & Push Website
-        uses: docker/build-push-action@v5
-        with:
-          context: ./Prod_Invoice_LLM
-          file: ./Prod_Invoice_LLM/docker/Dockerfile.website
-          push: true
-          build-args: |
-            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ steps.resolve.outputs.pub_key }}
-            NEXT_PUBLIC_FE_URL=${{ steps.resolve.outputs.fe_url }}
-          tags: |
-            ${{ env.ACR_NAME }}.azurecr.io/invoice-website:${{ github.sha }}
-            ${{ env.ACR_NAME }}.azurecr.io/invoice-website:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+  deploy-worker:
+    needs: changes
+    if: needs.changes.outputs.worker == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-dev
+      acr_name: acrinvoicellmdev
+      service: queue-worker
+      dockerfile: docker/Dockerfile.worker
+      container_app_name: ca-queue-worker-dev
+      image_tag: ${{ github.sha }}
+      also_tag_latest: true
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Update Container Apps images (no Bicep)
-        shell: bash
-        env:
-          RESOURCE_GROUP: ${{ env.RESOURCE_GROUP }}
-          ACR_NAME: ${{ env.ACR_NAME }}
-          GITHUB_SHA: ${{ github.sha }}
-          PARAMS_FILE: Prod_Invoice_LLM/infra/params.dev.json
-        run: |
-          set -euo pipefail
-          
-          # Use explicit app names matching Azure Container Apps resources
-          backend_app="ca-invoice-be-dev"
-          worker_app="ca-queue-worker-dev"
-          frontend_app="ca-invoice-fe-dev"
-          website_app="ca-invoice-website-dev"
+  deploy-frontend:
+    needs: [changes, resolve-fqdns]
+    if: needs.changes.outputs.fe == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-dev
+      acr_name: acrinvoicellmdev
+      service: invoice-fe
+      dockerfile: docker/Dockerfile.fe
+      container_app_name: ca-invoice-fe-dev
+      image_tag: ${{ github.sha }}
+      also_tag_latest: true
+      build_args: |
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ needs.resolve-fqdns.outputs.pub_key }}
+        NEXT_PUBLIC_WEBSITE_URL=${{ needs.resolve-fqdns.outputs.website_url }}
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
 
-          backend_img="${ACR_NAME}.azurecr.io/invoice-be:${GITHUB_SHA}"
-          worker_img="${ACR_NAME}.azurecr.io/queue-worker:${GITHUB_SHA}"
-          frontend_img="${ACR_NAME}.azurecr.io/invoice-fe:${GITHUB_SHA}"
-          website_img="${ACR_NAME}.azurecr.io/invoice-website:${GITHUB_SHA}"
-
-          echo "Updating backend ($backend_app) -> $backend_img"
-          az containerapp update --name "$backend_app" --resource-group "$RESOURCE_GROUP" \
-            --image "$backend_img"
-
-          echo "Updating worker ($worker_app) -> $worker_img"
-          az containerapp update --name "$worker_app" --resource-group "$RESOURCE_GROUP" \
-            --image "$worker_img"
-
-          echo "Updating frontend ($frontend_app) -> $frontend_img"
-          az containerapp update --name "$frontend_app" --resource-group "$RESOURCE_GROUP" \
-            --image "$frontend_img"
-
-          # Best-effort: the website Container App only exists once
-          # infra/08-apps.bicep has actually been (re-)deployed with the
-          # websiteApp module (added 2026-07-30). Don't fail the whole
-          # pipeline over it if that hasn't happened yet in this environment.
-          echo "Updating website ($website_app) -> $website_img"
-          az containerapp update --name "$website_app" --resource-group "$RESOURCE_GROUP" \
-            --image "$website_img" || echo "WARNING: $website_app not found -- run bicep (Stage 8) to create it first." >&2
-
-          echo "Verifying current image tags:"
-          az containerapp show --name "$backend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
-          az containerapp show --name "$worker_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
-          az containerapp show --name "$frontend_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv || true
-          az containerapp show --name "$website_app" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv 2>/dev/null || true
-
+  # invoice-website's own NEXT_PUBLIC_FE_URL points back at the FE app (for
+  # post-login redirects), not at itself -- hence fe_url here, unlike the FE
+  # build above which points at the website for its own post-sign-out
+  # redirect.
+  deploy-website:
+    needs: [changes, resolve-fqdns]
+    if: needs.changes.outputs.website == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-dev
+      acr_name: acrinvoicellmdev
+      service: invoice-website
+      dockerfile: docker/Dockerfile.website
+      container_app_name: ca-invoice-website-dev
+      image_tag: ${{ github.sha }}
+      also_tag_latest: true
+      build_args: |
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ needs.resolve-fqdns.outputs.pub_key }}
+        NEXT_PUBLIC_FE_URL=${{ needs.resolve-fqdns.outputs.fe_url }}
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}

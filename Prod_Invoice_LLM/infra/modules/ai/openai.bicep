@@ -4,11 +4,24 @@ param deploymentName string = 'gpt-5-mini'
 param subnetId string
 param privateDnsZoneId string
 
+@description('Whether to provision private networking. false = public network access, key-auth reachable (dev); true = private-endpoint-only (prod).')
+param networkIsolation bool = false
+
+@description('Public network access when networkIsolation=false. Ignored (forced Disabled) when networkIsolation=true.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param publicNetworkAccess string = 'Enabled'
+
 @description('OpenAI model name to deploy. Verify current availability first: az cognitiveservices account list-models --location <region> -o table')
 param modelName string = 'gpt-5-mini'
 
 @description('Model version string. Do NOT guess this - the GPT-4.x line is actively being retired as of mid-2026. Get the exact current version with: az cognitiveservices account list-models --location <region> --query "[?name==\'gpt-5-mini\']" -o table')
 param modelVersion string
+
+@description('GlobalStandard deployment TPM capacity. Dev should stay low so it does not claim TPM prod needs.')
+param capacity int = 100
 
 resource openaiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   name: openaiName
@@ -18,11 +31,11 @@ resource openaiAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
     name: 'S0'
   }
   properties: {
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: networkIsolation ? 'Disabled' : publicNetworkAccess
     customSubDomainName: openaiName
     // Added networkAcls block to resolve the deployment error
     networkAcls: {
-      defaultAction: 'Deny'
+      defaultAction: networkIsolation ? 'Deny' : 'Allow'
       ipRules: []
       virtualNetworkRules: []
     }
@@ -48,21 +61,23 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-
   }
   sku: {
     name: 'GlobalStandard'
-    // 500k TPM / ~500 RPM - raised from 20k Jul 2026 to support concurrent
-    // (multi-threaded) extraction processing (Gap 41/42) with headroom for
-    // future scale. Pay-per-token billing (GlobalStandard) means this
-    // ceiling costs nothing extra unless actually used. Subscription-level
-    // quota for gpt-5-mini GlobalStandard in this region is 1,000k TPM with
-    // only ~30k in active use elsewhere, so this stays well within the
+    // Up to 500k TPM / ~500 RPM (prod default) - raised from 20k Jul 2026 to
+    // support concurrent (multi-threaded) extraction processing (Gap 41/42)
+    // with headroom for future scale. Pay-per-token billing (GlobalStandard)
+    // means this ceiling costs nothing extra unless actually used.
+    // Dev defaults much lower (100) via the `capacity` param so it doesn't
+    // claim TPM headroom prod needs. Subscription-level quota for
+    // gpt-5-mini GlobalStandard in this region is 1,000k TPM with only
+    // ~30k in active use elsewhere, so prod's 500 stays well within the
     // self-service range (no support-ticket quota increase needed).
     // Re-tune based on real token-usage-per-invoice data from the planned
     // 150-PDF load test (Task 13.8).
-    capacity: 500
+    capacity: capacity
   }
 }
 
 // Private Endpoint for OpenAI
-resource openaiPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+resource openaiPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (networkIsolation) {
   name: '${openaiName}-pe'
   location: location
   properties: {
@@ -83,7 +98,7 @@ resource openaiPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' =
   }
 }
 
-resource openaiPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+resource openaiPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (networkIsolation) {
   parent: openaiPrivateEndpoint
   name: 'default'
   properties: {

@@ -1,0 +1,232 @@
+name: Deploy to Prod Environment (Azure)
+
+# Unlike deploy-dev.yml, this does NOT trigger on push-to-master -- prod
+# deploys are deliberate, reviewed releases, not continuous per-commit
+# deploys. Triggers: a version tag push (v*), or a manual dispatch (e.g. to
+# re-deploy an existing tag, or hotfix outside the normal tag cadence).
+#
+# Deploys all 4 services on every run rather than path-filtering like
+# deploy-dev.yml -- a release is a single reviewed unit, and path-filtering
+# a *tag* push against dev's paths-filter (which needs a base commit to
+# diff against) doesn't map cleanly onto "what changed since the last
+# prod release" without extra bookkeeping. Simpler to always release the
+# full set; the `production` GitHub Environment's required-reviewer gate
+# is the actual control here, not fine-grained per-service skipping.
+#
+# Shared-ACR tag discipline: prod NEVER builds or pulls `:latest` -- dev's
+# CI already publishes `:latest` on every dev-affecting push with dev's own
+# Clerk key/URLs baked into the fe/website images, so a prod deploy that
+# pulled `:latest` would silently ship a dev-configured image. Every image
+# this workflow builds/pushes/deploys is tagged with an immutable,
+# prod-specific tag (the release tag for a `v*` push, or `manual-<sha>` for
+# a manual dispatch) that can never collide with dev's bare-sha tags.
+#
+# FE/website are rebuilt here (not promoted byte-for-byte from a dev
+# image) because NEXT_PUBLIC_* values (prod Clerk key, prod FE/website
+# URLs) are baked into the client bundle at build time and differ from
+# dev's -- there is no dev-built image that would be correct for prod to
+# reuse as-is for those two services. Backend/queue-worker have no
+# environment-specific values baked into the image (config is injected at
+# container-app runtime), so rebuilding them here is a correctness-neutral
+# simplification vs. promoting dev's already-tested image, at the cost of
+# not being a true "build once, promote" pipeline -- worth revisiting later
+# if reproducibility-by-promotion becomes a priority.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      image_tag_override:
+        description: 'Optional: deploy this exact image tag instead of building a new one (must already exist in ACR for all 4 services). Leave blank to build fresh.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  RESOURCE_GROUP: invoice-llm-prod
+  # Shared ACR: prod does not own/deploy its own registry (see
+  # infra/03-data.bicep's deployAcr param) -- it pulls from the same
+  # registry dev owns.
+  ACR_NAME: acrinvoicellmdev
+
+jobs:
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      build_fresh: ${{ steps.tag.outputs.build_fresh }}
+    steps:
+      - name: Resolve release image tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.image_tag_override }}" ]; then
+            echo "image_tag=${{ github.event.inputs.image_tag_override }}" >> "$GITHUB_OUTPUT"
+            echo "build_fresh=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "image_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "build_fresh=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_tag=manual-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "build_fresh=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Resolves prod's own FE/website FQDNs + the prod Clerk publishable key,
+  # needed as Docker build-args for the FE/website images (NEXT_PUBLIC_*
+  # vars are inlined into the client bundle by `next build`). Skipped
+  # entirely when image_tag_override is set (deploying a pre-built image,
+  # nothing to rebuild).
+  resolve-fqdns:
+    needs: resolve-tag
+    if: needs.resolve-tag.outputs.build_fresh == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      pub_key: ${{ steps.resolve.outputs.pub_key }}
+      fe_url: ${{ steps.resolve.outputs.fe_url }}
+      website_url: ${{ steps.resolve.outputs.website_url }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+      - name: Resolve Azure FQDNs and Clerk key
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          params="Prod_Invoice_LLM/infra/params.prod.json"
+
+          fe_fqdn=$(az containerapp show --name ca-invoice-fe-prod \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+
+          pub_key=$(python3 -c "import json;print(json.load(open('$params'))['parameters']['nextPublicClerkPublishableKey']['value'])")
+
+          # Prod's params file ships with a REPLACE_WITH_... placeholder until
+          # a real prod Clerk instance exists -- fail loudly rather than ship
+          # a build that can never authenticate.
+          if [ -z "$pub_key" ] || [[ "$pub_key" == *mock* ]] || [[ "$pub_key" == *REPLACE_WITH* ]]; then
+            echo "ERROR: nextPublicClerkPublishableKey in $params is empty or still a placeholder. Fill in the real prod Clerk publishable key before releasing." >&2
+            exit 1
+          fi
+
+          website_fqdn=$(az containerapp show --name ca-invoice-website-prod \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+
+          if [ -z "$website_fqdn" ]; then
+            echo "WARNING: ca-invoice-website-prod not found yet -- falling back to FE origin for website_url." >&2
+            website_fqdn="${fe_fqdn}"
+          fi
+
+          echo "website_url=https://${website_fqdn}" >> "$GITHUB_OUTPUT"
+          echo "fe_url=https://${fe_fqdn}" >> "$GITHUB_OUTPUT"
+          echo "pub_key=${pub_key}" >> "$GITHUB_OUTPUT"
+
+  deploy-backend:
+    needs: [resolve-tag]
+    if: needs.resolve-tag.outputs.build_fresh == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-prod
+      acr_name: acrinvoicellmdev
+      service: invoice-be
+      dockerfile: docker/Dockerfile.be
+      container_app_name: ca-invoice-be-prod
+      image_tag: ${{ needs.resolve-tag.outputs.image_tag }}
+      also_tag_latest: false
+      gh_environment: production
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+  deploy-worker:
+    needs: [resolve-tag]
+    if: needs.resolve-tag.outputs.build_fresh == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-prod
+      acr_name: acrinvoicellmdev
+      service: queue-worker
+      dockerfile: docker/Dockerfile.worker
+      container_app_name: ca-queue-worker-prod
+      image_tag: ${{ needs.resolve-tag.outputs.image_tag }}
+      also_tag_latest: false
+      gh_environment: production
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+  deploy-frontend:
+    needs: [resolve-tag, resolve-fqdns]
+    if: needs.resolve-tag.outputs.build_fresh == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-prod
+      acr_name: acrinvoicellmdev
+      service: invoice-fe
+      dockerfile: docker/Dockerfile.fe
+      container_app_name: ca-invoice-fe-prod
+      image_tag: ${{ needs.resolve-tag.outputs.image_tag }}
+      also_tag_latest: false
+      gh_environment: production
+      build_args: |
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ needs.resolve-fqdns.outputs.pub_key }}
+        NEXT_PUBLIC_WEBSITE_URL=${{ needs.resolve-fqdns.outputs.website_url }}
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+  deploy-website:
+    needs: [resolve-tag, resolve-fqdns]
+    if: needs.resolve-tag.outputs.build_fresh == 'true'
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      resource_group: invoice-llm-prod
+      acr_name: acrinvoicellmdev
+      service: invoice-website
+      dockerfile: docker/Dockerfile.website
+      container_app_name: ca-invoice-website-prod
+      image_tag: ${{ needs.resolve-tag.outputs.image_tag }}
+      also_tag_latest: false
+      gh_environment: production
+      build_args: |
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ needs.resolve-fqdns.outputs.pub_key }}
+        NEXT_PUBLIC_FE_URL=${{ needs.resolve-fqdns.outputs.fe_url }}
+    secrets:
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+
+  # image_tag_override path: promote an already-built, already-pushed tag
+  # straight to all 4 prod Container Apps with no rebuild -- e.g. re-running
+  # a known-good previous prod release.
+  deploy-prebuilt:
+    needs: [resolve-tag]
+    if: needs.resolve-tag.outputs.build_fresh == 'false'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+      - name: Deploy pre-built images to all 4 prod Container Apps
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.resolve-tag.outputs.image_tag }}"
+          for pair in "ca-invoice-be-prod:invoice-be" "ca-queue-worker-prod:queue-worker" "ca-invoice-fe-prod:invoice-fe" "ca-invoice-website-prod:invoice-website"; do
+            app="${pair%%:*}"
+            svc="${pair##*:}"
+            image="${{ env.ACR_NAME }}.azurecr.io/${svc}:${tag}"
+            echo "Updating $app -> $image"
+            az containerapp update --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" --image "$image"
+          done
