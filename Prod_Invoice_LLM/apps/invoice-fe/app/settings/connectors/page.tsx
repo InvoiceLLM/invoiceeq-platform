@@ -147,8 +147,11 @@ export default function ConnectorsPage() {
   const handleDisconnect = async (provider: string) => {
     setIsConnecting((prev) => ({ ...prev, [provider]: true }));
     try {
-      // In production, we call a DELETE endpoint.
-      // For testing, simulate disconnect by resetting local status mappings.
+      const res = await fetch(`/api/connectors/${provider}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to disconnect connector");
+
       setStatuses((prev) => {
         if (!prev) return prev;
         return { ...prev, [provider]: "Not Configured" };

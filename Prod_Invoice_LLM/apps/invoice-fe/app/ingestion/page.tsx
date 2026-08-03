@@ -28,8 +28,8 @@ export default function IngestionPage() {
   const [activeTab, setActiveTab] = useState<IngestionTab>("receiving");
 
   // Outbound (Sending) state
-  const [outboundFile, setOutboundFile] = useState<File | null>(null);
-  const [outboundInvoiceId, setOutboundInvoiceId] = useState<string | null>(null);
+  const [outboundFiles, setOutboundFiles] = useState<File[]>([]);
+  const [outboundInvoices, setOutboundInvoices] = useState<Array<{ id: string; name: string }>>([]);
   const [isOutboundUploading, setIsOutboundUploading] = useState(false);
   const [outboundError, setOutboundError] = useState<string | null>(null);
 
@@ -56,23 +56,34 @@ export default function IngestionPage() {
 
   const handleOutboundUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!outboundFile) return;
+    if (outboundFiles.length === 0) return;
 
     setIsOutboundUploading(true);
     setOutboundError(null);
 
-    const formData = new FormData();
-    formData.append("file", outboundFile);
+    const uploadedList: Array<{ id: string; name: string }> = [];
+    let hasError = false;
 
-    try {
-      const response = await apiClient.post("/outbound-invoices/upload", formData);
-      setOutboundInvoiceId(response.data.invoice_id);
-    } catch (err: any) {
-      console.error("Outbound upload failed", err);
-      setOutboundError(err.response?.data?.detail || "Failed to upload outbound invoice.");
-    } finally {
-      setIsOutboundUploading(false);
+    for (const file of outboundFiles) {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const response = await apiClient.post("/outbound-invoices/upload", formData);
+        uploadedList.push({ id: response.data.invoice_id, name: file.name });
+      } catch (err: any) {
+        console.error(`Outbound upload failed for ${file.name}`, err);
+        setOutboundError(err.response?.data?.detail || `Failed to upload outbound invoice: ${file.name}`);
+        hasError = true;
+        break;
+      }
     }
+
+    if (!hasError) {
+      setOutboundInvoices((prev) => [...prev, ...uploadedList]);
+      setOutboundFiles([]);
+    }
+    setIsOutboundUploading(false);
   };
 
   // States to pass to the active StatusTable
@@ -216,8 +227,9 @@ export default function IngestionPage() {
               </div>
               <input
                 type="file"
+                multiple
                 accept="application/pdf"
-                onChange={(e) => setOutboundFile(e.target.files?.[0] || null)}
+                onChange={(e) => setOutboundFiles(Array.from(e.target.files || []))}
                 className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-800 file:text-slate-200 file:text-xs"
               />
               <ConnectorBrowseBar direction="outbound" />
@@ -229,9 +241,9 @@ export default function IngestionPage() {
               )}
               <button
                 onClick={handleOutboundUpload}
-                disabled={!outboundFile || isOutboundUploading}
+                disabled={outboundFiles.length === 0 || isOutboundUploading}
                 className={`w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-semibold border transition-all ${
-                  !outboundFile
+                  outboundFiles.length === 0
                     ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
                     : "bg-accent-blue border-accent-blue text-white hover:bg-[#2563EB]"
                 }`}
@@ -248,9 +260,11 @@ export default function IngestionPage() {
               </button>
             </div>
           </div>
-          <div className="lg:col-span-2">
-            {outboundInvoiceId && outboundFile ? (
-              <SendInvoiceStatusTable invoiceId={outboundInvoiceId} fileName={outboundFile.name} />
+          <div className="lg:col-span-2 space-y-4">
+            {outboundInvoices.length > 0 ? (
+              outboundInvoices.map((inv) => (
+                <SendInvoiceStatusTable key={inv.id} invoiceId={inv.id} fileName={inv.name} />
+              ))
             ) : (
               <div className="glass-panel rounded-xl border border-[#222D3D] p-12 text-center h-full min-h-[200px] flex flex-col items-center justify-center gap-3">
                 <div className="p-4 rounded-full bg-slate-900/50 border border-[#222D3D] text-slate-500">

@@ -92,7 +92,7 @@ function EditableField({
 
   const baseClass = "w-full rounded-lg border px-3 py-2 text-sm outline-none transition-colors";
   const stateClass = disabled
-    ? "border-[#222D3D] bg-[#1E293B] text-slate-300 pointer-events-none select-none"
+    ? "border-[#222D3D] bg-[#1E293B] text-slate-300 select-none cursor-not-allowed"
     : editing
     ? "border-blue-500 bg-[#1E293B] text-slate-100 cursor-text"
     : isLowConfidence

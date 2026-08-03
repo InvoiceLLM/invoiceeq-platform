@@ -412,3 +412,37 @@ async def trigger_file_import(
         logger.warning("Failed to dispatch Azure Storage Queue import task: %s", e)
 
     return {"success": True, "message": f"Queued {direction} import for file {payload.file_id}"}
+
+@router.delete("/{provider}")
+async def disconnect_connector(
+    provider: str,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Deletes the TenantConnection database row for the specified provider,
+    effectively revoking access from the platform.
+    """
+    prov = provider.lower()
+    if prov not in ["google_drive", "salesforce"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid connector provider '{provider}'."
+        )
+
+    statement = select(TenantConnection).where(
+        TenantConnection.tenant_id == context.tenant_id,
+        TenantConnection.provider == prov
+    )
+    connection = db_session.exec(statement).first()
+
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No connection found for provider '{provider}'."
+        )
+
+    db_session.delete(connection)
+    db_session.commit()
+
+    return {"detail": f"Successfully disconnected provider '{provider}'."}

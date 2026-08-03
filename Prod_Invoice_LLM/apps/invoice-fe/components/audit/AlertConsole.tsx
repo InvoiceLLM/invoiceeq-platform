@@ -58,10 +58,19 @@ export default function AlertConsole({
   };
 
   if (alerts.length === 0) {
+    const isAuditRequired = currentStatus === "AUDIT_REQUIRED";
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-700/50 bg-emerald-950/20 px-4 py-3 text-emerald-300">
-        <CheckCircle size={16} />
-        <span className="text-sm font-medium">No active discrepancy warnings.</span>
+      <div className={`flex items-center gap-2 rounded-lg border px-4 py-3 ${
+        isAuditRequired
+          ? "border-amber-700/50 bg-amber-950/20 text-amber-300"
+          : "border-emerald-700/50 bg-emerald-950/20 text-emerald-300"
+      }`}>
+        <CheckCircle size={16} className={isAuditRequired ? "text-amber-400" : "text-emerald-400"} />
+        <span className="text-sm font-medium">
+          {isAuditRequired
+            ? "No active discrepancies — previously dismissed, awaiting finalization."
+            : "No active discrepancy warnings."}
+        </span>
       </div>
     );
   }

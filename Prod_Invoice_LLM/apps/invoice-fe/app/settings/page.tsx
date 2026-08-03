@@ -13,13 +13,11 @@ import { Settings2 } from "lucide-react";
 import ServiceFlowToggles from "@/components/settings/ServiceFlowToggles";
 
 import Link from "next/link";
-
-// In production this comes from Clerk session claims / auth context.
-// For now the mock auth layer in dependencies.py always sets role="Admin"
-// so we use that directly; wire the real session role here once Clerk is live.
-const CURRENT_ROLE = "Admin";
+import { useAuth } from "@/hooks/useAuth";
+import { Loader2 } from "lucide-react";
 
 export default function SettingsPage() {
+  const { role, loading } = useAuth();
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
       {/* Page Header */}
@@ -52,7 +50,13 @@ export default function SettingsPage() {
             </p>
           </div>
 
-          <ServiceFlowToggles role={CURRENT_ROLE} />
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            </div>
+          ) : (
+            <ServiceFlowToggles role={role} />
+          )}
         </section>
 
         {/* Divider — future sections will slot in here */}
@@ -86,6 +90,22 @@ export default function SettingsPage() {
               className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
             >
               Configure
+            </Link>
+          </div>
+        </section>
+
+        {/* Admin Console Section */}
+        <section aria-labelledby="admin-console-heading">
+          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
+            <div>
+              <h2 id="admin-console-heading" className="text-sm font-medium text-white">Admin Console</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Manage user permissions, roles, and view tenant stats</p>
+            </div>
+            <Link
+              href="/admin"
+              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
+            >
+              Manage Org
             </Link>
           </div>
         </section>

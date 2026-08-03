@@ -19,6 +19,7 @@ import {
   Loader2,
   CornerDownRight,
   CheckCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 interface ConnectorFile {
@@ -46,6 +47,7 @@ export default function FolderTreeExplorer({
   const [files, setFiles] = useState<ConnectorFile[]>([]);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importCompleted, setImportCompleted] = useState(false);
 
@@ -53,14 +55,19 @@ export default function FolderTreeExplorer({
   useEffect(() => {
     const fetchFiles = async () => {
       setIsLoading(true);
+      setError(null);
       try {
         const query = currentFolderId ? `&folder_id=${currentFolderId}` : "";
         const res = await fetch(`/api/connectors/files/${provider}?direction=${direction}${query}`);
-        if (!res.ok) throw new Error("Failed to load files");
+        if (!res.ok) {
+          const detail = await res.json().then((d) => d.detail).catch(() => "Failed to load files from cloud connector.");
+          throw new Error(detail);
+        }
         const data = await res.json();
         setFiles(data.files || []);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Connector file listing failed", err);
+        setError(err.message || "Failed to connect or list directory.");
       } finally {
         setIsLoading(false);
       }
@@ -190,6 +197,12 @@ export default function FolderTreeExplorer({
           <div className="h-full flex items-center justify-center text-slate-500 text-xs gap-2.5">
             <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
             Reading cloud catalog…
+          </div>
+        ) : error ? (
+          <div className="h-full flex flex-col items-center justify-center text-rose-400 text-xs py-8 text-center px-4 gap-2">
+            <AlertTriangle className="w-6 h-6 text-rose-500" />
+            <p className="font-semibold">Connection Error</p>
+            <p className="text-[10px] text-slate-500 max-w-xs">{error}</p>
           </div>
         ) : files.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-500 text-xs py-8">

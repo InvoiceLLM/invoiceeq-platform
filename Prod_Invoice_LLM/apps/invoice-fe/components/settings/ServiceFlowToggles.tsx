@@ -17,6 +17,7 @@
  */
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   Download,
   Send,
@@ -181,15 +182,13 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
   };
 
   const handleToggleSend = async () => {
-    if (!isAdmin || !settings) return;
-
+    if (!isAdmin || !settings || isSaving) return;
     const enablingNow = !settings.send_invoices_enabled;
 
     if (enablingNow) {
-      // Client-side email guard
-      const email = senderEmailDraft.trim();
+      const email = (settings.outbound_sender_email || "").trim();
       if (!email) {
-        setEmailError("Outbound Sender Email is required before enabling Send Invoices.");
+        setEmailError("Outbound Sender Email must be configured under Email Settings before enabling Send Invoices.");
         return;
       }
       // Billing plan guard
@@ -201,20 +200,11 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
 
     await save({
       send_invoices_enabled: enablingNow,
-      outbound_sender_email: senderEmailDraft.trim() || null,
+      outbound_sender_email: settings.outbound_sender_email || null,
     });
   };
 
-  const handleSaveEmail = async () => {
-    if (!isAdmin || !settings) return;
-    const email = senderEmailDraft.trim();
-    if (!email) {
-      setEmailError("Please enter a valid email address.");
-      return;
-    }
-    setEmailError("");
-    await save({ outbound_sender_email: email });
-  };
+
 
   // ---------------------------------------------------------------------------
   // Render
@@ -322,26 +312,19 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
             <input
               id="outbound-sender-email"
               type="email"
-              value={senderEmailDraft}
-              onChange={(e) => {
-                setSenderEmailDraft(e.target.value);
-                if (emailError) setEmailError("");
-              }}
-              disabled={!isAdmin || isSaving}
-              placeholder="invoices@yourcompany.com"
-              className={`flex-1 bg-[#0D131F] border rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-violet-500/50 transition-colors ${
-                emailError ? "border-red-500/60" : "border-[#2D3F55]"
-              } ${!isAdmin ? "opacity-50 cursor-not-allowed" : ""}`}
+              value={settings.outbound_sender_email || ""}
+              readOnly
+              disabled
+              placeholder="Not Configured (Configure in Email settings)"
+              className="flex-1 bg-[#0D131F] border border-[#2D3F55] rounded-lg px-3 py-2 text-xs text-slate-400 placeholder-slate-600 select-none cursor-not-allowed opacity-70"
             />
             {isAdmin && (
-              <button
-                onClick={handleSaveEmail}
-                disabled={isSaving}
-                className="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium transition-colors flex items-center gap-1.5"
+              <Link
+                href="/settings/email"
+                className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-[#2D3F55] text-xs font-medium transition-colors flex items-center justify-center whitespace-nowrap"
               >
-                {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                Save
-              </button>
+                Configure Email
+              </Link>
             )}
           </div>
 
