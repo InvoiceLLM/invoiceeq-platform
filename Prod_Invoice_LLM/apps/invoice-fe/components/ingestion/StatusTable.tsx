@@ -18,7 +18,7 @@ export interface StatusItem {
   id: string;
   name: string;
   size: number;
-  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED";
+  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED" | "PAID" | "REJECTED";
   progress: number;
   alerts?: string[];
   vendorName?: string;
@@ -215,11 +215,18 @@ export default function StatusTable({
 
   const getStatusBadge = (status: StatusItem["status"]) => {
     switch (status) {
-      case "COMPLETED":
+      case "PAID":
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
             <CheckCircle2 className="w-3 h-3" />
-            Complete
+            Paid
+          </span>
+        );
+      case "COMPLETED":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-500/10 border border-teal-500/20 text-teal-400">
+            <CheckCircle2 className="w-3 h-3" />
+            Completed
           </span>
         );
       case "AUDIT_REQUIRED":
@@ -234,6 +241,13 @@ export default function StatusTable({
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 border border-rose-500/20 text-rose-400">
             <AlertTriangle className="w-3 h-3" />
             Failed
+          </span>
+        );
+      case "REJECTED":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 border border-rose-500/20 text-rose-400">
+            <AlertTriangle className="w-3 h-3" />
+            Rejected
           </span>
         );
       case "DUPLICATE":

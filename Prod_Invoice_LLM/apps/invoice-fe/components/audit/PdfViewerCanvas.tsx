@@ -26,6 +26,7 @@ export default function PdfViewerCanvas({
 }: PdfViewerCanvasProps) {
   const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
+  const isRotated = rotation % 180 !== 0;
 
   const pdfUrl = `/api/invoices/${invoiceId}/pdf`;
 
@@ -87,35 +88,48 @@ export default function PdfViewerCanvas({
       </div>
 
       {/* PDF + Overlay Container */}
-      <div className="relative flex-1 overflow-auto bg-[#08101A] p-4">
+      <div className="relative flex-1 overflow-auto bg-[#08101A] p-4 flex items-start justify-center">
         <div
-          className="relative mx-auto origin-top transition-transform"
+          className="relative transition-all duration-200"
           style={{
-            width: `${zoom}%`,
-            transform: `rotate(${rotation}deg)`,
+            width: isRotated ? `calc(800px * ${zoom / 100})` : `${zoom}%`,
+            height: isRotated ? `calc(565px * ${zoom / 100})` : "auto",
+            display: isRotated ? "flex" : "block",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          {/* PDF iframe */}
-          <iframe
-            src={pdfUrl}
-            className="h-[800px] w-full rounded-md border border-[#222D3D] bg-white"
-            title="Invoice PDF"
-          />
-
-          {/* Bounding Box Overlays */}
-          {coordinates.map((coord, idx) => (
-            <div
-              key={idx}
-              className="pointer-events-none absolute rounded-sm border border-emerald-400 bg-emerald-400/10 shadow-[0_0_10px_rgba(16,185,129,0.4)]"
-              style={{
-                left: `${coord.x}%`,
-                top: `${coord.y}%`,
-                width: `${coord.width}%`,
-                height: `${coord.height}%`,
-              }}
-              title={coord.label}
+          <div
+            className="transition-all duration-200"
+            style={{
+              width: isRotated ? "565px" : "100%",
+              height: isRotated ? "800px" : "auto",
+              transform: isRotated ? `rotate(${rotation}deg) scale(${zoom / 100})` : `rotate(${rotation}deg)`,
+              transformOrigin: "center center",
+            }}
+          >
+            {/* PDF iframe */}
+            <iframe
+              src={pdfUrl}
+              className="h-[800px] w-full rounded-md border border-[#222D3D] bg-white"
+              title="Invoice PDF"
             />
-          ))}
+
+            {/* Bounding Box Overlays */}
+            {coordinates.map((coord, idx) => (
+              <div
+                key={idx}
+                className="pointer-events-none absolute rounded-sm border border-emerald-400 bg-emerald-400/10 shadow-[0_0_10px_rgba(16,185,129,0.4)]"
+                style={{
+                  left: `${coord.x}%`,
+                  top: `${coord.y}%`,
+                  width: `${coord.width}%`,
+                  height: `${coord.height}%`,
+                }}
+                title={coord.label}
+              />
+            ))}
+          </div>
         </div>
       </div>
     </div>

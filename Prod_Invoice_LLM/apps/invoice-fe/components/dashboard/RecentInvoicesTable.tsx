@@ -95,11 +95,17 @@ export default function RecentInvoicesTable({
     
     switch (rawStatus) {
       case "PAID":
-      case "COMPLETED":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 border border-emerald-500/25 text-emerald-400">
             <CheckCircle className="w-3.5 h-3.5" />
-            Verified
+            Paid
+          </span>
+        );
+      case "COMPLETED":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-teal-500/10 border border-teal-500/25 text-teal-400">
+            <CheckCircle className="w-3.5 h-3.5" />
+            Completed
           </span>
         );
       case "AUDIT_REQUIRED":
