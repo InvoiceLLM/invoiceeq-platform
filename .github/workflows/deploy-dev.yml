@@ -185,6 +185,7 @@ jobs:
       build_args: |
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ needs.resolve-fqdns.outputs.pub_key }}
         NEXT_PUBLIC_WEBSITE_URL=${{ needs.resolve-fqdns.outputs.website_url }}
+        ENABLE_FE_PROXY=true
     secrets:
       azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -207,5 +208,7 @@ jobs:
       build_args: |
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ needs.resolve-fqdns.outputs.pub_key }}
         NEXT_PUBLIC_FE_URL=${{ needs.resolve-fqdns.outputs.fe_url }}
+        ENABLE_FE_PROXY=true
+        FE_INTERNAL_URL=${{ needs.resolve-fqdns.outputs.fe_url }}
     secrets:
       azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}

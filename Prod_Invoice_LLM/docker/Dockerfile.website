@@ -31,6 +31,16 @@ ARG NEXT_PUBLIC_FE_URL
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_FE_URL=$NEXT_PUBLIC_FE_URL
 
+# Gap 12: next.config.js reads process.env.ENABLE_FE_PROXY/FE_INTERNAL_URL
+# inside `rewrites()`, which Next.js evaluates and bakes into
+# routes-manifest.json at `next build` time -- a Container App runtime env
+# var arrives too late to affect it, same class of bug as the NEXT_PUBLIC_*
+# vars above. Both must be build-args, not just bicep-supplied runtime vars.
+ARG ENABLE_FE_PROXY
+ARG FE_INTERNAL_URL
+ENV ENABLE_FE_PROXY=$ENABLE_FE_PROXY
+ENV FE_INTERNAL_URL=$FE_INTERNAL_URL
+
 # Fail loudly instead of shipping a broken image: a missing publishable key only
 # surfaces as a white screen in the browser, which is expensive to debug.
 # Clerk also validates the key format during static prerender, so a malformed

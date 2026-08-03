@@ -25,6 +25,14 @@ ARG NEXT_PUBLIC_WEBSITE_URL
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_WEBSITE_URL=$NEXT_PUBLIC_WEBSITE_URL
 
+# Gap 12: next.config.js reads process.env.ENABLE_FE_PROXY inside
+# `assetPrefix`, which Next.js evaluates and bakes into
+# required-server-files.json at `next build` time -- a Container App
+# runtime env var arrives too late to affect it, same class of bug as the
+# NEXT_PUBLIC_* vars above. Must be a build-arg.
+ARG ENABLE_FE_PROXY
+ENV ENABLE_FE_PROXY=$ENABLE_FE_PROXY
+
 # Fail loudly instead of shipping a broken image: a missing publishable key
 # only surfaces as a white screen in the browser, which is expensive to debug.
 RUN test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" || \
