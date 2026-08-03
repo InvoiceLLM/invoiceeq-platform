@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   FileText,
   ZoomIn,
@@ -11,6 +11,7 @@ import {
   Layers,
   ShieldCheck,
   Maximize2,
+  AlertTriangle,
 } from "lucide-react";
 import { ExtractedVariable } from "@/lib/trainer-service";
 
@@ -72,6 +73,31 @@ export default function PdfViewerPanel({
   const handleZoomOut = () => setZoom((z) => Math.max(z - 15, 75));
   const handleResetZoom = () => setZoom(100);
 
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pdfUrl) {
+      setPdfError(null);
+      return;
+    }
+    if (pdfUrl.startsWith("blob:")) {
+      setPdfError(null);
+      return;
+    }
+
+    fetch(pdfUrl, { method: "HEAD" })
+      .then((res) => {
+        if (!res.ok) {
+          setPdfError("Production sample PDF is missing or unavailable.");
+        } else {
+          setPdfError(null);
+        }
+      })
+      .catch(() => {
+        setPdfError("Failed to retrieve sample PDF.");
+      });
+  }, [pdfUrl]);
+
   // ── MODE 2: Global Scope Chat-Only Empty State ──────────────────────────
   if (isGlobalScopeNoPdf || !pdfUrl) {
     const isGlobal = scope === "global";
@@ -87,72 +113,79 @@ export default function PdfViewerPanel({
       if (isGlobal) {
         return (
           <>
-            You are editing <span className="text-blue-400 font-medium">tenant-wide rules</span>.
-            No specific vendor PDF is required — chat directly on the right to teach or refine global constraints.
-            Optionally upload a sample PDF above for visual grounding.
+            Tenant-wide rules apply globally. No specific vendor PDF is required — chat directly on the right to teach or refine global constraints, or upload a sample PDF for visual grounding.
           </>
         );
       }
       if (isExisting) {
         return (
           <>
-            You are editing rules for vendor: <span className="text-blue-400 font-medium">{vendorName || "Selected Vendor"}</span>.
-            Select a vendor above to load their active rules, or upload a sample PDF to ground the sandbox with visual field mapping.
+            Refining rules for vendor: <span className="text-blue-400 font-medium">{vendorName || "Selected Vendor"}</span>. Select a vendor above to load active rules, or upload a PDF to ground the sandbox.
           </>
         );
       }
       return (
         <>
-          You are teaching rules for a <span className="text-blue-400 font-medium">new vendor</span>.
-          Drag and drop or browse a sample invoice PDF above to initialize OCR field extraction and start teaching the sandbox.
+          Teaching rules for a new vendor. Drag and drop or browse a sample invoice PDF above to initialize OCR field extraction and start training.
         </>
       );
     };
 
     return (
-      <div className="h-full flex flex-col items-center justify-center p-10 bg-[#070D1A]/90 border border-[#1E2D45] rounded-2xl text-center backdrop-blur-md relative overflow-hidden shadow-2xl shadow-black/30">
+      <div className="h-full flex flex-col items-center justify-center p-6 bg-[#070D1A]/90 border border-[#1E2D45] rounded-2xl text-center backdrop-blur-md relative overflow-hidden shadow-2xl shadow-black/30">
         {/* Ambient radial glow orbs — decorative only */}
         <div className="absolute -top-28 -left-28 w-80 h-80 bg-blue-600/8 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-28 -right-28 w-80 h-80 bg-indigo-600/8 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-blue-500/5 rounded-full blur-2xl pointer-events-none" />
 
         {/* Central Icon Badge */}
-        <div className="w-18 h-18 w-[72px] h-[72px] rounded-2xl bg-[#111827] border border-blue-500/25 flex items-center justify-center text-blue-400 mb-7 shadow-2xl shadow-blue-500/15 relative">
-          <Globe className="w-8 h-8" />
+        <div className="w-16 h-16 rounded-xl bg-[#111827] border border-blue-500/25 flex items-center justify-center text-blue-400 mb-5 shadow-2xl shadow-blue-500/15 relative">
+          <Globe className="w-7 h-7" />
           {/* Floating sparkle accent */}
-          <Sparkles className="w-4 h-4 text-blue-300 absolute -top-2 -right-2 animate-pulse" />
+          <Sparkles className="w-3.5 h-3.5 text-blue-300 absolute -top-1.5 -right-1.5 animate-pulse" />
         </div>
 
         {/* Heading & description */}
-        <h3 className="text-lg font-semibold text-white mb-2 tracking-tight">
+        <h3 className="text-base font-semibold text-white mb-2 tracking-tight">
           {getTitle()}
         </h3>
-        <p className="text-sm text-slate-400 max-w-sm mb-9 leading-relaxed">
+        <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
           {getDescription()}
         </p>
 
-        {/* Feature Info Cards grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-md text-left">
-          {/* Card 1: Tenant-Wide Precedence */}
-          <div className="p-4 bg-[#0D131F]/90 border border-blue-500/15 rounded-2xl hover:border-blue-500/30 transition-colors">
-            <div className="flex items-center gap-2 text-xs font-semibold text-blue-400 mb-2">
-              <ShieldCheck className="w-4 h-4" />
-              <span>Tenant-Wide Precedence</span>
+        {/* Step-by-Step Progress Indicator */}
+        <div className="w-full max-w-sm bg-[#0D131F]/90 border border-[#1E2D45] rounded-xl p-4">
+          <p className="text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-3 text-center">
+            How to teach the sandbox
+          </p>
+          <div className="flex items-center justify-between text-left text-xs gap-2">
+            <div className="flex-1 flex flex-col items-center text-center">
+              <span className="w-5.5 h-5.5 w-6 h-6 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-semibold flex items-center justify-center mb-1 text-[10px]">
+                1
+              </span>
+              <span className="font-semibold text-slate-300 text-[10px]">Set Scope</span>
+              <span className="text-[9px] text-slate-500">Global vs Vendor</span>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Applied on the first extraction pass before vendor identity is resolved.
-            </p>
-          </div>
+            
+            <div className="h-0.5 w-4 bg-[#1E2D45] shrink-0 self-center -mt-4" />
 
-          {/* Card 2: Automatic Re-Audit */}
-          <div className="p-4 bg-[#0D131F]/90 border border-indigo-500/15 rounded-2xl hover:border-indigo-500/30 transition-colors">
-            <div className="flex items-center gap-2 text-xs font-semibold text-indigo-400 mb-2">
-              <Layers className="w-4 h-4" />
-              <span>Automatic Re-Audit</span>
+            <div className="flex-1 flex flex-col items-center text-center">
+              <span className="w-5.5 h-5.5 w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold flex items-center justify-center mb-1 text-[10px]">
+                2
+              </span>
+              <span className="font-semibold text-slate-300 text-[10px]">Load PDF</span>
+              <span className="text-[9px] text-slate-500">Optional grounding</span>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Committing re-evaluates past invoices across all vendors in the background.
-            </p>
+
+            <div className="h-0.5 w-4 bg-[#1E2D45] shrink-0 self-center -mt-4" />
+
+            <div className="flex-1 flex flex-col items-center text-center">
+              <span className="w-5.5 h-5.5 w-6 h-6 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-400 font-semibold flex items-center justify-center mb-1 text-[10px]">
+                3
+              </span>
+              <span className="font-semibold text-slate-300 text-[10px]">Teach AI</span>
+              <span className="text-[9px] text-slate-500">Chat corrections</span>
+            </div>
           </div>
         </div>
       </div>
@@ -219,10 +252,17 @@ export default function PdfViewerPanel({
           style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center" }}
           className="transition-transform duration-150 flex-1 min-h-0 bg-[#0B1120] border border-[#1E2D45] rounded-2xl overflow-hidden relative"
         >
-          {/* Real PDF — a blob URL for freshly uploaded files (New Vendor / Global
-              grounding) or the real backend-served invoice for Existing Vendor
-              sessions. The browser's native PDF viewer renders it directly. */}
-          <iframe src={pdfUrl} title={fileName || "Sample invoice PDF"} className="w-full h-full" />
+          {pdfError ? (
+            <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-[#0B1120] rounded-2xl relative">
+              <div className="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/25 flex items-center justify-center text-red-400 mb-4">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-semibold text-white mb-1">Document Unavailable</h4>
+              <p className="text-xs text-slate-400 max-w-xs">{pdfError}</p>
+            </div>
+          ) : (
+            <iframe src={pdfUrl} title={fileName || "Sample invoice PDF"} className="w-full h-full border-none" />
+          )}
 
           {/* Selected-variable callout — real bounding-box coordinates aren't
               plumbed into the trainer session yet, so this names the field

@@ -20,6 +20,7 @@ from services.storage import upload_pdf_to_blob_storage, download_pdf_from_stora
 from chroma_client import delete_invoice_chunks
 from azure.storage.queue import QueueClient
 from config import get_settings
+from azure.core.exceptions import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -464,7 +465,7 @@ async def get_invoice_pdf(
     
     try:
         pdf_bytes = download_pdf_from_storage(invoice.file_path)
-    except FileNotFoundError:
+    except (FileNotFoundError, ResourceNotFoundError):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invoice PDF file not found in storage."

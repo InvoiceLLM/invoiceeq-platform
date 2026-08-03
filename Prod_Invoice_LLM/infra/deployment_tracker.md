@@ -45,39 +45,81 @@ completed a clean end-to-end run.
   queue-worker, frontend, and website. Deployment `provisioningState: Succeeded`
   as of 2026-08-03 (full env rebuild after the RG's Aug 2026 deletion/recovery —
   see `.claude/tasklists/infra-devops-dev-rebuild-redis-fix.md` for the full
-  chain: Redis+Postgres recreated, RBAC re-granted, real images built manually
-  via `az acr build`/`docker buildx build --push` since CI's `AZURE_CREDENTIALS`
-  is currently a dead service principal — out of scope to fix here).
-  **Two real problems found live, both currently unresolved, need a decision
-  before re-running anything further:**
-  - `ca-invoice-be-dev` is **crash-looping** (restartCount 6+). Root cause:
-    `apps/invoice-be/alembic/env.py`'s `config.set_main_option("sqlalchemy.url",
-    settings.DATABASE_URL)` runs the URL through Python `configparser`, which
-    treats `%` as interpolation syntax — the current dev DB password
-    (`P@ssw0rd12345!`) percent-encodes to `P%40ssw0rd12345%21` via
-    `05-secrets.bicep`'s (correct) `uriComponent()` call, and configparser
-    chokes on the `%`. `ca-queue-worker-dev` doesn't hit this (its entrypoint
-    skips alembic) so it's Healthy/Running; FE and website are also
-    Healthy/Running (neither touches Postgres directly).
-  - Gap 12's FE-proxy mechanism (invoice-website reverse-proxying invoice-fe)
-    **does not work** in the currently-built images even though bicep wires
-    `ENABLE_FE_PROXY`/`FE_INTERNAL_URL` correctly as container runtime env vars.
-    Both `apps/invoice-website/next.config.js`'s `rewrites()` and
-    `apps/invoice-fe/next.config.js`'s `assetPrefix` are evaluated by Next.js
-    at `next build` time, not per-request — the same class of bug Gap 6 already
-    fixed for `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (needs a Docker build-arg, a
-    runtime env var arrives too late). Neither `docker/Dockerfile.website` nor
-    `docker/Dockerfile.fe` declares these as `ARG`s, and
-    `.github/workflows/deploy-dev.yml` doesn't pass them as `build_args`.
-    Confirmed live: `invoice-website:latest`'s baked `routes-manifest.json` has
-    `"rewrites":[]`, `invoice-fe:latest`'s baked `required-server-files.json`
-    has `"assetPrefix":""`; hitting `/dashboard` through the website returns
-    404 with zero new request log lines in FE's own container logs (request
-    never reaches FE).
-  Ingress split itself (the part that doesn't need a rebuild) is confirmed
-  correct: FE + backend FQDNs both `.internal.` (internal-only), website's is
-  not (external); CLERK_SECRET_KEY via Key Vault secretRef on both FE and
-  website; BACKEND_API_URL correct.
+  chain). **Both real problems previously found here are now fixed and verified
+  live (2026-08-03/04):**
+  - **Backend crash-loop — FIXED.** Root cause was `apps/invoice-be/alembic/env.py`
+    passing `DATABASE_URL` through Python `configparser` (which treats `%` as
+    interpolation syntax) with a password that percent-encoded to include `%`
+    (`P@ssw0rd12345!` → `P%40ssw0rd12345%21`). Fix: rotated `dbAdminPassword` to
+    a pure-alphanumeric value (`Passw0rd1234X`, in `params.dev.secrets.json`,
+    gitignored) via a Stage 3 re-run (`03-data.bicep`, `deployPostgres=true` PUTs
+    the new password onto the existing `psql-invoice-llm-dev` in place;
+    `deployRedis=false` override used since Redis Enterprise was already Running
+    and cannot be redeployed in place), then a Stage 5 re-run (`05-secrets.bicep`)
+    to re-seed `DATABASE-URL`. Note: a bare Container App revision restart does
+    NOT re-fetch an updated Key-Vault-referenced secret value — had to
+    `az containerapp secret set` (re-declare the same `keyvaultUrl` ref, which
+    forces a resync and explicitly warns a restart is needed) before restarting.
+    Confirmed via logs: alembic migration runs clean, Uvicorn starts, healthy
+    and stable through a subsequent full CI redeploy.
+  - **Gap 12 FE-proxy inert in built images — FIXED**, plus **a second bug found
+    during live verification and also fixed**. `docker/Dockerfile.fe` /
+    `docker/Dockerfile.website` now declare `ARG`/`ENV ENABLE_FE_PROXY` (website
+    also `FE_INTERNAL_URL`), and `.github/workflows/deploy-dev.yml`'s
+    deploy-frontend/deploy-website jobs now pass them as `build_args` — mirrors
+    the existing Gap 6 pattern for `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. Verified
+    live in the rebuilt images: `invoice-website:latest`'s `routes-manifest.json`
+    now has real `rewrites` (was `[]`); `invoice-fe:latest`'s
+    `required-server-files.json` now has `"assetPrefix":"/fe-static"` (was `""`).
+    Second bug (found via a real logged-in user's `/dashboard` rendering data but
+    zero CSS/JS): `apps/invoice-website/next.config.js`'s
+    `{ source: "/fe-static/:path*", destination: `${feUrl}/_next/:path*` }` rule
+    double-prepended `/_next/` (since `assetPrefix="/fe-static"` already produces
+    asset URLs like `/fe-static/_next/static/...`, so `:path*` already contained
+    `_next/static/...`), producing a `${feUrl}/_next/_next/static/...` 404 on
+    every asset. Fixed by changing the source to
+    `/fe-static/_next/:path*` so `:path*` only captures what's after the literal
+    `_next/` segment. Verified live: 5 different real `/fe-static/_next/...`
+    asset URLs (pulled from the actual rendered `/flows` page) now return 200.
+    **Third bug found on real-user retest (page displayed data but zero buttons
+    clickable — a hydration failure): FIXED.** Root cause: Next.js's App Router
+    does not apply `assetPrefix` uniformly — per-page/layout chunks correctly got
+    `/fe-static`, but the App-Router-wide bootstrap set (`rootMainFiles` in
+    `build-manifest.json`: webpack runtime, the "23"/"fd9d1056" framework chunks,
+    main-app, `polyfillFiles`, and the root layout's own CSS) were emitted as bare
+    `/_next/static/...` with no prefix at all — confirmed via the live HTML's
+    client-hydration payload literally embedding `"assetPrefix":""` for this
+    specific rendering path, even though the same build's
+    `required-server-files.json` has `"/fe-static"`. Without the webpack runtime,
+    React never initializes client-side. This is a genuine Next.js App Router
+    limitation, not an invoice-fe/invoice-website config mistake, so fixed at the
+    proxy layer instead: added a fallback rewrite in
+    `apps/invoice-website/next.config.js` for bare `/_next/static/:path*` → FE,
+    using the **object-form `{ afterFiles: [...] }`** return (not a plain array,
+    which Next checks before the filesystem) — `afterFiles` is checked only
+    after invoice-website's own local static files, so invoice-website's own
+    homepage/login/signup JS+CSS (same generic path, different content hashes)
+    always wins locally, and this rule only ever fires as a genuine fallback for
+    a hash invoice-website doesn't have (i.e., one of FE's chunks). Verified
+    live: all 11 unique asset URLs on a fresh `/flows` load now return 200 with
+    correct content-type/size, reproduced on a second independent page load, and
+    confirmed invoice-website's own 11 homepage assets are unaffected (still
+    served locally) and that a genuinely-fake nonexistent path still 404s (rules
+    out an accidental always-200 catch-all).
+  Ingress split confirmed correct: FE + backend FQDNs both `.internal.`
+  (internal-only, external curl gets a generic 404 from the CAE edge, never
+  reaches the app), website's is external; CLERK_SECRET_KEY via Key Vault
+  secretRef on both FE and website; BACKEND_API_URL correct. All 4 apps
+  (`ca-invoice-be-dev`, `ca-queue-worker-dev`, `ca-invoice-fe-dev`,
+  `ca-invoice-website-dev`) confirmed Healthy.
+  **CI/CD note**: the `AZURE_CREDENTIALS` service principal (`invoiceeq-dev-cicd`)
+  was missing a role assignment on the RG (caused "No subscriptions found" in
+  `resolve-fqdns`) — user added Contributor at RG scope manually via Portal
+  (confirmed via `az role assignment list`, `createdOn: 2026-08-03T16:34:29Z`).
+  Verified fixed via two real `gh run` executions after that point (one
+  push-triggered, one explicit `workflow_dispatch`) — both completed
+  successfully end-to-end, `resolve-fqdns`'s Azure Login step succeeded both
+  times ("Azure CLI login succeeds by using service principal with secret").
 - **[ ] Stage 9: Monitoring** (`09-monitoring.bicep`) — Log Analytics
   (existing `law-invoice-llm-dev` gets reconciled), Application Insights
   (new), action group, diagnostic settings, ~16 health/availability alert

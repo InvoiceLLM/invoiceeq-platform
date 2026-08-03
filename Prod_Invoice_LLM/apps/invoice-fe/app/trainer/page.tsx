@@ -181,6 +181,17 @@ function TrainerContent() {
     }
   };
 
+  const handleClearFile = async () => {
+    try {
+      const newSess = await trainerService.startSession(activeScope, selectedVendorName);
+      setSession(newSess);
+      showToast("Cleared grounding document", "info");
+    } catch (err) {
+      console.error("Failed to clear sample file", err);
+      showToast("Failed to clear the sample file.", "error");
+    }
+  };
+
   /**
    * HANDLER: Natural Language Chat Correction (Task 6.5)
    * Sends user instruction to LLM trainer agent, updating active rules & variables.
@@ -383,7 +394,7 @@ function TrainerContent() {
       </header>
 
       {/* Secondary Controls Bar: Scope Selector & Document Uploader */}
-      <div className="p-4 border-b border-[#222D3D] bg-[#0D131F]/90 space-y-3 shrink-0">
+      <div className="px-6 py-3 border-b border-[#222D3D] bg-[#0D131F]/90 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shrink-0">
         {/* Task 6.1: 3-Way Scope Selector */}
         <ScopeSelector activeScope={activeScope} onScopeChange={handleScopeChange} />
 
@@ -394,6 +405,7 @@ function TrainerContent() {
           selectedVendorName={selectedVendorName}
           onSelectVendor={handleSelectVendor}
           onUploadFile={handleUploadFile}
+          onClearFile={handleClearFile}
           activeFileName={session?.fileName}
         />
       </div>

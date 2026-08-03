@@ -157,6 +157,17 @@ def post_chat_message(
         content=payload.content
     )
     db_session.add(user_msg)
+    
+    # Auto-generate session title if it uses the default placeholder or timestamp format
+    if chat_session.title.startswith("Chat Session -") or chat_session.title == "New Chat":
+        words = payload.content.strip().split()
+        if words:
+            new_title = " ".join(words[:6])
+            if len(words) > 6:
+                new_title += "..."
+            chat_session.title = new_title
+            db_session.add(chat_session)
+            
     db_session.commit()
     
     # 3. Invoke multi-agent Query Agent routing pipeline.

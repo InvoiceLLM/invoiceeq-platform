@@ -89,72 +89,56 @@ export default function ScopeSelector({
   const activeScope_ = scopes.find((s) => s.id === activeScope);
 
   return (
-    /* Outer container: dark glass pill with subtle inner glow border */
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0D131F]/80 backdrop-blur-sm p-1.5 border border-[#1E2D45] rounded-2xl shadow-xl shadow-black/30">
-      {/* ── Segmented Tab Controls ──────────────────────────────────────── */}
-      <div className="flex flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar">
-        {scopes.map((scope) => {
-          const Icon = scope.icon;
-          const isActive = activeScope === scope.id;
+    <div className="flex items-center gap-1 bg-[#111827]/60 p-1 border border-[#1E2D45] rounded-xl shadow-inner max-w-full overflow-x-auto no-scrollbar">
+      {scopes.map((scope) => {
+        const Icon = scope.icon;
+        const isActive = activeScope === scope.id;
 
-          return (
-            <button
-              key={scope.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => onScopeChange(scope.id)}
-              className={`
-                group flex-1 min-w-[155px] flex items-center justify-center gap-2.5
-                px-4 py-2.5 rounded-xl text-sm font-medium
-                transition-all duration-200 relative
-                ${isActive
-                  /* Active: glassy card with colored border glow */
-                  ? `${scope.activeBg} text-white border ${scope.activeRing} shadow-lg`
-                  /* Inactive: ghost with hover lift */
-                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent"
-                }
-                ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}
-              `}
+        return (
+          <button
+            key={scope.id}
+            type="button"
+            disabled={disabled}
+            onClick={() => onScopeChange(scope.id)}
+            className={`
+              group flex items-center justify-center gap-2
+              px-3.5 py-1.5 rounded-lg text-xs font-semibold
+              transition-all duration-200 relative
+              ${isActive
+                ? `${scope.activeBg} text-white border ${scope.activeRing} shadow-md`
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent"
+              }
+              ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}
+            `}
+          >
+            <Icon
+              className={`w-3.5 h-3.5 transition-colors ${
+                isActive ? scope.activeIcon : "text-slate-500 group-hover:text-slate-300"
+              }`}
+            />
+
+            <span className="whitespace-nowrap">{scope.label}</span>
+
+            <span
+              className={`hidden lg:inline-block text-[9px] px-1.5 py-0.5 rounded border font-mono font-medium ${scope.badgeCls}`}
             >
-              {/* Icon with active color glow */}
-              <Icon
-                className={`w-4 h-4 transition-colors ${
-                  isActive ? scope.activeIcon : "text-slate-500 group-hover:text-slate-300"
+              {scope.badgeText}
+            </span>
+
+            {isActive && (
+              <span
+                className={`absolute bottom-0 left-1/4 right-1/4 h-[1.5px] rounded-full ${
+                  scope.id === "global"
+                    ? "bg-blue-400"
+                    : scope.id === "existing_vendor"
+                    ? "bg-emerald-400"
+                    : "bg-purple-400"
                 }`}
               />
-
-              <span className="whitespace-nowrap">{scope.label}</span>
-
-              {/* Badge pill — visible only on large screens */}
-              <span
-                className={`hidden lg:inline-block text-[10px] px-1.5 py-0.5 rounded-md border font-mono font-medium ${scope.badgeCls}`}
-              >
-                {scope.badgeText}
-              </span>
-
-              {/* Active bottom indicator line */}
-              {isActive && (
-                <span
-                  className={`absolute bottom-0 left-1/4 right-1/4 h-[2px] rounded-full ${
-                    scope.id === "global"
-                      ? "bg-blue-400"
-                      : scope.id === "existing_vendor"
-                      ? "bg-emerald-400"
-                      : "bg-purple-400"
-                  }`}
-                />
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ── Active Scope Context Description Strip ─────────────────────── */}
-      {/* Hidden on small screens; shown on xl+ as a contextual tooltip bar */}
-      <div className="hidden xl:flex items-center gap-2 px-3.5 py-2 bg-[#070D1A]/70 rounded-xl border border-[#1E2D45] text-xs text-slate-400 max-w-[340px] shrink-0">
-        <HelpCircle className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-        <span className="truncate leading-snug">{activeScope_?.description}</span>
-      </div>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -158,13 +158,19 @@ export function useChatSession(): UseChatSessionReturn {
         const assistantMsg = res.data;
         setMessages((prev) => [...prev, assistantMsg]);
 
-        // Optimistically rename "New Chat" to the first message text for sidebar legibility
+        // Optimistically rename "New Chat" or placeholder to the first message text for sidebar legibility
         setSessions((prev) =>
-          prev.map((s) =>
-            s.id === activeSessionId && s.title === "New Chat"
-              ? { ...s, title: text.trim().slice(0, 48) }
-              : s
-          )
+          prev.map((s) => {
+            if (s.id === activeSessionId && (s.title === "New Chat" || s.title.startsWith("Chat Session -"))) {
+              const words = text.trim().split(/\s+/);
+              let newTitle = words.slice(0, 6).join(" ");
+              if (words.length > 6) {
+                newTitle += "...";
+              }
+              return { ...s, title: newTitle };
+            }
+            return s;
+          })
         );
       } catch {
         setError("Failed to send message. Please try again.");
