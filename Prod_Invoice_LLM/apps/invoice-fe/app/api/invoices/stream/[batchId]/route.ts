@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest, { params }: { params: { batchId: string } }) {
   const backendResponse = await fetch(backendUrl(`/invoices/stream/${params.batchId}`), {
     method: "GET",
-    headers: forwardedHeaders(request),
+    headers: await forwardedHeaders(request),
     cache: "no-store",
   });
 

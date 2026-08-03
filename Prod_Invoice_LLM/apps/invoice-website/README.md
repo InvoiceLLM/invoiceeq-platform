@@ -20,14 +20,18 @@ invoice-website/
 │   ├── login/page.tsx          # Clerk sign-in (role toggle + OTP second factor) + forgot password link (Gap 3)
 │   ├── signup/page.tsx         # Clerk sign-up + org creation + server-side provision call (Gap 7)
 │   ├── forgot-password/page.tsx # Two-step password reset using Clerk reset_password_email_code (Gap 3)
+│   ├── billing/success/page.tsx # PayU return page — upgrade confirmed (public, no Clerk gate, no API call)
+│   ├── billing/failed/page.tsx  # PayU return page — maps the backend's reason codes to 3 severities (public)
 │   ├── api/
-│   │   └── auth/provision/route.ts  # Server-side proxy for backend /auth/provision (Gap 7)
-│   └── api/webhooks/payu/      # empty (.gitkeep only) — unused; PayU's surl/furl callbacks land on invoice-be directly, not here
+│   │   ├── auth/provision/route.ts             # Server-side proxy for backend /auth/provision (Gap 7)
+│   │   ├── billing/create-checkout-session/route.ts  # Clerk-gated proxy that starts a PayU checkout
+│   │   └── v1/billing/payu/{success,failure}/route.ts # PayU surl/furl pass-through (UNauthenticated by design) + shared relay.ts
 ├── components/
 │   ├── ui/                     # empty (.gitkeep only) — no Shadcn/UI components exist
-│   └── marketing/              # Header, Hero, WorkspaceShowcase, AITeamSection, FlowsShowcaseSection, FlowsModal, BenefitsStrip, MouseSpotlight, Footer
+│   └── marketing/              # Header, Hero, WorkspaceShowcase, AITeamSection, FlowsShowcaseSection, PricingTable, FlowsModal, BenefitsStrip, MouseSpotlight, Footer
 ├── lib/
-│   └── utils.ts                # Tailwind class merger (no payu.ts)
+│   ├── utils.ts                # Tailwind class merger
+│   └── billingPlans.ts         # Plan copy + searchParams/app-link helpers for the two /billing pages
 ├── middleware.ts               # bare clerkMiddleware() — makes Clerk auth context available; no route protection enforced
 └── website_features/           # Implementation documentation for Gaps 3 & 7
 ```
@@ -40,7 +44,9 @@ invoice-website/
 - **Benefits Strip** — row of benefit callouts below the hero
 - **Auth** — Clerk-based signup (`/signup`) and login (`/login`, with admin/user role toggle + OTP second factor)
 - **Password Reset** — Two-step forgot password flow (`/forgot-password`) using Clerk's `reset_password_email_code` strategy (Gap 3)
-- **No pricing page** — no PayU checkout exists yet (see `website_features/feature_3_pricing_payu.md` — planned, not built)
+- **Pricing & PayU checkout** — `PricingTable` (Free / Pro / Pro Combined) on the landing page at `#pricing`, submitting a hash-signed hidden form to PayU's hosted page. *(This bullet previously read "No pricing page — no PayU checkout exists yet"; that was stale from 2026-07-31.)*
+- **PayU return pages** — `/billing/success` and `/billing/failed`, both **public and deliberately not Clerk-gated** (a user coming back from PayU may have no session in that tab). `/billing/failed` distinguishes an honest decline (retry offered) from "we could not verify" and from "you were charged but we couldn't apply it" (no retry offered — see `website_features/feature_3_pricing_payu.md`).
+- **PayU callback pass-through** — `/api/v1/billing/payu/{success,failure}`, path-identical to the backend's own endpoints. Unauthenticated on purpose: PayU carries no session, and the backend independently verifies the response hash plus a server-to-server `verify_payment` before trusting anything. `invoice-be`'s ingress is internal-only, so without this route PayU could not deliver the callback at all.
 
 ## Recent Changes (auth-feature-4)
 - **Gap 3:** Added `/forgot-password` page with two-step Clerk password reset flow

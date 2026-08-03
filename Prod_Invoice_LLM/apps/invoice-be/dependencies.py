@@ -18,6 +18,14 @@ class TenantContext(BaseModel):
     db_user_id: UUID | None = None
     role: str
     billing_plan: str
+    # Feature 1.1 (Task 1.1.3): per-area permissions, resolved from the User
+    # row rather than the JWT -- permissions are our data, not Clerk's, so an
+    # Admin's grant takes effect on the very next request without waiting for
+    # a token refresh. Admin implies all three (see resolve_permissions).
+    # GET /auth/me returns this model verbatim, so the FE gets them for free.
+    can_train: bool = False
+    can_audit: bool = False
+    can_load: bool = False
 
 # Cache for Clerk JWKS keys
 _jwks_cache = {}
@@ -91,6 +99,22 @@ def get_jwk(kid: str) -> dict:
         )
     
     return _jwks_cache[kid]
+
+def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool]:
+    """
+    Feature 1.1 (Task 1.1.3): resolve (can_train, can_audit, can_load).
+
+    Admin is a role, not a 4th permission -- it implies all three, and is the
+    only role that can grant them to others. For everyone else the flags come
+    straight off the `User` row (default False = the design's "Viewer":
+    Dashboard + Chat + Help only).
+    """
+    if role == "Admin":
+        return True, True, True
+    if user is None:
+        return False, False, False
+    return bool(user.can_train), bool(user.can_audit), bool(user.can_load)
+
 
 def get_tenant_context(
     authorization: str | None = Header(None),
@@ -323,12 +347,17 @@ def get_tenant_context(
             db_session.add(user)
             db_session.commit()
 
+    can_train, can_audit, can_load = resolve_permissions(role, user)
+
     context = TenantContext(
         tenant_id=tenant_id,
         user_id=user_id,
         db_user_id=user.id,
         role=role,
-        billing_plan=tenant.billing_plan
+        billing_plan=tenant.billing_plan,
+        can_train=can_train,
+        can_audit=can_audit,
+        can_load=can_load,
     )
     
     # 4. Enforce billing subscription gate
@@ -337,6 +366,60 @@ def get_tenant_context(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="Tenant subscription is unpaid. Access blocked."
         )
-        
+
+    return context
+
+
+# --- Feature 1.1 (Task 1.1.2): permission-check dependencies ---------------
+#
+# Same shape as the existing inline `context.role != "Admin"` checks in
+# routers/settings.py and routers/billing.py -- a 403 with a human-readable
+# reason -- but expressed as a dependency so it can be attached once per
+# router/endpoint instead of being repeated in every handler body.
+#
+# Each returns the resolved TenantContext, so a handler can use it as a drop-in
+# replacement for `Depends(get_tenant_context)` rather than depending on both.
+
+_PERMISSION_LABELS = {
+    "can_train": "AI Trainer",
+    "can_audit": "the Audit Queue",
+    "can_load": "invoice ingestion",
+}
+
+
+def require_permission(permission: str):
+    """
+    Build a dependency that 403s unless the caller has `permission`.
+
+    Admins always pass (resolve_permissions grants them all three). Deliberately
+    NOT applied to machine-to-machine routes -- routers/email_ingestion.py's
+    SendGrid webhook and routers/webhooks.py's HMAC-signed outbound deliveries
+    are not user requests and gating them would break Features 14/15.
+    """
+    label = _PERMISSION_LABELS.get(permission, permission)
+
+    def _dependency(context: TenantContext = Depends(get_tenant_context)) -> TenantContext:
+        if not getattr(context, permission, False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to access {label}. Ask an Admin to grant it.",
+            )
+        return context
+
+    return _dependency
+
+
+require_can_train = require_permission("can_train")
+require_can_audit = require_permission("can_audit")
+require_can_load = require_permission("can_load")
+
+
+def require_admin(context: TenantContext = Depends(get_tenant_context)) -> TenantContext:
+    """Admin-only gate, for the Feature 1.1 Task 1.1.6 permission-granting endpoints."""
+    if context.role != "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin users can manage user permissions.",
+        )
     return context
 

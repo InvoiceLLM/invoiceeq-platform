@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:e2e": "playwright test",
+    "test:e2e:proxy": "playwright test --config=playwright.proxy.config.ts",
+    "test:e2e:all": "npm run test:e2e && npm run test:e2e:proxy"
   },
   "dependencies": {
     "@clerk/nextjs": "^5.0.1",
@@ -23,6 +26,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.0",
     "@types/node": "^20.12.11",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",

@@ -1,5 +1,6 @@
 # Stop the PostgreSQL Database (Stops Compute Billing)
-az postgres flexible-server stop --name psql-invoice-llm-dev --resource-group invoice-llm-dev
+# Name is psql-invoice-llm-dev-v2 -- see start-env.ps1 for why.
+az postgres flexible-server stop --name psql-invoice-llm-dev-v2 --resource-group invoice-llm-dev
 
 # Force Containers to Zero (Just to be safe)
 az containerapp update --name ca-invoice-be-dev --resource-group invoice-llm-dev --min-replicas 0

@@ -29,6 +29,15 @@
     "dbAdminLogin": {
       "value": "dbadmin"
     },
+    "postgresServerName": {
+      "value": "psql-invoice-llm-dev-v2"
+    },
+    "deployPostgres": {
+      "value": false
+    },
+    "manageDatabaseUrlSecret": {
+      "value": false
+    },
     "nextPublicClerkPublishableKey": {
       "value": "pk_test_cmVhbC1zdGFsbGlvbi0yMS5jbGVyay5hY2NvdW50cy5kZXYk"
     },

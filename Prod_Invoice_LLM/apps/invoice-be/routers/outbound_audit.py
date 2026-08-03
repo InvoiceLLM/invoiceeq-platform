@@ -5,13 +5,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from datetime import datetime
 
-from dependencies import get_tenant_context, get_db_session, TenantContext
+from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/outbound-audit", tags=["Outbound Audit"])
+# Feature 1.1 (Task 1.1.2): AR-side mirror of routers/audit.py -- same
+# `can_audit` permission gates the outbound review console.
+router = APIRouter(
+    prefix="/outbound-audit",
+    tags=["Outbound Audit"],
+    dependencies=[Depends(require_can_audit)],
+)
 
 # Feature 7.1: outbound corrections only ever touch these fields -- the
 # same set OutboundInvoiceExtractionSchema extracts (feature_2.1_vendor_flow_ingestion.md),

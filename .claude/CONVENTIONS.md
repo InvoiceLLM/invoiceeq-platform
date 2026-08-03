@@ -24,6 +24,12 @@ This repo's current priority, in order: **1) finish coding, 2) functional testin
 
 Application code and `Prod_Invoice_LLM/infra/` bicep/ps1 themselves are the record for infra-devops's actual changes. infra-devops does **not** file to `reports/infra/` by default — scope and findings go in chat instead (2026-08-01: the user doesn't want infra scoping/audit work turned into persistent report docs). If a task explicitly calls for a written report, it's a one-off, confirmed in chat, and deleted once the user has reviewed/approved it — not kept the way load/security reports are.
 
+## Live task list — every long-running specialist run maintains one
+
+Any task expected to take more than a few steps (multi-gap repro, a multi-file build, a multi-stage infra change) creates `.claude/tasklists/<agent>-<short-topic>.md` **before starting work** — a plain markdown checklist of the concrete steps planned, one line per step. Update it (check items off, add detail inline) as each step actually completes, not in a batch at the end — the point is that the user can open this file at any time mid-run and see real current status, not just get a summary once the whole thing finishes. This is separate from the final deliverable (tracker/report/coverage-map per the table above); the tasklist is working-state, the tracker/report is the record.
+
+Leave the file in place once the task completes, with every item checked and a one-line final status at the bottom — don't delete it (unlike the ephemeral infra reports pattern). The user can clean these up manually once reviewed.
+
 ## Scope vs. output — the pattern every non-architect agent follows
 
 1. State scope first: what will be done, to which files, and why. This is what the user approves before execution.

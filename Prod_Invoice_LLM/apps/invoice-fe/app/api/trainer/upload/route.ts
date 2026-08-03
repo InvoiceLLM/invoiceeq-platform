@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
 
   const response = await fetch(backendUrl("/trainer/upload"), {
     method: "POST",
-    headers: forwardedHeaders(request),
+    headers: await forwardedHeaders(request),
     body: formData,
     cache: "no-store",
   });

@@ -1,0 +1,12 @@
+Prod_Invoice_LLM/apps/invoice-be/local_logs/be.log (2026-08-03 session), excerpt:
+
+INFO:     127.0.0.1:63916 - "GET /api/v1/connectors/files/google_drive?direction=inbound HTTP/1.1" 502 Bad Gateway
+INFO:     127.0.0.1:63916 - "GET /api/v1/connectors/files/google_drive?direction=inbound HTTP/1.1" 502 Bad Gateway
+
+Backend behavior confirmed correct by reading routers/connectors.py::list_connector_files
+(lines 264-353): a real Google Drive API call is attempted (real GOOGLE_CLIENT_ID is
+configured, so _has_real_credentials() is true), the real httpx call to Google fails
+(fake/invalid access token used for this test), the httpx.HTTPError is caught, logged
+server-side ("Real google_drive file listing failed: ..."), and a clean
+502 with detail "Could not list files from google_drive." is returned. This is the
+correct, intended backend behavior -- the bug is entirely client-side.

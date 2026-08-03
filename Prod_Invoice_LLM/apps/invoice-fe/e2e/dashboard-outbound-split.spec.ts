@@ -58,6 +58,26 @@ async function stubDashboardApis(
   page: Page,
   flow: { receive_invoices_enabled: boolean; send_invoices_enabled: boolean }
 ) {
+  // Feature 1.1: the shell resolves identity from GET /api/auth/me and
+  // Sidebar.tsx filters nav on it. Pinned to Admin here so these Dashboard
+  // layout assertions aren't sitting on top of whatever the fallback identity
+  // happens to render when the backend isn't reachable.
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tenant_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        user_id: "user_e2e_admin",
+        role: "Admin",
+        billing_plan: "active",
+        can_train: true,
+        can_audit: true,
+        can_load: true,
+      }),
+    })
+  );
+
   await page.route("**/api/settings/service-flow", (route) =>
     route.fulfill({
       status: 200,

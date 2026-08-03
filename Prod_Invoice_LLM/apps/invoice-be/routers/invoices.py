@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 from config import settings
 
-from dependencies import get_tenant_context, get_db_session, TenantContext
+from dependencies import get_tenant_context, get_db_session, require_can_load, TenantContext
 from models import Invoice, Tenant, AuditLog
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage, delete_pdf_from_storage
 from chroma_client import delete_invoice_chunks
@@ -158,7 +158,11 @@ async def _ingest_single_file(
 async def upload_invoices(
     files: list[UploadFile] = File(...),
     tags: list[str] = Form([]),
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 1.1 (Task 1.1.2): ingestion is a granted permission, default off.
+    # Only the two write/ingest endpoints are gated -- the GET list/detail/pdf
+    # routes below stay open so the Dashboard remains reachable for a user with
+    # no permissions at all, per the feature's access model.
+    context: TenantContext = Depends(require_can_load),
     db_session: Session = Depends(get_db_session)
 ):
     """
@@ -226,7 +230,9 @@ class DirectoryWatchRequest(BaseModel):
 @router.post("/watcher/start", status_code=status.HTTP_200_OK)
 async def start_directory_watcher(
     payload: DirectoryWatchRequest,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 1.1 (Task 1.1.2): bulk directory ingest is the same action as
+    # /upload by another door, so it carries the same `can_load` gate.
+    context: TenantContext = Depends(require_can_load),
     db_session: Session = Depends(get_db_session)
 ):
     """

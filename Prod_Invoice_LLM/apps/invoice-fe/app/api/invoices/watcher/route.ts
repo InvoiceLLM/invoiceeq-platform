@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
 
   const response = await fetch(backendUrl("/invoices/watcher/start"), {
     method: "POST",
-    headers: { ...forwardedHeaders(request), "Content-Type": "application/json" },
+    headers: { ...(await forwardedHeaders(request)), "Content-Type": "application/json" },
     body,
     cache: "no-store",
   });

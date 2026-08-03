@@ -51,7 +51,33 @@ const json = (body: unknown) => ({
   body: JSON.stringify(body),
 });
 
+/**
+ * Feature 1.1: the app shell now resolves identity from GET /api/auth/me
+ * (hooks/useAuth.ts), and Sidebar.tsx filters its nav items on the result.
+ * These specs exercise Ingestion / Trainer / Dashboard, which an Admin
+ * reaches, so they pin an Admin identity rather than leaving the call to fail
+ * against a backend that isn't running -- an unstubbed failure resolves to the
+ * permission-less fallback, which would silently change what the shell renders
+ * underneath these layout assertions.
+ */
+async function stubAuthMe(page: Page) {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill(
+      json({
+        tenant_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        user_id: "user_e2e_admin",
+        role: "Admin",
+        billing_plan: "active",
+        can_train: true,
+        can_audit: true,
+        can_load: true,
+      })
+    )
+  );
+}
+
 async function stubIngestionApis(page: Page, flow: Record<string, unknown>) {
+  await stubAuthMe(page);
   await page.route("**/api/settings/service-flow", (route) => route.fulfill(json(flow)));
   // Connector status drives ConnectorBrowseBar; empty = renders nothing, which
   // is the conservative case for an overflow test (fewer elements, so if the
@@ -60,6 +86,7 @@ async function stubIngestionApis(page: Page, flow: Record<string, unknown>) {
 }
 
 async function stubTrainerApis(page: Page) {
+  await stubAuthMe(page);
   await page.route("**/api/trainer/vendors**", (route) =>
     route.fulfill(json([{ name: "Hardware Depot", invoice_count: 4 }]))
   );
@@ -281,6 +308,7 @@ test.describe("Gap 69 — Ingestion left column overflow", () => {
  */
 test.describe("Gap 85 — Dashboard header row across widths", () => {
   async function stubDashboard(page: Page) {
+    await stubAuthMe(page);
     await page.route("**/api/settings/service-flow", (route) =>
       route.fulfill(json(SERVICE_FLOW_RECEIVE_ONLY))
     );

@@ -31,6 +31,12 @@ param dbAdminPassword string
 @description('Whether to deploy Redis (skip if it already exists and is Running — Redis Enterprise cannot be redeployed in place once created)')
 param deployRedis bool = true
 
+@description('Postgres Flexible Server resource name. Defaults to the naming-convention value; override when the live server was recreated under a different name outside this template (e.g. dev\'s server was manually rebuilt as psql-invoice-llm-dev-v2 after the original psql-invoice-llm-dev was deleted, and this template was never reconciled to match -- confirmed 2026-08-03, this is why Stage 5 failed with ParentResourceNotFound/ResourceNotFound against the old name).')
+param postgresServerName string = 'psql-${namingPrefix}-${environment}'
+
+@description('Whether this deployment owns/creates the Postgres server. false when it already exists live (e.g. under a postgresServerName override) and this template should only ever reference it, never PUT to it -- protects a live server with real data from an unintended in-place update via a stale/mismatched param set.')
+param deployPostgres bool = true
+
 @description('Postgres Flexible Server compute SKU name.')
 param postgresSkuName string = 'Standard_B2s'
 
@@ -75,11 +81,11 @@ var storageDnsZoneId = networkIsolation ? resourceId('Microsoft.Network/privateD
 var queueDnsZoneId = networkIsolation ? resourceId('Microsoft.Network/privateDnsZones', 'privatelink.queue.core.windows.net') : ''
 var acrDnsZoneId = networkIsolation ? resourceId('Microsoft.Network/privateDnsZones', 'privatelink.azurecr.io') : ''
 
-module postgresql './modules/data/postgresql.bicep' = {
+module postgresql './modules/data/postgresql.bicep' = if (deployPostgres) {
   name: 'postgresql-deploy'
   params: {
     location: location
-    serverName: 'psql-${namingPrefix}-${environment}'
+    serverName: postgresServerName
     adminLogin: dbAdminLogin
     adminPassword: dbAdminPassword
     networkIsolation: networkIsolation
@@ -145,4 +151,7 @@ module acr './modules/data/acr.bicep' = if (deployAcr) {
 output storageAccountName string = storageAccountName
 output acrName string = sharedAcrName
 output acrResourceGroup string = sharedAcrResourceGroup
-output postgresFqdn string = postgresql.outputs.fqdn
+// Predictable FQDN pattern (<serverName>.postgres.database.azure.com) used
+// directly when deployPostgres=false instead of reading postgresql.outputs.fqdn
+// -- that module output does not exist when the module itself is skipped.
+output postgresFqdn string = deployPostgres ? postgresql.outputs.fqdn : '${postgresServerName}.postgres.database.azure.com'

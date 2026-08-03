@@ -139,6 +139,16 @@ class User(SQLModel, table=True):
     last_name: str | None = Field(default=None, max_length=100)
     role: str = Field(max_length=50)
     clerk_user_id: str = Field(max_length=255, unique=True, index=True)
+    # Feature 1.1 (Granular RBAC, Task 1.1.1): per-area permissions, least
+    # privilege by default. These are our own data, deliberately NOT sourced
+    # from the Clerk JWT -- an Admin grants them via the Admin console and the
+    # effect is immediate on the next request without a re-login.
+    # A user with all three False is the original design's "Viewer": Dashboard
+    # + Chat + Help only. Admin implies all three (resolved in
+    # dependencies.get_tenant_context, not stored redundantly here).
+    can_train: bool = Field(default=False, nullable=False)
+    can_audit: bool = Field(default=False, nullable=False)
+    can_load: bool = Field(default=False, nullable=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: datetime | None = Field(default=None)
 

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
 
 from config import get_settings
-from dependencies import get_db_session, get_tenant_context, TenantContext
+from dependencies import get_db_session, get_tenant_context, require_can_train, TenantContext
 from models import ExtractionTemplate, ExtractionTemplateVersion, Invoice, User
 from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
@@ -23,7 +23,16 @@ from azure.storage.queue import QueueClient
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/trainer", tags=["trainer"])
+# Feature 1.1 (Task 1.1.2): every Trainer endpoint requires the `can_train`
+# permission. Applied at router level rather than per-handler because the
+# permission is uniform across the whole surface -- Trainer rules affect every
+# future extraction for a vendor, so there is no read-only subset here that a
+# non-Trainer should reach. Admins pass implicitly.
+router = APIRouter(
+    prefix="/trainer",
+    tags=["trainer"],
+    dependencies=[Depends(require_can_train)],
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

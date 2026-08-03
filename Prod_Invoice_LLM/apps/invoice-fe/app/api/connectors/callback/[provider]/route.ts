@@ -22,7 +22,7 @@ export async function GET(
     backendUrl(`/connectors/callback/${params.provider}`, request.nextUrl.search),
     {
       method: "GET",
-      headers: forwardedHeaders(request),
+      headers: await forwardedHeaders(request),
       redirect: "manual",
       cache: "no-store",
     }

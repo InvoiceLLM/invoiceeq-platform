@@ -28,7 +28,23 @@ class Settings(BaseSettings):
     # OAuth flow completes -- Google/Salesforce hit this backend directly
     # (see GOOGLE_REDIRECT_URI), so the backend itself must send the user
     # back into the app rather than leaving them on a bare JSON response.
+    # This one targets an *invoice-fe* route (/settings/connectors), so in
+    # local dev it is FE's own dev server (:3001 if FE is run directly, :3000
+    # only if the website's Multi-Zone proxy is fronting it). Deliberately
+    # kept distinct from PUBLIC_APP_URL below -- see that comment.
     FRONTEND_URL: str = "http://localhost:3000"
+    # Where routers/billing.py sends a user returning from PayU
+    # (/billing/success, /billing/failed). Those two routes live in
+    # *invoice-website*, not invoice-fe, because post-Multi-Zone-proxy
+    # (website_features_tracker.md Gap 12) invoice-fe's ingress is
+    # external: false and a browser coming back from a third party
+    # physically cannot reach an invoice-fe URL -- invoice-website is the
+    # only public origin. Split out from FRONTEND_URL rather than reusing
+    # it so the connectors redirect (an invoice-fe route) and the billing
+    # redirect (an invoice-website route) can differ in local dev, where
+    # there is no proxy collapsing them onto one origin. In Azure both
+    # values point at invoice-website's public FQDN.
+    PUBLIC_APP_URL: str = "http://localhost:3000"
     MOCK_EMBEDDINGS: bool = False
     # Gap 12: directory watcher only accepts paths under this base dir (path-traversal
     # guard against arbitrary server filesystem reads). Empty = feature disabled.
@@ -75,14 +91,18 @@ class Settings(BaseSettings):
     PAYU_MERCHANT_KEY: str = ""
     PAYU_MERCHANT_SALT: str = ""
     PAYU_MODE: str = "test"  # "test" or "live"
-    # invoice-be's own ingress is internal-only (external: false), so PayU
-    # (an external third party) can't POST surl/furl directly at it in
-    # production -- those must go through invoice-website's public FQDN,
-    # which proxies through internally, mirroring the existing OAuth
-    # callback proxy pattern (see routers/connectors.py's oauth_callback()
-    # / apps/invoice-fe's /api/connectors/callback/[provider] route).
-    # Empty default = local dev only, where invoice-be is directly reachable.
-    BACKEND_PUBLIC_URL: str = "http://localhost:8000"
+    # The public origin PayU POSTs surl/furl back to. Despite the name this
+    # is NOT invoice-be's own origin: invoice-be's ingress is internal-only
+    # (external: false), so PayU -- an external third party -- can never
+    # reach it directly. It is invoice-website's public origin, which now
+    # carries a verbatim pass-through at the *same* path shape the backend
+    # serves (app/api/v1/billing/payu/{success,failure}/route.ts), so the
+    # surl/furl strings built below need no special-casing. Mirrors the
+    # existing OAuth callback proxy pattern (routers/connectors.py's
+    # oauth_callback() / apps/invoice-fe's /api/connectors/callback/[provider]).
+    # Default is invoice-website's local dev port (3000), not invoice-be's
+    # (8000), so local dev exercises the same pass-through path as Azure.
+    BACKEND_PUBLIC_URL: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

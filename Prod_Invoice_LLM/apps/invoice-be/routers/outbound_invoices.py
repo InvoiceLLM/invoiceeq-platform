@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
-from dependencies import get_tenant_context, get_db_session, TenantContext
+from dependencies import get_tenant_context, get_db_session, require_can_load, TenantContext
 from models import Invoice, Tenant
 from services.storage import upload_pdf_to_blob_storage
 from azure.storage.queue import QueueClient
@@ -39,7 +39,11 @@ def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_outbound_invoice(
     file: UploadFile = File(...),
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 1.1 (Task 1.1.2): AR-side mirror of the inbound upload gate.
+    # confirm-send / mark-paid below are deliberately left ungated in this pass
+    # -- they are outbound *lifecycle* transitions, not ingestion, and were not
+    # in the approved scope.
+    context: TenantContext = Depends(require_can_load),
     db_session: Session = Depends(get_db_session),
 ):
     """Feature 2.1, Task 2.1.5: upload the tenant's own invoice to be sent to

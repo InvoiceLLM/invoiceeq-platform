@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
 from config import get_settings
-from dependencies import get_tenant_context, get_db_session, TenantContext
+from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
@@ -14,7 +14,14 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/audit", tags=["Audit"])
+# Feature 1.1 (Task 1.1.2): the Audit Queue's actions (Mark Paid, Reject,
+# corrections) are real financial actions, so the whole router requires
+# `can_audit`. Admins pass implicitly.
+router = APIRouter(
+    prefix="/audit",
+    tags=["Audit"],
+    dependencies=[Depends(require_can_audit)],
+)
 
 # Fields an auditor is allowed to correct from the metadata inspector (Task 7.3),
 # matching exactly what fe_features/feature_4_auditor.md's ReadOnlyField list shows.

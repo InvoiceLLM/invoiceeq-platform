@@ -44,9 +44,14 @@ param salesforceClientSecret string
 @maxValue(3)
 param docIntelInstanceCount int = 1
 
+@description('Postgres Flexible Server resource name (must match Stage 3\'s postgresServerName override -- see 03-data.bicep for why this can differ from the naming-convention default).')
+param postgresServerName string = 'psql-${namingPrefix}-${environment}'
+
+@description('Whether to (re)write the DATABASE-URL secret from dbAdminPassword. Default true for a fresh environment stand-up; set false when the live Postgres server already has a working DATABASE-URL secret and dbAdminPassword in the local secrets file cannot be trusted to be current (e.g. the server was recreated manually outside this template and the local params file was never updated to match) -- protects a live, working connection string from being silently overwritten with a wrong password.')
+param manageDatabaseUrlSecret bool = true
+
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
-var postgresServerName = 'psql-${namingPrefix}-${environment}'
 var redisName = 'redis-${namingPrefix}-${environment}'
 var openaiName = 'openai-${namingPrefix}-${environment}'
 var docIntelName = 'docintel-${namingPrefix}-${environment}'
@@ -90,7 +95,7 @@ resource docIntelAccount3 'Microsoft.CognitiveServices/accounts@2023-05-01' exis
   name: docIntelName3
 }
 
-resource secretDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource secretDatabaseUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (manageDatabaseUrlSecret) {
   parent: keyVault
   name: 'DATABASE-URL'
   properties: {

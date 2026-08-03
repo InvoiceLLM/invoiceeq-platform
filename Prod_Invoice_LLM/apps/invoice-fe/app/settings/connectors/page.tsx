@@ -12,6 +12,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { ArrowLeft, HardDrive, Cpu, Loader2, CheckCircle } from "lucide-react";
 import IntegrationCard from "@/components/connectors/IntegrationCard";
 import FolderTreeExplorer from "@/components/connectors/FolderTreeExplorer";
+import { useAuth } from "@/hooks/useAuth";
 
 // Local storage keys to persist mapped folder names for demo purposes
 const STORAGE_KEYS = {
@@ -27,6 +28,10 @@ interface ConnectionStatuses {
 export default function ConnectorsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  // FE Gap 99 (sub-finding): `isAdmin` was hardcoded `true` on both cards
+  // below -- a gate wired to always pass. Now the real role from GET /auth/me.
+  const { role: authRole } = useAuth();
+  const isAdmin = authRole === "Admin";
   const justConnected = searchParams.get("connected");
 
   const [statuses, setStatuses] = useState<ConnectionStatuses | null>(null);
@@ -226,7 +231,7 @@ export default function ConnectorsPage() {
           label="Google Drive"
           status={statuses.google_drive}
           icon={HardDrive}
-          isAdmin={true}
+          isAdmin={isAdmin}
           inboundFolder={mappings.google_drive.inbound}
           outboundFolder={mappings.google_drive.outbound}
           onUpdateFolder={(dir, folder) => handleUpdateFolderMapping("google_drive", dir, folder)}
@@ -242,7 +247,7 @@ export default function ConnectorsPage() {
           label="Salesforce Files"
           status={statuses.salesforce}
           icon={Cpu}
-          isAdmin={true}
+          isAdmin={isAdmin}
           inboundFolder={mappings.salesforce.inbound}
           outboundFolder={mappings.salesforce.outbound}
           onUpdateFolder={(dir, folder) => handleUpdateFolderMapping("salesforce", dir, folder)}

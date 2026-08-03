@@ -7,7 +7,31 @@ Ensure secure, isolated access for multiple tenant organizations and support use
 * Dependency Injection: [apps/invoice-be/dependencies.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/dependencies.py) → `get_tenant_context()`, `get_db_session()`, `TenantContext` schema
 
 ### Functionality
-Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to decode the bearer JWT (Clerk/Auth0 JWKS) into a `TenantContext{tenant_id, user_id, role, billing_plan}`, and blocks with `402` if `billing_plan == 'unpaid'`. **Local/test fallback** *(gated since Clerk-list Gap 4 — see below)*: a missing/invalid header, or one starting `Bearer test_`, yields a mock context (`tenant_id: 00000000-...`, `role: Admin`, `billing_plan: active`) instead of failing — this is why `Sidebar.tsx` in the FE hardcodes the same all-zero tenant UUID.
+Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to decode the bearer JWT (Clerk/Auth0 JWKS) into a `TenantContext{tenant_id, user_id, role, billing_plan, can_train, can_audit, can_load}`, and blocks with `402` if `billing_plan == 'unpaid'`. **Local/test fallback** *(gated since Clerk-list Gap 4 — see below)*: a missing/invalid header, or one starting `Bearer test_`, yields a mock context (`tenant_id: 00000000-...`, `role: Admin`, `billing_plan: active`) instead of failing.
+
+> **Feature 1.1 update (2026-08-02):** the role set this feature named from the
+> start (Admin, Auditor, Loader, Trainer, Viewer) is now actually enforced — see
+> [feature_1.1_rbac.md](feature_1.1_rbac.md). `TenantContext` carries
+> `can_train`/`can_audit`/`can_load`, resolved by `dependencies.py::resolve_permissions()`
+> **from the `User` row rather than from the JWT** (permissions are our own data, so
+> an Admin's grant applies on the caller's very next request without a token
+> refresh); `role == "Admin"` implies all three, which is what keeps the mock/test
+> context — and therefore the whole existing pytest suite — passing unchanged. A
+> user with all three `False` *is* the design's "Viewer", so no separate Viewer
+> flag was needed. Enforcement is via `require_permission()`-built dependencies on
+> the Trainer, Audit and ingestion-upload routers.
+>
+> The same change closed **Clerk-list Gap 4's B1 blocker**: `invoice-fe` now sends
+> a real `Authorization` header. `lib/backendProxy.ts::forwardedHeaders()` mints a
+> bearer token server-side from the Clerk session when no inbound header is
+> present, so `ALLOW_MOCK_AUTH` is no longer structurally required in a deployed
+> environment. It has **not** been flipped anywhere — that remains a deployment
+> decision — and route-level protection (`middleware.ts` `.protect()`) is still
+> absent, so nav hiding hides links, not routes.
+>
+> Correspondingly, `Sidebar.tsx` no longer hardcodes the all-zero tenant UUID; it
+> renders the real `tenant_id` from `GET /auth/me`, and `hooks/useAuth.ts` no
+> longer reads `localStorage` at all.
 
 > **Gap 4 update (2026-07-29):** that fallback is no longer unconditional. It now
 > requires `ALLOW_MOCK_AUTH=true`, which defaults to `false`, so a deployed

@@ -6,11 +6,20 @@ and no native subscription/proration object (unlike Stripe/Razorpay, both
 considered and ruled out before this -- see feature_11_billing.md for the
 full provider-decision history, including the 2026-07-31 end-to-end
 connection test against PayU's real sandbox). Payment confirmation instead
-flows through surl/furl: PayU POSTs the transaction result directly to
-these backend URLs. That POST is never trusted on its own -- it's checked
-two ways: (1) the response hash PayU itself sends, and (2) a server-to-server
-cross-check via PayU's verify_payment API (the same call already verified
-working manually).
+flows through surl/furl: PayU POSTs the transaction result to these URLs.
+That POST is never trusted on its own -- it's checked two ways: (1) the
+response hash PayU itself sends, and (2) a server-to-server cross-check via
+PayU's verify_payment API (the same call already verified working manually).
+
+Reachability: this router's ingress is internal-only, so surl/furl are built
+from BACKEND_PUBLIC_URL, which points at *invoice-website*'s public origin.
+That app carries a verbatim, unauthenticated pass-through at the identical
+path (app/api/v1/billing/payu/{success,failure}/route.ts) which forwards the
+raw form body here and relays the 303 back to the browser. Nothing about the
+URL shape below changes as a result. The user-facing landing pages
+(/billing/success, /billing/failed) live in invoice-website too, addressed
+via PUBLIC_APP_URL -- see config.py for why that is separate from
+FRONTEND_URL.
 
 Renewal model: manual monthly re-payment (the tenant re-runs checkout each
 cycle) rather than true auto-debit -- PayU's classic API has no recurring
@@ -184,7 +193,10 @@ async def _handle_payu_callback(form: dict, db_session: Session, is_surl: bool) 
     udf1 = form.get("udf1", "") or ""
     received_hash = form.get("hash", "")
 
-    fail_redirect = f"{settings.FRONTEND_URL}/billing/failed"
+    # PUBLIC_APP_URL, not FRONTEND_URL: /billing/success and /billing/failed
+    # are invoice-website routes (invoice-fe is internal-only post-proxy, so
+    # a browser returning from PayU can't reach it) -- see config.py.
+    fail_redirect = f"{settings.PUBLIC_APP_URL.rstrip('/')}/billing/failed"
 
     if not txnid:
         logger.warning("PayU callback with no txnid, ignoring.")
@@ -195,7 +207,11 @@ async def _handle_payu_callback(form: dict, db_session: Session, is_surl: bool) 
     expected_hash = _response_hash(status_str, txnid, amount, productinfo, firstname, email, udf1)
     if not hmac.compare_digest(expected_hash, received_hash):
         logger.error("PayU callback hash mismatch for txnid=%s -- not trusting this POST.", txnid)
-        return RedirectResponse(f"{fail_redirect}?reason=hash_mismatch", status_code=status.HTTP_303_SEE_OTHER)
+        # txnid is carried on every reason= branch below too: these are exactly
+        # the cases where the user may have been charged but we can't confirm
+        # it, so the landing page has to be able to show them a reference to
+        # quote to support.
+        return RedirectResponse(f"{fail_redirect}?reason=hash_mismatch&txnid={txnid}", status_code=status.HTTP_303_SEE_OTHER)
 
     # 2. Cross-check server-to-server via verify_payment -- the response
     # hash alone only proves this POST's fields weren't tampered with in
@@ -206,7 +222,7 @@ async def _handle_payu_callback(form: dict, db_session: Session, is_surl: bool) 
     verified_status = await _verify_payment_with_payu(txnid)
     if verified_status is None:
         logger.error("Could not reach PayU verify_payment for txnid=%s -- not trusting this callback.", txnid)
-        return RedirectResponse(f"{fail_redirect}?reason=unverifiable", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(f"{fail_redirect}?reason=unverifiable&txnid={txnid}", status_code=status.HTTP_303_SEE_OTHER)
 
     if not is_surl or status_str.lower() != "success" or verified_status.lower() != "success":
         logger.info("PayU payment not successful: txnid=%s callback_status=%s verified_status=%s", txnid, status_str, verified_status)
@@ -215,18 +231,18 @@ async def _handle_payu_callback(form: dict, db_session: Session, is_surl: bool) 
     plan = productinfo.removeprefix("InvoiceAI-") if productinfo.startswith("InvoiceAI-") else None
     if plan not in PLAN_AMOUNTS:
         logger.error("PayU callback verified but productinfo=%r doesn't map to a known plan, txnid=%s", productinfo, txnid)
-        return RedirectResponse(f"{fail_redirect}?reason=unknown_plan", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(f"{fail_redirect}?reason=unknown_plan&txnid={txnid}", status_code=status.HTTP_303_SEE_OTHER)
 
     try:
         tenant_id = uuid.UUID(udf1)
     except ValueError:
         logger.error("PayU callback verified but udf1=%r isn't a valid tenant_id, txnid=%s", udf1, txnid)
-        return RedirectResponse(f"{fail_redirect}?reason=unknown_tenant", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(f"{fail_redirect}?reason=unknown_tenant&txnid={txnid}", status_code=status.HTTP_303_SEE_OTHER)
 
     tenant = db_session.get(Tenant, tenant_id)
     if not tenant:
         logger.error("PayU callback verified for txnid=%s but tenant %s no longer exists.", txnid, tenant_id)
-        return RedirectResponse(f"{fail_redirect}?reason=unknown_tenant", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(f"{fail_redirect}?reason=unknown_tenant&txnid={txnid}", status_code=status.HTTP_303_SEE_OTHER)
 
     tenant.billing_plan = plan
     tenant.payu_subscription_id = txnid
@@ -234,7 +250,11 @@ async def _handle_payu_callback(form: dict, db_session: Session, is_surl: bool) 
     db_session.commit()
 
     logger.info("PayU payment verified, tenant=%s upgraded to plan=%s (txnid=%s).", tenant_id, plan, txnid)
-    return RedirectResponse(f"{settings.FRONTEND_URL}/billing/success?plan={plan}", status_code=status.HTTP_303_SEE_OTHER)
+    # The plan change is already committed above, so the landing page needs no
+    # API call of its own -- it is purely informational. Deliberate: a fetch on
+    # that page could fail and make a successful payment look failed.
+    success_url = f"{settings.PUBLIC_APP_URL.rstrip('/')}/billing/success"
+    return RedirectResponse(f"{success_url}?plan={plan}&txnid={txnid}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/payu/success")

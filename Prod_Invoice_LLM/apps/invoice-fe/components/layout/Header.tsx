@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Search, Bell, HelpCircle, ChevronDown, User, LogOut, Settings } from "lucide-react";
 import { useClerk, useUser } from "@clerk/nextjs";
 
@@ -62,13 +63,18 @@ export default function Header() {
 
       {/* Right Controls Container */}
       <div className="flex items-center gap-6">
-        {/* Help Link */}
-        <button 
+        {/* Help Link -- Gap 87 finding G: this was a <button> with a title and
+            no onClick and no href at all, so clicking it did nothing even
+            though /help has existed as a real route (app/help/) all along. Now
+            a real Link to it. */}
+        <Link
+          href="/help"
+          aria-label="Help Center"
           className="p-1.5 rounded-lg hover:bg-[#1E293B]/50 hover:text-white transition-all text-slate-400 relative"
           title="Help Center"
         >
           <HelpCircle className="h-5 w-5" />
-        </button>
+        </Link>
 
         {/* Notifications Tray */}
         <button 
