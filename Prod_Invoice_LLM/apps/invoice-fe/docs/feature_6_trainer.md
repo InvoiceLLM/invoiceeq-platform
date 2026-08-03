@@ -23,27 +23,31 @@ Committing a Global or Existing Vendor session queues a background re-audit (Glo
 * Training Uploader: [apps/invoice-fe/components/trainer/TrainerUploader.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/TrainerUploader.tsx)
 * Q&A Console: [apps/invoice-fe/components/trainer/QnAPanel.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/QnAPanel.tsx)
 * Rule History Drawer: [apps/invoice-fe/components/trainer/RuleHistoryDrawer.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/RuleHistoryDrawer.tsx)
-* Proxy Routes: none exist yet under `app/api/trainer/`. Backend currently only exposes the pre-redesign endpoints (`POST /trainer/upload` → `upload_transient_file()`, `POST /trainer/sessions/{id}/chat` → `trainer_chat()`, `POST /trainer/sessions/{id}/commit` → `trainer_commit()`) — the scope-aware routes this file's tasks depend on (`/trainer/sessions/global`, `/trainer/sessions/from-production`, rollback) don't exist until `docs/feature_10_trainer.md` Tasks 10.1–10.10 land
+* Commit Confirmation Modal: `apps/invoice-fe/components/trainer/CommitModal.tsx`
+* Document Viewer Panel: `apps/invoice-fe/components/trainer/PdfViewerPanel.tsx`
+* Shared trainer API client: `apps/invoice-fe/lib/trainer-service.ts`
+* Proxy Routes (**corrected 2026-08-01 — this section was badly stale**, all 8 exist and are live): `app/api/trainer/sessions/[id]/chat/route.ts`, `app/api/trainer/sessions/[id]/commit/route.ts`, `app/api/trainer/sessions/from-production/route.ts`, `app/api/trainer/sessions/global/route.ts`, `app/api/trainer/templates/[id]/rollback/[version]/route.ts`, `app/api/trainer/templates/history/route.ts`, `app/api/trainer/upload/route.ts`, `app/api/trainer/vendors/route.ts`.
 
 ### Tasks
-- [ ] **Task 6.1: Build Rule Scope Selector**
+**Status corrected 2026-08-01**: all of Tasks 6.1–6.8 below were shown unchecked (`[ ]`), implying nothing was built — false, and self-contradicting given this same doc's own "P0 Fixes" and "Gap 76" sections below describe real bugs found and fixed in this already-shipped code. `fe_features_tracker.md` (the actual status source of truth) has correctly tracked this feature as built for some time; this doc's own checkboxes were simply never brought current. Marking `[x]` to match reality.
+- [x] **Task 6.1: Build Rule Scope Selector**
   - Segmented control switching between Global / Existing Vendor / New Vendor. Switching scope resets the sandbox session state.
-- [ ] **Task 6.2: Global Scope Entry**
+- [x] **Task 6.2: Global Scope Entry**
   - Chat-only entry with an optional PDF drop for grounding. Dispatch `POST /trainer/sessions/global`, per `docs/feature_10_trainer.md` Task 10.2.
-- [ ] **Task 6.3: Existing Vendor Scope Entry**
+- [x] **Task 6.3: Existing Vendor Scope Entry**
   - Vendor dropdown (sourced from the tenant's known vendors) loads a real production invoice into the sandbox. Dispatch `POST /trainer/sessions/from-production?vendor_name=X`, per Task 10.3.
-- [ ] **Task 6.4: New Vendor Scope Entry**
+- [x] **Task 6.4: New Vendor Scope Entry**
   - Carried over from the prior design: file uploader dispatches to `POST /trainer/upload`, renders the PDF on the left, per Task 10.4.
-- [ ] **Task 6.5: Build Q&A Validation Panel**
+- [x] **Task 6.5: Build Q&A Validation Panel**
   - Training chat panel on the right. Display the key-value extraction list alongside conversational bubbles.
   - Bind chat input to send corrections (e.g., *"No, read the date as DD-MM-YYYY"*) and update the extracted variables view dynamically. For Global-scope sessions, the panel has no extraction list to show until/unless a grounding PDF is present — chat input stays active regardless (see Gap 8 in the tracker).
-- [ ] **Task 6.6: Scope-Aware Commit Handler**
+- [x] **Task 6.6: Scope-Aware Commit Handler**
   - `Commit to Template Registry` action dispatches to `POST /trainer/sessions/{session_id}/commit`, per Task 10.6.
   - On success, show a toast reflecting the scope: Global → "Queued re-audit across all vendors"; Existing Vendor → "Queued re-audit for {vendor}"; New Vendor → plain success, no re-audit toast.
-- [ ] **Task 6.7: Rule History & Rollback Drawer**
+- [x] **Task 6.7: Rule History & Rollback Drawer**
   - List committed rule versions for the active template (Global or the selected vendor) with `changed_by` / `changed_at`, per Task 10.10.
   - `Rollback` action on a version calls `POST /trainer/templates/{id}/rollback/{version}`.
-- [ ] **Task 6.8: Audit-Seeded Session Entry**
+- [x] **Task 6.8: Audit-Seeded Session Entry**
   - Accept a deep-link/query param carrying `{scope, field, sample_correction}` from the "Want to save this as a rule?" prompt (`feature_4_auditor.md` Task 4.7), per Task 10.11.
   - Pre-select the given scope, skip the vendor/PDF picker if already resolved, and pre-populate the chat with the sample correction instead of an empty session.
 

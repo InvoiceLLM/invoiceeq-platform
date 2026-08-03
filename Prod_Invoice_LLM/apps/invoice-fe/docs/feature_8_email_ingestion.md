@@ -11,15 +11,16 @@ Lives under the **Settings** sidebar tab as a sub-section (`Settings → Email`)
 * Outbound Configuration: Text input for *Outbound Sender Email*, with a verify indicator and instructions for domain validation.
 
 ### File Coordinates
-* Settings Page: [apps/invoice-fe/app/settings/email/page.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/settings/email/page.tsx) *(not yet created)*
+**Corrected 2026-08-01**: both files below marked "(not yet created)" actually exist and are live — this doc was never brought current after they were built (subsequently implemented as Features 7 and 8, per `feature_10_settings.md`'s own correct cross-reference).
+* Settings Page: [apps/invoice-fe/app/settings/email/page.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/settings/email/page.tsx)
 * Allowed-Senders Manager: [apps/invoice-fe/components/settings/EmailSendersList.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/settings/EmailSendersList.tsx)
-* Outbound Configuration Component: [apps/invoice-fe/components/settings/OutboundEmailSettings.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/settings/OutboundEmailSettings.tsx) *(not yet created)*
+* Outbound Configuration Component: [apps/invoice-fe/components/settings/OutboundEmailSettings.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/settings/OutboundEmailSettings.tsx)
 
 ### Tasks
-- [ ] **Task 8.1: Display Inbound Alias & Manage Senders**
+- [x] **Task 8.1: Display Inbound Alias & Manage Senders**
   - Fetch and show the tenant's inbound alias with copy action.
-  - List/add/remove allowed sender addresses via `/api/v1/settings/email-senders`.
-- [ ] **Task 8.2: Outbound Sender Email Configuration**
+  - List/add/remove allowed sender addresses via `apps/invoice-fe/app/api/email/settings/email-senders/route.ts` (+ `[sender_id]/route.ts` for remove) → backend `/email/settings/email-senders`. **Path corrected 2026-08-01** — this doc previously said `/api/v1/settings/email-senders`, which isn't the real route.
+- [x] **Task 8.2: Outbound Sender Email Configuration**
   - Input field to save/update `outbound_sender_email` via `PUT /settings/vendor-flow`.
   - Format-validate input client-side before dispatching save request.
 

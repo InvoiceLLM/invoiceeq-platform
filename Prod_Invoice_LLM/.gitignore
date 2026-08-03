@@ -51,11 +51,14 @@ coverage/
 htmlcov/
 .pytest_cache/
 
-# Playwright (FE e2e) — run artifacts, regenerated each run
+# Playwright (FE + website e2e) — run artifacts, regenerated each run
 apps/invoice-fe/test-results/
 apps/invoice-fe/playwright-report/
 apps/invoice-fe/blob-report/
 apps/invoice-fe/.cache/ms-playwright/
+apps/invoice-website/test-results/
+apps/invoice-website/playwright-report/
+apps/invoice-website/blob-report/
 
 # Local dev fallback storage (blob/chroma emulation when Azure isn't configured)
 apps/invoice-be/temp_storage/

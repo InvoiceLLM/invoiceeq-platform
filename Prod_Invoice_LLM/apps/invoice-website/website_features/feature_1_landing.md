@@ -12,6 +12,8 @@ Configure the visual entry point, shared design system styling, header navigatio
 * Main Page: `apps/invoice-website/app/page.tsx`
 * Layout Settings: `apps/invoice-website/app/layout.tsx`
 * Stylesheet: `apps/invoice-website/app/globals.css`
+* Navigation Header: `apps/invoice-website/components/marketing/Header.tsx`
+* Hero & Live Demo Console: `apps/invoice-website/components/marketing/Hero.tsx`
 * Benefits Strip: `apps/invoice-website/components/marketing/BenefitsStrip.tsx`
 * Cursor Spotlight Effect: `apps/invoice-website/components/marketing/MouseSpotlight.tsx`
 * Site Footer: `apps/invoice-website/components/marketing/Footer.tsx`
