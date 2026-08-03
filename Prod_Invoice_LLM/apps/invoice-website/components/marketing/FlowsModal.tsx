@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import { X, ExternalLink, Activity, Sparkles } from "lucide-react";
+import { appHref } from "../../lib/billingPlans";
 
 interface FlowsModalProps {
   isOpen: boolean;
@@ -10,8 +11,7 @@ interface FlowsModalProps {
 }
 
 export function FlowsModal({ isOpen, onClose, initialFlowId }: FlowsModalProps) {
-  const feBaseUrl = process.env.NEXT_PUBLIC_FE_URL || "http://localhost:3001";
-  const flowsUrl = `${feBaseUrl}/flows${initialFlowId ? `?flow=${initialFlowId}` : ""}`;
+  const flowsUrl = appHref(`/flows${initialFlowId ? `?flow=${initialFlowId}` : ""}`);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

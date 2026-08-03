@@ -2,9 +2,7 @@
 
 import React, { useState } from "react";
 import { useSignIn, useClerk, useUser } from "@clerk/nextjs";
-
-// invoice-fe is a separate deployment -- full origin needed, not an internal route.
-const FE_URL = process.env.NEXT_PUBLIC_FE_URL || "http://localhost:3001";
+import { appHref } from "../../lib/billingPlans";
 
 /* Design tokens (match invoice-fe/invoice-website globals) */
 const T = {
@@ -77,10 +75,6 @@ const STATS = [
 // invoice-fe currently has one dashboard for all authenticated users, no
 // distinct admin/user route split yet -- both roles land on /dashboard for
 // now. Revisit if/when that split gets built.
-const ROLE_REDIRECT: Record<string, string> = {
-  admin: `${FE_URL}/dashboard`,
-  user: `${FE_URL}/dashboard`,
-};
 
 export default function LoginPage() {
   const { isLoaded, signIn, setActive } = useSignIn();
@@ -144,7 +138,7 @@ export default function LoginPage() {
         console.error("Could not set active org:", orgErr);
       }
 
-      window.location.href = ROLE_REDIRECT[targetRole];
+      window.location.href = appHref("/dashboard");
     } else {
       setError(`Sign-in status: ${activeSignIn.status}. Re-creating the user from Admin Console will fix this.`);
       setLoading(false);

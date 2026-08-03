@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: {
+    ENABLE_FE_PROXY: process.env.ENABLE_FE_PROXY || "false",
+  },
   async rewrites() {
     if (process.env.ENABLE_FE_PROXY !== "true") return [];
 

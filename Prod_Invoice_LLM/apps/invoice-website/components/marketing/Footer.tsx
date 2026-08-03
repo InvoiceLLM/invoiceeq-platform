@@ -24,13 +24,13 @@ export function Footer() {
 
           <div className="flex items-center gap-6 text-xs sm:text-sm">
             <Link
-              href="#privacy"
+              href="/privacy"
               className="hover:text-[#22D3EE] hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] transition-all duration-200"
             >
               Privacy Policy
             </Link>
             <Link
-              href="#terms"
+              href="/terms"
               className="hover:text-[#22D3EE] hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] transition-all duration-200"
             >
               Terms of Service

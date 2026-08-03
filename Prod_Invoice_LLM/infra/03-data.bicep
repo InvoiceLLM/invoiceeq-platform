@@ -31,6 +31,9 @@ param dbAdminPassword string
 @description('Whether to deploy Redis (skip if it already exists and is Running — Redis Enterprise cannot be redeployed in place once created)')
 param deployRedis bool = true
 
+@description('Azure region for the Redis Enterprise cluster. Defaults to `location` (the resource group\'s region, used for every other resource in this stage) — this is the current/prod behavior. Override when the RG\'s default region lacks Redis Enterprise capacity for this SKU: confirmed 2026-08-03, East US 2 Balanced_B0 creation failed 5 times in one day across two different operators -- a real regional capacity issue, not a config bug. Same override pattern as postgresServerName above.')
+param redisLocation string = location
+
 @description('Postgres Flexible Server resource name. Defaults to the naming-convention value; override when the live server was recreated under a different name outside this template (e.g. dev\'s server was manually rebuilt as psql-invoice-llm-dev-v2 after the original psql-invoice-llm-dev was deleted, and this template was never reconciled to match -- confirmed 2026-08-03, this is why Stage 5 failed with ParentResourceNotFound/ResourceNotFound against the old name).')
 param postgresServerName string = 'psql-${namingPrefix}-${environment}'
 
@@ -103,7 +106,7 @@ module postgresql './modules/data/postgresql.bicep' = if (deployPostgres) {
 module redis './modules/data/redis.bicep' = if (deployRedis) {
   name: 'redis-deploy'
   params: {
-    location: location
+    location: redisLocation
     redisName: 'redis-${namingPrefix}-${environment}'
     networkIsolation: networkIsolation
     subnetId: peSubnetId

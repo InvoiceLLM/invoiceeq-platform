@@ -103,6 +103,8 @@ export default function SignupPage() {
         unsafeMetadata: { orgType, country, role: "admin,user" },
       });
 
+      const finalOrgName = orgName.trim() || `${email.split("@")[0]}'s Org`;
+
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
 
@@ -110,7 +112,7 @@ export default function SignupPage() {
         try {
           await new Promise((r) => setTimeout(r, 200));
           // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
-          const org = await window.Clerk.createOrganization({ name: orgName });
+          const org = await window.Clerk.createOrganization({ name: finalOrgName });
           orgId = org.id;
           // @ts-expect-error -- see above
           await window.Clerk.setActive({ organization: org.id });
@@ -121,7 +123,7 @@ export default function SignupPage() {
         try {
           // @ts-expect-error -- see above
           await window.Clerk.user.update({
-            unsafeMetadata: { orgId, orgName, orgType, country, role: "admin,user" },
+            unsafeMetadata: { orgId, orgName: finalOrgName, orgType, country, role: "admin,user" },
           });
         } catch (metaErr) {
           console.warn("Metadata update failed:", metaErr);
@@ -134,7 +136,7 @@ export default function SignupPage() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 clerk_org_id: orgId,
-                org_name: orgName,
+                org_name: finalOrgName,
                 admin_email: email,
                 clerk_user_id: result.createdUserId,
               }),
@@ -205,13 +207,12 @@ export default function SignupPage() {
                 <span style={S.inputIcon}>🏢</span>
                 <input
                   type="text"
-                  placeholder="Organisation name"
+                  placeholder="Organisation name (optional)"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
                   onFocus={() => setFocused("orgName")}
                   onBlur={() => setFocused(null)}
                   style={inputStyle("orgName")}
-                  required
                 />
               </div>
               <div style={S.grid2}>

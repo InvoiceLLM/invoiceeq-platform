@@ -1,11 +1,19 @@
-import { clerkMiddleware } from '@clerk/nextjs/server';
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 
-// Bare clerkMiddleware() -- makes Clerk's auth() context available to routes
-// (needed for useUser()/useClerk() in Header.tsx) without enforcing route
-// protection. No .protect() calls here, so this does not block or redirect
-// any existing page; that's a separate decision for whoever builds the real
-// auth gate.
-export default clerkMiddleware();
+const isPublicRoute = createRouteMatcher([
+  '/flows(.*)',
+]);
+
+export default clerkMiddleware((auth, req) => {
+  // Allow bypassing auth gating in local Playwright test environments
+  if (process.env.DISABLE_CLERK_AUTH === 'true') {
+    return;
+  }
+
+  if (!isPublicRoute(req)) {
+    auth().protect();
+  }
+});
 
 export const config = {
   matcher: [

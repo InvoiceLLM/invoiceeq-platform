@@ -44,9 +44,7 @@ interface Toast {
   type: "success" | "error" | "info";
 }
 
-// ---------------------------------------------------------------------------
-// Upgrade Modal
-// ---------------------------------------------------------------------------
+const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
 function UpgradeModal({ onClose }: { onClose: () => void }) {
   return (
@@ -100,7 +98,7 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
             Cancel
           </button>
           <a
-            href="/billing/upgrade"
+            href={`${WEBSITE_URL}/pricing`}
             className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
           >
             <ExternalLink className="w-3.5 h-3.5" />

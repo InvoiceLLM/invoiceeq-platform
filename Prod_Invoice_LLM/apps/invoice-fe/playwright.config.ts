@@ -32,5 +32,8 @@ export default defineConfig({
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
+    env: {
+      DISABLE_CLERK_AUTH: "true",
+    },
   },
 });

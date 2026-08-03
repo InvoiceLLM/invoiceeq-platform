@@ -14,6 +14,9 @@
     "networkIsolation": {
       "value": false
     },
+    "redisLocation": {
+      "value": "eastus"
+    },
     "docIntelInstanceCount": {
       "value": 1
     },
@@ -30,13 +33,13 @@
       "value": "dbadmin"
     },
     "postgresServerName": {
-      "value": "psql-invoice-llm-dev-v2"
+      "value": "psql-invoice-llm-dev"
     },
     "deployPostgres": {
-      "value": false
+      "value": true
     },
     "manageDatabaseUrlSecret": {
-      "value": false
+      "value": true
     },
     "nextPublicClerkPublishableKey": {
       "value": "pk_test_cmVhbC1zdGFsbGlvbi0yMS5jbGVyay5hY2NvdW50cy5kZXYk"

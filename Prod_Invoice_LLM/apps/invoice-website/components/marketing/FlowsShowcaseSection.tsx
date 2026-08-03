@@ -12,6 +12,7 @@ import {
   Bot,
   ShieldCheck,
 } from "lucide-react";
+import { appHref } from "../../lib/billingPlans";
 
 interface FlowsShowcaseSectionProps {
   onOpenModal: (flowId?: string) => void;
@@ -53,8 +54,7 @@ const FEATURED_FLOWS = [
 ];
 
 export function FlowsShowcaseSection({ onOpenModal }: FlowsShowcaseSectionProps) {
-  const feBaseUrl = process.env.NEXT_PUBLIC_FE_URL || "http://localhost:3001";
-  const flowsUrl = `${feBaseUrl}/flows`;
+  const flowsUrl = appHref("/flows");
 
   return (
     <section id="architecture-flows" className="py-20 relative border-t border-[rgba(255,255,255,0.08)] bg-[#050816]/70 backdrop-blur-md overflow-hidden">
