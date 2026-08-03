@@ -28,6 +28,7 @@ interface InvoiceDetail {
   items: LineItem[] | null;
   coordinates?: { x: number; y: number; width: number; height: number; label?: string }[];
   field_confidence?: Record<string, number>;
+  flow_direction?: string;
 }
 
 interface SuggestedRule {
@@ -151,12 +152,19 @@ export default function AuditorReviewPage() {
     apiClient
       .get<InvoiceDetail>(`/invoices/${id}`)
       .then((res) => {
-        setInvoice(res.data);
-        setAlerts(res.data.sa_alerts ?? []);
+        if (res.data.flow_direction?.toUpperCase() === "OUTBOUND") {
+          router.replace(`/invoices/outbound-review/${id}`);
+        } else {
+          setInvoice(res.data);
+          setAlerts(res.data.sa_alerts ?? []);
+          setLoading(false);
+        }
       })
-      .catch(() => setError("Invoice not found or access denied."))
-      .finally(() => setLoading(false));
-  }, [id]);
+      .catch(() => {
+        setError("Invoice not found or access denied.");
+        setLoading(false);
+      });
+  }, [id, router]);
 
   // Current display value for a field: the in-progress correction if dirty, else the original.
   const displayValue = (key: keyof InvoiceDetail): string => {

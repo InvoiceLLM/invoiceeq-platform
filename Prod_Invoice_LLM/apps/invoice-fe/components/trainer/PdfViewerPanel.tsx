@@ -51,6 +51,8 @@ interface PdfViewerPanelProps {
   onSelectVariable?: (variable: ExtractedVariable) => void;
   /** Real extracted scalar fields for this session — drives the live summary strip. */
   variables?: ExtractedVariable[];
+  scope?: "global" | "existing_vendor" | "new_vendor";
+  vendorName?: string | null;
 }
 
 export default function PdfViewerPanel({
@@ -59,6 +61,8 @@ export default function PdfViewerPanel({
   isGlobalScopeNoPdf = false,
   selectedVariable,
   variables = [],
+  scope = "global",
+  vendorName,
 }: PdfViewerPanelProps) {
   const getVar = (key: string) => variables.find((v) => v.key === key)?.value;
   // Zoom level for the document canvas; range 75% – 175%
@@ -70,6 +74,41 @@ export default function PdfViewerPanel({
 
   // ── MODE 2: Global Scope Chat-Only Empty State ──────────────────────────
   if (isGlobalScopeNoPdf || !pdfUrl) {
+    const isGlobal = scope === "global";
+    const isExisting = scope === "existing_vendor";
+
+    const getTitle = () => {
+      if (isGlobal) return "Global Rule Grounding Sandbox";
+      if (isExisting) return "Existing Vendor Sandbox";
+      return "New Vendor Sandbox";
+    };
+
+    const getDescription = () => {
+      if (isGlobal) {
+        return (
+          <>
+            You are editing <span className="text-blue-400 font-medium">tenant-wide rules</span>.
+            No specific vendor PDF is required — chat directly on the right to teach or refine global constraints.
+            Optionally upload a sample PDF above for visual grounding.
+          </>
+        );
+      }
+      if (isExisting) {
+        return (
+          <>
+            You are editing rules for vendor: <span className="text-blue-400 font-medium">{vendorName || "Selected Vendor"}</span>.
+            Select a vendor above to load their active rules, or upload a sample PDF to ground the sandbox with visual field mapping.
+          </>
+        );
+      }
+      return (
+        <>
+          You are teaching rules for a <span className="text-blue-400 font-medium">new vendor</span>.
+          Drag and drop or browse a sample invoice PDF above to initialize OCR field extraction and start teaching the sandbox.
+        </>
+      );
+    };
+
     return (
       <div className="h-full flex flex-col items-center justify-center p-10 bg-[#070D1A]/90 border border-[#1E2D45] rounded-2xl text-center backdrop-blur-md relative overflow-hidden shadow-2xl shadow-black/30">
         {/* Ambient radial glow orbs — decorative only */}
@@ -86,12 +125,10 @@ export default function PdfViewerPanel({
 
         {/* Heading & description */}
         <h3 className="text-lg font-semibold text-white mb-2 tracking-tight">
-          Global Rule Grounding Sandbox
+          {getTitle()}
         </h3>
         <p className="text-sm text-slate-400 max-w-sm mb-9 leading-relaxed">
-          You are editing <span className="text-blue-400 font-medium">tenant-wide rules</span>.
-          No specific vendor PDF is required — chat directly on the right to teach or refine global constraints.
-          Optionally upload a sample PDF above for visual grounding.
+          {getDescription()}
         </p>
 
         {/* Feature Info Cards grid */}

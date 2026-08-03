@@ -405,9 +405,11 @@ function TrainerContent() {
           <PdfViewerPanel
             fileName={session?.fileName}
             pdfUrl={session?.pdfUrl}
-            isGlobalScopeNoPdf={activeScope === "global" && !session?.pdfUrl}
+            isGlobalScopeNoPdf={!session?.pdfUrl}
             selectedVariable={selectedVariable}
             variables={session?.variables}
+            scope={activeScope}
+            vendorName={selectedVendorName}
           />
         </div>
 
