@@ -198,14 +198,45 @@ async def get_dashboard_metrics(
         ai_field_extraction = max(0.0, min(100.0, ai_field_extraction))
 
     # 2. AI Alert Response (Percentage of valid alerts vs false alarms)
+    def get_alert_severity(alert) -> str:
+        if isinstance(alert, dict):
+            if "severity" in alert and alert["severity"]:
+                return alert["severity"].lower()
+            alert_type = alert.get("type", "").lower()
+            alert_msg = alert.get("message", "").lower()
+        else:
+            alert_type = str(alert).lower()
+            alert_msg = str(alert).lower()
+
+        if any(k in alert_type or k in alert_msg for k in ["mismatch", "duplicate", "failed", "timeout", "missing", "error"]):
+            return "error"
+        if any(k in alert_type or k in alert_msg for k in ["not_verified", "confidence"]):
+            return "warning"
+        return "information"
+
     total_alerts_flagged = 0
     total_alerts_dismissed = 0
     for details, _, _ in audit_rows:
         if details:
             prev_alerts = details.get("previous_alerts") or []
             dismissed = details.get("dismissed_alerts_input") or []
-            total_alerts_flagged += len(prev_alerts)
-            total_alerts_dismissed += len(dismissed)
+            
+            error_alerts = [a for a in prev_alerts if get_alert_severity(a) == "error"]
+            total_alerts_flagged += len(error_alerts)
+            
+            for d in dismissed:
+                is_error = False
+                for a in error_alerts:
+                    if isinstance(a, dict):
+                        if d == a.get("id") or d == a.get("type") or d == a.get("message"):
+                            is_error = True
+                            break
+                    elif isinstance(a, str):
+                        if d == a:
+                            is_error = True
+                            break
+                if is_error:
+                    total_alerts_dismissed += 1
     
     ai_alert_response = 100.0
     if total_alerts_flagged > 0:

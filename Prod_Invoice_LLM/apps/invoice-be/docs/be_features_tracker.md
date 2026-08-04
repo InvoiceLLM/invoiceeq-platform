@@ -236,7 +236,7 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
   3. **AI Alerts Missed:** Rate of invoices rejected specifically due to "AI Extraction Error".
   Requires updating the `resolve_audit_invoice()` endpoint schema to accept and log a structured `reject_reason` in `AuditLog.details`, and exposing these three calculated values in `get_dashboard_metrics` and `get_outbound_dashboard_metrics`.
 
-- `[ ]` **Gap 123: Alert Classification and Severity-based Error Accuracy** — proposed 2026-08-05. Add support for categorizing alerts into 3 severity levels (`information`, `warning`, `error`). Update calculations for AI Alert Response so that only dismissed alerts of type `error` count as false alarms (wrong alerts) and degrade the AI Alert Response accuracy score. Dismissing `information` or `warning` alerts should not impact the accuracy metrics.
+- `[x]` **Gap 123: Alert Classification and Severity-based Error Accuracy** — closed 2026-08-05. Added severity categories (`information`, `warning`, `error`) to verification tools and updated dashboard metrics algorithms to only count `error` type alerts in accuracy calculations.
 
 
 ---

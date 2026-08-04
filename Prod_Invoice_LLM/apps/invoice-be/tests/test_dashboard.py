@@ -302,7 +302,8 @@ def test_ai_score_metrics(db_session):
     res = client.put(f"/api/v1/audit/resolve/{inv1_id}", json=payload1)
     assert res.status_code == 200
 
-    # 2. Create another resolved invoice with 2 alerts, 1 dismissed, 1 not dismissed.
+    # 2. Create another resolved invoice with 2 error-level alerts, 1 dismissed, 1 not dismissed.
+    # Gap 123: only error-severity alerts count for the AI Alert Response metric.
     # Dismissed = False alarm (1), Not dismissed = Correct alert (1).
     # Alert accuracy = 1 / 2 = 50.0%
     inv2_id = uuid4()
@@ -311,7 +312,10 @@ def test_ai_score_metrics(db_session):
         tenant_id=MOCK_TENANT_ID,
         file_path="mock/invoice2.pdf",
         status="AUDIT_REQUIRED",
-        sa_alerts=["Math mismatch", "Invalid vendor"]
+        sa_alerts=[
+            {"type": "tax_mismatch", "message": "Math mismatch"},
+            {"type": "missing_required_field", "message": "Invalid vendor"}
+        ]
     )
     db_session.add(inv2)
     db_session.commit()

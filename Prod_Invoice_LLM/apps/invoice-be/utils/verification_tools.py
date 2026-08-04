@@ -64,7 +64,8 @@ def verify_line_items_math(items: list[dict], subtotal: float | None, invoice_ta
                     return {
                         "type": "line_item_calculation_mismatch",
                         "message": f"Line item '{item.get('description', '')}' amount ({amount:.2f}) does not match calculated amount ({expected_post_tax:.2f}) based on qty/unit_price/discount/tax",
-                        "field": "items"
+                        "field": "items",
+                        "severity": "error"
                     }
 
         # 2. Verify subtotal matches sum of line item amounts.
@@ -79,7 +80,8 @@ def verify_line_items_math(items: list[dict], subtotal: float | None, invoice_ta
             return {
                 "type": "line_items_mismatch",
                 "message": f"Line items sum ({total_line_amount:.2f}) does not match subtotal ({subtotal:.2f})",
-                "field": "subtotal"
+                "field": "subtotal",
+                "severity": "error"
             }
     except Exception as e:
         logger.warning("Failed to perform line items math verification: %s", e)
@@ -133,7 +135,8 @@ def verify_totals_math(
         return {
             "type": "tax_mismatch",
             "message": msg,
-            "field": "tax_amount"
+            "field": "tax_amount",
+            "severity": "error"
         }
     except Exception as e:
         logger.warning("Failed to perform totals math verification: %s", e)
@@ -201,7 +204,8 @@ def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str |
                 "source document text — possible silent correction of a printed figure rather "
                 "than faithful transcription. Flagged for manual review."
             ),
-            "field": "grand_total"
+            "field": "grand_total",
+            "severity": "warning"
         }
     except Exception as e:
         logger.warning("Failed to perform grand_total source-text verification: %s", e)
@@ -249,7 +253,8 @@ def verify_line_item_amounts_in_source_text(items: list[dict] | None, ocr_text: 
                 "possible silent correction of a printed figure rather than faithful transcription. "
                 "Flagged for manual review."
             ),
-            "field": "items"
+            "field": "items",
+            "severity": "warning"
         }
     except Exception as e:
         logger.warning("Failed to perform line item source-text verification: %s", e)
@@ -282,7 +287,8 @@ def verify_subtotal_in_source_text(subtotal: float | None, ocr_text: str | None)
                 "source document text — possible silent correction of a printed figure rather "
                 "than faithful transcription. Flagged for manual review."
             ),
-            "field": "subtotal"
+            "field": "subtotal",
+            "severity": "warning"
         }
     except Exception as e:
         logger.warning("Failed to perform subtotal source-text verification: %s", e)
@@ -324,7 +330,8 @@ def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | 
                 "possible silent correction of a printed figure rather than faithful transcription. "
                 "Flagged for manual review."
             ),
-            "field": "items"
+            "field": "items",
+            "severity": "warning"
         }
     except Exception as e:
         logger.warning("Failed to perform unit-price source-text verification: %s", e)
@@ -395,7 +402,8 @@ def verify_tax_amount_in_source_text(
                 "source document text — possible silent LLM auto-correction of a printed vendor flaw "
                 "rather than faithful transcription. Flagged for manual review."
             ),
-            "field": "tax_amount"
+            "field": "tax_amount",
+            "severity": "warning"
         }
     except Exception as e:
         logger.warning("Failed to perform tax_amount source-text verification: %s", e)
@@ -489,6 +497,7 @@ def verify_field_confidence(
                     ),
                     "field": schema_field,
                     "confidence": score,
+                    "severity": "warning",
                 })
     except Exception as e:
         logger.warning("Failed to perform field confidence verification: %s", e)

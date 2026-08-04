@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle, X, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle, X, ShieldCheck, Info } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 
 interface Alert {
@@ -77,19 +77,59 @@ export default function OutboundAlertConsole({
         </p>
       </div>
 
-      {alerts.map((alert, idx) => (
-        <div key={idx} className="flex items-start gap-3 rounded-lg border border-yellow-700/50 bg-yellow-950/20 px-4 py-3">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-yellow-400" />
-          <p className="flex-1 text-sm leading-relaxed text-yellow-200">{alert.message}</p>
-          <button
-            onClick={() => handleDismiss(alert)}
-            disabled={dismissing === alert.message}
-            className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-900/30 px-2 py-1 text-xs text-yellow-300 transition hover:bg-yellow-800/40 disabled:opacity-50"
-          >
-            {dismissing === alert.message ? <X size={12} className="animate-spin" /> : "Dismiss"}
-          </button>
-        </div>
-      ))}
+      {alerts.map((alert, idx) => {
+        const getSeverity = (a: Alert): "information" | "warning" | "error" => {
+          const type = a.type?.toLowerCase() || "";
+          const msg = a.message?.toLowerCase() || "";
+          if (type.includes("mismatch") || type.includes("duplicate") || type.includes("failed") || type.includes("timeout") || type.includes("missing")) {
+            return "error";
+          }
+          if (type.includes("not_verified") || type.includes("confidence")) {
+            return "warning";
+          }
+          return "information";
+        };
+
+        const severity = getSeverity(alert);
+        const severityStyles = {
+          error: {
+            container: "border-red-700/50 bg-red-950/20",
+            text: "text-red-200",
+            iconColor: "text-red-400",
+            buttonBorder: "border-red-700/50 bg-red-900/30 text-red-300 hover:bg-red-800/40"
+          },
+          warning: {
+            container: "border-yellow-700/50 bg-yellow-950/20",
+            text: "text-yellow-200",
+            iconColor: "text-yellow-400",
+            buttonBorder: "border-yellow-700/50 bg-yellow-900/30 text-yellow-300 hover:bg-yellow-800/40"
+          },
+          information: {
+            container: "border-blue-700/50 bg-blue-950/20",
+            text: "text-blue-200",
+            iconColor: "text-blue-400",
+            buttonBorder: "border-blue-700/50 bg-blue-900/30 text-blue-300 hover:bg-blue-800/40"
+          }
+        }[severity];
+
+        return (
+          <div key={idx} className={`flex items-start gap-3 rounded-lg border px-4 py-3 ${severityStyles.container}`}>
+            {severity === "information" ? (
+              <Info size={16} className={`mt-0.5 shrink-0 ${severityStyles.iconColor}`} />
+            ) : (
+              <AlertTriangle size={16} className={`mt-0.5 shrink-0 ${severityStyles.iconColor}`} />
+            )}
+            <p className={`flex-1 text-sm leading-relaxed ${severityStyles.text}`}>{alert.message}</p>
+            <button
+              onClick={() => handleDismiss(alert)}
+              disabled={dismissing === alert.message}
+              className={`shrink-0 rounded-md border px-2 py-1 text-xs transition disabled:opacity-50 ${severityStyles.buttonBorder}`}
+            >
+              {dismissing === alert.message ? <X size={12} className="animate-spin" /> : "Dismiss"}
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

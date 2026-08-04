@@ -393,6 +393,6 @@ Found during a focused read-through of every Settings surface (`/settings`, `/se
   1. **AI Score Widget:** Replace the legacy single gauge on the Inbound and Outbound dashboards with a unified "AI Score" widget detailing the 3 rates (Field Extraction, Alert Response, and Escape Rate/Alerts Missed).
   2. **Rejection Modal Update:** In the Auditor Review Console, when an auditor clicks "Reject," prompt them with a modal to select a structured rejection reason (`AI Extraction Error`, `Business Logic Error`, `Illegible Document`, etc.). Send the chosen reason as `reject_reason` in the `PUT /api/v1/audit/resolve/{id}` request body so it is recorded in the audit log.
 
-- `[ ]` **Gap 123: Alert Severity UI Categorization** — proposed 2026-08-05. In the Auditor Review Console, visualize alerts grouped or colored by their severity levels (`information` - blue/info, `warning` - yellow, `error` - red). Ensure that when resolving, the severity information is captured.
+- `[x]` **Gap 123: Alert Severity UI Categorization** — closed 2026-08-05. Visualized alerts by severity color (error - red, warning - yellow, information - blue) in the Inbound and Outbound Alert Consoles, and updated backend accuracy metrics to only count error-level alerts in accuracy rates.
 
 

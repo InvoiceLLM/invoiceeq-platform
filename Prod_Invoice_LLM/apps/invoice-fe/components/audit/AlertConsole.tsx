@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ArrowRight, CheckCircle, Pencil, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle, Pencil, X, Info } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 
 interface Alert {
@@ -128,23 +128,64 @@ export default function AlertConsole({
         );
         const busy = dismissing === alert.message;
 
+        const getSeverity = (a: Alert): "information" | "warning" | "error" => {
+          const type = a.type?.toLowerCase() || "";
+          const msg = a.message?.toLowerCase() || "";
+          if (type.includes("mismatch") || type.includes("duplicate") || type.includes("failed") || type.includes("timeout") || type.includes("missing")) {
+            return "error";
+          }
+          if (type.includes("not_verified") || type.includes("confidence")) {
+            return "warning";
+          }
+          return "information";
+        };
+
+        const severity = getSeverity(alert);
+        const severityStyles = {
+          error: {
+            container: "border-red-700/50 bg-red-950/20",
+            text: "text-red-200",
+            iconColor: "text-red-400",
+            buttonBorder: "border-red-700/50 bg-red-900/30 text-red-300 hover:bg-red-800/40",
+            badge: "border-red-700/40 text-red-400/90 hover:bg-red-800/30 hover:text-red-200"
+          },
+          warning: {
+            container: "border-yellow-700/50 bg-yellow-950/20",
+            text: "text-yellow-200",
+            iconColor: "text-yellow-400",
+            buttonBorder: "border-yellow-700/50 bg-yellow-900/30 text-yellow-300 hover:bg-yellow-800/40",
+            badge: "border-yellow-700/40 text-yellow-400/90 hover:bg-yellow-800/30 hover:text-yellow-200"
+          },
+          information: {
+            container: "border-blue-700/50 bg-blue-950/20",
+            text: "text-blue-200",
+            iconColor: "text-blue-400",
+            buttonBorder: "border-blue-700/50 bg-blue-900/30 text-blue-300 hover:bg-blue-800/40",
+            badge: "border-blue-700/40 text-blue-400/90 hover:bg-blue-800/30 hover:text-blue-200"
+          }
+        }[severity];
+
         return (
           <div
             key={idx}
             data-testid="audit-alert"
-            className="rounded-lg border border-yellow-700/50 bg-yellow-950/20 px-4 py-3"
+            className={`rounded-lg border px-4 py-3 ${severityStyles.container}`}
           >
             <div className="flex items-start gap-3">
-              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-yellow-400" />
+              {severity === "information" ? (
+                <Info size={16} className={`mt-0.5 shrink-0 ${severityStyles.iconColor}`} />
+              ) : (
+                <AlertTriangle size={16} className={`mt-0.5 shrink-0 ${severityStyles.iconColor}`} />
+              )}
               <div className="min-w-0 flex-1">
-                <p className="text-sm leading-relaxed text-yellow-200">{alert.message}</p>
+                <p className={`text-sm leading-relaxed ${severityStyles.text}`}>{alert.message}</p>
                 {/* The field this alert names, as a jump target into the
                     Fields column. Only rendered when the backend actually
                     tagged the alert with a field. */}
                 {alert.field && onFocusField && (
                   <button
                     onClick={() => onFocusField(alert.field as string)}
-                    className="mt-1.5 rounded border border-yellow-700/40 px-1.5 py-0.5 font-mono text-[10px] text-yellow-400/90 transition hover:bg-yellow-800/30 hover:text-yellow-200"
+                    className={`mt-1.5 rounded border px-1.5 py-0.5 font-mono text-[10px] transition ${severityStyles.badge}`}
                     title={`Jump to ${alert.field} in the Fields column`}
                   >
                     {alert.field} →
@@ -164,7 +205,7 @@ export default function AlertConsole({
                 className={`shrink-0 rounded-md border px-2 py-1 text-xs transition disabled:opacity-50 ${
                   pending
                     ? "border-blue-500/50 bg-blue-600/20 font-semibold text-blue-200 hover:bg-blue-600/40"
-                    : "border-yellow-700/50 bg-yellow-900/30 text-yellow-300 hover:bg-yellow-800/40"
+                    : severityStyles.buttonBorder
                 }`}
               >
                 {busy ? (
