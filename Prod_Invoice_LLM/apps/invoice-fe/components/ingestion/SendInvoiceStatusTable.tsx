@@ -1,14 +1,28 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { CheckCircle2, AlertTriangle, Loader2, FileText, Send } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, FileText, Send, XCircle } from "lucide-react";
 import Link from "next/link";
 import { apiClient } from "../../lib/apiClient";
 
 // Feature 2.1's outbound status lifecycle -- distinct from inbound's
 // PROCESSING/COMPLETED/AUDIT_REQUIRED since the semantics differ (pre-send
 // validation, not post-receipt audit).
-export type OutboundStatus = "UPLOADED" | "PROCESSING_OCR" | "EXTRACTING_DATA" | "VERIFIED" | "NEEDS_REVIEW" | "SENT";
+// Gap 84 added FAILED: the outbound worker's except block now persists it to
+// the invoice row instead of only broadcasting it over the ephemeral SSE
+// channel, so this poll can finally see a real processing failure at all.
+export type OutboundStatus =
+  | "UPLOADED"
+  | "PROCESSING_OCR"
+  | "EXTRACTING_DATA"
+  | "VERIFIED"
+  | "NEEDS_REVIEW"
+  | "SENT"
+  | "FAILED";
+
+// Statuses the pipeline will never move on from. Anything not listed here means
+// work is still owed, so polling continues.
+const TERMINAL_STATUSES: OutboundStatus[] = ["VERIFIED", "NEEDS_REVIEW", "SENT", "FAILED"];
 
 interface SendInvoiceStatusTableProps {
   invoiceId: string | null;
@@ -42,17 +56,25 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
 
     const poll = async () => {
       if (!activeRef.current) return;
+      // Read the terminal check off the value this pass actually fetched, not
+      // off the `status` state variable. This effect only re-runs on invoiceId,
+      // so the closure's `status` was pinned to "UPLOADED" forever and the loop
+      // never stopped even once the invoice reached VERIFIED/SENT. Fixed here
+      // rather than left alone because Gap 84's whole point is that a terminal
+      // state has to actually be recognised as terminal.
+      let latest: OutboundStatus = "UPLOADED";
       try {
         const res = await apiClient.get(`/invoices/${invoiceId}`);
         const data = res.data;
-        setStatus((data.status || "UPLOADED") as OutboundStatus);
+        latest = (data.status || "UPLOADED") as OutboundStatus;
+        setStatus(latest);
         setCustomerName(data.customer_name ?? null);
         setGrandTotal(data.grand_total ?? null);
         setAlerts(Array.isArray(data.sa_alerts) ? data.sa_alerts : []);
       } catch (e) {
         console.error("Failed to poll outbound invoice status", e);
       }
-      if (activeRef.current && !["VERIFIED", "NEEDS_REVIEW", "SENT"].includes(status)) {
+      if (activeRef.current && !TERMINAL_STATUSES.includes(latest)) {
         setTimeout(poll, 2000);
       }
     };
@@ -95,6 +117,14 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
             <Send className="w-3 h-3" /> Sent
           </span>
         );
+      case "FAILED":
+        // Matches StatusTable.tsx's existing inbound Failed badge (red/XCircle)
+        // rather than inventing a second visual language for the same outcome.
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/10 border border-red-500/20 text-red-400">
+            <XCircle className="w-3 h-3" /> Failed
+          </span>
+        );
       default:
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/10 border border-sky-500/20 text-sky-400">
@@ -119,6 +149,17 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
       {(customerName || grandTotal) && (
         <div className="text-[11px] text-slate-400 font-mono">
           Customer: {customerName || "Pending"} | Total: {grandTotal ? `$${grandTotal.toFixed(2)}` : "Pending"}
+        </div>
+      )}
+
+      {status === "FAILED" && (
+        <div className="space-y-1 text-xs text-red-300 bg-red-500/5 border border-red-500/20 rounded-lg p-3">
+          <div className="font-semibold">Processing failed.</div>
+          {alerts.length > 0 ? (
+            alerts.map((a, idx) => <div key={idx}>{a.message}</div>)
+          ) : (
+            <div>The document could not be processed. Try re-uploading the file.</div>
+          )}
         </div>
       )}
 

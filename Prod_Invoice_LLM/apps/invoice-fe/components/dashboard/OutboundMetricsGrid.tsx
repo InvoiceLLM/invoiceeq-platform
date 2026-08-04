@@ -264,11 +264,11 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
       <div className="lg:col-span-1 flex flex-col gap-6">
         <div className="glass-panel p-6 rounded-xl flex flex-col items-center justify-between flex-1 min-h-[220px]">
           <div className="text-center w-full">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Verification Accuracy
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider" title="Measures touchless processing rate; lower rates indicate poor document quality, not AI inaccuracy.">
+              Auto-Verification Rate
             </h3>
             <p className="text-[10px] text-slate-500 mt-0.5">
-              Outbound invoices verified with no alerts
+              Outbound invoices verified with no alerts (higher indicates good formatting)
             </p>
           </div>
 

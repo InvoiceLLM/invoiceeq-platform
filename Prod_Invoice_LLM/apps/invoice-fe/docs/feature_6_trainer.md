@@ -60,6 +60,14 @@ This trainer code was only merged from a feature branch the day before (Jul 24) 
 
 See `be_features_tracker.md` Gaps 50/51 and `fe_features_tracker.md` Gaps 23-25 for the full writeups.
 
+### Gap 90 — missing production sample PDF (closed 2026-08-04)
+
+An Existing Vendor session grounds itself on the vendor's latest production invoice, served through `/api/invoices/{id}/pdf` (built by `routers/trainer.py::_serialize_session`). If that blob is gone — e.g. Azurite storage lost across a `docker compose` restart while Postgres survived on its named volume — the pane used to render the backend's raw error JSON (`{"detail":"Failed to retrieve invoice PDF."}`) verbatim, in place of the document.
+
+Both halves of that are now fixed: the backend returns a proper `404` for a missing blob (the Azure SDK's `ResourceNotFoundError` is *not* a Python `FileNotFoundError`, which is exactly why the original catch clause missed it), and `PdfViewerPanel.tsx` probes with `fetch(pdfUrl, {method:"HEAD"})` before rendering the iframe, showing a "Document Unavailable" card instead.
+
+**One non-obvious property of that probe, worth knowing before touching either side.** It only treats a `404` as "missing" and a `>= 500` as "failed"; any other non-ok status is treated as an *inconclusive probe* and the iframe renders anyway. That is deliberate, not defensive noise: the backend route is `@router.get`-only, and FastAPI's `APIRouter` — unlike a bare Starlette `Route`, which adds HEAD alongside GET — does not accept HEAD, so a direct HEAD to the backend is a **405**. The browser's HEAD succeeds only because Next 14 auto-implements HEAD by invoking the exported `GET`, and `app/api/invoices/[id]/pdf/route.ts` forwards a hardcoded `method: "GET"` inward. If that proxy is ever changed to forward the caller's real method, every probe becomes a 405 — and under a naive `!res.ok` check the Trainer would claim "Document Unavailable" for every perfectly good PDF. Pinned by `invoice-be/tests/test_queries.py::test_stream_pdf_is_get_only_and_405s_a_direct_head`.
+
 ### Gap 76 — Commit button clipped out of view (fixed 2026-07-31)
 
 Reported live as "the Commit to Template Registry button appears clipped/not visible." Root cause was a container-sizing conflict, not anything in the header markup itself: `app/trainer/page.tsx`'s root was `h-screen` (100vh), but this page renders inside `Shell.tsx`'s `<main className="flex-1 overflow-y-auto p-8">`, which has already spent the global Header's 64px plus 32px of padding top and bottom. A 100vh child inside a container ~128px shorter than the viewport is taller than the space it actually has, so its own contents get pushed past the bottom edge.

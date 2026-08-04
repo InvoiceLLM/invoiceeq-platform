@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from dependencies import get_tenant_context, get_db_session, TenantContext
+from dependencies import get_tenant_context_allow_unpaid, get_db_session, TenantContext
 from models import Tenant, User
 from config import settings
 
@@ -48,8 +48,15 @@ class LogoutResponse(BaseModel):
 # --- Endpoints ---
 
 @router.get("/me", response_model=TenantContext)
-async def get_current_user_context(context: TenantContext = Depends(get_tenant_context)):
-    """Returns the authenticated tenant and user context parsed from the JWT."""
+async def get_current_user_context(context: TenantContext = Depends(get_tenant_context_allow_unpaid)):
+    """Returns the authenticated tenant and user context parsed from the JWT.
+
+    Gap 71: deliberately allow-unpaid. This is the FE's identity source
+    (hooks/useAuth.ts) -- if it 402'd for a lapsed tenant the app could not
+    read its own billing_plan to explain *why* everything else is failing, and
+    would fall back to the anonymous least-privilege identity instead. Returning
+    the real context with billing_plan='unpaid' is what lets the UI say
+    "your plan lapsed" and route the user to checkout."""
     return context
 
 

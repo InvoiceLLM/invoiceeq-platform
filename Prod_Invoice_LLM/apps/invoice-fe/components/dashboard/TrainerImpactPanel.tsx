@@ -95,14 +95,17 @@ export default function TrainerImpactPanel() {
         {data.audit_rate_trend.length === 0 ? (
           <p className="text-[11px] text-slate-600">Not enough processed invoices yet to show a trend.</p>
         ) : (
-          <div className="flex items-end gap-1.5 h-16">
+          <div className="flex items-end gap-1.5 h-28 border-b border-[#222D3D] pb-1">
             {data.audit_rate_trend.map((w) => (
-              <div key={w.week} className="flex-1 flex flex-col items-center gap-1" title={`Week of ${w.week}: ${w.audit_rate}% (${w.total_processed} processed)`}>
+              <div key={w.week} className="flex-1 flex flex-col items-center justify-end h-full gap-1" title={`Week of ${w.week}: ${w.audit_rate}% (${w.total_processed} processed)`}>
+                <span className="text-[9px] font-semibold text-amber-400 select-none">
+                  {w.audit_rate.toFixed(0)}%
+                </span>
                 <div
-                  className="w-full bg-amber-500/60 rounded-t"
-                  style={{ height: `${Math.max(4, (w.audit_rate / maxRate) * 56)}px` }}
+                  className="w-full bg-amber-500/60 hover:bg-amber-500/80 rounded-t transition-colors"
+                  style={{ height: `${Math.max(4, (w.audit_rate / maxRate) * 80)}px` }}
                 />
-                <span className="text-[8px] text-slate-600">{w.week.slice(5)}</span>
+                <span className="text-[8px] text-slate-500 mt-1 select-none">{w.week.slice(5)}</span>
               </div>
             ))}
           </div>

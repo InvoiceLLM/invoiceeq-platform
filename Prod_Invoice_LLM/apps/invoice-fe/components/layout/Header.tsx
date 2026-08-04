@@ -1,19 +1,74 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Search, Bell, HelpCircle, ChevronDown, User, LogOut, Settings } from "lucide-react";
+import { Bell, HelpCircle, ChevronDown, User, LogOut, Settings } from "lucide-react";
 import { useClerk, useUser } from "@clerk/nextjs";
+import { useAuth } from "@/hooks/useAuth";
 
 // Marketing site's login page -- separate deployment, so this needs the full
 // origin, not an internal Next.js route. Local dev port is unconfirmed since
 // invoice-website has no dev script/port assignment yet; update once it does.
 const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
+/**
+ * Gap 87 / Gap 95 — how many invoices are actually waiting on a human.
+ *
+ * The bell used to be a `<button>` with no `onClick` and a hardcoded blue dot
+ * that was *always* lit, i.e. it permanently implied unread notifications that
+ * did not exist. Rather than build a notification system nobody asked for, it
+ * now shows the one number this product genuinely has to chase: the same
+ * "Needs Attention" set the dashboard widget lists (inbound `AUDIT_REQUIRED`
+ * + outbound `NEEDS_REVIEW`), and links to the real queue.
+ *
+ * Counts come from the `X-Total-Count` header both list endpoints already set
+ * for pagination, so `limit=1` is enough — no page of rows is fetched just to
+ * count them. Settled independently: a receive-only tenant's outbound call may
+ * 403, which must not suppress the inbound count.
+ */
+function useNeedsAttentionCount(enabled: boolean): number | null {
+  const [count, setCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setCount(null);
+      return;
+    }
+    let cancelled = false;
+
+    const readTotal = async (url: string): Promise<number> => {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return 0;
+      return Number(res.headers.get("X-Total-Count") ?? "0") || 0;
+    };
+
+    Promise.allSettled([
+      readTotal("/api/invoices?status=AUDIT_REQUIRED&limit=1"),
+      readTotal("/api/outbound-dashboard/invoices?status=NEEDS_REVIEW&limit=1"),
+    ]).then((results) => {
+      if (cancelled) return;
+      setCount(
+        results.reduce((sum, r) => sum + (r.status === "fulfilled" ? r.value : 0), 0)
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  return count;
+}
+
 export default function Header() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const { signOut } = useClerk();
   const { user } = useUser();
+  // Gated on canAudit for the same reason Sidebar hides the Audit Queue item:
+  // a user who cannot open the queue gains nothing from a count of it, and the
+  // backend would 403 the calls anyway.
+  const { canAudit } = useAuth();
+  const needsAttention = useNeedsAttentionCount(canAudit);
 
   const handleSignOut = async () => {
     setShowProfileMenu(false);
@@ -48,19 +103,12 @@ export default function Header() {
   const userRole = (user?.unsafeMetadata?.role as string) || "Admin";
 
   return (
-    <header className="h-16 border-b border-[#222D3D] bg-[#0B0F19]/80 backdrop-blur-md flex items-center justify-between px-8 text-slate-300 z-10">
-      {/* Search Input Container */}
-      <div className="relative w-96">
-        <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-          <Search className="h-4.5 w-4.5 text-slate-400" />
-        </span>
-        <input
-          type="text"
-          placeholder="Search invoices, vendors, or batches..."
-          className="w-full bg-[#151B26]/50 border border-[#222D3D] rounded-lg py-2 pl-10 pr-4 text-sm text-slate-200 placeholder-slate-400 focus:outline-none focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6] transition-all duration-200"
-        />
-      </div>
-
+    // Gap 87/95: the global search box was removed from this row, so there is
+    // no left-hand group left to justify against -- `justify-end` rather than
+    // `justify-between`, which would otherwise leave the controls floating in
+    // the middle of an empty header. Page titles already live in PageHeader, so
+    // nothing needs to take the search box's place.
+    <header className="h-16 border-b border-[#222D3D] bg-[#0B0F19]/80 backdrop-blur-md flex items-center justify-end px-8 text-slate-300 z-10">
       {/* Right Controls Container */}
       <div className="flex items-center gap-6">
         {/* Help Link -- Gap 87 finding G: this was a <button> with a title and
@@ -76,14 +124,33 @@ export default function Header() {
           <HelpCircle className="h-5 w-5" />
         </Link>
 
-        {/* Notifications Tray */}
-        <button 
-          className="p-1.5 rounded-lg hover:bg-[#1E293B]/50 hover:text-white transition-all text-slate-400 relative"
-          title="Notifications"
-        >
-          <Bell className="h-5 w-5" />
-          <span className="absolute top-1 right-1.5 h-2 w-2 rounded-full bg-[#3B82F6] ring-2 ring-[#0B0F19]"></span>
-        </button>
+        {/* Needs Attention -- Gap 87/95. Rendered only for a user who can
+            actually open the queue; the badge appears only when the count is
+            genuinely non-zero, replacing the old always-lit dot that implied
+            unread notifications at all times. */}
+        {canAudit && (
+          <Link
+            href="/invoices"
+            aria-label={
+              needsAttention
+                ? `${needsAttention} invoice${needsAttention === 1 ? "" : "s"} need review`
+                : "Invoice queue"
+            }
+            title={
+              needsAttention
+                ? `${needsAttention} invoice${needsAttention === 1 ? "" : "s"} need review`
+                : "Nothing needs review right now"
+            }
+            className="p-1.5 rounded-lg hover:bg-[#1E293B]/50 hover:text-white transition-all text-slate-400 relative"
+          >
+            <Bell className="h-5 w-5" />
+            {needsAttention !== null && needsAttention > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-[10px] font-bold text-[#0B0F19] flex items-center justify-center ring-2 ring-[#0B0F19]">
+                {needsAttention > 99 ? "99+" : needsAttention}
+              </span>
+            )}
+          </Link>
+        )}
 
         {/* Vertical Divider */}
         <div className="h-6 w-px bg-[#222D3D]"></div>

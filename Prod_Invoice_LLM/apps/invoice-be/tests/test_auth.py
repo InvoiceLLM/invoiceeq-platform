@@ -57,10 +57,28 @@ def test_auth_me_test_token():
     assert data["tenant_id"] == str(MOCK_TENANT_ID)
     assert data["billing_plan"] == "active"
 
-def test_auth_me_unpaid_payment_required():
-    """Verify that a test_unpaid token blocks requests with a 402 error."""
+def test_auth_me_unpaid_is_allowed_through():
+    """
+    Gap 71 (deliberate behaviour change): /auth/me no longer 402s for an unpaid
+    tenant.
+
+    It previously did, which was harmless only because nothing ever *set*
+    'unpaid'. Now that billing lapse really demotes tenants, /auth/me is the FE's
+    identity source (hooks/useAuth.ts) -- 402ing it would leave the app unable to
+    read its own billing_plan and therefore unable to explain why everything else
+    is failing or to offer checkout. The 402 gate still applies to every other
+    endpoint (see test_unpaid_tenant_is_402_on_a_normal_endpoint).
+    """
     headers = {"Authorization": "Bearer test_unpaid_user"}
     response = client.get("/auth/me", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["billing_plan"] == "unpaid"
+
+
+def test_unpaid_tenant_is_402_on_a_normal_endpoint():
+    """The 402 gate itself is unchanged -- it just moved off /auth/me."""
+    headers = {"Authorization": "Bearer test_unpaid_user"}
+    response = client.get("/api/v1/dashboard/metrics", headers=headers)
     assert response.status_code == 402
     assert "subscription is unpaid" in response.json()["detail"].lower()
 

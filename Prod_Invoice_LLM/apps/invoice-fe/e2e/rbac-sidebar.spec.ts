@@ -211,3 +211,64 @@ test.describe("Header — Help button (Gap 87 finding G)", () => {
     await expect(page).toHaveURL(/\/help$/);
   });
 });
+
+/**
+ * Gaps 87 + 95. The search box was removed outright (dead element, no handler,
+ * and the reporter's own "never going to be used"), and the bell — previously a
+ * handler-less button with a permanently-lit dot implying notifications that
+ * did not exist — became a real Needs Attention count linking to the queue.
+ *
+ * The count is asserted from the stub's `x-total-count` header rather than from
+ * a row payload, because that header is what the component actually reads
+ * (`limit=1`, so no page of rows is fetched just to count them).
+ */
+test.describe("Header — search box and notification bell (Gaps 87 + 95)", () => {
+  test("no search box is rendered anywhere in the header", async ({ page }) => {
+    await stubShell(page, { role: "Admin" });
+    await page.goto("/dashboard");
+    await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
+
+    await expect(page.locator("header").getByRole("textbox")).toHaveCount(0);
+    await expect(page.getByPlaceholder(/search invoices/i)).toHaveCount(0);
+  });
+
+  test("bell is hidden from a user who cannot open the audit queue", async ({ page }) => {
+    await stubShell(page, { role: "Viewer" });
+    await page.goto("/dashboard");
+    await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
+
+    await expect(page.locator("header").getByRole("link", { name: /need review|invoice queue/i })).toHaveCount(0);
+  });
+
+  test("bell shows no badge when nothing needs review", async ({ page }) => {
+    await stubShell(page, { role: "Admin" });
+    await page.goto("/dashboard");
+
+    const bell = page.locator("header").getByRole("link", { name: /invoice queue/i });
+    await expect(bell).toBeVisible();
+    // stubShell answers x-total-count: 0 -- an always-visible dot here is
+    // exactly the old misleading behaviour this replaced.
+    await expect(bell.locator("span")).toHaveCount(0);
+  });
+
+  test("bell shows the real count and links to the queue", async ({ page }) => {
+    await stubShell(page, { role: "Admin" });
+    // Registered after stubShell so this more specific route wins.
+    await page.route("**/api/invoices?status=AUDIT_REQUIRED**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "x-total-count": "7" },
+        body: "[]",
+      })
+    );
+    await page.goto("/dashboard");
+
+    const bell = page.locator("header").getByRole("link", { name: /7 invoices need review/i });
+    await expect(bell).toBeVisible();
+    await expect(bell.locator("span")).toHaveText("7");
+
+    await bell.click();
+    await expect(page).toHaveURL(/\/invoices$/);
+  });
+});

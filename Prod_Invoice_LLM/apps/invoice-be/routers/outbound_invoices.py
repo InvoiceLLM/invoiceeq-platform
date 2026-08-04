@@ -99,10 +99,28 @@ async def upload_outbound_invoice(
                 "task": "process_outbound_invoice",
                 "kwargs": {"batch_id": str(batch_id), "file_path": file_path, "tenant_id": str(context.tenant_id)},
             }))
+            # Gap 81: see routers/invoices.py -- the reconciliation sweep
+            # measures staleness from this stamp, not from created_at.
+            db_invoice.last_enqueued_at = datetime.utcnow()
+            db_invoice.processing_attempts = 1
+            db_session.add(db_invoice)
+            await run_in_threadpool(db_session.commit)
         else:
-            logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing outbound invoice %s.", invoice_id)
+            logger.error(
+                "AZURE_STORAGE_CONNECTION_STRING missing -- outbound invoice %s was stored but never "
+                "queued and will sit at UPLOADED until the reconciliation sweep re-enqueues it.",
+                invoice_id,
+            )
     except Exception as e:
-        logger.warning("Failed to dispatch outbound extraction queue task: %s", e)
+        # Gap 81: promoted from warning. Azurite/Azure accepting an upload while
+        # the queue send fails is precisely the silent-forever case this gap was
+        # about -- the request still returns 201, so the log line is the only
+        # signal that exists.
+        logger.error(
+            "Failed to dispatch outbound extraction queue task for invoice %s -- it will remain at "
+            "UPLOADED until the reconciliation sweep re-enqueues it: %s",
+            invoice_id, e,
+        )
 
     return {"batch_id": str(batch_id), "invoice_id": str(invoice_id)}
 

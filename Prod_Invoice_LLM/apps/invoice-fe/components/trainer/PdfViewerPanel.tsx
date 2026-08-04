@@ -85,15 +85,33 @@ export default function PdfViewerPanel({
       return;
     }
 
+    // Gap 90: probe before rendering the iframe, so a missing production sample
+    // shows a friendly card instead of the backend's raw error JSON rendered
+    // verbatim in the PDF pane.
+    //
+    // Only a 404 is treated as "the document isn't there". Anything else is
+    // treated as an inconclusive probe and the iframe is rendered anyway:
+    // claiming a document is unavailable when the *probe* is what failed is a
+    // worse outcome than letting the browser's own PDF viewer try. This is not
+    // hypothetical -- the backend route is `@router.get` only (FastAPI's
+    // APIRouter, unlike a bare Starlette Route, does not add HEAD alongside
+    // GET), so this HEAD only succeeds because Next 14 auto-implements HEAD by
+    // calling the exported GET, whose handler forwards a hardcoded `method:
+    // "GET"` inward. Change that proxy to forward the real method and every
+    // probe becomes a 405 -- under the old `!res.ok` check that would have
+    // shown "Document Unavailable" on every perfectly good PDF.
     fetch(pdfUrl, { method: "HEAD" })
       .then((res) => {
-        if (!res.ok) {
+        if (res.status === 404) {
           setPdfError("Production sample PDF is missing or unavailable.");
+        } else if (res.status >= 500) {
+          setPdfError("Failed to retrieve sample PDF.");
         } else {
           setPdfError(null);
         }
       })
       .catch(() => {
+        // A genuine network failure -- the iframe would fail the same way.
         setPdfError("Failed to retrieve sample PDF.");
       });
   }, [pdfUrl]);

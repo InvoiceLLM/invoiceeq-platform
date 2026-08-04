@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { Check, Sparkles, Loader2 } from "lucide-react";
@@ -88,11 +88,36 @@ function cardBorderClasses(highlight?: "popular" | "combined") {
   return "border-[#222D3D] hover:border-slate-700";
 }
 
+const PLAN_IDS = PLANS.map((p) => p.id);
+
 export function PricingTable() {
   const { isSignedIn } = useUser();
   const router = useRouter();
   const [loadingPlan, setLoadingPlan] = useState<PlanId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Gap 101: which plan the visitor was sent here *for*, via ?plan=<id>.
+  // invoice-fe's Settings upgrade modal is the first caller (its "Upgrade Now"
+  // sends ?plan=pro_combined#pricing), and the signup flow already uses the
+  // same param shape in handleSelectPlan below.
+  const [requestedPlan, setRequestedPlan] = useState<PlanId | null>(null);
+  const cardRefs = useRef<Partial<Record<PlanId, HTMLDivElement | null>>>({});
+
+  useEffect(() => {
+    // Read from window.location rather than useSearchParams(): this component
+    // renders inside the statically-rendered homepage, and useSearchParams()
+    // there forces a Suspense boundary / dynamic rendering for what is purely a
+    // presentational highlight. Same approach invoice-fe's /flows page already
+    // uses for its own ?flow= deep link (website Gap 1).
+    const param = new URLSearchParams(window.location.search).get("plan");
+    if (!param || !PLAN_IDS.includes(param as PlanId)) return;
+
+    const plan = param as PlanId;
+    setRequestedPlan(plan);
+    // The #pricing anchor already scrolls the section into view; this centres
+    // the specific card, which matters on the 3-column desktop layout where the
+    // requested plan can otherwise be the one furthest from where the eye lands.
+    cardRefs.current[plan]?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, []);
 
   const handleSelectPlan = async (plan: PlanId) => {
     setError(null);
@@ -199,10 +224,22 @@ export function PricingTable() {
           {PLANS.map((plan) => (
             <div
               key={plan.id}
+              ref={(el) => {
+                cardRefs.current[plan.id] = el;
+              }}
               className={`relative flex flex-col rounded-2xl border bg-white/[0.03] backdrop-blur-md p-8 transition-all duration-300 ${cardBorderClasses(
                 plan.highlight
-              )}`}
+              )} ${
+                requestedPlan === plan.id
+                  ? "ring-2 ring-violet-400 ring-offset-2 ring-offset-[#050816]"
+                  : ""
+              }`}
             >
+              {requestedPlan === plan.id && (
+                <span className="absolute -top-3 right-4 bg-violet-600 text-white rounded-full px-2 py-0.5 text-xs font-semibold">
+                  The plan you need
+                </span>
+              )}
               {plan.highlight === "popular" && (
                 <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-indigo-600 text-white rounded-full px-2 py-0.5 text-xs font-semibold">
                   Most Popular

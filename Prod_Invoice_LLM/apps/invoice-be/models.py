@@ -17,6 +17,13 @@ class Tenant(SQLModel, table=True):
     free_invoices_remaining: int = Field(default_factory=lambda: settings.DEFAULT_FREE_INVOICES_LIMIT)
     payu_customer_id: str | None = Field(default=None, max_length=255)
     payu_subscription_id: str | None = Field(default=None, max_length=255)
+    # Gap 71: end of the currently-paid-for billing cycle. PayU's classic API
+    # has no subscription object, so this is the only record that a paid plan
+    # was ever paid *for a period* rather than once. Extended by
+    # services/billing_lifecycle.extend_paid_through() on every verified
+    # payment; NULL means "never paid" (free tier) or a legacy pre-Gap-71 row,
+    # neither of which may be lapsed -- see is_lapsed().
+    paid_through: datetime | None = Field(default=None)
     # Feature 16: Service Flow toggles
     receive_invoices_enabled: bool = Field(default=True)   # Inbound (AP) — on by default, preserves existing behaviour
     send_invoices_enabled: bool = Field(default=False)     # Outbound (AR) — opt-in, requires pro_combined plan
@@ -58,6 +65,16 @@ class Invoice(SQLModel, table=True):
     compliance_metadata: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = Field(default=None)
+
+    # FE Gaps 81/84: stuck-invoice reconciliation bookkeeping. `last_enqueued_at`
+    # is when a queue message was last *sent* for this invoice (upload time, or
+    # the last reconciliation re-enqueue) -- staleness has to be measured from
+    # that, not from created_at, or a re-enqueued invoice would look permanently
+    # overdue and be re-enqueued on every sweep. `processing_attempts` bounds how
+    # many times the sweep will retry before giving up and marking it FAILED,
+    # so a genuinely unprocessable file can't be requeued forever.
+    last_enqueued_at: datetime | None = Field(default=None)
+    processing_attempts: int = Field(default=0)
 
     # Feature 2.1 (Outbound Invoice Ingestion, Task 2.1.1): flow_direction
     # distinguishes a vendor's invoice addressed to this tenant (INBOUND,

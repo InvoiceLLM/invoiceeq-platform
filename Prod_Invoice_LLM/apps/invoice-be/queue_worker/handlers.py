@@ -589,9 +589,39 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
 
     except Exception as e:
         logger.error("Error processing invoice batch %s: %s", batch_id, e)
-        # Update status: failed
+        # Gap 84: persist FAILED before re-raising. This block used to publish
+        # to the ephemeral SSE channel only, so a permanent failure was visible
+        # solely to a browser that happened to have the stream open at that
+        # instant -- every REST poll of GET /invoices/status/{id} kept returning
+        # the upload-time PROCESSING forever, on a row nothing would ever touch
+        # again.
+        _persist_processing_failure(file_path, e)
         _publish_sse_events(batch_id, {"status": "FAILED", "message": str(e)})
         raise e
+
+
+def _persist_processing_failure(file_path: str, error: Exception) -> None:
+    """Write FAILED onto the invoice row for a processing exception (Gap 84).
+
+    Wrapped in its own try/except on purpose: if recording the failure itself
+    fails (DB down, row missing), that must not replace the original exception
+    the caller is about to re-raise -- losing the real cause to a bookkeeping
+    error would make this strictly harder to debug than the bug it fixes.
+    """
+    try:
+        from services.invoice_reconciliation import mark_invoice_failed
+
+        with Session(engine) as session:
+            invoice = session.exec(select(Invoice).where(Invoice.file_path == file_path)).first()
+            if invoice is None:
+                logger.error("Could not persist FAILED status: no invoice row for %s", file_path)
+                return
+            mark_invoice_failed(session, invoice, reason=str(error))
+    except Exception as persist_error:
+        logger.error(
+            "Could not persist FAILED status for %s: %s (original error preserved)",
+            file_path, persist_error,
+        )
 
 
 def handle_reaudit_templates(tenant_id: str, vendor_name: str = None) -> dict:

@@ -103,6 +103,29 @@ class Settings(BaseSettings):
     # Default is invoice-website's local dev port (3000), not invoice-be's
     # (8000), so local dev exercises the same pass-through path as Azure.
     BACKEND_PUBLIC_URL: str = "http://localhost:3000"
+    # Gap 71: billing lapse enforcement. PayU's classic API has no recurring
+    # object, so a paid cycle is tracked by us as a date (Tenant.paid_through)
+    # and lapse is inferred from it rather than received as a webhook.
+    # BILLING_CYCLE_DAYS is how far a verified payment pushes that date
+    # forward; 30 rather than a real calendar month because the prices in
+    # routers/billing.py::PLAN_AMOUNTS are flat monthly figures with no
+    # proration, so a fixed period is both simpler and never shorter than
+    # what was paid for. BILLING_GRACE_PERIOD_DAYS is how long past that date
+    # a tenant keeps access before being demoted to 'unpaid' -- deliberately
+    # non-zero so a payment that lands a few hours late (or a sweep that runs
+    # late) doesn't lock out a paying customer.
+    BILLING_CYCLE_DAYS: int = 30
+    BILLING_GRACE_PERIOD_DAYS: int = 3
+    # FE Gap 81: stuck-invoice reconciliation. An invoice still in a
+    # non-terminal status this long after its last enqueue is treated as
+    # stalled and re-enqueued. 15 minutes is comfortably above a normal
+    # end-to-end run (OCR + up to two LLM extraction passes, observed ~20-60s)
+    # including the retry loops in extraction_agent/_run_ocr, so a merely slow
+    # invoice is never re-queued underneath a worker that is still working on
+    # it. After MAX_REPROCESS_ATTEMPTS re-queues it is marked FAILED instead,
+    # so a file the worker genuinely cannot process can't loop forever.
+    INVOICE_STUCK_AFTER_MINUTES: int = 15
+    INVOICE_MAX_REPROCESS_ATTEMPTS: int = 2
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

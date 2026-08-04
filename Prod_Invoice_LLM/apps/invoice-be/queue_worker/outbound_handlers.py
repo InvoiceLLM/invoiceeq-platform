@@ -6,7 +6,7 @@ from sqlalchemy import func
 
 from database import engine
 from models import Invoice, ExtractionTemplate
-from queue_worker.handlers import _run_ocr, _publish_sse_events
+from queue_worker.handlers import _run_ocr, _publish_sse_events, _persist_processing_failure
 from agents.outbound_extraction_agent import run_outbound_extraction_agent
 from config import get_settings
 
@@ -147,5 +147,13 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
 
     except Exception as e:
         logger.error("Error processing outbound invoice batch %s: %s", batch_id, e)
+        # Gap 84: persist FAILED before re-raising -- see the inbound handler's
+        # note. Outbound is the worse of the two cases: it never persists any
+        # intermediate status at all, so without this the row stays on its
+        # upload-time UPLOADED, which is also exactly what a Gap 81 worker-down
+        # invoice looks like. Writing FAILED is what makes the two
+        # distinguishable from the database alone instead of only from the
+        # worker log.
+        _persist_processing_failure(file_path, e)
         _publish_sse_events(batch_id, {"status": "FAILED", "message": str(e)})
         raise e

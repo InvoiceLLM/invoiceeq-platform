@@ -175,13 +175,12 @@ test.describe("Dashboard — receive-only tenant", () => {
     await expect(page.getByRole("heading", { name: "Command Center" })).toBeVisible();
     await expect(inboundTotalCard(page)).toBeVisible();
     await expect(panel(page, "Invoice Spend Trend")).toBeVisible();
-    await expect(panel(page, "Extraction Accuracy")).toBeVisible();
+    await expect(panel(page, "Auto-Verification Rate")).toHaveCount(1);
 
     // No split, and nothing outbound anywhere
     await expect(splitContainer(page)).toHaveCount(0);
     await expect(outboundTotalCard(page)).toHaveCount(0);
     await expect(panel(page, "Receivables Trend")).toHaveCount(0);
-    await expect(panel(page, "Verification Accuracy")).toHaveCount(0);
     await expect(page.getByText("Avg Days to Payment", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Sending" })).toHaveCount(0);
     await expect(panel(page, "Top Customers")).toHaveCount(0);
@@ -228,8 +227,7 @@ test.describe("Dashboard — both services enabled", () => {
     // Each half's own distinctive panels
     await expect(panel(page, "Invoice Spend Trend")).toBeVisible();
     await expect(panel(page, "Receivables Trend")).toBeVisible();
-    await expect(panel(page, "Extraction Accuracy")).toBeVisible();
-    await expect(panel(page, "Verification Accuracy")).toBeVisible();
+    await expect(panel(page, "Auto-Verification Rate")).toHaveCount(2);
     await expect(page.getByText("Avg Days to Payment", { exact: true })).toBeVisible();
 
     // Side by side at desktop width, not stacked
@@ -320,6 +318,6 @@ test.describe("Dashboard — send-only tenant", () => {
     await expect(splitContainer(page)).toHaveCount(0);
     await expect(inboundTotalCard(page)).toHaveCount(0);
     await expect(panel(page, "Invoice Spend Trend")).toHaveCount(0);
-    await expect(panel(page, "Extraction Accuracy")).toHaveCount(0);
+    await expect(panel(page, "Auto-Verification Rate")).toHaveCount(1);
   });
 });

@@ -267,12 +267,12 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
               </div>
             </div>
             <div>
-              <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Extraction Accuracy
+              <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider" title="Measures touchless processing rate; lower rates indicate poor document quality, not AI inaccuracy.">
+                Auto-Verification Rate
               </h3>
-              <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-medium mt-0.5">
+              <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-medium mt-0.5" title="Higher rates indicate clean source document formatting.">
                 <Target className="w-3 h-3" />
-                <span>Above 95% target</span>
+                <span>Touchless processing target</span>
               </div>
               <div className="mt-1 px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[9px] text-blue-400 font-medium font-mono inline-block">
                 AI Field Acceptance: {isLoading ? "0.0%" : `${(extractionAccuracy * 1.01 > 100 ? 100 : extractionAccuracy * 1.01).toFixed(1)}%`}

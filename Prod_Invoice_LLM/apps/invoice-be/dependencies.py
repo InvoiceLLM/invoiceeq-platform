@@ -11,6 +11,7 @@ from datetime import datetime
 from config import settings
 from database import engine
 from models import Tenant, User
+from services.billing_lifecycle import enforce_lapse
 
 class TenantContext(BaseModel):
     tenant_id: UUID
@@ -116,14 +117,20 @@ def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool]
     return bool(user.can_train), bool(user.can_audit), bool(user.can_load)
 
 
-def get_tenant_context(
+def get_tenant_context_allow_unpaid(
     authorization: str | None = Header(None),
     db_session: Session = Depends(get_db_session)
 ) -> TenantContext:
     """
     Decodes and validates the Clerk JWT token.
-    Blocks any request with an 'unpaid' billing plan with HTTP 402.
     Provisions Tenant and User rows in the database if they do not exist.
+
+    Identical to get_tenant_context() except that it does NOT raise 402 for an
+    'unpaid' plan -- it only resolves and returns the context. Use this on the
+    handful of endpoints a lapsed tenant must still be able to reach: billing
+    checkout (the remedy for 402) and GET /auth/me (so the FE can read
+    billing_plan and render a "your plan lapsed" state instead of failing
+    opaquely). Everything else should depend on get_tenant_context().
 
     Gap 4: the mock/test fallback is gated behind settings.ALLOW_MOCK_AUTH,
     which defaults False. With it disabled, a missing/malformed header or a
@@ -349,6 +356,19 @@ def get_tenant_context(
 
     can_train, can_audit, can_load = resolve_permissions(role, user)
 
+    # Gap 71: lazy lapse check. PayU's classic API has no recurring object and
+    # no cancellation webhook, so a lapse can only be inferred from a date --
+    # and if nothing ever evaluates that date, the 402 gate below is dead code
+    # (which it was, from Feature 11 shipping until now). Doing it here means
+    # enforcement needs no new infrastructure and takes effect on the very next
+    # request. The cost on this hot path is one datetime comparison against a
+    # Tenant row that has already been loaded above; the DB write only happens
+    # on the single request that actually crosses the boundary, after which the
+    # plan is 'unpaid' and is_lapsed() short-circuits on the plan check.
+    # scripts/sweep_lapsed_billing.py covers idle tenants who never make a
+    # request at all -- see services/billing_lifecycle.sweep_lapsed_tenants().
+    enforce_lapse(tenant, db_session)
+
     context = TenantContext(
         tenant_id=tenant_id,
         user_id=user_id,
@@ -359,8 +379,21 @@ def get_tenant_context(
         can_audit=can_audit,
         can_load=can_load,
     )
-    
-    # 4. Enforce billing subscription gate
+
+    return context
+
+
+def get_tenant_context(
+    context: TenantContext = Depends(get_tenant_context_allow_unpaid),
+) -> TenantContext:
+    """
+    The default auth dependency for every tenant-scoped endpoint.
+
+    Resolves the context exactly as get_tenant_context_allow_unpaid() does, then
+    enforces the billing subscription gate: an 'unpaid' plan is blocked with
+    HTTP 402. As of Gap 71 this is reachable in practice -- billing lapse now
+    actually sets that plan.
+    """
     if context.billing_plan == "unpaid":
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,

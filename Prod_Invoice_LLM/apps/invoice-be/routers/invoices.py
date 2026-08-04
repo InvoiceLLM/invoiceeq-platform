@@ -4,7 +4,7 @@ import os
 import hashlib
 import asyncio
 from uuid import uuid4, UUID
-from datetime import date
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -144,13 +144,33 @@ async def _ingest_single_file(
                 }
             }
             queue_client.send_message(json.dumps(payload))
+            # Gap 81: stamp when the message actually went on the queue. The
+            # reconciliation sweep measures staleness from this, not from
+            # created_at, so it can tell "uploaded 20 minutes ago and never
+            # picked up" from "re-enqueued 20 seconds ago".
+            db_invoice.last_enqueued_at = datetime.utcnow()
+            db_invoice.processing_attempts = 1
+            db_session.add(db_invoice)
+            await run_in_threadpool(db_session.commit)
             print(f"SUCCESS: Dispatched Azure Storage Queue task for invoice {invoice_id}", flush=True)
         else:
             print("WARNING: AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.", flush=True)
-            logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
+            logger.error(
+                "AZURE_STORAGE_CONNECTION_STRING missing -- invoice %s was stored but never queued "
+                "and will sit at PROCESSING until the reconciliation sweep re-enqueues it.",
+                invoice_id,
+            )
     except Exception as e:
         print(f"ERROR: Failed to dispatch Azure Storage Queue task: {str(e)}", flush=True)
-        logger.warning("Failed to dispatch Azure Storage Queue task: %s", e)
+        # Gap 81 (third fix implication): this used to be logger.warning, which
+        # is exactly the "swallowed signal nobody watches" the gap called out --
+        # a failed enqueue leaves a real invoice permanently stuck, so it is an
+        # error, and the message names that consequence explicitly.
+        logger.error(
+            "Failed to dispatch extraction queue task for invoice %s -- it will remain at "
+            "PROCESSING until the reconciliation sweep re-enqueues it: %s",
+            invoice_id, e,
+        )
 
     return str(invoice_id)
 

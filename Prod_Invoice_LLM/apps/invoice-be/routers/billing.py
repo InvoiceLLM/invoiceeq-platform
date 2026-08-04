@@ -40,8 +40,9 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from config import settings
-from dependencies import get_tenant_context, get_db_session, TenantContext
+from dependencies import get_tenant_context_allow_unpaid, get_db_session, TenantContext
 from models import Tenant, User
+from services.billing_lifecycle import extend_paid_through
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +136,18 @@ async def _verify_payment_with_payu(txnid: str) -> str | None:
 @router.post("/create-checkout-session", response_model=CheckoutSessionResponse)
 async def create_checkout_session(
     payload: CheckoutSessionRequest,
-    context: TenantContext = Depends(get_tenant_context),
+    context: TenantContext = Depends(get_tenant_context_allow_unpaid),
     db_session: Session = Depends(get_db_session),
 ):
     """Generates a PayU hash-signed payment form. Admin-only, matching the
     Admin gate already used for other billing-plan-affecting actions (see
-    routers/settings.py::update_vendor_flow_settings)."""
+    routers/settings.py::update_vendor_flow_settings).
+
+    Gap 71: depends on get_tenant_context_allow_unpaid, not get_tenant_context.
+    Once lapse enforcement is live an 'unpaid' tenant 402s on every normal
+    endpoint -- including this one, which would make the *only* way back to a
+    paid plan unreachable to exactly the tenants who need it. Checkout is the
+    remedy for 402, so it cannot itself be gated behind it."""
     if context.role != "Admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin users can manage billing.")
 
@@ -246,10 +253,17 @@ async def _handle_payu_callback(form: dict, db_session: Session, is_surl: bool) 
 
     tenant.billing_plan = plan
     tenant.payu_subscription_id = txnid
+    # Gap 71: record that this plan is paid for a *period*, not just paid once.
+    # Without this there is no date for the lapse check to compare against and
+    # the 402 gate in dependencies.get_tenant_context() can never fire.
+    paid_through = extend_paid_through(tenant)
     db_session.add(tenant)
     db_session.commit()
 
-    logger.info("PayU payment verified, tenant=%s upgraded to plan=%s (txnid=%s).", tenant_id, plan, txnid)
+    logger.info(
+        "PayU payment verified, tenant=%s upgraded to plan=%s (txnid=%s), paid_through=%s.",
+        tenant_id, plan, txnid, paid_through.isoformat(),
+    )
     # The plan change is already committed above, so the landing page needs no
     # API call of its own -- it is purely informational. Deliberate: a fetch on
     # that page could fail and make a successful payment look failed.

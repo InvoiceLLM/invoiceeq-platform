@@ -71,7 +71,7 @@ export async function forwardedHeaders(
  */
 export async function clerkSessionToken(): Promise<string | null> {
   try {
-    const { userId, getToken } = auth();
+    const { userId, getToken } = await auth();
     if (!userId) return null;
     return (await getToken()) ?? null;
   } catch {

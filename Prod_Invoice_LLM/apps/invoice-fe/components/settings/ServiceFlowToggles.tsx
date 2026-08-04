@@ -47,6 +47,31 @@ interface Toast {
 
 const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
+/**
+ * Gap 101: where "Upgrade Now" actually goes.
+ *
+ * This used to be a bare `/billing/upgrade`, a route that exists in neither app
+ * — a dead end at the terminal click of the only upgrade funnel a non-combined
+ * tenant is ever offered. There is no upgrade page to build: PayU has no
+ * subscription object, so an "upgrade" is just another full-price
+ * create_checkout_session() call, and the only surface that makes that call is
+ * invoice-website's PricingTable. So this points there rather than inventing a
+ * route.
+ *
+ * Absolute (not same-origin) on purpose. In local dev the two apps are on
+ * different ports; under the Multi-Zone proxy (website_features_tracker.md
+ * Gap 12) invoice-fe is served *under* the website's origin, so an absolute URL
+ * built from NEXT_PUBLIC_WEBSITE_URL is correct in both cases, whereas a
+ * relative "/#pricing" would resolve against invoice-fe's own route table in
+ * local dev and 404. NEXT_PUBLIC_WEBSITE_URL is baked at image-build time
+ * (docker/Dockerfile.fe ARG, fed the real FQDN by deploy-dev/prod.yml).
+ *
+ * `?plan=` carries the tenant's intent through so they land on the Pro Combined
+ * card highlighted and scrolled into view, instead of a generic three-column
+ * table where they have to re-derive which plan the modal just told them about.
+ */
+const COMBINED_PLAN_UPGRADE_URL = `${WEBSITE_URL}/?plan=pro_combined#pricing`;
+
 function UpgradeModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -99,7 +124,7 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
             Cancel
           </button>
           <a
-            href={`${WEBSITE_URL}/#pricing`}
+            href={COMBINED_PLAN_UPGRADE_URL}
             className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
           >
             <ExternalLink className="w-3.5 h-3.5" />

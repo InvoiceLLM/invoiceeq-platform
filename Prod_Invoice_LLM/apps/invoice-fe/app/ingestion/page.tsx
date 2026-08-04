@@ -220,41 +220,37 @@ export default function IngestionPage() {
           {/* FE Gap 69: space-y-4 (was space-y-6) -- tighter vertical rhythm so
               the column fits the viewport without scrolling. */}
           <div className="lg:col-span-1 space-y-4">
-            <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-3">
+            <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-4">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
                 <Send className="w-4 h-4 text-slate-500" />
                 Upload Outbound Invoice
               </div>
-              <input
-                type="file"
-                multiple
-                accept="application/pdf"
-                onChange={(e) => setOutboundFiles(Array.from(e.target.files || []))}
-                className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-slate-800 file:text-slate-200 file:text-xs"
-              />
+              <DropZone files={outboundFiles} onChange={setOutboundFiles} />
               <ConnectorBrowseBar direction="outbound" />
               {outboundError && (
-                <div className="flex items-center gap-2 p-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-[11px]">
-                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <div className="flex items-center gap-2 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-xs">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   <span>{outboundError}</span>
                 </div>
               )}
               <button
                 onClick={handleOutboundUpload}
                 disabled={outboundFiles.length === 0 || isOutboundUploading}
-                className={`w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-semibold border transition-all ${
+                className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-semibold border transition-all duration-300 ${
                   outboundFiles.length === 0
                     ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
-                    : "bg-accent-blue border-accent-blue text-white hover:bg-[#2563EB]"
+                    : isOutboundUploading
+                      ? "bg-accent-blue/20 border-accent-blue/40 text-accent-blue cursor-wait"
+                      : "bg-accent-blue border-accent-blue text-white shadow-lg shadow-accent-blue/10 hover:shadow-accent-blue/20 hover:bg-[#2563EB]"
                 }`}
               >
                 {isOutboundUploading ? (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Uploading...
+                    <RefreshCw className="w-4 h-4 animate-spin" /> Uploading...
                   </>
                 ) : (
                   <>
-                    <UploadCloud className="w-3.5 h-3.5" /> Upload &amp; Extract
+                    <UploadCloud className="w-4 h-4" /> Upload &amp; Extract
                   </>
                 )}
               </button>
@@ -266,13 +262,18 @@ export default function IngestionPage() {
                 <SendInvoiceStatusTable key={inv.id} invoiceId={inv.id} fileName={inv.name} />
               ))
             ) : (
-              <div className="glass-panel rounded-xl border border-[#222D3D] p-12 text-center h-full min-h-[200px] flex flex-col items-center justify-center gap-3">
+              <div className="glass-panel rounded-xl border border-[#222D3D] p-12 text-center h-full min-h-[300px] flex flex-col items-center justify-center gap-3">
                 <div className="p-4 rounded-full bg-slate-900/50 border border-[#222D3D] text-slate-500">
                   <Send className="w-8 h-8" />
                 </div>
-                <p className="text-[11px] text-slate-500 max-w-xs">
-                  Upload one of your own invoices on the left to verify it before sending.
-                </p>
+                <div className="max-w-xs space-y-1">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Outbound Ledger Idle
+                  </h3>
+                  <p className="text-[11px] text-slate-500 leading-normal">
+                    Upload your outbound invoices on the left to run touchless validation and monitor processing.
+                  </p>
+                </div>
               </div>
             )}
           </div>

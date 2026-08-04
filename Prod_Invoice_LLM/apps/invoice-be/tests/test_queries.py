@@ -217,3 +217,69 @@ def test_stream_pdf(db_session):
         assert f"inline; filename={invoice_id}.pdf" in response.headers["content-disposition"]
         assert response.content == pdf_content
         mock_download.assert_called_once_with(invoice.file_path)
+
+
+def _seed_pdf_invoice(db_session):
+    invoice = Invoice(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        file_path="azure://invoices/tenants/0000-0000/invoices/gone.pdf",
+        vendor_name="Test Vendor",
+        status="COMPLETED",
+    )
+    db_session.add(invoice)
+    db_session.commit()
+    return invoice
+
+
+def test_stream_pdf_missing_blob_is_404_not_500(db_session):
+    """
+    FE Gap 90 regression guard.
+
+    A blob that no longer exists (e.g. Azurite storage lost across a container
+    restart while Postgres survived on its named volume) raises the Azure SDK's
+    ResourceNotFoundError, which is NOT a Python FileNotFoundError. Before this
+    was fixed, only FileNotFoundError was caught, so a missing blob fell through
+    to the generic handler and returned a raw 500 -- and the Trainer's PDF pane
+    rendered that error JSON verbatim in place of the document.
+    """
+    from azure.core.exceptions import ResourceNotFoundError
+
+    invoice = _seed_pdf_invoice(db_session)
+
+    with patch("routers.invoices.download_pdf_from_storage") as mock_download:
+        mock_download.side_effect = ResourceNotFoundError("The specified blob does not exist.")
+
+        response = TestClient(app).get(f"/api/v1/invoices/{invoice.id}/pdf")
+
+    assert response.status_code == 404
+    assert "not found in storage" in response.json()["detail"].lower()
+
+
+def test_stream_pdf_is_get_only_and_405s_a_direct_head(db_session):
+    """
+    Pins a real asymmetry found while closing FE Gap 90, so it can't be
+    misremembered later.
+
+    The FE's PdfViewerPanel probes this endpoint with HEAD before rendering the
+    iframe (to choose between the document and a friendly "Document Unavailable"
+    card). That probe works only because it goes through invoice-fe's own route
+    handler, and Next 14 auto-implements HEAD by invoking the exported GET
+    (`next/dist/server/future/route-modules/app-route/helpers/auto-implement-methods.js`),
+    which then calls this backend with an explicit `method: "GET"`. This backend
+    route is registered with `@router.get` and -- unlike a bare Starlette Route,
+    which does add HEAD alongside GET -- FastAPI's APIRouter does not, so a
+    *direct* HEAD here is a 405.
+
+    That matters because if anyone ever changes `app/api/invoices/[id]/pdf/route.ts`
+    to forward the caller's real method instead of hardcoding GET, every probe
+    starts returning 405 and the panel shows "Document Unavailable" for every
+    perfectly good PDF -- a worse bug than the one Gap 90 fixed. The FE now
+    treats a non-404 failure as inconclusive and renders the document anyway, so
+    this asymmetry is defused on that side rather than by widening the API here.
+    """
+    invoice = _seed_pdf_invoice(db_session)
+
+    response = TestClient(app).head(f"/api/v1/invoices/{invoice.id}/pdf")
+
+    assert response.status_code == 405
