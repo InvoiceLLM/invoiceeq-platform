@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X } from "lucide-react";
+import { useParams } from "next/navigation";
+import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
+import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import OutboundAlertConsole, { StandingRuleResult } from "@/components/audit/OutboundAlertConsole";
 
@@ -76,7 +77,6 @@ function EditableField({
 
 export default function OutboundAuditorReviewPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
 
   const [invoice, setInvoice] = useState<OutboundInvoiceDetail | null>(null);
   const [alerts, setAlerts] = useState<{ type: string; message: string }[]>([]);
@@ -87,6 +87,17 @@ export default function OutboundAuditorReviewPage() {
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
+
+  // FE Gap 110 — see the inbound review console for the reasoning, including
+  // why Back is an explicit /invoices link rather than router.back().
+  usePageHeader({
+    title: "Outbound Auditor Console",
+    agentIcon: "🛡️",
+    agentName: "SENTINEL",
+    agentRole: "Audit & Compliance",
+    subtitle: invoice ? `Invoice #${invoice.invoice_number ?? invoice.id}` : undefined,
+    backHref: "/invoices",
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -181,19 +192,12 @@ export default function OutboundAuditorReviewPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-1.5 rounded-lg border border-[#222D3D] px-3 py-1.5 text-xs text-slate-400 transition hover:border-slate-500 hover:text-slate-200"
-        >
-          <ArrowLeft size={13} /> Back
-        </button>
-        <div>
-          <h1 className="text-lg font-semibold text-slate-100">Outbound Auditor Console</h1>
-          <p className="text-xs text-slate-500">Invoice #{invoice.invoice_number ?? invoice.id}</p>
-        </div>
+      {/* FE Gap 110: same treatment as the inbound review console -- title,
+          subtitle and Back moved into the shared header, status badge portalled
+          up beside them. */}
+      <PageHeaderActions>
         <span
-          className={`ml-auto rounded-full border px-3 py-1 text-xs font-medium ${
+          className={`rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap ${
             invoice.status === "PAID"
               ? "border-emerald-600/50 bg-emerald-500/10 text-emerald-300"
               : invoice.status === "SENT"
@@ -205,7 +209,7 @@ export default function OutboundAuditorReviewPage() {
         >
           {invoice.status.replace("_", " ")}
         </span>
-      </div>
+      </PageHeaderActions>
 
       <div className="grid flex-1 grid-cols-2 gap-4 overflow-hidden">
         <PdfViewerCanvas

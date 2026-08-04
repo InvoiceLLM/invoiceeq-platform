@@ -5,8 +5,20 @@
 
 import { useChatSession } from "@/hooks/useChatSession";
 import ChatWindow from "@/components/chat/ChatWindow";
+import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
 export default function ChatPage() {
+  // FE Gap 110: Chat never had a page title of its own -- it went straight into
+  // ChatWindow's own slim agent strip -- which would have left it as the one
+  // screen with an unnamed header once every other route started declaring
+  // one. Declaring it here costs nothing and changes no page markup.
+  usePageHeader({
+    title: "Semantic Chat",
+    agentIcon: "🧠",
+    agentName: "SAGE",
+    agentRole: "Query & Insights",
+  });
+
   // Destructure only the values that ChatWindow needs.
   // useChatSession owns all state and async actions — page.tsx is intentionally
   // thin so the same hook could power a different layout in the future without

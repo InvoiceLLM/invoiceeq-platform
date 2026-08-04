@@ -202,13 +202,109 @@ test.describe("Sidebar — identity lookup fails", () => {
   });
 });
 
-test.describe("Header — Help button (Gap 87 finding G)", () => {
-  test("navigates to /help instead of doing nothing", async ({ page }) => {
+/**
+ * Gap 87 finding G gave the header's dead HelpCircle button a real href, and
+ * this suite asserted that it navigated. Gap 110 then removed that icon
+ * outright: it was a second entry point to the exact same /help route the
+ * Sidebar already carries, and the shared header row now has the active page's
+ * title and controls to fit as well.
+ *
+ * The requirement did not go away, it moved -- so neither did the test. It now
+ * asserts both halves of that decision: exactly one Help entry point exists,
+ * it is the Sidebar's, and it still reaches /help. Asserting only "the header
+ * has no Help link" would pass just as well if /help became unreachable.
+ */
+test.describe("Help entry point (Gap 87 finding G, relocated by Gap 110)", () => {
+  test("the Sidebar's Help item navigates to /help", async ({ page }) => {
     await stubShell(page, { role: "Viewer" });
     await page.goto("/dashboard");
 
-    await page.getByRole("link", { name: "Help Center" }).click();
+    await navLink(page, "Help").click();
     await expect(page).toHaveURL(/\/help$/);
+  });
+
+  test("the header no longer carries a duplicate Help link", async ({ page }) => {
+    await stubShell(page, { role: "Viewer" });
+    await page.goto("/dashboard");
+    await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
+
+    await expect(page.locator("header").getByRole("link", { name: /help/i })).toHaveCount(0);
+    // ...and the one that remains is the Sidebar's, not zero overall.
+    await expect(navLink(page, "Help")).toBeVisible();
+  });
+});
+
+/**
+ * FE Gap 110 — every screen's title now comes from one shared header rendered
+ * by Shell, fed through PageHeaderContext by the active route. The regression
+ * this guards is a page rendering its own second header bar underneath it,
+ * which is what Trainer/Settings/the review consoles used to do (Gaps 76/88).
+ */
+test.describe("Shared page header (Gap 110)", () => {
+  const ROUTES: { path: string; title: string }[] = [
+    { path: "/dashboard", title: "Command Center" },
+    { path: "/settings", title: "Settings" },
+    { path: "/help", title: "Help Center" },
+  ];
+
+  for (const { path, title } of ROUTES) {
+    test(`${path} renders exactly one header and one h1, titled "${title}"`, async ({ page }) => {
+      await stubShell(page, { role: "Admin", can_train: true, can_audit: true, can_load: true });
+      await page.goto(path);
+
+      const heading = page.getByRole("heading", { name: title, level: 1 });
+      await expect(heading).toBeVisible();
+
+      // One <header> element in the whole document: the shared one. Two would
+      // mean a page had started drawing its own again.
+      await expect(page.locator("header")).toHaveCount(1);
+      await expect(page.locator("h1")).toHaveCount(1);
+      // And that h1 is inside the shared header, not in the page body.
+      await expect(page.locator("header h1")).toHaveText(title);
+    });
+  }
+
+  test("Trainer's actions render in the shared header, not a second bar", async ({ page }) => {
+    await stubShell(page, { role: "Admin", can_train: true, can_audit: true, can_load: true });
+    await page.route("**/api/trainer/vendors**", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+    );
+    await page.route("**/api/trainer/sessions/global**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session_id: "s1",
+          scope: "global",
+          variables: [],
+          chat_history: [],
+        }),
+      })
+    );
+
+    await page.goto("/trainer");
+
+    await expect(page.locator("header")).toHaveCount(1);
+    await expect(page.locator("header h1")).toHaveText("AI Trainer");
+    // Portalled up from app/trainer/page.tsx via <PageHeaderActions>.
+    await expect(
+      page.locator("header").getByRole("button", { name: /Commit to Template Registry/ })
+    ).toBeVisible();
+    await expect(
+      page.locator("header").getByRole("button", { name: /Rule History/ })
+    ).toBeVisible();
+  });
+
+  test("the title updates on client-side navigation between routes", async ({ page }) => {
+    await stubShell(page, { role: "Admin", can_train: true, can_audit: true, can_load: true });
+    await page.goto("/dashboard");
+    await expect(page.locator("header h1")).toHaveText("Command Center");
+
+    // A stale title after a soft navigation is the specific failure mode a
+    // context-fed header can have and a per-page header cannot.
+    await navLink(page, "Help").click();
+    await expect(page).toHaveURL(/\/help$/);
+    await expect(page.locator("header h1")).toHaveText("Help Center");
   });
 });
 
@@ -241,7 +337,13 @@ test.describe("Header — search box and notification bell (Gaps 87 + 95)", () =
   });
 
   test("bell shows no badge when nothing needs review", async ({ page }) => {
-    await stubShell(page, { role: "Admin" });
+    // can_audit must be stubbed explicitly, not implied by role: useAuth() reads
+    // the permission flags straight off /auth/me and never derives them from
+    // "Admin" (the backend's resolve_permissions does that, and it is not in
+    // play here). Without it the bell is correctly hidden and this test fails
+    // for a reason unrelated to what it is checking -- which is how it stood
+    // before Gap 110's pass, failing on master. Same fix in the test below.
+    await stubShell(page, { role: "Admin", can_audit: true });
     await page.goto("/dashboard");
 
     const bell = page.locator("header").getByRole("link", { name: /invoice queue/i });
@@ -252,7 +354,7 @@ test.describe("Header — search box and notification bell (Gaps 87 + 95)", () =
   });
 
   test("bell shows the real count and links to the queue", async ({ page }) => {
-    await stubShell(page, { role: "Admin" });
+    await stubShell(page, { role: "Admin", can_audit: true });
     // Registered after stubShell so this more specific route wins.
     await page.route("**/api/invoices?status=AUDIT_REQUIRED**", (route) =>
       route.fulfill({

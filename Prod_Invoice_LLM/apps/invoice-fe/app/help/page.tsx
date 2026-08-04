@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { Search, GraduationCap, ChevronRight } from "lucide-react";
+import { Search, ChevronRight } from "lucide-react";
+import { usePageHeader } from "@/components/layout/PageHeaderContext";
 import { HELP_SECTIONS as TRAINER_HELP_SECTIONS, type HelpSection } from "./content/trainer-guide";
 import { AUDITOR_HELP_SECTIONS } from "./content/auditor-guide";
 
@@ -11,6 +12,14 @@ const HELP_SECTIONS: HelpSection[] = [
 ];
 
 export default function HelpPage() {
+  // FE Gap 110: Help Center stays a real page and a real Sidebar tab -- only
+  // the duplicate HelpCircle icon in Header.tsx was removed. Its own <h1>
+  // block folds into the shared header like every other screen.
+  usePageHeader({
+    title: "Help Center",
+    subtitle: "Step-by-step guides for using the platform, with screenshots from the real app.",
+  });
+
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string>(HELP_SECTIONS[0].id);
 
@@ -32,16 +41,6 @@ export default function HelpPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-white tracking-wide flex items-center gap-2">
-          <GraduationCap className="w-6 h-6 text-blue-400" />
-          Help Center
-        </h1>
-        <p className="text-xs text-slate-400">
-          Step-by-step guides for using the platform, with screenshots from the real app.
-        </p>
-      </div>
-
       {/* Search bar — client-side filter over section title/keywords/body text.
           A chat-style "ask a question" assistant would need a new backend
           endpoint (LLM over this guide content); scoped out for now — search

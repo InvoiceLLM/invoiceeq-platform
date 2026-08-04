@@ -16,6 +16,14 @@ class Tenant(SQLModel, table=True):
     clerk_org_id: str | None = Field(default=None, max_length=255, unique=True, index=True)
     billing_plan: str = Field(default="free", max_length=50)
     free_invoices_remaining: int = Field(default_factory=lambda: settings.DEFAULT_FREE_INVOICES_LIMIT)
+    # Gap 118: when the free allowance above next refills. routers/invoices.py
+    # only ever decrements free_invoices_remaining, so without this the "50
+    # invoices/month" free tier was really 50 invoices for the lifetime of the
+    # account. NULL means "the cycle clock has not started yet" -- true for
+    # every row predating the migration and for a tenant that has never been on
+    # the free plan -- and is seeded, without granting a refill, the first time
+    # services/billing_lifecycle.refresh_free_quota() sees the tenant.
+    free_quota_reset_at: datetime | None = Field(default=None)
     payu_customer_id: str | None = Field(default=None, max_length=255)
     payu_subscription_id: str | None = Field(default=None, max_length=255)
     # Gap 71: end of the currently-paid-for billing cycle. PayU's classic API

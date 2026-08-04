@@ -8,13 +8,21 @@
  */
 
 import React, { useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, Mail, Copy, Check, Info } from "lucide-react";
+import { Mail, Copy, Check, Info } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { usePageHeader } from "@/components/layout/PageHeaderContext";
 import EmailSendersList from "@/components/settings/EmailSendersList";
 import OutboundEmailSettings from "@/components/settings/OutboundEmailSettings";
 
 export default function EmailSettingsPage() {
+  // FE Gap 110: own h-16 header bar replaced by the shared one; its back arrow
+  // becomes the header's backHref.
+  usePageHeader({
+    title: "Email Ingestion & Delivery",
+    subtitle: "Configure email-in invoice triggers and outbound delivery senders",
+    backHref: "/settings",
+  });
+
   const { tenantId, role } = useAuth();
   const isAdmin = role === "Admin";
   const [copied, setCopied] = useState(false);
@@ -33,22 +41,6 @@ export default function EmailSettingsPage() {
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
-      {/* Header */}
-      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/settings"
-            className="w-9 h-9 rounded-xl bg-slate-500/10 border border-slate-500/20 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div>
-            <h1 className="text-base font-semibold text-white tracking-wide">Email Ingestion & Delivery</h1>
-            <p className="text-xs text-slate-400">Configure email-in invoice triggers and outbound delivery senders</p>
-          </div>
-        </div>
-      </header>
-
       {/* Content Grid */}
       <main className="flex-1 px-6 py-8 max-w-2xl w-full mx-auto space-y-8">
         

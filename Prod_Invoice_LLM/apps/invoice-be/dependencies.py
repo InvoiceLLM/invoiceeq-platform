@@ -11,7 +11,7 @@ from datetime import datetime
 from config import settings
 from database import engine
 from models import Tenant, User, RoleMapper
-from services.billing_lifecycle import enforce_lapse
+from services.billing_lifecycle import enforce_lapse, refresh_free_quota
 
 class TenantContext(BaseModel):
     tenant_id: UUID
@@ -361,6 +361,20 @@ def get_tenant_context_allow_unpaid(
     # scripts/sweep_lapsed_billing.py covers idle tenants who never make a
     # request at all -- see services/billing_lifecycle.sweep_lapsed_tenants().
     enforce_lapse(tenant, db_session)
+
+    # Gap 118: the free tier's mirror of the same problem, checked in the same
+    # place for the same reasons. routers/invoices.py only ever decrements
+    # free_invoices_remaining, so the advertised "50 invoices a month" was in
+    # practice 50 invoices ever. Doing the refill here rather than at the two
+    # upload call sites means the tenant's allowance is already correct
+    # whichever door they come in through (upload, directory watcher, or just
+    # loading a page that reads the counter), and costs one datetime comparison
+    # against the Tenant row this request has already loaded. Deliberately
+    # ordered after enforce_lapse(): a tenant demoted to 'unpaid' on this very
+    # request must not then be handed a fresh free allowance -- refresh_free_
+    # quota() only acts on plan == 'free'. Idle free tenants who never make a
+    # request are Gap 121 (a scheduled sweep), not covered here.
+    refresh_free_quota(tenant, db_session)
 
     context = TenantContext(
         tenant_id=tenant_id,

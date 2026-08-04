@@ -2,9 +2,8 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { 
-  ArrowLeft, 
-  Webhook, 
+import {
+  Webhook,
   Copy, 
   Check, 
   Plus, 
@@ -17,6 +16,7 @@ import {
   RotateCw
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 
 interface WebhookSub {
   id: string;
@@ -40,6 +40,14 @@ const ALLOWED_EVENTS = [
 ];
 
 export default function WebhooksPage() {
+  // FE Gap 110: declared above the loading/Access-Restricted early returns, so
+  // the shared header still names the screen in both of those states.
+  usePageHeader({
+    title: "Developer Webhooks",
+    subtitle: "Register endpoints to receive automated event payloads",
+    backHref: "/settings",
+  });
+
   const { role, loading } = useAuth();
   const isAdmin = role === "Admin";
 
@@ -206,32 +214,20 @@ export default function WebhooksPage() {
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
-      {/* Header */}
-      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/settings"
-            className="w-9 h-9 rounded-xl bg-slate-500/10 border border-slate-500/20 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div>
-            <h1 className="text-base font-semibold text-white tracking-wide">Developer Webhooks</h1>
-            <p className="text-xs text-slate-400">Register endpoints to receive automated event payloads</p>
-          </div>
-        </div>
-
+      {/* FE Gap 110: own h-16 header bar replaced by the shared one; "Add
+          Endpoint" portals up into it so it keeps sitting beside the title. */}
+      <PageHeaderActions>
         <button
           onClick={() => {
             setCreatedSecret(null);
             setShowCreateModal(true);
           }}
-          className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-md active:scale-95"
+          className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-md active:scale-95 shrink-0"
         >
           <Plus className="w-4 h-4" />
           Add Endpoint
         </button>
-      </header>
+      </PageHeaderActions>
 
       {/* Main Content */}
       <main className="flex-1 px-6 py-8 max-w-4xl w-full mx-auto space-y-6">

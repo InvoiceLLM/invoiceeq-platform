@@ -21,7 +21,23 @@ class Settings(BaseSettings):
     # request with no Authorization header resolves to a mock Admin context on
     # the all-zero tenant, which is a full auth bypass.
     ALLOW_MOCK_AUTH: bool = False
+    # Gap 117: which deployment this process is. Read only by ops scripts that
+    # must never touch production data (scripts/grant_test_plan.py), never by
+    # request-handling code -- nothing about the product's behaviour should
+    # branch on it. Defaults to "production" deliberately, the same fail-closed
+    # choice as ALLOW_MOCK_AUTH above: an environment that forgot to declare
+    # itself is treated as the one where a destructive script must refuse to
+    # run, so the unsafe state is the one you have to opt into explicitly.
+    ENVIRONMENT: str = "production"
     DEFAULT_FREE_INVOICES_LIMIT: int = 50
+    # Gap 118: how often DEFAULT_FREE_INVOICES_LIMIT refills. The free tier was
+    # always described as a monthly allowance but was implemented as a
+    # decrement-only lifetime counter, so a free tenant was permanently capped
+    # at 50 invoices ever. Deliberately its own knob rather than reusing
+    # BILLING_CYCLE_DAYS: that value is "how much time one PayU payment buys",
+    # and if a future annual plan pushed it to 365 the free tier would silently
+    # become 50 invoices per *year*. Same default (30) today, different meaning.
+    FREE_QUOTA_CYCLE_DAYS: int = 30
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     # Where oauth_callback() redirects the browser back to after a connector

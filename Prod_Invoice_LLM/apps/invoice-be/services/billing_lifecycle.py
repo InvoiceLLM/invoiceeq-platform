@@ -24,6 +24,14 @@ Two deliberate non-behaviours:
 * Only PAID_PLANS lapse. `free` has its own enforcement (the
   `free_invoices_remaining` quota in routers/invoices.py), and the mock
   `active` plan exists only for the test/dev auth fallback.
+
+Gap 118 added the free tier's mirror image to this same module. Lapse moves a
+paid tenant *down* when a date passes; the free-quota refill moves a free
+tenant's allowance back *up* when a date passes. Same inputs (a column on
+Tenant plus a cycle length from settings), same two call-site story (lazy in
+dependencies.py; a batch sweep for idle tenants, which is Gap 121 and does not
+exist yet), so they live together rather than in a second module that would
+inevitably drift on the date arithmetic.
 """
 import logging
 from datetime import datetime, timedelta
@@ -45,6 +53,12 @@ PAID_PLANS = {"pro", "pro_combined"}
 # paying. "unpaid" is the state dependencies.get_tenant_context() already
 # blocks with a 402.
 LAPSED_PLAN = "unpaid"
+
+# Gap 118: the only plan whose invoice allowance refills on a cycle. Paid plans
+# have no `free_invoices_remaining` enforcement at all (routers/invoices.py
+# checks it only when billing_plan == "free"), and "unpaid" must not refill --
+# see the LAPSED_PLAN comment above for why that would be backwards.
+FREE_PLAN = "free"
 
 
 def extend_paid_through(tenant: Tenant, now: datetime | None = None) -> datetime:
@@ -136,3 +150,121 @@ def sweep_lapsed_tenants(db_session: Session, now: datetime | None = None) -> li
     demoted = [tenant for tenant in candidates if enforce_lapse(tenant, db_session, now)]
     logger.info("Billing lapse sweep: %s candidate(s) checked, %s demoted.", len(candidates), len(demoted))
     return demoted
+
+
+# ---------------------------------------------------------------------------
+# Gap 118: free-tier quota refill -- the mirror image of the lapse logic above.
+# ---------------------------------------------------------------------------
+
+
+def free_quota_deadline(tenant: Tenant) -> datetime | None:
+    """
+    The instant at which this tenant's free allowance refills, or None when the
+    question doesn't apply (not on the free plan, or the cycle clock has never
+    been started for this row).
+    """
+    if tenant.billing_plan != FREE_PLAN:
+        return None
+    return tenant.free_quota_reset_at
+
+
+def is_free_quota_due(tenant: Tenant, now: datetime | None = None) -> bool:
+    """
+    True when this free-plan tenant's allowance has reached its refill date.
+
+    NULL `free_quota_reset_at` is deliberately False, not True -- exactly as
+    NULL `paid_through` is never lapsed. It means "no cycle has been observed
+    for this tenant yet", so treating it as due would hand every pre-migration
+    row an immediate extra allowance the moment this deployed.
+    """
+    deadline = free_quota_deadline(tenant)
+    if deadline is None:
+        return False
+    return (now or datetime.utcnow()) >= deadline
+
+
+def advance_free_quota_reset_at(tenant: Tenant, now: datetime | None = None) -> datetime:
+    """
+    Move `tenant.free_quota_reset_at` to the next boundary strictly in the
+    future and return it. Does not commit -- the caller owns the transaction.
+
+    Unset (or somehow in the future already) means start one cycle from now.
+    Otherwise it advances by whole cycles from the existing date rather than
+    resetting to `now + cycle`, so a tenant who was idle for three months lands
+    back on their original monthly anniversary instead of having it silently
+    drift to whenever they happened to come back. This is the same
+    "extend from the existing date, not from now" intent as
+    extend_paid_through(), applied to a date that may be many cycles stale.
+    """
+    now = now or datetime.utcnow()
+    cycle = timedelta(days=settings.FREE_QUOTA_CYCLE_DAYS)
+    current = tenant.free_quota_reset_at
+    if current is None or current > now:
+        tenant.free_quota_reset_at = now + cycle
+        return tenant.free_quota_reset_at
+
+    elapsed_cycles = (now - current) // cycle
+    tenant.free_quota_reset_at = current + (elapsed_cycles + 1) * cycle
+    return tenant.free_quota_reset_at
+
+
+def refresh_free_quota(tenant: Tenant, db_session: Session, now: datetime | None = None) -> bool:
+    """
+    Refill a free-plan tenant's invoice allowance if its cycle has elapsed, and
+    commit. Returns whether an actual refill happened.
+
+    Three distinct outcomes, only one of which is a refill:
+
+    * Not on the free plan -> nothing at all. Paid plans don't consult
+      `free_invoices_remaining`, and 'unpaid' must never be handed a fresh
+      allowance (that is the whole reason LAPSED_PLAN isn't 'free').
+    * On the free plan with no cycle clock yet -> seed
+      `free_quota_reset_at` one cycle out and commit, but leave the counter
+      alone, and return False. Whatever balance the tenant already has is
+      theirs; they simply get their first refill one full cycle from now. This
+      is what makes the migration backfill-free and stops the deploy itself
+      from being a mass grant of 50 invoices.
+    * On the free plan and past the deadline -> counter back to
+      DEFAULT_FREE_INVOICES_LIMIT, deadline advanced, commit, return True.
+
+    Like enforce_lapse(), the result is persisted rather than derived on read,
+    so `free_invoices_remaining` in the database is always the number
+    routers/invoices.py will actually enforce.
+    """
+    if tenant.billing_plan != FREE_PLAN:
+        return False
+
+    if tenant.free_quota_reset_at is None:
+        advance_free_quota_reset_at(tenant, now)
+        tenant.updated_at = datetime.utcnow()
+        db_session.add(tenant)
+        db_session.commit()
+        db_session.refresh(tenant)
+        logger.info(
+            "Free quota cycle started: tenant=%s remaining=%s next_reset=%s",
+            tenant.id,
+            tenant.free_invoices_remaining,
+            tenant.free_quota_reset_at,
+        )
+        return False
+
+    if not is_free_quota_due(tenant, now):
+        return False
+
+    previous_remaining = tenant.free_invoices_remaining
+    tenant.free_invoices_remaining = settings.DEFAULT_FREE_INVOICES_LIMIT
+    advance_free_quota_reset_at(tenant, now)
+    tenant.updated_at = datetime.utcnow()
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+
+    logger.info(
+        "Free quota refilled: tenant=%s remaining %s -> %s (next_reset=%s, cycle=%sd)",
+        tenant.id,
+        previous_remaining,
+        tenant.free_invoices_remaining,
+        tenant.free_quota_reset_at,
+        settings.FREE_QUOTA_CYCLE_DAYS,
+    )
+    return True

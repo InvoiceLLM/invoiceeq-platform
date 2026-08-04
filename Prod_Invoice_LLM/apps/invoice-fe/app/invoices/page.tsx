@@ -5,7 +5,7 @@ import FilterBar, { FilterState } from "../../components/dashboard/FilterBar";
 import RecentInvoicesTable, { StatusTab } from "../../components/dashboard/RecentInvoicesTable";
 import OutboundFilterBar, { OutboundFilterState } from "../../components/dashboard/OutboundFilterBar";
 import OutboundInvoicesTable, { OutboundStatusTab } from "../../components/dashboard/OutboundInvoicesTable";
-import PageHeader from "../../components/layout/PageHeader";
+import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
 
@@ -35,6 +35,14 @@ function outboundTabToStatusParams(tab: OutboundStatusTab): { status?: string; s
 type InvoicesTab = "receiving" | "sending";
 
 export default function InvoicesPage() {
+  // FE Gap 110: title + SENTINEL badge now live in Shell's one shared header.
+  usePageHeader({
+    title: "Audit Queue",
+    agentIcon: "🛡️",
+    agentName: "SENTINEL",
+    agentRole: "Audit & Compliance",
+  });
+
   const { loading: authLoading } = useAuth();
   const [filters, setFilters] = useState<FilterState>({
     vendorName: "",
@@ -251,27 +259,31 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Audit Queue" agentIcon="🛡️" agentName="SENTINEL" agentRole="Audit & Compliance" />
-
+      {/* FE Gap 110: title + SENTINEL badge moved to Shell's shared header, and
+          the Receiving/Sending toggle follows it there via the header's actions
+          portal -- same treatment Ingestion gets, so the two screens' tab rows
+          stay consistent with each other. */}
       {showTabs && (
-        <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
-          <button
-            onClick={() => setInvoicesTab("receiving")}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              invoicesTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Receiving
-          </button>
-          <button
-            onClick={() => setInvoicesTab("sending")}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              invoicesTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Sending
-          </button>
-        </div>
+        <PageHeaderActions>
+          <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
+            <button
+              onClick={() => setInvoicesTab("receiving")}
+              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                invoicesTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Receiving
+            </button>
+            <button
+              onClick={() => setInvoicesTab("sending")}
+              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                invoicesTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Sending
+            </button>
+          </div>
+        </PageHeaderActions>
       )}
 
       {showReceiving && (

@@ -9,30 +9,24 @@
  */
 
 import React from "react";
-import { Settings2 } from "lucide-react";
 import ServiceFlowToggles from "@/components/settings/ServiceFlowToggles";
 
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
+import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
 export default function SettingsPage() {
+  // FE Gap 110: this page used to render its own h-16 header bar below Shell's
+  // global Header. Title and subtitle now go up to the one shared header.
+  usePageHeader({
+    title: "Settings",
+    subtitle: "Configure your workspace integrations and features",
+  });
+
   const { role, loading } = useAuth();
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
-      {/* Page Header */}
-      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-slate-500/10 border border-slate-500/20 flex items-center justify-center text-slate-300">
-            <Settings2 className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-base font-semibold text-white tracking-wide">Settings</h1>
-            <p className="text-xs text-slate-400">Configure your workspace integrations and features</p>
-          </div>
-        </div>
-      </header>
-
       {/* Content */}
       <main className="flex-1 px-6 py-8 max-w-2xl w-full mx-auto space-y-8">
 

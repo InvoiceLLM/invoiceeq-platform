@@ -121,8 +121,10 @@ def test_webhook_unauthorized_sender(db_session):
     assert res.json()["status"] == "dropped"
 
 
+@patch("routers.invoices.upload_pdf_to_blob_storage")
 @patch("routers.invoices.QueueClient")
-def test_webhook_success_ingestion(mock_qc, db_session):
+def test_webhook_success_ingestion(mock_qc, mock_storage, db_session):
+    mock_storage.return_value = "mock/path/invoice.pdf"
     mock_qc.from_connection_string.return_value.send_message = MagicMock()
 
     # 1. Add sender to allow-list

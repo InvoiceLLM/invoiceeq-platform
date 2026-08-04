@@ -4,6 +4,7 @@ import React from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
+import { PageHeaderProvider } from "./PageHeaderContext";
 
 interface ShellProps {
   children: React.ReactNode;
@@ -27,20 +28,26 @@ export default function Shell({ children }: ShellProps) {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-bg-main">
-      {/* Sidebar Panel */}
-      <Sidebar />
+    // FE Gap 110: the provider has to wrap both <Header /> and {children},
+    // because the header is what renders each page's title and the pages are
+    // what declare it -- the state has to sit above their nearest common
+    // ancestor, which is this element.
+    <PageHeaderProvider>
+      <div className="flex h-screen w-screen overflow-hidden bg-bg-main">
+        {/* Sidebar Panel */}
+        <Sidebar />
 
-      {/* Main Panel Content Area */}
-      <div className="flex flex-col flex-1 h-full overflow-hidden">
-        {/* Top Header */}
-        <Header />
+        {/* Main Panel Content Area */}
+        <div className="flex flex-col flex-1 h-full overflow-hidden">
+          {/* Top Header -- the app's only page header, for every route */}
+          <Header />
 
-        {/* Scrollable Children Canvas */}
-        <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-b from-[#0B0F19] to-[#080B12]">
-          {children}
-        </main>
+          {/* Scrollable Children Canvas */}
+          <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-b from-[#0B0F19] to-[#080B12]">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </PageHeaderProvider>
   );
 }

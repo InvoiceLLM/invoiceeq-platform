@@ -11,7 +11,7 @@ import ClientPerformanceChart from "../../components/dashboard/ClientPerformance
 import NeedsAttentionWidget from "../../components/dashboard/NeedsAttentionWidget";
 import TrainerImpactPanel from "../../components/dashboard/TrainerImpactPanel";
 import ActionableInsightsPanel from "../../components/dashboard/ActionableInsightsPanel";
-import PageHeader from "../../components/layout/PageHeader";
+import { usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
 
@@ -56,6 +56,10 @@ const defaultMetrics: DashboardMetrics = {
 };
 
 export default function DashboardPage() {
+  // FE Gap 110: feeds Shell's one shared header instead of rendering a title
+  // block of this page's own.
+  usePageHeader({ title: "Command Center" });
+
   const { loading: authLoading } = useAuth();
   const [filters, setFilters] = useState<FilterState>({
     vendorName: "",
@@ -240,23 +244,26 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      {/* Title + filters share one row -- no subtitle line, no separate
-          filter panel. Filters are inbound-only vocabulary (vendor_name,
+      {/* FE Gap 110: the title moved out of the page body into Shell's one
+          shared header (declared above via usePageHeader). The filter row is
+          deliberately NOT portalled up there with it: FilterBar's compact
+          variant is still four selects plus a Save button (~660px of minimum
+          widths), which cannot share a 64px header row with the title and the
+          profile block at 1024-1280px without pushing controls off-screen --
+          the exact failure Gap 85 exists to prevent. It keeps the row the
+          title used to occupy, so no vertical space is lost either way.
+
+          Filters are inbound-only vocabulary (vendor_name,
           PAID/REJECTED/AUDIT_REQUIRED), so hidden entirely for a send-only
           tenant rather than silently mis-filtering/zeroing the outbound half. */}
-      <PageHeader
-        title="Command Center"
-        actions={
-          receiveEnabled ? (
-            <FilterBar
-              compact
-              onFilterChange={handleFilterChange}
-              availableVendors={uniqueVendors}
-              availableTags={uniqueTags}
-            />
-          ) : undefined
-        }
-      />
+      {receiveEnabled && (
+        <FilterBar
+          compact
+          onFilterChange={handleFilterChange}
+          availableVendors={uniqueVendors}
+          availableTags={uniqueTags}
+        />
+      )}
 
       {/* Metrics half. One undivided grid when only one service is active;
           two side-by-side halves when both are. No combined/net figure in

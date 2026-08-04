@@ -7,12 +7,12 @@
  */
 
 import React, { useState, useEffect } from "react";
-import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft, HardDrive, Cpu, Loader2, CheckCircle } from "lucide-react";
+import { HardDrive, Cpu, Loader2, CheckCircle } from "lucide-react";
 import IntegrationCard from "@/components/connectors/IntegrationCard";
 import FolderTreeExplorer from "@/components/connectors/FolderTreeExplorer";
 import { useAuth } from "@/hooks/useAuth";
+import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
 // Local storage keys to persist mapped folder names for demo purposes
 const STORAGE_KEYS = {
@@ -26,6 +26,13 @@ interface ConnectionStatuses {
 }
 
 export default function ConnectorsPage() {
+  // FE Gap 110: own h-16 header bar replaced by the shared one.
+  usePageHeader({
+    title: "Third-Party Connectors",
+    subtitle: "Map Google Drive and Salesforce documents to service pipelines",
+    backHref: "/settings",
+  });
+
   const searchParams = useSearchParams();
   const router = useRouter();
   // FE Gap 99 (sub-finding): `isAdmin` was hardcoded `true` on both cards
@@ -200,22 +207,6 @@ export default function ConnectorsPage() {
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
-      {/* Header */}
-      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/settings"
-            className="w-9 h-9 rounded-xl bg-slate-500/10 border border-slate-500/20 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div>
-            <h1 className="text-base font-semibold text-white tracking-wide">Third-Party Connectors</h1>
-            <p className="text-xs text-slate-400">Map Google Drive and Salesforce documents to service pipelines</p>
-          </div>
-        </div>
-      </header>
-
       {justConnected && (
         <div className="max-w-4xl w-full mx-auto px-6 pt-4">
           <div className="flex items-center gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-xs">

@@ -1,13 +1,20 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
-import { ArrowLeft, CreditCard, CheckCircle2, ShieldCheck, Sparkles, AlertTriangle } from "lucide-react";
+import { CreditCard, CheckCircle2, ShieldCheck, Sparkles, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
 const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
 export default function SubscriptionsPage() {
+  // FE Gap 110: own h-16 header bar replaced by the shared one.
+  usePageHeader({
+    title: "Subscriptions & Billing",
+    subtitle: "Manage your workspace pricing tier and limits",
+    backHref: "/settings",
+  });
+
   const { role, billingPlan, loading } = useAuth();
   const isAdmin = role === "Admin";
 
@@ -30,22 +37,6 @@ export default function SubscriptionsPage() {
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
-      {/* Header */}
-      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/settings"
-            className="w-9 h-9 rounded-xl bg-slate-500/10 border border-slate-500/20 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div>
-            <h1 className="text-base font-semibold text-white tracking-wide">Subscriptions &amp; Billing</h1>
-            <p className="text-xs text-slate-400">Manage your workspace pricing tier and limits</p>
-          </div>
-        </div>
-      </header>
-
       {/* Content Grid */}
       <main className="flex-1 px-6 py-8 max-w-2xl w-full mx-auto space-y-6">
         {/* Current Plan Overview */}
