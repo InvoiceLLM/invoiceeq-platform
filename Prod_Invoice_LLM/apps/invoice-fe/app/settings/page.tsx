@@ -126,22 +126,21 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* Coming-soon chips for the next sections */}
-        {[
-          { label: "Webhooks", description: "Event routing for invoice status changes" },
-        ].map(({ label, description }) => (
-          <section key={label} aria-label={label}>
-            <div className="flex items-center justify-between px-5 py-4 rounded-xl bg-[#0D131F] border border-[#1A2437]">
-              <div>
-                <p className="text-sm font-medium text-slate-300">{label}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{description}</p>
-              </div>
-              <span className="text-[10px] px-2 py-1 rounded-full bg-[#1E293B] border border-[#2D3F55] text-slate-500 font-mono whitespace-nowrap">
-                Coming soon
-              </span>
+        {/* Webhooks Section */}
+        <section aria-labelledby="webhooks-heading">
+          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
+            <div>
+              <h2 id="webhooks-heading" className="text-sm font-medium text-white">Developer Webhooks</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Register HTTP callback endpoints to receive real-time status updates</p>
             </div>
-          </section>
-        ))}
+            <Link
+              href="/settings/webhooks"
+              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
+            >
+              Configure
+            </Link>
+          </div>
+        </section>
 
 
       </main>

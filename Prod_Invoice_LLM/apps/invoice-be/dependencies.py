@@ -233,7 +233,13 @@ def get_tenant_context_allow_unpaid(
                     pass  # Not a valid UUID, ignore
 
             user_id = payload.get("sub", MOCK_USER_ID)
-            role = payload.get("role") or payload.get("org_role", "Viewer")
+            raw_role = payload.get("role") or payload.get("org_role", "Viewer")
+            if raw_role in ("org:admin", "admin", "Admin"):
+                role = "Admin"
+            elif raw_role in ("org:member", "member", "Auditor", "auditor"):
+                role = "Auditor"
+            else:
+                role = "Viewer"
             plan = payload.get("billing_plan", "free")
             email = payload.get("email") or payload.get("email_address") or f"{user_id}@domain.com"
             first_name = payload.get("first_name") or payload.get("given_name")
