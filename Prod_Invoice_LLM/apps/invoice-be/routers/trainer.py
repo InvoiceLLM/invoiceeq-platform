@@ -18,6 +18,7 @@ from agents.extraction_agent import run_extraction_agent
 from agents.trainer_agent import run_trainer_agent
 from services.storage import LOCAL_STORAGE_DIR
 from services import trainer_sessions
+from services.billing_lifecycle import PAID_PLANS
 from utils.llm import get_llm
 from azure.storage.queue import QueueClient
 
@@ -33,6 +34,50 @@ router = APIRouter(
     tags=["trainer"],
     dependencies=[Depends(require_can_train)],
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FE Gap 115: paid-plan gate
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Settings -> Subscriptions & Billing advertises "AI Quality Rules" as a
+# paid-only capability, but nothing enforced it: a Free-tier tenant could drive
+# the whole Trainer, and the FE gate added alongside this is bypassable by
+# calling the API directly, so this is the source of truth.
+#
+# Gate condition, decided deliberately rather than copied:
+#
+#   * 'free' -> 403 here. This is the only plan the gate actually has to reject.
+#   * 'unpaid' -> never reaches this code. dependencies.get_tenant_context()
+#     already 402s a lapsed tenant before any router dependency runs (Gap 71),
+#     so re-checking it here would be dead code that only made the rule look
+#     more complicated than it is. It is still listed in the 403 path below by
+#     construction (it is simply "not in the allowed set"), so the behaviour is
+#     correct if that 402 ever moves.
+#   * 'active' is allowed alongside PAID_PLANS. It is not a real plan -- it is
+#     dependencies.MOCK_BILLING_PLAN, what a mock/dev-auth context resolves to
+#     with ALLOW_MOCK_AUTH on. Gating on PAID_PLANS alone would 403 every local
+#     dev session and every backend test. The FE already treats it as Pro
+#     Combined (app/settings/subscriptions/page.tsx), so this matches.
+#
+# Applied to the endpoints that create or change Trainer state, not to the two
+# read-only ones (/vendors, /templates/history): a Free tenant that reaches
+# those sees an accurate, empty-handed picture of what already exists rather
+# than an opaque error, and neither can produce a rule.
+TRAINER_ALLOWED_PLANS = PAID_PLANS | {"active"}
+
+
+def require_paid_plan(context: TenantContext = Depends(get_tenant_context)) -> TenantContext:
+    """403 unless the tenant is on a plan that includes the AI Trainer."""
+    if context.billing_plan not in TRAINER_ALLOWED_PLANS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "The AI Trainer is available on the Pro and Pro Combined plans. "
+                "Upgrade your subscription to train extraction rules."
+            ),
+        )
+    return context
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -284,7 +329,7 @@ def _invalidate_chat_answer_cache(tenant_id: str) -> None:
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_transient_file(
     file: UploadFile = File(...),
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(require_paid_plan),
 ):
     """Scope #3 (New Vendor): cold-start from a freshly uploaded sample PDF (Task 10.4)."""
     if not file.filename.lower().endswith(".pdf"):
@@ -335,7 +380,7 @@ async def upload_transient_file(
 @router.post("/sessions/global", status_code=status.HTTP_201_CREATED)
 async def start_global_session(
     file: UploadFile | None = File(default=None),
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(require_paid_plan),
     db_session: Session = Depends(get_db_session),
 ):
     """Scope #1 (Global): tenant-wide, vendor-agnostic. Chat-only or optionally PDF-grounded (Task 10.2)."""
@@ -390,7 +435,7 @@ async def start_global_session(
 @router.post("/sessions/from-production", status_code=status.HTTP_201_CREATED)
 def start_from_production_session(
     vendor_name: str = Query(..., description="Vendor whose latest production invoice seeds the sandbox"),
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(require_paid_plan),
     db_session: Session = Depends(get_db_session),
 ):
     """Scope #2 (Existing Vendor): seed from a real, already-extracted production invoice (Task 10.3)."""
@@ -494,7 +539,7 @@ def list_trainer_vendors(
 def trainer_chat(
     session_id: str,
     payload: ChatPayload,
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(require_paid_plan),
     db_session: Session = Depends(get_db_session),
 ):
     """Refine constraints from a natural-language correction and re-extract."""
@@ -570,7 +615,7 @@ def trainer_chat(
 def trainer_commit(
     session_id: str,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(require_paid_plan),
 ):
     """Persist session rules to the correct scope, record a version, and queue re-audit."""
     session = trainer_sessions.get_session(session_id)
@@ -708,7 +753,7 @@ def rollback_template(
     template_id: UUID,
     version: int,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(require_paid_plan),
 ):
     """Promote a past rule version back to current (writes a new version, queues re-audit)."""
     template = db_session.get(ExtractionTemplate, template_id)

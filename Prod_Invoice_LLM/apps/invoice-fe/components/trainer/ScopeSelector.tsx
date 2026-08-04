@@ -119,8 +119,14 @@ export default function ScopeSelector({
 
             <span className="whitespace-nowrap">{scope.label}</span>
 
+            {/* Gap 77: all three descriptor badges follow one rule -- same
+                breakpoint, same shape, same per-scope colour token. Raised
+                from `lg` to `xl` because Gap 77 moved these tabs into a shared
+                bar with the grounding control: at lg they now compete with it
+                for the row, and a badge is decoration where the vendor picker
+                / Browse PDF button is function. */}
             <span
-              className={`hidden lg:inline-block text-[9px] px-1.5 py-0.5 rounded border font-mono font-medium ${scope.badgeCls}`}
+              className={`hidden xl:inline-block text-[9px] px-1.5 py-0.5 rounded border font-mono font-medium ${scope.badgeCls}`}
             >
               {scope.badgeText}
             </span>

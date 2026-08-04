@@ -336,3 +336,103 @@ def test_build_system_prompt_is_scope_aware():
     vendor_prompt = _build_system_prompt("existing_vendor", ["Global rule X"])
     assert "read-only context" in vendor_prompt.lower()
     assert "Global rule X" in vendor_prompt
+
+
+# ── FE Gap 115: paid-plan gate ───────────────────────────────────────────────
+#
+# The mock-auth context resolves to billing_plan 'active' (dependencies.
+# MOCK_BILLING_PLAN), which is in TRAINER_ALLOWED_PLANS -- that is why every
+# test above still passes unchanged. To exercise the reject path the tenant row
+# the mock context resolves to has to exist already, on 'free':
+# get_tenant_context() looks the tenant up by MOCK_TENANT_ID before it would
+# create one, so a pre-seeded row wins and its plan is what lands in
+# TenantContext.
+
+@pytest.fixture
+def free_plan_tenant(db_session):
+    from models import Tenant
+
+    db_session.add(Tenant(
+        id=MOCK_TENANT_ID,
+        name="Free Tier Co",
+        domain="free-tier.test",
+        billing_plan="free",
+    ))
+    db_session.commit()
+    yield
+
+
+def test_free_plan_cannot_start_a_global_session(free_plan_tenant, trainer_mocks):
+    resp = client.post("/api/v1/trainer/sessions/global")
+    assert resp.status_code == 403
+    assert "Pro" in resp.json()["detail"]
+
+
+def test_free_plan_cannot_upload_a_new_vendor_sample(free_plan_tenant, trainer_mocks):
+    resp = client.post(
+        "/api/v1/trainer/upload",
+        files={"file": ("inv.pdf", b"%PDF-1.4 mock", "application/pdf")},
+    )
+    assert resp.status_code == 403
+
+
+def test_free_plan_cannot_seed_from_production(free_plan_tenant, db_session):
+    db_session.add(Invoice(id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="mock/acme.pdf",
+                           status="COMPLETED", vendor_name="ACME Corporation"))
+    db_session.commit()
+
+    resp = client.post("/api/v1/trainer/sessions/from-production?vendor_name=ACME%20Corporation")
+    assert resp.status_code == 403
+
+
+def test_free_plan_cannot_commit_a_session(free_plan_tenant, trainer_mocks):
+    # A session that already exists (e.g. created while the tenant was paid)
+    # must still not be committable on a free plan -- the gate is on the write,
+    # not only on session creation.
+    session_id = "sess-free-commit"
+    trainer_sessions.save_session(session_id, {
+        "session_id": session_id,
+        "tenant_id": str(MOCK_TENANT_ID),
+        "scope": "global",
+        "constraints": ["Parse dates as DD/MM/YYYY"],
+        "extracted_data": {},
+        "chat_history": [],
+    })
+
+    resp = client.post(f"/api/v1/trainer/sessions/{session_id}/commit")
+    assert resp.status_code == 403
+
+
+def test_free_plan_cannot_chat_into_a_session(free_plan_tenant, trainer_mocks):
+    session_id = "sess-free-chat"
+    trainer_sessions.save_session(session_id, {
+        "session_id": session_id,
+        "tenant_id": str(MOCK_TENANT_ID),
+        "scope": "global",
+        "constraints": [],
+        "extracted_data": {},
+        "chat_history": [],
+    })
+
+    resp = client.post(
+        f"/api/v1/trainer/sessions/{session_id}/chat",
+        json={"content": "Dates are DD/MM/YYYY"},
+    )
+    assert resp.status_code == 403
+
+
+def test_free_plan_can_still_read_vendors_and_history(free_plan_tenant):
+    # Read-only endpoints are deliberately left open: they can never produce a
+    # rule, and an accurate empty view beats an opaque 403 on page load.
+    assert client.get("/api/v1/trainer/vendors").status_code == 200
+    assert client.get("/api/v1/trainer/templates/history?scope=global").status_code == 200
+
+
+def test_paid_plan_passes_the_gate(db_session, trainer_mocks):
+    from models import Tenant
+
+    db_session.add(Tenant(id=MOCK_TENANT_ID, name="Pro Co", domain="pro.test", billing_plan="pro"))
+    db_session.commit()
+
+    resp = client.post("/api/v1/trainer/sessions/global")
+    assert resp.status_code == 201

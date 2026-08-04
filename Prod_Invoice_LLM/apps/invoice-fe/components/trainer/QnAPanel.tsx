@@ -3,72 +3,51 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
   MessageSquare,
-  Sliders,
   Send,
   Sparkles,
   Bot,
   User,
-  CheckCircle2,
-  AlertCircle,
-  Wand2,
-  Tag,
   Zap,
 } from "lucide-react";
-import { ChatMessage, ExtractedVariable } from "@/lib/trainer-service";
+import { ChatMessage } from "@/lib/trainer-service";
 
 /**
- * Feature 6 Component: QnAPanel (Task 6.5 — Right Panel)
+ * Feature 6 Component: QnAPanel (Task 6.5 — Chat panel)
  *
  * FOR MANAGERS & DEVELOPERS:
- * This component renders the right 50% split-panel column in the AI Trainer workspace.
- * Two core views are accessible via a top tab toggle:
- *
- *   Tab 1 — Chat Assistant:
+ * This component renders the conversational panel in the AI Trainer workspace:
  *     • Conversational message bubbles (User right-aligned, AI left-aligned).
  *     • AI "Thinking..." typing pulse animation during active processing.
  *     • Rule Candidate card inline within AI reply when a rule is created.
  *     • Quick-action suggestion chip strip for fast rule teaching.
  *     • Always-active text input bar at the bottom.
  *
- *   Tab 2 — Variables & Rules Inspector:
- *     • Active Rule Candidates list with emerald "Active" status badges.
- *     • Extracted Document Variables key-value grid with:
- *         – Emerald tick for corrected fields (updated by rule)
- *         – Amber warning for low-confidence fields (< 80%)
- *     • Click-to-highlight: selecting a variable triggers PDF bounding box.
+ * FE Gap 111: this used to be a two-tab panel — Chat, plus a "Variables &
+ * Rules" inspector holding the extracted field list and the active rule
+ * candidates. Both of those now have dedicated always-visible homes
+ * (`ExtractedFieldsPanel` and `RulesRail`), so the tab strip is gone and this
+ * panel does one thing. That tab was a real cost, not just clutter: reading
+ * the field values you were correcting meant hiding the chat you were
+ * correcting them in, which is the workflow the whole screen exists for.
  *
  * Design: Deep glassmorphism panel, message bubbles with gradient backgrounds,
- * animated suggestion chips, smooth tab indicator transition.
+ * animated suggestion chips.
  */
 
 interface QnAPanelProps {
   /** Array of chat messages in current sandbox session */
   chatHistory: ChatMessage[];
-  /** Array of extracted variables from the loaded document */
-  variables: ExtractedVariable[];
-  /** Array of active rule strings registered during session */
-  activeRules: string[];
   /** Callback fired when user submits a new chat rule / instruction */
   onSendMessage: (text: string) => void;
   /** Flag indicating active AI response is processing */
   isSending?: boolean;
-  /** Callback fired when user clicks a variable row to highlight on PDF */
-  onSelectVariable?: (variable: ExtractedVariable) => void;
-  /** ID of currently selected variable */
-  selectedVariableId?: string;
 }
 
 export default function QnAPanel({
   chatHistory,
-  variables,
-  activeRules,
   onSendMessage,
   isSending = false,
-  onSelectVariable,
-  selectedVariableId,
 }: QnAPanelProps) {
-  // Tab state: 'chat' or 'variables'
-  const [activeTab, setActiveTab] = useState<"chat" | "variables">("chat");
   const [inputText, setInputText] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -129,57 +108,21 @@ export default function QnAPanel({
 
   return (
     <div className="h-full flex flex-col bg-[#070D1A]/90 border border-[#1E2D45] rounded-2xl overflow-hidden shadow-2xl shadow-black/30">
-      {/* ── Panel Top Tab Navigation ───────────────────────────────────── */}
-      <div className="h-12 px-4 bg-[#0B1120]/90 border-b border-[#1E2D45] flex items-center justify-between gap-3 shrink-0">
-        {/* Tab Toggle Pill */}
-        <div className="flex items-center gap-1 p-0.5 bg-[#111827]/80 rounded-xl border border-[#1E2D45]">
-          {/* Chat tab */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("chat")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-              activeTab === "chat"
-                ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>Chat Assistant</span>
-            <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-[#6366F1]/15 text-[#6366F1] border border-[#6366F1]/30 text-[10px] font-mono font-semibold leading-none">EVOLVE</span>
-          </button>
-
-          {/* Variables & Rules tab */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("variables")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-              activeTab === "variables"
-                ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Variables & Rules</span>
-            <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-mono leading-none">
-              {variables.length}
-            </span>
-          </button>
-        </div>
-
-        {/* Active Rules counter badge — shown when rules exist */}
-        {activeRules.length > 0 && (
-          <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 shrink-0">
-            <Wand2 className="w-3 h-3 shrink-0" />
-            <span>{activeRules.length} Rule{activeRules.length !== 1 ? "s" : ""} Active</span>
-          </div>
-        )}
+      {/* ── Panel header ───────────────────────────────────────────────── */}
+      {/* Gap 111: a plain title, not a tab strip. The panel has one job now. */}
+      <div className="h-12 px-4 bg-[#0B1120]/90 border-b border-[#1E2D45] flex items-center gap-2 shrink-0">
+        <MessageSquare className="w-4 h-4 text-blue-400 shrink-0" />
+        <h2 className="text-xs font-semibold text-white truncate">Chat Assistant</h2>
+        <span className="px-1.5 py-0.5 rounded-full bg-[#6366F1]/15 text-[#6366F1] border border-[#6366F1]/30 text-[10px] font-mono font-semibold leading-none shrink-0">
+          EVOLVE
+        </span>
+        <span className="hidden lg:inline text-[10px] text-slate-500 truncate ml-1">
+          Describe a correction in plain language — it becomes a rule candidate
+        </span>
       </div>
 
-      {/* ════════════════════════════════════════════════════════════════
-          TAB 1: Chat Assistant
-      ════════════════════════════════════════════════════════════════ */}
-      {activeTab === "chat" && (
-        <div className="flex-1 flex flex-col min-h-0">
+      {/* ── Conversation ───────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-h-0">
           {/* Scrollable Chat Message History */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {/* Empty chat state */}
@@ -330,115 +273,7 @@ export default function QnAPanel({
               <Send className="w-4 h-4" />
             </button>
           </form>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════
-          TAB 2: Extracted Variables & Active Rules Inspector
-      ════════════════════════════════════════════════════════════════ */}
-      {activeTab === "variables" && (
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          {/* ── Section A: Active Rule Template Candidates ─────────── */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Active Rule Candidates ({activeRules.length})</span>
-            </h4>
-
-            {activeRules.length === 0 ? (
-              <div className="p-4 bg-[#0B1120]/80 border border-dashed border-[#1E2D45] rounded-2xl text-xs text-slate-500 text-center leading-relaxed">
-                No rules trained in this session yet.
-                <br />
-                Chat on the left to generate rule candidates.
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                {activeRules.map((rule, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 bg-[#0B1120]/80 border border-emerald-500/20 rounded-xl flex items-center justify-between gap-2 text-xs text-emerald-300 hover:border-emerald-500/40 transition-colors"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Tag className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span className="font-mono text-[11px] truncate">{rule}</span>
-                    </div>
-                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                      Active
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* ── Section B: Extracted Variables Key-Value Inspector ──── */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-              <span>Extracted Variables ({variables.length})</span>
-              <span className="text-[10px] text-slate-500 font-normal">Click to highlight in viewer</span>
-            </h4>
-
-            {variables.length === 0 ? (
-              <div className="p-4 bg-[#0B1120]/80 border border-dashed border-[#1E2D45] rounded-2xl text-xs text-slate-500 text-center leading-relaxed">
-                No extracted variables available.
-                <br />
-                <span className="text-[10px] text-slate-600 mt-1 block">
-                  Variables populate dynamically once a grounding PDF is uploaded or a vendor seed is loaded.
-                </span>
-              </div>
-            ) : (
-              <div className="divide-y divide-[#1E2D45] border border-[#1E2D45] rounded-2xl overflow-hidden bg-[#0B1120]/80">
-                {variables.map((v) => {
-                  const isSelected = selectedVariableId === v.id;
-                  return (
-                    <div
-                      key={v.id}
-                      onClick={() => onSelectVariable && onSelectVariable(v)}
-                      className={`p-3 flex items-center justify-between gap-3 text-xs transition-all cursor-pointer ${
-                        isSelected
-                          ? "bg-blue-500/10 border-l-4 border-l-blue-500"
-                          : "hover:bg-[#111827]/60"
-                      }`}
-                    >
-                      {/* Variable key + label */}
-                      <div className="min-w-0">
-                        <span className="text-[9px] text-slate-500 block uppercase tracking-wider font-mono mb-0.5">
-                          {v.key}
-                        </span>
-                        <span className="font-medium text-white text-xs truncate block">{v.label}</span>
-                      </div>
-
-                      {/* Value chip + status icon */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span
-                          className={`font-mono text-xs px-2.5 py-1 rounded-lg font-semibold ${
-                            v.isCorrected
-                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                              : "bg-[#111827] text-slate-200 border border-[#1E2D45]"
-                          }`}
-                        >
-                          {v.value}
-                        </span>
-
-                        {/* Status icon: green check (corrected) or amber warning (low confidence) */}
-                        {v.isCorrected ? (
-                          <span title="Updated by Rule">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                          </span>
-                        ) : v.confidence < 0.8 ? (
-                          <span title={`Low Confidence (${Math.round(v.confidence * 100)}%)`}>
-                            <AlertCircle className="w-4 h-4 text-amber-400" />
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

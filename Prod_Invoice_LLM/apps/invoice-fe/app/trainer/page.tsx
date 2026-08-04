@@ -2,14 +2,15 @@
 
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
-  GraduationCap,
   History,
   CheckCircle2,
   Sparkles,
   AlertCircle,
   X,
-  ChevronRight,
+  Lock,
+  ExternalLink,
 } from "lucide-react";
 
 import {
@@ -21,61 +22,93 @@ import {
   trainerService,
 } from "@/lib/trainer-service";
 
-import ScopeSelector from "@/components/trainer/ScopeSelector";
-import TrainerUploader from "@/components/trainer/TrainerUploader";
+import { useAuth } from "@/hooks/useAuth";
+import {
+  PageHeaderActions,
+  usePageHeader,
+} from "@/components/layout/PageHeaderContext";
+import TrainerControlBar from "@/components/trainer/TrainerControlBar";
 import PdfViewerPanel from "@/components/trainer/PdfViewerPanel";
+import ExtractedFieldsPanel from "@/components/trainer/ExtractedFieldsPanel";
 import QnAPanel from "@/components/trainer/QnAPanel";
+import RulesRail from "@/components/trainer/RulesRail";
 import CommitModal from "@/components/trainer/CommitModal";
 import RuleHistoryDrawer from "@/components/trainer/RuleHistoryDrawer";
 
-/**
- * StepIndicator component shows the user's progress through the training process.
- */
-function StepIndicator({
-  activeScope,
-  hasSession,
-  hasFile,
-}: {
-  activeScope: string;
-  hasSession: boolean;
-  hasFile: boolean;
-}) {
-  const step2Active = activeScope === "existing_vendor" || activeScope === "new_vendor" || hasFile;
-  const step3Active = hasSession;
+const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
+/**
+ * FE Gap 115 — the plans that include the AI Trainer, mirroring the backend's
+ * `routers/trainer.py::TRAINER_ALLOWED_PLANS`. The backend is the enforcement
+ * (a FE-only gate is bypassable by calling the API directly); this exists so a
+ * Free-tier tenant gets a real explanation instead of a raw 403 on page load.
+ *
+ * `"active"` is included for the same reason it is on the backend: it is the
+ * mock/dev billing plan (`dependencies.MOCK_BILLING_PLAN`), not a real one, and
+ * `app/settings/subscriptions/page.tsx` already treats it as Pro Combined.
+ */
+const TRAINER_PLANS = ["pro", "pro_combined", "active"];
+
+/**
+ * FE Gap 115: what a tenant without a Trainer plan sees instead of the sandbox.
+ *
+ * Modelled on `components/settings/ServiceFlowToggles.tsx`'s UpgradeModal --
+ * same copy structure, same feature list treatment, same absolute
+ * NEXT_PUBLIC_WEBSITE_URL link (see that file for why absolute rather than
+ * same-origin). It is a full-page state rather than that file's modal, because
+ * there is no underlying screen to return to here: the entire route is gated,
+ * so a dismissable overlay would just reveal a sandbox that 403s on every call.
+ */
+function TrainerUpgradePrompt() {
   return (
-    <div className="hidden lg:flex items-center gap-3 bg-[#111827]/40 px-4 py-1.5 border border-[#1E2D45]/55 rounded-xl text-[10px] font-semibold text-slate-400">
-      <div className="flex items-center gap-1.5">
-        <span className="w-4 h-4 rounded-full bg-blue-500/10 border border-blue-500/40 text-blue-400 flex items-center justify-center text-[9px] font-mono select-none">
-          1
-        </span>
-        <span className="text-white select-none">Scope</span>
-      </div>
-      <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-      <div className={`flex items-center gap-1.5 ${step2Active ? "text-slate-300" : "text-slate-500"}`}>
-        <span
-          className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-mono select-none ${
-            step2Active
-              ? "bg-emerald-500/10 border border-emerald-500/40 text-emerald-400"
-              : "bg-slate-800/50 border border-slate-700 text-slate-500"
-          }`}
-        >
-          2
-        </span>
-        <span className={`${step2Active ? "text-white" : ""} select-none`}>Ground</span>
-      </div>
-      <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-      <div className={`flex items-center gap-1.5 ${step3Active ? "text-slate-300" : "text-slate-500"}`}>
-        <span
-          className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-mono select-none ${
-            step3Active
-              ? "bg-purple-500/10 border border-purple-500/40 text-purple-400"
-              : "bg-slate-800/50 border border-slate-700 text-slate-500"
-          }`}
-        >
-          3
-        </span>
-        <span className={`${step3Active ? "text-white" : ""} select-none`}>Teach</span>
+    <div className="h-full flex items-center justify-center p-6 bg-[#0B0F19] text-slate-100 font-sans">
+      <div className="w-full max-w-md bg-[#0F172A] border border-[#222D3D] rounded-2xl shadow-2xl p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+            <Lock className="w-5 h-5 text-violet-400" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-white font-semibold text-sm">Upgrade Required</h2>
+            <p className="text-slate-400 text-xs">AI Trainer &mdash; Pro &amp; Pro Combined</p>
+          </div>
+        </div>
+
+        <p className="text-slate-300 text-xs leading-relaxed mb-4">
+          The <span className="text-violet-300 font-semibold">AI Trainer</span> lets
+          you teach extraction rules in plain language and commit them to your
+          template registry. It is included on the{" "}
+          <span className="text-white font-semibold">Pro</span> and{" "}
+          <span className="text-white font-semibold">Pro Combined</span> plans.
+        </p>
+
+        <div className="bg-[#1E293B] border border-[#2D3F55] rounded-xl p-3 mb-5 space-y-1.5">
+          {[
+            "Teach tenant-wide and per-vendor extraction rules",
+            "Cold-start a brand new vendor from one sample invoice",
+            "Versioned rule history with rollback and re-audit",
+          ].map((feat) => (
+            <div key={feat} className="flex items-center gap-2 text-xs text-slate-300">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              {feat}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-3">
+          <Link
+            href="/settings/subscriptions"
+            className="flex-1 py-2 rounded-lg border border-[#2D3F55] text-slate-400 text-xs hover:text-slate-200 hover:border-slate-500 transition-colors flex items-center justify-center"
+          >
+            View Plan
+          </Link>
+          <a
+            href={`${WEBSITE_URL}/?plan=pro#pricing`}
+            className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Upgrade Now
+          </a>
+        </div>
       </div>
     </div>
   );
@@ -98,6 +131,26 @@ function StepIndicator({
 function TrainerContent() {
   const searchParams = useSearchParams();
 
+  // FE Gap 110 (closing out Gaps 76/88): this page used to draw its own full
+  // h-16 header bar directly below Shell's global Header -- two stacked header
+  // bars on one screen. The title/EVOLVE badge now go up to the shared header,
+  // and the Rule History / Commit buttons follow them through its actions
+  // portal, so nothing is orphaned into a row of its own down here.
+  usePageHeader({
+    title: "AI Trainer",
+    agentIcon: "🧬",
+    agentName: "EVOLVE",
+    agentRole: "Rules Trainer",
+  });
+
+  // FE Gap 115: the Trainer is a paid-tier capability. Read the plan here so
+  // the whole screen can be gated below -- the backend already 403s every
+  // session-create/commit call for a free tenant (routers/trainer.py::
+  // require_paid_plan), so without this the screen would render fully and then
+  // fail on its own initialisation with no explanation.
+  const { billingPlan, loading: authLoading } = useAuth();
+  const hasTrainerPlan = TRAINER_PLANS.includes(billingPlan);
+
   // Core Session State Management
   const [activeScope, setActiveScope] = useState<TrainerScope>("global");
   const [vendors, setVendors] = useState<VendorOption[]>([]);
@@ -111,6 +164,10 @@ function TrainerContent() {
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [ruleHistory, setRuleHistory] = useState<RuleVersion[]>([]);
   const [isSubmittingCommit, setIsSubmittingCommit] = useState(false);
+
+  // Gap 111: the Rules rail starts collapsed -- there is nothing in it until
+  // the user teaches something, and the chat beside it uses the space better.
+  const [isRulesRailExpanded, setIsRulesRailExpanded] = useState(false);
 
   // Toast Notification State
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "info" | "error" } | null>(null);
@@ -128,6 +185,14 @@ function TrainerContent() {
    *    the sandbox session with the suggested scope and correction prompt!
    */
   useEffect(() => {
+    // Gap 115: don't initialise a sandbox we're about to hide. Waiting for
+    // `authLoading` matters as much as the plan check -- `billingPlan` is ""
+    // until GET /api/auth/me resolves, so firing on the first render would
+    // start a session for every tenant regardless of plan and only then find
+    // out it wasn't allowed (a guaranteed 403 in the console on every free
+    // tenant's page load).
+    if (authLoading || !hasTrainerPlan) return;
+
     const init = async () => {
       try {
         const vendorList = await trainerService.getTenantVendors();
@@ -169,7 +234,7 @@ function TrainerContent() {
     };
 
     init();
-  }, [searchParams]);
+  }, [searchParams, authLoading, hasTrainerPlan]);
 
   /**
    * HANDLER: Scope Switching (Task 6.1)
@@ -366,6 +431,22 @@ function TrainerContent() {
     }
   };
 
+  // FE Gap 115: gate the whole route. Both returns are below every hook,
+  // including usePageHeader() above -- the shared header must still name the
+  // screen while identity is resolving and on the upgrade prompt, or the top
+  // bar would go blank on exactly the screens that most need explaining.
+  if (authLoading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#0B0F19]">
+        <div className="h-6 w-40 rounded-lg bg-[#1E293B] animate-pulse" />
+      </div>
+    );
+  }
+
+  if (!hasTrainerPlan) {
+    return <TrainerUpgradePrompt />;
+  }
+
   return (
     // FE Gap 76: h-full, not h-screen. This page renders inside Shell.tsx's
     // <main className="flex-1 overflow-y-auto p-8">, which has already spent
@@ -402,100 +483,116 @@ function TrainerContent() {
         </div>
       )}
 
-      {/* Top Application Page Header */}
-      {/* FE Gap 76: min-w-0 on the title side and shrink-0 on the actions side.
-          Without them, the title + EVOLVE badge (whitespace-nowrap) could grow
-          past the row and push the Commit button out horizontally at narrower
-          widths, which is the same symptom as the vertical clipping above but a
-          different cause -- both were reported as "Commit button not visible". */}
-      <header className="h-16 border-b border-[#222D3D] bg-[#0F172A]/70 backdrop-blur-md px-6 flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-[#3B82F6] shrink-0">
-            <GraduationCap className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-base font-semibold text-white tracking-wide flex items-center gap-2 min-w-0">
-              <span className="truncate">AI Trainer</span>
-              <span className="hidden sm:flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold whitespace-nowrap">
-                <span className="text-xs leading-none not-italic">🧬</span>
-                EVOLVE
-                <span className="text-slate-400 font-normal font-sans normal-case ml-1">— Rules Trainer</span>
-              </span>
-            </h1>
-          </div>
-        </div>
+      {/* FE Gap 110: Rule History / Commit to Template Registry render into
+          Shell's shared header row. They stay `shrink-0` there for the same
+          reason Gap 76 gave them that: they must never be the thing that gets
+          squeezed off the row when the title beside them grows. */}
+      <PageHeaderActions>
+        <button
+          type="button"
+          onClick={handleOpenHistory}
+          aria-label="Rule History"
+          title="Rule History"
+          className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#1E293B] hover:bg-[#283548] text-slate-200 text-xs font-medium border border-[#222D3D] transition-colors cursor-pointer shrink-0"
+        >
+          <History className="w-4 h-4 text-[#3B82F6]" />
+          {/* Label collapses to the icon on narrow rows; the aria-label keeps
+              the button named either way. */}
+          <span className="hidden lg:inline">Rule History</span>
+        </button>
 
-        {/* Header Action Buttons (Rule History & Commit to Registry) */}
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={handleOpenHistory}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#1E293B] hover:bg-[#283548] text-slate-200 text-xs font-medium border border-[#222D3D] transition-colors cursor-pointer"
-          >
-            <History className="w-4 h-4 text-[#3B82F6]" />
-            <span>Rule History</span>
-          </button>
+        <button
+          type="button"
+          onClick={() => setIsCommitModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-medium shadow-md transition-all cursor-pointer shrink-0"
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>Commit to Template Registry</span>
+        </button>
+      </PageHeaderActions>
 
-          <button
-            type="button"
-            onClick={() => setIsCommitModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-medium shadow-md transition-all cursor-pointer"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>Commit to Template Registry</span>
-          </button>
-        </div>
-      </header>
+      {/* FE Gap 77: one control bar, not a scope block and a grounding block
+          the user has to connect for themselves. See TrainerControlBar. */}
+      <TrainerControlBar
+        activeScope={activeScope}
+        onScopeChange={handleScopeChange}
+        vendors={vendors}
+        selectedVendorName={selectedVendorName}
+        onSelectVendor={handleSelectVendor}
+        onUploadFile={handleUploadFile}
+        onClearFile={handleClearFile}
+        activeFileName={session?.fileName}
+      />
 
-      {/* Secondary Controls Bar: Scope Selector & Document Uploader */}
-      <div className="px-6 py-3 border-b border-[#222D3D] bg-[#0D131F]/90 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shrink-0">
-        {/* Task 6.1: 3-Way Scope Selector */}
-        <ScopeSelector activeScope={activeScope} onScopeChange={handleScopeChange} />
+      {/*
+        FE Gap 111 — the agreed workspace: PDF → Extracted Fields → Chat, with
+        a collapsed Rules rail on the far right.
 
-        {/* Step-by-Step Progress Indicator */}
-        <StepIndicator
-          activeScope={activeScope}
-          hasSession={!!session}
-          hasFile={!!session?.fileName || (activeScope === "existing_vendor" && !!selectedVendorName)}
-        />
+        A flex row rather than the old `grid-cols-2`, because the four panels
+        have deliberately different sizing rules: the first two are fixed-width
+        columns (a document preview and a field list have a natural width and
+        gain nothing from more), chat takes everything left over, and the rail
+        sizes itself from its own collapsed/expanded state. Expressing that as
+        grid template columns would have meant recomputing the template string
+        every time the rail toggles.
 
-        {/* Tasks 6.2 - 6.4: Scope-Aware Document Uploader / Vendor Picker */}
-        <TrainerUploader
-          scope={activeScope}
-          vendors={vendors}
-          selectedVendorName={selectedVendorName}
-          onSelectVendor={handleSelectVendor}
-          onUploadFile={handleUploadFile}
-          onClearFile={handleClearFile}
-          activeFileName={session?.fileName}
-        />
-      </div>
+        Every panel is `min-h-0` inside a `min-h-0` row, which is what lets each
+        one scroll internally instead of growing the page -- Gap 76's geometry
+        (Shell's <main> must not become scrollable on this route) still holds,
+        and a long PDF no longer moves anything beside it (Gap 111.2).
 
-      {/* Main 50/50 Split-Screen Workspace Layout */}
-      <main className="flex-1 p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0 overflow-hidden">
-        {/* Left 50% Panel: PDF Viewer Canvas / Global Empty State */}
-        <div className="h-full min-h-0">
+        Below `xl` this stacks into a normal scrolling column: three fixed
+        columns plus a rail do not fit a laptop width, and squeezing them would
+        undo the readability this gap is about.
+      */}
+      <main className="flex-1 p-3 min-h-0 overflow-y-auto xl:overflow-hidden flex flex-col xl:flex-row gap-3">
+        {/* 1. Document preview — fixed ~300px, own internal scroll */}
+        <div className="h-[420px] xl:h-full min-h-0 xl:w-[300px] xl:shrink-0">
           <PdfViewerPanel
             fileName={session?.fileName}
             pdfUrl={session?.pdfUrl}
             isGlobalScopeNoPdf={!session?.pdfUrl}
             selectedVariable={selectedVariable}
-            variables={session?.variables}
             scope={activeScope}
             vendorName={selectedVendorName}
           />
         </div>
 
-        {/* Right 50% Panel: Interactive Chat & Variables Inspector */}
-        <div className="h-full min-h-0">
-          <QnAPanel
-            chatHistory={session?.chatHistory || []}
+        {/* 2. Extracted fields — its own column, no longer buried under the PDF */}
+        <div className="h-[280px] xl:h-full min-h-0 xl:w-[220px] xl:shrink-0">
+          <ExtractedFieldsPanel
             variables={session?.variables || []}
-            activeRules={session?.activeRules || []}
-            onSendMessage={handleSendMessage}
-            isSending={isSending}
             selectedVariableId={selectedVariable?.id}
             onSelectVariable={(v) => setSelectedVariable(v)}
+          />
+        </div>
+
+        {/* 3. Chat — everything left over */}
+        <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-0">
+          <QnAPanel
+            chatHistory={session?.chatHistory || []}
+            onSendMessage={handleSendMessage}
+            isSending={isSending}
+          />
+        </div>
+
+        {/* 4. Rule candidates — slim rail, count badge only until expanded.
+               Below xl there is no fourth column, so the same component
+               renders as a plain always-open panel at the end of the stack
+               rather than disappearing (see RulesRail's `stacked` prop). */}
+        <div className="hidden xl:block h-full min-h-0">
+          <RulesRail
+            activeRules={session?.activeRules || []}
+            isExpanded={isRulesRailExpanded}
+            onToggle={() => setIsRulesRailExpanded((v) => !v)}
+          />
+        </div>
+        <div className="xl:hidden h-[220px] min-h-0">
+          <RulesRail
+            activeRules={session?.activeRules || []}
+            isExpanded
+            onToggle={() => undefined}
+            stacked
           />
         </div>
       </main>
