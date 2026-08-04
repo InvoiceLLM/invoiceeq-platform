@@ -9,6 +9,7 @@ import {
   Sparkles,
   AlertCircle,
   X,
+  ChevronRight,
 } from "lucide-react";
 
 import {
@@ -26,6 +27,59 @@ import PdfViewerPanel from "@/components/trainer/PdfViewerPanel";
 import QnAPanel from "@/components/trainer/QnAPanel";
 import CommitModal from "@/components/trainer/CommitModal";
 import RuleHistoryDrawer from "@/components/trainer/RuleHistoryDrawer";
+
+/**
+ * StepIndicator component shows the user's progress through the training process.
+ */
+function StepIndicator({
+  activeScope,
+  hasSession,
+  hasFile,
+}: {
+  activeScope: string;
+  hasSession: boolean;
+  hasFile: boolean;
+}) {
+  const step2Active = activeScope === "existing_vendor" || activeScope === "new_vendor" || hasFile;
+  const step3Active = hasSession;
+
+  return (
+    <div className="hidden lg:flex items-center gap-3 bg-[#111827]/40 px-4 py-1.5 border border-[#1E2D45]/55 rounded-xl text-[10px] font-semibold text-slate-400">
+      <div className="flex items-center gap-1.5">
+        <span className="w-4 h-4 rounded-full bg-blue-500/10 border border-blue-500/40 text-blue-400 flex items-center justify-center text-[9px] font-mono select-none">
+          1
+        </span>
+        <span className="text-white select-none">Scope</span>
+      </div>
+      <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+      <div className={`flex items-center gap-1.5 ${step2Active ? "text-slate-300" : "text-slate-500"}`}>
+        <span
+          className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-mono select-none ${
+            step2Active
+              ? "bg-emerald-500/10 border border-emerald-500/40 text-emerald-400"
+              : "bg-slate-800/50 border border-slate-700 text-slate-500"
+          }`}
+        >
+          2
+        </span>
+        <span className={`${step2Active ? "text-white" : ""} select-none`}>Ground</span>
+      </div>
+      <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+      <div className={`flex items-center gap-1.5 ${step3Active ? "text-slate-300" : "text-slate-500"}`}>
+        <span
+          className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-mono select-none ${
+            step3Active
+              ? "bg-purple-500/10 border border-purple-500/40 text-purple-400"
+              : "bg-slate-800/50 border border-slate-700 text-slate-500"
+          }`}
+        >
+          3
+        </span>
+        <span className={`${step3Active ? "text-white" : ""} select-none`}>Teach</span>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Feature 6 Main Page: AI Trainer Interactive Sandbox (app/trainer/page.tsx)
@@ -397,6 +451,13 @@ function TrainerContent() {
       <div className="px-6 py-3 border-b border-[#222D3D] bg-[#0D131F]/90 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shrink-0">
         {/* Task 6.1: 3-Way Scope Selector */}
         <ScopeSelector activeScope={activeScope} onScopeChange={handleScopeChange} />
+
+        {/* Step-by-Step Progress Indicator */}
+        <StepIndicator
+          activeScope={activeScope}
+          hasSession={!!session}
+          hasFile={!!session?.fileName || (activeScope === "existing_vendor" && !!selectedVendorName)}
+        />
 
         {/* Tasks 6.2 - 6.4: Scope-Aware Document Uploader / Vendor Picker */}
         <TrainerUploader

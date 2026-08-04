@@ -110,6 +110,22 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {/* Subscriptions & Billing Section */}
+        <section aria-labelledby="subscriptions-heading">
+          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
+            <div>
+              <h2 id="subscriptions-heading" className="text-sm font-medium text-white">Subscriptions &amp; Billing</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Manage active plan limits, invoices cycle, and tier upgrades</p>
+            </div>
+            <Link
+              href="/settings/subscriptions"
+              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
+            >
+              Configure
+            </Link>
+          </div>
+        </section>
+
         {/* Coming-soon chips for the next sections */}
         {[
           { label: "Webhooks", description: "Event routing for invoice status changes" },

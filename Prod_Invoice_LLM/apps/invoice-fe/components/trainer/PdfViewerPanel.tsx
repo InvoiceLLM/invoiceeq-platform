@@ -170,42 +170,6 @@ export default function PdfViewerPanel({
         <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
           {getDescription()}
         </p>
-
-        {/* Step-by-Step Progress Indicator */}
-        <div className="w-full max-w-sm bg-[#0D131F]/90 border border-[#1E2D45] rounded-xl p-4">
-          <p className="text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-3 text-center">
-            How to teach the sandbox
-          </p>
-          <div className="flex items-center justify-between text-left text-xs gap-2">
-            <div className="flex-1 flex flex-col items-center text-center">
-              <span className="w-5.5 h-5.5 w-6 h-6 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-semibold flex items-center justify-center mb-1 text-[10px]">
-                1
-              </span>
-              <span className="font-semibold text-slate-300 text-[10px]">Set Scope</span>
-              <span className="text-[9px] text-slate-500">Global vs Vendor</span>
-            </div>
-            
-            <div className="h-0.5 w-4 bg-[#1E2D45] shrink-0 self-center -mt-4" />
-
-            <div className="flex-1 flex flex-col items-center text-center">
-              <span className="w-5.5 h-5.5 w-6 h-6 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold flex items-center justify-center mb-1 text-[10px]">
-                2
-              </span>
-              <span className="font-semibold text-slate-300 text-[10px]">Load PDF</span>
-              <span className="text-[9px] text-slate-500">Optional grounding</span>
-            </div>
-
-            <div className="h-0.5 w-4 bg-[#1E2D45] shrink-0 self-center -mt-4" />
-
-            <div className="flex-1 flex flex-col items-center text-center">
-              <span className="w-5.5 h-5.5 w-6 h-6 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-400 font-semibold flex items-center justify-center mb-1 text-[10px]">
-                3
-              </span>
-              <span className="font-semibold text-slate-300 text-[10px]">Teach AI</span>
-              <span className="text-[9px] text-slate-500">Chat corrections</span>
-            </div>
-          </div>
-        </div>
       </div>
     );
   }

@@ -382,7 +382,9 @@ export default function QnAPanel({
               <div className="p-4 bg-[#0B1120]/80 border border-dashed border-[#1E2D45] rounded-2xl text-xs text-slate-500 text-center leading-relaxed">
                 No extracted variables available.
                 <br />
-                (Global session without a seed document)
+                <span className="text-[10px] text-slate-600 mt-1 block">
+                  Variables populate dynamically once a grounding PDF is uploaded or a vendor seed is loaded.
+                </span>
               </div>
             ) : (
               <div className="divide-y divide-[#1E2D45] border border-[#1E2D45] rounded-2xl overflow-hidden bg-[#0B1120]/80">

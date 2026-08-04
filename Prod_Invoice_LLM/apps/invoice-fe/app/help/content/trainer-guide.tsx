@@ -64,7 +64,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         <Shot
           src="/help/trainer/01-global-scope.png"
           alt="AI Trainer sandbox, Global scope, empty chat-only state"
-          caption="The AI Trainer sandbox — three scope tabs at the top, a document/summary panel on the left, chat on the right."
+          caption="The AI Trainer sandbox — three scope tabs and a progress step-by-step indicator at the top, a document/summary panel on the left, chat on the right."
         />
       </>
     ),
