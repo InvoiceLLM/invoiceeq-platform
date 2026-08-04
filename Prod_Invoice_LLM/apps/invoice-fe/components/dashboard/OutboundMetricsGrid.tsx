@@ -35,6 +35,9 @@ export interface OutboundMetrics {
   // same payload (Task 2.1.4), so it belongs on the shared response type.
   top_customers: CustomerRevenue[];
   invoices_by_status: Record<string, number>;
+  ai_field_extraction?: number;
+  ai_alert_response?: number;
+  ai_alerts_missed?: number;
 }
 
 interface OutboundMetricsGridProps {
@@ -53,6 +56,9 @@ export const defaultOutboundMetrics: OutboundMetrics = {
   revenue_over_time: [],
   top_customers: [],
   invoices_by_status: {},
+  ai_field_extraction: 100.0,
+  ai_alert_response: 100.0,
+  ai_alerts_missed: 0.0,
 };
 
 const ACCURACY_TARGET = 95.0;
@@ -82,6 +88,10 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
   const avgDaysToPayment = metrics?.average_days_to_payment ?? 0;
   const revenueOverTime = metrics?.revenue_over_time ?? [];
   const verificationAccuracy = metrics?.verification_accuracy ?? 0.0;
+  const aiFieldExtraction = metrics?.ai_field_extraction ?? 100.0;
+  const aiAlertResponse = metrics?.ai_alert_response ?? 100.0;
+  const aiAlertsMissed = metrics?.ai_alerts_missed ?? 0.0;
+
 
   const collectedPercent =
     totalInvoicedOut > 0 ? Math.round((amountCollected / totalInvoicedOut) * 100) : 0;
@@ -118,7 +128,7 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
 
   const gaugeRadius = 52;
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
-  const strokeDashoffset = gaugeCircumference - (verificationAccuracy / 100) * gaugeCircumference;
+  const strokeDashoffset = gaugeCircumference - (aiFieldExtraction / 100) * gaugeCircumference;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -261,14 +271,13 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
       </div>
 
       {/* Verification Accuracy & Days-to-Payment Column */}
-      <div className="lg:col-span-1 flex flex-col gap-6">
-        <div className="glass-panel p-6 rounded-xl flex flex-col items-center justify-between flex-1 min-h-[220px]">
+      <div className="lg:col-span-1 flex flex-col gap-6">        <div className="glass-panel p-6 rounded-xl flex flex-col items-center justify-between flex-1 min-h-[220px]">
           <div className="text-center w-full">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider" title="Measures touchless processing rate; lower rates indicate poor document quality, not AI inaccuracy.">
-              Auto-Verification Rate
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              AI Score
             </h3>
             <p className="text-[10px] text-slate-500 mt-0.5">
-              Outbound invoices verified with no alerts (higher indicates good formatting)
+              Outbound decision correctness and processing precision
             </p>
           </div>
 
@@ -296,28 +305,30 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
               />
             </svg>
             <div className="absolute flex flex-col items-center justify-center">
-              <span className="text-lg font-bold text-white tracking-tight">
-                {isLoading ? "0.0%" : `${verificationAccuracy.toFixed(1)}%`}
+              <span className="text-sm font-bold text-white tracking-tight">
+                {isLoading ? "0.0%" : `${aiFieldExtraction.toFixed(1)}%`}
               </span>
               <span className="text-[8px] uppercase tracking-wider text-slate-400">
-                First Pass
+                Accuracy
               </span>
             </div>
           </div>
 
-          {/* Reports against the target rather than asserting it was met --
-              the real number decides which message shows. */}
-          <div
-            className={`flex items-center gap-1.5 text-xs font-medium ${
-              verificationAccuracy >= ACCURACY_TARGET ? "text-emerald-400" : "text-amber-400"
-            }`}
-          >
-            <Target className="w-3.5 h-3.5" />
-            <span>
-              {verificationAccuracy >= ACCURACY_TARGET
-                ? `Target benchmark met (${ACCURACY_TARGET.toFixed(1)}%)`
-                : `Below target benchmark (${ACCURACY_TARGET.toFixed(1)}%)`}
-            </span>
+          <div className="w-full flex flex-col gap-2 bg-slate-900/40 rounded-lg p-2.5 border border-[#222D3D]/50 text-[10px]">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400 flex items-center gap-1.5">
+                <Target className="w-3.5 h-3.5 text-blue-400" />
+                Field Extraction
+              </span>
+              <span className="font-bold text-white">{isLoading ? "0.0%" : `${aiFieldExtraction.toFixed(1)}%`}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Alert Response
+              </span>
+              <span className="font-bold text-white">{isLoading ? "0.0%" : `${aiAlertResponse.toFixed(1)}%`}</span>
+            </div>
           </div>
         </div>
 

@@ -8,7 +8,7 @@ from sqlalchemy import func, case
 from sqlmodel import Session, select
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
-from models import Invoice, ExtractionTemplate
+from models import Invoice, ExtractionTemplate, AuditLog
 from utils.llm import get_llm
 
 logger = logging.getLogger(__name__)
@@ -168,6 +168,63 @@ async def get_dashboard_metrics(
         round(total_processing_time / timed_invoice_count, 1) if timed_invoice_count > 0 else 0.0
     )
 
+    # Query matching AuditLog entries for the AI score metrics calculations
+    # Joining with Invoice to apply the same workspace-level and date-range filters
+    audit_query = select(AuditLog.details, Invoice.sa_alerts, Invoice.status).join(
+        Invoice, AuditLog.invoice_id == Invoice.id
+    ).where(
+        AuditLog.tenant_id == context.tenant_id,
+        AuditLog.action == "RESOLVE_INVOICE"
+    )
+    for cond in conditions:
+        audit_query = audit_query.where(cond)
+    
+    audit_rows = db_session.exec(audit_query).all()
+
+    # 1. AI Field Extraction (Accuracy of the core 7 fields)
+    total_corrections = 0
+    TARGET_FIELDS = {"vendor_name", "invoice_number", "invoice_date", "due_date", "subtotal", "tax_amount", "grand_total"}
+    for details, _, _ in audit_rows:
+        if details and "corrections" in details:
+            corrections = details["corrections"] or {}
+            for field in corrections.keys():
+                if field in TARGET_FIELDS:
+                    total_corrections += 1
+    
+    ai_field_extraction = 100.0
+    total_possible_fields = total_processed * 7
+    if total_possible_fields > 0:
+        ai_field_extraction = round(100.0 * (1.0 - (total_corrections / total_possible_fields)), 1)
+        ai_field_extraction = max(0.0, min(100.0, ai_field_extraction))
+
+    # 2. AI Alert Response (Percentage of valid alerts vs false alarms)
+    total_alerts_flagged = 0
+    total_alerts_dismissed = 0
+    for details, _, _ in audit_rows:
+        if details:
+            prev_alerts = details.get("previous_alerts") or []
+            dismissed = details.get("dismissed_alerts_input") or []
+            total_alerts_flagged += len(prev_alerts)
+            total_alerts_dismissed += len(dismissed)
+    
+    ai_alert_response = 100.0
+    if total_alerts_flagged > 0:
+        ai_alert_response = round(100.0 * (1.0 - (total_alerts_dismissed / total_alerts_flagged)), 1)
+        ai_alert_response = max(0.0, min(100.0, ai_alert_response))
+
+    # 3. AI Alerts Missed (Escape Rate of rejections due to AI Extraction Error)
+    rejections_with_extraction_error = 0
+    for details, _, _ in audit_rows:
+        if details and details.get("target_status") == "REJECTED":
+            reason = details.get("reject_reason") or ""
+            if reason.startswith("AI") or "AI Extraction" in reason or "Error Invoice" in reason:
+                rejections_with_extraction_error += 1
+                
+    ai_alerts_missed = 0.0
+    if total_processed > 0:
+        ai_alerts_missed = round(100.0 * (rejections_with_extraction_error / total_processed), 1)
+        ai_alerts_missed = max(0.0, min(100.0, ai_alerts_missed))
+
     # Calculate real accuracy (what % of invoices went through without alerts)
     extraction_accuracy = 100.0
     if total_processed > 0:
@@ -184,8 +241,12 @@ async def get_dashboard_metrics(
         "active_alerts_count": active_alerts_count,
         "spend_over_time": spend_over_time,
         "top_vendors": top_vendors,
-        "invoices_by_status": status_counts
+        "invoices_by_status": status_counts,
+        "ai_field_extraction": ai_field_extraction,
+        "ai_alert_response": ai_alert_response,
+        "ai_alerts_missed": ai_alerts_missed
     }
+
 
 
 @router.get("/trainer-impact")

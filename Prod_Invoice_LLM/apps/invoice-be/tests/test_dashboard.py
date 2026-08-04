@@ -276,3 +276,96 @@ def test_dashboard_insights_llm_failure_returns_empty(db_session):
         response = client.get("/api/v1/dashboard/insights")
         assert response.status_code == 200
         assert response.json() == {"insights": []}
+
+
+def test_ai_score_metrics(db_session):
+    """Verify AI extraction accuracy, alert response accuracy, and missed alerts escape rate."""
+    # 1. Create a resolved invoice with 1 field correction.
+    # Total fields = 7. Corrected = 1. Field extraction = 6 / 7 = 85.7%
+    inv1_id = uuid4()
+    inv1 = Invoice(
+        id=inv1_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice1.pdf",
+        status="AUDIT_REQUIRED",
+        grand_total=100.0,
+        sa_alerts=[]
+    )
+    db_session.add(inv1)
+    db_session.commit()
+
+    # Resolve it as PAID with corrections
+    payload1 = {
+        "status": "PAID",
+        "corrections": {"grand_total": 90.0}
+    }
+    res = client.put(f"/api/v1/audit/resolve/{inv1_id}", json=payload1)
+    assert res.status_code == 200
+
+    # 2. Create another resolved invoice with 2 alerts, 1 dismissed, 1 not dismissed.
+    # Dismissed = False alarm (1), Not dismissed = Correct alert (1).
+    # Alert accuracy = 1 / 2 = 50.0%
+    inv2_id = uuid4()
+    inv2 = Invoice(
+        id=inv2_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice2.pdf",
+        status="AUDIT_REQUIRED",
+        sa_alerts=["Math mismatch", "Invalid vendor"]
+    )
+    db_session.add(inv2)
+    db_session.commit()
+
+    payload2 = {
+        "status": "PAID",
+        "dismissed_alerts": ["Math mismatch"]
+    }
+    res = client.put(f"/api/v1/audit/resolve/{inv2_id}", json=payload2)
+    assert res.status_code == 200
+
+    # 3. Create a rejected invoice with AI Extraction Error reason.
+    # Rejections with AI error = 1. Total rejections = 1. Escape rate = 100.0%
+    inv3_id = uuid4()
+    inv3 = Invoice(
+        id=inv3_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice3.pdf",
+        status="AUDIT_REQUIRED",
+        sa_alerts=[]
+    )
+    db_session.add(inv3)
+    db_session.commit()
+
+    payload3 = {
+        "status": "REJECTED",
+        "reject_reason": "AI Extraction Error"
+    }
+    res = client.put(f"/api/v1/audit/resolve/{inv3_id}", json=payload3)
+    assert res.status_code == 200
+
+    # Retrieve metrics
+    response = client.get("/api/v1/dashboard/metrics")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "ai_field_extraction" in data
+    assert "ai_alert_response" in data
+    assert "ai_alerts_missed" in data
+
+    # Expected field extraction:
+    # Invoice 1: 1 correction out of 7 fields -> 6 correct.
+    # Invoice 2: 0 corrections -> 7 correct.
+    # Invoice 3: 0 corrections -> 7 correct.
+    # Total fields = 21. Total correct = 20. Accuracy = 20 / 21 = 95.2% (approx 95.238%)
+    assert abs(data["ai_field_extraction"] - 95.238) < 0.1
+
+    # Expected alert response:
+    # Invoice 2 has 2 alerts. 1 is dismissed (false alarm). 1 remains (correct alert).
+    # Alert accuracy = 1 / 2 = 50.0%
+    assert data["ai_alert_response"] == 50.0
+
+    # Expected escape rate:
+    # 1 rejection with reject_reason="AI Extraction Error" out of 3 total processed.
+    # Escape rate = 33.3%
+    assert data["ai_alerts_missed"] == 33.3
+

@@ -335,3 +335,65 @@ def test_unknown_customer_name_grouping(db_session):
     data = client.get(METRICS_URL).json()
     assert data["top_customers"] == [{"customer_name": "Unknown Customer", "amount": 100.0}]
     assert data["total_invoiced_out"] == 100.0
+
+
+def test_outbound_ai_score_metrics(db_session):
+    """Verify outbound AI extraction accuracy and alert response accuracy computations."""
+    # 1. Outbound invoice with 1 field correction.
+    # Total fields = 7. Corrected = 1. Field extraction = 6 / 7 = 85.7%
+    inv1_id = uuid4()
+    inv1 = _outbound(
+        id=inv1_id,
+        status="NEEDS_REVIEW",
+        grand_total=100.0,
+        sa_alerts=[]
+    )
+    db_session.add(inv1)
+    db_session.commit()
+
+    # Resolve it as VERIFIED with corrections
+    payload1 = {
+        "status": "PAID",
+        "corrections": {"grand_total": 90.0}
+    }
+    res = client.put(f"/api/v1/audit/resolve/{inv1_id}", json=payload1)
+    assert res.status_code == 200
+
+    # 2. Outbound invoice with 2 alerts, 1 dismissed, 1 not dismissed.
+    # Dismissed = False alarm (1), Not dismissed = Correct alert (1).
+    # Alert accuracy = 1 / 2 = 50.0%
+    inv2_id = uuid4()
+    inv2 = _outbound(
+        id=inv2_id,
+        status="NEEDS_REVIEW",
+        sa_alerts=[{"type": "math_mismatch", "message": "totals do not reconcile"}, {"type": "date_mismatch", "message": "due date before invoice date"}]
+    )
+    db_session.add(inv2)
+    db_session.commit()
+
+    payload2 = {
+        "status": "PAID",
+        "dismissed_alerts": ["totals do not reconcile"]
+    }
+    res = client.put(f"/api/v1/audit/resolve/{inv2_id}", json=payload2)
+    assert res.status_code == 200
+
+    # Retrieve metrics
+    response = client.get(METRICS_URL)
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "ai_field_extraction" in data
+    assert "ai_alert_response" in data
+
+    # Expected field extraction:
+    # Invoice 1: 1 correction out of 7 fields -> 6 correct.
+    # Invoice 2: 0 corrections -> 7 correct.
+    # Total fields = 14. Total correct = 13. Accuracy = 13 / 14 = 92.857%
+    assert abs(data["ai_field_extraction"] - 92.857) < 0.1
+
+    # Expected alert response:
+    # Invoice 2 has 2 alerts. 1 is dismissed (false alarm). 1 remains (correct alert).
+    # Alert accuracy = 1 / 2 = 50.0%
+    assert data["ai_alert_response"] == 50.0
+

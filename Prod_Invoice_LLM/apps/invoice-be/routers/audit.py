@@ -63,6 +63,11 @@ class AuditResolutionPayload(BaseModel):
                      "correction back as a vendor-scoped ExtractionTemplate rule, gated "
                      "on a safety re-extraction check (see _apply_standing_rule below).",
     )
+    reject_reason: Optional[str] = Field(
+        default=None,
+        description="Auditor rejection reason"
+    )
+
 
 
 def _coerce_correction_value(field: str, raw_value: Any):
@@ -362,12 +367,14 @@ async def resolve_audit_invoice(
     # exactly what a human changed and why.
     log_details = {
         "target_status": target_status,
+        "reject_reason": payload.reject_reason,
         "dismissed_alerts_input": dismissed_list,
         "previous_alerts": previous_alerts,
         "remaining_alerts": new_alerts,
         "corrections": correction_diff,
         "standing_rule_result": standing_rule_result,
     }
+
 
     audit_log = AuditLog(
         tenant_id=context.tenant_id,

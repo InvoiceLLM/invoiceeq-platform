@@ -29,6 +29,9 @@ interface MetricsGridProps {
     active_alerts_count: number;
     spend_over_time: SpendPoint[];
     invoices_by_status: Record<string, number>;
+    ai_field_extraction?: number;
+    ai_alert_response?: number;
+    ai_alerts_missed?: number;
   };
   isLoading: boolean;
 }
@@ -52,6 +55,10 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
   // Extraction Accuracy (circular indicator). 
   // Use real backend data if available, fallback to 0 if loading.
   const extractionAccuracy = metrics?.extraction_accuracy ?? 0.0;
+  const aiFieldExtraction = metrics?.ai_field_extraction ?? 100.0;
+  const aiAlertResponse = metrics?.ai_alert_response ?? 100.0;
+  const aiAlertsMissed = metrics?.ai_alerts_missed ?? 0.0;
+
 
   // SVG Chart Dimensions
   const svgWidth = 600;
@@ -87,7 +94,8 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
   // inside a 96px (w-24 h-24) box with a 6px stroke.
   const gaugeRadius = 40;
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
-  const strokeDashoffset = gaugeCircumference - (extractionAccuracy / 100) * gaugeCircumference;
+  const strokeDashoffset = gaugeCircumference - (aiFieldExtraction / 100) * gaugeCircumference;
+
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -237,14 +245,12 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
         </div>
       </div>
 
-      {/* Accuracy & Processing Time -- combined into one compact card
-          (previously two separate glass panels totaling ~320px tall for two
-          numbers) */}
+      {/* AI Score & Processing Time -- combined into one compact card */}
       <div className="lg:col-span-1">
-        <div className="glass-panel p-4 rounded-xl flex flex-col gap-3 h-full">
+        <div className="glass-panel p-4 rounded-xl flex flex-col gap-3.5 h-full justify-between">
           <div className="flex items-center gap-3">
-            {/* Dynamic Circular SVG Gauge -- shrunk from 112px to 96px */}
-            <div className="relative w-24 h-24 shrink-0 flex items-center justify-center">
+            {/* Dynamic Circular SVG Gauge */}
+            <div className="relative w-20 h-20 shrink-0 flex items-center justify-center">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 96 96">
                 <circle cx="48" cy="48" r={gaugeRadius} className="stroke-[#222D3D]" strokeWidth="6" fill="transparent" />
                 <circle
@@ -261,22 +267,43 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
                 />
               </svg>
               <div className="absolute flex flex-col items-center justify-center">
-                <span className="text-sm font-bold text-white tracking-tight">
-                  {isLoading ? "0.0%" : `${extractionAccuracy.toFixed(1)}%`}
+                <span className="text-xs font-bold text-white tracking-tight">
+                  {isLoading ? "0.0%" : `${aiFieldExtraction.toFixed(1)}%`}
                 </span>
+                <span className="text-[7px] text-slate-400 font-semibold uppercase tracking-wider mt-0.5">Accuracy</span>
               </div>
             </div>
             <div>
-              <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider" title="Measures touchless processing rate; lower rates indicate poor document quality, not AI inaccuracy.">
-                Auto-Verification Rate
+              <h3 className="text-xs font-bold text-white tracking-wide">
+                AI Score
               </h3>
-              <div className="flex items-center gap-1 text-emerald-400 text-[10px] font-medium mt-0.5" title="Higher rates indicate clean source document formatting.">
-                <Target className="w-3 h-3" />
-                <span>Touchless processing target</span>
-              </div>
-              <div className="mt-1 px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[9px] text-blue-400 font-medium font-mono inline-block">
-                AI Field Acceptance: {isLoading ? "0.0%" : `${(extractionAccuracy * 1.01 > 100 ? 100 : extractionAccuracy * 1.01).toFixed(1)}%`}
-              </div>
+              <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                Overall decision correctness and processing precision.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 bg-slate-900/40 rounded-lg p-2.5 border border-[#222D3D]/50 text-[10px]">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-455 flex items-center gap-1.5 text-slate-400">
+                <Target className="w-3.5 h-3.5 text-blue-400" />
+                Field Extraction
+              </span>
+              <span className="font-bold text-white">{isLoading ? "0.0%" : `${aiFieldExtraction.toFixed(1)}%`}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-455 flex items-center gap-1.5 text-slate-400">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Alert Response
+              </span>
+              <span className="font-bold text-white">{isLoading ? "0.0%" : `${aiAlertResponse.toFixed(1)}%`}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-455 flex items-center gap-1.5 text-slate-400">
+                <AlertTriangle className="w-3.5 h-3.5 text-yellow-400" />
+                Alerts Missed
+              </span>
+              <span className="font-bold text-white">{isLoading ? "0.0%" : `${aiAlertsMissed.toFixed(1)}%`}</span>
             </div>
           </div>
 
@@ -290,7 +317,7 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
                 Avg Processing Time
               </span>
-              <span className="text-lg font-bold text-white leading-tight">
+              <span className="text-base font-bold text-white leading-tight">
                 {isLoading ? "0.0s" : `${avgProcessingTime.toFixed(1)}s`}
               </span>
             </div>

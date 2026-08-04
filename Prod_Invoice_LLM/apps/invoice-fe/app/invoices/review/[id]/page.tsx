@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle, XCircle, Loader2, Pencil, AlertTriangle, Sparkles, ShieldCheck, X } from "lucide-react";
+import { CheckCircle, XCircle, Loader2, Pencil, AlertTriangle, Sparkles, ShieldCheck, X } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
+import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import AlertConsole from "@/components/audit/AlertConsole";
 
@@ -146,6 +147,26 @@ export default function AuditorReviewPage() {
   // check failed).
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("Invoice Error");
+
+
+  // FE Gap 110: this screen used to draw its own title + Back button + status
+  // badge above the workspace, a second header under Shell's global one.
+  // Declared before the loading/error early returns below, so the header names
+  // the screen while it is still fetching rather than going blank.
+  usePageHeader({
+    title: "Auditor Review Console",
+    agentIcon: "🛡️",
+    agentName: "SENTINEL",
+    agentRole: "Audit & Compliance",
+    subtitle: invoice ? `Invoice #${invoice.invoice_number ?? invoice.id}` : undefined,
+    // Deviation from the old `router.back()`: this route is reachable by deep
+    // link (chat citations, dashboard rows, the notification bell), where
+    // history-back can walk out of the app entirely. The Audit Queue is the
+    // one destination that is always correct.
+    backHref: "/invoices",
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -179,7 +200,7 @@ export default function AuditorReviewPage() {
     setCorrections((prev) => ({ ...prev, [key]: next }));
   };
 
-  const handleResolve = async (targetStatus?: "PAID" | "REJECTED") => {
+  const handleResolve = async (targetStatus?: "PAID" | "REJECTED", reasonText?: string) => {
     if (!invoice) return;
     // Gap 53/FE 26: this can now also be called with no targetStatus and no
     // dismissed alerts -- just persisting a field correction on an invoice
@@ -196,6 +217,7 @@ export default function AuditorReviewPage() {
     try {
       const res = await apiClient.put(`/audit/resolve/${invoice.id}`, {
         ...(targetStatus ? { status: targetStatus } : {}),
+        ...(reasonText ? { reject_reason: reasonText } : {}),
         dismissed_alerts: alerts.map((a) => a.message),
         corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
@@ -252,22 +274,12 @@ export default function AuditorReviewPage() {
 
   return (
       <div className="flex h-full flex-col gap-4 p-6">
-        {/* Page Header */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.back()}
-            className="flex items-center gap-1.5 rounded-lg border border-[#222D3D] px-3 py-1.5 text-xs text-slate-400 transition hover:border-slate-500 hover:text-slate-200"
-          >
-            <ArrowLeft size={13} /> Back
-          </button>
-          <div>
-            <h1 className="text-lg font-semibold text-slate-100">Auditor Review Console</h1>
-            <p className="text-xs text-slate-500">
-              Invoice #{invoice.invoice_number ?? invoice.id}
-            </p>
-          </div>
+        {/* FE Gap 110: title/subtitle/Back all moved into the shared header
+            above; only the live status badge still comes from this page, and
+            it rides up there too rather than holding a row down here. */}
+        <PageHeaderActions>
           <span
-            className={`ml-auto rounded-full border px-3 py-1 text-xs font-medium ${
+            className={`rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap ${
               invoice.status === "PAID"
                 ? "border-emerald-600/50 bg-emerald-500/10 text-emerald-300"
                 : invoice.status === "REJECTED"
@@ -279,7 +291,7 @@ export default function AuditorReviewPage() {
           >
             {invoice.status.replace("_", " ")}
           </span>
-        </div>
+        </PageHeaderActions>
 
         {/* Task 4.7: Rule Suggestion Prompt — surfaced after a correction pattern
             recurred enough times (Task 7.4) to be worth automating. */}
@@ -509,7 +521,7 @@ export default function AuditorReviewPage() {
                   Mark Paid &amp; Finalize
                 </button>
                 <button
-                  onClick={() => handleResolve("REJECTED")}
+                  onClick={() => setShowRejectModal(true)}
                   disabled={!!actionLoading}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/50 bg-red-600/10 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-600/30 disabled:opacity-50"
                 >
@@ -531,6 +543,54 @@ export default function AuditorReviewPage() {
             )}
           </div>
         </div>
+
+        {showRejectModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="glass-panel w-full max-w-md p-6 rounded-2xl border border-slate-700/50 bg-[#0F172A]/90 shadow-2xl flex flex-col gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-white">Reject Invoice</h3>
+                <p className="text-xs text-slate-400 mt-1">Please select the reason for rejecting this invoice to help track AI performance metrics.</p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-semibold text-slate-300">Rejection Reason</label>
+                <select
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  className="w-full bg-[#1E293B] border border-[#222D3D] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="Invoice Error">Invoice Error (Errors on the source document itself)</option>
+                  <option value="AI Extraction Error">AI Extraction Error (Missed / incorrect AI extraction)</option>
+                  <option value="AI Field Extraction Error">AI Field Extraction Error (Wrong total/dates/vendor)</option>
+                  <option value="AI Line Items Error">AI Line Items Error (Wrong description/qty/prices)</option>
+                  <option value="AI Classification Error">AI Classification Error (Incorrect template match)</option>
+                  <option value="Other AI Error">Other AI Error (General extraction failure)</option>
+                  <option value="Business Logic Error">Business Logic Error (Duplicate / Invalid business vendor)</option>
+                  <option value="Illegible Document">Illegible Document (Blurred PDF / Corrupted file)</option>
+                  <option value="Other Non-AI Error">Other Non-AI Error</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 mt-2">
+                <button
+                  onClick={() => setShowRejectModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowRejectModal(false);
+                    handleResolve("REJECTED", rejectReason);
+                  }}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-sm font-semibold text-white rounded-lg transition"
+                >
+                  Confirm Rejection
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
   );
 }
