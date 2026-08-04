@@ -6,11 +6,22 @@ import { UploadCloud, FileText, Trash2, AlertCircle } from "lucide-react";
 interface DropZoneProps {
   files: File[];
   onChange: (files: File[]) => void;
+  /**
+   * FE Gap 113 item 7: the Receiving tab now renders the selected-but-not-yet-
+   * submitted list as a "Pending" section inside the Status Ledger (see
+   * PendingLedger.tsx) rather than buried under the drop target, where it was
+   * easy to miss after dropping files. Set false there; the drop zone then
+   * shows a one-line pointer at the ledger instead.
+   *
+   * Defaults to true so the Sending tab (Gap 97) keeps the exact layout it has
+   * today -- selection/validation logic below is identical either way.
+   */
+  showQueue?: boolean;
 }
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
-export default function DropZone({ files = [], onChange }: DropZoneProps) {
+export default function DropZone({ files = [], onChange, showQueue = true }: DropZoneProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -134,8 +145,19 @@ export default function DropZone({ files = [], onChange }: DropZoneProps) {
         </div>
       )}
 
+      {/* FE Gap 113 item 7: with the queue relocated to the Status Ledger, the
+          drop zone keeps only a short inline pointer so the files never look
+          like they were silently dropped on the floor. */}
+      {!showQueue && files.length > 0 && (
+        <p className="text-[11px] text-slate-500">
+          <span className="font-semibold text-slate-300">{files.length}</span>{" "}
+          {files.length === 1 ? "file" : "files"} selected &mdash; review them under{" "}
+          <span className="font-semibold text-slate-300">Pending</span> in the Status Ledger.
+        </p>
+      )}
+
       {/* Pending Files Display Queue */}
-      {files.length > 0 && (
+      {showQueue && files.length > 0 && (
         <div className="glass-panel p-4 rounded-xl space-y-3">
           <div className="flex items-center justify-between border-b border-[#222D3D] pb-2">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">

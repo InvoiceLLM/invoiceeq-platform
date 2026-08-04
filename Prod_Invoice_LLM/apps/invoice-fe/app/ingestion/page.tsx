@@ -5,15 +5,24 @@ import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send, C
 import TagSelector from "../../components/ingestion/TagSelector";
 import DropZone from "../../components/ingestion/DropZone";
 import StatusTable from "../../components/ingestion/StatusTable";
+import PendingLedger from "../../components/ingestion/PendingLedger";
 import LogTerminal from "../../components/ingestion/LogTerminal";
 import SendInvoiceStatusTable from "../../components/ingestion/SendInvoiceStatusTable";
 import ConnectorBrowseBar from "../../components/ingestion/ConnectorBrowseBar";
-import PageHeader from "../../components/layout/PageHeader";
+import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 
 type IngestionTab = "receiving" | "sending";
 
 export default function IngestionPage() {
+  // FE Gap 110: title + NOVA badge now live in Shell's one shared header.
+  usePageHeader({
+    title: "File Ingestion",
+    agentIcon: "🤖",
+    agentName: "NOVA",
+    agentRole: "Extraction & Validation",
+  });
+
   const [files, setFiles] = useState<File[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -180,40 +189,34 @@ export default function IngestionPage() {
 
   return (
     <div className="space-y-6">
-      {/* FE Gap 86: the Receiving/Sending toggle used to render as its own
-          block below the title, spending a whole row on one control and
-          compounding Gap 69's left-column overflow. It now shares the title's
-          row via PageHeader's existing `actions` slot -- the same mechanism
-          the Dashboard already uses for its FilterBar (Gap 68). Still gated on
-          showTabs, so a single-service tenant sees exactly what it did before. */}
-      <PageHeader
-        title="File Ingestion"
-        agentIcon="🤖"
-        agentName="NOVA"
-        agentRole="Extraction & Validation"
-        actions={
-          showTabs ? (
-            <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
-              <button
-                onClick={() => setActiveTab("receiving")}
-                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                Receiving
-              </button>
-              <button
-                onClick={() => setActiveTab("sending")}
-                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                Sending
-              </button>
-            </div>
-          ) : undefined
-        }
-      />
+      {/* FE Gap 86 (preserved through Gap 110): the Receiving/Sending toggle
+          must stay on the same row as the title, not start a row of its own.
+          The title now lives in Shell's shared header, so the toggle follows it
+          there through the header's actions portal rather than through the old
+          `actions` prop. Still gated on showTabs, so a single-service tenant
+          sees exactly what it did before. */}
+      {showTabs && (
+        <PageHeaderActions>
+          <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
+            <button
+              onClick={() => setActiveTab("receiving")}
+              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Receiving
+            </button>
+            <button
+              onClick={() => setActiveTab("sending")}
+              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Sending
+            </button>
+          </div>
+        </PageHeaderActions>
+      )}
 
       {showSending && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -281,58 +284,31 @@ export default function IngestionPage() {
       )}
 
       {showReceiving && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Side: Tagging & Files Drag-Drop - takes 1 col.
+      /* FE Gap 113 items 5/6: three real columns on a 12-col grid instead of
+         the old 1/3 + 2/3 split -- inputs (4), a slim Dispatch panel (3), and
+         the Status Ledger (5). The ledger used to take two-thirds of the width
+         to show three fields' worth of content; the width it gave back is what
+         lets Submit stand beside it as its own panel rather than being stacked
+         at the bottom of the input pile. */
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left Side: file selection & batch inputs.
             FE Gap 69: space-y-4 (was space-y-6). */}
-        <div className="lg:col-span-1 space-y-4">
+        <div className="lg:col-span-4 space-y-4">
+          {/* Files Selector.
+              FE Gap 113 item 1: the drop zone now leads this column -- picking
+              files is the primary action here, tagging is metadata applied to
+              files already picked. TagSelector used to render above it.
+              Item 7: showQueue={false} moves the selected-file list into the
+              Status Ledger's Pending section on the right. */}
+          <DropZone files={files} onChange={setFiles} showQueue={false} />
+
           {/* Metadata tagging */}
           <TagSelector tags={tags} onChange={setTags} />
 
-          {/* Files Selector */}
-          <DropZone files={files} onChange={setFiles} />
-
-          {/* Connector-sourced files (Gap 98): only renders once an admin has
-              an active Google Drive/Salesforce connection in Settings. */}
+          {/* Connector-sourced files (Gap 98). FE Gap 113 item 4: always
+              rendered now -- inactive providers show locked with a link to
+              Settings rather than the whole row disappearing. */}
           <ConnectorBrowseBar direction="inbound" />
-
-          {/* Form Status Notification Banner */}
-          {error && (
-            <div className="flex items-center gap-2 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-xs">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {success && (
-            <div className="flex items-center gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-xs">
-              <CheckCircle className="w-4 h-4 flex-shrink-0" />
-              <span>Batch successfully queued for processing.</span>
-            </div>
-          )}
-
-          {/* Submit/Upload Button */}
-          <button
-            onClick={handleUpload}
-            disabled={files.length === 0 || isUploading}
-            className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-semibold tracking-wide border transition-all duration-300 ${files.length === 0
-              ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
-              : isUploading
-                ? "bg-accent-blue/20 border-accent-blue/40 text-accent-blue cursor-wait"
-                : "bg-accent-blue border-accent-blue text-white shadow-lg shadow-accent-blue/10 hover:shadow-accent-blue/20 hover:bg-[#2563EB]"
-              }`}
-          >
-            {isUploading ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                Ingesting Files...
-              </>
-            ) : (
-              <>
-                <UploadCloud className="w-4 h-4" />
-                Submit Ingestion Batch
-              </>
-            )}
-          </button>
 
           {/* Directory Watcher (Gap 12 / FE Gap 1): bulk-ingest a server-accessible
               folder in one pass, no per-file drag-and-drop.
@@ -357,9 +333,12 @@ export default function IngestionPage() {
 
             {isDirectoryScanOpen && (
             <div id="bulk-directory-scan-body" className="space-y-3">
+            {/* FE Gap 113 item 3: condensed from a two-line explanatory
+                sentence to the action itself. This is still the raw
+                server-readable filesystem path feature it always was -- it has
+                no relationship to the OAuth connectors in the row above. */}
             <p className="text-[11px] text-slate-500">
-              Point at a folder the backend can read (e.g. a shared network drop
-              folder) to ingest every PDF inside in one pass.
+              Select a shared folder path to scan.
             </p>
             <form onSubmit={handleWatchDirectory} className="flex flex-col gap-2">
               <input
@@ -406,8 +385,78 @@ export default function IngestionPage() {
           </div>
         </div>
 
-        {/* Right Side: Status ledger tracking - takes 2 cols */}
-        <div className="lg:col-span-2 space-y-4">
+        {/* Middle: Dispatch.
+            FE Gap 113 item 5: Submit was the last thing in a stack of four
+            input panels, so the one action on this screen looked like another
+            input. It now stands on its own beside the ledger it feeds. It is
+            still the single action that both dispatches the batch and starts
+            OCR extraction -- not two steps -- and the submit-result banners
+            moved with it, since they report on this button rather than on any
+            of the inputs. */}
+        <div className="lg:col-span-3 space-y-4">
+          <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-white tracking-wide">Dispatch</h3>
+              <p className="text-[11px] text-slate-500">
+                Queues the batch and starts OCR extraction.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-500 border-y border-[#222D3D] py-2">
+              <span>Files selected</span>
+              <span className="font-mono font-semibold text-slate-300">{files.length}</span>
+            </div>
+
+            {/* Submit/Upload Button */}
+            <button
+              onClick={handleUpload}
+              disabled={files.length === 0 || isUploading}
+              className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-semibold tracking-wide border transition-all duration-300 ${files.length === 0
+                ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
+                : isUploading
+                  ? "bg-accent-blue/20 border-accent-blue/40 text-accent-blue cursor-wait"
+                  : "bg-accent-blue border-accent-blue text-white shadow-lg shadow-accent-blue/10 hover:shadow-accent-blue/20 hover:bg-[#2563EB]"
+                }`}
+            >
+              {isUploading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Ingesting Files...
+                </>
+              ) : (
+                <>
+                  <UploadCloud className="w-4 h-4" />
+                  Submit Ingestion Batch
+                </>
+              )}
+            </button>
+
+            {/* Form Status Notification Banner */}
+            {error && (
+              <div className="flex items-center gap-2 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-xs">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {success && (
+              <div className="flex items-center gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-xs">
+                <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                <span>Batch successfully queued for processing.</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Side: Status ledger tracking.
+            FE Gap 113 item 6: 5 of 12 columns, down from two-thirds of the
+            screen -- sized to the filename / stage / status it actually shows.
+            Item 7: Pending sits at the top of this column, so one place shows
+            the whole lifecycle (pending -> processing -> completed) instead of
+            splitting the first stage off into the drop zone. */}
+        <div className="lg:col-span-5 space-y-4">
+          <PendingLedger files={files} onChange={setFiles} />
+
           {jobIds.length > 0 ? (
             <>
               <StatusTable
@@ -418,19 +467,21 @@ export default function IngestionPage() {
               <LogTerminal batchId={batchId} />
             </>
           ) : (
-            <div className="glass-panel rounded-xl border border-[#222D3D] p-12 text-center h-full min-h-[300px] flex flex-col items-center justify-center gap-3">
-              <div className="p-4 rounded-full bg-slate-900/50 border border-[#222D3D] text-slate-500">
-                <UploadCloud className="w-8 h-8" />
+            files.length === 0 && (
+              <div className="glass-panel rounded-xl border border-[#222D3D] p-8 text-center h-full min-h-[300px] flex flex-col items-center justify-center gap-3">
+                <div className="p-4 rounded-full bg-slate-900/50 border border-[#222D3D] text-slate-500">
+                  <UploadCloud className="w-8 h-8" />
+                </div>
+                <div className="max-w-xs space-y-1">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Status Ledger Idle
+                  </h3>
+                  <p className="text-[11px] text-slate-500 leading-normal">
+                    Drop files and dispatch an ingestion batch on the left to monitor live OCR extraction progress.
+                  </p>
+                </div>
               </div>
-              <div className="max-w-xs space-y-1">
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Status Ledger Idle
-                </h3>
-                <p className="text-[11px] text-slate-500 leading-normal">
-                  Drop files and dispatch an ingestion batch on the left to monitor live OCR extraction progress.
-                </p>
-              </div>
-            </div>
+            )
           )}
         </div>
       </div>

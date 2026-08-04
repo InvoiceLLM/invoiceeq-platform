@@ -289,20 +289,24 @@ export default function StatusTable({
   const failedCount = items.filter((i) => i.status === "FAILED").length;
 
   return (
-    <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D] space-y-4">
-      {/* Component Title */}
-      <div className="p-5 border-b border-[#222D3D] flex items-center justify-between">
+    <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D]">
+      {/* Component Title.
+          FE Gap 113 item 6: the title block and the counters used to sit on one
+          wide row, which only worked while this panel spanned two-thirds of the
+          screen. They now stack, so the panel reads correctly at the narrower
+          width the ledger column actually needs. */}
+      <div className="p-4 border-b border-[#222D3D] space-y-3">
         <div>
           <h3 className="text-sm font-semibold text-white tracking-wide">
             Ingestion Progress Queue
           </h3>
-          <p className="text-xs text-slate-400">
+          <p className="text-[11px] text-slate-500">
             Live extraction ledger pipeline ({jobIds.length >= 6 ? "SSE Connection" : "Polling Mode"}).
           </p>
         </div>
 
         {/* FE Gap 14: live statistics counters */}
-        <div className="flex items-center gap-4 text-right">
+        <div className="flex items-center gap-4 flex-wrap">
           <div>
             <div className="text-sm font-bold text-white">{totalFound}</div>
             <div className="text-[9px] text-slate-500 uppercase tracking-wide">Found</div>
@@ -322,17 +326,22 @@ export default function StatusTable({
         </div>
       </div>
 
-      {/* Table view */}
+      {/* Table view.
+          FE Gap 113 item 6: six columns (File Name / Size / Type / Status /
+          Progress / Details) collapsed to the three this ledger is actually
+          about -- File, Stage, Status. Nothing was dropped except the "Type"
+          column, which was the constant string "PDF" on every row (the drop
+          zone only accepts PDFs): Size moved under the filename, Progress
+          became the Stage cell, and the Details chevron moved into the Status
+          cell next to the badge it expands. Row behavior -- polling/SSE
+          updates, badges, expansion -- is untouched. */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="w-full text-left border-collapse table-fixed">
           <thead>
             <tr className="border-b border-[#222D3D] bg-slate-900/20 text-slate-400 text-[10px] font-bold uppercase tracking-wider select-none">
-              <th className="px-6 py-3">File Name</th>
-              <th className="px-6 py-3">Size</th>
-              <th className="px-6 py-3">Type</th>
-              <th className="px-6 py-3">Status</th>
-              <th className="px-6 py-3">Progress</th>
-              <th className="px-6 py-3 text-right">Details</th>
+              <th className="px-4 py-3 w-[44%]">File</th>
+              <th className="px-4 py-3 w-[26%]">Stage</th>
+              <th className="px-4 py-3 w-[30%]">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#222D3D]/30 text-slate-300 text-xs">
@@ -343,23 +352,21 @@ export default function StatusTable({
               return (
                 <React.Fragment key={item.id}>
                   {/* Ledger Data Row */}
-                  <tr className="hover:bg-slate-900/20 transition-colors">
-                    <td className="px-6 py-4 flex items-center gap-2 max-w-xs truncate">
-                      <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                      <span className="truncate font-semibold text-slate-200">
-                        {item.name}
-                      </span>
+                  <tr className="hover:bg-slate-900/20 transition-colors align-top">
+                    <td className="px-4 py-3">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <FileText className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-slate-200" title={item.name}>
+                            {item.name}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            PDF &middot; {formatFileSize(item.size)}
+                          </div>
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-6 py-4 text-slate-400">
-                      {formatFileSize(item.size)}
-                    </td>
-                    <td className="px-6 py-4 font-mono text-[10px] text-slate-500">
-                      PDF
-                    </td>
-                    <td className="px-6 py-4">
-                      {getStatusBadge(item.status)}
-                    </td>
-                    <td className="px-6 py-4 min-w-[120px]">
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         {/* Progress ring track */}
                         <div className="flex-1 bg-slate-800 rounded-full h-1.5 overflow-hidden">
@@ -376,33 +383,35 @@ export default function StatusTable({
                             style={{ width: `${item.progress}%` }}
                           />
                         </div>
-                        <span className="text-[10px] font-semibold font-mono text-slate-400">
+                        <span className="text-[10px] font-semibold font-mono text-slate-400 shrink-0">
                           {item.progress}%
                         </span>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      {hasAlerts || item.status === "COMPLETED" ? (
-                        <button
-                          onClick={() => toggleRowExpansion(item.id)}
-                          className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                        >
-                          {isExpanded ? (
-                            <ChevronUp className="w-4 h-4" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4" />
-                          )}
-                        </button>
-                      ) : (
-                        <span className="text-slate-500 text-[10px]">-</span>
-                      )}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-between gap-1">
+                        {getStatusBadge(item.status)}
+                        {(hasAlerts || item.status === "COMPLETED") && (
+                          <button
+                            onClick={() => toggleRowExpansion(item.id)}
+                            aria-label={isExpanded ? "Hide details" : "Show details"}
+                            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors shrink-0"
+                          >
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
 
                   {/* Expandable audit alert warnings */}
                   {isExpanded && (
                     <tr>
-                      <td colSpan={6} className="bg-amber-500/5 px-6 py-4 border-l-2 border-amber-500">
+                      <td colSpan={3} className="bg-amber-500/5 px-4 py-4 border-l-2 border-amber-500">
                         {item.status === "AUDIT_REQUIRED" ? (
                           <div className="space-y-2 text-xs text-amber-300">
                             <div className="flex items-center gap-2 font-semibold">
@@ -422,7 +431,7 @@ export default function StatusTable({
                               </p>
                             )}
 
-                            <div className="pt-2 flex items-center justify-between">
+                            <div className="pt-2 flex items-center justify-between gap-2 flex-wrap">
                               <span className="text-[10px] text-slate-400 font-mono">
                                 Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? `$${item.total.toFixed(2)}` : "Pending"}
                               </span>
@@ -436,7 +445,7 @@ export default function StatusTable({
                             </div>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-between text-xs text-slate-300">
+                          <div className="flex items-center justify-between gap-2 flex-wrap text-xs text-slate-300">
                             <span className="text-emerald-400 font-semibold flex items-center gap-2">
                               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                               Invoice parsed successfully with zero warnings.

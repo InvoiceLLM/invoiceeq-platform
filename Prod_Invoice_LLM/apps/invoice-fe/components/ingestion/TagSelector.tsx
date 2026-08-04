@@ -42,15 +42,19 @@ export default function TagSelector({ tags = [], onChange }: TagSelectorProps) {
   };
 
   return (
-    <div className="glass-panel p-5 rounded-xl space-y-4">
-      {/* Header Info */}
-      <div className="flex items-center gap-2 text-white">
-        <Tag className="w-4.5 h-4.5 text-accent-blue" />
-        <h3 className="text-sm font-semibold tracking-wide">Batch Ingestion Tags</h3>
+    <div className="glass-panel p-4 rounded-xl space-y-3">
+      {/* Header Info.
+          FE Gap 113 item 2: this panel was roughly twice the height it needed
+          to be. The description is now a single small-font line sitting under
+          the title (was a full-size `text-xs` sentence on its own block), and
+          padding/spacing dropped a step (p-5/space-y-4 -> p-4/space-y-3). */}
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 text-white">
+          <Tag className="w-4 h-4 text-accent-blue" />
+          <h3 className="text-sm font-semibold tracking-wide">Batch Ingestion Tags</h3>
+        </div>
+        <p className="text-[11px] text-slate-500">Labels applied to this batch.</p>
       </div>
-      <p className="text-xs text-slate-400">
-        Specify metadata labels to organize and catalog files during extraction.
-      </p>
 
       {/* Input controls */}
       <div className="flex gap-2">
@@ -74,14 +78,14 @@ export default function TagSelector({ tags = [], onChange }: TagSelectorProps) {
         </button>
       </div>
 
-      {/* Tag Chips List */}
-      <div className="flex flex-wrap gap-2 pt-1">
-        {tags.length === 0 ? (
-          <span className="text-[11px] text-slate-500 italic select-none">
-            No active tags defined. Invoices will use default indexing.
-          </span>
-        ) : (
-          tags.map((tag) => (
+      {/* Tag Chips List.
+          FE Gap 113 item 2: the "No active tags defined. Invoices will use
+          default indexing." empty state is gone, and the row itself is only
+          rendered once there is at least one chip -- an empty chip row already
+          communicates "no tags" without occupying a line of its own. */}
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {tags.map((tag) => (
             <div
               key={tag}
               className="flex items-center gap-1 bg-[#1E293B] border border-[#222D3D] hover:bg-[#334155] rounded-full px-3 py-1 text-xs text-slate-300 transition-all select-none group"
@@ -96,9 +100,9 @@ export default function TagSelector({ tags = [], onChange }: TagSelectorProps) {
                 <X className="w-3 h-3" />
               </button>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
