@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from dependencies import get_tenant_context_allow_unpaid, get_db_session, TenantContext
-from models import Tenant, User
+from models import Tenant, User, RoleMapper
 from config import settings
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -136,7 +136,7 @@ async def provision_tenant(
             email=body.admin_email,
             first_name=body.first_name,
             last_name=body.last_name,
-            role="Admin",
+            role=RoleMapper.normalize_role("Admin"),
             clerk_user_id=body.clerk_user_id,
             created_at=datetime.utcnow(),
         )

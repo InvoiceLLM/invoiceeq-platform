@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID, uuid4
 from datetime import datetime, date
 from sqlmodel import SQLModel, Field, Column
@@ -264,5 +265,58 @@ class WebhookSubscription(SQLModel, table=True):
     consecutive_failures: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RoleMapper:
+    """
+    Enterprise Role & Permission Engine (Gap 73).
+    Maps any 3rd-party IDP string to internal application roles and default permission flags.
+    """
+    ROLE_ALIAS_MAP = {
+        "org:admin": "Admin",
+        "admin": "Admin",
+        "org_admin": "Admin",
+        "org:trainer": "Trainer",
+        "trainer": "Trainer",
+        "org_trainer": "Trainer",
+        "org:auditor": "Auditor",
+        "auditor": "Auditor",
+        "org:member": "Viewer",
+        "member": "Viewer",
+        "viewer": "Viewer",
+    }
+
+    ROLE_PERMISSION_DEFAULTS = {
+        "Admin":   {"can_train": True,  "can_audit": True,  "can_load": True},
+        "Trainer": {"can_train": True,  "can_audit": False, "can_load": False},
+        "Auditor": {"can_train": False, "can_audit": True,  "can_load": False},
+        "Viewer":  {"can_train": False, "can_audit": False, "can_load": False},
+    }
+
+    @classmethod
+    def normalize_role(cls, raw_role: str | None) -> str:
+        """Translates raw strings (e.g. 'org:trainer', 'trainer') into internal DB roles ('Trainer')."""
+        if not raw_role:
+            return "Viewer"
+        clean_key = str(raw_role).strip().lower()
+        return cls.ROLE_ALIAS_MAP.get(clean_key, raw_role.title() if raw_role else "Viewer")
+
+    @classmethod
+    def resolve_permissions(cls, role: str, user: Any = None) -> tuple[bool, bool, bool]:
+        """Resolves (can_train, can_audit, can_load) for any role."""
+        if role == "Admin":
+            return True, True, True
+
+        defaults = cls.ROLE_PERMISSION_DEFAULTS.get(role, cls.ROLE_PERMISSION_DEFAULTS["Viewer"])
+        can_train = getattr(user, "can_train", None) if user else None
+        can_audit = getattr(user, "can_audit", None) if user else None
+        can_load  = getattr(user, "can_load", None)  if user else None
+
+        res_train = can_train if can_train is not None else defaults["can_train"]
+        res_audit = can_audit if can_audit is not None else defaults["can_audit"]
+        res_load  = can_load  if can_load  is not None  else defaults["can_load"]
+
+        return bool(res_train), bool(res_audit), bool(res_load)
+
 
 

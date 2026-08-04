@@ -10,7 +10,7 @@ from datetime import datetime
 
 from config import settings
 from database import engine
-from models import Tenant, User
+from models import Tenant, User, RoleMapper
 from services.billing_lifecycle import enforce_lapse
 
 class TenantContext(BaseModel):
@@ -103,18 +103,10 @@ def get_jwk(kid: str) -> dict:
 
 def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool]:
     """
-    Feature 1.1 (Task 1.1.3): resolve (can_train, can_audit, can_load).
-
-    Admin is a role, not a 4th permission -- it implies all three, and is the
-    only role that can grant them to others. For everyone else the flags come
-    straight off the `User` row (default False = the design's "Viewer":
-    Dashboard + Chat + Help only).
+    Feature 1.1 (Task 1.1.3) / Gap 73: resolve (can_train, can_audit, can_load).
+    Delegates to RoleMapper for enterprise-scale role mapping and fallback permissions.
     """
-    if role == "Admin":
-        return True, True, True
-    if user is None:
-        return False, False, False
-    return bool(user.can_train), bool(user.can_audit), bool(user.can_load)
+    return RoleMapper.resolve_permissions(role, user)
 
 
 def get_tenant_context_allow_unpaid(
@@ -234,12 +226,7 @@ def get_tenant_context_allow_unpaid(
 
             user_id = payload.get("sub", MOCK_USER_ID)
             raw_role = payload.get("role") or payload.get("org_role", "Viewer")
-            if raw_role in ("org:admin", "admin", "Admin"):
-                role = "Admin"
-            elif raw_role in ("org:member", "member", "Auditor", "auditor"):
-                role = "Auditor"
-            else:
-                role = "Viewer"
+            role = RoleMapper.normalize_role(raw_role)
             plan = payload.get("billing_plan", "free")
             email = payload.get("email") or payload.get("email_address") or f"{user_id}@domain.com"
             first_name = payload.get("first_name") or payload.get("given_name")
