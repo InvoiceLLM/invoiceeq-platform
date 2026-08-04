@@ -269,7 +269,7 @@ class WebhookSubscription(SQLModel, table=True):
 
 class RoleMapper:
     """
-    Enterprise Role & Permission Engine (Gap 73).
+    Enterprise Role & Permission Engine (Gap 108).
     Maps any 3rd-party IDP string to internal application roles and default permission flags.
     """
     ROLE_ALIAS_MAP = {
