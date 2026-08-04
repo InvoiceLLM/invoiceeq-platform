@@ -63,6 +63,17 @@ export async function forwardedHeaders(
  * Mints a Clerk session token for the current request, or null if there is no
  * signed-in session.
  *
+ * Bug fix (2026-08-04): must request the "invoice-app" JWT Template by name.
+ * A plain `getToken()` mints Clerk's bare default token, which carries none
+ * of this app's custom claims (email, org_id, org_role) - the backend then
+ * has nothing to resolve a real role from and silently falls back to
+ * Viewer for every user, no matter their actual Clerk org role. Confirmed
+ * live: Postgres rows created via the bare token had role="Viewer" and a
+ * synthetic fallback email, for an account Clerk itself has recorded as
+ * "org:admin" or its own organization. The "invoice-app" template exists in
+ * the Clerk dashboard already (claims: email, org_id, org_role) - it was
+ * just never requested by name anywhere in this codebase.
+ *
  * Wrapped in try/catch because `auth()` throws when clerkMiddleware() has not
  * run for the current path (middleware.ts's matcher covers /api/*, but a
  * proxy helper shouldn't hard-fail on a config change) and `getToken()` can
@@ -73,7 +84,7 @@ export async function clerkSessionToken(): Promise<string | null> {
   try {
     const { userId, getToken } = await auth();
     if (!userId) return null;
-    return (await getToken()) ?? null;
+    return (await getToken({ template: "invoice-app" })) ?? null;
   } catch {
     return null;
   }
