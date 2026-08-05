@@ -37,14 +37,14 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
     es.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload?.type === "log_line") {
+        if (payload?.message) {
           setLines((prev) => [
             ...prev,
             {
               id: `${Date.now()}-${prev.length}`,
               invoiceId: payload.invoice_id ?? null,
               message: payload.message ?? "",
-              level: payload.level ?? "info",
+              level: payload.level ?? (payload.status === "FAILED" ? "error" : "info"),
             },
           ]);
         }

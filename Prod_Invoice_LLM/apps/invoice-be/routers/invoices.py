@@ -279,9 +279,16 @@ async def start_directory_watcher(
             detail="Directory watcher is not configured for this environment."
         )
 
-    allowed_base_abs = os.path.realpath(allowed_base)
-    requested_abs = os.path.realpath(payload.directory_path)
-    if os.path.commonpath([allowed_base_abs, requested_abs]) != allowed_base_abs:
+    allowed_base_abs = os.path.normcase(os.path.realpath(allowed_base))
+    requested_abs = os.path.normcase(os.path.realpath(payload.directory_path))
+    try:
+        common = os.path.commonpath([allowed_base_abs, requested_abs])
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid path comparison: {str(ve)}"
+        )
+    if common != allowed_base_abs:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="directory_path must be inside the configured watcher base directory."

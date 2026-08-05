@@ -14,6 +14,11 @@ import { apiClient } from "../../lib/apiClient";
 
 type IngestionTab = "receiving" | "sending";
 
+// Module-level cache to persist selected files/tags across page navigations (Gap 146)
+let cachedFiles: File[] = [];
+let cachedTags: string[] = [];
+let cachedOutboundFiles: File[] = [];
+
 export default function IngestionPage() {
   // FE Gap 110: title + NOVA badge now live in Shell's one shared header.
   usePageHeader({
@@ -23,11 +28,20 @@ export default function IngestionPage() {
     agentRole: "Extraction & Validation",
   });
 
-  const [files, setFiles] = useState<File[]>([]);
-  const [tags, setTags] = useState<string[]>([]);
+  const [files, setFiles] = useState<File[]>(() => cachedFiles);
+  const [tags, setTags] = useState<string[]>(() => cachedTags);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // Sync inbound files and tags to cache
+  useEffect(() => {
+    cachedFiles = files;
+  }, [files]);
+
+  useEffect(() => {
+    cachedTags = tags;
+  }, [tags]);
 
   // Task 3.1.1 (Feature 3.1, Service Flow): the tab header only appears when
   // both Receive/Send are enabled -- a single-service tenant sees exactly
@@ -37,10 +51,15 @@ export default function IngestionPage() {
   const [activeTab, setActiveTab] = useState<IngestionTab>("receiving");
 
   // Outbound (Sending) state
-  const [outboundFiles, setOutboundFiles] = useState<File[]>([]);
-  const [outboundInvoices, setOutboundInvoices] = useState<Array<{ id: string; name: string }>>([]);
+  const [outboundFiles, setOutboundFiles] = useState<File[]>(() => cachedOutboundFiles);
+  const [outboundInvoices, setOutboundInvoices] = useState<Array<{ id: string; batchId: string; name: string }>>([]);
   const [isOutboundUploading, setIsOutboundUploading] = useState(false);
   const [outboundError, setOutboundError] = useState<string | null>(null);
+
+  // Sync outbound files to cache
+  useEffect(() => {
+    cachedOutboundFiles = outboundFiles;
+  }, [outboundFiles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +89,7 @@ export default function IngestionPage() {
     setIsOutboundUploading(true);
     setOutboundError(null);
 
-    const uploadedList: Array<{ id: string; name: string }> = [];
+    const uploadedList: Array<{ id: string; batchId: string; name: string }> = [];
     let hasError = false;
 
     for (const file of outboundFiles) {
@@ -79,7 +98,11 @@ export default function IngestionPage() {
 
       try {
         const response = await apiClient.post("/outbound-invoices/upload", formData);
-        uploadedList.push({ id: response.data.invoice_id, name: file.name });
+        uploadedList.push({
+          id: response.data.invoice_id,
+          batchId: response.data.batch_id,
+          name: file.name,
+        });
       } catch (err: any) {
         console.error(`Outbound upload failed for ${file.name}`, err);
         setOutboundError(err.response?.data?.detail || `Failed to upload outbound invoice: ${file.name}`);
@@ -91,6 +114,7 @@ export default function IngestionPage() {
     if (!hasError) {
       setOutboundInvoices((prev) => [...prev, ...uploadedList]);
       setOutboundFiles([]);
+      cachedOutboundFiles = [];
     }
     setIsOutboundUploading(false);
   };
@@ -262,7 +286,10 @@ export default function IngestionPage() {
           <div className="lg:col-span-2 space-y-4">
             {outboundInvoices.length > 0 ? (
               outboundInvoices.map((inv) => (
-                <SendInvoiceStatusTable key={inv.id} invoiceId={inv.id} fileName={inv.name} />
+                <div key={inv.id} className="space-y-4">
+                  <SendInvoiceStatusTable invoiceId={inv.id} fileName={inv.name} />
+                  <LogTerminal batchId={inv.batchId} />
+                </div>
               ))
             ) : (
               <div className="glass-panel rounded-xl border border-[#222D3D] p-12 text-center h-full min-h-[300px] flex flex-col items-center justify-center gap-3">
