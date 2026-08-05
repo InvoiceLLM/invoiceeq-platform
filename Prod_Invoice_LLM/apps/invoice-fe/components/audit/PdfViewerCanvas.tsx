@@ -40,7 +40,7 @@ export default function PdfViewerCanvas({
   };
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]">
+    <div className="flex h-full min-h-[500px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-[#222D3D] px-4 py-3">
         <div>
@@ -104,7 +104,7 @@ export default function PdfViewerCanvas({
             style={{
               width: isRotated ? "565px" : "100%",
               height: isRotated ? "800px" : "auto",
-              transform: isRotated ? `rotate(${rotation}deg) scale(${zoom / 100})` : `rotate(${rotation}deg)`,
+              transform: `rotate(${rotation}deg) scale(${zoom / 100})`,
               transformOrigin: "center center",
             }}
           >

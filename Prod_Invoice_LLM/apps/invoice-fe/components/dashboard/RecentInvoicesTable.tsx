@@ -227,7 +227,7 @@ export default function RecentInvoicesTable({
               pageInvoices.map((inv) => (
                 <tr 
                   key={inv.id}
-                  className="hover:bg-slate-900/30 transition-colors duration-150 group"
+                  className={`hover:bg-slate-900/30 transition-colors duration-150 group ${activeMenuId === inv.id ? "relative z-30" : ""}`}
                 >
                   {/* Invoice # */}
                   <td className="px-6 py-4 font-mono font-medium text-white group-hover:text-[#3B82F6] transition-colors">

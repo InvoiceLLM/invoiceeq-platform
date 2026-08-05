@@ -415,7 +415,7 @@ export default function AuditorReviewPage() {
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
 
   return (
-      <div className="flex h-full flex-col gap-4 p-6">
+    <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto xl:overflow-hidden">
         {/* FE Gap 110: title/subtitle/Back all moved into the shared header
             above; the live status badge rides up there too rather than holding
             a row down here.
@@ -429,7 +429,7 @@ export default function AuditorReviewPage() {
             the two terminal actions, not the main content. */}
         <PageHeaderActions>
           <span
-            className={`rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap ${
+            className={`rounded-full border px-2 sm:px-3 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium whitespace-nowrap ${
               invoice.status === "PAID"
                 ? "border-emerald-600/50 bg-emerald-500/10 text-emerald-300"
                 : invoice.status === "REJECTED"
@@ -446,7 +446,7 @@ export default function AuditorReviewPage() {
               <button
                 onClick={() => setShowRejectModal(true)}
                 disabled={!!actionLoading}
-                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-500/50 bg-red-600/10 px-3 py-1.5 text-xs font-semibold text-red-300 transition hover:bg-red-600/30 disabled:opacity-50"
+                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-500/50 bg-red-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-red-300 transition hover:bg-red-600/30 disabled:opacity-50"
               >
                 {actionLoading === "rejected" ? (
                   <Loader2 size={13} className="animate-spin" />
@@ -458,7 +458,7 @@ export default function AuditorReviewPage() {
               <button
                 onClick={() => handleResolve("PAID")}
                 disabled={!!actionLoading}
-                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50"
+                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50"
               >
                 {actionLoading === "paid" ? (
                   <Loader2 size={13} className="animate-spin" />
@@ -513,7 +513,7 @@ export default function AuditorReviewPage() {
             -- this route renders exactly one invoice (`/invoices/review/[id]`)
             and the Audit Queue is the place to move between them. Confirmed
             absent in code as well: nothing here has ever rendered one. */}
-        <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
           {/* COLUMN 1 — PDF Viewer (unchanged; it already manages its own
               internal scrolling and zoom/rotate toolbar). */}
           <PdfViewerCanvas
@@ -531,7 +531,7 @@ export default function AuditorReviewPage() {
               overflow-hidden instead of becoming scrollable. */}
           <section
             data-testid="fields-panel"
-            className="flex min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
+            className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
           >
             <div className="flex items-center justify-between gap-2 border-b border-[#222D3D] px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
@@ -669,7 +669,7 @@ export default function AuditorReviewPage() {
               that a dismiss can produce. */}
           <section
             data-testid="alerts-panel"
-            className="flex min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
+            className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
           >
             <div className="flex items-center justify-between gap-2 border-b border-[#222D3D] px-4 py-3">
               {/* Moved out of AlertConsole itself, which used to draw this
