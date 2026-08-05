@@ -218,7 +218,7 @@ td, .table-cell {
 }
 
 .animated-hero-heading {
-  font-family: "Cambria", "Georgia", "Times New Roman", serif !important;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif !important;
   font-weight: 700;
   letter-spacing: -0.025em;
   display: inline-block;

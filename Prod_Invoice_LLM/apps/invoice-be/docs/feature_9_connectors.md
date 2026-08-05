@@ -38,3 +38,5 @@ Integrate secure API credentials exchanges and import pipelines to retrieve file
 * **Automated Tests**: `uv run pytest tests/test_connectors.py` (15 tests, including real listing/download/refresh-token/PKCE paths, all mocking `httpx`/Redis calls — no live network calls in CI) and `uv run pytest tests/` for full-suite regression (152 tests).
 * **Manual/Live Verification (done 2026-07-30)**: Google — smoke-tested `list_google_drive_files()`/`download_google_drive_file()`/token-refresh directly against the real endpoints with a deliberately invalid token (got real `401`/`invalid_grant` back). Salesforce — real Consumer Key/Secret from the user's Developer Edition org, Connect flow reaching the real Salesforce login screen, PKCE error hit and fixed live. Full real-token connect-and-browse pass (actually completing login and pulling a real file) still pending the user's own manual click-through.
 
+Note: SendGrid (inbound/outbound transactional email) setup steps live in `apps/invoice-be/docs/feature_14_email_ingestion.md`, not here — it's not an OAuth connector a tenant clicks "Connect" on, so it doesn't belong in this doc's scope.
+

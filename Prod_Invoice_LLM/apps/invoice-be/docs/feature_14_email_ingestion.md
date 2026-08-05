@@ -76,3 +76,70 @@ like a normal upload, and tagging each resulting `Invoice` row `["email"]`.
   configured in this repo)*: send a real email with a PDF attachment to a
   test tenant's alias, confirm it appears in the ingestion queue exactly
   like a UI upload.
+
+### SendGrid setup — one-time, platform-wide (not yet done in any environment)
+Both directions above ride on the same SendGrid account. Configured **once
+for the whole platform**, not once per tenant — unlike `feature_9_connectors.md`'s
+Google/Salesforce connectors where each *end-user* connects their own
+account. Every tenant's inbound alias is the same domain
+(`invoices.invoice-ai.com`) with a different UUID as the local part;
+SendGrid's Inbound Parse is a wildcard on that whole domain, forwarding
+*any* local part to the one webhook above — our own backend, not
+SendGrid, resolves which tenant an email belongs to
+(`UUID_EMAIL_PATTERN` parse of the `To` header). Outbound (Task 14.6,
+below) works the same way: one platform-authenticated sending domain,
+with a tenant's saved `outbound_sender_email` used only as the `Reply-To`
+header, never as a per-tenant SendGrid identity — see `be_features_tracker.md`
+Gap 125 items 2/5 for why this design was chosen over per-tenant domain
+authentication (avoids requiring every tenant to run their own SPF/DKIM/
+DMARC DNS setup).
+
+**Dashboard steps:**
+1. Create/confirm the SendGrid account.
+2. **Sender Authentication → Authenticate a Domain** — enter the
+   platform's domain (e.g. `invoice-ai.com`, or a dedicated subdomain
+   like `mail.invoice-ai.com` for outbound specifically, kept separate
+   from the inbound-receiving subdomain). SendGrid returns a set of CNAME
+   records.
+3. Add those CNAME records at whichever DNS provider actually hosts
+   `invoice-ai.com` — **not Azure**: this infra has no DNS zone resource
+   anywhere, so this is a manual step at the domain registrar/DNS host,
+   outside this repo entirely.
+4. Back in SendGrid, click **Verify** on the domain once the records
+   propagate.
+5. **Settings → Inbound Parse → Add Host & URL** — hostname
+   `invoices.invoice-ai.com`, destination URL **must be the public
+   website's proxied path**, not the backend directly — `invoice-be`'s
+   ingress is `external: false` (see `be_features_tracker.md` Gap 124
+   item 1, found 2026-08-05: same root cause as Gap 131's connector
+   `redirect_uri_mismatch`, since `invoice-website` is the only
+   `external: true` app in this infra). The correct destination is
+   `https://<WEBSITE_PUBLIC_URL>/api/email/inbound`, which requires a new
+   FE proxy route (`app/api/email/inbound/route.ts`, Clerk-auth-bypassed
+   in `middleware.ts`) that doesn't exist yet — **not buildable as a
+   direct backend URL today**.
+6. Add the **MX record** SendGrid shows for that hostname
+   (`mx.sendgrid.net`, priority 10) at the same DNS host as step 3.
+7. **Settings → API Keys → Create API Key**, Mail Send permission (needed
+   once Task 14.6 builds outbound) — copy the key value; SendGrid shows
+   it exactly once.
+
+**What to save, and where:**
+| Value | Where it's saved | Secret? |
+|---|---|---|
+| SendGrid API Key (step 7) | Azure Key Vault secret `SENDGRID-API-KEY` → `invoice-be` container env `SENDGRID_API_KEY` | Yes |
+| Inbound Parse shared secret (Gap 124 item 2's fix — a value only this app and the registered webhook URL know, to confirm a request genuinely came from SendGrid) | Azure Key Vault secret `SENDGRID-INBOUND-SECRET` → env `INBOUND_PARSE_SHARED_SECRET` | Yes |
+| Authenticated sending domain name (e.g. `mail.invoice-ai.com`) | Plain bicep param, not Key Vault — not sensitive, same treatment as `googleRedirectUri` in `feature_9_connectors.md` | No |
+| Inbound receiving domain name (e.g. `invoices.invoice-ai.com`) | Hardcoded in `app/settings/email/page.tsx`'s `platformDomain` constant — matches the domain-level (not per-tenant) design | No |
+| Anything tenant-specific | **Nothing** — a tenant's alias/sender-email are both derived from data already stored (their `tenant_id`, their saved `outbound_sender_email`), never round-tripped through SendGrid's own API for storage | N/A |
+
+**Bicep — done 2026-08-05**, mirroring the pattern already used for
+`GOOGLE-CLIENT-SECRET`/`SALESFORCE-CLIENT-SECRET`: `infra/05-secrets.bicep`
+(`sendgridApiKey`/`sendgridInboundSecret` secure params → 2 Key Vault
+secret resources), `infra/modules/compute/invoice-be.bicep`
+(`sendgridSendingDomain` param, 2 `secrets:` entries, 3 `env:` entries),
+`infra/08-apps.bicep` (`sendgridSendingDomain` param threaded to the
+`backendApp` module), `infra/params.dev.json` (`sendgridSendingDomain`
+entry), `infra/params.dev.secrets.json.example` (placeholder entries for
+both secrets). Real values still need seeding into `params.dev.secrets.json`
+(gitignored, local-only) once a real SendGrid account exists.

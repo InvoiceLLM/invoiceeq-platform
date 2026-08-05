@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Sparkles,
   ArrowRight,
+  ChevronDown,
   ShieldCheck,
   Zap,
   Cpu,
@@ -13,18 +14,12 @@ import {
   Lock,
   RotateCcw,
   Database,
-  Play,
+  Mail,
   ScanLine,
   MessageSquareText,
   BrainCircuit,
   Bot,
-  ShieldAlert,
-  Workflow,
 } from "lucide-react";
-
-interface HeroProps {
-  onOpenFlowsModal?: () => void;
-}
 
 interface SampleInvoice {
   id: string;
@@ -122,42 +117,47 @@ const SAMPLE_INVOICES: SampleInvoice[] = [
   },
 ];
 
-const HERO_CAPABILITIES = [
-  {
-    name: "NOVA",
-    subtitle: "Smart Invoice Extraction",
-    icon: ScanLine,
-    tooltip: "Reads PDFs and converts invoice details into structured data.",
-    gradient: "from-[#3B82F6] to-[#22D3EE]",
-    activeBorder: "border-[#22D3EE]/70 shadow-[0_0_25px_rgba(34,211,238,0.45)] bg-[#22D3EE]/15 text-white",
-  },
-  {
-    name: "SENTINEL",
-    subtitle: "Anomaly & Duplicate Detection",
-    icon: ShieldCheck,
-    tooltip: "Flags calculation errors, suspicious values and duplicate invoices.",
-    gradient: "from-[#10B981] to-[#14B8A6]",
-    activeBorder: "border-[#10B981]/70 shadow-[0_0_25px_rgba(16,185,129,0.45)] bg-[#10B981]/15 text-white",
-  },
-  {
-    name: "SAGE",
-    subtitle: "Chat With Your Invoices",
-    icon: MessageSquareText,
-    tooltip: "Answers invoice and finance questions in natural language.",
-    gradient: "from-[#8B5CF6] to-[#3B82F6]",
-    activeBorder: "border-[#8B5CF6]/70 shadow-[0_0_25px_rgba(139,92,246,0.45)] bg-[#8B5CF6]/15 text-white",
-  },
-  {
-    name: "EVOLVE",
-    subtitle: "Learns From Corrections",
-    icon: BrainCircuit,
-    tooltip: "Uses auditor corrections to improve future extraction.",
-    gradient: "from-[#6366F1] to-[#8B5CF6]",
-    activeBorder: "border-[#6366F1]/70 shadow-[0_0_25px_rgba(99,102,241,0.45)] bg-[#6366F1]/15 text-white",
-  },
+/* Gap 163: the four agents are now a compact colour-keyed legend around the
+   "AI Engine" ring rather than four standalone capability cards above the fold. */
+const AGENT_LEGEND = [
+  { name: "NOVA", role: "Extracts", icon: ScanLine, color: "#22D3EE" },
+  { name: "SENTINEL", role: "Verifies", icon: ShieldCheck, color: "#10B981" },
+  { name: "SAGE", role: "Answers", icon: MessageSquareText, color: "#8B5CF6" },
+  { name: "EVOLVE", role: "Learns", icon: BrainCircuit, color: "#6366F1" },
 ];
 
-export function Hero({ onOpenFlowsModal }: HeroProps) {
+/* Gap 163: input/output nodes flanking the AI Engine ring in the hero flow diagram. */
+function FlowNode({
+  icon: Icon,
+  title,
+  caption,
+  accent,
+}: {
+  icon: React.ElementType;
+  title: string;
+  caption: string;
+  accent: string;
+}) {
+  return (
+    <div
+      className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] backdrop-blur-md px-3.5 py-2.5 text-left transition-colors duration-300 hover:border-white/20"
+      style={{ boxShadow: `inset 0 0 0 1px ${accent}14` }}
+    >
+      <div
+        className="shrink-0 rounded-lg p-2"
+        style={{ background: `${accent}1F`, border: `1px solid ${accent}59` }}
+      >
+        <Icon className="w-4 h-4" style={{ color: accent }} />
+      </div>
+      <div className="min-w-0">
+        <span className="block text-[13px] font-semibold text-white leading-tight">{title}</span>
+        <span className="block text-[11px] text-[#94A3B8] leading-tight truncate">{caption}</span>
+      </div>
+    </div>
+  );
+}
+
+export function Hero() {
   const [selectedInvoice, setSelectedInvoice] = useState<SampleInvoice>(SAMPLE_INVOICES[0]);
   const [activeStep, setActiveStep] = useState<number>(3);
   const [inspectorTab, setInspectorTab] = useState<"SUMMARY" | "JSON">("SUMMARY");
@@ -190,7 +190,7 @@ export function Hero({ onOpenFlowsModal }: HeroProps) {
     };
   }, []);
 
-  // 2. Sequential 1.5s Staggered Highlight Wave for Hero Capability Cards
+  // 2. Sequential 1.5s Staggered Highlight Wave across the AI Engine agent legend
   useEffect(() => {
     const pillTimer = setInterval(() => {
       setHighlightedPillIndex((prev) => (prev + 1) % 4);
@@ -271,68 +271,28 @@ export function Hero({ onOpenFlowsModal }: HeroProps) {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Main Title & Subtitle */}
-        <div className="text-center max-w-4xl mx-auto space-y-6">
-          
+        {/* Headline, single CTA and flow-diagram centrepiece (Gap 163) */}
+        <div className="text-center max-w-5xl mx-auto">
+
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[rgba(255,255,255,0.08)] bg-white/[0.04] backdrop-blur-md text-xs font-semibold text-[#22D3EE] shadow-[0_0_20px_rgba(34,211,238,0.2)]">
             <Sparkles className="w-4 h-4 text-[#22D3EE] animate-spin" style={{ animationDuration: "8s" }} />
             <span>AI-Powered Finance Workspace</span>
           </div>
 
-          {/* Executive Corporate Hero Heading */}
-          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.25]">
-            <span className="animated-hero-heading inline-block">Automated Invoice Intelligence</span>
+          {/* Single-line serif headline. `whitespace-nowrap` only from lg up so
+              smaller viewports may still wrap; the step up to text-6xl is held
+              back to xl because at 60px this string is ~1040px wide and would
+              overflow the container at exactly the lg breakpoint (1024px). */}
+          <h1 className="mt-4 text-3xl sm:text-5xl xl:text-6xl font-bold tracking-tight leading-[1.2] lg:whitespace-nowrap">
+            <span className="animated-hero-heading inline-block">Invoices, understood automatically</span>
           </h1>
 
-          {/* 4 Hero Feature Capability Cards (NOVA, SENTINEL, SAGE, EVOLVE) */}
-          <div className="pt-2 grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-4xl mx-auto text-xs">
-            {HERO_CAPABILITIES.map((cap, idx) => {
-              const Icon = cap.icon;
-              const isHighlight = highlightedPillIndex === idx;
-
-              return (
-                <div
-                  key={cap.name}
-                  onClick={() => setHighlightedPillIndex(idx)}
-                  className={`group relative flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-300 cursor-pointer ${
-                    isHighlight
-                      ? `-translate-y-1.5 scale-[1.03] ${cap.activeBorder} z-20`
-                      : "bg-white/5 border-white/10 text-[#CBD5E1] hover:text-white hover:-translate-y-1 hover:border-white/20"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`p-1.5 rounded-lg bg-gradient-to-br ${cap.gradient} text-white transition-all duration-300 ${
-                        isHighlight ? "scale-110 rotate-6 shadow-md" : "group-hover:rotate-6"
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="text-left">
-                      <span className="font-extrabold text-white text-xs block leading-tight">
-                        {cap.name}
-                      </span>
-                      <span className="text-[10px] text-[#94A3B8] font-medium block leading-tight truncate">
-                        {cap.subtitle}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Tooltip Popup on Hover */}
-                  <div className="pointer-events-none absolute left-1/2 -bottom-12 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 z-30 w-52 p-2 rounded-lg bg-[#0A1124] border border-white/20 text-[10px] text-[#CBD5E1] text-center shadow-xl backdrop-blur-md">
-                    {cap.tooltip}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Subheading: Max 2 lines on desktop */}
-          <p className="text-base sm:text-lg text-[#94A3B8] max-w-2xl mx-auto leading-relaxed pt-1">
-            Extract, verify and understand every invoice using intelligent AI agents — inside your own secure enterprise workspace.
+          <p className="mt-2 text-sm sm:text-base text-[#94A3B8] max-w-xl mx-auto leading-relaxed">
+            From inbox to verified data — no manual keying.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+          {/* One primary CTA plus a quiet scroll cue down to the pipeline demo */}
+          <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link
               href="/login"
               className="btn-primary-gradient w-full sm:w-auto text-base px-8 py-3.5 flex items-center justify-center gap-3 group"
@@ -342,25 +302,129 @@ export function Hero({ onOpenFlowsModal }: HeroProps) {
             </Link>
             <a
               href="#pipeline-demo"
-              className="btn-secondary-glass w-full sm:w-auto text-base px-8 py-3.5 flex items-center justify-center gap-2"
+              className="group flex items-center gap-2 text-sm font-semibold text-[#94A3B8] hover:text-[#22D3EE] transition-colors duration-200"
             >
-              <Play className="w-4 h-4 text-[#22D3EE] fill-[#22D3EE]" />
-              <span>Simulate Pipeline</span>
+              <span>See how it flows</span>
+              <ChevronDown
+                className="w-4 h-4 animate-bounce group-hover:text-[#22D3EE]"
+                style={{ animationDuration: "2.2s" }}
+              />
             </a>
-            <button
-              onClick={() => {
-                if (onOpenFlowsModal) {
-                  onOpenFlowsModal();
-                } else {
-                  const el = document.getElementById("architecture-flows");
-                  el?.scrollIntoView({ behavior: "smooth" });
-                }
-              }}
-              className="btn-secondary-glass w-full sm:w-auto text-base px-6 py-3.5 flex items-center justify-center gap-2 group border-[#22D3EE]/30 hover:border-[#22D3EE]"
-            >
-              <Workflow className="w-4 h-4 text-[#22D3EE] group-hover:rotate-12 transition-transform" />
-              <span>Architecture Flow</span>
-            </button>
+          </div>
+
+          {/* Flow diagram: connectors/email in -> AI Engine -> verified data/webhooks out */}
+          <div className="mt-9 flex flex-col lg:flex-row items-stretch lg:items-center justify-center gap-4 lg:gap-10">
+
+            {/* Inputs */}
+            <div className="flex flex-col gap-3 lg:w-[248px] shrink-0">
+              <FlowNode icon={Mail} title="Email Inbox" caption="Invoices arrive as attachments" accent="#3B82F6" />
+              <FlowNode icon={Database} title="Drive & Salesforce" caption="Connected source systems" accent="#22D3EE" />
+            </div>
+
+            {/* AI Engine core + colour-keyed agent legend */}
+            <div className="relative flex flex-col items-center gap-3.5 shrink-0">
+              {/* Connector beams, anchored to the ring itself (top-[52px] = the
+                  104px ring's vertical centre) so they always meet the circle's
+                  edge rather than stopping short of it as the legend width shifts. */}
+              <div
+                className="hidden lg:block pointer-events-none absolute top-[52px] -left-10 right-[calc(50%_+_52px)] h-px flowing-beam"
+                aria-hidden="true"
+              />
+              <div
+                className="hidden lg:block pointer-events-none absolute top-[52px] -right-10 left-[calc(50%_+_52px)] h-px flowing-beam"
+                aria-hidden="true"
+              />
+
+              <div className="relative flex items-center justify-center">
+                <div className="pointer-events-none absolute h-32 w-32 rounded-full bg-[#3B82F6]/25 blur-2xl" />
+                <div
+                  className="pointer-events-none absolute h-[132px] w-[132px] rounded-full border border-dashed border-white/15 animate-spin"
+                  style={{ animationDuration: "22s" }}
+                />
+                <div className="relative h-[104px] w-[104px] rounded-full border border-[#22D3EE]/45 bg-[#050816]/85 backdrop-blur-md flex flex-col items-center justify-center shadow-[0_0_45px_rgba(34,211,238,0.35)]">
+                  <Cpu className="w-5 h-5 text-[#22D3EE]" />
+                  <span className="mt-1 text-[11px] font-extrabold tracking-wide text-white leading-none">AI ENGINE</span>
+                  <span className="mt-1 text-[9px] font-mono text-[#64748B] leading-none">4 agents</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                {AGENT_LEGEND.map((agent, idx) => {
+                  const Icon = agent.icon;
+                  const isHighlight = highlightedPillIndex === idx;
+
+                  return (
+                    <span
+                      key={agent.name}
+                      className="flex items-center gap-1.5 rounded-md px-1.5 py-1 transition-all duration-300"
+                      style={{
+                        background: isHighlight ? `${agent.color}1A` : "transparent",
+                        boxShadow: isHighlight ? `inset 0 0 0 1px ${agent.color}4D` : "none",
+                      }}
+                    >
+                      <Icon
+                        className="w-3 h-3 shrink-0 transition-opacity duration-300"
+                        style={{ color: agent.color, opacity: isHighlight ? 1 : 0.65 }}
+                      />
+                      <span className="text-[10px] font-bold tracking-wide text-white leading-none">{agent.name}</span>
+                      <span className="text-[10px] text-[#64748B] leading-none">{agent.role}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Outputs */}
+            <div className="flex flex-col gap-3 lg:w-[248px] shrink-0">
+              <FlowNode icon={FileCheck} title="Verified Data" caption="Approval-ready, audit-trailed" accent="#10B981" />
+              <FlowNode icon={Zap} title="Webhooks" caption="Pushed back to your systems" accent="#8B5CF6" />
+            </div>
+
+          </div>
+
+          {/* Concrete outcome: same sample data the pipeline demo below runs on */}
+          <div className="mt-6 mx-auto max-w-2xl rounded-xl border border-[#10B981]/25 bg-[#050816]/70 backdrop-blur-md px-4 py-3 flex flex-wrap items-center justify-center sm:justify-between gap-x-5 gap-y-3 text-left">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 shrink-0 rounded-lg bg-[#10B981]/15 border border-[#10B981]/30 flex items-center justify-center">
+                <FileCheck className="w-4 h-4 text-[#10B981]" />
+              </div>
+              <div className="min-w-0">
+                <span className="block text-xs font-semibold text-white leading-tight">{selectedInvoice.vendor}</span>
+                <span className="block text-[10px] font-mono text-[#64748B] leading-tight">
+                  Invoice #{selectedInvoice.id} • PO #{selectedInvoice.poNumber}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-5">
+              <div>
+                <span className="block text-[9px] uppercase tracking-wider text-[#64748B] leading-none">Total</span>
+                <span className="text-sm font-bold font-mono text-[#22D3EE]">{selectedInvoice.amount}</span>
+              </div>
+              <div>
+                <span className="block text-[9px] uppercase tracking-wider text-[#64748B] leading-none">Precision</span>
+                <span className="text-sm font-bold font-mono text-[#3B82F6]">{selectedInvoice.confidence}</span>
+              </div>
+              <span className="text-[10px] px-2 py-1 rounded bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30 font-semibold shrink-0">
+                {selectedInvoice.status}
+              </span>
+            </div>
+          </div>
+
+          {/* Trust-signal row -- last element of the above-the-fold block */}
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[11px] text-[#64748B]">
+            <span className="flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-[#10B981]" />
+              VNet-isolated tenant
+            </span>
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#3B82F6]" />
+              AES-256 encrypted storage
+            </span>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#22D3EE]" />
+              No card required to start
+            </span>
           </div>
 
         </div>

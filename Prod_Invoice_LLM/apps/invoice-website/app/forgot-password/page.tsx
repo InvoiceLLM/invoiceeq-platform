@@ -164,6 +164,9 @@ export default function ForgotPasswordPage() {
                 <span style={S.inputIcon}>✉️</span>
                 <input
                   type="email"
+                  name="email"
+                  autoComplete="email"
+                  inputMode="email"
                   placeholder="Work email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -202,8 +205,14 @@ export default function ForgotPasswordPage() {
 
               <div style={S.inputWrap}>
                 <span style={S.inputIcon}>🔑</span>
+                {/* Gap 161: without an explicit autoComplete the browser treated this
+                    (the form's first text input) as the identifier field and filled it
+                    with the saved email. "one-time-code" pins it to the real purpose. */}
                 <input
                   type="text"
+                  name="reset-code"
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
                   placeholder="Enter 6-digit code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
@@ -221,6 +230,8 @@ export default function ForgotPasswordPage() {
                 <span style={S.inputIcon}>🔒</span>
                 <input
                   type="password"
+                  name="new-password"
+                  autoComplete="new-password"
                   placeholder="New password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}

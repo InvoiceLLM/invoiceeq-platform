@@ -74,6 +74,9 @@
     "salesforceClientId": {
       "value": "3MVG9.Houp75EVdZiPnzAXP1ly3NOyDA1TAh7PFpBvzsf6qxIjwVSJoxyMRmkvNbfU4twmqALTJ_SZtlRrylg"
     },
+    "sendgridSendingDomain": {
+      "value": ""
+    },
     "clerkJwtIssuer": {
       "value": "https://real-stallion-21.clerk.accounts.dev"
     },

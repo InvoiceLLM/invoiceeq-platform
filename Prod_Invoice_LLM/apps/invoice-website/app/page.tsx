@@ -28,7 +28,7 @@ export default function Home() {
     <div className="flex flex-col min-h-screen">
       <Header onOpenFlowsModal={() => handleOpenModal("inbound")} />
       <main className="flex-1 relative z-10">
-        <Hero onOpenFlowsModal={() => handleOpenModal("inbound")} />
+        <Hero />
         <FlowsShowcaseSection onOpenModal={(flowId) => handleOpenModal(flowId)} />
         <AITeamSection />
         <WorkspaceShowcase />

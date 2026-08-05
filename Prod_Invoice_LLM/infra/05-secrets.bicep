@@ -39,6 +39,14 @@ param googleClientSecret string
 @secure()
 param salesforceClientSecret string
 
+@description('SendGrid API key (Mail Send scope) -- platform-wide, one key for both inbound and outbound (Gap 124/125). Not per-tenant; see feature_9_connectors.md.')
+@secure()
+param sendgridApiKey string
+
+@description('Shared secret checked on the SendGrid Inbound Parse webhook path to confirm a request genuinely came from SendGrid (Gap 124 item 2 -- Inbound Parse does not sign its payloads).')
+@secure()
+param sendgridInboundSecret string
+
 @description('Number of Document Intelligence resources deployed in Stage 4 (must match). Dev=1, prod=3 -- gates whether the DOC-INTEL-KEY-2/3 and DOC-INTEL-ENDPOINT-2/3 secrets are seeded.')
 @minValue(1)
 @maxValue(3)
@@ -207,13 +215,34 @@ resource secretSalesforceClientSecret 'Microsoft.KeyVault/vaults/secrets@2023-07
   }
 }
 
-// Computed, not hardcoded: 9 always-seeded secrets (DATABASE-URL, REDIS-URL,
+// SendGrid (Gap 124/125): one platform-wide key + one inbound-webhook shared
+// secret, not per-tenant -- see feature_9_connectors.md for why no tenant
+// ever needs their own SendGrid credential.
+resource secretSendgridApiKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'SENDGRID-API-KEY'
+  properties: {
+    value: sendgridApiKey
+  }
+}
+
+resource secretSendgridInboundSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'SENDGRID-INBOUND-SECRET'
+  properties: {
+    value: sendgridInboundSecret
+  }
+}
+
+// Computed, not hardcoded: 11 always-seeded secrets (DATABASE-URL, REDIS-URL,
 // AZURE-STORAGE-CONNECTION-STRING, AZURE-OPENAI-API-KEY, AZURE-DOC-INTEL-KEY,
 // CLERK-SECRET-KEY, TOKEN-ENCRYPTION-KEY, GOOGLE-CLIENT-SECRET,
-// SALESFORCE-CLIENT-SECRET) + 2 more per additional Doc Intelligence
-// instance beyond the first (KEY + ENDPOINT, gated on docIntelInstanceCount).
-// This was hardcoded to 9 and went stale the moment Gap 41/42 added the
-// docintel-2/3 secrets (actual count today, with docIntelInstanceCount=3,
-// is 13) -- deploy-all.ps1's Stage 5 gate now reads this output instead of
-// asserting a literal number, so it can't go stale the same way again.
-output secretsSeeded int = 9 + (2 * (docIntelInstanceCount - 1))
+// SALESFORCE-CLIENT-SECRET, SENDGRID-API-KEY, SENDGRID-INBOUND-SECRET) + 2
+// more per additional Doc Intelligence instance beyond the first (KEY +
+// ENDPOINT, gated on docIntelInstanceCount). This was hardcoded to 9 and went
+// stale the moment Gap 41/42 added the docintel-2/3 secrets, and again just
+// now adding the 2 SendGrid secrets (actual count today, with
+// docIntelInstanceCount=3, is 15) -- deploy-all.ps1's Stage 5 gate reads this
+// output instead of asserting a literal number, so it can't go stale the same
+// way again.
+output secretsSeeded int = 11 + (2 * (docIntelInstanceCount - 1))

@@ -50,12 +50,17 @@ const S: Record<string, React.CSSProperties> = {
   errorBox: { display: "flex", alignItems: "flex-start", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "10px", padding: "10px 14px", fontSize: "13px", color: T.red, marginTop: "6px", marginBottom: "6px" },
   accessDenied: { display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "12px", padding: "16px", fontSize: "13px", color: T.red, marginTop: "8px", textAlign: "center" },
   btn: { width: "100%", background: "linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: "20px", letterSpacing: "0.2px", transition: "opacity 0.2s", boxShadow: "0 4px 20px rgba(59,130,246,0.25)" },
-  dividerRow: { display: "flex", alignItems: "center", gap: "12px", margin: "20px 0" },
-  dividerLine: { flex: 1, height: "1px", background: T.border },
-  dividerText: { fontSize: "12px", color: T.textDim, flexShrink: 0 },
-  signupRow: { textAlign: "center", marginTop: "20px", fontSize: "13px", color: T.textDim },
-  signupLink: { color: T.green, textDecoration: "none", fontWeight: 600 },
   sessionBanner: { display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "10px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.textPrimary },
+  /* Gap 164: top-level mode switcher, sits directly under the card header so
+     "Create Organisation" is visible on load instead of depending on the card
+     fitting a full stack of sign-in fields above it (Gap 160). */
+  tabRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "24px" },
+  /* Gap 164: create-organisation pane -- no inline form, the real org fields live on /signup. */
+  createPane: { textAlign: "center", paddingTop: "4px" },
+  createIcon: { width: "56px", height: "56px", borderRadius: "14px", background: "linear-gradient(135deg, rgba(16,185,129,0.18) 0%, rgba(59,130,246,0.14) 100%)", border: "1px solid rgba(16,185,129,0.28)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", margin: "0 auto 16px" },
+  createTitle: { fontSize: "19px", fontWeight: 700, color: T.textPrimary, letterSpacing: "-0.3px", marginBottom: "8px" },
+  createCopy: { fontSize: "13.5px", color: T.textMuted, lineHeight: 1.6, marginBottom: "22px" },
+  createBtn: { display: "block", width: "100%", boxSizing: "border-box", background: "linear-gradient(135deg, #10B981 0%, #059669 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", letterSpacing: "0.2px", textAlign: "center", textDecoration: "none", boxShadow: "0 4px 20px rgba(16,185,129,0.25)" },
 };
 
 const roleBtnStyle = (active: boolean, color: string): React.CSSProperties => ({
@@ -64,6 +69,15 @@ const roleBtnStyle = (active: boolean, color: string): React.CSSProperties => ({
   color: active ? color : T.textDim, cursor: "pointer",
   fontFamily: T.font, fontSize: "13px", fontWeight: 600,
   transition: "all 0.2s", textAlign: "center", outline: "none",
+});
+
+const tabBtnStyle = (active: boolean, color: string): React.CSSProperties => ({
+  padding: "11px 8px", borderRadius: "10px", border: `1px solid ${active ? color : T.border}`,
+  background: active ? `${color}1F` : "rgba(15,20,30,0.4)",
+  color: active ? color : T.textMuted, cursor: "pointer",
+  fontFamily: T.font, fontSize: "13.5px", fontWeight: 700, letterSpacing: "0.2px",
+  transition: "all 0.2s", textAlign: "center", outline: "none",
+  boxShadow: active ? `0 0 0 3px ${color}1A` : "none",
 });
 
 const STATS = [
@@ -81,6 +95,7 @@ export default function LoginPage() {
   const { signOut } = useClerk();
   const { user: currentUser } = useUser();
 
+  const [mode, setMode] = useState<"signin" | "create">("signin");
   const [selectedRole, setSelectedRole] = useState("admin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -263,10 +278,35 @@ export default function LoginPage() {
 
           <div style={S.cardHeader}>
             <div style={S.avatarIcon}>🔐</div>
-            <h2 style={S.cardTitle}>Sign in</h2>
-            <p style={S.cardSubtitle}>Select your role and enter credentials</p>
+            <h2 style={S.cardTitle}>Get started</h2>
+            <p style={S.cardSubtitle}>Sign in, or create your organisation</p>
           </div>
 
+          {/* Gap 164: mode switcher -- both entry points are visible on load, at
+              the same visual weight, regardless of card height or zoom level. */}
+          <div style={S.tabRow} role="tablist" aria-label="Sign in or create an organisation">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "signin"}
+              onClick={() => setMode("signin")}
+              style={tabBtnStyle(mode === "signin", T.blue)}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "create"}
+              onClick={() => setMode("create")}
+              style={tabBtnStyle(mode === "create", T.green)}
+            >
+              + Create Organisation
+            </button>
+          </div>
+
+          {mode === "signin" ? (
+          <>
           <div style={{ marginBottom: "20px" }}>
             <div style={{ ...S.sectionLabel, marginTop: 0 }}>I am signing in as</div>
             <div style={S.roleRow}>
@@ -394,16 +434,19 @@ export default function LoginPage() {
               </button>
             </form>
           )}
-
-          <div style={S.dividerRow}>
-            <div style={S.dividerLine} />
-            <span style={S.dividerText}>New to InvoiceAI?</span>
-            <div style={S.dividerLine} />
-          </div>
-
-          <div style={S.signupRow}>
-            <a href="/signup" style={S.signupLink}>Create your organisation →</a>
-          </div>
+          </>
+          ) : (
+            <div style={S.createPane}>
+              <div style={S.createIcon}>🏢</div>
+              <h3 style={S.createTitle}>Set up your workspace</h3>
+              <p style={S.createCopy}>
+                Any name works, even a test one — takes under a minute.
+              </p>
+              <a href="/signup" style={S.createBtn}>
+                Create Organisation →
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </div>

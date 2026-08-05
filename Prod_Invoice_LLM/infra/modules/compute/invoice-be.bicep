@@ -48,6 +48,13 @@ param salesforceClientId string = ''
 @description('OAuth redirect URI registered with Salesforce for this environment')
 param salesforceRedirectUri string = ''
 
+// SendGrid (Gap 124/125): one platform-wide domain, not per-tenant -- see
+// feature_9_connectors.md. The sending domain name itself isn't sensitive
+// (same treatment as the OAuth redirect URIs above); the API key and inbound
+// webhook shared secret are, so those come from Key Vault below instead.
+@description('SendGrid-authenticated domain used as the technical From for outbound mail (Gap 125) -- e.g. mail.invoice-ai.com')
+param sendgridSendingDomain string = ''
+
 @description('Real FE origin (https://...) -- oauth_callback() redirects the browser here once a connector OAuth flow completes, since Google/Salesforce hit this backend directly')
 param frontendUrl string = ''
 
@@ -136,6 +143,16 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'salesforce-client-secret-secret'
           keyVaultUrl: '${keyVaultUrl}/secrets/SALESFORCE-CLIENT-SECRET'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'sendgrid-api-key-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/SENDGRID-API-KEY'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'sendgrid-inbound-secret-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/SENDGRID-INBOUND-SECRET'
           identity: userAssignedIdentityId
         }
       ]
@@ -245,6 +262,18 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'SALESFORCE_REDIRECT_URI'
               value: salesforceRedirectUri
+            }
+            {
+              name: 'SENDGRID_API_KEY'
+              secretRef: 'sendgrid-api-key-secret'
+            }
+            {
+              name: 'INBOUND_PARSE_SHARED_SECRET'
+              secretRef: 'sendgrid-inbound-secret-secret'
+            }
+            {
+              name: 'SENDGRID_SENDING_DOMAIN'
+              value: sendgridSendingDomain
             }
             {
               name: 'FRONTEND_URL'

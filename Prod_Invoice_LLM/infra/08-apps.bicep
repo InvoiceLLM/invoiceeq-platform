@@ -47,6 +47,9 @@ param googleClientId string = ''
 @description('Our company Salesforce Connected App Consumer Key (connectors) -- public value, see invoice-be.bicep')
 param salesforceClientId string = ''
 
+@description('SendGrid-authenticated sending domain for outbound mail (Gap 125) -- public value, see invoice-be.bicep and feature_9_connectors.md. The API key/inbound webhook secret are seeded separately in Stage 5 (05-secrets.bicep), not threaded through this file.')
+param sendgridSendingDomain string = ''
+
 @description('Number of Document Intelligence resources deployed (must match Stage 4/5). Threaded into queue-worker.bicep so it only wires up the docintel-2/-3 Key Vault secretRefs that Stage 5 actually seeded.')
 @minValue(1)
 @maxValue(3)
@@ -160,6 +163,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     googleRedirectUri: googleRedirectUri
     salesforceClientId: salesforceClientId
     salesforceRedirectUri: salesforceRedirectUri
+    sendgridSendingDomain: sendgridSendingDomain
     frontendUrl: 'https://${frontendFqdn}'
     cpu: backendCpu
     memory: backendMemory

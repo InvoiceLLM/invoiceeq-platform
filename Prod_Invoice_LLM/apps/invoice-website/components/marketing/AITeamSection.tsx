@@ -145,7 +145,7 @@ function Agent3DCard({ agent }: { agent: AgentCapability }) {
           ? "transform 0.15s cubic-bezier(0.2, 0.8, 0.2, 1)"
           : "transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
       }}
-      className={`group relative rounded-2xl p-6 bg-[#050816]/80 backdrop-blur-xl border border-white/10 transition-all duration-300 flex flex-col justify-between overflow-hidden cursor-pointer ${agent.borderGlow}`}
+      className={`group relative rounded-2xl p-6 bg-[#050816]/80 backdrop-blur-xl border border-white/10 transition-all duration-300 flex flex-col justify-between overflow-hidden ${agent.borderGlow}`}
     >
       {/* Background Radial Glow */}
       <div

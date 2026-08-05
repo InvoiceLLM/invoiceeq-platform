@@ -16,7 +16,8 @@ test.describe("Landing page", () => {
     const response = await page.goto("/");
     expect(response?.status()).toBe(200);
 
-    await expect(page.getByRole("link", { name: "Invoice.AI" })).toBeVisible();
+    // Gap 163: logotype is now serif "Invoice" + an "AI" mono tag (was "Invoice.AI").
+    await expect(page.getByRole("link", { name: "Invoice AI" })).toBeVisible();
     await expect(page.locator("#pricing")).toBeAttached();
   });
 
@@ -82,7 +83,11 @@ test.describe("Login page", () => {
     const response = await page.goto("/login");
     expect(response?.status()).toBe(200);
 
-    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    // Gap 164: the card header is now generic ("Get started") with a Sign In /
+    // + Create Organisation tab row underneath; Sign In is the default tab.
+    await expect(page.getByRole("heading", { name: "Get started" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Sign In" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "+ Create Organisation" })).toBeVisible();
     // ".first()" -- the role-toggle button and the submit button
     // ("-> Sign In as Admin") both contain the substring "Admin", which
     // would otherwise be a strict-mode violation.
@@ -114,7 +119,11 @@ test.describe("Login page", () => {
       "href",
       "/forgot-password"
     );
-    await expect(page.getByRole("link", { name: /Create your organisation/ })).toHaveAttribute(
+    // Gap 164: the signup CTA moved out of the card footer and into the
+    // "+ Create Organisation" tab pane, so the tab has to be selected first.
+    await page.getByRole("tab", { name: "+ Create Organisation" }).click();
+    await expect(page.getByRole("heading", { name: "Set up your workspace" })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Create Organisation/ })).toHaveAttribute(
       "href",
       "/signup"
     );
