@@ -82,6 +82,42 @@ def create_session(
     db_session.refresh(db_session_obj)
     return db_session_obj
 
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(
+    session_id: UUID,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context)
+):
+    """Delete a chat session and all its associated messages and feedback."""
+    session_statement = select(ChatSession).where(ChatSession.id == session_id)
+    chat_session = db_session.exec(session_statement).first()
+    
+    if not chat_session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat session not found."
+        )
+        
+    if chat_session.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat session."
+        )
+        
+    # Delete associated messages
+    messages_statement = select(ChatMessage).where(ChatMessage.session_id == session_id)
+    messages = db_session.exec(messages_statement).all()
+    for msg in messages:
+        # Delete associated feedback first
+        feedback_statement = select(ChatFeedback).where(ChatFeedback.message_id == msg.id)
+        feedbacks = db_session.exec(feedback_statement).all()
+        for f in feedbacks:
+            db_session.delete(f)
+        db_session.delete(msg)
+        
+    db_session.delete(chat_session)
+    db_session.commit()
+
 @router.get("/sessions/{session_id}", response_model=list[MessageResponse])
 def get_session_messages(
     session_id: UUID,

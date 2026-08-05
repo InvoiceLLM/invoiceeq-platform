@@ -24,6 +24,7 @@ import {
   Send,
   Loader2,
   BotMessageSquare,
+  Trash2,
 } from "lucide-react";
 import { MessageStream } from "./MessageBubble";
 import type { ChatSession, ChatMessage } from "@/types/chat";
@@ -348,6 +349,7 @@ interface ChatWindowProps {
   onCreateSession: () => void;
   onSelectSession: (id: string) => void;
   onSendMessage: (text: string) => void;
+  onDeleteSession: (id: string) => void;
 }
 
 export default function ChatWindow({
@@ -361,6 +363,7 @@ export default function ChatWindow({
   onCreateSession,
   onSelectSession,
   onSendMessage,
+  onDeleteSession,
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
 
@@ -384,10 +387,22 @@ export default function ChatWindow({
             fills the entire viewport with no outer gutters (see page.tsx's
             -m-8 comment), so anything taller than one compact row would eat
             directly into message-area space. */}
-        <div className="px-4 py-1.5 border-b border-[#222D3D] flex items-center gap-1.5 shrink-0">
-          <span className="text-xs leading-none not-italic">🧙</span>
-          <span className="text-[10px] font-mono font-semibold text-[#6366F1] tracking-wide">SAGE</span>
-          <span className="text-[10px] text-slate-500">— Conversational Insights</span>
+        <div className="px-4 py-1.5 border-b border-[#222D3D] flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs leading-none not-italic">🧙</span>
+            <span className="text-[10px] font-mono font-semibold text-[#6366F1] tracking-wide">SAGE</span>
+            <span className="text-[10px] text-slate-500">— Conversational Insights</span>
+          </div>
+          {hasActiveSession && (
+            <button
+              onClick={() => onDeleteSession(activeSessionId)}
+              title="Delete conversation"
+              className="flex items-center gap-1 text-[10px] text-rose-400 hover:text-rose-300 font-semibold px-2 py-0.5 border border-rose-800/30 rounded bg-rose-950/15 hover:bg-rose-950/30 transition-all duration-150"
+            >
+              <Trash2 className="w-3 h-3" />
+              Clear Chat
+            </button>
+          )}
         </div>
 
         {/* Error Banner — shown when the hook sets a non-null error string */}

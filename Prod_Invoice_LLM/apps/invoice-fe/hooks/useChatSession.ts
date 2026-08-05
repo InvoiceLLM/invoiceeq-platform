@@ -34,6 +34,7 @@ export interface UseChatSessionReturn {
   selectSession: (id: string) => Promise<void>;
   sendMessage: (text: string) => Promise<void>;
   clearError: () => void;
+  deleteSession: (id: string) => Promise<void>;
 }
 
 export function useChatSession(): UseChatSessionReturn {
@@ -185,6 +186,20 @@ export function useChatSession(): UseChatSessionReturn {
     [activeSessionId, isSending]
   );
 
+  const deleteSession = useCallback(async (id: string) => {
+    setError(null);
+    try {
+      await apiClient.delete(`/chat/sessions/${id}`);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      if (activeSessionId === id) {
+        setActiveSessionId(null);
+        setMessages([]);
+      }
+    } catch {
+      setError("Failed to delete the chat session.");
+    }
+  }, [activeSessionId]);
+
   // Allows the error banner's dismiss button (or future logic) to clear state
   const clearError = useCallback(() => setError(null), []);
 
@@ -200,5 +215,6 @@ export function useChatSession(): UseChatSessionReturn {
     selectSession,
     sendMessage,
     clearError,
+    deleteSession,
   };
 }

@@ -24,3 +24,10 @@ export async function GET(
   // apply tenant-scoped row-level security before returning records.
   return proxyJson(request, `/chat/sessions/${params.sessionId}`);
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { sessionId: string } }
+) {
+  return proxyJson(request, `/chat/sessions/${params.sessionId}`);
+}

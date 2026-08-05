@@ -34,6 +34,7 @@ export default function ChatPage() {
     createSession,
     selectSession,
     sendMessage,
+    deleteSession,
   } = useChatSession();
 
   return (
@@ -61,6 +62,7 @@ export default function ChatPage() {
         onCreateSession={createSession}
         onSelectSession={selectSession}
         onSendMessage={sendMessage}
+        onDeleteSession={deleteSession}
       />
     </div>
   );
