@@ -39,6 +39,43 @@ const ALLOWED_EVENTS = [
   { value: "outbound_invoice.paid", label: "Outbound Paid", desc: "Fires when an outbound invoice is marked as paid." }
 ];
 
+const GENERIC_ERRORS = {
+  load: "Failed to load webhooks. Please try again.",
+  create: "Failed to create webhook. Please try again.",
+  toggle: "Failed to update the webhook's status. Please try again.",
+  delete: "Failed to delete webhook. Please try again."
+};
+
+/**
+ * Website Gap 13 (2026-08-05): never surface a raw response body to the user.
+ * This screen used to do `throw new Error(await res.text())` and render the
+ * result verbatim in the error banner -- so when `/api/webhooks` was answered
+ * by something other than the intended API (a Next.js 404 HTML page, an
+ * upstream proxy error page, a gateway timeout page), the *entire HTML source*
+ * of that page rendered inside the app screen. Only a JSON error body is
+ * trusted for a user-facing message; every other content type, a body that
+ * doesn't parse, and any body without a usable string field all fall back to
+ * the caller's generic message.
+ */
+const errorMessage = async (res: Response, fallback: string): Promise<string> => {
+  try {
+    const contentType = (res.headers.get("content-type") || "").toLowerCase();
+    if (!contentType.includes("application/json")) return fallback;
+    const data = await res.json();
+    const detail =
+      typeof data?.detail === "string"
+        ? data.detail
+        : typeof data?.error === "string"
+        ? data.error
+        : typeof data?.message === "string"
+        ? data.message
+        : null;
+    return detail && detail.trim() ? detail.trim() : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export default function WebhooksPage() {
   // FE Gap 110: declared above the loading/Access-Restricted early returns, so
   // the shared header still names the screen in both of those states.
@@ -70,12 +107,18 @@ export default function WebhooksPage() {
       setError(null);
       const res = await fetch("/api/webhooks");
       if (!res.ok) {
-        throw new Error(await res.text() || "Failed to load webhooks.");
+        throw new Error(await errorMessage(res, GENERIC_ERRORS.load));
+      }
+      // A 200 that isn't JSON is just as untrustworthy as a non-OK one here --
+      // don't let a stray HTML body reach res.json()'s parser error message.
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.includes("application/json")) {
+        throw new Error(GENERIC_ERRORS.load);
       }
       const data = await res.json();
-      setWebhooks(data);
+      setWebhooks(Array.isArray(data) ? data : []);
     } catch (err: any) {
-      setError(err.message || "An error occurred while fetching webhooks.");
+      setError(typeof err?.message === "string" && err.message ? err.message : GENERIC_ERRORS.load);
     } finally {
       setFetching(false);
     }
@@ -108,8 +151,7 @@ export default function WebhooksPage() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || "Failed to create webhook.");
+        throw new Error(await errorMessage(res, GENERIC_ERRORS.create));
       }
 
       const newWebhook = await res.json();
@@ -120,7 +162,7 @@ export default function WebhooksPage() {
       setTargetUrl("");
       setSelectedEvents([]);
     } catch (err: any) {
-      alert(err.message);
+      alert(typeof err?.message === "string" && err.message ? err.message : GENERIC_ERRORS.create);
     } finally {
       setSubmitting(false);
     }
@@ -137,12 +179,12 @@ export default function WebhooksPage() {
       });
 
       if (!res.ok) {
-        throw new Error("Failed to toggle status.");
+        throw new Error(await errorMessage(res, GENERIC_ERRORS.toggle));
       }
 
       setWebhooks(prev => prev.map(w => w.id === webhook.id ? { ...w, enabled: !w.enabled } : w));
     } catch (err: any) {
-      alert(err.message);
+      alert(typeof err?.message === "string" && err.message ? err.message : GENERIC_ERRORS.toggle);
     }
   };
 
@@ -155,12 +197,12 @@ export default function WebhooksPage() {
       });
 
       if (!res.ok) {
-        throw new Error("Failed to delete webhook.");
+        throw new Error(await errorMessage(res, GENERIC_ERRORS.delete));
       }
 
       setWebhooks(prev => prev.filter(w => w.id !== id));
     } catch (err: any) {
-      alert(err.message);
+      alert(typeof err?.message === "string" && err.message ? err.message : GENERIC_ERRORS.delete);
     }
   };
 

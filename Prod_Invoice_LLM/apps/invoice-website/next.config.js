@@ -25,7 +25,19 @@ const nextConfig = {
     // admin, audit, auth, chat, connectors, dashboard, email, invoices,
     // outbound-audit, outbound-dashboard, outbound-invoices, settings,
     // trainer -- all 12 others were already present here).
-    const feApiPrefixes = ["admin", "audit", "auth", "chat", "connectors", "dashboard", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "trainer"];
+    //
+    // Bug fix (2026-08-05): "webhooks" was the same class of miss. invoice-fe
+    // gained app/api/webhooks/route.ts + app/api/webhooks/[id]/route.ts (FE Gap
+    // 107) AFTER the audit above was done, so this array was never re-diffed
+    // against app/api/. /settings/webhooks calls a relative `GET /api/webhooks`,
+    // which on the public invoice-website origin had no rewrite rule and no
+    // middleware exclusion -- Clerk's middleware took it first and rewrote it to
+    // its own handshake path (confirmed live: `x-middleware-rewrite:
+    // /api/webhooks` on a 404 response), so the request never reached
+    // invoice-fe. invoice-website has no app/api/webhooks/ of its own, so this
+    // prefix cannot shadow a real local route. Re-diffed against
+    // apps/invoice-fe/app/api/ on 2026-08-05: 14 folders, all 14 now listed.
+    const feApiPrefixes = ["admin", "audit", "auth", "chat", "connectors", "dashboard", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "trainer", "webhooks"];
 
     const pageRewrites = [
       ...fePages.flatMap((p) => [

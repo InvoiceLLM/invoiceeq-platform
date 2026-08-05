@@ -23,9 +23,17 @@ export default clerkMiddleware();
 // invoice-website has its own real route at app/api/auth/provision/route.ts,
 // and a blanket "api/auth" exclusion would also pull Clerk's middleware off
 // that route, an unrelated behavior change this fix has no business making.
+//
+// 2026-08-05: "api/webhooks" added -- it was missing from BOTH this list and
+// next.config.js's feApiPrefixes (invoice-fe's app/api/webhooks/ landed after
+// the original 2026-08-04 sweep), so /settings/webhooks' `GET /api/webhooks`
+// hit exactly the failure mode described above: Clerk intercepted it first and
+// the caller got a generic 404 with `x-middleware-rewrite: /api/webhooks`
+// instead of invoice-fe's real response. Safe to exclude wholesale (unlike
+// "auth") -- invoice-website has no app/api/webhooks/ route of its own.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)|api/admin|api/audit|api/auth/me|api/chat|api/connectors|api/dashboard|api/email|api/invoices|api/outbound-audit|api/outbound-dashboard|api/outbound-invoices|api/settings|api/trainer).*)',
+    '/((?!_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)|api/admin|api/audit|api/auth/me|api/chat|api/connectors|api/dashboard|api/email|api/invoices|api/outbound-audit|api/outbound-dashboard|api/outbound-invoices|api/settings|api/trainer|api/webhooks).*)',
     '/trpc/(.*)',
   ],
 };
