@@ -3,9 +3,8 @@
 /**
  * Feature 10: Settings Page — /settings
  *
- * v1 renders the VendorFlowToggles section only.
- * Future sections (Connectors, Email Ingestion, Webhooks) will be added
- * as their respective features are implemented — no empty placeholders now.
+ * Gap 114: Realigned layout — three compact service-flow tiles in a single row,
+ * integrations in a 3×2 grid below, all fitting on one laptop viewport without scroll.
  */
 
 import React from "react";
@@ -13,8 +12,73 @@ import ServiceFlowToggles from "@/components/settings/ServiceFlowToggles";
 
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
-import { Loader2 } from "lucide-react";
+import {
+  Loader2,
+  FolderSync,
+  Mail,
+  ShieldCheck,
+  CreditCard,
+  Webhook,
+  UserCog,
+} from "lucide-react";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
+
+const INTEGRATIONS = [
+  {
+    id: "connectors",
+    title: "Connectors",
+    desc: "Google Drive & Salesforce folder mapping",
+    href: "/settings/connectors",
+    icon: FolderSync,
+    iconBg: "bg-cyan-500/10 border-cyan-500/20",
+    iconColor: "text-cyan-400",
+  },
+  {
+    id: "email",
+    title: "Email",
+    desc: "Inbound alias & outbound sender config",
+    href: "/settings/email",
+    icon: Mail,
+    iconBg: "bg-amber-500/10 border-amber-500/20",
+    iconColor: "text-amber-400",
+  },
+  {
+    id: "admin",
+    title: "Admin Console",
+    desc: "User permissions, roles & tenant stats",
+    href: "/admin",
+    icon: UserCog,
+    iconBg: "bg-rose-500/10 border-rose-500/20",
+    iconColor: "text-rose-400",
+  },
+  {
+    id: "subscriptions",
+    title: "Subscriptions",
+    desc: "Plan limits, billing cycle & upgrades",
+    href: "/settings/subscriptions",
+    icon: CreditCard,
+    iconBg: "bg-blue-500/10 border-blue-500/20",
+    iconColor: "text-blue-400",
+  },
+  {
+    id: "webhooks",
+    title: "Webhooks",
+    desc: "HTTP callback endpoints for status updates",
+    href: "/settings/webhooks",
+    icon: Webhook,
+    iconBg: "bg-violet-500/10 border-violet-500/20",
+    iconColor: "text-violet-400",
+  },
+  {
+    id: "security",
+    title: "Security",
+    desc: "API keys, audit logs & access control",
+    href: "/settings/security",
+    icon: ShieldCheck,
+    iconBg: "bg-emerald-500/10 border-emerald-500/20",
+    iconColor: "text-emerald-400",
+  },
+];
 
 export default function SettingsPage() {
   // FE Gap 110: this page used to render its own h-16 header bar below Shell's
@@ -28,18 +92,18 @@ export default function SettingsPage() {
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
       {/* Content */}
-      <main className="flex-1 px-6 py-8 max-w-2xl w-full mx-auto space-y-8">
+      <main className="flex-1 px-6 py-6 max-w-5xl w-full mx-auto space-y-6">
 
-        {/* Service Flow Section */}
+        {/* Service Flow Section — Gap 114: compact row of 3 tiles */}
         <section aria-labelledby="service-flow-heading">
-          <div className="mb-4">
+          <div className="mb-3">
             <h2
               id="service-flow-heading"
-              className="text-sm font-semibold text-white"
+              className="text-xs font-semibold uppercase tracking-wider text-slate-500"
             >
               Service Flow
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-[11px] text-slate-500 mt-0.5">
               Control which invoice directions are active for your workspace.
             </p>
           </div>
@@ -53,89 +117,45 @@ export default function SettingsPage() {
           )}
         </section>
 
-        {/* Divider — future sections will slot in here */}
+        {/* Divider */}
         <hr className="border-[#1E293B]" />
 
-        {/* Connectors Section */}
-        <section aria-labelledby="connectors-heading">
-          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
-            <div>
-              <h2 id="connectors-heading" className="text-sm font-medium text-white">Connectors</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Google Drive & Salesforce folder mapping for imports and exports</p>
-            </div>
-            <Link
-              href="/settings/connectors"
-              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
-            >
-              Configure
-            </Link>
+        {/* Integrations — Gap 114: 3×2 compact grid */}
+        <section aria-labelledby="integrations-heading">
+          <h2
+            id="integrations-heading"
+            className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3"
+          >
+            Integrations & Management
+          </h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {INTEGRATIONS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className="group flex items-start gap-3 px-4 py-3.5 rounded-xl bg-[#111827] border border-[#1E293B] hover:border-[#334155] hover:bg-[#151D2E] transition-all"
+                >
+                  <div
+                    className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${item.iconBg}`}
+                  >
+                    <Icon className={`w-4 h-4 ${item.iconColor}`} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white group-hover:text-blue-200 transition-colors">
+                      {item.title}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-tight">
+                      {item.desc}
+                    </p>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </section>
-
-        {/* Email Ingestion & Delivery Section */}
-        <section aria-labelledby="email-settings-heading">
-          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
-            <div>
-              <h2 id="email-settings-heading" className="text-sm font-medium text-white">Email Ingestion & Delivery</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Inbound alias and outbound sender configuration</p>
-            </div>
-            <Link
-              href="/settings/email"
-              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
-            >
-              Configure
-            </Link>
-          </div>
-        </section>
-
-        {/* Admin Console Section */}
-        <section aria-labelledby="admin-console-heading">
-          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
-            <div>
-              <h2 id="admin-console-heading" className="text-sm font-medium text-white">Admin Console</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Manage user permissions, roles, and view tenant stats</p>
-            </div>
-            <Link
-              href="/admin"
-              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
-            >
-              Manage Org
-            </Link>
-          </div>
-        </section>
-
-        {/* Subscriptions & Billing Section */}
-        <section aria-labelledby="subscriptions-heading">
-          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
-            <div>
-              <h2 id="subscriptions-heading" className="text-sm font-medium text-white">Subscriptions &amp; Billing</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Manage active plan limits, invoices cycle, and tier upgrades</p>
-            </div>
-            <Link
-              href="/settings/subscriptions"
-              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
-            >
-              Configure
-            </Link>
-          </div>
-        </section>
-
-        {/* Webhooks Section */}
-        <section aria-labelledby="webhooks-heading">
-          <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
-            <div>
-              <h2 id="webhooks-heading" className="text-sm font-medium text-white">Developer Webhooks</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Register HTTP callback endpoints to receive real-time status updates</p>
-            </div>
-            <Link
-              href="/settings/webhooks"
-              className="px-4 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] border border-[#222D3D] text-white text-xs font-medium transition-colors whitespace-nowrap"
-            >
-              Configure
-            </Link>
-          </div>
-        </section>
-
 
       </main>
     </div>

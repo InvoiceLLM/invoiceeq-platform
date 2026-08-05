@@ -1,11 +1,46 @@
 "use client";
 
-import React from "react";
+/**
+ * Feature 10 — Subscriptions & Billing page
+ *
+ * Gap 120: Added a real plan picker (Pro / Pro Combined) so the "Change Plan"
+ * CTA routes to PayU with the correct `?plan=` pre-selected, instead of always
+ * hardcoding pro_combined.
+ */
+
+import React, { useState } from "react";
 import { CreditCard, CheckCircle2, ShieldCheck, Sparkles, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
 const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
+
+const PLANS = [
+  {
+    key: "pro",
+    name: "Pro Plan",
+    price: "₹4,999",
+    period: "/ month",
+    features: [
+      "Up to 1,000 invoices / month",
+      "Inbound AP processing",
+      "AI Quality Rules & Trainer",
+    ],
+    accent: "blue",
+  },
+  {
+    key: "pro_combined",
+    name: "Pro Combined",
+    price: "₹8,999",
+    period: "/ month",
+    features: [
+      "Unlimited inbound & outbound",
+      "Email, Webhook & Connector support",
+      "Priority support SLA",
+    ],
+    accent: "violet",
+  },
+] as const;
 
 export default function SubscriptionsPage() {
   // FE Gap 110: own h-16 header bar replaced by the shared one.
@@ -22,6 +57,11 @@ export default function SubscriptionsPage() {
   const isPro = billingPlan === "pro";
   const isFree = !isPro && !isProCombined;
 
+  // Gap 120: plan picker state — defaults to current plan, or pro if free
+  const [selectedPlan, setSelectedPlan] = useState<"pro" | "pro_combined">(
+    isProCombined ? "pro_combined" : "pro"
+  );
+
   const getPlanName = () => {
     if (loading) return "Loading...";
     if (isProCombined) return "Pro Combined Plan";
@@ -34,6 +74,8 @@ export default function SubscriptionsPage() {
     if (isPro) return "₹4,999 / month";
     return "₹0 / month";
   };
+
+  const upgradeUrl = `${WEBSITE_URL}/?plan=${selectedPlan}#pricing`;
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
@@ -135,22 +177,76 @@ export default function SubscriptionsPage() {
           </div>
         </section>
 
-        {/* Change plan CTA */}
+        {/* Gap 120: Plan Picker + Change plan CTA */}
         {isAdmin ? (
-          <section className="bg-slate-900/40 border border-[#222D3D] rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="space-y-0.5 text-center sm:text-left">
-              <p className="text-xs font-semibold text-white">Need to change your plan?</p>
-              <p className="text-[11px] text-slate-400">Upgrades are processed securely via PayU checkout</p>
+          <section className="space-y-4">
+            <h3 className="text-xs uppercase font-bold text-slate-500 tracking-wider">
+              Select a Plan to Upgrade
+            </h3>
+
+            <div className="grid grid-cols-2 gap-3">
+              {PLANS.map((plan) => {
+                const isSelected = selectedPlan === plan.key;
+                const isCurrent =
+                  (plan.key === "pro_combined" && isProCombined) ||
+                  (plan.key === "pro" && isPro);
+                const accentBorder = plan.accent === "violet"
+                  ? "border-violet-500/60 ring-violet-500/20"
+                  : "border-blue-500/60 ring-blue-500/20";
+                const accentBg = plan.accent === "violet"
+                  ? "bg-violet-500/5"
+                  : "bg-blue-500/5";
+
+                return (
+                  <button
+                    key={plan.key}
+                    onClick={() => setSelectedPlan(plan.key as "pro" | "pro_combined")}
+                    className={`relative text-left p-4 rounded-xl border-2 transition-all ${
+                      isSelected
+                        ? `${accentBorder} ${accentBg} ring-2`
+                        : "border-[#222D3D] bg-[#111827]/40 hover:border-[#334155]"
+                    }`}
+                  >
+                    {isCurrent && (
+                      <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        CURRENT
+                      </span>
+                    )}
+                    <p className="text-sm font-semibold text-white">{plan.name}</p>
+                    <p className="text-lg font-extrabold text-slate-200 mt-1">
+                      {plan.price}
+                      <span className="text-xs font-normal text-slate-500"> {plan.period}</span>
+                    </p>
+                    <ul className="mt-3 space-y-1.5">
+                      {plan.features.map((f) => (
+                        <li key={f} className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                          {f}
+                        </li>
+                      ))}
+                    </ul>
+                  </button>
+                );
+              })}
             </div>
-            <a
-              href={`${WEBSITE_URL}/?plan=pro_combined#pricing`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/10 hover:shadow-blue-600/20 transition-all whitespace-nowrap"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Change Subscription Plan</span>
-            </a>
+
+            <div className="bg-slate-900/40 border border-[#222D3D] rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="space-y-0.5 text-center sm:text-left">
+                <p className="text-xs font-semibold text-white">
+                  {selectedPlan === "pro" ? "Upgrade to Pro" : "Upgrade to Pro Combined"}
+                </p>
+                <p className="text-[11px] text-slate-400">Processed securely via PayU checkout</p>
+              </div>
+              <a
+                href={upgradeUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/10 hover:shadow-blue-600/20 transition-all whitespace-nowrap"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Change Subscription Plan</span>
+              </a>
+            </div>
           </section>
         ) : (
           <div className="flex items-start gap-2.5 bg-[#1E293B]/20 border border-[#222D3D] rounded-xl p-3 text-[11px] text-slate-400">

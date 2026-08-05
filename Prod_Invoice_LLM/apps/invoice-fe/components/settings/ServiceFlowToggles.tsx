@@ -280,7 +280,7 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
       {/* Upgrade Modal */}
       {showUpgradeModal && <UpgradeModal onClose={() => setShowUpgradeModal(false)} />}
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {/* Non-Admin read-only banner */}
         {!isAdmin && (
           <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
@@ -289,119 +289,115 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
           </div>
         )}
 
-        {/* Receive Invoices toggle */}
-        <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-              <Download className="w-4 h-4 text-blue-400" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-white">Receive Invoices</p>
-              <p className="text-xs text-slate-400">Inbound AP — process incoming vendor invoices</p>
-            </div>
-          </div>
-
-          <button
-            title={disabledTooltip}
-            disabled={!isAdmin || isSaving}
-            onClick={handleToggleReceive}
-            className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40 ${
-              settings.receive_invoices_enabled ? "bg-blue-600" : "bg-[#2D3F55]"
-            } ${!isAdmin ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-            role="switch"
-            aria-checked={settings.receive_invoices_enabled}
-            id="toggle-receive-invoices"
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
-                settings.receive_invoices_enabled ? "translate-x-5" : "translate-x-0"
-              }`}
-            />
-          </button>
-        </div>
-
-        {/* Outbound Sender Email */}
-        <div className="px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B] space-y-3">
-          <div className="flex items-center gap-2 mb-1">
-            <Send className="w-3.5 h-3.5 text-violet-400" />
-            <p className="text-xs font-medium text-slate-300">Outbound Sender Email</p>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 font-mono">
-              AR
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-500">
-            The "From" address used when delivering verified outbound invoices to customers.
-          </p>
-
-          <div className="flex gap-2">
-            <input
-              id="outbound-sender-email"
-              type="email"
-              value={settings.outbound_sender_email || ""}
-              readOnly
-              disabled
-              placeholder="Not Configured (Configure in Email settings)"
-              className="flex-1 bg-[#0D131F] border border-[#2D3F55] rounded-lg px-3 py-2 text-xs text-slate-400 placeholder-slate-600 select-none cursor-not-allowed opacity-70"
-            />
-            {isAdmin && (
-              <Link
-                href="/settings/email"
-                className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-[#2D3F55] text-xs font-medium transition-colors flex items-center justify-center whitespace-nowrap"
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* Receive Invoices tile */}
+          <div className="flex flex-col justify-between px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
+            <div className="flex items-start justify-between gap-2">
+              <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                <Download className="w-4 h-4 text-blue-400" />
+              </div>
+              <button
+                title={disabledTooltip}
+                disabled={!isAdmin || isSaving}
+                onClick={handleToggleReceive}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40 ${
+                  settings.receive_invoices_enabled ? "bg-blue-600" : "bg-[#2D3F55]"
+                } ${!isAdmin ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                role="switch"
+                aria-checked={settings.receive_invoices_enabled}
+                id="toggle-receive-invoices"
               >
-                Configure Email
-              </Link>
-            )}
-          </div>
-
-          {emailError && (
-            <p className="flex items-center gap-1.5 text-[11px] text-red-400">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-              {emailError}
-            </p>
-          )}
-        </div>
-
-        {/* Send Invoices toggle */}
-        <div className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-              <Send className="w-4 h-4 text-violet-400" />
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                    settings.receive_invoices_enabled ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
             </div>
-            <div>
-              <p className="text-sm font-medium text-white">Send Invoices</p>
-              <p className="text-xs text-slate-400">
-                Outbound AR — deliver verified invoices to customers
-                {settings.billing_plan !== "pro_combined" && (
-                  <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 font-mono">
-                    Requires Pro Combined
-                  </span>
-                )}
+            <div className="mt-4">
+              <p className="text-sm font-medium text-white">Receive Invoices</p>
+              <p className="text-[11px] text-slate-400 mt-1 leading-tight">
+                Inbound AP — process incoming vendor invoices
               </p>
             </div>
           </div>
 
-          <button
-            title={disabledTooltip}
-            disabled={!isAdmin || isSaving}
-            onClick={handleToggleSend}
-            className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-violet-500/40 ${
-              settings.send_invoices_enabled ? "bg-violet-600" : "bg-[#2D3F55]"
-            } ${!isAdmin ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-            role="switch"
-            aria-checked={settings.send_invoices_enabled}
-            id="toggle-send-invoices"
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
-                settings.send_invoices_enabled ? "translate-x-5" : "translate-x-0"
-              }`}
-            />
-          </button>
+          {/* Outbound Sender Email tile */}
+          <div className="flex flex-col justify-between px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
+            <div className="flex items-start justify-between gap-2">
+              <div className="w-9 h-9 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                <Send className="w-4 h-4 text-violet-400" />
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 font-mono font-bold">
+                AR SENDER
+              </span>
+            </div>
+            <div className="mt-4">
+              <p className="text-sm font-medium text-white">Sender Email</p>
+              <p className="text-[11px] text-slate-400 mt-1 leading-tight truncate select-all" title={settings.outbound_sender_email || "Not Configured"}>
+                {settings.outbound_sender_email || "Not Configured"}
+              </p>
+              {isAdmin && (
+                <Link
+                  href="/settings/email"
+                  className="mt-2 inline-flex items-center text-[11px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  Configure Email &rarr;
+                </Link>
+              )}
+            </div>
+          </div>
+
+          {/* Send Invoices tile */}
+          <div className="flex flex-col justify-between px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
+            <div className="flex items-start justify-between gap-2">
+              <div className="w-9 h-9 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                <Send className="w-4 h-4 text-violet-400" />
+              </div>
+              <button
+                title={disabledTooltip}
+                disabled={!isAdmin || isSaving}
+                onClick={handleToggleSend}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-violet-500/40 ${
+                  settings.send_invoices_enabled ? "bg-violet-600" : "bg-[#2D3F55]"
+                } ${!isAdmin ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                role="switch"
+                aria-checked={settings.send_invoices_enabled}
+                id="toggle-send-invoices"
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${
+                    settings.send_invoices_enabled ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+            <div className="mt-4">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-medium text-white">Send Invoices</p>
+                {settings.billing_plan !== "pro_combined" && (
+                  <span className="text-[9px] px-1 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 font-mono">
+                    PRO COMBINED
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-tight">
+                Outbound AR — deliver verified invoices to customers
+              </p>
+            </div>
+          </div>
         </div>
+
+        {emailError && (
+          <p className="flex items-center gap-1.5 text-[11px] text-red-400 mt-1 px-1">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            {emailError}
+          </p>
+        )}
 
         {/* Pro Combined active confirmation */}
         {settings.billing_plan === "pro_combined" && (
-          <p className="flex items-center gap-1.5 text-[11px] text-emerald-400 px-1">
+          <p className="flex items-center gap-1.5 text-[11px] text-emerald-400 px-1 mt-1">
             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
             Pro Combined plan active — outbound features available.
           </p>
