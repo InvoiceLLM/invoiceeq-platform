@@ -92,7 +92,7 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_DEV_CREDENTIALS }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Resolve Azure FQDNs and Clerk key
         id: resolve
@@ -153,7 +153,7 @@ jobs:
       image_tag: ${{ github.sha }}
       also_tag_latest: true
     secrets:
-      azure_credentials: ${{ secrets.AZURE_DEV_CREDENTIALS }}
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
 
   deploy-worker:
     needs: changes
@@ -168,7 +168,7 @@ jobs:
       image_tag: ${{ github.sha }}
       also_tag_latest: true
     secrets:
-      azure_credentials: ${{ secrets.AZURE_DEV_CREDENTIALS }}
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
 
   deploy-frontend:
     needs: [changes, resolve-fqdns]
@@ -187,7 +187,7 @@ jobs:
         NEXT_PUBLIC_WEBSITE_URL=${{ needs.resolve-fqdns.outputs.website_url }}
         ENABLE_FE_PROXY=true
     secrets:
-      azure_credentials: ${{ secrets.AZURE_DEV_CREDENTIALS }}
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
 
   # invoice-website's own NEXT_PUBLIC_FE_URL points back at the FE app (for
   # post-login redirects), not at itself -- hence fe_url here, unlike the FE
@@ -211,4 +211,4 @@ jobs:
         ENABLE_FE_PROXY=true
         FE_INTERNAL_URL=${{ needs.resolve-fqdns.outputs.fe_url }}
     secrets:
-      azure_credentials: ${{ secrets.AZURE_DEV_CREDENTIALS }}
+      azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
