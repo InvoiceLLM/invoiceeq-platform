@@ -141,7 +141,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: ${{ env.ACR_NAME }}
+      acr_name: acrinvoicellmdev2
       service: invoice-be
       dockerfile: docker/Dockerfile.be
       container_app_name: ca-invoice-be-prod
@@ -157,7 +157,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: ${{ env.ACR_NAME }}
+      acr_name: acrinvoicellmdev2
       service: queue-worker
       dockerfile: docker/Dockerfile.worker
       container_app_name: ca-queue-worker-prod
@@ -173,7 +173,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: ${{ env.ACR_NAME }}
+      acr_name: acrinvoicellmdev2
       service: invoice-fe
       dockerfile: docker/Dockerfile.fe
       container_app_name: ca-invoice-fe-prod
@@ -192,7 +192,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: ${{ env.ACR_NAME }}
+      acr_name: acrinvoicellmdev2
       service: invoice-website
       dockerfile: docker/Dockerfile.website
       container_app_name: ca-invoice-website-prod
