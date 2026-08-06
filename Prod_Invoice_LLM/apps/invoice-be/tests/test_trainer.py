@@ -139,6 +139,27 @@ def test_from_production_unknown_vendor_404(trainer_mocks):
     assert resp.status_code == 404
 
 
+def test_from_production_ocr_failure_returns_500_not_a_broken_session(db_session):
+    """Gap 137: an OCR failure re-running text for an existing vendor's sample
+    invoice used to be swallowed (session created anyway with ocr_text=""),
+    only breaking later, confusingly, inside chat. It must now fail loudly
+    at load time instead, matching the New Vendor / Global-with-file scopes."""
+    inv = Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="blob/acme.pdf", status="COMPLETED",
+        vendor_name="ACME Corporation", invoice_number="INV-9", grand_total=110.0, field_confidence={},
+    )
+    db_session.add(inv)
+    db_session.commit()
+
+    with patch("routers.trainer._run_ocr", side_effect=RuntimeError("BlobNotFound")):
+        resp = client.post("/api/v1/trainer/sessions/from-production", params={"vendor_name": "ACME Corporation"})
+
+    assert resp.status_code == 500
+    assert "ACME Corporation" in resp.json()["detail"]
+    # No half-broken session should have been persisted for later chat calls to hit.
+    assert trainer_sessions._memory_store == {}
+
+
 def test_vendors_endpoint(db_session):
     db_session.add(Invoice(id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="a/x1.pdf", status="COMPLETED", vendor_name="Acme"))
     db_session.add(Invoice(id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="a/x2.pdf", status="PAID", vendor_name="Acme"))

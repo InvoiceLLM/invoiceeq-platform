@@ -23,7 +23,28 @@ import {
 } from "lucide-react";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
-const INTEGRATIONS = [
+/**
+ * FE Gap 167: `adminOnly` exists because the Admin Console tile used to render
+ * for every role — the only tile on this page with no gate at all, while
+ * ServiceFlowToggles and the Webhooks/Security screens behind the other tiles
+ * all resolve `role === "Admin"` from `useAuth()`. A Viewer who followed it hit
+ * `/admin`, whose own list call 403s, and was then shown a page labelling them
+ * the organisation's Admin. The route itself now refuses non-Admins too (see
+ * `app/admin/page.tsx`); hiding the tile is the discoverability half of that.
+ */
+interface IntegrationTile {
+  id: string;
+  title: string;
+  desc: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconBg: string;
+  iconColor: string;
+  /** Hidden from anyone whose resolved role is not "Admin". */
+  adminOnly?: boolean;
+}
+
+const INTEGRATIONS: IntegrationTile[] = [
   {
     id: "connectors",
     title: "Connectors",
@@ -50,6 +71,7 @@ const INTEGRATIONS = [
     icon: UserCog,
     iconBg: "bg-rose-500/10 border-rose-500/20",
     iconColor: "text-rose-400",
+    adminOnly: true,
   },
   {
     id: "subscriptions",
@@ -89,6 +111,14 @@ export default function SettingsPage() {
   });
 
   const { role, loading } = useAuth();
+  // FE Gap 167: same resolution every other gated Settings screen uses
+  // (`app/settings/webhooks/page.tsx`, `ServiceFlowToggles`) — the real role
+  // from GET /auth/me, never Clerk's client-editable metadata. While identity
+  // is still loading `role` is "", so admin-only tiles stay hidden rather than
+  // flashing in and disappearing.
+  const isAdmin = role === "Admin";
+  const visibleIntegrations = INTEGRATIONS.filter((item) => !item.adminOnly || isAdmin);
+
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
       {/* Content */}
@@ -130,7 +160,7 @@ export default function SettingsPage() {
           </h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {INTEGRATIONS.map((item) => {
+            {visibleIntegrations.map((item) => {
               const Icon = item.icon;
               return (
                 <Link

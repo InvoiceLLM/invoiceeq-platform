@@ -1,7 +1,17 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
+import { useAuth } from "@/hooks/useAuth";
+
+/**
+ * FE Gap 169: new users log in through the marketing site's /login page, not a
+ * `/admin/login` route — that route has never existed in this app (Gap 66).
+ * Same env var, same localhost fallback as every other cross-app link here
+ * (`components/layout/Header.tsx`, `app/trainer/page.tsx`).
+ */
+const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
 /* ─── Types ─── */
 export interface OrgUser {
@@ -66,6 +76,31 @@ async function savePermissions(
     const data = await res.json().catch(() => ({}));
     throw new Error(data.detail || data.error || "Failed to save permissions");
   }
+}
+
+/** Result of a real user removal — see DELETE /api/admin/users/[userRef]. */
+interface RemoveUserResult {
+  /** False when the backend row was detached but the Clerk account survived. */
+  clerkDeleted: boolean;
+  /** Present only when `clerkDeleted` is false: why sign-in access may remain. */
+  warning?: string;
+}
+
+/**
+ * FE Gap 168: really remove a user, rather than dropping them from local state.
+ * The FE route deletes the Clerk account (the thing that actually grants
+ * sign-in) after the backend has detached/deleted their tenant row, and the
+ * backend's `require_admin` is the authorization boundary for both halves.
+ */
+async function removeUser(userRef: string): Promise<RemoveUserResult> {
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(userRef)}`, {
+    method: "DELETE",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || "Failed to remove user");
+  }
+  return { clerkDeleted: data.clerkDeleted !== false, warning: data.warning };
 }
 
 interface StatCardProps {
@@ -274,10 +309,21 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
 /* ─── Main Admin Dashboard Page ─── */
 export default function AdminDashboardPage() {
   const { user, isLoaded } = useUser();
+  // FE Gap 167: the real, backend-resolved identity of whoever is looking at
+  // this page. This screen used to describe the viewer as the org's Admin
+  // unconditionally; every role/permission label below now comes from here.
+  const { role, canTrain, canAudit, canLoad, loading: authLoading } = useAuth();
+  const isAdmin = role === "Admin";
+
   const [users, setUsers] = useState<OrgUser[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [permError, setPermError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  // FE Gap 167: a 403 from GET /api/admin/users used to be swallowed, leaving a
+  // non-Admin on a page that looked like an empty but legitimate console.
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   // Feature 1.1 Task 1.1.6: the user list used to be ephemeral client state
   // that vanished on reload, which left the edit-time permission checkboxes
@@ -287,7 +333,20 @@ export default function AdminDashboardPage() {
   const loadUsers = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/users", { cache: "no-store" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        // Gap 167: a 401/403 is not a "no users yet" state -- it means the
+        // viewer is not this tenant's Admin and must be told so, not shown an
+        // empty console. Anything else is a genuine load failure and gets a
+        // visible error rather than a silently blank table.
+        if (res.status === 401 || res.status === 403) {
+          setAccessDenied(true);
+        } else {
+          setListError("Could not load the user list. Please try again.");
+        }
+        return;
+      }
+      setAccessDenied(false);
+      setListError(null);
       const rows: AdminUserDto[] = await res.json();
       setUsers(
         rows
@@ -306,13 +365,16 @@ export default function AdminDashboardPage() {
           }))
       );
     } catch {
-      // Non-blocking: the org/stat cards above still render without the list.
+      setListError("Could not load the user list. Please try again.");
     }
   }, []);
 
   useEffect(() => {
+    // Gap 167: don't fire an Admin-only call for a viewer we already know is
+    // not an Admin -- the same shape `app/settings/webhooks/page.tsx` uses.
+    if (authLoading || !isAdmin) return;
     void loadUsers();
-  }, [loadUsers]);
+  }, [loadUsers, authLoading, isAdmin]);
 
   const handleTogglePermission = async (target: OrgUser, key: keyof PermissionState) => {
     const next: PermissionState = {
@@ -342,18 +404,89 @@ export default function AdminDashboardPage() {
   const country = (user?.unsafeMetadata?.country as string) || "—";
   const adminEmail = user?.primaryEmailAddress?.emailAddress || "—";
 
+  // FE Gap 167: how the viewer's own row describes them. "Organisation Owner"
+  // and "All (Admin)" used to be literals in the markup regardless of role.
+  const selfSubtitle = isAdmin ? "Organisation Owner" : "Workspace member";
+  const grantedAreas = [
+    canTrain ? "Trainer" : null,
+    canAudit ? "Auditor" : null,
+    canLoad ? "Loader" : null,
+  ].filter(Boolean) as string[];
+  const selfPermissions = isAdmin
+    ? "All (Admin)"
+    : grantedAreas.length > 0
+    ? grantedAreas.join(", ")
+    : "View only";
+
   const handleUserCreated = (newUser: OrgUser) => {
     setUsers((prev) => [newUser, ...prev]);
   };
 
-  const handleRemoveUser = (id: string) => {
-    setUsers((prev) => prev.filter((u) => u.id !== id));
+  /**
+   * FE Gap 168: this used to be `setUsers(prev => prev.filter(...))` and
+   * nothing else -- the row vanished, the user kept every bit of their access,
+   * and the next page load brought them back. It now calls the real
+   * DELETE /api/admin/users/{ref}, and only drops the row once that succeeds.
+   */
+  const handleRemoveUser = async (target: OrgUser) => {
+    const confirmed = window.confirm(
+      `Remove ${target.email}? Their sign-in account is deleted and they lose access to this workspace immediately.`
+    );
+    if (!confirmed) return;
+
+    setRemovingId(target.id);
+    setPermError(null);
+    try {
+      const { clerkDeleted, warning } = await removeUser(target.id);
+      setUsers((prev) => prev.filter((u) => u.id !== target.id));
+      if (!clerkDeleted) {
+        // Partial success is stated plainly rather than shown as a clean
+        // removal -- the whole point of this gap was false confidence.
+        setPermError(
+          warning ||
+            "Removed from this workspace, but their sign-in account could not be deleted. Remove it in Clerk to fully revoke access."
+        );
+      }
+    } catch (err: any) {
+      setPermError(err.message || "Failed to remove user");
+    } finally {
+      setRemovingId(null);
+    }
   };
 
-  if (!isLoaded) {
+  if (!isLoaded || authLoading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "200px", color: T.textDim }}>
         Loading…
+      </div>
+    );
+  }
+
+  /**
+   * FE Gap 167: the route's own gate. The Settings tile is hidden from
+   * non-Admins, but the URL is still typeable, and the backend's `require_admin`
+   * (the actual boundary) 403s every call this page makes -- so say that,
+   * instead of rendering an Admin console that describes the viewer as the
+   * organisation's owner. `accessDenied` covers the case where the client-side
+   * role says Admin but the backend disagrees.
+   */
+  if (!isAdmin || accessDenied) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "14px", padding: "64px 24px", textAlign: "center" }}>
+        <div style={{ width: "56px", height: "56px", borderRadius: "16px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px" }}>
+          🛡️
+        </div>
+        <h1 style={{ fontSize: "20px", fontWeight: "800", color: T.textPrimary, margin: 0 }}>Access Restricted</h1>
+        <p style={{ fontSize: "13px", color: T.textDim, maxWidth: "420px", margin: 0 }}>
+          Only organisation Administrators can manage users, roles and permissions.
+          {role ? ` You are signed in as ${role}.` : ""}
+        </p>
+        <Link
+          href="/settings"
+          style={{ marginTop: "6px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "10px 18px", fontSize: "13px", color: T.textMuted, textDecoration: "none" }}
+        >
+          Return to Settings
+        </Link>
       </div>
     );
   }
@@ -434,7 +567,14 @@ export default function AdminDashboardPage() {
           <span>Action</span>
         </div>
 
-        {/* Admin row (always shown) */}
+        {/* The signed-in viewer's own row.
+            FE Gap 167: every label here was hardcoded ("Organisation Owner",
+            "Admin", "All (Admin)") and was shown to whoever loaded the page,
+            so a Viewer who reached /admin was told they were the org's Admin.
+            The role badge, the subtitle and the permissions cell now all come
+            from GET /auth/me. Only an Admin gets this far now, but the values
+            are read rather than asserted so this row can never drift from the
+            backend's answer again. */}
         <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1.6fr auto", padding: "14px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <div style={{ width: "32px", height: "32px", borderRadius: "8px", background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px" }}>
@@ -442,19 +582,19 @@ export default function AdminDashboardPage() {
             </div>
             <div>
               <div style={{ fontSize: "14px", fontWeight: "600", color: T.textPrimary }}>{user?.firstName ? `${user.firstName} ${user.lastName || ""}` : "You"}</div>
-              <div style={{ fontSize: "12px", color: T.textDim }}>Organisation Owner</div>
+              <div style={{ fontSize: "12px", color: T.textDim }}>{selfSubtitle}</div>
             </div>
           </div>
           <div style={{ fontSize: "14px", color: T.textMuted }}>{adminEmail}</div>
           <div>
-            <span style={{ background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.blue, fontWeight: "600" }}>Admin</span>
+            <span style={{ background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.blue, fontWeight: "600" }}>{role || "Unknown"}</span>
           </div>
           <div>
             <span style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.green, fontWeight: "600" }}>● Active</span>
           </div>
           {/* Admin is a role, not a 4th permission -- it implies all three
               (dependencies.resolve_permissions), so there is nothing to tick. */}
-          <div style={{ fontSize: "12px", color: T.textDim }}>All (Admin)</div>
+          <div style={{ fontSize: "12px", color: T.textDim }}>{selfPermissions}</div>
           <div style={{ fontSize: "12px", color: T.textDim }}>—</div>
         </div>
 
@@ -475,7 +615,10 @@ export default function AdminDashboardPage() {
               </div>
               <div style={{ fontSize: "14px", color: T.textMuted }}>{u.email}</div>
               <div>
-                <span style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.green, fontWeight: "600" }}>User</span>
+                {/* Gap 167: the stored role, not a literal "User" -- this cell
+                    claimed "User" even for a row the backend returned as, say,
+                    Auditor. */}
+                <span style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.green, fontWeight: "600" }}>{u.role || "User"}</span>
               </div>
               <div>
                 <span style={{ background: u.status === "active" ? "rgba(16,185,129,0.1)" : "rgba(245,158,11,0.1)", border: `1px solid ${u.status === "active" ? "rgba(16,185,129,0.2)" : "rgba(245,158,11,0.2)"}`, borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: u.status === "active" ? T.green : T.yellow, fontWeight: "600" }}>
@@ -502,18 +645,20 @@ export default function AdminDashboardPage() {
                 ))}
               </div>
               <button
-                onClick={() => handleRemoveUser(u.id)}
-                style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "6px", padding: "4px 10px", fontSize: "12px", color: T.red, cursor: "pointer", fontFamily: "inherit" }}
+                onClick={() => void handleRemoveUser(u)}
+                disabled={removingId === u.id}
+                aria-label={`Remove ${u.email}`}
+                style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "6px", padding: "4px 10px", fontSize: "12px", color: T.red, cursor: removingId === u.id ? "wait" : "pointer", opacity: removingId === u.id ? 0.5 : 1, fontFamily: "inherit" }}
               >
-                Remove
+                {removingId === u.id ? "Removing…" : "Remove"}
               </button>
             </div>
           ))
         )}
 
-        {permError && (
+        {(permError || listError) && (
           <div style={{ padding: "10px 24px", background: "rgba(239,68,68,0.08)", borderTop: `1px solid ${T.border}`, fontSize: "13px", color: T.red }}>
-            ⚠️ {permError}
+            ⚠️ {permError || listError}
           </div>
         )}
       </div>
@@ -521,9 +666,23 @@ export default function AdminDashboardPage() {
       {/* Info banner */}
       <div style={{ background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)", borderRadius: "12px", padding: "14px 20px", display: "flex", gap: "12px", alignItems: "flex-start", fontSize: "13px", color: T.textMuted }}>
         <span style={{ fontSize: "18px", flexShrink: 0 }}>💡</span>
+        {/* FE Gap 169: this used to point new users at
+            `localhost:3000/admin/login`, a route that has never existed in this
+            app (Gap 66) -- and a hardcoded localhost host, so it was wrong in
+            every deployed environment too. Sign-in happens on the marketing
+            site's /login page, which then lands them on this dashboard. */}
         <span>
           Users created here are synced to <strong style={{ color: T.textPrimary }}>Clerk</strong> and assigned the <strong style={{ color: T.green }}>user</strong> role.
-          They can log in at <strong style={{ color: T.blue }}>localhost:3000/admin/login</strong> → select <em>User</em> → access the <strong style={{ color: T.textPrimary }}>User Dashboard</strong>.
+          They sign in at{" "}
+          <a
+            href={`${WEBSITE_URL}/login`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: T.blue, fontWeight: "700", textDecoration: "underline" }}
+          >
+            {`${WEBSITE_URL}/login`}
+          </a>{" "}
+          with the email and temporary password set above, and land straight on the <strong style={{ color: T.textPrimary }}>Dashboard</strong> with whatever permissions you grant here.
         </span>
       </div>
 

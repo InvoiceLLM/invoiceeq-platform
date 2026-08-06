@@ -21,6 +21,11 @@ import {
   CheckCircle,
   AlertTriangle,
 } from "lucide-react";
+import {
+  ConnectorDirection,
+  ConnectorProvider,
+  FolderShortcut,
+} from "@/lib/connectorFolderShortcut";
 
 interface ConnectorFile {
   id: string;
@@ -30,10 +35,22 @@ interface ConnectorFile {
 }
 
 interface FolderTreeExplorerProps {
-  provider: "google_drive" | "salesforce";
-  direction: "inbound" | "outbound";
-  onFolderSelected: (folderName: string) => void;
+  provider: ConnectorProvider;
+  direction: ConnectorDirection;
+  /**
+   * Fired when the user saves the folder they are currently in as their
+   * default browse folder. FE Gap 165: this used to hand back a bare string
+   * that was, in practice, usually a raw folder id (see handleSetDefaultFolder)
+   * and could not be navigated back to. It now carries both id and name.
+   */
+  onFolderSelected: (folder: FolderShortcut) => void;
   onClose: () => void;
+  /**
+   * Where to open. FE Gap 165: the saved folder had no effect on anything --
+   * every browse session started at Root regardless. Passing the saved
+   * shortcut in is what makes it more than a label.
+   */
+  initialFolder?: FolderShortcut | null;
 }
 
 export default function FolderTreeExplorer({
@@ -41,15 +58,27 @@ export default function FolderTreeExplorer({
   direction,
   onFolderSelected,
   onClose,
+  initialFolder = null,
 }: FolderTreeExplorerProps) {
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
-  const [folderHistory, setFolderHistory] = useState<string[]>([]);
+  /**
+   * The folders entered so far, root-first. Replaces the previous
+   * `currentFolderId` + `folderHistory` pair, which tracked ids only -- with no
+   * name for the folder you were standing in, "Map current folder" fell back to
+   * the raw id and the path row rendered that id too (FE Gap 165).
+   */
+  const [path, setPath] = useState<FolderShortcut[]>(
+    initialFolder?.id ? [initialFolder] : []
+  );
+  const currentFolder = path.length > 0 ? path[path.length - 1] : null;
+  const currentFolderId = currentFolder?.id ?? null;
   const [files, setFiles] = useState<ConnectorFile[]>([]);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importCompleted, setImportCompleted] = useState(false);
+  // FE Gap 166: a failed import has to be visible, not just console-logged.
+  const [importError, setImportError] = useState<string | null>(null);
 
   // --- Load directory contents ---
   useEffect(() => {
@@ -85,27 +114,22 @@ export default function FolderTreeExplorer({
   // --- Navigation actions ---
   const handleFolderClick = (folder: ConnectorFile) => {
     if (folder.type !== "folder") return;
-    if (currentFolderId) {
-      setFolderHistory((prev) => [...prev, currentFolderId]);
-    }
-    setCurrentFolderId(folder.id);
+    setPath((prev) => [...prev, { id: folder.id, name: folder.name }]);
     setSelectedFileIds([]);
   };
 
   const handleGoBack = () => {
-    const history = [...folderHistory];
-    const prevFolder = history.pop() || null;
-    setFolderHistory(history);
-    setCurrentFolderId(prevFolder);
+    setPath((prev) => prev.slice(0, -1));
     setSelectedFileIds([]);
   };
 
-  // --- Select Folder for Mapping ---
-  const handleMapFolder = () => {
-    const currentName = currentFolderId
-      ? files.find((f) => f.id === currentFolderId)?.name || currentFolderId
-      : "Root";
-    onFolderSelected(currentName);
+  // --- Save the current folder as this browser's default browse folder ---
+  // FE Gap 165: the name came from `files.find(f => f.id === currentFolderId)`,
+  // but `files` holds the *children* of the current folder -- the folder itself
+  // is never in that list, so this always fell through to the raw folder id.
+  // The breadcrumb carries the real name now.
+  const handleSetDefaultFolder = () => {
+    onFolderSelected(currentFolder ?? { id: null, name: "Root" });
   };
 
   // --- Trigger Ingestion Imports ---
@@ -113,21 +137,38 @@ export default function FolderTreeExplorer({
     if (selectedFileIds.length === 0) return;
     setIsImporting(true);
     setImportCompleted(false);
+    setImportError(null);
 
     try {
-      // Import sequentially in background queue
+      // Import sequentially in background queue.
+      // FE Gap 166: the response status used to be ignored entirely -- only a
+      // network-level throw was caught -- so a rejected import (unknown file
+      // id, quota exceeded, backend 500) still ended on the green "Import
+      // request queued!" banner. Same `if (!res.ok) throw` shape as
+      // components/settings/EmailSendersList.tsx. Deliberately aborts the loop
+      // on the first failure rather than pressing on: the remaining files are
+      // almost always failing for the same reason, and a partial run reported
+      // as success is exactly the problem being fixed here.
       for (const fileId of selectedFileIds) {
-        await fetch(`/api/connectors/import/${provider}?direction=${direction}`, {
+        const res = await fetch(`/api/connectors/import/${provider}?direction=${direction}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file_id: fileId }),
         });
+        if (!res.ok) {
+          const detail = await res
+            .json()
+            .then((d) => d.detail || d.error)
+            .catch(() => null);
+          throw new Error(detail || "The connector rejected this import request.");
+        }
       }
       setImportCompleted(true);
       setSelectedFileIds([]);
       setTimeout(() => setImportCompleted(false), 4000);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Bulk connector import failed", err);
+      setImportError(err?.message || "Failed to queue the selected files for import.");
     } finally {
       setIsImporting(false);
     }
@@ -153,8 +194,11 @@ export default function FolderTreeExplorer({
               {direction}
             </span>
           </div>
+          {/* Gap 165: this said "map folders for automated service flows" —
+              there is no automated pull from a connector folder; files enter
+              the pipeline only when they are imported here, explicitly. */}
           <p className="text-[10px] text-slate-400">
-            Browse files and map folders for automated service flows.
+            Browse the connector and import the files you want processed.
           </p>
         </div>
 
@@ -168,26 +212,31 @@ export default function FolderTreeExplorer({
 
       {/* Explorer Path Navigation */}
       <div className="px-5 py-2.5 bg-[#0F141F] border-b border-[#1E293B]/40 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2 text-slate-300">
-          {(currentFolderId || folderHistory.length > 0) && (
+        <div className="flex items-center gap-2 text-slate-300 min-w-0">
+          {path.length > 0 && (
             <button
               onClick={handleGoBack}
-              className="flex items-center gap-1 text-blue-400 hover:text-blue-300 font-medium transition-colors"
+              className="flex items-center gap-1 text-blue-400 hover:text-blue-300 font-medium transition-colors shrink-0"
             >
               <ChevronLeft className="w-3.5 h-3.5" /> Back
             </button>
           )}
-          <span className="text-slate-500">Path:</span>
-          <span className="font-mono text-slate-400">
-            Root {currentFolderId ? `/ ${currentFolderId}` : ""}
+          <span className="text-slate-500 shrink-0">Path:</span>
+          {/* Gap 165: folder names, not the opaque provider ids this used to print. */}
+          <span className="font-mono text-slate-400 truncate">
+            {["Root", ...path.map((f) => f.name)].join(" / ")}
           </span>
         </div>
 
+        {/* Gap 165: was "Map current folder", which implied this folder would be
+            picked up automatically. It is a per-browser starting point for
+            browsing — nothing imports from it on its own. */}
         <button
-          onClick={handleMapFolder}
-          className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-medium"
+          onClick={handleSetDefaultFolder}
+          title="Remembers this folder as where browsing starts, in this browser. It does not import anything on its own."
+          className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-medium shrink-0"
         >
-          <CornerDownRight className="w-3.5 h-3.5" /> Map current folder
+          <CornerDownRight className="w-3.5 h-3.5" /> Start here next time
         </button>
       </div>
 
@@ -277,6 +326,15 @@ export default function FolderTreeExplorer({
           {importCompleted && (
             <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
               <CheckCircle className="w-3.5 h-3.5" /> Import request queued!
+            </span>
+          )}
+
+          {importError && (
+            <span
+              title={importError}
+              className="text-[10px] text-rose-400 font-medium flex items-center gap-1 max-w-[320px] truncate"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {importError}
             </span>
           )}
 

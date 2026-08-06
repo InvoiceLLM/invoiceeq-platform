@@ -245,8 +245,12 @@ function TrainerContent() {
     setSelectedVariable(null);
 
     let vendor = selectedVendorName;
-    if (newScope === "existing_vendor" && !vendor && vendors.length > 0) {
-      vendor = vendors[0].name;
+    // FE Gap 170: `selectedVendorName` can now hold a vendor detected from a New
+    // Vendor upload, which by definition has no production invoices yet -- so
+    // Existing Vendor must fall back to a known vendor rather than trying to
+    // start a production session for one that isn't in the list.
+    if (newScope === "existing_vendor" && !vendors.some((v) => v.name === vendor)) {
+      vendor = vendors[0]?.name || "";
       setSelectedVendorName(vendor);
     }
 
@@ -293,7 +297,34 @@ function TrainerContent() {
     try {
       const newSess = await trainerService.startSession(activeScope, selectedVendorName, file);
       setSession(newSess);
-      showToast(`Loaded sample file ${file.name}`, "info");
+
+      /**
+       * FE Gap 170: a New Vendor session's vendor is discovered by the backend,
+       * not chosen by the user -- `routers/trainer.py::upload_transient_file`
+       * reads `vendor_name` out of the extraction result and returns it on the
+       * session (`_serialize_session`). Nothing here ever read it, so
+       * `selectedVendorName` stayed "" for the whole New Vendor flow: Rule
+       * History called `getRuleHistory("new_vendor", "")`, and an empty
+       * vendor_name resolves, per `GET /templates/history`, to the tenant's
+       * *Global* template -- the drawer confidently showed the wrong timeline.
+       * CommitModal and RuleHistoryDrawer read the same value, so all three are
+       * fixed by capturing it here, exactly as `handleSelectVendor` does for
+       * the Existing Vendor flow.
+       *
+       * Scoped to new_vendor deliberately: a Global session may also carry a
+       * vendor name from its grounding PDF, but Global rules are tenant-wide
+       * and must not start keying off whichever sample was uploaded.
+       */
+      if (activeScope === "new_vendor" && newSess.vendorName) {
+        setSelectedVendorName(newSess.vendorName);
+      }
+
+      showToast(
+        activeScope === "new_vendor" && newSess.vendorName
+          ? `Loaded sample file ${file.name} — vendor detected: ${newSess.vendorName}`
+          : `Loaded sample file ${file.name}`,
+        "info"
+      );
     } catch (err) {
       console.error("Failed to load sample file", err);
       showToast("Failed to process the uploaded sample.", "error");
@@ -312,11 +343,39 @@ function TrainerContent() {
   };
 
   /**
+   * FE Gap 171: why the chat is unusable right now, or null when it is usable.
+   *
+   * `session` is null in two ordinary situations -- New Vendor before a PDF is
+   * uploaded, and Existing Vendor with no vendor selected -- and the chat panel
+   * gave no hint of it: the input accepted text, cleared it on submit, and the
+   * message was dropped. Naming the reason here keeps the panel's disabled
+   * state, its placeholder and the backstop toast in `handleSendMessage`
+   * saying the same thing.
+   */
+  const chatDisabledReason: string | null = session
+    ? null
+    : activeScope === "new_vendor"
+    ? "Upload a sample invoice PDF to start a New Vendor session before teaching rules."
+    : activeScope === "existing_vendor"
+    ? "Select a vendor to start a training session before teaching rules."
+    : "Starting a training session — one moment.";
+
+  /**
    * HANDLER: Natural Language Chat Correction (Task 6.5)
    * Sends user instruction to LLM trainer agent, updating active rules & variables.
    */
   const handleSendMessage = async (text: string) => {
-    if (!session || isSending) return;
+    // FE Gap 171: this was a bare `if (!session || isSending) return;` -- the
+    // panel had already cleared the input by then, so a typed correction with
+    // no active session vanished with no feedback at all. The primary fix is in
+    // QnAPanel (the input is disabled and explains itself while `chatDisabledReason`
+    // is set, so the text is never lost); this stays as the backstop for the
+    // suggestion chips and any future caller, and now says why nothing happened.
+    if (!session) {
+      showToast(chatDisabledReason || "No active training session.", "error");
+      return;
+    }
+    if (isSending) return;
     setIsSending(true);
 
     try {
@@ -339,6 +398,20 @@ function TrainerContent() {
    */
   const handleOpenHistory = async () => {
     setIsHistoryDrawerOpen(true);
+    // FE Gap 170: a vendor-scoped history request with an empty vendor_name is
+    // resolved by the backend to the tenant's Global template, so this used to
+    // present Global's timeline as if it were the new vendor's. With no vendor
+    // identified yet there is genuinely nothing to show -- say so.
+    if (activeScope !== "global" && !selectedVendorName) {
+      setRuleHistory([]);
+      showToast(
+        activeScope === "new_vendor"
+          ? "Upload a sample invoice first — a new vendor has no rule history yet."
+          : "Select a vendor to see its rule history.",
+        "info"
+      );
+      return;
+    }
     try {
       const history = await trainerService.getRuleHistory(activeScope, selectedVendorName);
       setRuleHistory(history);
@@ -573,6 +646,7 @@ function TrainerContent() {
             chatHistory={session?.chatHistory || []}
             onSendMessage={handleSendMessage}
             isSending={isSending}
+            disabledReason={chatDisabledReason}
           />
         </div>
 

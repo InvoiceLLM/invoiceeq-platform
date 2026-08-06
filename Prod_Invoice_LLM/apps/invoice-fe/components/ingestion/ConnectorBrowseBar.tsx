@@ -20,6 +20,11 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { HardDrive, Cpu, Lock } from "lucide-react";
 import FolderTreeExplorer from "@/components/connectors/FolderTreeExplorer";
+import {
+  FolderShortcut,
+  readFolderShortcut,
+  writeFolderShortcut,
+} from "@/lib/connectorFolderShortcut";
 
 type Provider = "google_drive" | "salesforce";
 type Direction = "inbound" | "outbound";
@@ -119,10 +124,19 @@ export default function ConnectorBrowseBar({ direction }: { direction: Direction
       {browsing && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
           <div className="w-full max-w-2xl">
+            {/* FE Gap 165: this screen is the reason the Settings "mapping" was
+                decorative -- it opened the explorer at Root every time and never
+                read the saved folder. It now opens at the saved default folder
+                for this provider + direction, and honours a new default set
+                from here (same localStorage shortcut, so the two screens agree). */}
             <FolderTreeExplorer
               provider={browsing}
               direction={direction}
-              onFolderSelected={() => setBrowsing(null)}
+              initialFolder={readFolderShortcut(browsing, direction)}
+              onFolderSelected={(folder: FolderShortcut) => {
+                writeFolderShortcut(browsing, direction, folder);
+                setBrowsing(null);
+              }}
               onClose={() => setBrowsing(null)}
             />
           </div>

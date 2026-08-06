@@ -8,6 +8,7 @@ import {
   Bot,
   User,
   Zap,
+  Lock,
 } from "lucide-react";
 import { ChatMessage } from "@/lib/trainer-service";
 
@@ -41,12 +42,22 @@ interface QnAPanelProps {
   onSendMessage: (text: string) => void;
   /** Flag indicating active AI response is processing */
   isSending?: boolean;
+  /**
+   * FE Gap 171: why the chat cannot be used yet (no active session), or null
+   * when it can. The panel used to have no awareness of this at all: it took
+   * the text, cleared the input as if it had been sent, and the page's
+   * `handleSendMessage` dropped it on a silent early return. When set, the
+   * input and the suggestion chips are disabled and the reason is shown, so
+   * nothing typed can be lost.
+   */
+  disabledReason?: string | null;
 }
 
 export default function QnAPanel({
   chatHistory,
   onSendMessage,
   isSending = false,
+  disabledReason = null,
 }: QnAPanelProps) {
   const [inputText, setInputText] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -94,15 +105,20 @@ export default function QnAPanel({
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, isSending]);
 
+  const isDisabled = isSending || disabledReason !== null;
+
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() || isSending) return;
+    // Gap 171: the typed text is only cleared once it has actually been handed
+    // over. With no session the input is disabled anyway, but the guard is kept
+    // here too so the field can never be emptied by a submit that goes nowhere.
+    if (!inputText.trim() || isDisabled) return;
     onSendMessage(inputText.trim());
     setInputText("");
   };
 
   const handleChipClick = (chipText: string) => {
-    if (isSending) return;
+    if (isDisabled) return;
     onSendMessage(chipText);
   };
 
@@ -244,7 +260,8 @@ export default function QnAPanel({
                 key={idx}
                 type="button"
                 onClick={() => handleChipClick(chip)}
-                disabled={isSending}
+                disabled={isDisabled}
+                title={disabledReason || chip}
                 className="shrink-0 text-[11px] bg-[#111827] hover:bg-[#1E293B] text-slate-300 hover:text-white px-3 py-1 rounded-full border border-[#1E2D45] hover:border-blue-500/40 transition-all cursor-pointer disabled:opacity-40"
               >
                 + {chip}
@@ -255,23 +272,38 @@ export default function QnAPanel({
           {/* ── Chat Input Form Bar ─────────────────────────────────── */}
           <form
             onSubmit={handleSend}
-            className="p-3 bg-[#070D1A] border-t border-[#1E2D45] flex items-center gap-2 shrink-0"
+            className="p-3 bg-[#070D1A] border-t border-[#1E2D45] flex flex-col gap-2 shrink-0"
           >
+            {/* Gap 171: the blocker is stated above the input, in the same
+                amber "not ready yet" treatment the Trainer uses elsewhere,
+                rather than being left for the user to infer from a dead field. */}
+            {disabledReason && (
+              <div className="flex items-start gap-2 text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2">
+                <Lock className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>{disabledReason}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
             <input
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="Teach a rule (e.g. 'Read invoice date in DD/MM/YYYY format')…"
-              disabled={isSending}
-              className="flex-1 bg-[#111827] border border-[#1E2D45] text-white text-xs rounded-xl px-4 py-2.5 focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/15 placeholder:text-slate-500 transition-colors"
+              placeholder={
+                disabledReason || "Teach a rule (e.g. 'Read invoice date in DD/MM/YYYY format')…"
+              }
+              title={disabledReason || undefined}
+              disabled={isDisabled}
+              className="flex-1 bg-[#111827] border border-[#1E2D45] text-white text-xs rounded-xl px-4 py-2.5 focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/15 placeholder:text-slate-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             />
             <button
               type="submit"
-              disabled={!inputText.trim() || isSending}
+              title={disabledReason || "Send"}
+              disabled={!inputText.trim() || isDisabled}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white p-2.5 rounded-xl transition-all shadow-md shadow-blue-600/20 shrink-0 cursor-pointer"
             >
               <Send className="w-4 h-4" />
             </button>
+            </div>
           </form>
       </div>
     </div>

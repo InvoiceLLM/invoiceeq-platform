@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from dependencies import get_db_session, require_admin, TenantContext
-from models import User
+from models import AuditLog, User
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,20 @@ class PermissionsUpdate(BaseModel):
     email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
+
+
+class AdminUserRemoved(BaseModel):
+    """Outcome of DELETE /admin/users/{user_ref}.
+
+    `detached` distinguishes the two legal end states: the row was deleted
+    outright, or it was kept but stripped of its tenant and permissions because
+    `audit_logs.actor_user_id` still references it (see remove_tenant_user).
+    Either way the user is gone from GET /admin/users, which is tenant-scoped.
+    """
+    id: UUID
+    clerk_user_id: str
+    email: str
+    detached: bool
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -149,3 +163,96 @@ async def set_user_permissions(
         context.user_id, user.clerk_user_id, user.can_train, user.can_audit, user.can_load,
     )
     return AdminUserOut.model_validate(user, from_attributes=True)
+
+
+@router.delete("/users/{user_ref}", response_model=AdminUserRemoved)
+async def remove_tenant_user(
+    user_ref: str,
+    context: TenantContext = Depends(require_admin),
+    db_session: Session = Depends(get_db_session),
+):
+    """Remove a user from the caller's tenant. Admin-only, tenant-scoped.
+
+    FE Gap 168: the Admin console's "Remove" button had no endpoint behind it
+    at all -- it filtered the row out of React state and nothing else, so the
+    user kept every bit of their access and reappeared on the next page load.
+
+    `user_ref` accepts the same two forms as PUT .../permissions: the backend
+    `users.id` UUID (what GET /admin/users returns) or a Clerk user ID.
+
+    Two guards, both deliberate:
+      - an Admin cannot remove themselves (that would leave a tenant with no
+        one able to administer it, and is almost always a misclick);
+      - an Admin cannot remove another Admin here. Admin comes from the Clerk
+        org role the JWT carries, not from this table, so deleting the row
+        would not demote them -- it would be undone on their next request.
+        Demotion belongs in Clerk.
+
+    Rows referenced by `audit_logs.actor_user_id` are detached rather than
+    deleted (tenant_id cleared, permissions revoked): the audit trail must keep
+    naming who acted, and a hard delete would either violate the FK or orphan
+    history. A detached row is invisible to every tenant-scoped query,
+    including GET /admin/users.
+
+    Note what this endpoint is and is not: it removes the user from *this
+    tenant's* data. Deleting their Clerk account -- the thing that actually
+    grants sign-in -- is done by the FE route that calls this
+    (`app/api/admin/users/[userRef]/route.ts`), for the same reason
+    `POST /api/admin/create-user` creates it there: Clerk user administration
+    lives on the Next.js side, which holds CLERK_SECRET_KEY.
+    """
+    user: User | None = None
+
+    try:
+        user = db_session.get(User, UUID(user_ref))
+    except ValueError:
+        user = db_session.exec(
+            select(User).where(User.clerk_user_id == user_ref)
+        ).first()
+
+    # Never leak the existence of another tenant's user.
+    if not user or user.tenant_id != context.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    if user.clerk_user_id == context.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot remove your own account.",
+        )
+
+    if user.role == "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another Admin cannot be removed here. Change their role in Clerk first.",
+        )
+
+    removed = AdminUserRemoved(
+        id=user.id,
+        clerk_user_id=user.clerk_user_id,
+        email=user.email,
+        detached=False,
+    )
+
+    has_audit_history = db_session.exec(
+        select(AuditLog.id).where(AuditLog.actor_user_id == user.id).limit(1)
+    ).first() is not None
+
+    if has_audit_history:
+        user.tenant_id = None
+        user.can_train = False
+        user.can_audit = False
+        user.can_load = False
+        user.role = "Viewer"
+        db_session.add(user)
+        removed.detached = True
+    else:
+        db_session.delete(user)
+
+    db_session.commit()
+
+    logger.info(
+        "Admin %s removed user %s (%s) from tenant %s (detached=%s)",
+        context.user_id, removed.clerk_user_id, removed.email,
+        context.tenant_id, removed.detached,
+    )
+    return removed

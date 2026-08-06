@@ -13,12 +13,23 @@ import IntegrationCard from "@/components/connectors/IntegrationCard";
 import FolderTreeExplorer from "@/components/connectors/FolderTreeExplorer";
 import { useAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
+import {
+  ConnectorDirection,
+  ConnectorProvider,
+  FolderShortcut,
+  clearFolderShortcuts,
+  readFolderShortcut,
+  writeFolderShortcut,
+} from "@/lib/connectorFolderShortcut";
 
-// Local storage keys to persist mapped folder names for demo purposes
-const STORAGE_KEYS = {
-  google_drive: { inbound: "map_gdrive_in", outbound: "map_gdrive_out" },
-  salesforce: { inbound: "map_sf_in", outbound: "map_sf_out" },
-};
+/**
+ * FE Gap 165: the storage keys and their read/write live in
+ * `lib/connectorFolderShortcut.ts` now, because the Ingestion tab's browse bar
+ * has to read the same value — the whole finding was that this screen wrote a
+ * "mapping" nothing else ever looked at. That module also documents what the
+ * saved folder does and does not do (a per-browser starting point for
+ * browsing; not an automated import mapping).
+ */
 
 interface ConnectionStatuses {
   google_drive: "Active" | "Inactive" | "Not Configured";
@@ -45,16 +56,17 @@ export default function ConnectorsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isConnecting, setIsConnecting] = useState<Record<string, boolean>>({});
   
-  // Folder mapping selections
-  const [mappings, setMappings] = useState({
-    google_drive: { inbound: "", outbound: "" },
-    salesforce: { inbound: "", outbound: "" },
+  // Saved default browse folders, per provider + direction (local to this browser).
+  type ShortcutMap = Record<ConnectorProvider, Record<ConnectorDirection, FolderShortcut | null>>;
+  const [shortcuts, setShortcuts] = useState<ShortcutMap>({
+    google_drive: { inbound: null, outbound: null },
+    salesforce: { inbound: null, outbound: null },
   });
 
   // Active explorer state
   const [explorer, setExplorer] = useState<{
-    provider: "google_drive" | "salesforce";
-    direction: "inbound" | "outbound";
+    provider: ConnectorProvider;
+    direction: ConnectorDirection;
   } | null>(null);
 
   // --- Load connection statuses on mount ---
@@ -77,19 +89,17 @@ export default function ConnectorsPage() {
   useEffect(() => {
     loadStatuses();
     
-    // Load local mappings
-    if (typeof window !== "undefined") {
-      setMappings({
-        google_drive: {
-          inbound: localStorage.getItem(STORAGE_KEYS.google_drive.inbound) || "",
-          outbound: localStorage.getItem(STORAGE_KEYS.google_drive.outbound) || "",
-        },
-        salesforce: {
-          inbound: localStorage.getItem(STORAGE_KEYS.salesforce.inbound) || "",
-          outbound: localStorage.getItem(STORAGE_KEYS.salesforce.outbound) || "",
-        },
-      });
-    }
+    // Load this browser's saved default browse folders.
+    setShortcuts({
+      google_drive: {
+        inbound: readFolderShortcut("google_drive", "inbound"),
+        outbound: readFolderShortcut("google_drive", "outbound"),
+      },
+      salesforce: {
+        inbound: readFolderShortcut("salesforce", "inbound"),
+        outbound: readFolderShortcut("salesforce", "outbound"),
+      },
+    });
 
     // Strip ?connected= from the URL after reading it, so a refresh doesn't
     // keep re-showing the confirmation banner.
@@ -163,12 +173,11 @@ export default function ConnectorsPage() {
         if (!prev) return prev;
         return { ...prev, [provider]: "Not Configured" };
       });
-      // Clear mappings
-      localStorage.removeItem(STORAGE_KEYS[provider as keyof typeof STORAGE_KEYS].inbound);
-      localStorage.removeItem(STORAGE_KEYS[provider as keyof typeof STORAGE_KEYS].outbound);
-      setMappings((prev) => ({
+      // Drop the saved browse shortcuts along with the connection.
+      clearFolderShortcuts(provider as ConnectorProvider);
+      setShortcuts((prev) => ({
         ...prev,
-        [provider]: { inbound: "", outbound: "" },
+        [provider]: { inbound: null, outbound: null },
       }));
       setExplorer(null);
     } catch (err) {
@@ -178,19 +187,18 @@ export default function ConnectorsPage() {
     }
   };
 
-  // --- Update directory mapping ---
-  const handleUpdateFolderMapping = (
-    provider: "google_drive" | "salesforce",
-    direction: "inbound" | "outbound",
-    folderName: string | null
+  // --- Save / clear the default browse folder for a provider + direction ---
+  const handleUpdateFolderShortcut = (
+    provider: ConnectorProvider,
+    direction: ConnectorDirection,
+    folder: FolderShortcut | null
   ) => {
-    const val = folderName || "";
-    localStorage.setItem(STORAGE_KEYS[provider][direction], val);
-    setMappings((prev) => ({
+    writeFolderShortcut(provider, direction, folder);
+    setShortcuts((prev) => ({
       ...prev,
       [provider]: {
         ...prev[provider],
-        [direction]: val,
+        [direction]: folder,
       },
     }));
     setExplorer(null);
@@ -226,9 +234,8 @@ export default function ConnectorsPage() {
           status={statuses.google_drive}
           icon={HardDrive}
           isAdmin={isAdmin}
-          inboundFolder={mappings.google_drive.inbound}
-          outboundFolder={mappings.google_drive.outbound}
-          onUpdateFolder={(dir, folder) => handleUpdateFolderMapping("google_drive", dir, folder)}
+          inboundFolder={shortcuts.google_drive.inbound?.name || null}
+          outboundFolder={shortcuts.google_drive.outbound?.name || null}
           onConnect={() => handleConnect("google_drive")}
           onDisconnect={() => handleDisconnect("google_drive")}
           isConnecting={isConnecting["google_drive"] || false}
@@ -242,9 +249,8 @@ export default function ConnectorsPage() {
           status={statuses.salesforce}
           icon={Cpu}
           isAdmin={isAdmin}
-          inboundFolder={mappings.salesforce.inbound}
-          outboundFolder={mappings.salesforce.outbound}
-          onUpdateFolder={(dir, folder) => handleUpdateFolderMapping("salesforce", dir, folder)}
+          inboundFolder={shortcuts.salesforce.inbound?.name || null}
+          outboundFolder={shortcuts.salesforce.outbound?.name || null}
           onConnect={() => handleConnect("salesforce")}
           onDisconnect={() => handleDisconnect("salesforce")}
           isConnecting={isConnecting["salesforce"] || false}
@@ -257,8 +263,9 @@ export default function ConnectorsPage() {
             <FolderTreeExplorer
               provider={explorer.provider}
               direction={explorer.direction}
+              initialFolder={shortcuts[explorer.provider][explorer.direction]}
               onFolderSelected={(folder) =>
-                handleUpdateFolderMapping(explorer.provider, explorer.direction, folder)
+                handleUpdateFolderShortcut(explorer.provider, explorer.direction, folder)
               }
               onClose={() => setExplorer(null)}
             />

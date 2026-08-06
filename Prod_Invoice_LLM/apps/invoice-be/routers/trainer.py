@@ -455,11 +455,18 @@ def start_from_production_session(
 
     # Reuse the invoice's already-stored extraction; re-run OCR only for the raw
     # text (not retained on the row) so chat corrections can re-extract.
-    ocr_text = ""
+    # Gap 137: this used to swallow a failure here (`except: logger.warning`),
+    # letting the session load with an empty ocr_text that only broke later,
+    # confusingly, inside trainer_chat(). Fail loudly at load time instead,
+    # matching the New Vendor / Global-with-file scopes above.
     try:
         ocr_text, _, _ = _run_ocr_split(invoice.file_path)
     except Exception as e:
-        logger.warning("Could not re-run OCR for production seed (%s): %s", invoice.id, e)
+        logger.error("Could not re-run OCR for production seed (%s): %s", invoice.id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not prepare '{vendor_name}' for training: {str(e)}",
+        )
 
     extracted_data = {
         "vendor_name": invoice.vendor_name,

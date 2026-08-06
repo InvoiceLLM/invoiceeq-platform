@@ -3,8 +3,16 @@
 /**
  * Feature 7 — IntegrationCard.tsx
  *
- * Configures connection toggle (OAuth flow) and independent AP/AR folder mapping
- * for a connector provider (Google Drive / Salesforce).
+ * Connection toggle (OAuth flow) for a connector provider (Google Drive /
+ * Salesforce), plus the saved default browse folder per direction.
+ *
+ * FE Gap 165: this card used to be headed "Folder Mappings" and promised
+ * folders that "automatically import"/"export" — none of that exists. There is
+ * no connector auto-pull anywhere in the backend; files enter the pipeline only
+ * when someone imports them explicitly in the explorer. The folder shown here
+ * is a per-browser convenience: where the explorer opens. The copy now says
+ * exactly that. Making it a real tenant-wide mapping would need backend
+ * persistence plus a scheduled pull, which is a feature, not a fix.
  */
 
 import React, { useState } from "react";
@@ -25,9 +33,9 @@ interface IntegrationCardProps {
   status: "Active" | "Inactive" | "Not Configured";
   icon: React.ComponentType<any>;
   isAdmin: boolean;
+  /** Saved default browse folder name for each direction, or null if none. */
   inboundFolder: string | null;
   outboundFolder: string | null;
-  onUpdateFolder: (direction: "inbound" | "outbound", folderName: string | null) => void;
   onConnect: () => void;
   onDisconnect: () => void;
   isConnecting: boolean;
@@ -42,7 +50,6 @@ export default function IntegrationCard({
   isAdmin,
   inboundFolder,
   outboundFolder,
-  onUpdateFolder,
   onConnect,
   onDisconnect,
   isConnecting,
@@ -87,15 +94,22 @@ export default function IntegrationCard({
           </span>
         </div>
 
+        {/* Gap 165: previously claimed folders were mapped "to automatically
+            import ... or export" — nothing pulls from a connector on its own. */}
         <p className="text-xs text-slate-500 leading-relaxed">
-          Securely map document folders to automatically import vendor invoices or export customer billing files directly to your cloud store.
+          Browse this cloud store from the app and import supplier invoices into the pipeline, or pick up verified customer invoices to send out.
         </p>
       </div>
 
       {/* Directory Mappings Configuration */}
       {isConnected && (
         <div className="space-y-3 bg-[#0F141F] border border-[#1E293B] rounded-xl p-4.5">
-          <h4 className="text-[10px] text-slate-500 font-mono tracking-wider uppercase mb-1">Folder Mappings</h4>
+          <h4 className="text-[10px] text-slate-500 font-mono tracking-wider uppercase mb-1">
+            Default Browse Folder
+          </h4>
+          <p className="text-[10px] text-slate-500 -mt-1">
+            Where the file explorer opens, saved in this browser. Files are only imported when you select them.
+          </p>
 
           {/* Inbound (AP) */}
           <div className="flex items-center justify-between gap-3 border-b border-[#1E293B]/40 pb-3">
@@ -104,11 +118,11 @@ export default function IntegrationCard({
                 <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
                 <span className="text-xs text-slate-300 font-medium">Inbound AP</span>
               </div>
-              <p className="text-[10px] text-slate-500">Imports supplier PDFs</p>
+              <p className="text-[10px] text-slate-500">Where supplier PDFs are picked up from</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-mono truncate max-w-[120px] bg-[#151B26] px-2 py-1 rounded border border-[#222D3D]">
-                {inboundFolder || "Not Mapped"}
+                {inboundFolder || "Root"}
               </span>
               {isAdmin && (
                 <button
@@ -130,11 +144,11 @@ export default function IntegrationCard({
                 <FolderSync className="w-3.5 h-3.5 text-violet-400" />
                 <span className="text-xs text-slate-300 font-medium">Outbound AR</span>
               </div>
-              <p className="text-[10px] text-slate-500">Exports verified customer invoices</p>
+              <p className="text-[10px] text-slate-500">Where verified customer invoices are picked up from</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-mono truncate max-w-[120px] bg-[#151B26] px-2 py-1 rounded border border-[#222D3D]">
-                {outboundFolder || "Not Mapped"}
+                {outboundFolder || "Root"}
               </span>
               {isAdmin && (
                 <button
