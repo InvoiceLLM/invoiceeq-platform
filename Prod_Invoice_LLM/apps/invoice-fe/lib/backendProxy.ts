@@ -83,9 +83,25 @@ export async function forwardedHeaders(
 export async function clerkSessionToken(): Promise<string | null> {
   try {
     const { userId, getToken } = await auth();
-    if (!userId) return null;
-    return (await getToken({ template: "invoice-app" })) ?? null;
-  } catch {
+    if (!userId) {
+      // TEMP DIAGNOSTIC (remove once resolved): auth() resolved but reports no
+      // signed-in user -- means the Clerk session cookie isn't being recognised
+      // server-side for this request at all, distinct from a template/token error.
+      console.error("[clerkSessionToken] auth() returned no userId -- no session recognised server-side");
+      return null;
+    }
+    const token = await getToken({ template: "invoice-app" });
+    if (!token) {
+      // TEMP DIAGNOSTIC (remove once resolved): userId was present but the
+      // template token came back empty -- points at the "invoice-app" JWT
+      // Template itself, not session establishment.
+      console.error("[clerkSessionToken] getToken({template:'invoice-app'}) returned falsy for userId:", userId);
+    }
+    return token ?? null;
+  } catch (err) {
+    // TEMP DIAGNOSTIC (remove once resolved): auth()/getToken() threw outright
+    // -- most likely clerkMiddleware() did not run for this request path.
+    console.error("[clerkSessionToken] threw:", err instanceof Error ? err.stack || err.message : err);
     return null;
   }
 }
