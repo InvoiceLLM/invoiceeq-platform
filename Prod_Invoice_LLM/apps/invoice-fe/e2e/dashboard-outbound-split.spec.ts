@@ -312,6 +312,7 @@ test.describe("Dashboard — send-only tenant", () => {
 
     await expect(outboundTotalCard(page)).toBeVisible();
     await expect(panel(page, "Receivables Trend")).toBeVisible();
+    await page.getByRole("button", { name: "Top Customers" }).click();
     await expect(panel(page, "Top Customers")).toBeVisible();
 
     // No split container, and no inbound remnants

@@ -98,156 +98,157 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
 
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-      {/* KPI Cards & Spend Graph Container */}
-      <div className="lg:col-span-3 space-y-3">
-        {/* KPI Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <KpiCard
-            title="Total Invoiced"
-            value={isLoading ? "$0.00" : formatCurrency(totalInvoiced)}
-            subtext="Lifetime aggregated value"
-            icon={<DollarSign className="w-4 h-4 text-accent-blue" />}
-          />
-          <KpiCard
-            title="Paid Amount"
-            value={isLoading ? "$0.00" : formatCurrency(paidAmount)}
-            subtext={`${paidPercent}% of total volume`}
-            icon={<CheckCircle2 className="w-4 h-4 text-accent-green" />}
-            trend={{
-              value: `${paidPercent}% Paid`,
-              type: paidPercent > 50 ? "positive" : "neutral",
-            }}
-          />
-          <KpiCard
-            title="Outstanding"
-            value={isLoading ? "$0.00" : formatCurrency(outstandingAmount)}
-            subtext="Pending auditor review/payment"
-            icon={<TrendingUp className="w-4 h-4 text-slate-400" />}
-          />
-          <KpiCard
-            title="At-Risk Volume"
-            value={isLoading ? "$0.00" : formatCurrency(atRiskAmount)}
-            subtext={`${activeAlerts} active extraction alerts`}
-            icon={<AlertTriangle className="w-4 h-4 text-accent-yellow" />}
-            trend={
-              atRiskAmount > 0
-                ? { value: "Review Req", type: "warning" }
-                : undefined
-            }
-          />
+    <div className="space-y-4 w-full">
+      {/* KPI Row */}
+      <div className="flex flex-wrap gap-3 w-full">
+        <KpiCard
+          className="flex-1 min-w-[200px]"
+          title="Total Invoiced"
+          value={isLoading ? "$0.00" : formatCurrency(totalInvoiced)}
+          subtext="Lifetime aggregated value"
+          icon={<DollarSign className="w-4 h-4 text-accent-blue" />}
+        />
+        <KpiCard
+          className="flex-1 min-w-[200px]"
+          title="Paid Amount"
+          value={isLoading ? "$0.00" : formatCurrency(paidAmount)}
+          subtext={`${paidPercent}% of total volume`}
+          icon={<CheckCircle2 className="w-4 h-4 text-accent-green" />}
+          trend={{
+            value: `${paidPercent}% Paid`,
+            type: paidPercent > 50 ? "positive" : "neutral",
+          }}
+        />
+        <KpiCard
+          className="flex-1 min-w-[200px]"
+          title="Outstanding"
+          value={isLoading ? "$0.00" : formatCurrency(outstandingAmount)}
+          subtext="Pending auditor review/payment"
+          icon={<TrendingUp className="w-4 h-4 text-slate-400" />}
+        />
+        <KpiCard
+          className="flex-1 min-w-[200px]"
+          title="At-Risk Volume"
+          value={isLoading ? "$0.00" : formatCurrency(atRiskAmount)}
+          subtext={`${activeAlerts} active extraction alerts`}
+          icon={<AlertTriangle className="w-4 h-4 text-accent-yellow" />}
+          trend={
+            atRiskAmount > 0
+              ? { value: "Review Req", type: "warning" }
+              : undefined
+          }
+        />
+      </div>
+
+      {/* Spend Graph Panel */}
+      <div className="glass-panel p-4 rounded-xl flex flex-col gap-2 relative overflow-hidden w-full">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-white tracking-wide">
+            Invoice Spend Trend
+          </h3>
+
+          {/* Tooltip detail display */}
+          {hoveredPoint && (
+            <div className="text-right text-xs bg-slate-800/80 border border-[#222D3D] px-2.5 py-1 rounded-lg animate-fade-in">
+              <span className="text-slate-400 mr-1.5">{hoveredPoint.date}:</span>
+              <span className="text-white font-bold">{formatCurrency(hoveredPoint.amount)}</span>
+            </div>
+          )}
         </div>
 
-        {/* Spend Graph Panel */}
-        <div className="glass-panel p-4 rounded-xl flex flex-col gap-2 relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-white tracking-wide">
-              Invoice Spend Trend
-            </h3>
+        <div className="w-full relative h-[100px] select-none">
+          {isLoading || spendOverTime.length <= 1 ? (
+            <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-xs">
+              {isLoading ? "Loading spend trend analytics..." : "Insufficient transaction history to build trend graph"}
+            </div>
+          ) : (
+            <svg 
+              viewBox={`0 0 ${svgWidth} ${svgHeight}`} 
+              className="w-full h-full overflow-visible"
+            >
+              <defs>
+                {/* Glowing Area Gradient */}
+                <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.25" />
+                  <stop offset="100%" stopColor="#0B0F19" stopOpacity="0.0" />
+                </linearGradient>
+                {/* Glowing line filter */}
+                <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="2" stdDeviation="4" floodColor="#3B82F6" floodOpacity="0.3" />
+                </filter>
+              </defs>
 
-            {/* Tooltip detail display */}
-            {hoveredPoint && (
-              <div className="text-right text-xs bg-slate-800/80 border border-[#222D3D] px-2.5 py-1 rounded-lg animate-fade-in">
-                <span className="text-slate-400 mr-1.5">{hoveredPoint.date}:</span>
-                <span className="text-white font-bold">{formatCurrency(hoveredPoint.amount)}</span>
-              </div>
-            )}
-          </div>
+              {/* Horizontal Guide Lines */}
+              <line x1={paddingX} y1={paddingY} x2={svgWidth - paddingX} y2={paddingY} stroke="#1E293B" strokeWidth="0.5" strokeDasharray="3 3" />
+              <line x1={paddingX} y1={svgHeight / 2} x2={svgWidth - paddingX} y2={svgHeight / 2} stroke="#1E293B" strokeWidth="0.5" strokeDasharray="3 3" />
+              <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke="#1E293B" strokeWidth="0.5" />
 
-          <div className="w-full relative h-[100px] select-none">
-            {isLoading || spendOverTime.length <= 1 ? (
-              <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-xs">
-                {isLoading ? "Loading spend trend analytics..." : "Insufficient transaction history to build trend graph"}
-              </div>
-            ) : (
-              <svg 
-                viewBox={`0 0 ${svgWidth} ${svgHeight}`} 
-                className="w-full h-full overflow-visible"
-              >
-                <defs>
-                  {/* Glowing Area Gradient */}
-                  <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.25" />
-                    <stop offset="100%" stopColor="#0B0F19" stopOpacity="0.0" />
-                  </linearGradient>
-                  {/* Glowing line filter */}
-                  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feDropShadow dx="0" dy="2" stdDeviation="4" floodColor="#3B82F6" floodOpacity="0.3" />
-                  </filter>
-                </defs>
+              {/* Chart Area Fill */}
+              <polygon points={areaPointsStr} fill="url(#chartGradient)" />
 
-                {/* Horizontal Guide Lines */}
-                <line x1={paddingX} y1={paddingY} x2={svgWidth - paddingX} y2={paddingY} stroke="#1E293B" strokeWidth="0.5" strokeDasharray="3 3" />
-                <line x1={paddingX} y1={svgHeight / 2} x2={svgWidth - paddingX} y2={svgHeight / 2} stroke="#1E293B" strokeWidth="0.5" strokeDasharray="3 3" />
-                <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke="#1E293B" strokeWidth="0.5" />
+              {/* Chart Stroke Line */}
+              <polyline
+                fill="none"
+                stroke="#3B82F6"
+                strokeWidth="2.5"
+                points={pointsStr}
+                filter="url(#glow)"
+              />
 
-                {/* Chart Area Fill */}
-                <polygon points={areaPointsStr} fill="url(#chartGradient)" />
-
-                {/* Chart Stroke Line */}
-                <polyline
-                  fill="none"
-                  stroke="#3B82F6"
-                  strokeWidth="2.5"
-                  points={pointsStr}
-                  filter="url(#glow)"
-                />
-
-                {/* Interactive Points & Guides */}
-                {chartPoints.map((p, idx) => (
-                  <g key={idx}>
-                    {/* Invisible hover area */}
-                    <circle
-                      cx={p.x}
-                      cy={p.y}
-                      r="12"
-                      fill="transparent"
-                      className="cursor-pointer"
-                      onMouseEnter={() => {
-                        setHoveredPoint(p.data);
-                        setHoveredIndex(idx);
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredPoint(null);
-                        setHoveredIndex(null);
-                      }}
-                    />
-                    
-                    {/* Vertical guideline on hover */}
-                    {hoveredIndex === idx && (
-                      <line
-                        x1={p.x}
-                        y1={paddingY}
-                        x2={p.x}
-                        y2={svgHeight - paddingY}
-                        stroke="#3B82F6"
-                        strokeWidth="1"
-                        strokeDasharray="2 2"
-                        className="pointer-events-none"
-                      />
-                    )}
-
-                    {/* Small glowing circle point */}
-                    <circle
-                      cx={p.x}
-                      cy={p.y}
-                      r={hoveredIndex === idx ? "5" : "3.5"}
-                      fill={hoveredIndex === idx ? "#3B82F6" : "#1e293b"}
+              {/* Interactive Points & Guides */}
+              {chartPoints.map((p, idx) => (
+                <g key={idx}>
+                  {/* Invisible hover area */}
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r="12"
+                    fill="transparent"
+                    className="cursor-pointer"
+                    onMouseEnter={() => {
+                      setHoveredPoint(p.data);
+                      setHoveredIndex(idx);
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredPoint(null);
+                      setHoveredIndex(null);
+                    }}
+                  />
+                  
+                  {/* Vertical guideline on hover */}
+                  {hoveredIndex === idx && (
+                    <line
+                      x1={p.x}
+                      y1={paddingY}
+                      x2={p.x}
+                      y2={svgHeight - paddingY}
                       stroke="#3B82F6"
-                      strokeWidth="1.5"
-                      className="pointer-events-none transition-all duration-150"
+                      strokeWidth="1"
+                      strokeDasharray="2 2"
+                      className="pointer-events-none"
                     />
-                  </g>
-                ))}
-              </svg>
-            )}
-          </div>
+                  )}
+
+                  {/* Small glowing circle point */}
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r={hoveredIndex === idx ? "5" : "3.5"}
+                    fill={hoveredIndex === idx ? "#3B82F6" : "#1e293b"}
+                    stroke="#3B82F6"
+                    strokeWidth="1.5"
+                    className="pointer-events-none transition-all duration-150"
+                  />
+                </g>
+              ))}
+            </svg>
+          )}
         </div>
       </div>
 
       {/* AI Score & Processing Time -- combined into one compact card */}
-      <div className="lg:col-span-1">
-        <div className="glass-panel p-4 rounded-xl flex flex-col gap-3.5 h-full justify-between">
+      <div className="glass-panel p-4 rounded-xl w-full">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
           <div className="flex items-center gap-3">
             {/* Dynamic Circular SVG Gauge */}
             <div className="relative w-20 h-20 shrink-0 flex items-center justify-center">
@@ -307,9 +308,7 @@ export default function MetricsGrid({ metrics, isLoading }: MetricsGridProps) {
             </div>
           </div>
 
-          <div className="h-px bg-[#222D3D]" />
-
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 justify-center md:justify-start pl-0 md:pl-6 border-t md:border-t-0 md:border-l border-[#222D3D] pt-3 md:pt-0">
             <div className="p-2 rounded-lg bg-[#F59E0B]/10 border border-[#F59E0B]/20 text-accent-yellow shrink-0">
               <Clock className="w-4 h-4" />
             </div>

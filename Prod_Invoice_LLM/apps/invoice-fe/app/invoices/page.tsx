@@ -235,22 +235,20 @@ export default function InvoicesPage() {
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const outboundTotalPages = Math.max(1, Math.ceil(outboundTotalCount / PAGE_SIZE));
 
+  const realVendors = allInvoices
+    .map((inv: any) => inv.vendor_name)
+    .filter((name): name is string => typeof name === "string" && name.trim() !== "");
+
   const uniqueVendors = Array.from(
-    new Set([
-      ...allInvoices
-        .map((inv: any) => inv.vendor_name)
-        .filter((name): name is string => typeof name === "string" && name.trim() !== ""),
-      ...DEFAULT_VENDORS,
-    ])
+    new Set(realVendors.length > 0 ? realVendors : DEFAULT_VENDORS)
   );
 
+  const realTags = allInvoices
+    .flatMap((inv: any) => inv.tags || [])
+    .filter((t): t is string => typeof t === "string" && t.trim() !== "");
+
   const uniqueTags = Array.from(
-    new Set([
-      ...allInvoices
-        .flatMap((inv: any) => inv.tags || [])
-        .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
-      ...DEFAULT_TAGS,
-    ])
+    new Set(realTags.length > 0 ? realTags : DEFAULT_TAGS)
   );
 
   const showTabs = receiveEnabled && sendEnabled;

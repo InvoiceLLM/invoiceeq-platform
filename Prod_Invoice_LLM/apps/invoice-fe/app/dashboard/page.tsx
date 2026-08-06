@@ -196,34 +196,29 @@ export default function DashboardPage() {
   };
 
   // Build unique lists of client/vendor names and tags from historical data
+  const realVendors = allInvoices
+    .map((inv: any) => inv.vendor_name)
+    .filter((name): name is string => typeof name === "string" && name.trim() !== "");
+
   const uniqueVendors = Array.from(
-    new Set([
-      ...allInvoices
-        .map((inv: any) => inv.vendor_name)
-        .filter((name): name is string => typeof name === "string" && name.trim() !== ""),
-      ...DEFAULT_VENDORS,
-    ])
+    new Set(realVendors.length > 0 ? realVendors : DEFAULT_VENDORS)
   );
+
+  const realTags = allInvoices
+    .flatMap((inv: any) => inv.tags || [])
+    .filter((t): t is string => typeof t === "string" && t.trim() !== "");
 
   const uniqueTags = Array.from(
-    new Set([
-      ...allInvoices
-        .flatMap((inv: any) => inv.tags || [])
-        .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
-      ...DEFAULT_TAGS,
-    ])
+    new Set(realTags.length > 0 ? realTags : DEFAULT_TAGS)
   );
 
-  // Only Insights/Trainer Impact are tab-gated -- Needs Attention and the
-  // vendor/customer rankings stay always-visible (no tab, no click), per the
-  // split-screen design's own stated rule ("no tab, no click needed") and
-  // e2e/dashboard-outbound-split.spec.ts's expectations, both of which
-  // assume those two panels render immediately regardless of tab state.
-  const TABS = [
-    { id: "insights", label: "Insights" },
-    { id: "trainer", label: "Trainer Impact" },
-  ] as const;
-  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]["id"]>("insights");
+  const dynamicTabs = [
+    ...(receiveEnabled ? [{ id: "vendors", label: "Top Vendors & Clients" } as const] : []),
+    ...(sendEnabled ? [{ id: "customers", label: "Top Customers" } as const] : []),
+    { id: "insights", label: "Insights" } as const,
+    { id: "trainer", label: "Trainer Impact" } as const,
+  ];
+  const [activeTab, setActiveTab] = useState<string>("insights");
 
   // Task 2.1.4: ClientPerformanceChart already renders any {name, amount}
   // ranking, so top_customers is mapped onto its existing prop shape rather
@@ -304,26 +299,12 @@ export default function DashboardPage() {
           enabled. */}
       <NeedsAttentionWidget receiveEnabled={receiveEnabled} sendEnabled={sendEnabled} />
 
-      <div className="space-y-3">
-        {showInboundMetrics && (
-          <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isMetricsLoading} />
-        )}
-        {showOutboundMetrics && (
-          <ClientPerformanceChart
-            vendors={topCustomersAsVendorShape}
-            isLoading={isOutboundMetricsLoading}
-            title="Top Customers"
-            subtitle="Ranking by aggregated invoiced-out value."
-          />
-        )}
-      </div>
-
       {/* Tabbed panel: only the genuinely supplementary panels share space
           here -- fits on screen without scrolling, and each gets the full
           page width when it's the one showing. */}
       <div className="glass-panel rounded-xl">
         <div className="flex items-center gap-1 border-b border-[#222D3D] px-3 pt-2">
-          {TABS.map((tab) => (
+          {dynamicTabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -338,6 +319,17 @@ export default function DashboardPage() {
           ))}
         </div>
         <div className="p-4">
+          {activeTab === "vendors" && (
+            <ClientPerformanceChart vendors={metrics.top_vendors} isLoading={isMetricsLoading} />
+          )}
+          {activeTab === "customers" && (
+            <ClientPerformanceChart
+              vendors={topCustomersAsVendorShape}
+              isLoading={isOutboundMetricsLoading}
+              title="Top Customers"
+              subtitle="Ranking by aggregated invoiced-out value."
+            />
+          )}
           {activeTab === "insights" && <ActionableInsightsPanel />}
           {activeTab === "trainer" && <TrainerImpactPanel />}
         </div>
