@@ -145,8 +145,8 @@ jobs:
     if: needs.changes.outputs.be == 'true'
     uses: ./.github/workflows/_deploy-service.yml
     with:
-      resource_group: invoice-llm-dev
-      acr_name: acrinvoicellmdev
+      resource_group: rg-invoice-llm-dev
+      acr_name: ${{ env.ACR_NAME }}
       service: invoice-be
       dockerfile: docker/Dockerfile.be
       container_app_name: ca-invoice-be-dev
@@ -160,8 +160,8 @@ jobs:
     if: needs.changes.outputs.worker == 'true'
     uses: ./.github/workflows/_deploy-service.yml
     with:
-      resource_group: invoice-llm-dev
-      acr_name: acrinvoicellmdev
+      resource_group: rg-invoice-llm-dev
+      acr_name: ${{ env.ACR_NAME }}
       service: queue-worker
       dockerfile: docker/Dockerfile.worker
       container_app_name: ca-queue-worker-dev
@@ -175,8 +175,8 @@ jobs:
     if: needs.changes.outputs.fe == 'true'
     uses: ./.github/workflows/_deploy-service.yml
     with:
-      resource_group: invoice-llm-dev
-      acr_name: acrinvoicellmdev
+      resource_group: rg-invoice-llm-dev
+      acr_name: ${{ env.ACR_NAME }}
       service: invoice-fe
       dockerfile: docker/Dockerfile.fe
       container_app_name: ca-invoice-fe-dev
@@ -198,8 +198,8 @@ jobs:
     if: needs.changes.outputs.website == 'true'
     uses: ./.github/workflows/_deploy-service.yml
     with:
-      resource_group: invoice-llm-dev
-      acr_name: acrinvoicellmdev
+      resource_group: rg-invoice-llm-dev
+      acr_name: ${{ env.ACR_NAME }}
       service: invoice-website
       dockerfile: docker/Dockerfile.website
       container_app_name: ca-invoice-website-dev

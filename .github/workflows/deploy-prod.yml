@@ -52,7 +52,7 @@ env:
   # Shared ACR: prod does not own/deploy its own registry (see
   # infra/03-data.bicep's deployAcr param) -- it pulls from the same
   # registry dev owns.
-  ACR_NAME: acrinvoicellmdev
+  ACR_NAME: acrinvoicellmdev2
 
 jobs:
   resolve-tag:
@@ -141,7 +141,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: acrinvoicellmdev
+      acr_name: ${{ env.ACR_NAME }}
       service: invoice-be
       dockerfile: docker/Dockerfile.be
       container_app_name: ca-invoice-be-prod
@@ -157,7 +157,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: acrinvoicellmdev
+      acr_name: ${{ env.ACR_NAME }}
       service: queue-worker
       dockerfile: docker/Dockerfile.worker
       container_app_name: ca-queue-worker-prod
@@ -173,7 +173,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: acrinvoicellmdev
+      acr_name: ${{ env.ACR_NAME }}
       service: invoice-fe
       dockerfile: docker/Dockerfile.fe
       container_app_name: ca-invoice-fe-prod
@@ -192,7 +192,7 @@ jobs:
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: invoice-llm-prod
-      acr_name: acrinvoicellmdev
+      acr_name: ${{ env.ACR_NAME }}
       service: invoice-website
       dockerfile: docker/Dockerfile.website
       container_app_name: ca-invoice-website-prod

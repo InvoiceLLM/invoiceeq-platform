@@ -11,8 +11,8 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     env:
-      RESOURCE_GROUP: invoice-llm-dev
-      KEY_VAULT: kv-invoice-llm-dev
+      RESOURCE_GROUP: rg-invoice-llm-dev
+      KEY_VAULT: kv-invoicellm-dev
       WORKDIR: Prod_Invoice_LLM/apps/invoice-be
 
     steps:
