@@ -16,8 +16,8 @@ permissions:
   id-token: write
 
 env:
-  RESOURCE_GROUP: invoice-llm-dev
-  ACR_NAME: acrinvoicellmdev
+  RESOURCE_GROUP: rg-invoice-llm-dev
+  ACR_NAME: acrinvoicellmdev2
 
 jobs:
   # Path-filtered so each service only rebuilds/redeploys when its own
