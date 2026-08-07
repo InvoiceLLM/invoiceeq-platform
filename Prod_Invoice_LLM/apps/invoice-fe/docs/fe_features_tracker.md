@@ -391,7 +391,7 @@ Found during a focused read-through of every Settings surface (`/settings`, `/se
 
 - `[x]` **Gap 129: Help Center has no article for Outbound Email setup** — **closed 2026-08-07.** Created `app/help/content/outbound-email-guide.tsx` covering target email addresses and outbound dispatch workflow, registered into `HelpPage`.
 
-- `[ ]` **Gap 132: Subscriptions page & Trainer links route out of FE to external website pages, and in-app checkout fails** — **reopened 2026-08-07.** User-reported: clicking links inside FE (from Settings and Trainer screens) redirects users to external marketing site pages rather than staying within the app. Additionally, the `/api/billing/create-checkout-session` proxy route is missing in `apps/invoice-fe/app/api/`, returning a 404 error when attempting in-app PayU payment form generation.
+- `[x]` **Gap 132: Subscriptions page & Trainer links route out of FE to external website pages, and in-app checkout fails** — **closed 2026-08-07.** Created missing Next.js API proxy route `app/api/billing/create-checkout-session/route.ts` in `invoice-fe`, and updated all upgrade links in `app/trainer/page.tsx` and `components/settings/ServiceFlowToggles.tsx` to navigate in-app directly to `/settings/subscriptions`.
 
 - `[x]` **Gap 143: Subscription & Billing is hard to reach, and its usage-limit tracker doesn't work** — **closed 2026-08-07.** Updated `app/settings/subscriptions/page.tsx` to dynamically fetch invoice processing count via `GET /api/invoices?limit=1` and compute usage against the plan limit (`25` for Free, `1,000` for Pro, `Unlimited` for Pro Combined), replacing the hardcoded `10%`/`25%` static percentages with real dynamic usage progress.
 

@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   Loader2,
   ExternalLink,
+  Sparkles,
   X,
 } from "lucide-react";
 
@@ -123,13 +124,13 @@ function UpgradeModal({ onClose }: { onClose: () => void }) {
           >
             Cancel
           </button>
-          <a
-            href={COMBINED_PLAN_UPGRADE_URL}
+          <Link
+            href="/settings/subscriptions"
             className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <Sparkles className="w-3.5 h-3.5" />
             Upgrade Now
-          </a>
+          </Link>
         </div>
       </div>
     </div>
