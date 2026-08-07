@@ -5,10 +5,16 @@ import { Search, ChevronRight } from "lucide-react";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 import { HELP_SECTIONS as TRAINER_HELP_SECTIONS, type HelpSection } from "./content/trainer-guide";
 import { AUDITOR_HELP_SECTIONS } from "./content/auditor-guide";
+import { WEBHOOKS_HELP_SECTIONS } from "./content/webhooks-guide";
+import { INBOUND_EMAIL_HELP_SECTIONS } from "./content/inbound-email-guide";
+import { OUTBOUND_EMAIL_HELP_SECTIONS } from "./content/outbound-email-guide";
 
 const HELP_SECTIONS: HelpSection[] = [
   ...TRAINER_HELP_SECTIONS,
   ...AUDITOR_HELP_SECTIONS,
+  ...WEBHOOKS_HELP_SECTIONS,
+  ...INBOUND_EMAIL_HELP_SECTIONS,
+  ...OUTBOUND_EMAIL_HELP_SECTIONS,
 ];
 
 export default function HelpPage() {
