@@ -73,9 +73,14 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: [
             {
-              // Server-side proxy env var — must use http:// for internal Container Apps traffic
+              // Gap 172: Container Apps ingress enforces HTTPS (allowInsecure:
+              // false) even for internal, same-VNet traffic — a plain http://
+              // call gets a 301 to https:// on the identical host, and
+              // fetch()/undici strips the Authorization header on that
+              // scheme-change redirect per the Fetch spec's cross-origin rule.
+              // Must be https:// even though this backend is internal-only.
               name: 'BACKEND_API_URL'
-              value: 'http://${backendApiUrl}'
+              value: 'https://${backendApiUrl}'
             }
             // Gap 6: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is deliberately NOT set
             // here. Next.js inlines NEXT_PUBLIC_* into the client bundle during

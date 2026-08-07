@@ -78,9 +78,13 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             {
               // Server-side only, used by pages/api/auth/provision.js.
-              // Must be http:// -- internal Container Apps traffic is not TLS.
+              // Gap 172: Container Apps ingress enforces HTTPS (allowInsecure:
+              // false) even for internal, same-VNet traffic -- a plain http://
+              // call gets a 301 to https:// on the identical host, and
+              // fetch()/undici strips the Authorization header on that
+              // scheme-change redirect per the Fetch spec's cross-origin rule.
               name: 'BACKEND_API_URL'
-              value: 'http://${backendApiUrl}'
+              value: 'https://${backendApiUrl}'
             }
             {
               name: 'CLERK_SECRET_KEY'
@@ -99,10 +103,14 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: 'true'
             }
             {
-              // Server-side only, read by next.config.js's rewrites(). Must be
-              // http:// -- internal Container Apps traffic is not TLS.
+              // Server-side only, read by next.config.js's rewrites().
+              // Gap 172: Container Apps ingress enforces HTTPS (allowInsecure:
+              // false) even for internal, same-VNet traffic -- a plain http://
+              // call gets a 301 to https:// on the identical host, and
+              // fetch()/undici strips the Authorization header on that
+              // scheme-change redirect per the Fetch spec's cross-origin rule.
               name: 'FE_INTERNAL_URL'
-              value: 'http://${frontendApiUrl}'
+              value: 'https://${frontendApiUrl}'
             }
             // Gap 6: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and NEXT_PUBLIC_FE_URL are
             // deliberately NOT set here. Next.js inlines NEXT_PUBLIC_* into the
