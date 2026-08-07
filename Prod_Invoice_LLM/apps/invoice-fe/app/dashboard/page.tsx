@@ -195,22 +195,18 @@ export default function DashboardPage() {
     setFilters(newFilters);
   };
 
-  // Build unique lists of client/vendor names and tags from historical data
+  // Build unique lists of client/vendor names and tags from real tenant invoice data (Gap 141)
   const realVendors = allInvoices
     .map((inv: any) => inv.vendor_name)
     .filter((name): name is string => typeof name === "string" && name.trim() !== "");
 
-  const uniqueVendors = Array.from(
-    new Set(realVendors.length > 0 ? realVendors : DEFAULT_VENDORS)
-  );
+  const uniqueVendors = Array.from(new Set(realVendors));
 
   const realTags = allInvoices
     .flatMap((inv: any) => inv.tags || [])
     .filter((t): t is string => typeof t === "string" && t.trim() !== "");
 
-  const uniqueTags = Array.from(
-    new Set(realTags.length > 0 ? realTags : DEFAULT_TAGS)
-  );
+  const uniqueTags = Array.from(new Set(realTags));
 
   const dynamicTabs = [
     ...(receiveEnabled ? [{ id: "vendors", label: "Top Vendors & Clients" } as const] : []),
