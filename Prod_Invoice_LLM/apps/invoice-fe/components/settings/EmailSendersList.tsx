@@ -111,15 +111,10 @@ export default function EmailSendersList({ isAdmin }: EmailSendersListProps) {
   };
 
   return (
-    <div className="bg-[#151B26] border border-[#222D3D] rounded-2xl p-5 space-y-5 shadow-lg">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-          <Mail className="w-5 h-5" />
-        </div>
-        <div>
-          <h3 className="font-semibold text-sm text-white">Allowed Inbound Senders</h3>
-          <p className="text-xs text-slate-400">Manage who can submit invoices to your workspace alias</p>
-        </div>
+    <div className="space-y-3">
+      <div>
+        <h3 className="font-semibold text-xs text-white uppercase tracking-wider">Allowed Inbound Senders</h3>
+        <p className="text-[11px] text-slate-400">Manage who can submit invoices to your alias</p>
       </div>
 
       {/* Notifications */}

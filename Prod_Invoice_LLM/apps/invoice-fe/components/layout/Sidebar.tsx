@@ -95,16 +95,15 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Tenant Context Footer */}
-      <div className="p-4 border-t border-[#222D3D] flex flex-col gap-1.5 text-xs text-slate-500 bg-[#070A13]/20">
-        <span>Tenant Isolation ID:</span>
-        {/* Was the hardcoded all-zeroes mock UUID -- the same fabricated
-            identity Gap 99 is about, displayed as if it were real. Now the
-            actual tenant_id from GET /auth/me. */}
-        <span className="font-mono text-[10px] text-slate-400 break-all select-all bg-[#0F172A]/50 p-1.5 rounded border border-[#222D3D]">
-          {loading ? "…" : tenantId || "—"}
-        </span>
-      </div>
+      {/* Tenant Context Footer — Admin only (Gap 144) */}
+      {role === "Admin" && (
+        <div className="p-4 border-t border-[#222D3D] flex flex-col gap-1.5 text-xs text-slate-500 bg-[#070A13]/20">
+          <span>Tenant Isolation ID:</span>
+          <span className="font-mono text-[10px] text-slate-400 break-all select-all bg-[#0F172A]/50 p-1.5 rounded border border-[#222D3D]">
+            {loading ? "…" : tenantId || "—"}
+          </span>
+        </div>
+      )}
     </aside>
   );
 }

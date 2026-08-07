@@ -45,8 +45,9 @@ export default function OutboundEmailSettings({ isAdmin }: OutboundEmailSettings
 
   const validateEmail = (value: string) => {
     if (!value.trim()) return true; // Empty value is allowed to clear the sender
+    const emails = value.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(value.trim().toLowerCase());
+    return emails.every((e) => re.test(e.toLowerCase()));
   };
 
   // --- Handle update ---
