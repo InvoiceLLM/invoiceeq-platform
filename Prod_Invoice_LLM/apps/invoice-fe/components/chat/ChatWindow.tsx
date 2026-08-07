@@ -25,31 +25,32 @@ import {
   Loader2,
   BotMessageSquare,
   Trash2,
+  Search,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import { MessageStream } from "./MessageBubble";
 import type { ChatSession, ChatMessage } from "@/types/chat";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// WHY this helper: the sidebar shows relative or absolute timestamps depending
-//   on the age of the session.  Sessions from today show HH:MM; older ones
-//   show "Jan 5" etc.  This mimics the convention used by Slack/WhatsApp.
 function formatSessionDate(dateStr: string): string {
-  const date = new Date(dateStr);
+  if (!dateStr) return "";
+  const isoStr = dateStr.endsWith("Z") || dateStr.includes("+") ? dateStr : `${dateStr.replace(" ", "T")}Z`;
+  const date = new Date(isoStr);
+  if (isNaN(date.getTime())) return dateStr;
+
   const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const diffHours = diff / (1000 * 60 * 60);
+  const diffHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
   if (diffHours < 24) {
-    return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
   }
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return date.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
 }
 
 // =============================================================================
-// ThreadSidebar — left panel showing the session list
-// REASON: Extracted into its own component so ThreadSidebar's render logic
-//   is isolated from the message area and input bar, making it easier to
-//   update the sidebar independently (e.g. adding search, folder grouping).
+// ThreadSidebar — left panel showing the session list with search & rename
 // =============================================================================
 
 interface ThreadSidebarProps {
@@ -58,6 +59,8 @@ interface ThreadSidebarProps {
   isLoading: boolean;
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onRename: (id: string, newTitle: string) => void;
+  onDelete: (id: string) => void;
 }
 
 function ThreadSidebar({
@@ -66,13 +69,36 @@ function ThreadSidebar({
   isLoading,
   onSelect,
   onCreate,
+  onRename,
+  onDelete,
 }: ThreadSidebarProps) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  const filteredSessions = sessions.filter((s) =>
+    (s.title || "New Chat").toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const startRename = (e: React.MouseEvent, s: ChatSession) => {
+    e.stopPropagation();
+    setEditingId(s.id);
+    setEditingTitle(s.title || "New Chat");
+  };
+
+  const confirmRename = (e: React.MouseEvent | React.FormEvent) => {
+    e.preventDefault();
+    if (editingId && editingTitle.trim()) {
+      onRename(editingId, editingTitle.trim());
+    }
+    setEditingId(null);
+  };
+
   return (
     <div className="w-64 shrink-0 border-r border-[#222D3D] flex flex-col h-full bg-[#080B12]/60">
       {/* Header with "+ New Chat" button */}
       <div className="px-4 py-4 border-b border-[#222D3D] flex items-center justify-between">
         <span className="text-sm font-semibold text-slate-200">Conversations</span>
-        {/* id="chat-new-session-btn" — unique ID for e2e test targeting */}
         <button
           id="chat-new-session-btn"
           onClick={onCreate}
@@ -89,58 +115,117 @@ function ThreadSidebar({
         </button>
       </div>
 
+      {/* Search Input Bar (Gap 149) */}
+      <div className="px-3 py-2 border-b border-[#222D3D]/60">
+        <div className="relative flex items-center">
+          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search threads..."
+            className="w-full bg-[#0F172A] border border-[#222D3D] text-xs text-slate-200 placeholder:text-slate-500 pl-8 pr-2.5 py-1.5 rounded-lg outline-none focus:border-blue-500/50"
+          />
+        </div>
+      </div>
+
       {/* Thread List — three states: loading, empty, populated */}
       <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
         {isLoading ? (
-          // WHY Loader2 spinner: consistent with other loading states in the app
           <div className="flex items-center justify-center py-8">
             <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />
           </div>
-        ) : sessions.length === 0 ? (
-          // Empty state guides the user to the action rather than leaving a blank panel
+        ) : filteredSessions.length === 0 ? (
           <div className="text-center py-8 text-xs text-slate-500 px-4">
-            No conversations yet.
-            <br />
-            Click &quot;New Chat&quot; to start.
+            {searchQuery ? "No matching conversations." : "No conversations yet. Click \"New Chat\" to start."}
           </div>
         ) : (
-          sessions.map((session) => {
+          filteredSessions.map((session) => {
             const isActive = session.id === activeSessionId;
+            const isEditing = session.id === editingId;
+
             return (
-              // Each session button has a unique id for programmatic test access
-              <button
+              <div
                 key={session.id}
                 id={`chat-session-${session.id}`}
                 onClick={() => onSelect(session.id)}
                 className={`
-                  w-full text-left px-3 py-2.5 rounded-lg
-                  flex items-start gap-2.5 transition-all duration-150
-                  focus:outline-none group
+                  group w-full text-left px-3 py-2.5 rounded-lg cursor-pointer
+                  flex items-start justify-between gap-2 transition-all duration-150
                   ${isActive
-                    // Active: solid background + blue left indicator matching the app's
-                    // active nav link convention in Sidebar.tsx
                     ? "bg-[#1E293B] border border-blue-800/40 text-white"
                     : "text-slate-400 hover:bg-[#1E293B]/40 hover:text-slate-200 border border-transparent"
                   }
                 `}
               >
-                <MessageSquare
-                  className={`w-4 h-4 mt-0.5 shrink-0 ${isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-400"}`}
-                />
-                <div className="flex-1 min-w-0">
-                  {/* Title truncated — long first messages would overflow the sidebar */}
-                  <p className="text-xs font-medium truncate">
-                    {session.title || "New Chat"}
-                  </p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    {formatSessionDate(session.updated_at || session.created_at)}
-                    {/* Message count hidden when zero — avoids "0 msgs" on new sessions */}
-                    {session.message_count > 0 && (
-                      <span className="ml-1.5">· {session.message_count} msgs</span>
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <MessageSquare
+                    className={`w-4 h-4 mt-0.5 shrink-0 ${isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-400"}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    {isEditing ? (
+                      <form onSubmit={confirmRename} className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          autoFocus
+                          className="w-full bg-slate-900 text-xs text-white px-1.5 py-0.5 rounded border border-blue-500 outline-none"
+                        />
+                        <button type="submit" className="p-0.5 text-emerald-400 hover:text-emerald-300">
+                          <Check className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingId(null);
+                          }}
+                          className="p-0.5 text-slate-400 hover:text-slate-300"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        <p className="text-xs font-medium truncate">
+                          {session.title || "New Chat"}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          {formatSessionDate(session.updated_at || session.created_at)}
+                          {session.message_count > 0 && (
+                            <span className="ml-1.5">· {session.message_count} msgs</span>
+                          )}
+                        </p>
+                      </>
                     )}
-                  </p>
+                  </div>
                 </div>
-              </button>
+
+                {!isEditing && (
+                  <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 shrink-0 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={(e) => startRename(e, session)}
+                      title="Rename thread"
+                      className="p-1 text-slate-400 hover:text-blue-400 rounded hover:bg-slate-800"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(session.id);
+                      }}
+                      title="Delete thread"
+                      className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
             );
           })
         )}
@@ -349,6 +434,7 @@ interface ChatWindowProps {
   onCreateSession: () => void;
   onSelectSession: (id: string) => void;
   onSendMessage: (text: string) => void;
+  onRenameSession: (id: string, newTitle: string) => void;
   onDeleteSession: (id: string) => void;
 }
 
@@ -363,6 +449,7 @@ export default function ChatWindow({
   onCreateSession,
   onSelectSession,
   onSendMessage,
+  onRenameSession,
   onDeleteSession,
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
@@ -379,6 +466,8 @@ export default function ChatWindow({
         isLoading={isLoadingSessions}
         onSelect={onSelectSession}
         onCreate={onCreateSession}
+        onRename={onRenameSession}
+        onDelete={onDeleteSession}
       />
 
       {/* Right: Chat Area — flex column so input bar is always pinned to bottom */}

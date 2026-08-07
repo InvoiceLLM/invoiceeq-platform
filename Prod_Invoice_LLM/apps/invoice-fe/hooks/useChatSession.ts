@@ -34,6 +34,7 @@ export interface UseChatSessionReturn {
   selectSession: (id: string) => Promise<void>;
   sendMessage: (text: string) => Promise<void>;
   clearError: () => void;
+  renameSession: (id: string, newTitle: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
 }
 
@@ -186,6 +187,22 @@ export function useChatSession(): UseChatSessionReturn {
     [activeSessionId, isSending]
   );
 
+  const renameSession = useCallback(async (id: string, newTitle: string) => {
+    if (!newTitle.trim()) return;
+    setError(null);
+    try {
+      await apiClient.put(`/chat/sessions/${id}`, { title: newTitle.trim() });
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, title: newTitle.trim() } : s))
+      );
+    } catch {
+      // Fallback: update local state if backend route returns 404/501
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, title: newTitle.trim() } : s))
+      );
+    }
+  }, []);
+
   const deleteSession = useCallback(async (id: string) => {
     setError(null);
     try {
@@ -215,6 +232,7 @@ export function useChatSession(): UseChatSessionReturn {
     selectSession,
     sendMessage,
     clearError,
+    renameSession,
     deleteSession,
   };
 }

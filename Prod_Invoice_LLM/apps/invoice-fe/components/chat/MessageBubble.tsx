@@ -157,14 +157,20 @@ interface MessageBubbleProps {
   message: ChatMessage;
 }
 
+function formatMessageTimestamp(dateStr?: string): string {
+  if (!dateStr) return "";
+  const isoStr = dateStr.endsWith("Z") || dateStr.includes("+") ? dateStr : `${dateStr.replace(" ", "T")}Z`;
+  const date = new Date(isoStr);
+  if (isNaN(date.getTime())) return dateStr;
+
+  const datePart = date.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+  const timePart = date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return `${datePart}, ${timePart}`;
+}
+
 export default function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
-
-  // Format ISO timestamp to HH:MM for the label below each bubble
-  const formattedTime = new Date(message.created_at).toLocaleTimeString(
-    "en-US",
-    { hour: "2-digit", minute: "2-digit" }
-  );
+  const formattedTime = formatMessageTimestamp(message.created_at);
 
   return (
     // flex-row-reverse for user messages pushes avatar + bubble to the right
@@ -228,7 +234,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             path messages, so we guard both the undefined and empty-array cases. */}
         {!isUser && message.citations && message.citations.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 mt-1">
-            {message.citations.map((citation, idx) => (
+            {message.citations.map((citation: any, idx: number) => (
               // idx suffix prevents key collision when the same invoice appears
               // twice in the citations array (e.g. two chunks from the same doc)
               <CitationPill key={`${citation.invoice_id}-${idx}`} citation={citation} />
