@@ -360,13 +360,51 @@ export default function IngestionPage() {
 
             {isDirectoryScanOpen && (
             <div id="bulk-directory-scan-body" className="space-y-3">
-            {/* FE Gap 113 item 3: condensed from a two-line explanatory
-                sentence to the action itself. This is still the raw
-                server-readable filesystem path feature it always was -- it has
-                no relationship to the OAuth connectors in the row above. */}
+            {/* FE Gap 113 item 3 & Gap 145: support both client-side folder selection and server-path watcher */}
             <p className="text-[11px] text-slate-500">
-              Select a shared folder path to scan.
+              Select a local folder or enter a shared server directory path.
             </p>
+
+            {/* Gap 145: Browser Local Folder Picker */}
+            <input
+              type="file"
+              ref={(ref) => {
+                if (ref) {
+                  ref.setAttribute("webkitdirectory", "");
+                  ref.setAttribute("directory", "");
+                }
+              }}
+              onChange={(e) => {
+                const selectedList = Array.from(e.target.files || []);
+                const pdfs = selectedList.filter(
+                  (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
+                );
+                if (pdfs.length > 0) {
+                  setFiles((prev) => [...prev, ...pdfs]);
+                  setWatcherResult({ files_found: selectedList.length, files_queued: pdfs.length });
+                  setWatcherError(null);
+                } else if (selectedList.length > 0) {
+                  setWatcherError("No PDF files found in selected folder.");
+                }
+              }}
+              className="hidden"
+              id="bulk-folder-input"
+            />
+            <button
+              type="button"
+              onClick={() => document.getElementById("bulk-folder-input")?.click()}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 transition-all"
+            >
+              <FolderSearch className="w-3.5 h-3.5" />
+              <span>Select Folder from Computer</span>
+            </button>
+
+            <div className="flex items-center gap-2 text-[10px] text-slate-500 my-1">
+              <div className="h-px bg-[#222D3D] flex-1" />
+              <span>OR SERVER PATH</span>
+              <div className="h-px bg-[#222D3D] flex-1" />
+            </div>
+
             <form onSubmit={handleWatchDirectory} className="flex flex-col gap-2">
               <input
                 type="text"
@@ -389,7 +427,7 @@ export default function IngestionPage() {
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Scanning...
                   </>
                 ) : (
-                  "Scan Directory"
+                  "Scan Directory Path"
                 )}
               </button>
             </form>

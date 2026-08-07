@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { CheckCircle2, AlertTriangle, Loader2, FileText, Send, XCircle } from "lucide-react";
 import Link from "next/link";
 import { apiClient } from "../../lib/apiClient";
+import LogTerminal from "./LogTerminal";
 
 // Feature 2.1's outbound status lifecycle -- distinct from inbound's
 // PROCESSING/COMPLETED/AUDIT_REQUIRED since the semantics differ (pre-send
@@ -137,56 +138,61 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
   const canConfirm = status === "VERIFIED" || status === "NEEDS_REVIEW";
 
   return (
-    <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D] space-y-4 p-5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 max-w-xs truncate">
-          <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-          <span className="truncate font-semibold text-slate-200 text-xs">{fileName}</span>
+    <div className="space-y-4">
+      <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D] space-y-4 p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 max-w-xs truncate">
+            <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+            <span className="truncate font-semibold text-slate-200 text-xs">{fileName}</span>
+          </div>
+          {getStatusBadge()}
         </div>
-        {getStatusBadge()}
+
+        {(customerName || grandTotal) && (
+          <div className="text-[11px] text-slate-400 font-mono">
+            Customer: {customerName || "Pending"} | Total: {grandTotal ? `$${grandTotal.toFixed(2)}` : "Pending"}
+          </div>
+        )}
+
+        {status === "FAILED" && (
+          <div className="space-y-1 text-xs text-red-300 bg-red-500/5 border border-red-500/20 rounded-lg p-3">
+            <div className="font-semibold">Processing failed.</div>
+            {alerts.length > 0 ? (
+              alerts.map((a, idx) => <div key={idx}>{a.message}</div>)
+            ) : (
+              <div>The document could not be processed. Try re-uploading the file.</div>
+            )}
+          </div>
+        )}
+
+        {status === "NEEDS_REVIEW" && alerts.length > 0 && (
+          <div className="space-y-1 text-xs text-amber-300 bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
+            {alerts.map((a, idx) => (
+              <div key={idx}>{a.message}</div>
+            ))}
+            <Link
+              href={`/invoices/outbound-review/${invoiceId}`}
+              className="inline-block mt-1 text-[#3B82F6] hover:text-[#3B82F6]/80 font-bold"
+            >
+              Open Outbound Auditor Console &rarr;
+            </Link>
+          </div>
+        )}
+
+        {canConfirm && (
+          <button
+            onClick={handleConfirmSend}
+            disabled={isConfirming}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-xs font-semibold border border-emerald-500/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/40 transition-colors disabled:opacity-50"
+          >
+            {isConfirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            Confirm &amp; Send
+          </button>
+        )}
       </div>
 
-      {(customerName || grandTotal) && (
-        <div className="text-[11px] text-slate-400 font-mono">
-          Customer: {customerName || "Pending"} | Total: {grandTotal ? `$${grandTotal.toFixed(2)}` : "Pending"}
-        </div>
-      )}
-
-      {status === "FAILED" && (
-        <div className="space-y-1 text-xs text-red-300 bg-red-500/5 border border-red-500/20 rounded-lg p-3">
-          <div className="font-semibold">Processing failed.</div>
-          {alerts.length > 0 ? (
-            alerts.map((a, idx) => <div key={idx}>{a.message}</div>)
-          ) : (
-            <div>The document could not be processed. Try re-uploading the file.</div>
-          )}
-        </div>
-      )}
-
-      {status === "NEEDS_REVIEW" && alerts.length > 0 && (
-        <div className="space-y-1 text-xs text-amber-300 bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
-          {alerts.map((a, idx) => (
-            <div key={idx}>{a.message}</div>
-          ))}
-          <Link
-            href={`/invoices/outbound-review/${invoiceId}`}
-            className="inline-block mt-1 text-[#3B82F6] hover:text-[#3B82F6]/80 font-bold"
-          >
-            Open Outbound Auditor Console &rarr;
-          </Link>
-        </div>
-      )}
-
-      {canConfirm && (
-        <button
-          onClick={handleConfirmSend}
-          disabled={isConfirming}
-          className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-xs font-semibold border border-emerald-500/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/40 transition-colors disabled:opacity-50"
-        >
-          {isConfirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          Confirm &amp; Send
-        </button>
-      )}
+      {/* Gap 134: Live per-stage scrolling log terminal for outbound processing */}
+      <LogTerminal batchId={invoiceId} />
     </div>
   );
 }
