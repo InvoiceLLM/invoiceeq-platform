@@ -3,7 +3,8 @@ import { auth } from '@clerk/nextjs/server';
 
 /**
  * POST /api/admin/create-user
- * Creates a new Clerk user with role: 'user' using Clerk REST API directly.
+ * Creates a new Clerk user and adds them to the caller's organization as
+ * "org:member", using Clerk REST API directly.
  * Using REST API directly (not SDK wrapper) to avoid SDK version compatibility issues
  * with email verification.
  *
@@ -17,12 +18,27 @@ import { auth } from '@clerk/nextjs/server';
  * does) -- not Clerk's client-editable unsafe_metadata, which a user could
  * set on themselves via the client SDK and is not a real authorization
  * boundary.
+ *
+ * Gap 173: users created here used to never become Clerk Organization
+ * members, so they had no `org_role` at all -- the backend's role
+ * resolution then had no choice but to fall back to the client-writable
+ * `unsafe_metadata.role`, clamped to never reach Admin. Now every created
+ * user is added to the caller's own organization (role: "org:member"), so
+ * `org_role` -- changeable only via Clerk's own permission-checked
+ * Organizations API, never by the user themselves -- is the single source
+ * of truth for everyone, the same way it already was for the org creator.
  */
 export async function POST(request) {
   try {
-    const { userId, getToken } = await auth();
+    const { userId, orgId, getToken } = await auth();
     if (!userId) {
       return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 });
+    }
+    if (!orgId) {
+      return NextResponse.json(
+        { error: 'No active organization on this session -- cannot add the new user to it.' },
+        { status: 400 }
+      );
     }
 
     const backendApiUrl = process.env.BACKEND_API_URL;
@@ -73,7 +89,7 @@ export async function POST(request) {
         password,
         skip_password_checks: true,
         skip_password_requirement: true,
-        unsafe_metadata: { role: 'user' },
+        unsafe_metadata: { role: 'member' },
       }),
     });
 
@@ -82,6 +98,25 @@ export async function POST(request) {
     if (!createRes.ok) {
       const errMsg = user?.errors?.[0]?.long_message || user?.errors?.[0]?.message || 'Failed to create user in Clerk.';
       return NextResponse.json({ error: errMsg }, { status: 400 });
+    }
+
+    // ── Step 1b: Add to the caller's organization (Gap 173) ───────────────
+    // role: "org:member", never "org:admin" -- this endpoint has never
+    // granted Admin (see admin.py's set_permissions docstring) and still
+    // doesn't; org:admin can only ever come from Clerk's own Organizations
+    // API/Dashboard, promoting someone who is already a member.
+    const membershipRes = await fetch(`https://api.clerk.com/v1/organizations/${orgId}/memberships`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ user_id: user.id, role: 'org:member' }),
+    });
+
+    if (!membershipRes.ok) {
+      const membershipErr = await membershipRes.json().catch(() => ({}));
+      console.warn('Adding new user to organization failed:', membershipErr);
     }
 
     // ── Step 2: Mark primary email as verified so sign-in works immediately ───

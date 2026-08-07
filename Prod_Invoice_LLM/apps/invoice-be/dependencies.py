@@ -251,8 +251,26 @@ def get_tenant_context_allow_unpaid(
                     pass  # Not a valid UUID, ignore
 
             user_id = payload.get("sub", MOCK_USER_ID)
-            raw_role = payload.get("role") or payload.get("org_role", "Viewer")
-            role = RoleMapper.normalize_role(raw_role)
+
+            # Gap 173: `org_role` comes from Clerk Organizations and can only be
+            # changed via Clerk's own permission-checked API (or the Dashboard) --
+            # it's the one trustworthy signal here. `role` is sourced from
+            # unsafe_metadata, which any signed-in user can rewrite on themselves
+            # via the client SDK (Clerk.user.update()), no backend involved. It
+            # used to be checked first, so any user could grant themselves Admin
+            # from a browser console. Users with no Clerk org membership at all
+            # (everyone added via the Settings "add user" flow -- see admin.py,
+            # which never adds them as an org member) have no org_role to fall
+            # back on; for them `role` is still read for display-ish labels, but
+            # it may never resolve to Admin on its own.
+            raw_org_role = payload.get("org_role")
+            raw_role = payload.get("role")
+            if raw_org_role:
+                role = RoleMapper.normalize_role(raw_org_role)
+            else:
+                role = RoleMapper.normalize_role(raw_role or "Viewer")
+                if role == "Admin":
+                    role = "Viewer"
             plan = payload.get("billing_plan", "free")
             email = payload.get("email") or payload.get("email_address") or f"{user_id}@domain.com"
             first_name = payload.get("first_name") or payload.get("given_name")
@@ -317,15 +335,31 @@ def get_tenant_context_allow_unpaid(
         db_session.refresh(user)
     else:
         user.last_login = datetime.utcnow()
-        if role and user.role != role:
+
+        # Gap 173 (cont'd): org_role is only meaningful for whichever org is
+        # currently active on the session -- and any signed-in user can
+        # self-serve create-and-activate a brand-new Clerk Organization
+        # (Clerk makes its creator that org's org:admin by default, no
+        # spoofing involved). That's real, Clerk-issued data, but it says
+        # nothing about this user's actual tenant. Without this check, a
+        # Viewer could self-escalate on their real tenant just by switching
+        # their active org to a throwaway one they made themselves. Only
+        # apply a role change when the token's org_id matches the org this
+        # user's tenant is already tied to; a role claim for an unrelated
+        # org must never touch this user's role here.
+        existing_tenant = db_session.get(Tenant, user.tenant_id) if user.tenant_id else None
+        org_matches = clerk_org_id is None or (
+            existing_tenant is not None and existing_tenant.clerk_org_id == clerk_org_id
+        )
+        if role and org_matches and user.role != role:
             user.role = role
         db_session.add(user)
         db_session.commit()
         db_session.refresh(user)
-        
+
         if user.tenant_id:
             tenant_id = user.tenant_id
-            tenant = db_session.get(Tenant, tenant_id)
+            tenant = existing_tenant if existing_tenant is not None else db_session.get(Tenant, tenant_id)
             if not tenant:
                 tenant = Tenant(
                     id=tenant_id,

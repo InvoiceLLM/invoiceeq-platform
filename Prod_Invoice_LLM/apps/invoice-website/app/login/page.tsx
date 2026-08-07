@@ -40,45 +40,15 @@ const S: Record<string, React.CSSProperties> = {
   avatarIcon: { width: "56px", height: "56px", borderRadius: "14px", background: "linear-gradient(135deg, rgba(59,130,246,0.15) 0%, rgba(16,185,129,0.15) 100%)", border: "1px solid rgba(59,130,246,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", margin: "0 auto 16px" },
   cardTitle: { fontSize: "26px", fontWeight: 700, color: T.textPrimary, letterSpacing: "-0.5px", marginBottom: "6px" },
   cardSubtitle: { fontSize: "14px", color: T.textDim },
-  roleRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "20px" },
-  roleIcon: { display: "block", fontSize: "20px", marginBottom: "4px" },
   sectionLabel: { fontSize: "11px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#475569", marginBottom: "10px", marginTop: "4px" },
   inputWrap: { position: "relative", marginBottom: "10px" },
   inputIcon: { position: "absolute", left: "13px", top: "50%", transform: "translateY(-50%)", fontSize: "14px", opacity: 0.5, pointerEvents: "none" },
   input: { width: "100%", boxSizing: "border-box", background: "rgba(15, 20, 30, 0.60)", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 14px 12px 38px", fontSize: "14px", color: T.textPrimary, outline: "none", transition: "border-color 0.2s, box-shadow 0.2s" },
   inputFocusBlue: { borderColor: T.blue, boxShadow: "0 0 0 3px rgba(59,130,246,0.13)" },
   errorBox: { display: "flex", alignItems: "flex-start", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "10px", padding: "10px 14px", fontSize: "13px", color: T.red, marginTop: "6px", marginBottom: "6px" },
-  accessDenied: { display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "12px", padding: "16px", fontSize: "13px", color: T.red, marginTop: "8px", textAlign: "center" },
   btn: { width: "100%", background: "linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: "20px", letterSpacing: "0.2px", transition: "opacity 0.2s", boxShadow: "0 4px 20px rgba(59,130,246,0.25)" },
   sessionBanner: { display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "10px", padding: "10px 14px", marginBottom: "16px", fontSize: "12px", color: T.textPrimary },
-  /* Gap 164: top-level mode switcher, sits directly under the card header so
-     "Create Organisation" is visible on load instead of depending on the card
-     fitting a full stack of sign-in fields above it (Gap 160). */
-  tabRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "24px" },
-  /* Gap 164: create-organisation pane -- no inline form, the real org fields live on /signup. */
-  createPane: { textAlign: "center", paddingTop: "4px" },
-  createIcon: { width: "56px", height: "56px", borderRadius: "14px", background: "linear-gradient(135deg, rgba(16,185,129,0.18) 0%, rgba(59,130,246,0.14) 100%)", border: "1px solid rgba(16,185,129,0.28)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "26px", margin: "0 auto 16px" },
-  createTitle: { fontSize: "19px", fontWeight: 700, color: T.textPrimary, letterSpacing: "-0.3px", marginBottom: "8px" },
-  createCopy: { fontSize: "13.5px", color: T.textMuted, lineHeight: 1.6, marginBottom: "22px" },
-  createBtn: { display: "block", width: "100%", boxSizing: "border-box", background: "linear-gradient(135deg, #10B981 0%, #059669 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", letterSpacing: "0.2px", textAlign: "center", textDecoration: "none", boxShadow: "0 4px 20px rgba(16,185,129,0.25)" },
 };
-
-const roleBtnStyle = (active: boolean, color: string): React.CSSProperties => ({
-  padding: "10px 8px", borderRadius: "10px", border: `1px solid ${active ? color : T.border}`,
-  background: active ? `${color}15` : "rgba(15,20,30,0.4)",
-  color: active ? color : T.textDim, cursor: "pointer",
-  fontFamily: T.font, fontSize: "13px", fontWeight: 600,
-  transition: "all 0.2s", textAlign: "center", outline: "none",
-});
-
-const tabBtnStyle = (active: boolean, color: string): React.CSSProperties => ({
-  padding: "11px 8px", borderRadius: "10px", border: `1px solid ${active ? color : T.border}`,
-  background: active ? `${color}1F` : "rgba(15,20,30,0.4)",
-  color: active ? color : T.textMuted, cursor: "pointer",
-  fontFamily: T.font, fontSize: "13.5px", fontWeight: 700, letterSpacing: "0.2px",
-  transition: "all 0.2s", textAlign: "center", outline: "none",
-  boxShadow: active ? `0 0 0 3px ${color}1A` : "none",
-});
 
 const STATS = [
   { num: "10K+", label: "Invoices processed" },
@@ -95,20 +65,24 @@ export default function LoginPage() {
   const { signOut } = useClerk();
   const { user: currentUser } = useUser();
 
-  const [mode, setMode] = useState<"signin" | "create">("signin");
-  const [selectedRole, setSelectedRole] = useState("admin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [needsOtp, setNeedsOtp] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [accessDenied, setAccessDenied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState<string | null>(null);
 
   const inputStyle = (id: string) => ({ ...S.input, ...(focused === id ? S.inputFocusBlue : {}) });
 
-  const processSignIn = async (activeSignIn: any, targetRole: string) => {
+  // Gap 173: used to gate sign-in on a role picked in the UI, checked against
+  // the client-writable unsafeMetadata.role -- neither the gate nor the
+  // picker had any bearing on what the user could actually do once signed
+  // in, since useAuth()/Sidebar.tsx already resolve real screens from the
+  // backend's GET /auth/me (now backed by Clerk's org_role, not this field).
+  // Removed the picker entirely: sign in, then show whatever the resolved
+  // role actually grants -- no self-reported role to mismatch against.
+  const processSignIn = async (activeSignIn: any) => {
     if (activeSignIn.status === "complete" || activeSignIn.createdSessionId) {
       const session = activeSignIn.createdSessionId;
       // setActive is typed as possibly undefined until Clerk finishes loading.
@@ -116,34 +90,15 @@ export default function LoginPage() {
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
-      // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
-      const clerkUser = window.Clerk?.session?.user || window.Clerk?.user;
-      const metadata = clerkUser?.unsafeMetadata || {};
-      const registeredRoles = metadata.role || (metadata.orgName ? "admin" : "user");
-      const userRoles = registeredRoles.split(",").map((r: string) => r.trim().toLowerCase());
-      const targetRoleLower = targetRole.toLowerCase();
-
-      if (!userRoles.includes(targetRoleLower)) {
-        setAccessDenied(true);
-        setLoading(false);
-        return;
-      }
-
       try {
-        const orgId = metadata.orgId;
+        // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
+        const clerkUser = window.Clerk?.session?.user || window.Clerk?.user;
+        const metadata = clerkUser?.unsafeMetadata || {};
         const memberships = clerkUser?.organizationMemberships || [];
-        let selectedOrgId: string | null = null;
-
-        if (targetRole === "admin") {
-          if (orgId) {
-            selectedOrgId = orgId;
-          } else if (memberships.length > 0) {
-            const adminMembership = memberships.find((m: any) => m.role === "org:admin");
-            selectedOrgId = adminMembership ? adminMembership.organization.id : memberships[0].organization.id;
-          }
-        } else if (memberships.length > 0) {
-          selectedOrgId = memberships[0].organization.id;
-        }
+        // Users belong to at most one org in this app's current model (the
+        // creator's own org, or none for a Settings-added user) -- prefer
+        // the org they created, else whichever single membership exists.
+        const selectedOrgId: string | null = metadata.orgId || memberships[0]?.organization?.id || null;
 
         if (selectedOrgId) {
           // @ts-expect-error -- see above
@@ -166,7 +121,6 @@ export default function LoginPage() {
 
     setLoading(true);
     setError(null);
-    setAccessDenied(false);
 
     try {
       // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
@@ -194,7 +148,7 @@ export default function LoginPage() {
         }
       }
 
-      await processSignIn(result, selectedRole);
+      await processSignIn(result);
     } catch (err: any) {
       if (err?.errors?.[0]?.code === "form_identifier_not_found") {
         setError("Couldn't find your account. Please check the email address or create an account.");
@@ -202,7 +156,7 @@ export default function LoginPage() {
         try {
           await signOut();
           const retryResult = await signIn.create({ identifier: email, password });
-          await processSignIn(retryResult, selectedRole);
+          await processSignIn(retryResult);
           return;
         } catch (retryErr: any) {
           setError(retryErr?.errors?.[0]?.longMessage || retryErr?.message || "Invalid email or password.");
@@ -226,7 +180,7 @@ export default function LoginPage() {
       // "phone_code"/"totp"/"backup_code" here. Kept as-is so the auth flow is
       // unchanged; the catch below handles rejection.
       const result = await signIn.attemptSecondFactor({ strategy: "email_code", code: otpCode });
-      await processSignIn(result, selectedRole);
+      await processSignIn(result);
     } catch (err: any) {
       setError(err?.errors?.[0]?.longMessage || err?.message || "Invalid verification code. Please try again.");
       setLoading(false);
@@ -278,55 +232,8 @@ export default function LoginPage() {
 
           <div style={S.cardHeader}>
             <div style={S.avatarIcon}>🔐</div>
-            <h2 style={S.cardTitle}>Get started</h2>
-            <p style={S.cardSubtitle}>Sign in, or create your organisation</p>
-          </div>
-
-          {/* Gap 164: mode switcher -- both entry points are visible on load, at
-              the same visual weight, regardless of card height or zoom level. */}
-          <div style={S.tabRow} role="tablist" aria-label="Sign in or create an organisation">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "signin"}
-              onClick={() => setMode("signin")}
-              style={tabBtnStyle(mode === "signin", T.blue)}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "create"}
-              onClick={() => setMode("create")}
-              style={tabBtnStyle(mode === "create", T.green)}
-            >
-              + Create Organisation
-            </button>
-          </div>
-
-          {mode === "signin" ? (
-          <>
-          <div style={{ marginBottom: "20px" }}>
-            <div style={{ ...S.sectionLabel, marginTop: 0 }}>I am signing in as</div>
-            <div style={S.roleRow}>
-              <button
-                type="button"
-                onClick={() => { setSelectedRole("admin"); setAccessDenied(false); setError(null); }}
-                style={roleBtnStyle(selectedRole === "admin", T.blue)}
-              >
-                <span style={S.roleIcon}>🛡️</span>
-                Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => { setSelectedRole("user"); setAccessDenied(false); setError(null); }}
-                style={roleBtnStyle(selectedRole === "user", T.green)}
-              >
-                <span style={S.roleIcon}>👤</span>
-                User
-              </button>
-            </div>
+            <h2 style={S.cardTitle}>Welcome back</h2>
+            <p style={S.cardSubtitle}>Sign in to your workspace</p>
           </div>
 
           {!needsOtp ? (
@@ -379,19 +286,16 @@ export default function LoginPage() {
                 </div>
               )}
 
-              {accessDenied && (
-                <div style={S.accessDenied}>
-                  <span style={{ fontSize: "28px" }}>🚫</span>
-                  <strong>Access Denied</strong>
-                  <span>
-                    Your account is not registered as <strong>{selectedRole}</strong>. Please select the correct role and try again.
-                  </span>
-                </div>
-              )}
-
               <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
-                {loading ? "⏳ Signing in…" : `→ Sign In as ${selectedRole === "admin" ? "Admin" : "User"}`}
+                {loading ? "⏳ Signing in…" : "→ Sign In"}
               </button>
+
+              <p style={{ textAlign: "center", marginTop: "18px", fontSize: "13px", color: T.textDim }}>
+                New here?{" "}
+                <a href="/signup" style={{ color: T.green, textDecoration: "none", fontWeight: 600 }}>
+                  Create an organisation →
+                </a>
+              </p>
             </form>
           ) : (
             <form onSubmit={handleVerifyOtp}>
@@ -433,19 +337,6 @@ export default function LoginPage() {
                 ← Back to Login
               </button>
             </form>
-          )}
-          </>
-          ) : (
-            <div style={S.createPane}>
-              <div style={S.createIcon}>🏢</div>
-              <h3 style={S.createTitle}>Set up your workspace</h3>
-              <p style={S.createCopy}>
-                Any name works, even a test one — takes under a minute.
-              </p>
-              <a href="/signup" style={S.createBtn}>
-                Create Organisation →
-              </a>
-            </div>
           )}
         </div>
       </div>

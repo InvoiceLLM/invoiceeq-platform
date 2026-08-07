@@ -11,10 +11,10 @@ Scope: `app/{signup,login,forgot-password}/page.tsx`, `app/api/auth/provision/ro
 
 | TC ID | Element | Expected Visual Spec |
 |---|---|---|
-| TC-WEB4-01 | Login page role toggle | Admin/User toggle, matches site design tokens |
+| TC-WEB4-01 | Login page (Gap 173, 2026-08-07) | Plain email/password form, no role picker above it — "Welcome back" / "Sign in to your workspace" header, then credentials, then a small "New here? Create an organisation →" link below the submit button |
 | TC-WEB4-02 | Signup form | Org name/type/country + email/password fields, dark theme, emerald primary CTA (matches Feature 1 button spec) |
 | TC-WEB4-03 | OTP second-factor screen | Renders when Clerk's `signIn.create()` demands a second factor |
-| TC-WEB4-04 | Access Denied state | Distinct visual state (not a silent redirect) when selected role ≠ `unsafeMetadata.role` |
+| TC-WEB4-04 | ~~Access Denied state~~ (removed, Gap 173) | The role picker and its Access Denied gate no longer exist — there's no role to mismatch against. Confirm no dead reference to it remains in the rendered page. |
 | TC-WEB4-05 | Forgot-password flow | Two-step UI (request code → enter code + new password), matches login/signup design tokens |
 | TC-WEB4-06 | Admin console (`invoice-fe/app/admin/page.tsx`) | Org member list + `CreateUserModal` (name/email/password fields) |
 
@@ -24,15 +24,15 @@ Scope: `app/{signup,login,forgot-password}/page.tsx`, `app/api/auth/provision/ro
 
 | TC ID | Action | Expected Behavior |
 |---|---|---|
-| TC-WEB4-07 | Submit signup form (`SignupPage`/`handleSignup`) | `signUp.create()` → Clerk session activated → `window.Clerk.createOrganization()` → metadata written (`orgId`, `orgName`, `orgType`, `country`, `role: "admin,user"`) → `POST /auth/provision` → redirect to `/login`. Org creation and provision are best-effort/non-fatal — confirm a provision failure still leaves the Clerk account intact. |
-| TC-WEB4-08 | Log in (`LoginPage`/`processSignIn`) | Role selection + `signIn.create()`; OTP path if required; role mismatch (`unsafeMetadata.role` vs. selected) → Access Denied, no login; success → resolves/activates org membership → redirect to `${NEXT_PUBLIC_FE_URL}/dashboard` |
+| TC-WEB4-07 | Submit signup form (`SignupPage`/`handleSignup`) | `signUp.create()` → Clerk session activated → `window.Clerk.createOrganization()` → metadata written (`orgId`, `orgName`, `orgType`, `country`, `role: "admin"`) → `POST /auth/provision` → redirect to `/login`. Org creation and provision are best-effort/non-fatal — confirm a provision failure still leaves the Clerk account intact. Note (Gap 173): the `role` value is no longer authorization-significant, this org's creator is Admin because Clerk made them `org:admin` of it, not because of this metadata field. |
+| TC-WEB4-08 | Log in (`LoginPage`/`processSignIn`) | No role selection (removed, Gap 173) — plain `signIn.create()`; OTP path if required; success → resolves/activates org membership (`unsafeMetadata.orgId` else sole `organizationMemberships` entry) → redirect to `${NEXT_PUBLIC_FE_URL}/dashboard` with tabs/screens resolved server-side from `GET /auth/me`'s `org_role`-backed role |
 | TC-WEB4-09 | `POST /auth/provision` called twice with the same `clerk_org_id` | Second call returns the **existing** tenant — idempotent, no duplicate row |
 | TC-WEB4-10 | `POST /auth/provision` for an org whose email domain matches a pre-Clerk tenant | Links to that existing tenant (backfills `clerk_org_id`) instead of creating a new one |
 | TC-WEB4-11 | `get_tenant_context()` resolution order | `clerk_org_id` → `tenant_id` → email domain; **no** `Authorization` header → falls back to `MOCK_TENANT_ID`/`role="Admin"` (Gap 4, still open by design for dev testing — confirm this is still current behavior) |
 | TC-WEB4-12 | Click Sign Out (`invoice-fe` `Header.tsx`) | `POST /api/auth/logout` proxy → backend `POST /auth/logout` → Clerk `signOut()` → redirect to `${NEXT_PUBLIC_WEBSITE_URL}/login` |
 | TC-WEB4-13 | Forgot-password flow (`ForgotPasswordPage`) | `signIn.create({strategy: "reset_password_email_code"})` sends a code → `signIn.attemptFirstFactor()` verifies code + sets new password in the same call |
-| TC-WEB4-14 | Admin creates a user (`CreateUserModal` → `POST /api/admin/create-user`) | Calls Clerk's REST API directly (not the SDK) with `unsafe_metadata: {role: "user"}`, immediately marks email verified so the new user can sign in without a confirmation step |
-| TC-WEB4-15 | **Security regression test (Gap 10, open)** | Call `POST /api/admin/create-user` directly with no session / a non-admin session. Today this route has **no server-side auth/role check** — expect it to incorrectly succeed. This test should be treated as a known-failing security case, tracked until Gap 10 is closed, not a pass. |
+| TC-WEB4-14 | Admin creates a user (`CreateUserModal` → `POST /api/admin/create-user`) | Calls Clerk's REST API directly (not the SDK) with `unsafe_metadata: {role: "member"}`, immediately marks email verified so the new user can sign in without a confirmation step. **Gap 173 (2026-08-07)**: now also adds the new user to the caller's own Clerk Organization as `org:member` — confirm via Clerk Dashboard → Organizations → the calling admin's org → Members, and confirm the new user's first `GET /auth/me` resolves a real `org_role`-backed role, not the Settings-added-user fallback path. |
+| TC-WEB4-15 | Security check (Gap 10) | Call `POST /api/admin/create-user` directly with no session / a non-admin session. The route's own docstring now states this is guarded (real session + `GET /auth/me` role check required) — **re-verify live**, this suite hasn't re-run it since that claim was added; if it still succeeds unauthenticated, treat Gap 10 as still open, not this doc's note. |
 | TC-WEB4-16 | Attempt signup with no org name | Blocked client-side (`orgName` is a `required` field) — confirm there is no code path to a standalone, company-less account (Gap 11, by design, not yet built) |
 
 ---
