@@ -8,12 +8,10 @@
  * hardcoding pro_combined.
  */
 
-import React, { useState } from "react";
-import { CreditCard, CheckCircle2, ShieldCheck, Sparkles, AlertTriangle } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { CreditCard, CheckCircle2, ShieldCheck, Sparkles, AlertTriangle, Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
-
-const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
 const PLANS = [
   {
@@ -61,6 +59,30 @@ export default function SubscriptionsPage() {
   const [selectedPlan, setSelectedPlan] = useState<"pro" | "pro_combined">(
     isProCombined ? "pro_combined" : "pro"
   );
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+
+  // Gap 143: real usage tracker state
+  const [invoicesCount, setInvoicesCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    async function fetchUsage() {
+      try {
+        const res = await fetch("/api/invoices?limit=1");
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.total === "number") {
+            setInvoicesCount(data.total);
+          } else if (Array.isArray(data.invoices)) {
+            setInvoicesCount(data.invoices.length);
+          }
+        }
+      } catch {
+        // Fallback to 0 if fetch fails
+      }
+    }
+    void fetchUsage();
+  }, []);
 
   const getPlanName = () => {
     if (loading) return "Loading...";
@@ -75,7 +97,69 @@ export default function SubscriptionsPage() {
     return "₹0 / month";
   };
 
-  const upgradeUrl = `${WEBSITE_URL}/?plan=${selectedPlan}#pricing`;
+  /**
+   * Gap 132: Direct PayU checkout session creation and POST form submit.
+   * Eliminates extra landing-page redirects and opens the PayU payment screen
+   * directly in the current window.
+   */
+  const handleUpgrade = async () => {
+    if (isCheckoutLoading) return;
+    setIsCheckoutLoading(true);
+    setCheckoutError(null);
+
+    try {
+      const res = await fetch("/api/billing/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: selectedPlan }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setCheckoutError(data?.error || data?.detail || "Could not start checkout. Please try again.");
+        setIsCheckoutLoading(false);
+        return;
+      }
+
+      // Build and submit the hidden form PayU's hosted payment gateway expects
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = data.action_url;
+
+      const fields: Record<string, string> = {
+        key: data.key,
+        txnid: data.txnid,
+        amount: String(data.amount),
+        productinfo: data.productinfo,
+        firstname: data.firstname,
+        email: data.email,
+        phone: data.phone || "",
+        surl: data.surl,
+        furl: data.furl,
+        udf1: data.udf1 || "",
+        hash: data.hash,
+        service_provider: data.service_provider || "payu_paisa",
+      };
+
+      for (const [name, value] of Object.entries(fields)) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = name;
+        input.value = value ?? "";
+        form.appendChild(input);
+      }
+
+      document.body.appendChild(form);
+      form.submit();
+    } catch (err) {
+      setCheckoutError("Failed to connect to checkout gateway. Please check network connection.");
+      setIsCheckoutLoading(false);
+    }
+  };
+
+  const processedCount = invoicesCount ?? 0;
+  const planLimit = isProCombined ? 999999 : isPro ? 1000 : 25;
+  const usagePercentage = isProCombined ? 100 : Math.min(100, Math.round((processedCount / planLimit) * 100));
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
@@ -107,18 +191,18 @@ export default function SubscriptionsPage() {
 
           <div className="h-px bg-[#222D3D] my-4" />
 
-          {/* Plan Limits Indicator */}
+          {/* Gap 143: Real Usage Limits Indicator */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">Usage Limit (Invoices Processed)</span>
-              <span className="font-semibold text-slate-200">
-                {isProCombined ? "Unlimited" : isPro ? "1,000 / month" : "25 / month"}
+              <span className="font-semibold text-slate-200 font-mono">
+                {isProCombined ? `${processedCount} processed (Unlimited)` : `${processedCount} / ${planLimit} invoices processed`}
               </span>
             </div>
             <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
               <div
-                className="h-full bg-blue-500 rounded-full"
-                style={{ width: isProCombined ? "100%" : isPro ? "10%" : "25%" }}
+                className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                style={{ width: `${usagePercentage}%` }}
               />
             </div>
           </div>
@@ -177,7 +261,7 @@ export default function SubscriptionsPage() {
           </div>
         </section>
 
-        {/* Gap 120: Plan Picker + Change plan CTA */}
+        {/* Gap 120 & Gap 132: Plan Picker + Direct PayU Checkout CTA */}
         {isAdmin ? (
           <section className="space-y-4">
             <h3 className="text-xs uppercase font-bold text-slate-500 tracking-wider">
@@ -230,6 +314,13 @@ export default function SubscriptionsPage() {
               })}
             </div>
 
+            {checkoutError && (
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{checkoutError}</span>
+              </div>
+            )}
+
             <div className="bg-slate-900/40 border border-[#222D3D] rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="space-y-0.5 text-center sm:text-left">
                 <p className="text-xs font-semibold text-white">
@@ -237,15 +328,24 @@ export default function SubscriptionsPage() {
                 </p>
                 <p className="text-[11px] text-slate-400">Processed securely via PayU checkout</p>
               </div>
-              <a
-                href={upgradeUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/10 hover:shadow-blue-600/20 transition-all whitespace-nowrap"
+              <button
+                type="button"
+                onClick={handleUpgrade}
+                disabled={isCheckoutLoading}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold shadow-lg shadow-blue-600/10 hover:shadow-blue-600/20 transition-all whitespace-nowrap"
               >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Change Subscription Plan</span>
-              </a>
+                {isCheckoutLoading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Connecting to PayU...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Change Subscription Plan</span>
+                  </>
+                )}
+              </button>
             </div>
           </section>
         ) : (
