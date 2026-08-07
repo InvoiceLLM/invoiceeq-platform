@@ -98,3 +98,6 @@ worker-app.yaml
 
 # Session handoff scratch doc (not a permanent project doc)
 HANDOFF_PROMPT.md
+
+# Clerk data exports contain real user PII -- never commit these
+apps/invoice-be/scripts/clerk_export_*.json

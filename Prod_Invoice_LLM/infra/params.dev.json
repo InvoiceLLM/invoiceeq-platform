@@ -42,7 +42,7 @@
       "value": true
     },
     "nextPublicClerkPublishableKey": {
-      "value": "pk_test_cmVhbC1zdGFsbGlvbi0yMS5jbGVyay5hY2NvdW50cy5kZXYk"
+      "value": "pk_test_Z3JlYXQtYmFib29uLTExLmNsZXJrLmFjY291bnRzLmRldiQ"
     },
     "azureOpenAiDeploymentName": {
       "value": "gpt-5-mini"
@@ -78,10 +78,10 @@
       "value": ""
     },
     "clerkJwtIssuer": {
-      "value": "https://real-stallion-21.clerk.accounts.dev"
+      "value": "https://great-baboon-11.clerk.accounts.dev"
     },
     "clerkJwksUrl": {
-      "value": "https://real-stallion-21.clerk.accounts.dev/.well-known/jwks.json"
+      "value": "https://great-baboon-11.clerk.accounts.dev/.well-known/jwks.json"
     }
   }
 }

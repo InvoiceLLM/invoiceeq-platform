@@ -228,6 +228,7 @@ module websiteApp './modules/compute/invoice-website.bicep' = {
     keyVaultName: keyVaultName
     backendApiUrl: backendApp.outputs.fqdn
     frontendApiUrl: frontendApp.outputs.fqdn
+    nextPublicClerkPublishableKey: nextPublicClerkPublishableKey
     acrName: sharedAcrName
     image: websiteImage
     cpu: websiteCpu

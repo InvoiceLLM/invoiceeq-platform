@@ -8,9 +8,14 @@ param keyVaultName string
 // App configurations
 param backendApiUrl string
 
-// Retained for caller compatibility (main-step4.bicep / deploy-all.ps1 still
-// pass it) but intentionally unused: see the Gap 6 note on the env block below.
-@description('Unused. NEXT_PUBLIC_* must be a Docker build-arg, not a runtime env var.')
+// Gap 172: also set as a runtime env var below, in addition to the Docker
+// build-arg deploy-dev.yml passes. The build-arg covers the browser bundle
+// (NEXT_PUBLIC_* is inlined by `next build`); Clerk's server-side SDK
+// (auth()/getToken(), used in Route Handlers) separately reads this same
+// variable name from process.env AT RUNTIME, independent of the client
+// bundle. A fresh environment that only had the build-arg had auth()
+// return no userId at all until this was patched live -- see be_features_tracker.md.
+@description('Clerk SSO Publishable Client Key -- baked into the client bundle via Docker build-arg AND set as a runtime env var for the server-side Clerk SDK (Gap 172).')
 param nextPublicClerkPublishableKey string = ''
 
 param acrName string
@@ -82,11 +87,13 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'BACKEND_API_URL'
               value: 'https://${backendApiUrl}'
             }
-            // Gap 6: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is deliberately NOT set
-            // here. Next.js inlines NEXT_PUBLIC_* into the client bundle during
-            // `next build`, so a runtime Container App env var arrives too late
-            // and has zero effect on the browser. It is passed as a Docker
-            // build-arg in .github/workflows/deploy-dev.yml instead.
+            {
+              // Gap 172: Clerk's server-side SDK (auth()/getToken()) reads
+              // this same variable name from process.env at runtime -- the
+              // Docker build-arg only covers the browser bundle, not this.
+              name: 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'
+              value: nextPublicClerkPublishableKey
+            }
             {
               name: 'CLERK_SECRET_KEY'
               secretRef: 'clerk-secret-secret'

@@ -17,6 +17,13 @@ param backendApiUrl string
 @description('Frontend (invoice-fe) Container App FQDN. Used server-side only (internal ingress) to reverse-proxy FE pages -- Gap 12 Multi-Zone fix.')
 param frontendApiUrl string
 
+// Gap 172: set as a runtime env var below, in addition to the Docker
+// build-arg deploy-dev.yml passes for the browser bundle. Clerk's
+// server-side SDK (auth()/getToken(), used e.g. in pages/api/auth/provision.js)
+// separately reads this same variable name from process.env at runtime.
+@description('Clerk SSO Publishable Client Key -- baked into the client bundle via Docker build-arg AND set as a runtime env var for the server-side Clerk SDK (Gap 172).')
+param nextPublicClerkPublishableKey string = ''
+
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -87,6 +94,13 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: 'https://${backendApiUrl}'
             }
             {
+              // Gap 172: Clerk's server-side SDK reads this same variable
+              // name from process.env at runtime -- the Docker build-arg
+              // only covers the browser bundle, not this.
+              name: 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'
+              value: nextPublicClerkPublishableKey
+            }
+            {
               name: 'CLERK_SECRET_KEY'
               secretRef: 'clerk-secret-secret'
             }
@@ -112,11 +126,11 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'FE_INTERNAL_URL'
               value: 'https://${frontendApiUrl}'
             }
-            // Gap 6: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and NEXT_PUBLIC_FE_URL are
-            // deliberately NOT set here. Next.js inlines NEXT_PUBLIC_* into the
-            // client bundle during `next build`, so a runtime env var arrives too
-            // late and has zero effect on the browser. They are passed as Docker
-            // build-args in .github/workflows/deploy-dev.yml instead.
+            // Gap 6: NEXT_PUBLIC_FE_URL is deliberately NOT set here -- it has
+            // no server-side reader, unlike NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+            // above (Gap 172). Next.js still inlines both into the client
+            // bundle during `next build` via the Docker build-args passed in
+            // .github/workflows/deploy-dev.yml.
           ]
         }
       ]
