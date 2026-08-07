@@ -83,25 +83,27 @@ export async function forwardedHeaders(
 export async function clerkSessionToken(): Promise<string | null> {
   try {
     const { userId, getToken } = await auth();
+    console.log("[clerkSessionToken] auth() resolved, userId:", userId);
     if (!userId) {
-      // TEMP DIAGNOSTIC (remove once resolved): auth() resolved but reports no
+      // Diagnostic logging, kept intentionally for future auth-issue debugging: auth() resolved but reports no
       // signed-in user -- means the Clerk session cookie isn't being recognised
       // server-side for this request at all, distinct from a template/token error.
-      console.error("[clerkSessionToken] auth() returned no userId -- no session recognised server-side");
+      console.log("[clerkSessionToken] NO USERID -- no session recognised server-side");
       return null;
     }
     const token = await getToken({ template: "invoice-app" });
+    console.log("[clerkSessionToken] getToken result, length:", token ? token.length : "null/empty");
     if (!token) {
-      // TEMP DIAGNOSTIC (remove once resolved): userId was present but the
+      // Diagnostic logging, kept intentionally for future auth-issue debugging: userId was present but the
       // template token came back empty -- points at the "invoice-app" JWT
       // Template itself, not session establishment.
-      console.error("[clerkSessionToken] getToken({template:'invoice-app'}) returned falsy for userId:", userId);
+      console.log("[clerkSessionToken] TOKEN EMPTY for userId:", userId);
     }
     return token ?? null;
   } catch (err) {
-    // TEMP DIAGNOSTIC (remove once resolved): auth()/getToken() threw outright
+    // Diagnostic logging, kept intentionally for future auth-issue debugging: auth()/getToken() threw outright
     // -- most likely clerkMiddleware() did not run for this request path.
-    console.error("[clerkSessionToken] threw:", err instanceof Error ? err.stack || err.message : err);
+    console.log("[clerkSessionToken] THREW:", err instanceof Error ? (err.stack || err.message) : String(err));
     return null;
   }
 }

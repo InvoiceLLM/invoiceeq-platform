@@ -1,5 +1,6 @@
 import httpx
 import jwt
+import logging
 from jwt.algorithms import RSAAlgorithm
 from uuid import UUID
 from typing import Generator
@@ -9,6 +10,8 @@ from sqlmodel import Session, select
 from datetime import datetime
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 from database import engine
 from models import Tenant, User, RoleMapper
 from services.billing_lifecycle import enforce_lapse, refresh_free_quota
@@ -131,6 +134,10 @@ def get_tenant_context_allow_unpaid(
     """
     # 1. Local Development / Test Fallback -- only when explicitly enabled
     if not authorization or not authorization.startswith("Bearer "):
+        # Diagnostic logging, kept intentionally for future auth-issue debugging: confirms whether this is the
+        # branch actually firing, distinct from a failure further down after a
+        # real header IS present. print(), not logger -- see note below.
+        print(f"[jwt-diag] header branch: authorization={authorization!r}", flush=True)
         if not settings.ALLOW_MOCK_AUTH:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -179,15 +186,32 @@ def get_tenant_context_allow_unpaid(
             try:
                 header = jwt.get_unverified_header(token)
                 kid = header.get("kid")
+                # Diagnostic logging, kept intentionally for future auth-issue debugging: unverified claims are
+                # safe to log (no signature/secret exposure) and show exactly
+                # what the token claims before we judge whether it's valid.
+                # print(), not logger.warning() -- confirmed live that this
+                # container's log stream only captures stdout (uvicorn's own
+                # access-log lines), not Python logging module output.
+                try:
+                    unverified = jwt.decode(token, options={"verify_signature": False})
+                    print(
+                        f"[jwt-diag] kid={kid} token_iss={unverified.get('iss')!r} "
+                        f"expected_iss={settings.CLERK_JWT_ISSUER!r} exp={unverified.get('exp')} "
+                        f"now={int(datetime.utcnow().timestamp())} org_id={unverified.get('org_id')!r} "
+                        f"org_role={unverified.get('org_role')!r} sub={unverified.get('sub')!r}",
+                        flush=True,
+                    )
+                except Exception as diag_e:
+                    print(f"[jwt-diag] could not decode unverified claims: {diag_e}", flush=True)
                 if not kid:
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="Missing key ID (kid) in token header."
                     )
-                
+
                 jwk_dict = get_jwk(kid)
                 public_key = RSAAlgorithm.from_jwk(jwk_dict)
-                
+
                 # Gap 4: issuer verification is now unconditional. It was
                 # previously `bool(settings.CLERK_JWT_ISSUER)`, which silently
                 # disabled the check whenever the setting was empty.
@@ -200,11 +224,13 @@ def get_tenant_context_allow_unpaid(
                     options={"verify_iss": True}
                 )
             except jwt.ExpiredSignatureError:
+                print("[jwt-diag] ExpiredSignatureError", flush=True)
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token signature has expired."
                 )
             except jwt.InvalidTokenError as e:
+                print(f"[jwt-diag] InvalidTokenError: {e}", flush=True)
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Invalid token: {str(e)}"
