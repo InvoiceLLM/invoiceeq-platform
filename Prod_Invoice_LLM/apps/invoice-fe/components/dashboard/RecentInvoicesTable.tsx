@@ -279,7 +279,7 @@ export default function RecentInvoicesTable({
                     
                     {activeMenuId === inv.id && (
                       <div 
-                        className="absolute right-6 mt-1 w-44 bg-[#0F172A] border border-[#222D3D] rounded-lg shadow-xl py-1 z-20 animate-in fade-in slide-in-from-top-1 duration-150 text-left"
+                        className="absolute right-6 bottom-10 w-44 bg-[#0F172A] border border-[#222D3D] rounded-lg shadow-2xl py-1 z-50 animate-in fade-in slide-in-from-bottom-1 duration-150 text-left"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <Link
