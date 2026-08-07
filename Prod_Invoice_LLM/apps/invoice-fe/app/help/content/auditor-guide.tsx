@@ -1,11 +1,28 @@
 import React from "react";
 import { HelpSection } from "./trainer-guide";
 
+import { ImageIcon } from "lucide-react";
+
 function Shot({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
+  const [hasError, setHasError] = React.useState(false);
+
   return (
     <figure className="rounded-xl overflow-hidden border border-[#222D3D] bg-[#0B0F19]">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={alt} className="w-full block" />
+      {!hasError ? (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          src={src}
+          alt={alt}
+          onError={() => setHasError(true)}
+          className="w-full block object-cover max-h-[420px]"
+        />
+      ) : (
+        <div className="flex flex-col items-center justify-center p-8 bg-[#0F172A]/90 text-slate-400 gap-2 border-b border-[#222D3D]">
+          <ImageIcon className="w-8 h-8 text-purple-400/60" />
+          <span className="text-xs font-semibold text-slate-300">{alt}</span>
+          <span className="text-[10px] text-slate-500 font-mono">Platform User Guide Preview Asset</span>
+        </div>
+      )}
       {caption && (
         <figcaption className="text-[11px] text-slate-500 px-3 py-2 border-t border-[#222D3D]">
           {caption}

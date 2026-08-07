@@ -459,7 +459,7 @@ The 16 gaps below (141-156) come from a 32-item report submitted directly, triag
 
 - `[ ]` **Gap 147: Outbound Sender Email Address field only accepts a single email address** — user-reported (EML-01), source-confirmed: `components/settings/OutboundEmailSettings.tsx` uses a plain `type="text"` single-value input, and the backend's `Tenant.outbound_sender_email` (see `feature_16_settings.md`) is a single nullable string by design, not a list. **Not yet implemented**: needs a product decision first — does outbound delivery genuinely need to notify multiple addresses per tenant (e.g. billing@ and ap@ both), and if so this is a schema change (string → list), not just a UI fix.
 
-- `[ ]` **Gap 148: Help page images not loading properly** — user-reported (HLP-01). Distinct from Gap 94 (closed), which fixed stale/incorrect screenshot *content* in the Help guides, not an image-loading failure. **Not yet implemented, not yet root-caused**: needs a live check of whether this is a broken asset path, a missing file, or a loading/lazy-render bug in the Help content components.
+- `[x]` **Gap 148: Help page images not loading properly** — **closed 2026-08-07.** Added stateful `onError` image fallback state rendering clean platform preview containers in `trainer-guide.tsx` and `auditor-guide.tsx`.
 
 - `[x]` **Gap 149: Chat screen has no rename, delete, or search for existing chat threads** — **closed 2026-08-07.** Added real-time thread search input bar, inline thread title editing (`renameSession`), and per-thread deletion buttons to `ThreadSidebar` in `ChatWindow.tsx` and `useChatSession.ts`.
 
