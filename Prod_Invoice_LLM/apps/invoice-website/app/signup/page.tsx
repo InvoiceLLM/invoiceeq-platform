@@ -100,7 +100,7 @@ export default function SignupPage() {
       const result = await signUp.create({
         emailAddress: email,
         password,
-        unsafeMetadata: { orgType, country, role: "admin,user" },
+        unsafeMetadata: { orgType, country, role: "admin" },
       });
 
       const finalOrgName = orgName.trim() || `${email.split("@")[0]}'s Org`;
@@ -123,7 +123,7 @@ export default function SignupPage() {
         try {
           // @ts-expect-error -- see above
           await window.Clerk.user.update({
-            unsafeMetadata: { orgId, orgName: finalOrgName, orgType, country, role: "admin,user" },
+            unsafeMetadata: { orgId, orgName: finalOrgName, orgType, country, role: "admin" },
           });
         } catch (metaErr) {
           console.warn("Metadata update failed:", metaErr);
