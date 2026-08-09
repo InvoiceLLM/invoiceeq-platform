@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AlertTriangle, ArrowRight, LifeBuoy, XCircle } from "lucide-react";
 import { Header } from "@/components/marketing/Header";
+import { PayuPopupReturn } from "@/components/billing/PayuPopupReturn";
 import { SUPPORT_EMAIL, appHref, firstParam } from "@/lib/billingPlans";
 
 export const dynamic = "force-dynamic";
@@ -150,6 +151,7 @@ export default function BillingFailedPage({
 
   return (
     <div className="flex flex-col min-h-screen">
+      <PayuPopupReturn status="failed" />
       <Header />
       <main className="flex-1 relative z-10 flex items-start justify-center px-4 sm:px-6 lg:px-8 py-20">
         <div className="w-full max-w-2xl">

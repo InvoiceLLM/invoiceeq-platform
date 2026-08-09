@@ -61,9 +61,28 @@ export default function SubscriptionsPage() {
   );
   const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [checkoutHint, setCheckoutHint] = useState<string | null>(null);
 
   // Gap 143: real usage tracker state
   const [invoicesCount, setInvoicesCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    function onPayuMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (!data || data.source !== "invoice-payu" || data.type !== "payu-return") return;
+      setIsCheckoutLoading(false);
+      setCheckoutHint(null);
+      if (data.status === "success") {
+        // Plan is already committed server-side; refresh so useAuth picks it up.
+        window.location.reload();
+      } else {
+        setCheckoutError("Payment was not completed. You can try again whenever you're ready.");
+      }
+    }
+    window.addEventListener("message", onPayuMessage);
+    return () => window.removeEventListener("message", onPayuMessage);
+  }, []);
 
   useEffect(() => {
     async function fetchUsage() {
@@ -98,14 +117,41 @@ export default function SubscriptionsPage() {
   };
 
   /**
-   * Gap 132: Direct PayU checkout session creation and POST form submit.
-   * Eliminates extra landing-page redirects and opens the PayU payment screen
-   * directly in the current window.
+   * Gap 132 + popup UX: create PayU checkout session and POST the classic
+   * hash form into a dedicated popup. Same-tab navigation left users stuck on
+   * PayU with no clean cancel path; closing the popup returns them here.
+   * PayU cannot be iframed (X-Frame-Options), so a popup is the workable
+   * "side window".
    */
   const handleUpgrade = async () => {
     if (isCheckoutLoading) return;
     setIsCheckoutLoading(true);
     setCheckoutError(null);
+    setCheckoutHint(null);
+
+    // Open synchronously on the click gesture so the browser doesn't block it
+    // after the await. Named window so the form can target it.
+    const popupName = "payu_checkout";
+    const payuWin = window.open(
+      "about:blank",
+      popupName,
+      "popup=yes,width=520,height=780,scrollbars=yes,resizable=yes"
+    );
+    if (!payuWin) {
+      setCheckoutError(
+        "Pop-up was blocked. Allow pop-ups for this site to open PayU, then try again."
+      );
+      setIsCheckoutLoading(false);
+      return;
+    }
+    try {
+      payuWin.document.write(
+        "<!doctype html><title>PayU</title><body style='font-family:sans-serif;padding:24px;color:#334155'>Opening PayU checkout…</body>"
+      );
+      payuWin.document.close();
+    } catch {
+      // Cross-origin write can fail after navigation; ignore.
+    }
 
     try {
       const res = await fetch("/api/billing/create-checkout-session", {
@@ -116,15 +162,20 @@ export default function SubscriptionsPage() {
 
       const data = await res.json();
       if (!res.ok) {
+        try {
+          payuWin.close();
+        } catch {
+          /* ignore */
+        }
         setCheckoutError(data?.error || data?.detail || "Could not start checkout. Please try again.");
         setIsCheckoutLoading(false);
         return;
       }
 
-      // Build and submit the hidden form PayU's hosted payment gateway expects
       const form = document.createElement("form");
       form.method = "POST";
       form.action = data.action_url;
+      form.target = popupName;
 
       const fields: Record<string, string> = {
         key: data.key,
@@ -151,7 +202,23 @@ export default function SubscriptionsPage() {
 
       document.body.appendChild(form);
       form.submit();
-    } catch (err) {
+      form.remove();
+
+      setCheckoutHint("PayU opened in a new window. Close that window to cancel without paying.");
+      setIsCheckoutLoading(false);
+
+      const poll = window.setInterval(() => {
+        if (payuWin.closed) {
+          window.clearInterval(poll);
+          setCheckoutHint(null);
+        }
+      }, 500);
+    } catch {
+      try {
+        payuWin.close();
+      } catch {
+        /* ignore */
+      }
       setCheckoutError("Failed to connect to checkout gateway. Please check network connection.");
       setIsCheckoutLoading(false);
     }
@@ -321,12 +388,21 @@ export default function SubscriptionsPage() {
               </div>
             )}
 
+            {checkoutHint && !checkoutError && (
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs">
+                <CreditCard className="w-4 h-4 shrink-0" />
+                <span>{checkoutHint}</span>
+              </div>
+            )}
+
             <div className="bg-slate-900/40 border border-[#222D3D] rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="space-y-0.5 text-center sm:text-left">
                 <p className="text-xs font-semibold text-white">
                   {selectedPlan === "pro" ? "Upgrade to Pro" : "Upgrade to Pro Combined"}
                 </p>
-                <p className="text-[11px] text-slate-400">Processed securely via PayU checkout</p>
+                <p className="text-[11px] text-slate-400">
+                  PayU opens in a new window — close it anytime to cancel
+                </p>
               </div>
               <button
                 type="button"
