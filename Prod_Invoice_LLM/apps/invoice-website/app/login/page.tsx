@@ -88,13 +88,25 @@ export default function LoginPage() {
       // setActive is typed as possibly undefined until Clerk finishes loading.
       if (session && setActive) await setActive({ session });
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
-
       try {
+        // Gap 157: a fixed 200ms wait was a guess at how long Clerk's client
+        // takes to populate session.user/organizationMemberships after
+        // setActive({session}) -- not a guarantee. Poll the real state
+        // instead, up to 2s, checking every 50ms, for either metadata.orgId
+        // (set synchronously at signup, available as soon as the user object
+        // loads) or a populated organizationMemberships array.
         // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
-        const clerkUser = window.Clerk?.session?.user || window.Clerk?.user;
-        const metadata = clerkUser?.unsafeMetadata || {};
-        const memberships = clerkUser?.organizationMemberships || [];
+        let clerkUser = window.Clerk?.session?.user || window.Clerk?.user;
+        let metadata = clerkUser?.unsafeMetadata || {};
+        let memberships = clerkUser?.organizationMemberships || [];
+        const deadline = Date.now() + 2000;
+        while (!metadata.orgId && memberships.length === 0 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          // @ts-expect-error -- see above
+          clerkUser = window.Clerk?.session?.user || window.Clerk?.user;
+          metadata = clerkUser?.unsafeMetadata || {};
+          memberships = clerkUser?.organizationMemberships || [];
+        }
         // Users belong to at most one org in this app's current model (the
         // creator's own org, or none for a Settings-added user) -- prefer
         // the org they created, else whichever single membership exists.

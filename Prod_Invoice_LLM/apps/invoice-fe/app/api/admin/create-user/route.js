@@ -30,13 +30,35 @@ import { auth } from '@clerk/nextjs/server';
  */
 export async function POST(request) {
   try {
-    const { userId, orgId, getToken } = await auth();
+    const { userId, getToken } = await auth();
     if (!userId) {
       return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 });
     }
+
+    const secretKey = process.env.CLERK_SECRET_KEY;
+    if (!secretKey) {
+      return NextResponse.json({ error: 'CLERK_SECRET_KEY is not configured.' }, { status: 500 });
+    }
+
+    // Gap 173 follow-up: resolve the caller's organization authoritatively via
+    // Clerk's Backend API rather than trusting auth()'s own `orgId`, which is
+    // read from the session cookie -- a short-lived, periodically-refreshed
+    // token that can lag behind Clerk.setActive({organization}) on the
+    // client. Confirmed live: the browser's own window.Clerk state showed the
+    // correct active org while auth()'s orgId came back empty for this exact
+    // request. This call always reflects Clerk's real, current membership
+    // state, independent of any session-cookie staleness.
+    const membershipsRes = await fetch(
+      `https://api.clerk.com/v1/users/${userId}/organization_memberships`,
+      { headers: { Authorization: `Bearer ${secretKey}` } }
+    );
+    const membershipsData = await membershipsRes.json();
+    const memberships = Array.isArray(membershipsData) ? membershipsData : membershipsData.data || [];
+    const orgId = memberships[0]?.organization?.id;
+
     if (!orgId) {
       return NextResponse.json(
-        { error: 'No active organization on this session -- cannot add the new user to it.' },
+        { error: 'No organization found for this account -- cannot add the new user to it.' },
         { status: 400 }
       );
     }
@@ -46,7 +68,7 @@ export async function POST(request) {
       throw new Error('BACKEND_API_URL is not set');
     }
 
-    const sessionToken = await getToken();
+    const sessionToken = await getToken({ template: "invoice-app" });
     const meRes = await fetch(`${backendApiUrl.replace(/\/$/, '')}/auth/me`, {
       headers: { Authorization: `Bearer ${sessionToken}` },
     });
@@ -68,11 +90,6 @@ export async function POST(request) {
         { error: 'firstName, lastName, email, and password are required.' },
         { status: 400 }
       );
-    }
-
-    const secretKey = process.env.CLERK_SECRET_KEY;
-    if (!secretKey) {
-      return NextResponse.json({ error: 'CLERK_SECRET_KEY is not configured.' }, { status: 500 });
     }
 
     // ── Step 1: Create user via Clerk REST API ───────────────────────────

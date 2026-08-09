@@ -347,11 +347,21 @@ def get_tenant_context_allow_unpaid(
         # apply a role change when the token's org_id matches the org this
         # user's tenant is already tied to; a role claim for an unrelated
         # org must never touch this user's role here.
+        # Gap 157/173 (cont'd): `clerk_org_id is None` used to count as a match
+        # (needed so Settings-added, never-org-member users can still get a
+        # role synced at all) -- but that also let a real org member's
+        # momentarily stale session cookie (no org_role this request, e.g. a
+        # brief window right after Clerk.setActive() before the cookie catches
+        # up) fall through this same branch and overwrite their real, correct
+        # Admin role with the org-less clamp's "Viewer". Confirmed live: this
+        # is what silently demoted an actual Admin's stored role after a
+        # normal navigation, well after login, with no error visible anywhere.
+        # Fix: only ever sync role from a request that actually carried a real
+        # org_role claim. No org_role this request -> leave the stored role
+        # untouched, regardless of what `role` clamped down to.
         existing_tenant = db_session.get(Tenant, user.tenant_id) if user.tenant_id else None
-        org_matches = clerk_org_id is None or (
-            existing_tenant is not None and existing_tenant.clerk_org_id == clerk_org_id
-        )
-        if role and org_matches and user.role != role:
+        org_matches = existing_tenant is not None and existing_tenant.clerk_org_id == clerk_org_id
+        if raw_org_role and org_matches and role and user.role != role:
             user.role = role
         db_session.add(user)
         db_session.commit()
