@@ -9,15 +9,10 @@ import {
   ShieldCheck,
   Zap,
   Cpu,
-  FileCheck,
   CheckCircle2,
   Lock,
   RotateCcw,
-  Database,
   Mail,
-  ScanLine,
-  MessageSquareText,
-  BrainCircuit,
   Bot,
 } from "lucide-react";
 
@@ -117,46 +112,6 @@ const SAMPLE_INVOICES: SampleInvoice[] = [
   },
 ];
 
-/* Gap 163: the four agents are now a compact colour-keyed legend around the
-   "AI Engine" ring rather than four standalone capability cards above the fold. */
-const AGENT_LEGEND = [
-  { name: "NOVA", role: "Extracts", icon: ScanLine, color: "#22D3EE" },
-  { name: "SENTINEL", role: "Verifies", icon: ShieldCheck, color: "#10B981" },
-  { name: "SAGE", role: "Answers", icon: MessageSquareText, color: "#8B5CF6" },
-  { name: "EVOLVE", role: "Learns", icon: BrainCircuit, color: "#6366F1" },
-];
-
-/* Gap 163: input/output nodes flanking the AI Engine ring in the hero flow diagram. */
-function FlowNode({
-  icon: Icon,
-  title,
-  caption,
-  accent,
-}: {
-  icon: React.ElementType;
-  title: string;
-  caption: string;
-  accent: string;
-}) {
-  return (
-    <div
-      className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] backdrop-blur-md px-3.5 py-2.5 text-left transition-colors duration-300 hover:border-white/20"
-      style={{ boxShadow: `inset 0 0 0 1px ${accent}14` }}
-    >
-      <div
-        className="shrink-0 rounded-lg p-2"
-        style={{ background: `${accent}1F`, border: `1px solid ${accent}59` }}
-      >
-        <Icon className="w-4 h-4" style={{ color: accent }} />
-      </div>
-      <div className="min-w-0">
-        <span className="block text-[13px] font-semibold text-white leading-tight">{title}</span>
-        <span className="block text-[11px] text-[#94A3B8] leading-tight truncate">{caption}</span>
-      </div>
-    </div>
-  );
-}
-
 export function Hero() {
   const [selectedInvoice, setSelectedInvoice] = useState<SampleInvoice>(SAMPLE_INVOICES[0]);
   const [activeStep, setActiveStep] = useState<number>(3);
@@ -169,7 +124,6 @@ export function Hero() {
   const [scrollTiltX, setScrollTiltX] = useState<number>(0);
   const [scrollScale, setScrollScale] = useState<number>(0.96);
   const [isHovered, setIsHovered] = useState<boolean>(false);
-  const [highlightedPillIndex, setHighlightedPillIndex] = useState<number>(0);
 
   // 1. Initial Page Load 3D Opening Animation (Entrance Wave)
   useEffect(() => {
@@ -190,16 +144,7 @@ export function Hero() {
     };
   }, []);
 
-  // 2. Sequential 1.5s Staggered Highlight Wave across the AI Engine agent legend
-  useEffect(() => {
-    const pillTimer = setInterval(() => {
-      setHighlightedPillIndex((prev) => (prev + 1) % 4);
-    }, 1500);
-
-    return () => clearInterval(pillTimer);
-  }, []);
-
-  // 3. Scroll-Driven 3D Interactive Parallax & Dynamic Tilt
+  // 2. Scroll-Driven 3D Interactive Parallax & Dynamic Tilt
   useEffect(() => {
     const handleScroll = () => {
       if (!cardRef.current) return;
@@ -312,103 +257,110 @@ export function Hero() {
             </a>
           </div>
 
-          {/* Flow diagram: connectors/email in -> AI Engine -> verified data/webhooks out */}
-          <div className="mt-9 flex flex-col lg:flex-row items-stretch lg:items-center justify-center gap-4 lg:gap-10">
+          {/* Before/after transform: a concrete invoice, not an abstract
+              diagram -- replaces Gap 163's flow diagram + separate outcome
+              strip with one visual that shows the actual value in one
+              glance. Deliberately static (not tied to selectedInvoice below)
+              -- this is a fixed, illustrative example, not another live demo. */}
+          <div className="mt-9 grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-5 max-w-4xl mx-auto">
 
-            {/* Inputs */}
-            <div className="flex flex-col gap-3 lg:w-[248px] shrink-0">
-              <FlowNode icon={Mail} title="Email Inbox" caption="Invoices arrive as attachments" accent="#3B82F6" />
-              <FlowNode icon={Database} title="Drive & Salesforce" caption="Connected source systems" accent="#22D3EE" />
-            </div>
-
-            {/* AI Engine core + colour-keyed agent legend */}
-            <div className="relative flex flex-col items-center gap-3.5 shrink-0">
-              {/* Connector beams, anchored to the ring itself (top-[52px] = the
-                  104px ring's vertical centre) so they always meet the circle's
-                  edge rather than stopping short of it as the legend width shifts. */}
-              <div
-                className="hidden lg:block pointer-events-none absolute top-[52px] -left-10 right-[calc(50%_+_52px)] h-px flowing-beam"
-                aria-hidden="true"
-              />
-              <div
-                className="hidden lg:block pointer-events-none absolute top-[52px] -right-10 left-[calc(50%_+_52px)] h-px flowing-beam"
-                aria-hidden="true"
-              />
-
-              <div className="relative flex items-center justify-center">
-                <div className="pointer-events-none absolute h-32 w-32 rounded-full bg-[#3B82F6]/25 blur-2xl" />
-                <div
-                  className="pointer-events-none absolute h-[132px] w-[132px] rounded-full border border-dashed border-white/15 animate-spin"
-                  style={{ animationDuration: "22s" }}
-                />
-                <div className="relative h-[104px] w-[104px] rounded-full border border-[#22D3EE]/45 bg-[#050816]/85 backdrop-blur-md flex flex-col items-center justify-center shadow-[0_0_45px_rgba(34,211,238,0.35)]">
-                  <Cpu className="w-5 h-5 text-[#22D3EE]" />
-                  <span className="mt-1 text-[11px] font-extrabold tracking-wide text-white leading-none">AI ENGINE</span>
-                  <span className="mt-1 text-[9px] font-mono text-[#64748B] leading-none">4 agents</span>
+            {/* Before: what arrives */}
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-md overflow-hidden text-left shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#64748B]">What arrives</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-[#64748B]" />
+              </div>
+              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-white/5 text-[11px] text-[#64748B]">
+                <Mail className="w-3 h-3" />
+                via email or connected apps
+              </div>
+              <div className="relative m-4 -rotate-1 rounded-sm bg-[#F4F1E9] p-5 text-[#2b2b28] shadow-[0_6px_20px_rgba(0,0,0,0.35)]">
+                <span className="absolute top-14 right-4 rotate-6 rounded border border-[#b3413a] px-1.5 py-0.5 font-mono text-[9px] tracking-wide text-[#b3413a] opacity-70">
+                  RECEIVED
+                </span>
+                <div className="mb-2 flex justify-between text-[10px] text-[#6b6a60]">
+                  <span>INV-9842</span>
+                  <span>PDF · 340KB</span>
+                </div>
+                <div className="mb-0.5 text-[15px] font-bold tracking-tight">TechCorp Solutions Inc.</div>
+                <div className="mb-3 text-[10px] text-[#8a8878]">Invoice · Net 30 · attached to email</div>
+                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-1 text-[10px] text-[#4a4940]">
+                  <span>Server Rack Module x4</span>
+                  <span>$18,720.00</span>
+                </div>
+                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-1 text-[10px] text-[#9c9a8c] line-through decoration-[#b3413a] decoration-wavy">
+                  <span>Gigabit Switch 48-Port</span>
+                  <span>$7,880.??</span>
+                </div>
+                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-1 text-[10px] text-[#4a4940]">
+                  <span>Installation Service</span>
+                  <span>$4,200.00</span>
+                </div>
+                <div className="flex justify-between py-1 text-[10px] text-[#4a4940]">
+                  <span>Tax</span>
+                  <span>$11,700.00</span>
+                </div>
+                <div className="mt-2 flex justify-between border-t border-[#4a4940] pt-2 text-xs font-bold">
+                  <span>Total Due</span>
+                  <span>$42,5??.00</span>
                 </div>
               </div>
+            </div>
 
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-                {AGENT_LEGEND.map((agent, idx) => {
-                  const Icon = agent.icon;
-                  const isHighlight = highlightedPillIndex === idx;
+            {/* AI Engine core */}
+            <div className="flex flex-row items-center justify-center gap-3 py-2 lg:flex-col">
+              <div className="hidden h-8 w-px bg-gradient-to-b from-transparent to-white/10 lg:block" />
+              <div className="relative flex items-center justify-center">
+                <div className="pointer-events-none absolute h-20 w-20 rounded-full bg-[#3B82F6]/25 blur-2xl" />
+                <div
+                  className="pointer-events-none absolute h-[76px] w-[76px] rounded-full border border-dashed border-white/15 animate-spin"
+                  style={{ animationDuration: "22s" }}
+                />
+                <div className="relative h-[64px] w-[64px] rounded-full border border-[#22D3EE]/45 bg-[#050816]/85 backdrop-blur-md flex items-center justify-center shadow-[0_0_30px_rgba(34,211,238,0.3)]">
+                  <Cpu className="w-4 h-4 text-[#22D3EE]" />
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-[11px] font-bold tracking-wide text-[#22D3EE]">AI Engine</div>
+                <div className="font-mono text-[9px] text-[#64748B]">4 agents, 6 sec</div>
+              </div>
+              <div className="hidden h-8 w-px bg-gradient-to-t from-transparent to-white/10 lg:block" />
+            </div>
 
-                  return (
-                    <span
-                      key={agent.name}
-                      className="flex items-center gap-1.5 rounded-md px-1.5 py-1 transition-all duration-300"
-                      style={{
-                        background: isHighlight ? `${agent.color}1A` : "transparent",
-                        boxShadow: isHighlight ? `inset 0 0 0 1px ${agent.color}4D` : "none",
-                      }}
-                    >
-                      <Icon
-                        className="w-3 h-3 shrink-0 transition-opacity duration-300"
-                        style={{ color: agent.color, opacity: isHighlight ? 1 : 0.65 }}
-                      />
-                      <span className="text-[10px] font-bold tracking-wide text-white leading-none">{agent.name}</span>
-                      <span className="text-[10px] text-[#64748B] leading-none">{agent.role}</span>
-                    </span>
-                  );
-                })}
+            {/* After: what you get */}
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-md overflow-hidden text-left shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#10B981]">What you get</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-[#10B981] shadow-[0_0_8px_#10B981]" />
+              </div>
+              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-white/5 text-[11px] text-[#64748B]">
+                <Zap className="w-3 h-3" />
+                synced to your systems via webhooks
+              </div>
+              <div className="p-4">
+                <div className="flex items-baseline justify-between border-b border-white/5 py-2">
+                  <span className="text-[11px] text-[#64748B]">Vendor</span>
+                  <span className="text-[13px] font-semibold text-white">TechCorp Solutions Inc.</span>
+                </div>
+                <div className="flex items-baseline justify-between border-b border-white/5 py-2">
+                  <span className="text-[11px] text-[#64748B]">Invoice #</span>
+                  <span className="font-mono text-xs text-white">INV-9842</span>
+                </div>
+                <div className="flex items-baseline justify-between border-b border-white/5 py-2">
+                  <span className="text-[11px] text-[#64748B]">PO Match</span>
+                  <span className="font-mono text-xs text-white">PO-88219 ✓</span>
+                </div>
+                <div className="flex items-baseline justify-between py-2">
+                  <span className="text-[11px] text-[#64748B]">Total</span>
+                  <span className="text-[13px] font-semibold text-white">$42,500.00</span>
+                </div>
+                <div className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[#10B981]/30 bg-[#10B981]/10 px-2.5 py-1.5 text-[11px] font-bold text-[#10B981]">
+                  <CheckCircle2 className="w-3 h-3" />
+                  Verified · 99.8% precision
+                </div>
               </div>
             </div>
 
-            {/* Outputs */}
-            <div className="flex flex-col gap-3 lg:w-[248px] shrink-0">
-              <FlowNode icon={FileCheck} title="Verified Data" caption="Approval-ready, audit-trailed" accent="#10B981" />
-              <FlowNode icon={Zap} title="Webhooks" caption="Pushed back to your systems" accent="#8B5CF6" />
-            </div>
-
-          </div>
-
-          {/* Concrete outcome: same sample data the pipeline demo below runs on */}
-          <div className="mt-6 mx-auto max-w-2xl rounded-xl border border-[#10B981]/25 bg-[#050816]/70 backdrop-blur-md px-4 py-3 flex flex-wrap items-center justify-center sm:justify-between gap-x-5 gap-y-3 text-left">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8 w-8 shrink-0 rounded-lg bg-[#10B981]/15 border border-[#10B981]/30 flex items-center justify-center">
-                <FileCheck className="w-4 h-4 text-[#10B981]" />
-              </div>
-              <div className="min-w-0">
-                <span className="block text-xs font-semibold text-white leading-tight">{selectedInvoice.vendor}</span>
-                <span className="block text-[10px] font-mono text-[#64748B] leading-tight">
-                  Invoice #{selectedInvoice.id} • PO #{selectedInvoice.poNumber}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-5">
-              <div>
-                <span className="block text-[9px] uppercase tracking-wider text-[#64748B] leading-none">Total</span>
-                <span className="text-sm font-bold font-mono text-[#22D3EE]">{selectedInvoice.amount}</span>
-              </div>
-              <div>
-                <span className="block text-[9px] uppercase tracking-wider text-[#64748B] leading-none">Precision</span>
-                <span className="text-sm font-bold font-mono text-[#3B82F6]">{selectedInvoice.confidence}</span>
-              </div>
-              <span className="text-[10px] px-2 py-1 rounded bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30 font-semibold shrink-0">
-                {selectedInvoice.status}
-              </span>
-            </div>
           </div>
 
           {/* Trust-signal row -- last element of the above-the-fold block */}
