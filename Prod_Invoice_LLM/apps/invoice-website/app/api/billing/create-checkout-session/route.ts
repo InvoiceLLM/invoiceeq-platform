@@ -10,9 +10,19 @@ import { auth } from "@clerk/nextjs/server";
  * /api/auth/provision proxy (Gap 7). Forwards the caller's real Clerk
  * session token so the backend's Admin-role gate
  * (routers/billing.py::create_checkout_session) can actually verify it.
+ *
+ * Gap 174: under Multi-Zone, invoice-fe's Subscriptions page posts to this
+ * website-owned route (billing is not in feApiPrefixes; this app has the
+ * local handler). Two bugs here meant PayU never opened even after Gaps
+ * 101/120/132 routed the user to a working upgrade CTA:
+ *   1. `auth()` was not awaited (Clerk v5 App Router) -- session looked empty
+ *      and the handler returned 401.
+ *   2. `getToken()` had no template -- Clerk's bare session token omits
+ *      org_id/org_role, so the backend resolved Viewer and 403'd Admin-only
+ *      checkout (same class as the Gap 109 / backendProxy fix on invoice-fe).
  */
 export async function POST(request: NextRequest) {
-  const { userId, getToken } = auth();
+  const { userId, getToken } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
   }
@@ -22,7 +32,14 @@ export async function POST(request: NextRequest) {
     throw new Error("BACKEND_API_URL is not set");
   }
 
-  const token = await getToken();
+  const token = await getToken({ template: "invoice-app" });
+  if (!token) {
+    return NextResponse.json(
+      { error: "Could not mint a session token for checkout." },
+      { status: 401 }
+    );
+  }
+
   const body = await request.text();
 
   const response = await fetch(
