@@ -37,11 +37,102 @@ def _publish_sse_events(batch_id: str, payload: dict) -> None:
 import io
 from services.storage import download_pdf_from_storage
 
-def _run_ocr(file_path: str, settings: Settings) -> str:
+
+def _serialize_di_field(field) -> dict | None:
+    """Gap 178: turn one Azure DocumentField into plain JSON (no polygons)."""
+    if field is None:
+        return None
+
+    out: dict = {}
+    field_type = getattr(field, "type", None) or getattr(field, "value_type", None)
+    if field_type:
+        out["type"] = field_type
+    confidence = getattr(field, "confidence", None)
+    if confidence is not None:
+        out["confidence"] = confidence
+
+    if getattr(field, "value_string", None) is not None:
+        out["value"] = field.value_string
+    elif getattr(field, "value_number", None) is not None:
+        out["value"] = field.value_number
+    elif getattr(field, "value_integer", None) is not None:
+        out["value"] = field.value_integer
+    elif getattr(field, "value_date", None) is not None:
+        d = field.value_date
+        out["value"] = d.isoformat() if hasattr(d, "isoformat") else str(d)
+    elif getattr(field, "value_time", None) is not None:
+        t = field.value_time
+        out["value"] = t.isoformat() if hasattr(t, "isoformat") else str(t)
+    elif getattr(field, "value_phone_number", None) is not None:
+        out["value"] = field.value_phone_number
+    elif getattr(field, "value_country_region", None) is not None:
+        out["value"] = field.value_country_region
+    elif getattr(field, "value_currency", None) is not None:
+        cv = field.value_currency
+        if isinstance(cv, dict):
+            out["value"] = cv
+        else:
+            out["value"] = {
+                "amount": getattr(cv, "amount", None),
+                "currency_code": getattr(cv, "currency_code", None)
+                or getattr(cv, "currencyCode", None),
+            }
+    elif getattr(field, "value_address", None) is not None:
+        addr = field.value_address
+        if isinstance(addr, dict):
+            out["value"] = addr
+        else:
+            out["value"] = {
+                k: getattr(addr, k, None)
+                for k in (
+                    "house_number",
+                    "po_box",
+                    "road",
+                    "city",
+                    "state",
+                    "postal_code",
+                    "country_region",
+                    "street_address",
+                )
+                if getattr(addr, k, None) is not None
+            }
+    elif getattr(field, "value_array", None) is not None:
+        out["value"] = [_serialize_di_field(item) for item in field.value_array]
+    elif getattr(field, "value_object", None) is not None:
+        obj = field.value_object or {}
+        out["value"] = {
+            key: _serialize_di_field(sub)
+            for key, sub in obj.items()
+        }
+    elif getattr(field, "content", None) is not None:
+        out["value"] = field.content
+
+    return out
+
+
+def _serialize_di_document_fields(fields) -> dict:
+    """Gap 178: DI prebuilt-invoice fields → JSON-safe dict for source_document_json."""
+    if not fields:
+        return {}
+    serialized = {}
+    for name, field in fields.items():
+        try:
+            serialized[name] = _serialize_di_field(field)
+        except Exception as e:
+            logger.warning("Failed to serialize Doc Intelligence field %s: %s", name, e)
+            content = getattr(field, "content", None)
+            if content is not None:
+                serialized[name] = {"value": content}
+    return serialized
+
+
+def _run_ocr(file_path: str, settings: Settings):
     """
     Runs the OCR / PDF layout extraction process for a given file path.
     - In local dev (LLM_PROVIDER=ollama): extracts text using local pypdf.
     - In production (LLM_PROVIDER=azure): calls Azure Document Intelligence.
+    Azure path returns a dict with content, coordinates, field_confidence,
+    tax_details_sum, and source_document_json (Gap 178).
     """
     # Download file bytes from storage (Azure Blob or Local Filesystem)
     try:
@@ -144,10 +235,12 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
     coordinates_list = []
     confidence_dict = {}
     tax_details_sum = None
+    source_document_json = None
 
     if hasattr(result, "documents") and result.documents:
         doc = result.documents[0]
         if hasattr(doc, "fields") and doc.fields:
+            source_document_json = _serialize_di_document_fields(doc.fields)
             for field_name, field in doc.fields.items():
                 if hasattr(field, "confidence") and field.confidence is not None:
                     confidence_dict[field_name] = field.confidence
@@ -207,7 +300,8 @@ def _run_ocr(file_path: str, settings: Settings) -> str:
         "content": result.content or "",
         "coordinates": coordinates_list,
         "field_confidence": confidence_dict,
-        "tax_details_sum": tax_details_sum
+        "tax_details_sum": tax_details_sum,
+        "source_document_json": source_document_json,
     }
 
 
@@ -419,10 +513,12 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
             _extracted_text = ocr_result["content"]
             coordinates = ocr_result.get("coordinates", [])
             field_confidence = ocr_result.get("field_confidence", {})
+            source_document_json = ocr_result.get("source_document_json")
         else:
             _extracted_text = ocr_result
             coordinates = []
             field_confidence = {}
+            source_document_json = None
         
         # 3. Update status: extracting structures (agent processing)
         _publish_sse_events(batch_id, {"status": "EXTRACTING_DATA", "message": "Extracting structured fields using LLM..."})
@@ -515,6 +611,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.po_number = extracted_data.get("po_number")
                 invoice.coordinates = coordinates
                 invoice.field_confidence = field_confidence
+                invoice.source_document_json = source_document_json
                 invoice.currency = extracted_data.get("currency")
                 invoice.discount_percent = extracted_data.get("discount_percent")
                 invoice.discount_amount = extracted_data.get("discount_amount")

@@ -44,10 +44,12 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
             ocr_text = ocr_result["content"]
             coordinates = ocr_result.get("coordinates", [])
             field_confidence = ocr_result.get("field_confidence", {})
+            source_document_json = ocr_result.get("source_document_json")
         else:
             ocr_text = ocr_result
             coordinates = []
             field_confidence = {}
+            source_document_json = None
 
         _publish_sse_events(batch_id, {"status": "EXTRACTING_DATA", "message": "Extracting structured fields using LLM..."})
 
@@ -107,6 +109,7 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 invoice.currency = extracted_data.get("currency")
                 invoice.coordinates = coordinates
                 invoice.field_confidence = field_confidence
+                invoice.source_document_json = source_document_json
                 invoice.status = status
                 invoice.sa_alerts = alerts
                 invoice.items = extracted_data.get("items", [])

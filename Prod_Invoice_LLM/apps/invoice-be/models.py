@@ -61,6 +61,10 @@ class Invoice(SQLModel, table=True):
     items: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     coordinates: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     field_confidence: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
+    # Gap 178: Doc Intelligence prebuilt-invoice structured fields (JSON), used
+    # as the PDF-side reference when checking extraction completeness. Not the
+    # PDF binary — that stays in blob storage via file_path.
+    source_document_json: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
     currency: str | None = Field(default=None)
     discount_percent: float | None = Field(default=None)
     discount_amount: float | None = Field(default=None)
