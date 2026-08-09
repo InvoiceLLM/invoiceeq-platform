@@ -149,8 +149,10 @@ export default function LoginPage() {
           // guarded by the catch below; changing the strategy would alter the
           // auth flow, so the behaviour is left as-is. See FIXME in docs.
           await result.prepareSecondFactor({ strategy: "email_code" });
+          // OTP copy lives on the verify form -- do not stash it in `error`
+          // or "← Back to Login" leaves a red banner on the password form.
           setNeedsOtp(true);
-          setError("📧 Enter the 6-digit verification code sent to your email.");
+          setError(null);
           setLoading(false);
           return;
         } catch {
@@ -343,7 +345,16 @@ export default function LoginPage() {
 
               <button
                 type="button"
-                onClick={() => setNeedsOtp(false)}
+                onClick={() => {
+                  // Flipping needsOtp alone left otpCode + a leftover banner and
+                  // kept Clerk mid second-factor -- password form then looked /
+                  // behaved odd. Soft-reset UI state; next Sign In calls
+                  // signIn.create() again and starts a fresh attempt.
+                  setNeedsOtp(false);
+                  setOtpCode("");
+                  setError(null);
+                  setLoading(false);
+                }}
                 style={{ background: "none", border: "none", color: T.textDim, fontSize: "13px", marginTop: "12px", width: "100%", cursor: "pointer" }}
               >
                 ← Back to Login

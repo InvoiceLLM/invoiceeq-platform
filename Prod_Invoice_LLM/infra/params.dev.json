@@ -82,6 +82,9 @@
     },
     "clerkJwksUrl": {
       "value": "https://great-baboon-11.clerk.accounts.dev/.well-known/jwks.json"
+    },
+    "payuMode": {
+      "value": "test"
     }
   }
 }

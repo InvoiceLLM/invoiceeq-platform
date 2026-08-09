@@ -47,6 +47,14 @@ param sendgridApiKey string
 @secure()
 param sendgridInboundSecret string
 
+@description('PayU Merchant Key (Feature 11 billing). Test/Live keys differ -- seed the pair that matches payuMode on invoice-be. Not the OAuth client/secret pair; classic hash checkout only needs key + salt.')
+@secure()
+param payuMerchantKey string
+
+@description('PayU Merchant Salt v2/SHA512 (Feature 11 billing). Must match the Merchant Key environment (test vs live).')
+@secure()
+param payuMerchantSalt string
+
 @description('Number of Document Intelligence resources deployed in Stage 4 (must match). Dev=1, prod=3 -- gates whether the DOC-INTEL-KEY-2/3 and DOC-INTEL-ENDPOINT-2/3 secrets are seeded.')
 @minValue(1)
 @maxValue(3)
@@ -234,15 +242,29 @@ resource secretSendgridInboundSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-
   }
 }
 
-// Computed, not hardcoded: 11 always-seeded secrets (DATABASE-URL, REDIS-URL,
+resource secretPayuMerchantKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'PAYU-MERCHANT-KEY'
+  properties: {
+    value: payuMerchantKey
+  }
+}
+
+resource secretPayuMerchantSalt 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'PAYU-MERCHANT-SALT'
+  properties: {
+    value: payuMerchantSalt
+  }
+}
+
+// Computed, not hardcoded: 13 always-seeded secrets (DATABASE-URL, REDIS-URL,
 // AZURE-STORAGE-CONNECTION-STRING, AZURE-OPENAI-API-KEY, AZURE-DOC-INTEL-KEY,
 // CLERK-SECRET-KEY, TOKEN-ENCRYPTION-KEY, GOOGLE-CLIENT-SECRET,
-// SALESFORCE-CLIENT-SECRET, SENDGRID-API-KEY, SENDGRID-INBOUND-SECRET) + 2
-// more per additional Doc Intelligence instance beyond the first (KEY +
-// ENDPOINT, gated on docIntelInstanceCount). This was hardcoded to 9 and went
-// stale the moment Gap 41/42 added the docintel-2/3 secrets, and again just
-// now adding the 2 SendGrid secrets (actual count today, with
-// docIntelInstanceCount=3, is 15) -- deploy-all.ps1's Stage 5 gate reads this
-// output instead of asserting a literal number, so it can't go stale the same
-// way again.
-output secretsSeeded int = 11 + (2 * (docIntelInstanceCount - 1))
+// SALESFORCE-CLIENT-SECRET, SENDGRID-API-KEY, SENDGRID-INBOUND-SECRET,
+// PAYU-MERCHANT-KEY, PAYU-MERCHANT-SALT) + 2 more per additional Doc
+// Intelligence instance beyond the first (KEY + ENDPOINT, gated on
+// docIntelInstanceCount). deploy-all.ps1's Stage 5 gate reads this output
+// instead of asserting a literal number, so it can't go stale the same way
+// again.
+output secretsSeeded int = 13 + (2 * (docIntelInstanceCount - 1))

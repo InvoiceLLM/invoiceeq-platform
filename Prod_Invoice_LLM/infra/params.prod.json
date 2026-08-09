@@ -97,6 +97,9 @@
     },
     "salesforceClientId": {
       "value": "REPLACE_WITH_PROD_SALESFORCE_CONNECTED_APP_CONSUMER_KEY"
+    },
+    "payuMode": {
+      "value": "live"
     }
   }
 }

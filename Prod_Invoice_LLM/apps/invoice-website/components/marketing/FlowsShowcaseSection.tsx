@@ -75,8 +75,12 @@ export function FlowsShowcaseSection({ onOpenModal }: FlowsShowcaseSectionProps)
             See Intelligent Agent Architecture <span className="animated-hero-heading inline-block">In Action</span>
           </h2>
 
-          <p className="text-base sm:text-lg text-[#94A3B8] leading-relaxed max-w-2xl mx-auto">
-            Watch how multi-agent LLM consensus, OCR parsing, and dual-direction rules process enterprise invoices in real time across four live pipelines.
+          <p className="text-base sm:text-lg text-[#E2E8F0] leading-relaxed max-w-2xl mx-auto font-medium">
+            See exactly how your invoices get checked and verified, step by step.
+          </p>
+
+          <p className="text-sm sm:text-base text-[#94A3B8] leading-relaxed max-w-2xl mx-auto">
+            Cross-checked by multiple AI models for accuracy, with real-time text extraction and rules that adapt for invoices coming in or going out — across four live pipelines.
           </p>
         </div>
 

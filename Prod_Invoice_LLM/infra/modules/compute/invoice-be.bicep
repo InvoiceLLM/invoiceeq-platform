@@ -58,6 +58,17 @@ param sendgridSendingDomain string = ''
 @description('Real FE origin (https://...) -- oauth_callback() redirects the browser here once a connector OAuth flow completes, since Google/Salesforce hit this backend directly')
 param frontendUrl string = ''
 
+// Feature 11 PayU: key/salt come from Key Vault (Stage 5). Mode and the two
+// public website origins are plain params -- not secrets.
+@description('PayU environment: test -> test.payu.in, live -> secure.payu.in')
+param payuMode string = 'test'
+
+@description('Public origin PayU POSTs surl/furl to -- invoice-website FQDN (be ingress is internal-only; website relays /api/v1/billing/payu/*)')
+param backendPublicUrl string = ''
+
+@description('Public origin for /billing/success and /billing/failed redirects after PayU -- invoice-website FQDN')
+param publicAppUrl string = ''
+
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -153,6 +164,16 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'sendgrid-inbound-secret-secret'
           keyVaultUrl: '${keyVaultUrl}/secrets/SENDGRID-INBOUND-SECRET'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'payu-merchant-key-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/PAYU-MERCHANT-KEY'
+          identity: userAssignedIdentityId
+        }
+        {
+          name: 'payu-merchant-salt-secret'
+          keyVaultUrl: '${keyVaultUrl}/secrets/PAYU-MERCHANT-SALT'
           identity: userAssignedIdentityId
         }
       ]
@@ -274,6 +295,26 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'SENDGRID_SENDING_DOMAIN'
               value: sendgridSendingDomain
+            }
+            {
+              name: 'PAYU_MERCHANT_KEY'
+              secretRef: 'payu-merchant-key-secret'
+            }
+            {
+              name: 'PAYU_MERCHANT_SALT'
+              secretRef: 'payu-merchant-salt-secret'
+            }
+            {
+              name: 'PAYU_MODE'
+              value: payuMode
+            }
+            {
+              name: 'BACKEND_PUBLIC_URL'
+              value: backendPublicUrl
+            }
+            {
+              name: 'PUBLIC_APP_URL'
+              value: publicAppUrl
             }
             {
               name: 'FRONTEND_URL'
