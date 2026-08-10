@@ -3,17 +3,8 @@
 /**
  * Feature 10 — ServiceFlowToggles.tsx
  *
- * Two independently-toggleable switches:
- *   - Receive Invoices (Inbound / AP)
- *   - Send Invoices    (Outbound / AR) — requires outbound_sender_email + pro_combined plan
- *
- * Behaviour:
- *   - Admin: both switches and the sender-email field are interactive.
- *   - Non-Admin: everything renders disabled with an explanatory tooltip.
- *   - Trying to enable "Send Invoices" with an empty sender email → blocked client-side,
- *     inline error shown, no network call made.
- *   - If the tenant's billing_plan is not 'pro_combined' and Admin tries to enable
- *     "Send Invoices" → opens the Combined Pro Upgrade Modal instead.
+ * Receive / Send switches. Send requires ≥1 outbound authorized email
+ * (Settings → Email) + pro_combined plan.
  */
 
 import React, { useState, useEffect } from "react";
@@ -28,6 +19,7 @@ import {
   ExternalLink,
   Sparkles,
   X,
+  Mail,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +31,7 @@ interface ServiceFlowState {
   send_invoices_enabled: boolean;
   outbound_sender_email: string | null;
   billing_plan: string;
+  outbound_authorized_count?: number;
 }
 
 interface Toast {
@@ -212,22 +205,19 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
     const enablingNow = !settings.send_invoices_enabled;
 
     if (enablingNow) {
-      const email = (settings.outbound_sender_email || "").trim();
-      if (!email) {
-        setEmailError("Outbound Sender Email must be configured under Email Settings before enabling Send Invoices.");
+      if ((settings.outbound_authorized_count ?? 0) < 1) {
+        setEmailError(
+          "Add at least one outbound authorized email under Email Setup before enabling Send Invoices."
+        );
         return;
       }
-      // Billing plan guard
       if (settings.billing_plan !== "pro_combined") {
         setShowUpgradeModal(true);
         return;
       }
     }
 
-    await save({
-      send_invoices_enabled: enablingNow,
-      outbound_sender_email: settings.outbound_sender_email || null,
-    });
+    await save({ send_invoices_enabled: enablingNow });
   };
 
 
@@ -323,29 +313,29 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
             </div>
           </div>
 
-          {/* Outbound Sender Email tile */}
+          {/* Email Setup tile */}
           <div className="flex flex-col justify-between px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
             <div className="flex items-start justify-between gap-2">
-              <div className="w-9 h-9 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
-                <Send className="w-4 h-4 text-violet-400" />
+              <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                <Mail className="w-4 h-4 text-amber-400" />
               </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 font-mono font-bold">
-                AR SENDER
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono font-bold">
+                SETS
               </span>
             </div>
             <div className="mt-4">
-              <p className="text-sm font-medium text-white">Sender Email</p>
-              <p className="text-[11px] text-slate-400 mt-1 leading-tight truncate select-all" title={settings.outbound_sender_email || "Not Configured"}>
-                {settings.outbound_sender_email || "Not Configured"}
+              <p className="text-sm font-medium text-white">Email Setup</p>
+              <p className="text-[11px] text-slate-400 mt-1 leading-tight">
+                {(settings.outbound_authorized_count ?? 0) > 0
+                  ? `${settings.outbound_authorized_count} outbound authorized`
+                  : "No outbound authorized emails"}
               </p>
-              {isAdmin && (
-                <Link
-                  href="/settings/email"
-                  className="mt-2 inline-flex items-center text-[11px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  Configure Email &rarr;
-                </Link>
-              )}
+              <Link
+                href="/settings/email"
+                className="mt-2 inline-flex items-center text-[11px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                Open Email Setup &rarr;
+              </Link>
             </div>
           </div>
 

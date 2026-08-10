@@ -142,6 +142,10 @@ class Settings(BaseSettings):
     # so a file the worker genuinely cannot process can't loop forever.
     INVOICE_STUCK_AFTER_MINUTES: int = 15
     INVOICE_MAX_REPROCESS_ATTEMPTS: int = 2
+    # Feature 14: one platform-wide mailbox (not per-tenant).
+    # Tenant + direction are resolved from the sender's registered set.
+    EMAIL_APP_DOMAIN: str = "invoiceeq.app"
+    EMAIL_APP_ADDRESS: str = "invoices@invoiceeq.app"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

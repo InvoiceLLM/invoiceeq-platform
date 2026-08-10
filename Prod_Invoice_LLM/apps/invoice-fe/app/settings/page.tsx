@@ -56,8 +56,8 @@ const INTEGRATIONS: IntegrationTile[] = [
   },
   {
     id: "email",
-    title: "Email",
-    desc: "Inbound alias & outbound sender config",
+    title: "Email Setup",
+    desc: "App mailbox & inbound/outbound authorized sets",
     href: "/settings/email",
     icon: Mail,
     iconBg: "bg-amber-500/10 border-amber-500/20",

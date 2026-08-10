@@ -62,14 +62,14 @@ Connectors allow tenants to import/export documents to their workspace Google Dr
 2. Go to **APIs & Services** > **OAuth consent screen** (configure as External, add `.../auth/drive.readonly` scope).
 3. Under **Credentials** > **Create Credentials** > **OAuth client ID** (Web application).
 4. Set Authorized Redirect URI to:
-   `https://<backend-domain>/api/v1/connectors/callback/google_drive`
+   `https://<frontend-domain>/api/connectors/callback/google_drive`
 5. Copy the **Client ID** and **Client Secret**.
 
 ### Salesforce Connected App Setup:
 1. Log in to your Salesforce Org, go to **Setup** > **App Manager** > **New Connected App**.
 2. Check **Enable OAuth Settings**.
 3. Set Callback URL to:
-   `https://<backend-domain>/api/v1/connectors/callback/salesforce`
+   `https://<frontend-domain>/api/connectors/callback/salesforce`
 4. Under Selected OAuth Scopes, add:
    * `Access and manage your data (api)`
    * `Perform requests at any time (refresh_token, offline_access)`

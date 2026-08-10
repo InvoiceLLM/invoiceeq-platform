@@ -69,10 +69,10 @@
       "value": "acrinvoicellmdev.azurecr.io/invoice-website:latest"
     },
     "googleClientId": {
-      "value": "462421932899-l4l5oesadqrmfrbm2i6er3a6gpfmsm3m.apps.googleusercontent.com"
+      "value": "147555722752-0mcfrfdrlhqdir5jeume0kqo04j5t4ee.apps.googleusercontent.com"
     },
     "salesforceClientId": {
-      "value": "3MVG9.Houp75EVdZiPnzAXP1ly3NOyDA1TAh7PFpBvzsf6qxIjwVSJoxyMRmkvNbfU4twmqALTJ_SZtlRrylg"
+      "value": "3MVG9.Houp75EVdbyeD7jb1ifYDKsbA13wj01m3m.S52wgdrGqf8yFPguY7jkx299zTSsAjlGIO_o1WcSK48g"
     },
     "sendgridSendingDomain": {
       "value": ""

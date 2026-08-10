@@ -36,7 +36,7 @@ class Tenant(SQLModel, table=True):
     # Feature 16: Service Flow toggles
     receive_invoices_enabled: bool = Field(default=True)   # Inbound (AP) — on by default, preserves existing behaviour
     send_invoices_enabled: bool = Field(default=False)     # Outbound (AR) — opt-in, requires pro_combined plan
-    outbound_sender_email: str | None = Field(default=None, max_length=255)  # "From" address for outbound delivery
+    outbound_sender_email: str | None = Field(default=None, max_length=255)  # Legacy Gap 125 Reply-To placeholder; Email Setup uses TenantEmailSender sets
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -244,14 +244,20 @@ class ExtractionTemplateVersion(SQLModel, table=True):
 
 
 class TenantEmailSender(SQLModel, table=True):
-    """Allow-list of email addresses permitted to submit invoices for a given tenant (Task 14.3)."""
+    """Authorized tenant-owned emails that may submit PDFs to the global app mailbox.
+
+    One platform mailbox (EMAIL_APP_ADDRESS). Webhook resolves tenant_id and
+    direction from From → this row (`email_set` inbound|outbound). `email` is
+    globally unique so one sender maps to exactly one tenant/set.
+    """
     __tablename__ = "tenant_email_senders"
     __table_args__ = (
-        sa.UniqueConstraint("tenant_id", "email", name="uq_tenant_email_senders_tenant_email"),
+        sa.UniqueConstraint("email", name="uq_tenant_email_senders_email"),
     )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(index=True, foreign_key="tenant.id")
     email: str = Field(index=True, max_length=255)
+    email_set: str = Field(default="inbound", max_length=20, index=True)  # inbound | outbound
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

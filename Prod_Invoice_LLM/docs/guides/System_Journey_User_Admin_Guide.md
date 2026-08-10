@@ -16,7 +16,7 @@ Marking convention:
 - **Viewer** — read-only access to Dashboard and Chat.
 
 ### A typical Monday
-Priya, an AP clerk, receives a stack of vendor invoices by email. She opens **Ingestion**, drags in five PDFs, and watches each one move through a live status bar — *Extracting text → Reading fields → Done* — usually inside a minute per invoice, since real OCR and AI extraction are running behind the scenes (**NOVA** — Smart Invoice Extraction agent), not a canned demo. Most land as **Completed**; a couple get flagged **Needs Review**, because **SENTINEL** (Invoice Risk Detection agent) automatically caught a field that was low-confidence or a total that didn't match what's printed on the page.
+Priya, an AP clerk, receives a stack of vendor invoices by email. She (or a registered AP address) can also forward PDFs to the shared app mailbox `invoices@invoiceeq.app` after an Admin adds her address to the **inbound** authorized set under **Settings → Email**. She opens **Ingestion**, drags in five PDFs, and watches each one move through a live status bar — *Extracting text → Reading fields → Done* — usually inside a minute per invoice, since real OCR and AI extraction are running behind the scenes (**NOVA** — Smart Invoice Extraction agent), not a canned demo. Most land as **Completed**; a couple get flagged **Needs Review**, because **SENTINEL** (Invoice Risk Detection agent) automatically caught a field that was low-confidence or a total that didn't match what's printed on the page.
 
 She opens the **Auditor** screen for the first flagged invoice. The PDF sits on one side, the extracted fields on the other — she can see exactly where the AI read the tax amount from, click any field to correct it, and save. If she happens to fix the same kind of mistake three times for the same vendor, the system quietly notices and offers: *"Want to save this as a rule?"* — one click sends her straight into the **Trainer** screen with that correction pre-filled, so the AI stops making the same mistake on that vendor's future invoices.
 
@@ -51,7 +51,7 @@ The **Dashboard** behaves differently here than the tabs above: if you're using 
 
 ### What this does *not* include
 - **No invoice creation/branding tool** — upload-only for now; a proper builder (logo, templates) is a separate future project.
-- **No customer-facing delivery** — nothing here emails the invoice to your customer or gives them a portal to view/pay it; this stops at "you can create, verify, and track your own outbound invoices inside this app."
+- **No customer-facing delivery yet** — Confirm Send does not email the customer (Gap 125). Staff can email the tenant’s own PDFs to `invoices@invoiceeq.app` for outbound audit if their address is on the **outbound** authorized set (Settings → Email).
 - **No pricing decided yet** — whether this comes free, requires the paid tier, or costs extra is an open question, deliberately not settled yet.
 
 ---

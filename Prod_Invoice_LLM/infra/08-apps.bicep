@@ -137,12 +137,11 @@ resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' exist
 var frontendFqdn = 'ca-invoice-fe-${environment}.${cae.properties.defaultDomain}'
 var websiteFqdn = 'ca-invoice-website-${environment}.${cae.properties.defaultDomain}'
 
-// OAuth redirect URIs must be the FE's public origin, not the backend's --
-// backendApp's ingress is external:false (internal-only), so Google/Salesforce
-// redirect the browser back to the FE, whose own /api/connectors/callback/
-// [provider] route proxies through to the backend's real callback endpoint.
-var googleRedirectUri = 'https://${frontendFqdn}/api/connectors/callback/google_drive'
-var salesforceRedirectUri = 'https://${frontendFqdn}/api/connectors/callback/salesforce'
+// OAuth redirect URIs must be the public origin (website), not the backend or internal frontend --
+// backendApp and frontendApp are both internal-only (external:false), so Google/Salesforce
+// redirect the browser back to the website, which proxies it to the frontend container.
+var googleRedirectUri = 'https://${websiteFqdn}/api/connectors/callback/google_drive'
+var salesforceRedirectUri = 'https://${websiteFqdn}/api/connectors/callback/salesforce'
 
 module backendApp './modules/compute/invoice-be.bicep' = {
   name: 'backend-deploy'
@@ -170,7 +169,10 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     payuMode: payuMode
     backendPublicUrl: 'https://${websiteFqdn}'
     publicAppUrl: 'https://${websiteFqdn}'
-    frontendUrl: 'https://${frontendFqdn}'
+    // Post-Multi-Zone: browser never reaches FE (ingress external:false). Any
+    // full-page RedirectResponse (e.g. connectors oauth_callback) must land on
+    // the public website origin, which proxies /settings/* to FE.
+    frontendUrl: 'https://${websiteFqdn}'
     cpu: backendCpu
     memory: backendMemory
     minReplicas: backendMinReplicas

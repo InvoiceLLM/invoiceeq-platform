@@ -55,7 +55,7 @@ param salesforceRedirectUri string = ''
 @description('SendGrid-authenticated domain used as the technical From for outbound mail (Gap 125) -- e.g. mail.invoice-ai.com')
 param sendgridSendingDomain string = ''
 
-@description('Real FE origin (https://...) -- oauth_callback() redirects the browser here once a connector OAuth flow completes, since Google/Salesforce hit this backend directly')
+@description('Public browser origin for full-page redirects after connector OAuth (settings/connectors). Must be the invoice-website FQDN under Multi-Zone — FE is internal-only and returns Azure\'s "stopped or does not exist" page if the browser is sent there.')
 param frontendUrl string = ''
 
 // Feature 11 PayU: key/salt come from Key Vault (Stage 5). Mode and the two

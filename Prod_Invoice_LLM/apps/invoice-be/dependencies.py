@@ -152,6 +152,7 @@ def get_tenant_context_allow_unpaid(
         first_name = "Test"
         last_name = "User"
         clerk_org_id = None
+        raw_org_role = None
     else:
         token = authorization.split(" ")[1]
 
@@ -168,6 +169,7 @@ def get_tenant_context_allow_unpaid(
 
             tenant_id = MOCK_TENANT_ID
             clerk_org_id = None
+            raw_org_role = None
             # Extract UUID if provided in test token
             for part in token.split("_"):
                 try:

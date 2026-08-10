@@ -120,6 +120,11 @@ completed a clean end-to-end run.
   push-triggered, one explicit `workflow_dispatch`) — both completed
   successfully end-to-end, `resolve-fqdns`'s Azure Login step succeeded both
   times ("Azure CLI login succeeds by using service principal with secret").
+  **Update (Aug 10, 2026)**: Fixed configuration drift where the OAuth redirect URIs and
+  `FRONTEND_URL` on the backend container app pointed to the internal-only frontend container FQDN
+  instead of the public website gateway. Updated `08-apps.bicep` to use `websiteFqdn` and applied
+  the changes directly to the running `ca-invoice-be-dev` container app along with updated Google
+  and Salesforce secrets.
 - **[ ] Stage 9: Monitoring** (`09-monitoring.bicep`) — Log Analytics
   (existing `law-invoice-llm-dev` gets reconciled), Application Insights
   (new), action group, diagnostic settings, ~16 health/availability alert

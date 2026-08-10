@@ -30,6 +30,23 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | `payu_subscription_id` | `VARCHAR(255)` | `NULL` | The most recent successful `txnid`/`mihpayid` that renewed this tenant's plan. Not a native subscription object — PayU's classic hash-based API is one-time-payment; "subscription" here just tracks the last renewal transaction that set the current `billing_plan`, since billing is a manual monthly re-payment flow, not auto-debit. |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Timestamp when the tenant workspace was created. |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Timestamp of the last workspace update. |
+| `receive_invoices_enabled` | `BOOLEAN` | `NOT NULL`, Default: `TRUE` | Service Flow — inbound AP processing enabled. |
+| `send_invoices_enabled` | `BOOLEAN` | `NOT NULL`, Default: `FALSE` | Service Flow — outbound AR processing enabled. |
+| `outbound_sender_email` | `VARCHAR(255)` | `NULL` | Legacy; customer-delivery Reply-To placeholder (Gap 125). Email Setup uses `tenant_email_senders` instead. |
+
+---
+
+## 1b. Table: `tenant_email_senders`
+
+*Authorized tenant-owned emails that may send invoice PDFs to the **global** app mailbox `invoices@invoiceeq.app`. Tenant + direction come from this row (`email_set`), not from the recipient address. `email` is unique platform-wide.*
+
+| Field Name | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY` | Row id. |
+| `tenant_id` | `UUID` | `FK → tenant.id`, indexed | Owning tenant. |
+| `email` | `VARCHAR(255)` | indexed, lowercased, **UNIQUE** | Authorized sender address (one workspace only). |
+| `email_set` | `VARCHAR(20)` | `NOT NULL`, Default `'inbound'`, Check: `IN ('inbound','outbound')` | AP inbound vs AR outbound audit. |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL` | When registered. |
 
 ---
 

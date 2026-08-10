@@ -1,29 +1,22 @@
-# Feature 8: Email Ingest & Outbound Delivery Settings
+# Feature 8: Email Setup (Inbound & Outbound Authorized Sets)
 
-Settings page for a tenant to manage both inbound email ingestion and outbound invoice delivery configurations.
+Settings page for a tenant to manage authorized email sets for the **one global** app mailbox.
+
+### Product model (2026-08-10)
+* **App mailbox (platform-wide, not per tenant):** `invoices@invoiceeq.app` — every tenant sends to and receives notifications from this same address.
+* **Inbound set / Outbound set:** tenant-owned emails; webhook resolves **tenant + direction** from `From`, not from `To`.
+* Authorized `email` is **globally unique** (one address → one workspace).
 
 ### Navigation
-Lives under the **Settings** sidebar tab as a sub-section (`Settings → Email`), alongside Connectors (`feature_7_connectors.md`) and Webhooks (`feature_9_webhooks.md`).
-
-### Theme & Styling Specifications
-* Alias display card: `bg-[#151B26] border border-[#222D3D] rounded-xl p-4`, monospace alias text with a copy-to-clipboard button.
-* Allowed-senders list: same row style as `feature_7_connectors.md`'s connector cards.
-* Outbound Configuration: Text input for *Outbound Sender Email*, with a verify indicator and instructions for domain validation.
+**Settings → Email** (`/settings/email`).
 
 ### File Coordinates
-**Corrected 2026-08-01**: both files below marked "(not yet created)" actually exist and are live — this doc was never brought current after they were built (subsequently implemented as Features 7 and 8, per `feature_10_settings.md`'s own correct cross-reference).
-* Settings Page: [apps/invoice-fe/app/settings/email/page.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/settings/email/page.tsx)
-* Allowed-Senders Manager: [apps/invoice-fe/components/settings/EmailSendersList.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/settings/EmailSendersList.tsx)
-* Outbound Configuration Component: [apps/invoice-fe/components/settings/OutboundEmailSettings.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/settings/OutboundEmailSettings.tsx)
+* `app/settings/email/page.tsx` — mailbox copy + two set lists
+* `components/settings/EmailSendersList.tsx` — `emailSet: "inbound" | "outbound"`
+* Proxies: `app/api/email/settings/email-senders/*`, `app/api/email/settings/mailbox/route.ts`
 
 ### Tasks
-- [x] **Task 8.1: Display Inbound Alias & Manage Senders**
-  - Fetch and show the tenant's inbound alias with copy action.
-  - List/add/remove allowed sender addresses via `apps/invoice-fe/app/api/email/settings/email-senders/route.ts` (+ `[sender_id]/route.ts` for remove) → backend `/email/settings/email-senders`. **Path corrected 2026-08-01** — this doc previously said `/api/v1/settings/email-senders`, which isn't the real route.
-- [x] **Task 8.2: Outbound Sender Email Configuration**
-  - Input field to save/update `outbound_sender_email` via `PUT /settings/vendor-flow`.
-  - Format-validate input client-side before dispatching save request.
-
-### Verification Plan
-* **Manual Verification**: Verify copy alias works. Add/remove a sender and verify DB updates. Save a valid outbound sender email and confirm settings reload persistence.
-
+- [x] **Task 8.1:** Display global mailbox with copy (`GET /email/settings/mailbox`).
+- [x] **Task 8.2–8.3:** Inbound / outbound authorized email CRUD.
+- [x] **Task 8.4:** Dual-set redesign; Gap 147 superseded.
+- [x] **Task 8.5:** Global mailbox (not `{tenant_id}@…`).

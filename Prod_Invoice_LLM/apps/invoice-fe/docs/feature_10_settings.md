@@ -10,16 +10,15 @@ New feature — the app's first `/settings` route. Confirmed via a full listing 
 
 ### Functionality
 
-**`ServiceFlowToggles.tsx`:** two switches, *Receive Invoices* and *Send Invoices*, each independently toggleable, plus a text input for *Outbound Sender Email* (shown once, above the *Send Invoices* switch, since the switch depends on it). Disabled (not hidden) for non-Admin roles, with a tooltip explaining why. 
+**`ServiceFlowToggles.tsx`:** two switches, *Receive Invoices* and *Send Invoices*, plus a middle tile linking to **Email Setup** (`/settings/email`) for the single app mailbox and inbound/outbound authorized sets (Feature 8, redesigned 2026-08-10). Disabled (not hidden) for non-Admin roles, with a tooltip explaining why.
 
-**Upgrade Verification Gate**:
+**Upgrade / enable gate for Send Invoices**:
 * When an Admin toggles *Send Invoices* ON:
-  * The component checks the current tenant's `billing_plan` (fetched via `GET /api/settings/service-flow` on mount).
-  * If the plan is `'pro_combined'`, the toggle behaves normally.
-  * If the plan is anything else (e.g. `'free'` or standard `'pro'`), the toggle remains off and opens the **Combined Pro Upgrade Modal**. Its "Upgrade Now" button targets `COMBINED_PLAN_UPGRADE_URL` = `${NEXT_PUBLIC_WEBSITE_URL}/?plan=pro_combined#pricing` — invoice-website's `PricingTable`, which highlights and scrolls to the Pro Combined card on that `?plan=` param. **This was `/billing/upgrade` in the original design and for a long time in the code: a route that has never existed in either app, i.e. a dead end at the terminal click of the only upgrade funnel a non-combined tenant is offered (FE tracker Gap 101, closed 2026-08-04).** No upgrade page was built to replace it, on purpose — PayU has no subscription/proration object, so an "upgrade" is just another full-price `create_checkout_session()` call, and `PricingTable` is already the only surface that makes it. The link is absolute rather than same-origin because in local dev the two apps sit on different ports (under the Multi-Zone proxy both forms would work). No proration-delta calculation is shown, for the same reason there is no upgrade page.
-* Attempting to save the toggle state with the sender email field empty is blocked client-side before any save call is made. Saving calls `PUT /api/settings/service-flow` (proxying to BE `PUT /settings/vendor-flow`).
+  * Checks `billing_plan` via `GET /api/settings/service-flow`. Non-`pro_combined` opens the Combined Pro Upgrade Modal (`COMBINED_PLAN_UPGRADE_URL` → website pricing; Gap 101 closed 2026-08-04).
+  * Backend requires ≥1 **outbound-set** authorized email (`TenantEmailSender.email_set='outbound'`) — not the legacy `outbound_sender_email` string. FE surfaces a clear error and links to Email Setup if the BE returns 400.
+* Saving calls `PUT /api/settings/service-flow`.
 
-**Page shell (as built):** `page.tsx` renders the Service Flow section (`ServiceFlowToggles.tsx`) plus Connectors and Email Ingestion & Delivery sections, each linking out to their own sub-pages (`/settings/connectors`, `/settings/email`, built as Features 7 and 8 respectively). Only Webhooks (Feature 9, still spec-only) remains a "Coming soon" chip.
+**Page shell (as built):** Service Flow + integration tiles including Email Setup (`/settings/email`), Connectors, Webhooks, Subscriptions, etc.
 
 **Tile visibility (Gap 167, 2026-08-06):** the integration tiles are described by a typed `IntegrationTile[]`, and the Admin Console tile carries `adminOnly: true`. `page.tsx` filters on `role === "Admin"` from `useAuth()` — the same backend-resolved role `ServiceFlowToggles` and `/settings/webhooks` gate on, never Clerk's client-editable metadata. It was previously the only tile on the page with no gate at all, so any role could see it and follow it to `/admin`. Because `role` is `""` until `GET /auth/me` resolves, an admin-only tile stays hidden while identity loads rather than appearing and then vanishing.
 
