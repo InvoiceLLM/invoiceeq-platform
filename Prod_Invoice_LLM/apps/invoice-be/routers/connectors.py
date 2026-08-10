@@ -389,7 +389,12 @@ async def trigger_file_import(
             detail=f"Integration '{provider}' is not connected."
         )
 
-    # Spawn background task via Azure Storage Queue
+    # Gap 179: never tell the FE "queued" unless the queue message actually landed.
+    # Previously returned success=True even when AZURE_STORAGE_CONNECTION_STRING was
+    # missing or send_message failed — green "Import request queued!" with nothing
+    # on the queue.
+    queued = False
+    queue_error: str | None = None
     try:
         settings = get_settings()
         if settings.AZURE_STORAGE_CONNECTION_STRING:
@@ -406,10 +411,28 @@ async def trigger_file_import(
                 }
             }
             queue_client.send_message(json.dumps(msg_payload))
+            queued = True
         else:
-            logger.warning("AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.")
+            queue_error = "AZURE_STORAGE_CONNECTION_STRING is not configured."
+            logger.error(
+                "Connector import skipped queueing for file %s — %s",
+                payload.file_id, queue_error,
+            )
     except Exception as e:
-        logger.warning("Failed to dispatch Azure Storage Queue import task: %s", e)
+        queue_error = str(e)
+        logger.error(
+            "Failed to dispatch Azure Storage Queue import task for file %s: %s",
+            payload.file_id, e,
+        )
+
+    if not queued:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Could not queue the connector import for processing. "
+                f"{queue_error or 'Storage queue unavailable.'}"
+            ),
+        )
 
     return {"success": True, "message": f"Queued {direction} import for file {payload.file_id}"}
 

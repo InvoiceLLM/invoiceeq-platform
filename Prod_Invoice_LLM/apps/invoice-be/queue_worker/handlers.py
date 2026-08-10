@@ -457,15 +457,65 @@ def handle_import_connector_file(
             f.write(file_bytes)
         uploaded_path = local_path
 
+    # Gap 179: inbound connector import used to enqueue process_invoice without
+    # creating an Invoice row. handle_process_invoice only updates when
+    # Invoice.file_path matches — so extraction ran (or was queued) with nothing
+    # visible in Ingestion/Audit. Mirror the normal upload path: persist first.
     if direction == "inbound":
-        _enqueue_process_invoice(batch_id, uploaded_path, tenant_id)
+        invoice_id = uuid4()
+        batch_uuid = UUID(batch_id)
+        tenant_uuid = UUID(tenant_id)
+
+        def _persist_and_enqueue(session: Session) -> bool:
+            invoice = Invoice(
+                id=invoice_id,
+                tenant_id=tenant_uuid,
+                batch_id=batch_uuid,
+                file_path=uploaded_path,
+                status="PROCESSING",
+                tags=["connector", provider],
+                flow_direction="INBOUND",
+            )
+            session.add(invoice)
+            session.commit()
+
+            enqueued = _enqueue_process_invoice(batch_id, uploaded_path, tenant_id)
+            if enqueued:
+                invoice.last_enqueued_at = datetime.utcnow()
+                invoice.processing_attempts = 1
+                session.add(invoice)
+                session.commit()
+            else:
+                logger.error(
+                    "Connector inbound import stored invoice %s but failed to enqueue extraction "
+                    "(queue unavailable). Row left at PROCESSING for reconciliation.",
+                    invoice_id,
+                )
+            return enqueued
+
+        if owns_session or db_session is None:
+            with Session(engine) as session:
+                _persist_and_enqueue(session)
+        else:
+            # Tests inject an in-memory session — write the Invoice there so
+            # assertions can see it (Session(engine) would hit a different DB).
+            _persist_and_enqueue(db_session)
+
         logger.info(
-            "Connector inbound import queued for extraction: batch_id=%s", batch_id
+            "Connector inbound import queued for extraction: batch_id=%s invoice_id=%s",
+            batch_id, invoice_id,
         )
-    else:
-        logger.info(
-            "Connector outbound import stored (no extraction): path=%s", uploaded_path
-        )
+        return {
+            "success": True,
+            "batch_id": batch_id,
+            "invoice_id": str(invoice_id),
+            "blob_path": uploaded_path,
+            "direction": direction,
+        }
+
+    logger.info(
+        "Connector outbound import stored (no extraction): path=%s", uploaded_path
+    )
 
     return {
         "success": True,

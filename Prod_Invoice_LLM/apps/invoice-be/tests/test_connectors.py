@@ -1,5 +1,5 @@
 import pytest
-from uuid import uuid4
+from uuid import uuid4, UUID
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs
 from sqlmodel import SQLModel, create_engine, Session, select
@@ -223,12 +223,15 @@ def test_trigger_import(db_session):
     db_session.add(conn)
     db_session.commit()
 
-    with patch("routers.connectors.QueueClient") as mock_qc:
+    with patch("routers.connectors.QueueClient") as mock_qc, \
+         patch("routers.connectors.get_settings") as mock_settings:
+        mock_settings.return_value.AZURE_STORAGE_CONNECTION_STRING = "UseDevelopmentStorage=true"
         mock_qc.from_connection_string.return_value.send_message = MagicMock()
         payload = {"file_id": "gdrive_file_101"}
         response = client.post("/api/v1/connectors/import/google_drive", json=payload)
     assert response.status_code == 200
     assert "inbound" in response.json()["message"].lower()
+    mock_qc.from_connection_string.return_value.send_message.assert_called_once()
 
 
 def test_trigger_import_outbound(db_session):
@@ -244,7 +247,9 @@ def test_trigger_import_outbound(db_session):
     db_session.add(conn)
     db_session.commit()
 
-    with patch("routers.connectors.QueueClient") as mock_qc:
+    with patch("routers.connectors.QueueClient") as mock_qc, \
+         patch("routers.connectors.get_settings") as mock_settings:
+        mock_settings.return_value.AZURE_STORAGE_CONNECTION_STRING = "UseDevelopmentStorage=true"
         mock_qc.from_connection_string.return_value.send_message = MagicMock()
         payload = {"file_id": "gdrive_file_202"}
         response = client.post(
@@ -252,6 +257,29 @@ def test_trigger_import_outbound(db_session):
         )
     assert response.status_code == 200
     assert "outbound" in response.json()["message"].lower()
+
+
+def test_trigger_import_returns_503_when_queue_unavailable(db_session):
+    """Gap 179: do not return success when the import was never queued."""
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("drive_secret"),
+        token_expiry=datetime.utcnow() + timedelta(hours=1),
+        status="active",
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    with patch("routers.connectors.get_settings") as mock_settings:
+        mock_settings.return_value.AZURE_STORAGE_CONNECTION_STRING = ""
+        response = client.post(
+            "/api/v1/connectors/import/google_drive",
+            json={"file_id": "gdrive_file_303"},
+        )
+    assert response.status_code == 503
+    assert "queue" in response.json()["detail"].lower()
 
 
 def test_list_files_invalid_direction(db_session):
@@ -295,6 +323,13 @@ def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc, db_ses
     assert result["success"] is True
     assert result["direction"] == "inbound"
     assert "inbound" in result["blob_path"]
+    assert result.get("invoice_id")
+    # Gap 179: inbound import must leave a PROCESSING Invoice so extraction can persist.
+    invoice = db_session.get(Invoice, UUID(result["invoice_id"]))
+    assert invoice is not None
+    assert invoice.status == "PROCESSING"
+    assert invoice.file_path == result["blob_path"]
+    assert "connector" in (invoice.tags or [])
 
 
 @patch("azure.storage.blob.BlobServiceClient")
