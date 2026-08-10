@@ -197,6 +197,10 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     storageAccountName: storageAccountName
     image: queueWorkerImage
     docIntelInstanceCount: docIntelInstanceCount
+    // Gap 180: same company OAuth apps as invoice-be — worker needs them to
+    // download Drive/Salesforce files and refresh tokens during import.
+    googleClientId: googleClientId
+    salesforceClientId: salesforceClientId
     cpu: workerCpu
     memory: workerMemory
     minReplicas: workerMinReplicas

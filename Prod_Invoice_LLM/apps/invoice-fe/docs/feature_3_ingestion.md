@@ -2,6 +2,8 @@
 
 **NOVA** (Smart Invoice Extraction) powers this screen. Develop the drag-and-drop file uploader, batch metadata tagger, and real-time processing queue status table.
 
+**Product follow-on:** [Feature 13: Autopilot](feature_13_autopilot.md) upgrades this same `/ingestion` surface into an Autopilot decision brief (rename + recommendations + Ask). Feature 3 capabilities stay; Autopilot does not replace connectors (those stay in Settings / Feature 7).
+
 ### Theme & Styling Specifications
 * Dashed drop zone: `border-2 border-dashed border-[#222D3D] hover:border-[#3B82F6] bg-opacity-30 rounded-xl`.
 * Interactive tag chips: `bg-[#1E293B] border border-[#222D3D] rounded-full text-slate-300 hover:bg-[#334155] cursor-pointer`.

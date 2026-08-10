@@ -351,10 +351,11 @@ def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc, db_se
     assert "outbound" in result["blob_path"]
 
 
+@patch("utils.connector_oauth.has_real_credentials", return_value=True)
 @patch("utils.connector_files.download_google_drive_file")
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
-def test_handle_import_connector_file_google_drive_real_download(mock_qc, mock_bsc, mock_download, db_session):
+def test_handle_import_connector_file_google_drive_real_download(mock_qc, mock_bsc, mock_download, _mock_creds, db_session):
     """Gap 98: with a real, active google_drive TenantConnection, the handler
     must download the file's real bytes via the Drive API instead of writing
     the stub PDF marker.
@@ -392,11 +393,12 @@ def test_handle_import_connector_file_google_drive_real_download(mock_qc, mock_b
     assert b"stub content" not in content
 
 
+@patch("utils.connector_oauth.has_real_credentials", return_value=True)
 @patch("utils.connector_oauth.httpx.post")
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
 @patch("utils.connector_files.download_google_drive_file")
-def test_handle_import_connector_file_refreshes_expired_token(mock_download, mock_qc, mock_bsc, mock_post, db_session):
+def test_handle_import_connector_file_refreshes_expired_token(mock_download, mock_qc, mock_bsc, mock_post, _mock_creds, db_session):
     """Gap 98 / 'connect once': an expired access token with a stored
     refresh_token must be silently refreshed (real POST to Google's token
     endpoint) rather than requiring the user to reconnect.

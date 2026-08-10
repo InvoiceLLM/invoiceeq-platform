@@ -34,6 +34,16 @@ param queueScaleLength string = '15'
 @maxValue(3)
 param docIntelInstanceCount int = 1
 
+// Gap 180: worker downloads connector files + refreshes OAuth tokens. Without
+// these, has_real_credentials() is false and Drive imports silently upload a
+// stub PDF that Doc Intelligence rejects (InvalidContent). Redirect URIs are
+// not needed here — only the BE oauth_callback uses them.
+@description('Our company Google Cloud OAuth Client ID (connectors: Drive)')
+param googleClientId string = ''
+
+@description('Our company Salesforce Connected App Consumer Key (connectors)')
+param salesforceClientId string = ''
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 var baseSecrets = [
@@ -70,6 +80,16 @@ var baseSecrets = [
   {
     name: 'storage-conn-secret'
     keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'google-client-secret-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/GOOGLE-CLIENT-SECRET'
+    identity: userAssignedIdentityId
+  }
+  {
+    name: 'salesforce-client-secret-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/SALESFORCE-CLIENT-SECRET'
     identity: userAssignedIdentityId
   }
 ]
@@ -221,6 +241,22 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_STORAGE_CONNECTION_STRING'
               secretRef: 'storage-conn-secret'
+            }
+            {
+              name: 'GOOGLE_CLIENT_ID'
+              value: googleClientId
+            }
+            {
+              name: 'GOOGLE_CLIENT_SECRET'
+              secretRef: 'google-client-secret-secret'
+            }
+            {
+              name: 'SALESFORCE_CLIENT_ID'
+              value: salesforceClientId
+            }
+            {
+              name: 'SALESFORCE_CLIENT_SECRET'
+              secretRef: 'salesforce-client-secret-secret'
             }
           ], docIntel2Env, docIntel3Env)
           // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence

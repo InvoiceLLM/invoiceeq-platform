@@ -397,25 +397,37 @@ def handle_import_connector_file(
             )
         ).first()
 
-        if connection and connection.status == "active" and has_real_credentials(provider, settings):
+        # Gap 180: an *active* tenant connection must never fall through to the
+        # stub PDF. That stub is only for local/dev tests with no connection;
+        # in Azure it produced Doc Intelligence InvalidContent while the FE
+        # still said "Import request queued!".
+        if connection and connection.status == "active":
+            if not has_real_credentials(provider, settings):
+                raise RuntimeError(
+                    f"Connector '{provider}' is active but platform OAuth credentials "
+                    "are not configured on this worker (GOOGLE_CLIENT_ID / "
+                    "SALESFORCE_CLIENT_ID). Cannot download the real file."
+                )
             access_token = get_valid_access_token(connection, settings, db_session)
             if provider == "google_drive":
                 file_bytes = download_google_drive_file(access_token, file_id)
             elif provider == "salesforce" and connection.instance_url:
                 file_bytes = download_salesforce_file(access_token, connection.instance_url, file_id)
-            if file_bytes is not None:
-                logger.info(
-                    "Downloaded real file from %s: file_id=%s size=%d bytes",
-                    provider, file_id, len(file_bytes),
+            if not file_bytes:
+                raise RuntimeError(
+                    f"Download from '{provider}' returned empty content for file_id={file_id}."
                 )
+            logger.info(
+                "Downloaded real file from %s: file_id=%s size=%d bytes",
+                provider, file_id, len(file_bytes),
+            )
     finally:
         if owns_session:
             db_session.close()
 
     if file_bytes is None:
-        # No active real connection for this tenant/provider (or provider
-        # not yet on a real OAuth app) -- keep the simulated content so
-        # local/dev testing without a registered connection still works.
+        # No active connection for this tenant/provider — simulated content so
+        # local/dev tests without a registered connection still work.
         file_bytes = (
             b"%PDF-1.4 stub content for connector import "
             + f"provider={provider} file_id={file_id}".encode()
