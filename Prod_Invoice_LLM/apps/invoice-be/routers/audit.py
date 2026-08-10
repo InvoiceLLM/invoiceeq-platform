@@ -67,6 +67,10 @@ class AuditResolutionPayload(BaseModel):
         default=None,
         description="Auditor rejection reason"
     )
+    notify_emails: Optional[List[str]] = Field(
+        default=None,
+        description="Gap 125: subset of inbound authorized set to notify on PAID/REJECTED. Never customers.",
+    )
 
 
 
@@ -315,6 +319,19 @@ async def resolve_audit_invoice(
                 detail=f"Invalid target status '{payload.status}'. Must be PAID or REJECTED."
             )
 
+    # Gap 125: validate notify list before mutating (only meaningful on finalize).
+    if target_status is not None and payload.notify_emails:
+        try:
+            from services.staff_notify import validate_notify_emails
+            validate_notify_emails(
+                db_session,
+                tenant_id=context.tenant_id,
+                email_set="inbound",
+                notify_emails=payload.notify_emails,
+            )
+        except ValueError as ve:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
+
     # 2. Retrieve the target invoice with tenant isolation scope
     statement = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
     invoice = db_session.exec(statement).first()
@@ -407,6 +424,20 @@ async def resolve_audit_invoice(
         except Exception as we:
             logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
 
+    email_notify = None
+    if target_status is not None:
+        try:
+            from services.staff_notify import notify_auditor_action
+            email_notify = notify_auditor_action(
+                db_session,
+                invoice,
+                action_label="Mark Paid" if target_status == "PAID" else "Rejected",
+                notify_emails=payload.notify_emails,
+            )
+        except ValueError as ve:
+            # Already validated above; defensive only.
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
+
     # 6. Task 7.4: suggest a Trainer rule if a correction just made recurred often
     # enough to be worth automating instead of fixing by hand every time.
     suggested_rule = None
@@ -420,4 +451,5 @@ async def resolve_audit_invoice(
         "corrections_applied": correction_diff,
         "suggested_rule": suggested_rule,
         "standing_rule_result": standing_rule_result,
+        "email_notify": email_notify,
     }

@@ -648,6 +648,12 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     except Exception as we:
                         logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
 
+                    try:
+                        from services.staff_notify import notify_processing_complete
+                        notify_processing_complete(session, invoice)
+                    except Exception as ne:
+                        logger.error("Staff process-complete notify failed for %s: %s", invoice.id, ne)
+
 
 
             # If successfully completed, run page-level RAG indexing

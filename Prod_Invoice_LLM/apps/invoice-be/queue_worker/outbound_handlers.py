@@ -133,6 +133,13 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                     except Exception as ie:
                         logger.error("RAG indexing failed for outbound invoice %s: %s", invoice.id, ie)
 
+                if status in ("VERIFIED", "NEEDS_REVIEW"):
+                    try:
+                        from services.staff_notify import notify_processing_complete
+                        notify_processing_complete(session, invoice)
+                    except Exception as ne:
+                        logger.error("Staff process-complete notify failed for outbound %s: %s", invoice.id, ne)
+
             _publish_sse_events(batch_id, {
                 "status": status,
                 "message": f"Outbound processing finished with status: {status}",

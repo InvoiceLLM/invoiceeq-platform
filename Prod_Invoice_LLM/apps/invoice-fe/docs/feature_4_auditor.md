@@ -24,6 +24,8 @@
 - [x] **Task 4.4: Code Active Alerts Review & Dismissal Actions**
   - `AlertConsole.tsx` renders per-alert yellow warning cards each with a `Dismiss` button calling `PUT /api/v1/audit/resolve/{id}`.
   - `Mark Paid & Finalize` and `Reject Invoice` buttons in the review page call `PUT /audit/resolve` with `status: PAID/REJECTED` and dismiss all remaining alerts.
+- [x] **Task 4.10 / Gap 125: Staff notify multi-select**
+  - Before Mark Paid / Reject, auditor multi-selects from the tenant’s **inbound** authorized email set; payload includes `notify_emails[]` (must ⊆ set). App never emails customers — only registered staff addresses.
 - [x] **Task 4.5: Confidence-based field highlighting**
   - Extend `ExtractedDataForm`/the metadata inspector to visually flag low-confidence fields (e.g. amber border/badge) using the backend's per-field confidence scores, so auditors can scan straight to what needs review instead of re-checking every field.
 - [x] **Task 4.6: Editable Metadata Inspector & Correction Capture**

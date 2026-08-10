@@ -91,6 +91,7 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | `field_confidence` | `JSONB` | `NULL` | Per-field confidence scores, driving the Critic Node's field-level (rather than document-level) audit routing. |
 | `sa_alerts` | `JSONB` | `NULL` | List of active warning/anomaly alert objects (e.g. `{"type": "tax_mismatch", "message": "...", "field": "tax_amount"}`). Manually dismissed/removed by the auditor. |
 | `status` | `VARCHAR(50)` | `NOT NULL`, Default: `'PROCESSING'`, `CHECK` | `'PROCESSING'`, `'COMPLETED'`, `'AUDIT_REQUIRED'`, `'PAID'`, `'REJECTED'`, or `'DUPLICATE'`. |
+| `submitted_by_email` | `VARCHAR(255)` | `NULL` | Gap 125: who submitted the PDF (email ingest From, or UI uploader). Used for process-complete staff notify; never used to email end customers. |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Ingestion date. |
 
 ---

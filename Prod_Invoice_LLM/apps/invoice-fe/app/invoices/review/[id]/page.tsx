@@ -17,6 +17,7 @@ import { apiClient } from "@/lib/apiClient";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import AlertConsole, { AlertCorrectionPreview } from "@/components/audit/AlertConsole";
+import NotifyEmailPicker from "@/components/audit/NotifyEmailPicker";
 
 interface LineItem {
   description: string;
@@ -238,6 +239,7 @@ export default function AuditorReviewPage() {
   // check failed).
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
+  const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
 
   // FE Gap 110: this screen used to draw its own title + Back button + status
   // badge above the workspace, a second header under Shell's global one.
@@ -363,6 +365,7 @@ export default function AuditorReviewPage() {
         dismissed_alerts: alerts.map((a) => a.message),
         corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
+        ...(targetStatus && notifyEmails.length > 0 ? { notify_emails: notifyEmails } : {}),
       });
       setInvoice((prev) => (prev ? { ...prev, status: targetStatus ?? prev.status, ...corrections } : prev));
       setAlerts([]);
@@ -470,6 +473,10 @@ export default function AuditorReviewPage() {
             </div>
           )}
         </PageHeaderActions>
+
+        {!isResolved && (
+          <NotifyEmailPicker emailSet="inbound" selected={notifyEmails} onChange={setNotifyEmails} />
+        )}
 
         {/* Task 4.7: Rule Suggestion Prompt — surfaced after a correction pattern
             recurred enough times (Task 7.4) to be worth automating. */}

@@ -1,22 +1,17 @@
 # Feature 8: Email Setup (Inbound & Outbound Authorized Sets)
 
-Settings page for a tenant to manage authorized email sets for the **one global** app mailbox.
+Settings for the **global** app mailbox and dual authorized email sets.
 
 ### Product model (2026-08-10)
-* **App mailbox (platform-wide, not per tenant):** `invoices@invoiceeq.app` — every tenant sends to and receives notifications from this same address.
-* **Inbound set / Outbound set:** tenant-owned emails; webhook resolves **tenant + direction** from `From`, not from `To`.
-* Authorized `email` is **globally unique** (one address → one workspace).
-
-### Navigation
-**Settings → Email** (`/settings/email`).
+* **App mailbox (platform-wide):** from `GET /email/settings/mailbox` (e.g. `invoices@invoiceeq.app` / env override).
+* **Inbound / outbound sets:** who may email PDFs in, and who may receive **staff** notifications. App **never** emails end customers.
+* **Auditor multi-select (Gap 125):** review screens load that direction’s set so the auditor can choose notify recipients before Approve/Pay/Send/Reject.
 
 ### File Coordinates
-* `app/settings/email/page.tsx` — mailbox copy + two set lists
-* `components/settings/EmailSendersList.tsx` — `emailSet: "inbound" | "outbound"`
-* Proxies: `app/api/email/settings/email-senders/*`, `app/api/email/settings/mailbox/route.ts`
+* `app/settings/email/page.tsx`, `components/settings/EmailSendersList.tsx`
+* Proxies: `app/api/email/settings/email-senders/*`, `mailbox/route.ts`
+* **Live receive (Gap 124):** SendGrid posts to **invoice-website** `POST /api/v1/email/mailintegration` (public relay → BE). FE settings still talk to BE via `/api/email/*` Multi-Zone rewrite — different path prefix on purpose.
 
 ### Tasks
-- [x] **Task 8.1:** Display global mailbox with copy (`GET /email/settings/mailbox`).
-- [x] **Task 8.2–8.3:** Inbound / outbound authorized email CRUD.
-- [x] **Task 8.4:** Dual-set redesign; Gap 147 superseded.
-- [x] **Task 8.5:** Global mailbox (not `{tenant_id}@…`).
+- [x] **8.1–8.5:** Mailbox + dual-set CRUD; Gap 147 superseded.
+- [x] **8.6 / Gap 125 FE:** Notify multi-select on inbound + outbound review actions; help copy updated.

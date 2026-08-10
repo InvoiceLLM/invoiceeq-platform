@@ -1,6 +1,6 @@
-# Third-Party Integrations & Credentials Setup Guide (PayU, Clerk, Google, Salesforce)
+# Third-Party Integrations & Credentials Setup Guide (PayU, Clerk, Google, Salesforce, SendGrid)
 
-This document describes how to configure the official company credentials for all third-party integrations (Authentication, Billing, and Storage Connectors) in your production Azure deployments using the Bicep infrastructure configuration.
+This document describes how to configure the official company credentials for all third-party integrations (Authentication, Billing, Storage Connectors, and Email) in your production Azure deployments using the Bicep infrastructure configuration.
 
 ---
 
@@ -77,7 +77,29 @@ Connectors allow tenants to import/export documents to their workspace Google Dr
 
 ---
 
-## 4. Key Vault Seeding & Bicep Orchestration
+## 4. SendGrid Email (Inbound Parse + Mail Send) — Gap 124 leftovers
+
+Inbound PDF receive and staff notify both use SendGrid. BE ingress is internal-only; **public** webhook is on `invoice-website`.
+
+### Receive (Inbound Parse)
+1. **GoDaddy (or DNS host):** point MX for `EMAIL_APP_DOMAIN` / `invoiceeq.app` at SendGrid’s inbound MX records (per SendGrid Inbound Parse docs).
+2. **SendGrid → Settings → Inbound Parse:** add a host for that domain.
+3. **Destination URL** (must be the **website** FQDN, not BE):
+   `https://ca-invoice-website-<env>.<caeDomain>/api/v1/email/mailintegration`
+   Website route relays raw multipart to internal BE (`apps/invoice-website/app/api/v1/email/mailintegration/route.ts`). Do **not** use `/api/email/*` (Multi-Zone FE settings proxy).
+4. Optional: check “POST the raw, full MIME message” only if you change BE parsing — current BE expects SendGrid’s multipart `to`/`from` + file fields.
+5. Seed `SENDGRID-INBOUND-SECRET` in Key Vault when authenticity enforcement lands (Gap 124 item 5 — secret param exists in `05-secrets.bicep`; not enforced in code yet).
+
+### Send (Mail Send / Gap 125)
+1. Create a SendGrid API key with Mail Send; seed as `SENDGRID-API-KEY` (already wired in bicep/KV).
+2. Single Sender Verification is enough to call the API; **domain authentication** (DNS CNAMEs on GoDaddy) improves inbox placement.
+
+### Live check
+Registered From → `invoices@invoiceeq.app` → Parse → website relay → BE → invoice row. Tracked as Gap 124 E2E.
+
+---
+
+## 5. Key Vault Seeding & Bicep Orchestration
 
 All secrets must be stored securely inside **Azure Key Vault** and injected into Container Apps at deploy time.
 
@@ -95,7 +117,9 @@ Add the credentials directly to your local, Git-ignored `infra/params.<env>.secr
     "payuMerchantKey": { "value": "..." },
     "payuMerchantSalt": { "value": "..." },
     "googleClientSecret": { "value": "..." },
-    "salesforceClientSecret": { "value": "..." }
+    "salesforceClientSecret": { "value": "..." },
+    "sendgridApiKey": { "value": "..." },
+    "sendgridInboundSecret": { "value": "..." }
   }
 }
 ```

@@ -25,7 +25,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 11: PayU Billing API](feature_11_billing.md) — completed 2026-08-04. PayU checkout session hashing, success/failure endpoints redirection flow, public pass-through relay callbacks, and billing lapse detection sweeps are fully built and covered by tests.
 - `[x]` [Feature 12: Alembic Database Migrations](feature_12_alembic.md) — verified against a throwaway local Postgres; local/Azure dev DBs still need manual reconciliation before their first `alembic upgrade head`, see doc
 - `[x]` [Feature 13: Automated Test & Benchmark Suite](feature_13_test_benchmark_suite.md) — test tooling spanning Feature 2 (extraction) + Feature 6 (RAG chat); Tier 1 regression suite is built and CI-wired, Tier 2 daily benchmark harness is fully verified, resolving Key Vault permissions, model name configuration, missing queue creation, and ThreadPoolExecutor SentenceTransformer concurrency crashes (86.7% extraction, 95.2% RAG chat passed on Day 2).
-- `[x]` [Feature 14: Email-In Invoice Ingestion](feature_14_email_ingestion.md) — implemented 2026-07-28; **redesigned 2026-08-10**: one **global** mailbox `invoices@invoiceeq.app`; `TenantEmailSender.email_set` + globally unique sender email; webhook resolves tenant+direction from From. Customer delivery still Gap 125.
+- `[x]` [Feature 14: Email-In Invoice Ingestion](feature_14_email_ingestion.md) — implemented 2026-07-28; **redesigned 2026-08-10**: global mailbox + dual sets + `mailintegration` webhook. Staff notify (never customer send) = Gap 125.
 - `[x]` [Feature 15: Outbound Webhooks](feature_15_webhooks.md) — fully built 2026-07-29. `WebhookSubscription` model/migration, CRUD endpoints with SSRF validation, HMAC-signed delivery with retry/backoff, auto-disable after 10 consecutive failures. Wired into the real hook points (corrected from the original spec's file-location guesses — see the feature doc). `outbound_invoice.overdue` deliberately not fired (no scheduled job exists for the virtual overdue computation). 14 new tests + live-verified SSRF rejection/creation against the real API.
 - `[x]` [Feature 16: Settings](feature_16_settings.md) — implemented 2026-07-28; **2026-08-10**: enabling `send_invoices_enabled` requires ≥1 outbound-set authorized email (not `outbound_sender_email`).
 - `[ ]` [Feature 17: Invoice Builder](feature_17_invoice_builder.md) — placeholder only, deliberately decoupled from Service Flow, not scoped
@@ -238,19 +238,32 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 
 - `[x]` **Gap 123: Alert Classification and Severity-based Error Accuracy** — closed 2026-08-05. Added severity categories (`information`, `warning`, `error`) to verification tools and updated dashboard metrics algorithms to only count `error` type alerts in accuracy calculations.
 
-- `[ ]` **Gap 124: Email mailintegration not live — SendGrid/DNS/public URL, authenticity, failed-mail visibility, size cap** — **KEEP OPEN.** App model shipped 2026-08-10 (global mailbox, dual sets, `POST /api/v1/email/mailintegration`), but real email still cannot reach the endpoint:
-  1. **No live SendGrid + public webhook URL** — BE ingress `external: false`; SendGrid cannot POST to an internal-only container. Needs path-external allowlist / APIM (same infra theme as former Gap 131 long-term) plus MX + Inbound Parse → `…/api/v1/email/mailintegration`, then one real E2E email test.
-  2. **No SendGrid authenticity check** on the unauthenticated webhook.
-  3. **Dropped/skipped mail has no admin UI / bounce** (bounce needs Gap 125 send).
-  4. **No 25MB attachment cap** on this path.
-  - Blocker order: item 1 first; item 2 before going live; 3–4 hardening.
-  - Customer send = **Gap 125** (separate).
+- `[ ]` **Gap 124: SendGrid / GoDaddy live mail settings + hardening (public URL proxy done)** — **KEEP OPEN for dashboard/DNS + remaining hardening.** App model + **website public relay** shipped 2026-08-10:
+  - **Shipped (public reachability):** `invoice-website` `POST /api/v1/email/mailintegration` → internal BE (PayU topology). SendGrid Destination URL must be the **website** FQDN, e.g. `https://ca-invoice-website-dev.<caeDomain>/api/v1/email/mailintegration` — not the internal BE host. Path does **not** collide with Multi-Zone FE rewrite `/api/email/*`.
+  - **Still open — SendGrid + GoDaddy (manual / ops):**
+    1. **MX + domain** on GoDaddy (or DNS host) for `EMAIL_APP_DOMAIN` / `invoiceeq.app` so mail to `invoices@invoiceeq.app` reaches SendGrid.
+    2. **SendGrid Inbound Parse** host/settings: Destination URL = website relay above; optional spam check / multipart.
+    3. **SendGrid domain auth / Single Sender** for Gap 125 *send* deliverability (API key already in KV/bicep; live send not verified).
+    4. One real E2E: registered From → mailbox → Parse → website relay → BE → invoice row.
+  - **Still open — hardening:**
+    5. **No SendGrid authenticity check** on the unauthenticated webhook (`SENDGRID-INBOUND-SECRET` seeded in KV but not enforced in code yet).
+    6. **Dropped/skipped mail has no admin UI / bounce** (bounce uses Gap 125 send).
+    7. **No 25MB attachment cap** on this path.
+  - Blocker order: DNS + Inbound Parse (1–2) first; E2E (4); authenticity (5) before trusting production traffic; 6–7 hardening.
+  - Staff notify = **Gap 125** (separate). Never customer email from app.
 
-- `[ ]` **Gap 125: Customer-facing outbound email send does not exist** — **KEEP OPEN.** Confirm Send only flips status + fires developer webhook; no SendGrid Mail Send. Email Setup dual sets are done; Reply-To/notify should use registered sets when this ships. Still needed: API key + domain auth, template, PDF attach, Confirm Send rewire, optional delivery events.
+- `[ ]` **Gap 125: Staff email notifications via SendGrid (never email customers)** — **code shipped 2026-08-10; keep open until live SendGrid Mail Send is verified.** Product rule: app only emails **registered** inbound/outbound set addresses (or auditor-selected subset). Staff send to customers themselves.
+  1. **After processing completes** — one notify: Completed vs Audit pending (+ alert summary) to `submitted_by_email` (fallback: direction set). Wired in inbound + outbound queue handlers.
+  2. **On auditor actions** — Mark Paid / Reject (inbound) or Confirm Send / Mark Paid (outbound): FE multi-select (`NotifyEmailPicker`); BE accepts `notify_emails[]` (must ⊆ set).
+  3. **Infra:** `SENDGRID_API_KEY` (KV + bicep already); Single Sender Verification OK without GoDaddy domain auth; domain auth optional for deliverability.
+  4. **Store** `Invoice.submitted_by_email` (migration `f9a0b1c2d3e4`) on email/UI ingest.
+  5. **Out of scope:** customer PDF delivery; Feature 15 developer webhooks remain separate.
+  - Distinct from Gap 124 (SendGrid/GoDaddy Parse + DNS; website relay shipped). Gap 126 is developer webhook leftovers.
+  - Files: `services/outbound_email.py`, `services/staff_notify.py`, audit/outbound routers, FE review pages.
 
 - `[ ]` **Gap 126: Developer Webhooks leftovers** — **KEEP OPEN.** (1) `outbound_invoice.overdue` never fires (needs scheduler). (2) No live E2E delivery test to a real external URL (mocked only).
 
-- `[x]` **Gap 131: Google Drive and Salesforce `redirect_uri_mismatch` / post-OAuth bounce to internal FE** — **closed 2026-08-10.** Root cause: OAuth redirect URIs and `FRONTEND_URL` used the FE container FQDN after Multi-Zone made FE `external: false`. Fix: `infra/08-apps.bicep` + live `ca-invoice-be-dev` use **website** FQDN for `GOOGLE_REDIRECT_URI` / `SALESFORCE_REDIRECT_URI` / `FRONTEND_URL`; Connected App / Google Console Callback URLs updated to match (manual). User confirmed portal URLs aligned. **Still open as separate work (not this gap):** Gap 124 needs public reachability for `POST /api/v1/email/mailintegration` (SendGrid); long-term APIM/path-external BE remains roadmap infra, not blocking connector OAuth anymore.
+- `[x]` **Gap 131: Google Drive and Salesforce `redirect_uri_mismatch` / post-OAuth bounce to internal FE** — **closed 2026-08-10.** Root cause: OAuth redirect URIs and `FRONTEND_URL` used the FE container FQDN after Multi-Zone made FE `external: false`. Fix: `infra/08-apps.bicep` + live `ca-invoice-be-dev` use **website** FQDN for `GOOGLE_REDIRECT_URI` / `SALESFORCE_REDIRECT_URI` / `FRONTEND_URL`; Connected App / Google Console Callback URLs updated to match (manual). User confirmed portal URLs aligned. **Related (not this gap):** Gap 124 website relay for SendGrid Inbound Parse shipped same topology as PayU; remaining open work is GoDaddy/SendGrid dashboard settings + hardening.
 
 - `[ ]` **Gap 133: A signed-up Clerk Organization can silently fail to provision into a real tenant, landing the user in an unrelated auto-created fallback tenant instead — with the FE displaying the org name they actually signed up with, masking the mismatch** — found 2026-08-05 debugging why a Pro Combined grant "wasn't working": it had been granted to a tenant the user wasn't actually using. Confirmed live via direct DB queries (see Gap 131's investigation thread in chat for the full trace).
   1. **The user's real Clerk Organization was never provisioned.** Their profile displays org name "test1" (Clerk org `org_3HH1VFXsiEo4hAdScaHFLGi2AxX`, written to `unsafeMetadata.orgName` at sign-up per `invoice-website/app/signup/page.tsx`) — but no `Tenant` row anywhere in the database has that `clerk_org_id`. Either `POST /auth/provision` was never called for this org at sign-up, or it failed silently with nothing surfaced to the user.

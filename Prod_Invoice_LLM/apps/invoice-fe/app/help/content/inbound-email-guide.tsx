@@ -25,6 +25,10 @@ export const INBOUND_EMAIL_HELP_SECTIONS: HelpSection[] = [
             <li>Copy the mailbox from <strong>Settings → Email</strong>.</li>
             <li>Add AP addresses to <strong>Inbound authorized emails</strong>.</li>
             <li>Send/forward supplier PDF invoices from those addresses to the mailbox.</li>
+            <li>
+              Ops: SendGrid Inbound Parse Destination URL must be the public website host
+              (<code className="text-blue-300">…/api/v1/email/mailintegration</code>), not the internal API — GoDaddy MX + Parse host settings are still required for live receive.
+            </li>
           </ol>
         </div>
 
@@ -33,6 +37,13 @@ export const INBOUND_EMAIL_HELP_SECTIONS: HelpSection[] = [
           <p>
             Tenant and direction come from the sender&apos;s registered email, not from a per-tenant To address. Unregistered senders are ignored.
           </p>
+        </div>
+
+        <div className="space-y-2 mt-4">
+          <h4 className="text-xs font-semibold text-white uppercase tracking-wider">Staff notifications</h4>
+          <P>
+            After processing, the submitter (or inbound set) can get a Completed / Audit pending email. When an auditor Marks Paid or Rejects, they multi-select registered inbound addresses to notify — the app never emails your vendors or customers.
+          </P>
         </div>
       </>
     ),

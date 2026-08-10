@@ -6,15 +6,36 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
 from dependencies import get_tenant_context, get_db_session, require_can_load, TenantContext
-from models import Invoice, Tenant
+from models import Invoice, Tenant, User
 from services.storage import upload_pdf_to_blob_storage
+from services.staff_notify import notify_auditor_action
 from azure.storage.queue import QueueClient
 from config import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/outbound-invoices", tags=["Outbound Invoices"])
+
+
+class OutboundNotifyPayload(BaseModel):
+    notify_emails: Optional[list[str]] = Field(
+        default=None,
+        description="Subset of the tenant outbound authorized set to notify (Gap 125). Never customers.",
+    )
+
+
+def _submitter_email_from_context(db_session: Session, context: TenantContext) -> str | None:
+    if not context.db_user_id:
+        return None
+    user = db_session.get(User, context.db_user_id)
+    if not user or not user.email:
+        return None
+    return str(user.email).strip().lower() or None
 
 
 def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type: str) -> None:
@@ -84,6 +105,7 @@ async def upload_outbound_invoice(
         file_path=file_path,
         flow_direction="OUTBOUND",
         status="UPLOADED",
+        submitted_by_email=_submitter_email_from_context(db_session, context),
     )
     db_session.add(db_invoice)
     await run_in_threadpool(db_session.commit)
@@ -128,13 +150,12 @@ async def upload_outbound_invoice(
 @router.put("/{invoice_id}/confirm-send", status_code=status.HTTP_200_OK)
 async def confirm_send_outbound_invoice(
     invoice_id: UUID,
+    payload: OutboundNotifyPayload | None = None,
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session),
 ):
-    """Feature 2.1, Task 2.1.5: VERIFIED (or corrected NEEDS_REVIEW) -> SENT.
-    The actual email-send call is a separate concern (feature_16_settings.md's
-    outbound_sender_email) -- this endpoint only finalizes the pre-send review
-    step and stamps sent_at for Feature 8.1's average_days_to_payment metric."""
+    """Feature 2.1 + Gap 125: VERIFIED/NEEDS_REVIEW → SENT. Staff notify only
+    (registered outbound set); never emails the end customer."""
     statement = select(Invoice).where(
         Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND",
     )
@@ -148,6 +169,16 @@ async def confirm_send_outbound_invoice(
             detail=f"Cannot confirm-send an invoice with status '{invoice.status}'. Must be VERIFIED or NEEDS_REVIEW.",
         )
 
+    notify_emails = (payload.notify_emails if payload else None)
+    try:
+        # Validate before mutating so a bad list doesn't leave a half-sent state.
+        from services.staff_notify import validate_notify_emails
+        validate_notify_emails(
+            db_session, tenant_id=invoice.tenant_id, email_set="outbound", notify_emails=notify_emails,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
+
     invoice.status = "SENT"
     invoice.sent_at = datetime.utcnow()
     db_session.add(invoice)
@@ -155,22 +186,26 @@ async def confirm_send_outbound_invoice(
     db_session.refresh(invoice)
 
     _dispatch_outbound_webhook(db_session, invoice, "outbound_invoice.sent")
+    email_notify = notify_auditor_action(
+        db_session, invoice, action_label="Confirm Send (SENT)", notify_emails=notify_emails,
+    )
 
-    return {"success": True, "status": invoice.status, "sent_at": invoice.sent_at.isoformat()}
+    return {
+        "success": True,
+        "status": invoice.status,
+        "sent_at": invoice.sent_at.isoformat(),
+        "email_notify": email_notify,
+    }
 
 
 @router.put("/{invoice_id}/mark-paid", status_code=status.HTTP_200_OK)
 async def mark_outbound_invoice_paid(
     invoice_id: UUID,
+    payload: OutboundNotifyPayload | None = None,
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session),
 ):
-    """Manual close-out, per the Task 4.1/7.1 write-up: outbound has no
-    payment-webhook integration in v1, so a human confirms payment arrived
-    (mirroring inbound's manual 'Mark Paid & Finalize'). SENT -> PAID only --
-    there's no Reject for outbound (it's the tenant's own invoice, not a
-    vendor's to dispute), so this is the only other terminal transition
-    besides confirm-send's SENT."""
+    """SENT → PAID + optional staff notify (Gap 125)."""
     statement = select(Invoice).where(
         Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND",
     )
@@ -184,6 +219,15 @@ async def mark_outbound_invoice_paid(
             detail=f"Cannot mark an invoice with status '{invoice.status}' as paid. Must be SENT.",
         )
 
+    notify_emails = (payload.notify_emails if payload else None)
+    try:
+        from services.staff_notify import validate_notify_emails
+        validate_notify_emails(
+            db_session, tenant_id=invoice.tenant_id, email_set="outbound", notify_emails=notify_emails,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
+
     invoice.status = "PAID"
     invoice.paid_at = datetime.utcnow()
     db_session.add(invoice)
@@ -191,5 +235,13 @@ async def mark_outbound_invoice_paid(
     db_session.refresh(invoice)
 
     _dispatch_outbound_webhook(db_session, invoice, "outbound_invoice.paid")
+    email_notify = notify_auditor_action(
+        db_session, invoice, action_label="Mark Paid", notify_emails=notify_emails,
+    )
 
-    return {"success": True, "status": invoice.status, "paid_at": invoice.paid_at.isoformat()}
+    return {
+        "success": True,
+        "status": invoice.status,
+        "paid_at": invoice.paid_at.isoformat(),
+        "email_notify": email_notify,
+    }

@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     # Tenant + direction are resolved from the sender's registered set.
     EMAIL_APP_DOMAIN: str = "invoiceeq.app"
     EMAIL_APP_ADDRESS: str = "invoices@invoiceeq.app"
+    # Gap 125: SendGrid Mail Send. Works with Single Sender Verification for
+    # tests (no GoDaddy domain auth required); domain auth improves deliverability.
+    SENDGRID_API_KEY: str = ""
+    SENDGRID_SENDING_DOMAIN: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

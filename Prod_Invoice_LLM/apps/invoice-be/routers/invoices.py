@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from config import settings
 
 from dependencies import get_tenant_context, get_db_session, require_can_load, TenantContext
-from models import Invoice, Tenant, AuditLog
+from models import Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage, delete_pdf_from_storage
 from chroma_client import delete_invoice_chunks
 from azure.storage.queue import QueueClient
@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
 
 
+def _submitter_email_from_context(db_session: Session, context: TenantContext) -> str | None:
+    """Best-effort UI uploader email for Gap 125 process-complete notify."""
+    if not context.db_user_id:
+        return None
+    user = db_session.get(User, context.db_user_id)
+    if not user or not user.email:
+        return None
+    return str(user.email).strip().lower() or None
+
+
 async def _ingest_single_file(
     file_bytes: bytes,
     filename: str,
@@ -35,6 +45,7 @@ async def _ingest_single_file(
     tenant: Tenant,
     context: TenantContext,
     db_session: Session,
+    submitted_by_email: str | None = None,
 ) -> str:
     """
     Shared per-file ingestion logic (dedup check, blob upload, DB row, queue
@@ -44,6 +55,7 @@ async def _ingest_single_file(
     """
     invoice_id = uuid4()
     file_hash = hashlib.sha256(file_bytes).hexdigest()
+    submitter = (submitted_by_email or _submitter_email_from_context(db_session, context) or "").strip().lower() or None
 
     existing_invoice = db_session.exec(
         select(Invoice).where(
@@ -72,7 +84,8 @@ async def _ingest_single_file(
                 "message": f"This file is a duplicate of a previously uploaded invoice (ID: {existing_invoice.id})."
             }],
             tags=tags,
-            items=existing_invoice.items
+            items=existing_invoice.items,
+            submitted_by_email=submitter,
         )
         db_session.add(db_invoice)
         await run_in_threadpool(db_session.commit)
@@ -123,7 +136,8 @@ async def _ingest_single_file(
         file_path=file_path,
         file_hash=file_hash,
         status="PROCESSING",
-        tags=tags
+        tags=tags,
+        submitted_by_email=submitter,
     )
     db_session.add(db_invoice)
     await run_in_threadpool(db_session.commit)

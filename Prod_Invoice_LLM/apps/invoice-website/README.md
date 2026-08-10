@@ -26,6 +26,7 @@ invoice-website/
 │   │   ├── auth/provision/route.ts             # Server-side proxy for backend /auth/provision (Gap 7)
 │   │   ├── billing/create-checkout-session/route.ts  # Clerk-gated proxy that starts a PayU checkout
 │   │   └── v1/billing/payu/{success,failure}/route.ts # PayU surl/furl pass-through (UNauthenticated by design) + shared relay.ts
+│   │   └── v1/email/mailintegration/route.ts          # SendGrid Inbound Parse pass-through → BE (Gap 124 public URL; UNauthenticated)
 ├── components/
 │   ├── ui/                     # empty (.gitkeep only) — no Shadcn/UI components exist
 │   └── marketing/              # Header, Hero, WorkspaceShowcase, AITeamSection, FlowsShowcaseSection, PricingTable, FlowsModal, BenefitsStrip, MouseSpotlight, Footer
@@ -47,6 +48,7 @@ invoice-website/
 - **Pricing & PayU checkout** — `PricingTable` (Free / Pro / Pro Combined) on the landing page at `#pricing`, submitting a hash-signed hidden form to PayU's hosted page. *(This bullet previously read "No pricing page — no PayU checkout exists yet"; that was stale from 2026-07-31.)*
 - **PayU return pages** — `/billing/success` and `/billing/failed`, both **public and deliberately not Clerk-gated** (a user coming back from PayU may have no session in that tab). `/billing/failed` distinguishes an honest decline (retry offered) from "we could not verify" and from "you were charged but we couldn't apply it" (no retry offered — see `website_features/feature_3_pricing_payu.md`).
 - **PayU callback pass-through** — `/api/v1/billing/payu/{success,failure}`, path-identical to the backend's own endpoints. Unauthenticated on purpose: PayU carries no session, and the backend independently verifies the response hash plus a server-to-server `verify_payment` before trusting anything. `invoice-be`'s ingress is internal-only, so without this route PayU could not deliver the callback at all.
+- **SendGrid Inbound Parse pass-through** — `/api/v1/email/mailintegration`, path-identical to BE. Same topology as PayU: public website → internal BE. Unauthenticated (SendGrid has no session). Live MX/Parse Destination still Gap 124 (`be_features_tracker.md`).
 
 ## Recent Changes (auth-feature-4)
 - **Gap 3:** Added `/forgot-password` page with two-step Clerk password reset flow

@@ -56,6 +56,7 @@ def test_resolve_invoice_paid(db_session):
     assert response.status_code == 200
     assert response.json() == {
         "success": True, "corrections_applied": {}, "suggested_rule": None, "standing_rule_result": None,
+        "email_notify": None,
     }
 
     # Verify updates in database

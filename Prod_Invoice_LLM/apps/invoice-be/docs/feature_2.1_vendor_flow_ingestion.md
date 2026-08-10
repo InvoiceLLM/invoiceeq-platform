@@ -36,7 +36,7 @@ Reusing the existing extraction schema (`InvoiceExtractionSchema` in `agents/ext
 
 ### Explicitly out of scope
 - Invoice generation/branding/templates (logo upload, layout picker) — separate feature, [feature_17_invoice_builder.md](feature_17_invoice_builder.md), not started.
-- The actual customer email-send call — Gap 125 / Feature 14 Task 14.6 (SendGrid Mail Send). Tenant staff who *email the app* for outbound audit are registered in the outbound authorized set (`TenantEmailSender.email_set='outbound'`), not via `Tenant.outbound_sender_email`. Wiring confirm-send to a real send remains Gap 125.
+- The actual staff email notification call — Gap 125 / Feature 14 Task 14.6 (SendGrid Mail Send to **registered** emails only; never customers). Confirm Send stamps SENT + optional `notify_emails[]` for AR staff. Tenant staff who *email the app* are on `TenantEmailSender.email_set='outbound'`.
 - AI Trainer rule scope for outbound — confirmed not applicable; extraction rules are a vendor/document-shape concern, and outbound documents aren't run through the Trainer's rule-resolution stage.
 
 ### Tasks

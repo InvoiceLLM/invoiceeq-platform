@@ -30,6 +30,8 @@ Adds the pre-send validation console for outbound invoices, plus the "apply as s
 ### Tasks
 - [x] **Task 4.1.1:** Built `OutboundAlertConsole.tsx` — alert rendering, editable corrections (shared `EditableField`-style click-to-edit inline in the review page, not a separate component), standing-rule checkbox.
 - [x] **Task 4.1.2:** Built `app/invoices/outbound-review/[id]/page.tsx`, reusing `PdfViewerCanvas.tsx` unmodified. Buttons: **Approve & Send** (`VERIFIED`/`NEEDS_REVIEW`) and **Mark Paid** (`SENT`) — no Reject, per the design reasoning already in `feature_2.1_vendor_flow_ingestion.md`.
+- [x] **Task 4.1.6 / Gap 125: Staff notify multi-select**
+  - Before Confirm Send / Mark Paid, auditor multi-selects from the tenant’s **outbound** authorized email set; `confirm-send` / `mark-paid` accept `notify_emails[]`. Never emails the end customer from the app.
 - [x] **Task 4.1.3:** Built the resolve proxy route (`app/api/outbound-audit/resolve/[id]/route.ts`).
 - [x] **Task 4.1.4:** Added the *Receiving*/*Sending* tab header directly on `/invoices` (not shared with Ingestion's tab as one component — each page implements its own small tab state, matching how the original Ingestion tab was built too; decided not worth extracting for two call sites).
 - [x] **Task 4.1.5:** Built `OutboundInvoicesTable.tsx` + `OutboundFilterBar.tsx` as the outbound tab of `/invoices`, reading `GET /outbound-dashboard/invoices`. 4-tab shape decided during build: **All / Pending / Paid / Overdue** — Pending bundles every in-flight status (`UPLOADED`→`SENT`), mirroring inbound's "Pending" bundling logic exactly, rather than exposing all 5 raw lifecycle states as separate tabs.

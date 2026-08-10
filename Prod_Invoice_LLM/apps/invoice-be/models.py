@@ -105,6 +105,9 @@ class Invoice(SQLModel, table=True):
     # those transitions, never estimated.
     sent_at: datetime | None = Field(default=None)
     paid_at: datetime | None = Field(default=None)
+    # Gap 125: email (or UI) submitter — process-complete staff notify target.
+    # Never used to email end customers from the app.
+    submitted_by_email: str | None = Field(default=None, max_length=255)
 
     # FE Gap 29: dashboard/list filters are always tenant-scoped plus one of
     # status/date/vendor, so composite indexes led by tenant_id (rather than

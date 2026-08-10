@@ -7,6 +7,7 @@ import { apiClient } from "@/lib/apiClient";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import OutboundAlertConsole, { StandingRuleResult } from "@/components/audit/OutboundAlertConsole";
+import NotifyEmailPicker from "@/components/audit/NotifyEmailPicker";
 
 interface OutboundInvoiceDetail {
   id: string;
@@ -150,6 +151,7 @@ export default function OutboundAuditorReviewPage() {
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
+  const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
 
   const [focusRequest, setFocusRequest] = useState<{ field: string; nonce: number } | null>(null);
 
@@ -228,7 +230,9 @@ export default function OutboundAuditorReviewPage() {
     if (!invoice) return;
     setActionLoading("send");
     try {
-      await apiClient.put(`/outbound-invoices/${invoice.id}/confirm-send`);
+      await apiClient.put(`/outbound-invoices/${invoice.id}/confirm-send`, {
+        ...(notifyEmails.length > 0 ? { notify_emails: notifyEmails } : {}),
+      });
       setInvoice((prev) => (prev ? { ...prev, status: "SENT" } : prev));
     } catch (err) {
       console.error("Confirm-send failed:", err);
@@ -241,7 +245,9 @@ export default function OutboundAuditorReviewPage() {
     if (!invoice) return;
     setActionLoading("paid");
     try {
-      await apiClient.put(`/outbound-invoices/${invoice.id}/mark-paid`);
+      await apiClient.put(`/outbound-invoices/${invoice.id}/mark-paid`, {
+        ...(notifyEmails.length > 0 ? { notify_emails: notifyEmails } : {}),
+      });
       setInvoice((prev) => (prev ? { ...prev, status: "PAID" } : prev));
     } catch (err) {
       console.error("Mark-paid failed:", err);
@@ -331,6 +337,10 @@ export default function OutboundAuditorReviewPage() {
           </button>
         )}
       </PageHeaderActions>
+
+      {(isVerifiedOrNeedsReview || isSent) && (
+        <NotifyEmailPicker emailSet="outbound" selected={notifyEmails} onChange={setNotifyEmails} />
+      )}
 
       <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
         {/* COLUMN 1 — PDF Viewer */}
