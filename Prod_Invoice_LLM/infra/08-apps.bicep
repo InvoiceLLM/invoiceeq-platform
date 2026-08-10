@@ -75,7 +75,7 @@ param workerCpu string = '2.0'
 @description('Queue-worker Container App memory allocation.')
 param workerMemory string = '4.0Gi'
 @description('Queue-worker Container App minimum replica count.')
-param workerMinReplicas int = 0
+param workerMinReplicas int = 1
 @description('Queue-worker Container App maximum replica count.')
 param workerMaxReplicas int = 10
 @description('Queue-worker KEDA queue-length scale trigger threshold.')
@@ -95,7 +95,7 @@ param websiteCpu string = '0.5'
 @description('Website Container App memory allocation.')
 param websiteMemory string = '1.0Gi'
 @description('Website Container App minimum replica count. Dev default 0 (scale-to-zero); prod should set >=1 to avoid cold-starts on the public entry point.')
-param websiteMinReplicas int = 0
+param websiteMinReplicas int = 1
 @description('Website Container App maximum replica count.')
 param websiteMaxReplicas int = 3
 
