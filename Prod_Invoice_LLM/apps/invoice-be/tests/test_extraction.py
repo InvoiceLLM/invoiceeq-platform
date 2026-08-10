@@ -213,3 +213,70 @@ def test_gap_69_tax_amount_component_sum_faithful():
     alert_bad_sum = verify_tax_amount_in_source_text(20000.00, ocr_text, tax_components=taxes)
     assert alert_bad_sum is not None
 
+
+def test_gap_181_precise_warnings_and_variants():
+    """Gap 181: Verify negative/credit variants are successfully matched and all warnings are extremely concise."""
+    from utils.verification_tools import (
+        _number_text_variants,
+        verify_grand_total_in_source_text,
+        verify_line_item_amounts_in_source_text,
+        verify_subtotal_in_source_text,
+        verify_unit_prices_in_source_text,
+        verify_tax_amount_in_source_text,
+        verify_field_confidence
+    )
+
+    # 1. Test negative number variants generator
+    variants = _number_text_variants(-183.78)
+    assert "183.78" in variants
+    assert "(183.78)" in variants
+    assert "183.78-" in variants
+    assert "183.78 Cr" in variants
+    assert "183.78 CR" in variants
+    assert "-183.78" in variants
+
+    # 2. Test negative amount verifies correctly in different source text formats
+    items = [{"description": "Credit Item", "amount": -183.78}]
+    
+    # Format A: Printed positive under Credit column
+    assert verify_line_item_amounts_in_source_text(items, "Credit: 183.78") is None
+    # Format B: Printed with parentheses
+    assert verify_line_item_amounts_in_source_text(items, "Net: (183.78)") is None
+    # Format C: Printed with Cr suffix
+    assert verify_line_item_amounts_in_source_text(items, "Total: 183.78 Cr") is None
+    # Format D: Printed standard negative
+    assert verify_line_item_amounts_in_source_text(items, "Total: -183.78") is None
+
+    # 3. Verify concise message contents for all alerts
+    # Line items mismatch message
+    alert_items = verify_line_item_amounts_in_source_text(items, "Clean OCR text")
+    assert alert_items is not None
+    assert alert_items["message"] == "-183.78 (negative/credit values may be printed as positive or parenthesized)"
+
+    # Unit prices mismatch message
+    unit_items = [{"description": "Item 1", "unit_price": 165656.00}]
+    alert_prices = verify_unit_prices_in_source_text(unit_items, "Clean OCR text")
+    assert alert_prices is not None
+    assert alert_prices["message"] == "165656.00"
+
+    # Grand total mismatch message
+    alert_total = verify_grand_total_in_source_text(123.45, "Clean OCR text")
+    assert alert_total is not None
+    assert alert_total["message"] == "123.45"
+
+    # Subtotal mismatch message
+    alert_subtotal = verify_subtotal_in_source_text(123.45, "Clean OCR text")
+    assert alert_subtotal is not None
+    assert alert_subtotal["message"] == "123.45"
+
+    # Tax amount mismatch message
+    alert_tax = verify_tax_amount_in_source_text(123.45, "Clean OCR text")
+    assert alert_tax is not None
+    assert alert_tax["message"] == "123.45"
+
+    # Field confidence warning message
+    conf = {"VendorName": 0.45}
+    alert_conf = verify_field_confidence(conf, threshold=0.60)
+    assert len(alert_conf) == 1
+    assert alert_conf[0]["message"] == "45% (threshold 60%)"
+

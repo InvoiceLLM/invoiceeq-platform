@@ -147,14 +147,32 @@ def verify_totals_math(
 def _number_text_variants(value: float) -> list[str]:
     """Plausible printed forms of a number: with/without thousands separator,
     with/without trailing .00, and rounded to 0/1/2 decimals (OCR sometimes
-    drops trailing zeros or a decimal entirely on whole-number totals)."""
+    drops trailing zeros or a decimal entirely on whole-number totals).
+    Also supports negative number variations (absolute value, parenthesized,
+    and credit suffixes)."""
     variants = set()
-    for decimals in (2, 1, 0):
-        rounded = round(value, decimals)
-        plain = f"{rounded:.{decimals}f}"
-        with_commas = f"{rounded:,.{decimals}f}"
-        variants.add(plain)
-        variants.add(with_commas)
+    values_to_format = [value]
+    if value < 0:
+        values_to_format.append(abs(value))
+
+    for val in values_to_format:
+        for decimals in (2, 1, 0):
+            rounded = round(val, decimals)
+            plain = f"{rounded:.{decimals}f}"
+            with_commas = f"{rounded:,.{decimals}f}"
+            variants.add(plain)
+            variants.add(with_commas)
+
+            # If the original value was negative, add negative-specific formats for the absolute value variants
+            if value < 0 and val >= 0:
+                variants.add(f"({plain})")
+                variants.add(f"({with_commas})")
+                variants.add(f"{plain}-")
+                variants.add(f"{with_commas}-")
+                variants.add(f"{plain} Cr")
+                variants.add(f"{with_commas} Cr")
+                variants.add(f"{plain} CR")
+                variants.add(f"{with_commas} CR")
     return list(variants)
 
 
@@ -199,11 +217,7 @@ def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str |
 
         return {
             "type": "total_not_verified_in_source",
-            "message": (
-                f"Extracted grand_total ({grand_total:.2f}) was not found verbatim in the "
-                "source document text — possible silent correction of a printed figure rather "
-                "than faithful transcription. Flagged for manual review."
-            ),
+            "message": f"{grand_total:.2f}",
             "field": "grand_total",
             "severity": "warning"
         }
@@ -245,14 +259,15 @@ def verify_line_item_amounts_in_source_text(items: list[dict] | None, ocr_text: 
         if not unverified:
             return None
 
-        desc = "; ".join(f"'{d}' ({a:.2f})" for _, d, a in unverified)
+        amounts_str = ", ".join(f"{a:.2f}" for _, _, a in unverified)
+        any_negative = any(a < 0 for _, _, a in unverified)
+        msg = amounts_str
+        if any_negative:
+            msg += " (negative/credit values may be printed as positive or parenthesized)"
+
         return {
             "type": "line_item_not_verified_in_source",
-            "message": (
-                f"Extracted line item amount(s) not found verbatim in the source document text: {desc} — "
-                "possible silent correction of a printed figure rather than faithful transcription. "
-                "Flagged for manual review."
-            ),
+            "message": msg,
             "field": "items",
             "severity": "warning"
         }
@@ -282,11 +297,7 @@ def verify_subtotal_in_source_text(subtotal: float | None, ocr_text: str | None)
 
         return {
             "type": "subtotal_not_verified_in_source",
-            "message": (
-                f"Extracted subtotal ({subtotal:.2f}) was not found verbatim in the "
-                "source document text — possible silent correction of a printed figure rather "
-                "than faithful transcription. Flagged for manual review."
-            ),
+            "message": f"{subtotal:.2f}",
             "field": "subtotal",
             "severity": "warning"
         }
@@ -322,14 +333,10 @@ def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | 
         if not unverified:
             return None
 
-        desc = "; ".join(f"'{d}' ({p:.2f})" for _, d, p in unverified)
+        msg = ", ".join(f"{p:.2f}" for _, _, p in unverified)
         return {
             "type": "unit_price_not_verified_in_source",
-            "message": (
-                f"Extracted unit price(s) not found verbatim in the source document text: {desc} — "
-                "possible silent correction of a printed figure rather than faithful transcription. "
-                "Flagged for manual review."
-            ),
+            "message": msg,
             "field": "items",
             "severity": "warning"
         }
@@ -397,11 +404,7 @@ def verify_tax_amount_in_source_text(
 
         return {
             "type": "tax_amount_not_verified_in_source",
-            "message": (
-                f"Extracted tax_amount ({tax_amount:.2f}) was not found verbatim in the "
-                "source document text — possible silent LLM auto-correction of a printed vendor flaw "
-                "rather than faithful transcription. Flagged for manual review."
-            ),
+            "message": f"{tax_amount:.2f}",
             "field": "tax_amount",
             "severity": "warning"
         }
@@ -489,12 +492,7 @@ def verify_field_confidence(
                 schema_field = AZURE_TO_SCHEMA.get(azure_field, azure_field)
                 low_confidence_alerts.append({
                     "type": "low_confidence_field",
-                    "message": (
-                        f"OCR confidence for '{schema_field}' is {score:.0%} "
-                        f"(below {threshold:.0%} threshold) — the document may be "
-                        "blurred, smudged, or faintly printed in this area. "
-                        "Flagged for manual review."
-                    ),
+                    "message": f"{score:.0%} (threshold {threshold:.0%})",
                     "field": schema_field,
                     "confidence": score,
                     "severity": "warning",
