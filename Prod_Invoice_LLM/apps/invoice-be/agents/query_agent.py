@@ -56,8 +56,48 @@ class SQLGenerationSchema(BaseModel):
     model_config = {"extra": "forbid"}
     sql: str = Field(description="The exact read-only SELECT SQL statement to execute. Must filter strictly by tenant_id.")
 
+# Gap 182: tried first, before ever calling an LLM. Deliberately the same two
+# lists that already existed as an LLM-failure fallback -- only the order
+# changed, not the wording, so this doesn't introduce a second, differently-
+# tuned classifier to keep in sync with the prompt below.
+_SQL_KEYWORDS = ("total", "spent", "sum", "average", "how many", "count", "mean", "min", "max", "date", "status", "vendor", "po number", "purchase order", "currency")
+_CHAT_KEYWORDS = ("hello", "hi ", "hey", "who are you", "what is your name")
+
+
 def classify_query(query: str) -> str:
-    """Classifies user queries into RAG, SQL, or CHAT."""
+    """Classifies user queries into RAG, SQL, or CHAT.
+
+    Gap 182: keyword match tried first, free and instant -- only falls
+    through to the LLM when neither keyword set confidently matches. Every
+    chat message previously paid for two full sequential LLM round-trips
+    (this classification, then the actual RAG/SQL answer), even though a
+    large share of real questions ("what's my total spend", "hello") are
+    unambiguously classifiable by keyword alone; the keyword lists already
+    existed but were only ever reached as a last-resort fallback if the LLM
+    call itself raised.
+
+    Known tradeoff, accepted rather than silently shipped: the keyword pass
+    is coarser than the LLM's routing prompt. "vendor" is an SQL keyword
+    here (matches e.g. "what's the vendor on invoice X"), but would also
+    fire on a genuinely semantic question like "what does the vendor say
+    about payment terms in their invoice" -- which the LLM prompt below is
+    explicit should route to RAG (free-text document content), not SQL. The
+    LLM path (still used whenever no keyword matches) has that nuance; the
+    fast path trades some of it for speed on the common, unambiguous cases.
+
+    Word-boundary matching, not plain substring: a naive `kw in q` check
+    caught "sum" inside "summarize" and would misfire the same way on "min"
+    inside "administrator" or "date" inside "update" -- tolerable back when
+    this was a rare except-block fallback, not acceptable now that it runs
+    on every message.
+    """
+    q = query.lower()
+    if any(re.search(rf"\b{re.escape(kw.strip())}\b", q) for kw in _SQL_KEYWORDS):
+        return "SQL"
+    if any(re.search(rf"\b{re.escape(kw.strip())}\b", q) for kw in _CHAT_KEYWORDS):
+        return "CHAT"
+
+    # No confident keyword match -- genuinely ambiguous, worth the LLM call.
     llm = get_llm()
     try:
         structured_llm = llm.with_structured_output(QueryRoutingSchema)
@@ -76,12 +116,7 @@ def classify_query(query: str) -> str:
         )
         return result.route.upper()
     except Exception as e:
-        logger.warning("Routing classification failed: %s. Using keyword fallback.", e)
-        q = query.lower()
-        if any(kw in q for kw in ["total", "spent", "sum", "average", "how many", "count", "mean", "min", "max", "date", "status", "vendor", "po number", "purchase order"]):
-            return "SQL"
-        if any(kw in q for kw in ["hello", "hi ", "hey", "who are you", "what is your name"]):
-            return "CHAT"
+        logger.warning("Routing classification failed: %s. Defaulting to RAG.", e)
         return "RAG"
 
 # Columns sourced from OCR/LLM extraction, where the LLM-generated SQL's exact-match
