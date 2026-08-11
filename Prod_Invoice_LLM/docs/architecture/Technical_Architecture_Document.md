@@ -192,6 +192,40 @@ Frontend polls GET /status/{job_id}
        └── UI updates when status ≠ PROCESSING
 ```
 
+#### Autopilot Folder Sync Flow (Scheduled / Manual)
+
+The Autopilot feature runs bulk ingestion deterministically using scheduled cron triggers (via Azure Container Apps Jobs) or manual triggers, sharing the exact same backend entrypoint logic.
+
+```
+Autopilot Trigger (Scheduled or Manual)
+       │
+       ├── Trigger A: Azure Container Apps Job (Scheduled cron runner)
+       │              └── Queries DB for due tenant autopilot configurations
+       │              └── Loops tenants and issues request to shared sync processor
+       ├── Trigger B: "Sync Now" Button (Settings UI)
+       │              └── Issues direct request to shared sync processor for specific folder
+       │
+       ▼
+Shared Sync Processor
+       │
+       ├── 1. Scan files in source folder (Google Drive / Salesforce) modified since last sync
+       ├── 2. Deduplicate files:
+       │       ├── Match cloud source file ID in tenant_autopilot_logs → Match? Skip.
+       │       └── Match file content hash in tenant_autopilot_logs → Match? Skip.
+       ├── 3. For each unique file:
+       │       ├── Download file bytes, save to Azure Blob Storage
+       │       ├── Create Invoice record in database (status: PROCESSING)
+       │       ├── Add message to Azure Storage Queue for extraction
+       │       └── Create entry in tenant_autopilot_logs (status: SUCCESS)
+       │
+       ▼
+Queue Worker (Asynchronous Processing)
+       │
+       ├── 1. Read message from Azure Storage Queue
+       ├── 2. Run OCR & extraction agent (NOVA/SENTINEL verification checks)
+       └── 3. Update Invoice status (COMPLETED / AUDIT_REQUIRED) and index in ChromaDB
+```
+
 #### Bulk Upload Flow (6+ PDFs) — Server-Sent Events (SSE)
 
 When uploading many PDFs at once, polling each individually would generate excessive requests (e.g., 100 PDFs × 1 request every 2 seconds = 50 req/sec). Instead, the system uses **SSE** — a single persistent HTTP connection where the backend pushes status updates as each PDF completes.

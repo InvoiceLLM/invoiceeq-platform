@@ -33,7 +33,7 @@ Here's the reading order, grouped by what each phase builds toward:
 	13. apps/invoice-be/README.md, apps/invoice-be/agents/README.md
 	14. apps/invoice-fe/README.md
 	15. apps/invoice-website/README.md
-	16. infra/README.md, infra/BICEP_GUIDE.md
+	16. infra/README.md (10-stage bicep deployment strategy, file-by-file)
 
 8. Roadmap/QA (optional, situational)
 	17. docs/guides/implementation_plan_updated.md — week-by-week sequencing (Month 1/2/3 sub-plans were retired 2026-07-27; current status lives in the *_features_tracker.md files instead)

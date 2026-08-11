@@ -5,6 +5,7 @@ import { CheckCircle2, AlertTriangle, Loader2, FileText, Send, XCircle } from "l
 import Link from "next/link";
 import { apiClient } from "../../lib/apiClient";
 import LogTerminal from "./LogTerminal";
+import { formatCurrency } from "../../lib/utils";
 
 // Feature 2.1's outbound status lifecycle -- distinct from inbound's
 // PROCESSING/COMPLETED/AUDIT_REQUIRED since the semantics differ (pre-send
@@ -41,6 +42,11 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
   const [status, setStatus] = useState<OutboundStatus>("UPLOADED");
   const [customerName, setCustomerName] = useState<string | null>(null);
   const [grandTotal, setGrandTotal] = useState<number | null>(null);
+  // FE Gap 183: the total below used to be rendered as `$${n.toFixed(2)}` --
+  // a third hardcoded-USD copy, on the one screen where the user is watching
+  // their own just-uploaded document being read. GET /invoices/{id} returns
+  // the full ORM row, so the real currency was always available here.
+  const [currency, setCurrency] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<{ type: string; message: string }[]>([]);
   const [isConfirming, setIsConfirming] = useState(false);
   const activeRef = useRef(true);
@@ -71,6 +77,7 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
         setStatus(latest);
         setCustomerName(data.customer_name ?? null);
         setGrandTotal(data.grand_total ?? null);
+        setCurrency(data.currency ?? null);
         setAlerts(Array.isArray(data.sa_alerts) ? data.sa_alerts : []);
       } catch (e) {
         console.error("Failed to poll outbound invoice status", e);
@@ -150,7 +157,7 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
 
         {(customerName || grandTotal) && (
           <div className="text-[11px] text-slate-400 font-mono">
-            Customer: {customerName || "Pending"} | Total: {grandTotal ? `$${grandTotal.toFixed(2)}` : "Pending"}
+            Customer: {customerName || "Pending"} | Total: {grandTotal ? formatCurrency(grandTotal, currency) : "Pending"}
           </div>
         )}
 

@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
+import { formatCurrency } from "@/lib/utils";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import OutboundAlertConsole, { StandingRuleResult } from "@/components/audit/OutboundAlertConsole";
@@ -18,6 +19,12 @@ interface OutboundInvoiceDetail {
   due_date: string | null;
   grand_total: number | null;
   tax_amount: number | null;
+  /**
+   * FE Gap 183: ISO-4217 code. The backend has always returned it (this page
+   * fetches the full ORM row via GET /invoices/{id}) -- the type simply never
+   * declared it, so every amount on the outbound console rendered as "$".
+   */
+  currency?: string | null;
   sa_alerts: { type: string; message: string; field?: string }[];
   items: { description: string; quantity?: number; unit_price?: number; amount: number }[] | null;
   coordinates?: { x: number; y: number; width: number; height: number; label?: string }[];
@@ -32,9 +39,15 @@ const CORRECTABLE_FIELDS: { key: keyof OutboundInvoiceDetail; label: string; typ
   { key: "tax_amount", label: "Tax Amount", type: "number" },
 ];
 
-function fmt(val?: number | null) {
+/**
+ * FE Gap 183: was a standalone hardcoded-USD copy of the same broken pattern
+ * `lib/utils.ts::formatCurrency` had. Now delegates to the shared, fixed
+ * helper and takes the invoice's real currency. The "—" for a null amount is
+ * kept -- this console distinguishes "not extracted" from "zero".
+ */
+function fmt(val?: number | null, currency?: string | null) {
   if (val == null) return "—";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val);
+  return formatCurrency(val, currency);
 }
 
 function EditableField({
@@ -188,7 +201,7 @@ export default function OutboundAuditorReviewPage() {
     const raw = initialInvoice?.[key];
     if (raw == null) return "";
     if (CORRECTABLE_FIELDS.find((f) => f.key === key)?.type === "number") {
-      return fmt(Number(raw));
+      return fmt(Number(raw), invoice?.currency);
     }
     return String(raw);
   };
@@ -369,7 +382,10 @@ export default function OutboundAuditorReviewPage() {
             <div className="flex flex-col gap-3">
               {CORRECTABLE_FIELDS.map(({ key, label, type }) => {
                 const rawValue = displayValue(key);
-                const displayed = type === "number" && !(key in corrections) ? fmt(rawValue ? Number(rawValue) : null) : rawValue;
+                const displayed =
+                  type === "number" && !(key in corrections)
+                    ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
+                    : rawValue;
                 return (
                   <EditableField
                     key={key as string}
@@ -409,8 +425,8 @@ export default function OutboundAuditorReviewPage() {
                         <td className="py-2 pr-3 text-slate-500">{idx + 1}</td>
                         <td className="py-2 pr-3">{item.description}</td>
                         <td className="py-2 pr-3 text-right text-slate-400">{item.quantity ?? "—"}</td>
-                        <td className="py-2 pr-3 text-right text-slate-400">{item.unit_price != null ? fmt(item.unit_price) : "—"}</td>
-                        <td className="py-2 text-right font-medium text-slate-200">{fmt(item.amount)}</td>
+                        <td className="py-2 pr-3 text-right text-slate-400">{item.unit_price != null ? fmt(item.unit_price, invoice.currency) : "—"}</td>
+                        <td className="py-2 text-right font-medium text-slate-200">{fmt(item.amount, invoice.currency)}</td>
                       </tr>
                     ))}
                   </tbody>

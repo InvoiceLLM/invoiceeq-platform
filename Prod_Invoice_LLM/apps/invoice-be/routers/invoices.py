@@ -78,6 +78,12 @@ async def _ingest_single_file(
             due_date=existing_invoice.due_date,
             tax_amount=existing_invoice.tax_amount,
             po_number=existing_invoice.po_number,
+            # FE Gap 183: currency was the one extracted field this copy
+            # dropped. A duplicate of an INR invoice landed with currency=NULL,
+            # so it was silently treated as USD by every reader downstream --
+            # real data loss, not just a display bug, because the duplicate row
+            # never goes through extraction again to recover it.
+            currency=existing_invoice.currency,
             status="DUPLICATE",
             sa_alerts=[{
                 "type": "duplicate",
@@ -104,6 +110,7 @@ async def _ingest_single_file(
                     "invoice_date": str(existing_invoice.invoice_date) if existing_invoice.invoice_date else None,
                     "due_date": str(existing_invoice.due_date) if existing_invoice.due_date else None,
                     "grand_total": existing_invoice.grand_total,
+                    "currency": existing_invoice.currency,
                     "tax_amount": existing_invoice.tax_amount,
                     "po_number": existing_invoice.po_number,
                     "items": existing_invoice.items,
@@ -402,6 +409,9 @@ async def get_invoice_status(
         "status": invoice.status,
         "vendor_name": invoice.vendor_name,
         "grand_total": invoice.grand_total,
+        # FE Gap 183: this endpoint hand-builds its dict, so the ingestion
+        # status ledger had no currency to render and hardcoded "$".
+        "currency": invoice.currency,
         "alerts": invoice.sa_alerts
     }
 

@@ -188,3 +188,74 @@ def test_directory_watcher_ingests_pdfs(db_session, tmp_path, monkeypatch):
         assert data["files_queued"] == 2
         assert len(db_session.exec(select(Invoice)).all()) == 2
         assert mock_queue_client.send_message.call_count == 2
+
+
+def test_duplicate_upload_copies_currency_from_original(db_session):
+    """FE Gap 183: the duplicate-detection path in
+    routers/invoices.py::_ingest_single_file() copies vendor_name, grand_total,
+    tax_amount, po_number, dates and items onto the new DUPLICATE row -- but
+    silently dropped `currency`. A duplicate of an INR invoice therefore landed
+    with currency=NULL and every reader downstream treated it as USD. This is
+    real data loss, not just a display bug: the duplicate row never goes back
+    through extraction, so the value can't be recovered later.
+    """
+    import hashlib
+
+    pdf_content = b"%PDF-1.4 duplicate currency test"
+    file_hash = hashlib.sha256(pdf_content).hexdigest()
+
+    original = Invoice(
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/original-inr.pdf",
+        file_hash=file_hash,
+        vendor_name="Mumbai Supplies Pvt Ltd",
+        grand_total=40000.0,
+        tax_amount=7200.0,
+        currency="INR",
+        status="COMPLETED",
+        sa_alerts=[],
+    )
+    db_session.add(original)
+    db_session.commit()
+
+    files = {"files": ("invoice-again.pdf", io.BytesIO(pdf_content), "application/pdf")}
+
+    with patch("routers.invoices.upload_pdf_to_blob_storage"), \
+         patch("routers.invoices.QueueClient"):
+        client = TestClient(app)
+        response = client.post("/api/v1/invoices/upload", files=files)
+
+    assert response.status_code == 201
+    duplicate_id = UUID(response.json()["job_ids"][0])
+    duplicate = db_session.get(Invoice, duplicate_id)
+
+    assert duplicate is not None
+    assert duplicate.status == "DUPLICATE"
+    # The fields that were already being copied, still copied...
+    assert duplicate.vendor_name == "Mumbai Supplies Pvt Ltd"
+    assert duplicate.grand_total == 40000.0
+    assert duplicate.tax_amount == 7200.0
+    # ...and the one that wasn't.
+    assert duplicate.currency == "INR"
+
+
+def test_invoice_status_endpoint_returns_currency(db_session):
+    """FE Gap 183: GET /invoices/status/{job_id} hand-builds its response dict,
+    so the ingestion status ledger had no currency to render and hardcoded "$".
+    """
+    invoice = Invoice(
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/inr.pdf",
+        vendor_name="Mumbai Supplies Pvt Ltd",
+        grand_total=40000.0,
+        currency="INR",
+        status="COMPLETED",
+        sa_alerts=[],
+    )
+    db_session.add(invoice)
+    db_session.commit()
+
+    client = TestClient(app)
+    data = client.get(f"/api/v1/invoices/status/{invoice.id}").json()
+    assert data["grand_total"] == 40000.0
+    assert data["currency"] == "INR"

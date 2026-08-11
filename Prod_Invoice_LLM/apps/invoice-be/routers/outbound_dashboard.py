@@ -29,6 +29,17 @@ _OUTSTANDING_STATUSES = ["UPLOADED", "VERIFIED", "NEEDS_REVIEW", "SENT"]
 _VERIFICATION_DECIDED_STATUSES = ("VERIFIED", "NEEDS_REVIEW", "SENT", "PAID")
 
 
+# FE Gap 183, AR side. Written here independently rather than imported from
+# routers/dashboard.py's identical helper: the zero-touch rule in
+# docs/architecture/System_Journey_Developer_Guide.md Part 3 keeps these two
+# modules from depending on each other, and that rule outranks the duplication.
+# Invoice.currency is nullable, so this normalizes at *query* time only --
+# NULL/blank collapse to "USD" and casing is folded, but nothing is ever
+# written back onto historical rows.
+def _currency_expr():
+    return func.upper(func.coalesce(func.nullif(func.trim(Invoice.currency), ""), "USD"))
+
+
 @router.get("/invoices")
 async def list_outbound_invoices(
     response: Response,
@@ -86,6 +97,10 @@ async def list_outbound_invoices(
             "invoice_date": inv.invoice_date,
             "due_date": inv.due_date,
             "grand_total": inv.grand_total,
+            # FE Gap 183: this endpoint hand-builds its response dict rather
+            # than returning the ORM row, so currency has to be listed
+            # explicitly or every consumer of these rows renders "$".
+            "currency": inv.currency,
             "status": inv.status,
             "is_overdue": inv.status == "SENT" and inv.due_date is not None and inv.due_date < today,
         }
@@ -114,6 +129,13 @@ async def get_outbound_dashboard_metrics(
     form here (verification_accuracy's sa_alerts list lengths,
     average_days_to_payment's timestamp deltas) take a per-row pass -- and
     that pass fetches 4 narrow columns, never full Invoice rows.
+
+    FE Gap 183, AR side: every money figure is broken out per currency, and no
+    blended cross-currency scalar survives. The old flat total_invoiced_out /
+    amount_collected / outstanding_receivables / at_risk_receivables keys are
+    **removed**, replaced by totals_by_currency; top_customers and
+    revenue_over_time carry a currency of their own. No FX conversion anywhere
+    -- amounts in different currencies are never added together.
     """
     # 1. Shared filter conditions. tenant_id + flow_direction are not
     # optional: without the direction predicate this would aggregate the
@@ -133,38 +155,52 @@ async def get_outbound_dashboard_metrics(
 
     today = date.today()
 
-    # 2. Dollar totals -- one aggregate query, computed entirely in SQL.
+    # 2. Money totals -- one aggregate query, computed entirely in SQL,
+    # GROUP BY currency (FE Gap 183). One row per currency actually billed in.
     # at_risk_receivables reuses feature_7.1's read-time overdue rule (SENT
     # past its due_date), the same predicate list_outbound_invoices() applies
     # for its virtual `status=overdue` filter, so the two can never disagree.
     # No persisted OVERDUE status, no scheduled job.
-    totals_row = db_session.exec(
-        select(
-            func.coalesce(func.sum(Invoice.grand_total), 0.0),
-            func.coalesce(func.sum(case((Invoice.status == "PAID", Invoice.grand_total), else_=0.0)), 0.0),
-            func.coalesce(
-                func.sum(case((Invoice.status.in_(_OUTSTANDING_STATUSES), Invoice.grand_total), else_=0.0)),
-                0.0,
-            ),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                Invoice.status == "SENT",
-                                Invoice.due_date.is_not(None),
-                                Invoice.due_date < today,
-                            ),
-                            Invoice.grand_total,
-                        ),
-                        else_=0.0,
-                    )
+    currency_expr = _currency_expr()
+    totals_by_currency = [
+        {
+            "currency": curr,
+            "total_invoiced_out": round(billed or 0.0, 2),
+            "amount_collected": round(collected or 0.0, 2),
+            "outstanding_receivables": round(outstanding or 0.0, 2),
+            "at_risk_receivables": round(at_risk or 0.0, 2),
+        }
+        for curr, billed, collected, outstanding, at_risk in db_session.exec(
+            select(
+                currency_expr,
+                func.coalesce(func.sum(Invoice.grand_total), 0.0),
+                func.coalesce(func.sum(case((Invoice.status == "PAID", Invoice.grand_total), else_=0.0)), 0.0),
+                func.coalesce(
+                    func.sum(case((Invoice.status.in_(_OUTSTANDING_STATUSES), Invoice.grand_total), else_=0.0)),
+                    0.0,
                 ),
-                0.0,
-            ),
-        ).where(*conditions)
-    ).first()
-    total_invoiced_out, amount_collected, outstanding_receivables, at_risk_receivables = totals_row
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    Invoice.status == "SENT",
+                                    Invoice.due_date.is_not(None),
+                                    Invoice.due_date < today,
+                                ),
+                                Invoice.grand_total,
+                            ),
+                            else_=0.0,
+                        )
+                    ),
+                    0.0,
+                ),
+            )
+            .where(*conditions)
+            .group_by(currency_expr)
+            .order_by(func.coalesce(func.sum(Invoice.grand_total), 0.0).desc(), currency_expr)
+        ).all()
+    ]
 
     # 3. Status breakdown -- GROUP BY status
     status_counts = {
@@ -176,28 +212,32 @@ async def get_outbound_dashboard_metrics(
 
     # 4. Top customers by billed value -- the AR mirror of inbound's
     # top_vendors, full ranked list rather than capped, matching that
-    # endpoint's behaviour.
+    # endpoint's behaviour. Grouped by currency as well as customer (FE Gap
+    # 183): a customer billed in two currencies gets one row per currency
+    # rather than a summed figure that belongs to neither.
     customer_expr = func.coalesce(Invoice.customer_name, "Unknown Customer")
     top_customers = [
-        {"customer_name": c, "amount": round(amt or 0.0, 2)}
-        for c, amt in db_session.exec(
-            select(customer_expr, func.sum(Invoice.grand_total))
+        {"customer_name": c, "currency": curr, "amount": round(amt or 0.0, 2)}
+        for c, curr, amt in db_session.exec(
+            select(customer_expr, currency_expr, func.sum(Invoice.grand_total))
             .where(*conditions)
-            .group_by(customer_expr)
+            .group_by(customer_expr, currency_expr)
             .order_by(func.sum(Invoice.grand_total).desc())
         ).all()
     ]
 
     # 5. Revenue-over-time series -- mirror of inbound's spend_over_time,
     # falling back to created_at's date when invoice_date wasn't extracted.
+    # One point per (date, currency) so the FE draws a separate line per
+    # currency rather than one line that jumps between scales.
     date_expr = func.coalesce(Invoice.invoice_date, func.date(Invoice.created_at))
     revenue_over_time = [
-        {"date": str(d), "amount": round(amt or 0.0, 2)}
-        for d, amt in db_session.exec(
-            select(date_expr, func.sum(Invoice.grand_total))
+        {"date": str(d), "currency": curr, "amount": round(amt or 0.0, 2)}
+        for d, curr, amt in db_session.exec(
+            select(date_expr, currency_expr, func.sum(Invoice.grand_total))
             .where(*conditions)
-            .group_by(date_expr)
-            .order_by(date_expr)
+            .group_by(date_expr, currency_expr)
+            .order_by(date_expr, currency_expr)
         ).all()
     ]
 
@@ -325,10 +365,10 @@ async def get_outbound_dashboard_metrics(
     # total, no net cash position) -- that comparison stays Chat-only, per the
     # design decision recorded in both feature docs.
     return {
-        "total_invoiced_out": round(total_invoiced_out, 2),
-        "amount_collected": round(amount_collected, 2),
-        "outstanding_receivables": round(outstanding_receivables, 2),
-        "at_risk_receivables": round(at_risk_receivables, 2),
+        # FE Gap 183: per-currency breakdown only. The flat blended
+        # total_invoiced_out / amount_collected / outstanding_receivables /
+        # at_risk_receivables keys were removed, not deprecated.
+        "totals_by_currency": totals_by_currency,
         "average_days_to_payment": average_days_to_payment,
         "verification_accuracy": verification_accuracy,
         "active_alerts_count": active_alerts_count,

@@ -372,6 +372,14 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
     against on the SQL route. NOT the source of truth for exact answers — the
     SQL route still runs a live query for those — so this is cached 5 minutes
     rather than computed fresh on every turn.
+
+    FE Gap 183: total spend used to be a single SUM(grand_total) across every
+    currency the tenant had, rendered into the prompt with a hardcoded "$".
+    A tenant with USD and INR invoices was therefore handed a number that was
+    neither, labelled as dollars. It is now broken out per currency
+    (COALESCE(currency,'USD') at read time only — nothing is written back to
+    the historical NULL rows), with no currency symbol hardcoded anywhere, and
+    the snapshot text itself tells the model not to combine across currencies.
     """
     cache_key = f"tenant_stats_summary:{tenant_id}"
     try:
@@ -398,13 +406,28 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
         row = db_session.exec(
             select(
                 func.count(Invoice.id),
-                func.coalesce(func.sum(Invoice.grand_total), 0),
                 func.count(func.distinct(Invoice.vendor_name)),
                 func.min(Invoice.invoice_date),
                 func.max(Invoice.invoice_date),
             ).where(Invoice.tenant_id == tenant_uuid)
         ).first()
-        total_invoices, total_spend, distinct_vendors, earliest_date, latest_date = row
+        total_invoices, distinct_vendors, earliest_date, latest_date = row
+
+        # Gap 183: GROUP BY currency. Normalized the same way the dashboard
+        # aggregates do it -- NULL/blank -> USD, casing folded -- at read time
+        # only.
+        currency_expr = func.upper(
+            func.coalesce(func.nullif(func.trim(Invoice.currency), ""), "USD")
+        )
+        spend_rows = db_session.exec(
+            select(currency_expr, func.coalesce(func.sum(Invoice.grand_total), 0))
+            .where(Invoice.tenant_id == tenant_uuid)
+            .group_by(currency_expr)
+            .order_by(func.coalesce(func.sum(Invoice.grand_total), 0).desc())
+        ).all()
+        spend_breakdown = (
+            "; ".join(f"{curr} {(amt or 0.0):,.2f}" for curr, amt in spend_rows) or "none"
+        )
 
         status_rows = db_session.exec(
             select(Invoice.status, func.count(Invoice.id))
@@ -415,7 +438,9 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
 
         summary = (
             f"Tenant Data Snapshot (orientation only — always run a live query for exact figures): "
-            f"{total_invoices} total invoices, ${total_spend:,.2f} total spend, "
+            f"{total_invoices} total invoices, total spend per currency: {spend_breakdown} "
+            f"(never add or compare amounts across different currencies — no exchange rate is available; "
+            f"always state the currency alongside any amount), "
             f"{distinct_vendors} distinct vendors, dates {earliest_date} to {latest_date}, "
             f"status breakdown: {status_breakdown}."
         )

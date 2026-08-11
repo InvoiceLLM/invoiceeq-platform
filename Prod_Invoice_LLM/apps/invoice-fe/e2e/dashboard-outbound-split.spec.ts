@@ -13,36 +13,83 @@ import { test, expect, Page } from "@playwright/test";
  * (invoice-be/tests/test_outbound_dashboard.py).
  */
 
+// FE Gap 183: both payloads moved from flat blended scalars
+// (total_invoiced: 1750, ...) to per-currency arrays. The old shape no longer
+// exists on the wire at all, so these stubs had to move with it or they would
+// be testing a response the backend can never send.
 const INBOUND_METRICS = {
-  total_invoiced: 1750,
-  paid_amount: 1000,
-  outstanding_amount: 750,
-  at_risk_amount: 500,
+  totals_by_currency: [
+    {
+      currency: "USD",
+      total_invoiced: 1750,
+      paid_amount: 1000,
+      outstanding_amount: 750,
+      at_risk_amount: 500,
+    },
+  ],
   average_processing_time: 12.5,
   extraction_accuracy: 96.4,
   active_alerts_count: 1,
   spend_over_time: [
-    { date: "2026-06-20", amount: 1000 },
-    { date: "2026-06-25", amount: 750 },
+    { date: "2026-06-20", currency: "USD", amount: 1000 },
+    { date: "2026-06-25", currency: "USD", amount: 750 },
   ],
-  top_vendors: [{ vendor_name: "Hardware Depot", amount: 1250 }],
+  top_vendors: [{ vendor_name: "Hardware Depot", currency: "USD", amount: 1250 }],
   invoices_by_status: { PAID: 1, AUDIT_REQUIRED: 1 },
 };
 
 const OUTBOUND_METRICS = {
-  total_invoiced_out: 2050,
-  amount_collected: 1000,
-  outstanding_receivables: 1050,
-  at_risk_receivables: 300,
+  totals_by_currency: [
+    {
+      currency: "USD",
+      total_invoiced_out: 2050,
+      amount_collected: 1000,
+      outstanding_receivables: 1050,
+      at_risk_receivables: 300,
+    },
+  ],
   average_days_to_payment: 10,
   verification_accuracy: 75,
   active_alerts_count: 1,
   revenue_over_time: [
-    { date: "2026-06-20", amount: 1000 },
-    { date: "2026-06-26", amount: 1050 },
+    { date: "2026-06-20", currency: "USD", amount: 1000 },
+    { date: "2026-06-26", currency: "USD", amount: 1050 },
   ],
-  top_customers: [{ customer_name: "Vertex Industries", amount: 1250 }],
+  top_customers: [{ customer_name: "Vertex Industries", currency: "USD", amount: 1250 }],
   invoices_by_status: { PAID: 1, SENT: 1 },
+};
+
+/** FE Gap 183: a genuinely multi-currency tenant, used by the currency tests
+ *  at the bottom of this file. $500 + Rs 40,000 is the exact case that used to
+ *  render as one blended "40500". */
+const INBOUND_METRICS_MULTI_CURRENCY = {
+  ...INBOUND_METRICS,
+  totals_by_currency: [
+    {
+      currency: "INR",
+      total_invoiced: 40000,
+      paid_amount: 0,
+      outstanding_amount: 40000,
+      at_risk_amount: 40000,
+    },
+    {
+      currency: "USD",
+      total_invoiced: 500,
+      paid_amount: 500,
+      outstanding_amount: 0,
+      at_risk_amount: 0,
+    },
+  ],
+  spend_over_time: [
+    { date: "2026-06-20", currency: "USD", amount: 500 },
+    { date: "2026-06-20", currency: "INR", amount: 40000 },
+    { date: "2026-06-25", currency: "USD", amount: 250 },
+    { date: "2026-06-25", currency: "INR", amount: 15000 },
+  ],
+  top_vendors: [
+    { vendor_name: "Mumbai Supplies", currency: "INR", amount: 40000 },
+    { vendor_name: "Hardware Depot", currency: "USD", amount: 500 },
+  ],
 };
 
 /** Text that would indicate a combined/net AP-vs-AR figure leaked onto the
@@ -56,7 +103,9 @@ const FORBIDDEN_COMBINED_TEXT = [
 
 async function stubDashboardApis(
   page: Page,
-  flow: { receive_invoices_enabled: boolean; send_invoices_enabled: boolean }
+  flow: { receive_invoices_enabled: boolean; send_invoices_enabled: boolean },
+  /** FE Gap 183: lets a test swap in the multi-currency payload. */
+  inboundMetrics?: typeof INBOUND_METRICS
 ) {
   // Feature 1.1: the shell resolves identity from GET /api/auth/me and
   // Sidebar.tsx filters nav on it. Pinned to Admin here so these Dashboard
@@ -91,7 +140,11 @@ async function stubDashboardApis(
   );
 
   await page.route("**/api/dashboard/metrics**", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(INBOUND_METRICS) })
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(inboundMetrics ?? INBOUND_METRICS),
+    })
   );
 
   await page.route("**/api/dashboard/outbound-metrics**", (route) =>
@@ -125,6 +178,8 @@ async function stubDashboardApis(
           invoice_number: "INV-IN-1",
           vendor_name: "Hardware Depot",
           grand_total: 500,
+          // FE Gap 183: rows carry their own currency now.
+          currency: "USD",
           status: "AUDIT_REQUIRED",
         },
       ]),
@@ -141,7 +196,9 @@ async function stubDashboardApis(
           id: "22222222-2222-2222-2222-222222222222",
           invoice_number: "INV-OUT-1",
           customer_name: "Vertex Industries",
-          grand_total: 900,
+          grand_total: 40000,
+          // FE Gap 183: GET /outbound-dashboard/invoices returns currency now.
+          currency: "INR",
           status: "NEEDS_REVIEW",
           is_overdue: false,
         },
@@ -320,5 +377,86 @@ test.describe("Dashboard — send-only tenant", () => {
     await expect(inboundTotalCard(page)).toHaveCount(0);
     await expect(panel(page, "Invoice Spend Trend")).toHaveCount(0);
     await expect(panel(page, "AI Score")).toHaveCount(1);
+  });
+});
+
+
+/**
+ * FE Gap 183 — money is rendered in the invoice's real currency, and totals
+ * are broken out per currency rather than blended into one number.
+ *
+ * The backend half is covered by invoice-be/tests/test_dashboard.py and
+ * test_outbound_dashboard.py; these assert the rendering contract on top of
+ * it -- that a tenant with USD and INR invoices sees two labelled figures and
+ * never their sum, and that the KPI card shrinks rather than clipping them.
+ */
+test.describe("Dashboard — multi-currency display (Gap 183)", () => {
+  test("shows one figure per currency on a KPI card, never their sum", async ({ page }) => {
+    await stubDashboardApis(
+      page,
+      { receive_invoices_enabled: true, send_invoices_enabled: false },
+      INBOUND_METRICS_MULTI_CURRENCY
+    );
+
+    await page.goto("/dashboard");
+    await expect(inboundTotalCard(page)).toBeVisible();
+
+    const body = page.locator("body");
+    // Both currencies rendered with their own symbol/code.
+    await expect(body).toContainText("$500.00");
+    await expect(body).toContainText(/(₹|INR)\s?40,000\.00/);
+
+    // The blended total (40500) must appear nowhere -- in any currency.
+    await expect(page.getByText("40,500", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("$40,500", { exact: false })).toHaveCount(0);
+  });
+
+  test("KPI card shrinks its text to fit both currencies instead of clipping", async ({ page }) => {
+    await stubDashboardApis(
+      page,
+      { receive_invoices_enabled: true, send_invoices_enabled: false },
+      INBOUND_METRICS_MULTI_CURRENCY
+    );
+
+    await page.goto("/dashboard");
+    await expect(inboundTotalCard(page)).toBeVisible();
+
+    const valueBox = page.getByTestId("kpi-value").first();
+    await expect(valueBox).toBeVisible();
+
+    // Nothing is scrolled out of view: the content fits its box rather than
+    // overflowing it (the shrink-to-fit requirement -- not truncation).
+    const fits = await valueBox.evaluate((el) => {
+      return (
+        el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1
+      );
+    });
+    expect(fits).toBe(true);
+
+    // And it actually shrank below the single-currency 24px baseline.
+    const fontSize = await valueBox.evaluate((el) => {
+      const inner = el.firstElementChild as HTMLElement;
+      return parseFloat(getComputedStyle(inner).fontSize);
+    });
+    expect(fontSize).toBeLessThan(24);
+    expect(fontSize).toBeGreaterThanOrEqual(9);
+  });
+
+  test("per-invoice rows render their own currency, not a hardcoded $", async ({ page }) => {
+    await stubDashboardApis(page, {
+      receive_invoices_enabled: true,
+      send_invoices_enabled: true,
+    });
+
+    await page.goto("/dashboard");
+    await expect(panel(page, "Needs Attention")).toBeVisible();
+
+    // The outbound flagged row is an INR invoice (see the stub above).
+    const outboundRow = page.getByRole("link", { name: /INV-OUT-1/ });
+    await expect(outboundRow).toContainText(/(₹|INR)\s?40,000\.00/);
+    await expect(outboundRow).not.toContainText("$40,000.00");
+
+    // The inbound one is USD and still renders as such.
+    await expect(page.getByRole("link", { name: /INV-IN-1/ })).toContainText("$500.00");
   });
 });

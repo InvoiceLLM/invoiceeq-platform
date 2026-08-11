@@ -315,10 +315,26 @@ test.describe("Gap 85 — Dashboard header row across widths", () => {
     await page.route("**/api/dashboard/metrics**", (route) =>
       route.fulfill(
         json({
-          total_invoiced: 1750,
-          paid_amount: 1000,
-          outstanding_amount: 750,
-          at_risk_amount: 500,
+          // FE Gap 183: per-currency array replaced the flat scalars. Two
+          // currencies on purpose -- this suite exists to catch layout
+          // overflow, and a multi-currency KPI card is the densest the card
+          // ever gets (it is what KpiCard's shrink-to-fit was added for).
+          totals_by_currency: [
+            {
+              currency: "INR",
+              total_invoiced: 40000,
+              paid_amount: 25000,
+              outstanding_amount: 15000,
+              at_risk_amount: 15000,
+            },
+            {
+              currency: "USD",
+              total_invoiced: 1750,
+              paid_amount: 1000,
+              outstanding_amount: 750,
+              at_risk_amount: 500,
+            },
+          ],
           average_processing_time: 12.5,
           extraction_accuracy: 96.4,
           active_alerts_count: 1,

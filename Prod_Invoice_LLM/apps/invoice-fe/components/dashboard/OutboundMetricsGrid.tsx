@@ -10,23 +10,38 @@ import {
   TrendingUp,
 } from "lucide-react";
 import KpiCard from "./KpiCard";
-import { formatCurrency } from "../../lib/utils";
+import { formatCurrency, normalizeCurrencyCode } from "../../lib/utils";
 
 interface RevenuePoint {
   date: string;
+  /** FE Gap 183: ISO-4217 code this point's amount is denominated in. */
+  currency?: string | null;
   amount: number;
 }
 
 export interface CustomerRevenue {
   customer_name: string;
+  /** FE Gap 183: one row per (customer, currency) rather than a summed total. */
+  currency?: string | null;
   amount: number;
 }
 
-export interface OutboundMetrics {
+/**
+ * FE Gap 183, AR side: one row per currency from
+ * GET /outbound-dashboard/metrics. Replaces the old flat total_invoiced_out /
+ * amount_collected / outstanding_receivables / at_risk_receivables scalars,
+ * which blended every currency into one unlabellable number.
+ */
+export interface OutboundCurrencyTotals {
+  currency: string;
   total_invoiced_out: number;
   amount_collected: number;
   outstanding_receivables: number;
   at_risk_receivables: number;
+}
+
+export interface OutboundMetrics {
+  totals_by_currency: OutboundCurrencyTotals[];
   average_days_to_payment: number;
   verification_accuracy: number;
   active_alerts_count: number;
@@ -46,10 +61,7 @@ interface OutboundMetricsGridProps {
 }
 
 export const defaultOutboundMetrics: OutboundMetrics = {
-  total_invoiced_out: 0,
-  amount_collected: 0,
-  outstanding_receivables: 0,
-  at_risk_receivables: 0,
+  totals_by_currency: [],
   average_days_to_payment: 0,
   verification_accuracy: 0,
   active_alerts_count: 0,
@@ -62,6 +74,10 @@ export const defaultOutboundMetrics: OutboundMetrics = {
 };
 
 const ACCURACY_TARGET = 95.0;
+
+// Green-family palette so the AR chart stays visually distinct from the
+// inbound grid's blues when both halves render side by side.
+const SERIES_COLORS = ["#10B981", "#34D399", "#0EA5E9", "#A3E635", "#F59E0B"];
 
 /**
  * Feature 2.1, Task 2.1.1 — the AR half of the Dashboard's metrics split.
@@ -78,12 +94,9 @@ const ACCURACY_TARGET = 95.0;
  */
 export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetricsGridProps) {
   const [hoveredPoint, setHoveredPoint] = useState<RevenuePoint | null>(null);
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
-  const totalInvoicedOut = metrics?.total_invoiced_out ?? 0;
-  const amountCollected = metrics?.amount_collected ?? 0;
-  const outstandingReceivables = metrics?.outstanding_receivables ?? 0;
-  const atRiskReceivables = metrics?.at_risk_receivables ?? 0;
+  const totalsByCurrency = metrics?.totals_by_currency ?? [];
   const activeAlerts = metrics?.active_alerts_count ?? 0;
   const avgDaysToPayment = metrics?.average_days_to_payment ?? 0;
   const revenueOverTime = metrics?.revenue_over_time ?? [];
@@ -92,9 +105,41 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
   const aiAlertResponse = metrics?.ai_alert_response ?? 100.0;
   const aiAlertsMissed = metrics?.ai_alerts_missed ?? 0.0;
 
+  // FE Gap 183: one KPI line per currency billed in. Never a cross-currency
+  // sum -- there is no exchange rate anywhere in this system to justify one.
+  const emptyValues = [formatCurrency(0)];
+  const lines = (pick: (t: OutboundCurrencyTotals) => number) =>
+    totalsByCurrency.length === 0
+      ? emptyValues
+      : totalsByCurrency.map((t) => formatCurrency(pick(t), t.currency));
 
-  const collectedPercent =
-    totalInvoicedOut > 0 ? Math.round((amountCollected / totalInvoicedOut) * 100) : 0;
+  // Collection rate computed *within* each currency. The old
+  // amountCollected / totalInvoicedOut divided two blended sums.
+  const collectedPercents = totalsByCurrency.map((t) => ({
+    currency: normalizeCurrencyCode(t.currency),
+    percent:
+      t.total_invoiced_out > 0
+        ? Math.round((t.amount_collected / t.total_invoiced_out) * 100)
+        : 0,
+  }));
+  const collectedSubtext =
+    collectedPercents.length === 0
+      ? "0% of total billed"
+      : collectedPercents.length === 1
+      ? `${collectedPercents[0].percent}% of ${collectedPercents[0].currency} billed`
+      : collectedPercents.map((c) => `${c.currency} ${c.percent}%`).join(" · ");
+  // One badge cannot honestly summarise several currencies' collection rates.
+  const collectedTrend =
+    collectedPercents.length === 1
+      ? {
+          value: `${collectedPercents[0].percent}% Collected`,
+          type: (collectedPercents[0].percent > 50 ? "positive" : "neutral") as
+            | "positive"
+            | "neutral",
+        }
+      : undefined;
+
+  const anyAtRisk = totalsByCurrency.some((t) => t.at_risk_receivables > 0);
 
   // SVG chart dimensions -- same geometry as MetricsGrid's spend trend so the
   // two halves line up visually when rendered side by side.
@@ -103,28 +148,44 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
   const paddingX = 20;
   const paddingY = 20;
 
-  let pointsStr = "";
-  let areaPointsStr = "";
-  let chartPoints: { x: number; y: number; data: RevenuePoint }[] = [];
+  // FE Gap 183: one polyline per currency, each on its own y scale. A shared
+  // scale drew a ₹40,000 day as an order-of-magnitude spike next to a $500
+  // day and presented it as a receivables trend. x stays shared (all dates).
+  const allDates = Array.from(new Set(revenueOverTime.map((p) => p.date))).sort();
+  const dateIndex = new Map(allDates.map((d, i) => [d, i]));
 
-  if (revenueOverTime.length > 1) {
-    const amounts = revenueOverTime.map((p) => p.amount);
-    const maxAmount = Math.max(...amounts, 100);
+  const currencySeries = Array.from(
+    new Set(revenueOverTime.map((p) => normalizeCurrencyCode(p.currency)))
+  ).map((currency, seriesIdx) => {
+    const points = revenueOverTime
+      .filter((p) => normalizeCurrencyCode(p.currency) === currency)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const amounts = points.map((p) => p.amount);
+    const maxAmount = Math.max(...amounts, 0);
     const minAmount = Math.min(...amounts, 0);
     const range = maxAmount - minAmount || 1;
 
-    chartPoints = revenueOverTime.map((p, idx) => {
-      const x = paddingX + (idx / (revenueOverTime.length - 1)) * (svgWidth - 2 * paddingX);
+    const chartPoints = points.map((p) => {
+      const idx = dateIndex.get(p.date) ?? 0;
+      const x =
+        allDates.length > 1
+          ? paddingX + (idx / (allDates.length - 1)) * (svgWidth - 2 * paddingX)
+          : svgWidth / 2;
       const y = svgHeight - paddingY - ((p.amount - minAmount) / range) * (svgHeight - 2 * paddingY);
       return { x, y, data: p };
     });
 
-    pointsStr = chartPoints.map((p) => `${p.x},${p.y}`).join(" ");
-    areaPointsStr =
-      `${chartPoints[0].x},${svgHeight - paddingY} ` +
-      pointsStr +
-      ` ${chartPoints[chartPoints.length - 1].x},${svgHeight - paddingY}`;
-  }
+    return {
+      currency,
+      color: SERIES_COLORS[seriesIdx % SERIES_COLORS.length],
+      chartPoints,
+      pointsStr: chartPoints.map((p) => `${p.x},${p.y}`).join(" "),
+    };
+  });
+
+  const hasTrendData = currencySeries.some((s) => s.chartPoints.length > 1);
+
   const gaugeRadius = 40;
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
   const strokeDashoffset = gaugeCircumference - (aiFieldExtraction / 100) * gaugeCircumference;
@@ -133,38 +194,37 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
     <div className="space-y-4 w-full">
       {/* KPI Row */}
       <div className="flex flex-wrap gap-3 w-full">
+        {/* FE Gap 183: arrays -- one formatted figure per currency, never a
+            blended receivables total. KpiCard auto-shrinks to fit them. */}
         <KpiCard
           className="flex-1 min-w-[200px]"
           title="Total Invoiced Out"
-          value={isLoading ? "$0.00" : formatCurrency(totalInvoicedOut)}
-          subtext="Lifetime billed to customers"
+          value={isLoading ? emptyValues : lines((t) => t.total_invoiced_out)}
+          subtext="Lifetime billed, per currency"
           icon={<DollarSign className="w-4 h-4 text-accent-blue" />}
         />
         <KpiCard
           className="flex-1 min-w-[200px]"
           title="Collected"
-          value={isLoading ? "$0.00" : formatCurrency(amountCollected)}
-          subtext={`${collectedPercent}% of total billed`}
+          value={isLoading ? emptyValues : lines((t) => t.amount_collected)}
+          subtext={isLoading ? "0% of total billed" : collectedSubtext}
           icon={<CheckCircle2 className="w-4 h-4 text-accent-green" />}
-          trend={{
-            value: `${collectedPercent}% Collected`,
-            type: collectedPercent > 50 ? "positive" : "neutral",
-          }}
+          trend={isLoading ? undefined : collectedTrend}
         />
         <KpiCard
           className="flex-1 min-w-[200px]"
           title="Outstanding"
-          value={isLoading ? "$0.00" : formatCurrency(outstandingReceivables)}
+          value={isLoading ? emptyValues : lines((t) => t.outstanding_receivables)}
           subtext="Awaiting send, review, or payment"
           icon={<TrendingUp className="w-4 h-4 text-slate-400" />}
         />
         <KpiCard
           className="flex-1 min-w-[200px]"
           title="At-Risk (Overdue)"
-          value={isLoading ? "$0.00" : formatCurrency(atRiskReceivables)}
+          value={isLoading ? emptyValues : lines((t) => t.at_risk_receivables)}
           subtext={`${activeAlerts} active verification alerts`}
           icon={<AlertTriangle className="w-4 h-4 text-accent-yellow" />}
-          trend={atRiskReceivables > 0 ? { value: "Chase Up", type: "warning" } : undefined}
+          trend={!isLoading && anyAtRisk ? { value: "Chase Up", type: "warning" } : undefined}
         />
       </div>
 
@@ -180,16 +240,37 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
             </p>
           </div>
 
-          {hoveredPoint && (
-            <div className="text-right text-xs bg-slate-800/80 border border-[#222D3D] px-2.5 py-1 rounded-lg animate-fade-in">
-              <span className="text-slate-400 mr-1.5">{hoveredPoint.date}:</span>
-              <span className="text-white font-bold">{formatCurrency(hoveredPoint.amount)}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2 min-w-0">
+            {/* FE Gap 183: legend -- each currency is its own line on its own
+                y scale, so heights are not comparable between series. */}
+            {!isLoading && currencySeries.length > 1 && (
+              <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                {currencySeries.map((s) => (
+                  <span key={s.currency} className="inline-flex items-center gap-1">
+                    <span
+                      className="inline-block w-2 h-2 rounded-full"
+                      style={{ backgroundColor: s.color }}
+                    />
+                    {s.currency}
+                  </span>
+                ))}
+                <span className="text-slate-500">(scaled separately)</span>
+              </div>
+            )}
+
+            {hoveredPoint && (
+              <div className="text-right text-xs bg-slate-800/80 border border-[#222D3D] px-2.5 py-1 rounded-lg animate-fade-in">
+                <span className="text-slate-400 mr-1.5">{hoveredPoint.date}:</span>
+                <span className="text-white font-bold">
+                  {formatCurrency(hoveredPoint.amount, hoveredPoint.currency)}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="w-full relative h-[160px] select-none">
-          {isLoading || revenueOverTime.length <= 1 ? (
+          {isLoading || !hasTrendData ? (
             <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-xs">
               {isLoading
                 ? "Loading receivables trend analytics..."
@@ -214,56 +295,78 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
               <line x1={paddingX} y1={svgHeight / 2} x2={svgWidth - paddingX} y2={svgHeight / 2} stroke="#1E293B" strokeWidth="0.5" strokeDasharray="3 3" />
               <line x1={paddingX} y1={svgHeight - paddingY} x2={svgWidth - paddingX} y2={svgHeight - paddingY} stroke="#1E293B" strokeWidth="0.5" />
 
-              <polygon points={areaPointsStr} fill="url(#outboundChartGradient)" />
-
-              <polyline
-                fill="none"
-                stroke="#10B981"
-                strokeWidth="2.5"
-                points={pointsStr}
-                filter="url(#outboundGlow)"
-              />
-
-              {chartPoints.map((p, idx) => (
-                <g key={idx}>
-                  <circle
-                    cx={p.x}
-                    cy={p.y}
-                    r="12"
-                    fill="transparent"
-                    className="cursor-pointer"
-                    onMouseEnter={() => {
-                      setHoveredPoint(p.data);
-                      setHoveredIndex(idx);
-                    }}
-                    onMouseLeave={() => {
-                      setHoveredPoint(null);
-                      setHoveredIndex(null);
-                    }}
-                  />
-
-                  {hoveredIndex === idx && (
-                    <line
-                      x1={p.x}
-                      y1={paddingY}
-                      x2={p.x}
-                      y2={svgHeight - paddingY}
-                      stroke="#10B981"
-                      strokeWidth="1"
-                      strokeDasharray="2 2"
-                      className="pointer-events-none"
+              {/* One series per currency. The area fill is only drawn for a
+                  single-currency tenant -- overlapping translucent fills read
+                  as a stacked cross-currency total, the exact impression this
+                  gap exists to remove. */}
+              {currencySeries.map((series) => (
+                <g key={series.currency}>
+                  {currencySeries.length === 1 && series.chartPoints.length > 1 && (
+                    <polygon
+                      points={
+                        `${series.chartPoints[0].x},${svgHeight - paddingY} ` +
+                        series.pointsStr +
+                        ` ${series.chartPoints[series.chartPoints.length - 1].x},${svgHeight - paddingY}`
+                      }
+                      fill="url(#outboundChartGradient)"
                     />
                   )}
 
-                  <circle
-                    cx={p.x}
-                    cy={p.y}
-                    r={hoveredIndex === idx ? "5" : "3.5"}
-                    fill={hoveredIndex === idx ? "#10B981" : "#1e293b"}
-                    stroke="#10B981"
-                    strokeWidth="1.5"
-                    className="pointer-events-none transition-all duration-150"
-                  />
+                  {series.chartPoints.length > 1 && (
+                    <polyline
+                      fill="none"
+                      stroke={series.color}
+                      strokeWidth="2.5"
+                      points={series.pointsStr}
+                      filter="url(#outboundGlow)"
+                    />
+                  )}
+
+                  {series.chartPoints.map((p, idx) => {
+                    const key = `${series.currency}-${idx}`;
+                    return (
+                      <g key={key}>
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r="12"
+                          fill="transparent"
+                          className="cursor-pointer"
+                          onMouseEnter={() => {
+                            setHoveredPoint(p.data);
+                            setHoveredKey(key);
+                          }}
+                          onMouseLeave={() => {
+                            setHoveredPoint(null);
+                            setHoveredKey(null);
+                          }}
+                        />
+
+                        {hoveredKey === key && (
+                          <line
+                            x1={p.x}
+                            y1={paddingY}
+                            x2={p.x}
+                            y2={svgHeight - paddingY}
+                            stroke={series.color}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                            className="pointer-events-none"
+                          />
+                        )}
+
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r={hoveredKey === key ? "5" : "3.5"}
+                          fill={hoveredKey === key ? series.color : "#1e293b"}
+                          stroke={series.color}
+                          strokeWidth="1.5"
+                          className="pointer-events-none transition-all duration-150"
+                        />
+                      </g>
+                    );
+                  })}
                 </g>
               ))}
             </svg>

@@ -14,6 +14,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
+import { formatCurrency } from "@/lib/utils";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import AlertConsole, { AlertCorrectionPreview } from "@/components/audit/AlertConsole";
@@ -36,6 +37,13 @@ interface InvoiceDetail {
   grand_total: number | null;
   tax_amount: number | null;
   po_number: string | null;
+  /**
+   * FE Gap 183: ISO-4217 code. The backend has always returned it (this page
+   * fetches the full ORM row via GET /invoices/{id}) -- the type simply never
+   * declared it, so every amount on the auditor console rendered as "$"
+   * regardless of what the document said.
+   */
+  currency?: string | null;
   // FE Gap 112 item 4: `field` was always on the wire -- every producer in
   // `utils/verification_tools.py` sets it and `sa_alerts` is a raw JSON column
   // -- the FE just never declared or read it. It is what links an alert to the
@@ -75,9 +83,16 @@ const CORRECTABLE_FIELDS: { key: keyof InvoiceDetail; label: string; azureKey: s
 ];
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
-function fmt(val?: number | null) {
+/**
+ * FE Gap 183: was a standalone hardcoded-USD copy of the same broken pattern
+ * `lib/utils.ts::formatCurrency` had. Now delegates to the shared, fixed
+ * helper and takes the invoice's real currency. The "—" for a null amount is
+ * kept -- this console distinguishes "not extracted" from "zero", which the
+ * shared helper (a dashboard formatter) does not.
+ */
+function fmt(val?: number | null, currency?: string | null) {
   if (val == null) return "—";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val);
+  return formatCurrency(val, currency);
 }
 
 /**
@@ -293,7 +308,7 @@ export default function AuditorReviewPage() {
   const originalDisplay = (key: keyof InvoiceDetail): string => {
     const raw = invoice?.[key];
     if (raw == null) return "";
-    if (key === "grand_total" || key === "tax_amount") return fmt(Number(raw));
+    if (key === "grand_total" || key === "tax_amount") return fmt(Number(raw), invoice?.currency);
     return String(raw);
   };
 
@@ -560,7 +575,10 @@ export default function AuditorReviewPage() {
                   const confidence = invoice.field_confidence?.[azureKey];
                   const isLowConfidence = confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
                   const rawValue = displayValue(key);
-                  const displayed = type === "number" && !(key in corrections) ? fmt(rawValue ? Number(rawValue) : null) : rawValue;
+                  const displayed =
+                    type === "number" && !(key in corrections)
+                      ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
+                      : rawValue;
                   return (
                     <EditableField
                       key={key as string}
@@ -610,10 +628,10 @@ export default function AuditorReviewPage() {
                             {item.quantity ?? "—"}
                           </td>
                           <td className="py-2 pr-3 text-right text-slate-400">
-                            {item.unit_price != null ? fmt(item.unit_price) : "—"}
+                            {item.unit_price != null ? fmt(item.unit_price, invoice.currency) : "—"}
                           </td>
                           <td className="py-2 text-right font-medium text-slate-200">
-                            {fmt(item.amount)}
+                            {fmt(item.amount, invoice.currency)}
                           </td>
                         </tr>
                       ))}
@@ -624,7 +642,7 @@ export default function AuditorReviewPage() {
                           Subtotal
                         </td>
                         <td className="pt-2 text-right text-xs font-medium text-slate-300">
-                          {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0))}
+                          {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
                         </td>
                       </tr>
                     </tfoot>

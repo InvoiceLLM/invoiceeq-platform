@@ -71,10 +71,10 @@ async function stubShell(page: Page, identity: Identity) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        total_invoiced: 0,
-        paid_amount: 0,
-        outstanding_amount: 0,
-        at_risk_amount: 0,
+        // FE Gap 183: per-currency array replaced the flat scalars. Empty here
+        // -- an empty-tenant response really is [], not a fabricated USD zero
+        // row -- which also exercises the grid's zero-state path.
+        totals_by_currency: [],
         average_processing_time: 0,
         extraction_accuracy: 0,
         active_alerts_count: 0,

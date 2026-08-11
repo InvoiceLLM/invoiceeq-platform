@@ -264,9 +264,56 @@ def test_tenant_stats_summary_reflects_real_data(db_session):
 
         summary = _get_tenant_stats_summary(str(MOCK_TENANT_ID), db_session)
         assert "2 total invoices" in summary
-        assert "$350.00 total spend" in summary
+        # FE Gap 183: spend is reported per currency with the ISO code, not as
+        # a single "$350.00" -- the "$" was hardcoded and the sum was blended
+        # across whatever currencies the tenant happened to have. These rows
+        # carry no currency, so they COALESCE into one USD bucket.
+        assert "total spend per currency: USD 350.00" in summary
+        assert "$" not in summary
         assert "2 distinct vendors" in summary
         assert "99999" not in summary
+    finally:
+        _clear_cache()
+
+
+def test_tenant_stats_summary_splits_spend_by_currency(db_session):
+    """FE Gap 183: two currencies -> two labelled figures and never their sum.
+    The old snapshot handed the model "$40500.00 total spend" for exactly this
+    data, which is neither a dollar nor a rupee amount."""
+    from agents.query_agent import _get_tenant_stats_summary, _get_redis_client
+    from models import Invoice
+    from datetime import date
+
+    cache_key = f"tenant_stats_summary:{MOCK_TENANT_ID}"
+
+    def _clear_cache():
+        try:
+            _get_redis_client().delete(cache_key)
+        except Exception:
+            pass
+
+    _clear_cache()
+    try:
+        db_session.add(Invoice(
+            id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="usd.pdf",
+            vendor_name="ACME", grand_total=500.0, currency="USD",
+            status="COMPLETED", invoice_date=date(2026, 1, 1),
+        ))
+        db_session.add(Invoice(
+            id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="inr.pdf",
+            vendor_name="Globex", grand_total=40000.0, currency="INR",
+            status="COMPLETED", invoice_date=date(2026, 2, 1),
+        ))
+        db_session.commit()
+
+        summary = _get_tenant_stats_summary(str(MOCK_TENANT_ID), db_session)
+        assert "INR 40,000.00" in summary
+        assert "USD 500.00" in summary
+        # The blended figure the old code produced.
+        assert "40,500" not in summary
+        assert "40500" not in summary
+        # And the model is told not to reproduce that mistake itself.
+        assert "never add or compare amounts across different currencies" in summary
     finally:
         _clear_cache()
 

@@ -11,6 +11,12 @@ export interface OutboundInvoiceRecord {
   customer_name?: string;
   invoice_date?: string;
   grand_total?: number;
+  /**
+   * FE Gap 183: ISO-4217 code from Invoice.currency, now returned by
+   * GET /outbound-dashboard/invoices (that endpoint hand-builds its response
+   * dict, so the field had to be added there explicitly).
+   */
+  currency?: string | null;
   status: string;
   is_overdue?: boolean;
 }
@@ -161,7 +167,7 @@ export default function OutboundInvoicesTable({
                     </span>
                   </td>
                   <td className="px-6 py-4 font-medium text-slate-400">{formatDate(inv.invoice_date)}</td>
-                  <td className="px-6 py-4 font-bold text-slate-200 font-mono">{formatCurrency(inv.grand_total)}</td>
+                  <td className="px-6 py-4 font-bold text-slate-200 font-mono">{formatCurrency(inv.grand_total, inv.currency)}</td>
                   <td className="px-6 py-4">{getStatusBadge(inv)}</td>
                   <td className="px-6 py-4 text-right">
                     <Link

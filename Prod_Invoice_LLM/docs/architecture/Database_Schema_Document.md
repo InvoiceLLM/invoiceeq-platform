@@ -183,6 +183,40 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 
 ---
 
+## 9. Table: `tenant_autopilot_configs`
+*Stores Autopilot folder synchronization and automation settings per tenant workspace.*
+
+| Field Name | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Autopilot config identifier. |
+| `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL`, indexed | Tenant owner (single active configuration per tenant). |
+| `source_type` | `VARCHAR(50)` | `NOT NULL` | The source integration type: `'gdrive'`, `'salesforce'`, `'email'`. |
+| `source_ref` | `VARCHAR(1024)` | `NOT NULL` | The folder reference or library path (e.g. Google Drive Folder ID or Salesforce Directory ID). |
+| `flow_direction` | `VARCHAR(10)` | `NOT NULL`, Default: `'INBOUND'` | Flow direction: `'INBOUND'` (AP flow, extraction queued) or `'OUTBOUND'` (AR flow, record-keeping). |
+| `trigger_mode` | `VARCHAR(20)` | `NOT NULL` | Scheduling trigger mode: `'interval'` (minutes) or `'cron'` (cron expression). |
+| `trigger_value` | `VARCHAR(100)` | `NOT NULL` | The schedule value (e.g., `'60'` for hourly interval, or `'0 * * * *'` for cron). |
+| `notify_emails` | `JSONB` | `NOT NULL`, Default: `'[]'` | Array of email strings to notify upon completed/failed runs. |
+| `send_approval_links` | `BOOLEAN` | `NOT NULL`, Default: `FALSE` | Toggle to include one-click manual audit links in the notification emails. |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Config creation timestamp. |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Config last updated. |
+
+---
+
+## 10. Table: `tenant_autopilot_logs`
+*Deduplication ledger tracking files processed by scheduled and manual Autopilot sync operations.*
+
+| Field Name | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Autopilot run log entry identifier. |
+| `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL`, indexed | Tenant owner. |
+| `source_type` | `VARCHAR(50)` | `NOT NULL` | Ingestion source: `'gdrive'`, `'salesforce'`, `'email'`, `'manual'`. |
+| `source_file_id` | `VARCHAR(255)` | `NOT NULL`, indexed | Cloud source identifier (e.g., Google Drive `fileId` or Salesforce record ID). |
+| `content_hash` | `VARCHAR(64)` | `NOT NULL`, indexed | SHA-256 hash of the document content to catch duplicates uploaded under different file IDs. |
+| `ingested_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Ingestion timestamp. |
+| `status` | `VARCHAR(50)` | `NOT NULL` | Status outcome of the ingestion run: `'SUCCESS'`, `'SKIPPED_DUPLICATE'`, or `'FAILED'`. |
+
+---
+
 # PART 2: ChromaDB Vector Store Collections
 
 ChromaDB is a document-based vector database and does not use a rigid, structured SQL schema. Instead, it is organized into **Collections** containing four key data layers per record.

@@ -1,6 +1,6 @@
 # Cloud Architecture Document
 
-![Azure Production Cloud Architecture](./azure_prod_architecture_1782387118810.png)
+![Azure Production Cloud Architecture](./azure_prod_architecture_updated.png)
 
 ## Invoice AI SaaS Platform — Azure Cloud Infrastructure
 
@@ -85,15 +85,15 @@ The cloud architecture is governed by five non-negotiable principles derived fro
 │  │  │  ┌──────────────────────────────────────────────────────────────────┐  │    │   │
 │  │  │  │            AZURE CONTAINER APPS ENVIRONMENT                     │  │    │   │
 │  │  │  │                                                                 │  │    │   │
-│  │  │  │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────────┐  │  │    │   │
-│  │  │  │  │ invoice-  │  │ invoice-  │  │ invoice-  │  │  queue-     │  │  │    │   │
-│  │  │  │  │ website   │  │ fe        │  │ be        │  │  worker     │  │  │    │   │
-│  │  │  │  │ (Next.js) │  │ (Next.js) │  │ (FastAPI) │  │  (Python)   │  │  │    │   │
-│  │  │  │  │           │  │           │  │           │  │             │  │  │    │   │
-│  │  │  │  │ Scale:    │  │ Scale:    │  │ Scale:    │  │ Scale:      │  │  │    │   │
-│  │  │  │  │ 0-3       │  │ 0-5       │  │ 1-10      │  │ 0-10        │  │  │    │   │
-│  │  │  │  └───────────┘  └───────────┘  └───────────┘  └─────────────┘  │  │    │   │
-│  │  │  └─────────────────────────────────────────────────────────────────┘  │    │   │
+│  │  │  │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌─────────────┐  ┌─────────────┐  │  │    │   │
+│  │  │  │  │ invoice-  │  │ invoice-  │  │ invoice-  │  │  queue-     │  │ autopilot-  │  │  │    │   │
+│  │  │  │  │ website   │  │ fe        │  │ be        │  │  worker     │  │ sync-job    │  │  │    │   │
+│  │  │  │  │ (Next.js) │  │ (Next.js) │  │ (FastAPI) │  │  (Python)   │  │ (ACA Job)   │  │  │    │   │
+│  │  │  │  │           │  │           │  │           │  │             │  │             │  │  │    │   │
+│  │  │  │  │ Scale:    │  │ Scale:    │  │ Scale:    │  │ Scale:      │  │ Schedule:   │  │  │    │   │
+│  │  │  │  │ 1-3       │  │ 1-5       │  │ 1-10      │  │ 1-10        │  │ Cron-based  │  │  │    │   │
+│  │  │  │  └───────────┘  └───────────┘  └───────────┘  └─────────────┘  └─────────────┘  │  │    │   │
+│  │  │  └────────────────────────────────────────────────────────────────────────────────┘  │    │   │
 │  │  └──────────────────────────────────────────────────────────────────────┘    │   │
 │  │                                                                              │   │
 │  │  ┌──────────────────────────────────────────────────────────────────────┐    │   │
@@ -514,7 +514,8 @@ The CD process is managed by GitHub Actions `.yml` workflow files (such as `.git
    * It passes parameters containing the newly pushed image tags (e.g. `backendImageTag=sha-123456`).
 3. **Container Placement & Ingress Rules**:
    * The Bicep template defines individual **Azure Container Apps** and applies specific network ingress bindings:
-     * **`invoice-website` & `invoice-fe`**: Deployed with `ingress.external = true` (exposed to port 443 via Front Door).
+     * **`invoice-website`**: Deployed with `ingress.external = true` — the sole public entry point (marketing site + login/signup).
+     * **`invoice-fe`**: Deployed with `ingress.external = false` and `ingress.targetPort = 3000`. FE is internal-only; `invoice-website` reverse-proxies it server-side (Multi-Zone), avoiding a cross-subdomain cookie handshake (Gap 12).
      * **`invoice-be`**: Deployed with `ingress.external = false` and `ingress.targetPort = 8000`. This locks the API inside the VNet, making it accessible only to the frontend.
      * **`queue-worker`**: Deployed with `ingress = null` (no ports open). It pulls tasks from Azure Storage Queues, making ingress unnecessary.
 

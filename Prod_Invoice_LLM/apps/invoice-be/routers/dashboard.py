@@ -31,6 +31,16 @@ def _insights_cache_key(tenant_id) -> str:
     return f"dashboard_insights:{tenant_id}"
 
 
+# FE Gap 183: Invoice.currency is nullable and historically unset, so every
+# aggregate below groups on this normalized expression instead of the raw
+# column. COALESCE at *query* time only -- nothing is ever written back onto
+# the historical NULL rows. NULLIF/TRIM collapses "" (an LLM that extracted an
+# empty string) into the same bucket as NULL, and UPPER stops "usd" and "USD"
+# from being reported as two separate currencies.
+def _currency_expr():
+    return func.upper(func.coalesce(func.nullif(func.trim(Invoice.currency), ""), "USD"))
+
+
 class DashboardInsight(BaseModel):
     model_config = {"extra": "forbid"}
     title: str = Field(description="Short headline (8 words or fewer) for this recommendation")
@@ -66,6 +76,16 @@ async def get_dashboard_metrics(
     portable cross-dialect SQL form in this codebase's Postgres/SQLite test
     setup), so that pass fetches only the 4 narrow columns it needs instead of
     full Invoice rows.
+
+    FE Gap 183: every money figure here is broken out **per currency** and no
+    blended cross-currency scalar is returned at all. The old flat
+    total_invoiced/paid_amount/outstanding_amount/at_risk_amount keys summed
+    grand_total across every currency the tenant had, so a $500 invoice and a
+    ₹40,000 invoice were reported as one "40500" and then labelled with a
+    single symbol by the FE. They are deliberately **removed** rather than kept
+    alongside the new shape: a blended number has no correct label, so leaving
+    it on the wire only invites something to render it again. No FX conversion
+    is performed anywhere -- amounts in different currencies are never added.
     """
     # 1. Shared filter conditions, scoped to the current tenant
     conditions = [Invoice.tenant_id == context.tenant_id]
@@ -80,24 +100,39 @@ async def get_dashboard_metrics(
     if status:
         conditions.append(Invoice.status == status)
 
-    # 2. Dollar totals -- one aggregate query, computed entirely in SQL
-    totals_row = db_session.exec(
-        select(
-            func.coalesce(func.sum(Invoice.grand_total), 0.0),
-            func.coalesce(func.sum(case((Invoice.status == "PAID", Invoice.grand_total), else_=0.0)), 0.0),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (Invoice.status.in_(["COMPLETED", "AUDIT_REQUIRED", "PROCESSING"]), Invoice.grand_total),
-                        else_=0.0,
-                    )
+    # 2. Money totals -- one aggregate query, computed entirely in SQL,
+    # GROUP BY currency (FE Gap 183). One row per currency the tenant actually
+    # has, ordered by size so the FE's KPI cards lead with the dominant one.
+    currency_expr = _currency_expr()
+    totals_by_currency = [
+        {
+            "currency": curr,
+            "total_invoiced": round(total or 0.0, 2),
+            "paid_amount": round(paid or 0.0, 2),
+            "outstanding_amount": round(outstanding or 0.0, 2),
+            "at_risk_amount": round(at_risk or 0.0, 2),
+        }
+        for curr, total, paid, outstanding, at_risk in db_session.exec(
+            select(
+                currency_expr,
+                func.coalesce(func.sum(Invoice.grand_total), 0.0),
+                func.coalesce(func.sum(case((Invoice.status == "PAID", Invoice.grand_total), else_=0.0)), 0.0),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (Invoice.status.in_(["COMPLETED", "AUDIT_REQUIRED", "PROCESSING"]), Invoice.grand_total),
+                            else_=0.0,
+                        )
+                    ),
+                    0.0,
                 ),
-                0.0,
-            ),
-            func.coalesce(func.sum(case((Invoice.status == "AUDIT_REQUIRED", Invoice.grand_total), else_=0.0)), 0.0),
-        ).where(*conditions)
-    ).first()
-    total_invoiced, paid_amount, outstanding_amount, at_risk_amount = totals_row
+                func.coalesce(func.sum(case((Invoice.status == "AUDIT_REQUIRED", Invoice.grand_total), else_=0.0)), 0.0),
+            )
+            .where(*conditions)
+            .group_by(currency_expr)
+            .order_by(func.coalesce(func.sum(Invoice.grand_total), 0.0).desc(), currency_expr)
+        ).all()
+    ]
 
     # 3. Status breakdown -- GROUP BY status
     status_counts = {
@@ -107,29 +142,34 @@ async def get_dashboard_metrics(
         ).all()
     }
 
-    # 4. Top vendors by spend -- GROUP BY vendor, ordered by spend desc (full
-    # ranked list, not capped -- matches this endpoint's prior behavior)
+    # 4. Top vendors by spend -- GROUP BY vendor *and* currency, ordered by
+    # spend desc (full ranked list, not capped -- matches this endpoint's prior
+    # behavior). A vendor billing in two currencies gets one row per currency:
+    # merging them would produce a meaningless total, and the FE scales its
+    # ranking bars within each currency group (FE Gap 183).
     vendor_expr = func.coalesce(Invoice.vendor_name, "Unknown Vendor")
     top_vendors = [
-        {"vendor_name": v, "amount": round(amt or 0.0, 2)}
-        for v, amt in db_session.exec(
-            select(vendor_expr, func.sum(Invoice.grand_total))
+        {"vendor_name": v, "currency": curr, "amount": round(amt or 0.0, 2)}
+        for v, curr, amt in db_session.exec(
+            select(vendor_expr, currency_expr, func.sum(Invoice.grand_total))
             .where(*conditions)
-            .group_by(vendor_expr)
+            .group_by(vendor_expr, currency_expr)
             .order_by(func.sum(Invoice.grand_total).desc())
         ).all()
     ]
 
-    # 5. Spend-over-time series -- GROUP BY date, falling back to created_at's
-    # date when invoice_date wasn't extracted
+    # 5. Spend-over-time series -- GROUP BY date and currency, falling back to
+    # created_at's date when invoice_date wasn't extracted. One point per
+    # (date, currency) so the FE can draw a separate trendline per currency
+    # instead of one line that jumps between scales.
     date_expr = func.coalesce(Invoice.invoice_date, func.date(Invoice.created_at))
     spend_over_time = [
-        {"date": str(d), "amount": round(amt or 0.0, 2)}
-        for d, amt in db_session.exec(
-            select(date_expr, func.sum(Invoice.grand_total))
+        {"date": str(d), "currency": curr, "amount": round(amt or 0.0, 2)}
+        for d, curr, amt in db_session.exec(
+            select(date_expr, currency_expr, func.sum(Invoice.grand_total))
             .where(*conditions)
-            .group_by(date_expr)
-            .order_by(date_expr)
+            .group_by(date_expr, currency_expr)
+            .order_by(date_expr, currency_expr)
         ).all()
     ]
 
@@ -263,10 +303,10 @@ async def get_dashboard_metrics(
         extraction_accuracy = max(0.0, min(100.0, extraction_accuracy))
 
     return {
-        "total_invoiced": round(total_invoiced, 2),
-        "paid_amount": round(paid_amount, 2),
-        "outstanding_amount": round(outstanding_amount, 2),
-        "at_risk_amount": round(at_risk_amount, 2),
+        # FE Gap 183: per-currency breakdown only. The flat blended
+        # total_invoiced/paid_amount/outstanding_amount/at_risk_amount keys
+        # were removed, not deprecated -- see this function's docstring.
+        "totals_by_currency": totals_by_currency,
         "average_processing_time": average_processing_time,
         "extraction_accuracy": extraction_accuracy,
         "active_alerts_count": active_alerts_count,
@@ -364,6 +404,13 @@ async def get_dashboard_insights(
     audit rate, vendors missing a Trainer rule -- and explicitly told not to
     invent figures, so recommendations stay grounded in this tenant's actual
     data rather than generic advice.
+
+    FE Gap 183: those aggregates used to be blended cross-currency sums, i.e.
+    the "grounding" fact handed to the model was arithmetic nobody could label
+    correctly. Every money figure in the prompt context is now keyed by
+    currency, and the prompt explicitly forbids adding or comparing amounts
+    across currencies -- no FX rate exists anywhere in this system to make such
+    a comparison valid.
     """
     cache_key = _insights_cache_key(context.tenant_id)
     try:
@@ -385,19 +432,40 @@ async def get_dashboard_insights(
         select(ExtractionTemplate).where(ExtractionTemplate.tenant_id == context.tenant_id)
     ).all()
 
-    total_invoiced = sum(inv.grand_total or 0.0 for inv in invoices)
-    at_risk_amount = sum(
-        inv.grand_total or 0.0 for inv in invoices if (inv.status or "").upper() == "AUDIT_REQUIRED"
-    )
+    # Same normalization the SQL aggregates above use, applied in Python here:
+    # NULL/blank -> "USD", uppercased, never written back to the row.
+    def _currency_of(inv) -> str:
+        return ((inv.currency or "").strip() or "USD").upper()
 
-    spend_by_vendor: dict[str, float] = {}
+    totals_per_currency: dict[str, dict[str, float]] = {}
+    spend_by_vendor: dict[tuple[str, str], float] = {}
     flagged_counts: dict[str, int] = {}
     for inv in invoices:
+        curr = _currency_of(inv)
+        amount = inv.grand_total or 0.0
+        bucket = totals_per_currency.setdefault(curr, {"total_invoiced": 0.0, "at_risk_amount": 0.0})
+        bucket["total_invoiced"] += amount
+        if (inv.status or "").upper() == "AUDIT_REQUIRED":
+            bucket["at_risk_amount"] += amount
+
         v = inv.vendor_name or "Unknown Vendor"
-        spend_by_vendor[v] = spend_by_vendor.get(v, 0.0) + (inv.grand_total or 0.0)
+        spend_by_vendor[(v, curr)] = spend_by_vendor.get((v, curr), 0.0) + amount
         if inv.sa_alerts and inv.vendor_name:
             flagged_counts[inv.vendor_name] = flagged_counts.get(inv.vendor_name, 0) + 1
 
+    totals_by_currency = [
+        {
+            "currency": curr,
+            "total_invoiced": round(vals["total_invoiced"], 2),
+            "at_risk_amount": round(vals["at_risk_amount"], 2),
+        }
+        for curr, vals in sorted(
+            totals_per_currency.items(), key=lambda kv: kv[1]["total_invoiced"], reverse=True
+        )
+    ]
+
+    # Ranked within each currency, never across -- a ₹ figure outranking a $
+    # one is an artifact of the exchange rate, not of spend concentration.
     top_vendors = sorted(spend_by_vendor.items(), key=lambda x: x[1], reverse=True)[:5]
 
     # Same "recurring, not a one-off" vendors-needing-a-rule logic as
@@ -419,11 +487,12 @@ async def get_dashboard_insights(
     audit_rate = round(100.0 * audit_required_count / len(processed), 1) if processed else 0.0
 
     context_blob = {
-        "total_invoiced": round(total_invoiced, 2),
-        "at_risk_amount": round(at_risk_amount, 2),
+        "totals_by_currency": totals_by_currency,
         "audit_rate_percent": audit_rate,
         "total_invoice_count": len(invoices),
-        "top_vendors_by_spend": [{"vendor_name": v, "amount": round(a, 2)} for v, a in top_vendors],
+        "top_vendors_by_spend": [
+            {"vendor_name": v, "currency": curr, "amount": round(a, 2)} for (v, curr), a in top_vendors
+        ],
         "vendors_needing_rules": vendors_needing_rules,
     }
 
@@ -433,6 +502,10 @@ async def get_dashboard_insights(
         "concise, specific, actionable recommendations for the accounts-payable team. "
         "Ground every recommendation in a specific number from the data, but write in plain, professional "
         "prose -- never quote the raw JSON field names (e.g. say 'the audit rate' not 'audit_rate_percent'). "
+        "Every monetary figure below is denominated in a specific currency and is reported separately per "
+        "currency. Never add, subtract, average or otherwise combine amounts in different currencies, and "
+        "never state a single overall total across currencies -- no exchange rate is available to you. "
+        "Always name the currency alongside any amount you quote. "
         "If the data shows nothing concerning, say so briefly rather than manufacturing a concern.\n\n"
         f"Data:\n{json.dumps(context_blob, indent=2)}"
     )

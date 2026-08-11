@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import FilterBar, { FilterState } from "../../components/dashboard/FilterBar";
-import MetricsGrid from "../../components/dashboard/MetricsGrid";
+import MetricsGrid, { CurrencyTotals } from "../../components/dashboard/MetricsGrid";
 import OutboundMetricsGrid, {
   OutboundMetrics,
   defaultOutboundMetrics,
@@ -17,19 +17,26 @@ import { useAuth } from "../../hooks/useAuth";
 
 interface SpendPoint {
   date: string;
+  /** FE Gap 183: ISO-4217 code this point's amount is denominated in. */
+  currency?: string | null;
   amount: number;
 }
 
 interface VendorSpend {
   vendor_name: string;
+  /** FE Gap 183: one row per (vendor, currency), never a summed total. */
+  currency?: string | null;
   amount: number;
 }
 
 interface DashboardMetrics {
-  total_invoiced: number;
-  paid_amount: number;
-  outstanding_amount: number;
-  at_risk_amount: number;
+  /**
+   * FE Gap 183: replaces the flat total_invoiced/paid_amount/
+   * outstanding_amount/at_risk_amount scalars, which the backend no longer
+   * returns at all -- they were blended cross-currency sums with no correct
+   * label.
+   */
+  totals_by_currency: CurrencyTotals[];
   average_processing_time: number;
   extraction_accuracy: number;
   active_alerts_count: number;
@@ -43,10 +50,7 @@ const DEFAULT_VENDORS = ["Hardware Depot", "Cloud Hosting Inc", "Office Supply C
 const DEFAULT_TAGS = ["Hardware", "Software", "Services", "Marketing", "Travel"];
 
 const defaultMetrics: DashboardMetrics = {
-  total_invoiced: 0,
-  paid_amount: 0,
-  outstanding_amount: 0,
-  at_risk_amount: 0,
+  totals_by_currency: [],
   average_processing_time: 0,
   extraction_accuracy: 0,
   active_alerts_count: 0,
@@ -218,10 +222,12 @@ export default function DashboardPage() {
 
   // Task 2.1.4: ClientPerformanceChart already renders any {name, amount}
   // ranking, so top_customers is mapped onto its existing prop shape rather
-  // than forking the component.
+  // than forking the component. FE Gap 183: currency rides along, otherwise
+  // the outbound ranking would fall back to USD for every row.
   const topCustomersAsVendorShape: VendorSpend[] = (outboundMetrics?.top_customers ?? []).map(
-    (c: { customer_name: string; amount: number }) => ({
+    (c: { customer_name: string; currency?: string | null; amount: number }) => ({
       vendor_name: c.customer_name,
+      currency: c.currency,
       amount: c.amount,
     })
   );

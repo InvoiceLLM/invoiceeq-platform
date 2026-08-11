@@ -14,6 +14,13 @@ interface FlaggedInvoice {
   vendor_name?: string;
   customer_name?: string;
   grand_total?: number;
+  /**
+   * FE Gap 183: ISO-4217 code. Both source endpoints return it -- GET
+   * /invoices from the full ORM row, GET /outbound-dashboard/invoices from an
+   * explicit field added for this gap -- and the spread below carries it
+   * through untouched.
+   */
+  currency?: string | null;
   direction: FlowDirection;
 }
 
@@ -178,7 +185,7 @@ export default function NeedsAttentionWidget({
               </div>
 
               <div className="text-xs font-mono text-slate-300 shrink-0">
-                {formatCurrency(inv.grand_total)}
+                {formatCurrency(inv.grand_total, inv.currency)}
               </div>
             </Link>
           ))}

@@ -23,6 +23,12 @@ export interface InvoiceRecord {
   vendor_name?: string;
   invoice_date?: string;
   grand_total?: number;
+  /**
+   * FE Gap 183: ISO-4217 code from Invoice.currency. The backend has always
+   * returned it (GET /invoices responds with the full ORM row); this type just
+   * never declared it, so every amount rendered as "$".
+   */
+  currency?: string | null;
   status: string;
   tags?: string[];
 }
@@ -260,7 +266,7 @@ export default function RecentInvoicesTable({
                   
                   {/* Amount */}
                   <td className="px-6 py-4 font-bold text-slate-200 font-mono">
-                    {formatCurrency(inv.grand_total)}
+                    {formatCurrency(inv.grand_total, inv.currency)}
                   </td>
                   
                   {/* AI Status */}

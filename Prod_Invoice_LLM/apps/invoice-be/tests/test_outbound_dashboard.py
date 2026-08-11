@@ -90,6 +90,16 @@ def populate_mock_outbound_invoices(db_session):
 
 # ── Aggregate correctness ─────────────────────────────────────────────────────
 
+
+def _totals(data, currency="USD"):
+    """FE Gap 183: the endpoint no longer returns flat blended scalars, so
+    every assertion below reads the one currency row it means. Raises rather
+    than defaulting -- a missing currency row is a real failure, not a zero."""
+    rows = [r for r in data["totals_by_currency"] if r["currency"] == currency]
+    assert rows, "no {} row in {}".format(currency, data["totals_by_currency"])
+    return rows[0]
+
+
 def test_aggregate_metrics(db_session):
     """Primary aggregate mathematics, with both isolation rows excluded."""
     populate_mock_outbound_invoices(db_session)
@@ -98,16 +108,21 @@ def test_aggregate_metrics(db_session):
     assert response.status_code == 200
     data = response.json()
 
+    # FE Gap 183: these fixtures carry no currency (nullable column, never
+    # backfilled), so they must all land in one COALESCE'd "USD" bucket.
+    assert len(data["totals_by_currency"]) == 1
+    usd = _totals(data)
     # 1000 + 500 + 250 + 300 = 2050. Neither 9999 (other tenant) nor 7777
     # (inbound) may appear.
-    assert data["total_invoiced_out"] == 2050.0
-    assert data["amount_collected"] == 1000.0
+    assert usd["total_invoiced_out"] == 2050.0
+    assert usd["amount_collected"] == 1000.0
     # UPLOADED/VERIFIED/NEEDS_REVIEW/SENT: 500 + 250 + 300
-    assert data["outstanding_receivables"] == 1050.0
+    assert usd["outstanding_receivables"] == 1050.0
     # Only the SENT row past its due date
-    assert data["at_risk_receivables"] == 300.0
-    # Every bucket accounted for -- no money belongs to nothing
-    assert data["amount_collected"] + data["outstanding_receivables"] == data["total_invoiced_out"]
+    assert usd["at_risk_receivables"] == 300.0
+    # Every bucket accounted for -- no money belongs to nothing. Checked
+    # *within* a currency; across currencies this equation is meaningless.
+    assert usd["amount_collected"] + usd["outstanding_receivables"] == usd["total_invoiced_out"]
     assert data["active_alerts_count"] == 1
 
     assert data["invoices_by_status"] == {"PAID": 1, "NEEDS_REVIEW": 1, "VERIFIED": 1, "SENT": 1}
@@ -115,16 +130,109 @@ def test_aggregate_metrics(db_session):
     top_customers = data["top_customers"]
     assert len(top_customers) == 2
     assert top_customers[0]["customer_name"] == "Vertex Industries"
+    assert top_customers[0]["currency"] == "USD"
     assert top_customers[0]["amount"] == 1250.0
     assert top_customers[1]["customer_name"] == "Northwind Ltd"
+    assert top_customers[1]["currency"] == "USD"
     assert top_customers[1]["amount"] == 800.0
 
     revenue = data["revenue_over_time"]
     assert len(revenue) == 4
     assert revenue[0]["date"] == "2026-06-20"
+    assert revenue[0]["currency"] == "USD"
     assert revenue[0]["amount"] == 1000.0
     assert revenue[-1]["date"] == "2026-06-26"
     assert revenue[-1]["amount"] == 300.0
+
+
+def test_blended_cross_currency_scalars_are_gone(db_session):
+    """FE Gap 183: the old flat AR keys summed grand_total across every
+    currency and were then rendered with a hardcoded "$". Removed outright, not
+    kept for compatibility -- this test guards against them creeping back."""
+    populate_mock_outbound_invoices(db_session)
+
+    data = client.get(METRICS_URL).json()
+    for forbidden in (
+        "total_invoiced_out",
+        "amount_collected",
+        "outstanding_receivables",
+        "at_risk_receivables",
+    ):
+        assert forbidden not in data
+
+
+def test_multi_currency_totals_are_broken_out_never_blended(db_session):
+    """FE Gap 183, AR side: a customer billed 500 USD and another billed
+    40,000 INR used to be reported as one "40500" receivable. Each currency
+    now gets its own row and nothing holds their sum."""
+    db_session.add(_outbound(
+        customer_name="Vertex Industries", grand_total=500.0, currency="USD",
+        invoice_date=date(2026, 6, 20), status="PAID",
+    ))
+    db_session.add(_outbound(
+        customer_name="Vertex Industries", grand_total=40000.0, currency="INR",
+        invoice_date=date(2026, 6, 20), status="SENT",
+        due_date=date.today() - timedelta(days=3),  # overdue
+    ))
+    # Lower-case / blank codes fold into the same buckets rather than creating
+    # phantom currencies.
+    db_session.add(_outbound(
+        customer_name="Northwind Ltd", grand_total=1000.0, currency="inr",
+        invoice_date=date(2026, 6, 21), status="PAID",
+    ))
+    db_session.add(_outbound(
+        customer_name="Northwind Ltd", grand_total=250.0, currency="  ",
+        invoice_date=date(2026, 6, 21), status="PAID",
+    ))
+    db_session.commit()
+
+    data = client.get(METRICS_URL).json()
+
+    assert {r["currency"] for r in data["totals_by_currency"]} == {"USD", "INR"}
+    usd = _totals(data, "USD")
+    inr = _totals(data, "INR")
+    assert usd["total_invoiced_out"] == 750.0    # 500 + the blank-currency 250
+    assert usd["amount_collected"] == 750.0
+    assert usd["at_risk_receivables"] == 0.0
+    assert inr["total_invoiced_out"] == 41000.0  # 40000 + the lower-case 1000
+    assert inr["amount_collected"] == 1000.0
+    assert inr["at_risk_receivables"] == 40000.0
+
+    # The blended figures must not appear.
+    assert not any(
+        r["total_invoiced_out"] in (40500.0, 41750.0) for r in data["totals_by_currency"]
+    )
+
+    # Vertex billed in both currencies: two rows, never one summed row.
+    vertex = {
+        (c["currency"], c["amount"])
+        for c in data["top_customers"]
+        if c["customer_name"] == "Vertex Industries"
+    }
+    assert vertex == {("USD", 500.0), ("INR", 40000.0)}
+
+    # Same day, two currencies -> two separate trend points.
+    june20 = {
+        (p["currency"], p["amount"]) for p in data["revenue_over_time"] if p["date"] == "2026-06-20"
+    }
+    assert june20 == {("USD", 500.0), ("INR", 40000.0)}
+
+
+def test_outbound_invoice_rows_expose_currency(db_session):
+    """FE Gap 183: GET /outbound-dashboard/invoices hand-builds its response
+    dict, so currency had to be added explicitly -- without it every row in the
+    FE's outbound table and Needs-Attention widget renders as "$"."""
+    db_session.add(_outbound(customer_name="Vertex Industries", grand_total=40000.0,
+                             currency="INR", status="SENT"))
+    db_session.add(_outbound(customer_name="Northwind Ltd", grand_total=100.0, status="SENT"))
+    db_session.commit()
+
+    rows = client.get("/api/v1/outbound-dashboard/invoices").json()
+    by_customer = {r["customer_name"]: r for r in rows}
+    assert by_customer["Vertex Industries"]["currency"] == "INR"
+    # Never extracted -> stays null on the wire; the FE applies its own USD
+    # display default rather than the API inventing one.
+    assert by_customer["Northwind Ltd"]["currency"] is None
 
 
 def test_empty_tenant_returns_zeroes_not_error(db_session):
@@ -134,10 +242,9 @@ def test_empty_tenant_returns_zeroes_not_error(db_session):
     assert response.status_code == 200
     data = response.json()
 
-    assert data["total_invoiced_out"] == 0.0
-    assert data["amount_collected"] == 0.0
-    assert data["outstanding_receivables"] == 0.0
-    assert data["at_risk_receivables"] == 0.0
+    # FE Gap 183: no invoices -> no currency rows at all, rather than a
+    # fabricated USD zero row. The FE renders its own zero placeholder.
+    assert data["totals_by_currency"] == []
     assert data["average_days_to_payment"] == 0.0
     assert data["verification_accuracy"] == 100.0
     assert data["top_customers"] == []
@@ -153,6 +260,9 @@ def test_no_combined_or_net_figure_in_response(db_session):
     data = client.get(METRICS_URL).json()
     for forbidden in ("net_position", "net_cash_position", "combined_total", "total_invoiced"):
         assert forbidden not in data
+    # ...and no per-currency row may carry an inbound-flavoured key either.
+    for row in data["totals_by_currency"]:
+        assert "total_invoiced" not in row
 
 
 # ── Tenant + direction isolation ──────────────────────────────────────────────
@@ -164,7 +274,7 @@ def test_tenant_isolation(db_session):
     db_session.commit()
 
     data = client.get(METRICS_URL).json()
-    assert data["total_invoiced_out"] == 0.0
+    assert data["totals_by_currency"] == []
     assert data["top_customers"] == []
 
 
@@ -181,8 +291,8 @@ def test_direction_isolation(db_session):
     db_session.commit()
 
     data = client.get(METRICS_URL).json()
-    assert data["total_invoiced_out"] == 100.0
-    assert data["amount_collected"] == 100.0
+    assert _totals(data)["total_invoiced_out"] == 100.0
+    assert _totals(data)["amount_collected"] == 100.0
     assert [c["customer_name"] for c in data["top_customers"]] == ["Vertex Industries"]
 
 
@@ -285,7 +395,7 @@ def test_at_risk_receivables_overdue_boundary(db_session):
     db_session.add(_outbound(customer_name="NoDate Co", grand_total=800.0, status="SENT"))
     db_session.commit()
 
-    assert client.get(METRICS_URL).json()["at_risk_receivables"] == 100.0
+    assert _totals(client.get(METRICS_URL).json())["at_risk_receivables"] == 100.0
 
 
 def test_at_risk_receivables_excludes_paid_past_due(db_session):
@@ -295,9 +405,9 @@ def test_at_risk_receivables_excludes_paid_past_due(db_session):
                              due_date=date.today() - timedelta(days=30)))
     db_session.commit()
 
-    data = client.get(METRICS_URL).json()
-    assert data["at_risk_receivables"] == 0.0
-    assert data["amount_collected"] == 100.0
+    usd = _totals(client.get(METRICS_URL).json())
+    assert usd["at_risk_receivables"] == 0.0
+    assert usd["amount_collected"] == 100.0
 
 
 # ── Filters ───────────────────────────────────────────────────────────────────
@@ -308,22 +418,22 @@ def test_metrics_filters(db_session):
 
     # 1. By customer
     data = client.get(METRICS_URL, params={"customer_name": "Vertex Industries"}).json()
-    assert data["total_invoiced_out"] == 1250.0
+    assert _totals(data)["total_invoiced_out"] == 1250.0
     assert len(data["top_customers"]) == 1
 
     # 2. By date range
     data = client.get(METRICS_URL, params={"start_date": "2026-06-21", "end_date": "2026-06-24"}).json()
-    assert data["total_invoiced_out"] == 500.0
-    assert data["outstanding_receivables"] == 500.0
+    assert _totals(data)["total_invoiced_out"] == 500.0
+    assert _totals(data)["outstanding_receivables"] == 500.0
 
     # 3. By status
     data = client.get(METRICS_URL, params={"status": "PAID"}).json()
-    assert data["total_invoiced_out"] == 1000.0
-    assert data["amount_collected"] == 1000.0
+    assert _totals(data)["total_invoiced_out"] == 1000.0
+    assert _totals(data)["amount_collected"] == 1000.0
 
     # 4. Status filter is case-insensitive, matching the list endpoint
     data = client.get(METRICS_URL, params={"status": "paid"}).json()
-    assert data["total_invoiced_out"] == 1000.0
+    assert _totals(data)["total_invoiced_out"] == 1000.0
 
 
 def test_unknown_customer_name_grouping(db_session):
@@ -333,8 +443,10 @@ def test_unknown_customer_name_grouping(db_session):
     db_session.commit()
 
     data = client.get(METRICS_URL).json()
-    assert data["top_customers"] == [{"customer_name": "Unknown Customer", "amount": 100.0}]
-    assert data["total_invoiced_out"] == 100.0
+    assert data["top_customers"] == [
+        {"customer_name": "Unknown Customer", "currency": "USD", "amount": 100.0}
+    ]
+    assert _totals(data)["total_invoiced_out"] == 100.0
 
 
 def test_outbound_ai_score_metrics(db_session):

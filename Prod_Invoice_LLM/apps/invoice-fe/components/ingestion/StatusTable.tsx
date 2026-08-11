@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { apiClient } from "../../lib/apiClient";
+import { formatCurrency } from "../../lib/utils";
 
 export interface StatusItem {
   id: string;
@@ -23,6 +24,13 @@ export interface StatusItem {
   alerts?: string[];
   vendorName?: string;
   total?: number;
+  /**
+   * FE Gap 183: ISO-4217 code for `total`. The two places this row renders a
+   * total used `$${total.toFixed(2)}`, hardcoding USD on the live ingestion
+   * ledger. GET /invoices/status/{id} now returns currency alongside
+   * grand_total so the real one can be threaded through.
+   */
+  currency?: string | null;
 }
 
 interface StatusTableProps {
@@ -134,7 +142,8 @@ export default function StatusTable({
     progress: number,
     alerts: string[] = [],
     vendorName?: string,
-    total?: number
+    total?: number,
+    currency?: string | null
   ) => {
     setItems((prev) =>
       prev.map((item) =>
@@ -146,6 +155,7 @@ export default function StatusTable({
               alerts: alerts || [],
               vendorName,
               total,
+              currency,
             }
           : item
       )
@@ -191,7 +201,15 @@ export default function StatusTable({
         ? data.alerts.map((a: any) => typeof a === "string" ? a : a.message || "Extraction alert detected")
         : [];
 
-      updateItemStatus(jobId, statusVal, progressVal, alertsList, data.vendor_name, data.grand_total);
+      updateItemStatus(
+        jobId,
+        statusVal,
+        progressVal,
+        alertsList,
+        data.vendor_name,
+        data.grand_total,
+        data.currency
+      );
       
       // Increment progress on active polling slightly to simulate loading state
       if (statusVal === "PROCESSING") {
@@ -433,7 +451,7 @@ export default function StatusTable({
 
                             <div className="pt-2 flex items-center justify-between gap-2 flex-wrap">
                               <span className="text-[10px] text-slate-400 font-mono">
-                                Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? `$${item.total.toFixed(2)}` : "Pending"}
+                                Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? formatCurrency(item.total, item.currency) : "Pending"}
                               </span>
                               <Link
                                 href={`/invoices/review/${item.id}`}
@@ -451,7 +469,7 @@ export default function StatusTable({
                               Invoice parsed successfully with zero warnings.
                             </span>
                             <span className="text-[10px] text-slate-400 font-mono">
-                              Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? `$${item.total.toFixed(2)}` : "Pending"}
+                              Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? formatCurrency(item.total, item.currency) : "Pending"}
                             </span>
                           </div>
                         )}
