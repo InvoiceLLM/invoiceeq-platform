@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect } from "react";
 import { CreditCard, CheckCircle2, ShieldCheck, Sparkles, AlertTriangle, Loader2 } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, refreshAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
 const PLANS = [
@@ -74,8 +74,12 @@ export default function SubscriptionsPage() {
       setIsCheckoutLoading(false);
       setCheckoutHint(null);
       if (data.status === "success") {
-        // Plan is already committed server-side; refresh so useAuth picks it up.
-        window.location.reload();
+        // Gap 138: plan is already committed server-side; refresh identity
+        // so billingPlan updates without requiring Ctrl+F5.
+        setCheckoutHint("Payment succeeded — refreshing your plan…");
+        void refreshAuth().then(() => {
+          setCheckoutHint("Your plan is up to date.");
+        });
       } else {
         setCheckoutError("Payment was not completed. You can try again whenever you're ready.");
       }

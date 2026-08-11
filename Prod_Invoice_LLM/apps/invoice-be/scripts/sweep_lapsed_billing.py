@@ -15,10 +15,10 @@ next pass.
 Usage:
     uv run python scripts/sweep_lapsed_billing.py [--dry-run]
 
-Intended to run daily. No scheduler exists in this repo yet, so it is
-deliberately a standalone entrypoint rather than a task registered with one --
-it can be driven by an Azure Container Apps scheduled job, cron, or Task
-Scheduler without any code change.
+Intended to run daily. Prefer `scripts/sweep_billing_lifecycle.py` for the
+scheduled Azure Container Apps Job (Gaps 119+121) — that entrypoint runs this
+lapse sweep and the free-quota sweep back to back. This script remains a
+standalone lapse-only entrypoint for manual/ops use.
 """
 import argparse
 import logging

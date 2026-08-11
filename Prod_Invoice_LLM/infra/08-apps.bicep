@@ -180,6 +180,21 @@ module backendApp './modules/compute/invoice-be.bicep' = {
   }
 }
 
+// Gaps 119 + 121: daily billing lifecycle sweep (paid lapse + free quota refill).
+// Same backend image as ca-invoice-be; command overridden to the sweep script.
+module billingLifecycleJob './modules/compute/billing-lifecycle-job.bicep' = {
+  name: 'billing-lifecycle-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-billing-lifecycle-${environment}'
+    userAssignedIdentityId: identity.id
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+  }
+}
+
 module queueWorker './modules/compute/queue-worker.bicep' = {
   name: 'worker-deploy'
   params: {

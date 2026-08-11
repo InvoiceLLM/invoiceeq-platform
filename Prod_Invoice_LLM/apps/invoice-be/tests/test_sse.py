@@ -176,28 +176,110 @@ def test_queue_worker_audit_anomalies(db_session):
             assert db_invoice.sa_alerts == ["Math mismatch"]
 
 
-def test_sse_stream_endpoint():
+def test_sse_stream_endpoint(db_session):
     """Verify streaming endpoint correctly formats and yields Redis Pub/Sub payloads."""
     batch_id = uuid4()
-    
+    db_session.add(
+        Invoice(
+            id=uuid4(),
+            tenant_id=MOCK_TENANT_ID,
+            batch_id=batch_id,
+            file_path="mock/path.pdf",
+            status="PROCESSING",
+        )
+    )
+    db_session.commit()
+
     from unittest.mock import MagicMock
     mock_redis = MagicMock()
+    mock_redis.aclose = AsyncMock()
     mock_redis.close = AsyncMock()
     mock_pubsub = AsyncMock()
+    mock_pubsub.aclose = AsyncMock()
     mock_redis.pubsub.return_value = mock_pubsub
-    
+
     # Mock progress update packet then terminal status completed packet
     mock_pubsub.get_message.side_effect = [
         {"data": json.dumps({"status": "PROCESSING_OCR", "message": "OCR Processing"})},
         {"data": json.dumps({"status": "COMPLETED", "message": "Finished", "data": {}})},
     ]
-    
+
     with patch("routers.invoices.AsyncRedis.from_url") as mock_from_url:
         mock_from_url.return_value = mock_redis
-        
+
         client = TestClient(app)
         with client.stream("GET", f"/api/v1/invoices/stream/{batch_id}") as response:
             assert response.status_code == 200
             lines = list(response.iter_lines())
             assert any("PROCESSING_OCR" in line for line in lines)
             assert any("COMPLETED" in line for line in lines)
+
+    # Gap 187: successful terminal stream still tears down pubsub + client
+    mock_pubsub.unsubscribe.assert_awaited()
+    mock_pubsub.aclose.assert_awaited()
+    mock_redis.aclose.assert_awaited()
+
+
+def test_sse_stream_closes_client_when_unsubscribe_fails(db_session):
+    """Gap 187: unsubscribe raising must not skip Redis client aclose."""
+    batch_id = uuid4()
+    db_session.add(
+        Invoice(
+            id=uuid4(),
+            tenant_id=MOCK_TENANT_ID,
+            batch_id=batch_id,
+            file_path="mock/path.pdf",
+            status="PROCESSING",
+        )
+    )
+    db_session.commit()
+
+    from unittest.mock import MagicMock
+    mock_redis = MagicMock()
+    mock_redis.aclose = AsyncMock()
+    mock_pubsub = AsyncMock()
+    mock_pubsub.aclose = AsyncMock()
+    mock_pubsub.unsubscribe.side_effect = RuntimeError("unsubscribe blew up")
+    mock_redis.pubsub.return_value = mock_pubsub
+    mock_pubsub.get_message.side_effect = [
+        {"data": json.dumps({"status": "COMPLETED", "message": "Finished", "data": {}})},
+    ]
+
+    with patch("routers.invoices.AsyncRedis.from_url") as mock_from_url:
+        mock_from_url.return_value = mock_redis
+        client = TestClient(app)
+        with client.stream("GET", f"/api/v1/invoices/stream/{batch_id}") as response:
+            assert response.status_code == 200
+            list(response.iter_lines())
+
+    mock_pubsub.unsubscribe.assert_awaited()
+    mock_pubsub.aclose.assert_awaited()
+    mock_redis.aclose.assert_awaited()
+
+
+def test_sse_stream_foreign_tenant_denied(db_session):
+    """Gap 186: a signed-in tenant must not subscribe to another tenant's batch."""
+    batch_id = uuid4()
+    db_session.add(
+        Invoice(
+            id=uuid4(),
+            tenant_id=uuid4(),
+            batch_id=batch_id,
+            file_path="mock/foreign.pdf",
+            status="PROCESSING",
+        )
+    )
+    db_session.commit()
+
+    client = TestClient(app)
+    response = client.get(f"/api/v1/invoices/stream/{batch_id}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Invoice not found or access denied."
+
+
+def test_sse_stream_unknown_batch_denied(db_session):
+    """Gap 186: unknown batch_id returns the same 404 (no oracle)."""
+    client = TestClient(app)
+    response = client.get(f"/api/v1/invoices/stream/{uuid4()}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Invoice not found or access denied."

@@ -16,8 +16,9 @@ from config import settings
 
 from dependencies import get_tenant_context, get_db_session, require_can_load, TenantContext
 from models import Invoice, Tenant, AuditLog, User
-from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage, delete_pdf_from_storage
-from chroma_client import delete_invoice_chunks
+from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
+from services.invoice_visibility import invoice_not_deleted
+from services.billing_quota import charge_free_quota, count_billable_uploads
 from azure.storage.queue import QueueClient
 from config import get_settings
 from azure.core.exceptions import ResourceNotFoundError
@@ -203,7 +204,8 @@ async def upload_invoices(
     """
     Accepts invoice PDF file uploads, saves them to tenant-isolated storage,
     provisions DB entries, and dispatches background processing tasks.
-    Enforces subscription limits for free-tier tenants.
+    Enforces subscription limits for free-tier tenants (Gap 189: charge only
+    billable/non-duplicate files under a Tenant row lock).
     """
     if not files:
         raise HTTPException(
@@ -219,28 +221,8 @@ async def upload_invoices(
                 detail=f"Invalid file format: {file.filename}. Only PDF is allowed."
             )
 
-    # 2. Fetch Tenant context (provisioned by get_tenant_context)
-    tenant = db_session.get(Tenant, context.tenant_id)
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found."
-        )
-
-    # 3. Enforce Free Plan Limits
-    if tenant.billing_plan == "free":
-        if tenant.free_invoices_remaining < len(files):
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="Limit reached"
-            )
-        tenant.free_invoices_remaining -= len(files)
-        db_session.add(tenant)
-        await run_in_threadpool(db_session.commit)
-
-    batch_id = uuid4()
-    job_ids = []
-
+    # 2. Read all bytes up front so we can classify duplicates before charging.
+    payloads: list[tuple[str, bytes]] = []
     for file in files:
         try:
             file_bytes = await file.read()
@@ -249,7 +231,20 @@ async def upload_invoices(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to read file {file.filename}: {str(e)}"
             )
-        job_id = await _ingest_single_file(file_bytes, file.filename, tags, batch_id, tenant, context, db_session)
+        payloads.append((file.filename, file_bytes))
+
+    # 3. Gap 189: count billable hashes, then lock Tenant and charge that count only.
+    billable = count_billable_uploads(
+        db_session, context.tenant_id, [data for _, data in payloads]
+    )
+    tenant = charge_free_quota(db_session, context.tenant_id, billable)
+
+    batch_id = uuid4()
+    job_ids = []
+    for filename, file_bytes in payloads:
+        job_id = await _ingest_single_file(
+            file_bytes, filename, tags, batch_id, tenant, context, db_session
+        )
         job_ids.append(job_id)
 
     return {
@@ -318,23 +313,23 @@ async def start_directory_watcher(
     if not pdf_filenames:
         return {"watcher_id": watcher_id, "status": "completed", "files_found": 0, "files_queued": 0}
 
-    tenant = db_session.get(Tenant, context.tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    payloads: list[tuple[str, bytes]] = []
+    for filename in pdf_filenames:
+        with open(os.path.join(requested_abs, filename), "rb") as f:
+            payloads.append((filename, f.read()))
 
-    if tenant.billing_plan == "free" and tenant.free_invoices_remaining < len(pdf_filenames):
-        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="Limit reached")
-    if tenant.billing_plan == "free":
-        tenant.free_invoices_remaining -= len(pdf_filenames)
-        db_session.add(tenant)
-        await run_in_threadpool(db_session.commit)
+    # Gap 189: same classify → lock → charge path as /upload (shared helpers).
+    billable = count_billable_uploads(
+        db_session, context.tenant_id, [data for _, data in payloads]
+    )
+    tenant = charge_free_quota(db_session, context.tenant_id, billable)
 
     batch_id = uuid4()
     job_ids = []
-    for filename in pdf_filenames:
-        with open(os.path.join(requested_abs, filename), "rb") as f:
-            file_bytes = f.read()
-        job_id = await _ingest_single_file(file_bytes, filename, [], batch_id, tenant, context, db_session)
+    for filename, file_bytes in payloads:
+        job_id = await _ingest_single_file(
+            file_bytes, filename, [], batch_id, tenant, context, db_session
+        )
         job_ids.append(job_id)
 
     return {
@@ -347,42 +342,92 @@ async def start_directory_watcher(
     }
 
 
-async def sse_event_generator(batch_id: str):
-    """Async generator to yield Redis pub/sub messages as Server-Sent Events."""
-    redis_client = AsyncRedis.from_url(settings.REDIS_URL, decode_responses=True)
-    pubsub = redis_client.pubsub()
-    channel = f"invoice.update.{batch_id}"
-    await pubsub.subscribe(channel)
-    
+async def _sse_aclose(resource, label: str) -> None:
+    """Best-effort aclose/close for Redis client or pubsub — never raises (Gap 187)."""
+    if resource is None:
+        return
+    closer = getattr(resource, "aclose", None) or getattr(resource, "close", None)
+    if closer is None:
+        return
     try:
-        while True:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if message:
-                data = message["data"]
-                yield f"data: {data}\n\n"
-                
-                # Terminate stream on final state
+        result = closer()
+        if asyncio.iscoroutine(result):
+            await result
+    except Exception as e:
+        logger.warning("SSE %s cleanup failed for resource: %s", label, e)
+
+
+async def sse_event_generator(batch_id: str):
+    """Async generator to yield Redis pub/sub messages as Server-Sent Events.
+
+    Gap 187: nested try/finally so pubsub and the Redis client always tear down,
+    even if unsubscribe raises or subscribe fails after the client was opened.
+    Cleanup errors are logged and swallowed so one failure cannot skip the other.
+    """
+    channel = f"invoice.update.{batch_id}"
+    redis_client = None
+    pubsub = None
+    try:
+        redis_client = AsyncRedis.from_url(settings.REDIS_URL, decode_responses=True)
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message:
+                    data = message["data"]
+                    yield f"data: {data}\n\n"
+
+                    # Terminate stream on final state
+                    try:
+                        payload = json.loads(data)
+                        if payload.get("status") in ["COMPLETED", "AUDIT_REQUIRED", "FAILED"]:
+                            break
+                    except Exception:
+                        pass
+                else:
+                    # Heartbeat keep-alive to keep connection open
+                    yield ": keep-alive\n\n"
+
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            logger.info("SSE subscription disconnected for batch %s", batch_id)
+        finally:
+            if pubsub is not None:
                 try:
-                    payload = json.loads(data)
-                    if payload.get("status") in ["COMPLETED", "AUDIT_REQUIRED", "FAILED"]:
-                        break
-                except Exception:
-                    pass
-            else:
-                # Heartbeat keep-alive to keep connection open
-                yield ": keep-alive\n\n"
-                
-            await asyncio.sleep(0.5)
-    except asyncio.CancelledError:
-        logger.info("SSE subscription disconnected for batch %s", batch_id)
+                    await pubsub.unsubscribe(channel)
+                except Exception as e:
+                    logger.warning("SSE pubsub unsubscribe failed for batch %s: %s", batch_id, e)
+                await _sse_aclose(pubsub, "pubsub")
+                pubsub = None
     finally:
-        await pubsub.unsubscribe(channel)
-        await redis_client.close()
+        await _sse_aclose(redis_client, "client")
 
 
 @router.get("/stream/{batch_id}")
-async def stream_invoice_status(batch_id: UUID, context: TenantContext = Depends(get_tenant_context)):
-    """Streaming response endpoint yielding real-time processing updates for a batch."""
+async def stream_invoice_status(
+    batch_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session),
+):
+    """Streaming response endpoint yielding real-time processing updates for a batch.
+
+    Gap 186: refuse the Redis subscription unless this tenant owns at least one
+    invoice in the batch — same 404 shape as get_invoice_status so a foreign
+    batch_id is indistinguishable from a missing one.
+    """
+    owned = db_session.exec(
+        select(Invoice.id).where(
+            Invoice.batch_id == batch_id,
+            Invoice.tenant_id == context.tenant_id,
+            invoice_not_deleted(),
+        )
+    ).first()
+    if not owned:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found or access denied.",
+        )
     return StreamingResponse(sse_event_generator(str(batch_id)), media_type="text/event-stream")
 
 
@@ -393,7 +438,11 @@ async def get_invoice_status(
     db_session: Session = Depends(get_db_session)
 ):
     """Polling status endpoint returning DB record details for a single invoice."""
-    statement = select(Invoice).where(Invoice.id == job_id, Invoice.tenant_id == context.tenant_id)
+    statement = select(Invoice).where(
+        Invoice.id == job_id,
+        Invoice.tenant_id == context.tenant_id,
+        invoice_not_deleted(),
+    )
     invoice = db_session.exec(statement).first()
     if not invoice:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found or access denied.")
@@ -437,7 +486,8 @@ async def list_invoices(
     """
     conditions = [
         Invoice.tenant_id == context.tenant_id,
-        Invoice.flow_direction == "INBOUND"
+        Invoice.flow_direction == "INBOUND",
+        invoice_not_deleted(),
     ]
     if start_date:
         conditions.append(Invoice.invoice_date >= start_date)
@@ -476,7 +526,11 @@ async def get_invoice(
     """
     Fetches a single invoice details. Enforces tenant isolation.
     """
-    query = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
+    query = select(Invoice).where(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        invoice_not_deleted(),
+    )
     invoice = db_session.exec(query).first()
     if not invoice:
         raise HTTPException(
@@ -496,7 +550,11 @@ async def get_invoice_pdf(
     Streams the secure PDF file retrieved from storage (Azure or Local fallback).
     Enforces tenant isolation.
     """
-    query = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
+    query = select(Invoice).where(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        invoice_not_deleted(),
+    )
     invoice = db_session.exec(query).first()
     if not invoice:
         raise HTTPException(
@@ -533,13 +591,22 @@ async def delete_invoice(
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Permanently deletes an invoice: the Postgres row, the PDF in Blob Storage,
-    its indexed vector chunks in ChromaDB, and any related audit log entries.
-    Enforces tenant isolation. Blob/vector cleanup is best-effort — a failure there
-    logs a warning but does not block removing the Postgres row, so a flaky
-    downstream store can't make an invoice permanently undeletable.
+    Gap 192: soft-deletes an invoice. Sets deleted_at, keeps the Postgres row and
+    all AuditLog history, and appends a DELETE_INVOICE audit entry. Blob Storage
+    and Chroma chunks are retained so a restore path remains possible. Enforces
+    tenant isolation; already-deleted rows return 404.
     """
-    query = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
+    if context.db_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user required to delete an invoice.",
+        )
+
+    query = select(Invoice).where(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        invoice_not_deleted(),
+    )
     invoice = db_session.exec(query).first()
     if not invoice:
         raise HTTPException(
@@ -547,21 +614,25 @@ async def delete_invoice(
             detail="Invoice not found or access denied."
         )
 
-    try:
-        await run_in_threadpool(delete_pdf_from_storage, invoice.file_path)
-    except Exception as e:
-        logger.warning("Failed to delete PDF for invoice %s: %s", invoice_id, e)
-
-    try:
-        await run_in_threadpool(delete_invoice_chunks, str(invoice_id), str(context.tenant_id))
-    except Exception as e:
-        logger.warning("Failed to delete vector chunks for invoice %s: %s", invoice_id, e)
-
-    audit_stmt = select(AuditLog).where(AuditLog.invoice_id == invoice_id, AuditLog.tenant_id == context.tenant_id)
-    for log in db_session.exec(audit_stmt).all():
-        db_session.delete(log)
-
-    db_session.delete(invoice)
+    now = datetime.utcnow()
+    invoice.deleted_at = now
+    db_session.add(invoice)
+    db_session.add(
+        AuditLog(
+            tenant_id=context.tenant_id,
+            invoice_id=invoice_id,
+            actor_user_id=context.db_user_id,
+            actor_role=context.role,
+            action="DELETE_INVOICE",
+            details={
+                "soft_delete": True,
+                "vendor_name": invoice.vendor_name,
+                "invoice_number": invoice.invoice_number,
+                "status": invoice.status,
+            },
+            timestamp=now,
+        )
+    )
     await run_in_threadpool(db_session.commit)
 
     return {"success": True}

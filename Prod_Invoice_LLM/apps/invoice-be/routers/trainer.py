@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from config import get_settings
 from dependencies import get_db_session, get_tenant_context, require_can_train, TenantContext
 from models import ExtractionTemplate, ExtractionTemplateVersion, Invoice, User
+from services.invoice_visibility import invoice_not_deleted
 from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
 from agents.trainer_agent import run_trainer_agent
@@ -441,7 +442,11 @@ def start_from_production_session(
     """Scope #2 (Existing Vendor): seed from a real, already-extracted production invoice (Task 10.3)."""
     stmt = (
         select(Invoice)
-        .where(Invoice.tenant_id == tenant_context.tenant_id, Invoice.vendor_name == vendor_name)
+        .where(
+            Invoice.tenant_id == tenant_context.tenant_id,
+            Invoice.vendor_name == vendor_name,
+            invoice_not_deleted(),
+        )
         .order_by(Invoice.created_at.desc())
     )
     invoice = db_session.exec(stmt).first()
@@ -514,6 +519,7 @@ def list_trainer_vendors(
     stmt = select(Invoice).where(
         Invoice.tenant_id == tenant_context.tenant_id,
         Invoice.vendor_name.is_not(None),
+        invoice_not_deleted(),
     )
     invoices = db_session.exec(stmt).all()
 

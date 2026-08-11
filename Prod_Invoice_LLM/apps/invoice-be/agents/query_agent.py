@@ -391,6 +391,7 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
         from sqlalchemy import func
         from sqlmodel import select
         from models import Invoice
+        from services.invoice_visibility import invoice_not_deleted
         from uuid import UUID as _UUID
 
         tenant_uuid = tenant_id if isinstance(tenant_id, _UUID) else _UUID(str(tenant_id))
@@ -402,13 +403,13 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
                 func.count(func.distinct(Invoice.vendor_name)),
                 func.min(Invoice.invoice_date),
                 func.max(Invoice.invoice_date),
-            ).where(Invoice.tenant_id == tenant_uuid)
+            ).where(Invoice.tenant_id == tenant_uuid, invoice_not_deleted())
         ).first()
         total_invoices, total_spend, distinct_vendors, earliest_date, latest_date = row
 
         status_rows = db_session.exec(
             select(Invoice.status, func.count(Invoice.id))
-            .where(Invoice.tenant_id == tenant_uuid)
+            .where(Invoice.tenant_id == tenant_uuid, invoice_not_deleted())
             .group_by(Invoice.status)
         ).all()
         status_breakdown = ", ".join(f"{s}: {c}" for s, c in status_rows) or "none"

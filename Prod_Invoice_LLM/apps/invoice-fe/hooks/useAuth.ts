@@ -20,6 +20,13 @@ import { useEffect, useState } from "react";
  * same page (Sidebar, Header-adjacent screens, page bodies). A module-level
  * cache plus a shared in-flight promise means one request per page load rather
  * than one per consumer, and every consumer re-renders when it resolves.
+ *
+ * Gap 138: the module cache used to live for the whole tab JS lifetime with
+ * nothing calling `refreshAuth()`, so a server-side plan/role change was
+ * invisible until a hard reload. We now (a) re-fetch on tab focus/visibility
+ * (debounced), (b) export `clearAuth` for sign-out, and (c) expect call sites
+ * that mutate identity (billing checkout, admin permission saves) to call
+ * `refreshAuth()` themselves.
  */
 export interface AuthContextType {
   tenantId: string;
@@ -63,9 +70,15 @@ const ANONYMOUS: AuthContextType = {
 
 const LOADING: AuthContextType = { ...ANONYMOUS, loading: true };
 
+/** Debounce window for focus/visibility re-fetch (Gap 138). */
+const FOCUS_REFRESH_DEBOUNCE_MS = 2000;
+
 let cached: AuthContextType | null = null;
 let inFlight: Promise<AuthContextType> | null = null;
 const subscribers = new Set<(auth: AuthContextType) => void>();
+let focusListenersAttached = false;
+let lastFocusRefreshAt = 0;
+let focusRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 function normalise(data: AuthMeResponse): AuthContextType {
   return {
@@ -108,6 +121,46 @@ function fetchAuth(): Promise<AuthContextType> {
   return inFlight;
 }
 
+function scheduleFocusRefresh() {
+  const now = Date.now();
+  const since = now - lastFocusRefreshAt;
+  const wait = Math.max(0, FOCUS_REFRESH_DEBOUNCE_MS - since);
+  if (focusRefreshTimer) clearTimeout(focusRefreshTimer);
+  focusRefreshTimer = setTimeout(() => {
+    focusRefreshTimer = null;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      return;
+    }
+    lastFocusRefreshAt = Date.now();
+    void refreshAuth();
+  }, wait);
+}
+
+function onVisibilityOrFocus() {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    return;
+  }
+  scheduleFocusRefresh();
+}
+
+function attachFocusListeners() {
+  if (focusListenersAttached || typeof window === "undefined") return;
+  focusListenersAttached = true;
+  window.addEventListener("focus", onVisibilityOrFocus);
+  document.addEventListener("visibilitychange", onVisibilityOrFocus);
+}
+
+function detachFocusListeners() {
+  if (!focusListenersAttached || typeof window === "undefined") return;
+  focusListenersAttached = false;
+  window.removeEventListener("focus", onVisibilityOrFocus);
+  document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+  if (focusRefreshTimer) {
+    clearTimeout(focusRefreshTimer);
+    focusRefreshTimer = null;
+  }
+}
+
 /**
  * Force a re-read of `/api/auth/me`, e.g. after an Admin changes permissions
  * in the Admin console, so the sidebar updates without a full reload.
@@ -118,11 +171,38 @@ export async function refreshAuth(): Promise<AuthContextType> {
   return fetchAuth();
 }
 
+/**
+ * Gap 138: drop the module cache on sign-out so the next session cannot
+ * inherit the previous user's role/plan from a surviving JS runtime.
+ */
+export function clearAuth(): void {
+  cached = null;
+  inFlight = null;
+  if (focusRefreshTimer) {
+    clearTimeout(focusRefreshTimer);
+    focusRefreshTimer = null;
+  }
+  publish(ANONYMOUS);
+}
+
+/**
+ * Gap 138: when a gated API returns 402/403 that contradicts the cached plan
+ * or permissions, re-fetch identity once so a stale cache is not trusted to
+ * the end of a dead-end error screen.
+ */
+export async function refreshAuthOnAuthError(
+  status: number
+): Promise<AuthContextType | null> {
+  if (status !== 402 && status !== 403) return null;
+  return refreshAuth();
+}
+
 export function useAuth(): AuthContextType {
   const [auth, setAuth] = useState<AuthContextType>(() => cached ?? LOADING);
 
   useEffect(() => {
     subscribers.add(setAuth);
+    if (subscribers.size === 1) attachFocusListeners();
     if (cached) {
       setAuth(cached);
     } else {
@@ -130,6 +210,7 @@ export function useAuth(): AuthContextType {
     }
     return () => {
       subscribers.delete(setAuth);
+      if (subscribers.size === 0) detachFocusListeners();
     };
   }, []);
 

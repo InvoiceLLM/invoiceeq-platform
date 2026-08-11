@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, refreshAuth } from "@/hooks/useAuth";
 
 /**
  * FE Gap 169: new users log in through the marketing site's /login page, not a
@@ -312,7 +312,7 @@ export default function AdminDashboardPage() {
   // FE Gap 167: the real, backend-resolved identity of whoever is looking at
   // this page. This screen used to describe the viewer as the org's Admin
   // unconditionally; every role/permission label below now comes from here.
-  const { role, canTrain, canAudit, canLoad, loading: authLoading } = useAuth();
+  const { role, canTrain, canAudit, canLoad, loading: authLoading, userId } = useAuth();
   const isAdmin = role === "Admin";
 
   const [users, setUsers] = useState<OrgUser[]>([]);
@@ -390,6 +390,10 @@ export default function AdminDashboardPage() {
     setPermError(null);
     try {
       await savePermissions(target.id, next, { email: target.email });
+      // Gap 138: if an Admin edited their own grants, refresh the shell cache.
+      if (target.id === userId || (target.clerkUserId && target.clerkUserId === user?.id)) {
+        void refreshAuth();
+      }
     } catch (err: any) {
       setUsers((prev) => prev.map((u) => (u.id === target.id ? target : u)));
       setPermError(err.message || "Failed to save permissions");

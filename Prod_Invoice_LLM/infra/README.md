@@ -17,7 +17,7 @@ verified before the next one starts:
 | 5 | `05-secrets.bicep` | Seeds the 7 Key Vault secrets from Stages 2-4's resources | `az keyvault secret list --vault-name kv-invoice-llm-dev --query "length(@)" -o tsv` (expect `7`) |
 | 6 | `06-compute-env.bicep` | Container Apps Environment, ChromaDB | `az containerapp env show -g invoice-llm-dev -n cae-invoice-llm-dev --query properties.provisioningState -o tsv` |
 | 7 | `07-rbac.bicep` | 5 role assignments for the managed identity | `az role assignment list --assignee <principalId> -g invoice-llm-dev -o table` (expect 5 rows) |
-| 8 | `08-apps.bicep` | Backend, queue-worker, frontend, and website container apps | `az containerapp show -g invoice-llm-dev -n ca-invoice-be-dev --query properties.runningStatus -o tsv` |
+| 8 | `08-apps.bicep` | Backend, queue-worker, frontend, website container apps, and billing-lifecycle Container Apps Job (Gaps 119/121) | `az containerapp show -g invoice-llm-dev -n ca-invoice-be-dev --query properties.runningStatus -o tsv` (+ `az containerapp job show -g invoice-llm-dev -n caj-billing-lifecycle-dev`) |
 | 9 | `09-monitoring.bicep` | Log Analytics, App Insights, action group, diagnostic settings, ~16 alert rules | `az monitor metrics alert list -g invoice-llm-dev -o table` |
 | 10 | `10-budget.bicep` | $150/month consumption budget, 80%/100% notifications | `az consumption budget list -o table` |
 

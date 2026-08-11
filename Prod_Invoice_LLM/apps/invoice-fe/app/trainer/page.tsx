@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -22,7 +22,7 @@ import {
   trainerService,
 } from "@/lib/trainer-service";
 
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, refreshAuth } from "@/hooks/useAuth";
 import {
   PageHeaderActions,
   usePageHeader,
@@ -150,6 +150,15 @@ function TrainerContent() {
   // fail on its own initialisation with no explanation.
   const { billingPlan, loading: authLoading } = useAuth();
   const hasTrainerPlan = TRAINER_PLANS.includes(billingPlan);
+
+  // Gap 138: if the gate is up, re-fetch identity once — covers the live case
+  // where a plan was granted server-side but the tab still has a stale cache.
+  const triedStalePlanRefresh = useRef(false);
+  useEffect(() => {
+    if (authLoading || hasTrainerPlan || triedStalePlanRefresh.current) return;
+    triedStalePlanRefresh.current = true;
+    void refreshAuth();
+  }, [authLoading, hasTrainerPlan]);
 
   // Core Session State Management
   const [activeScope, setActiveScope] = useState<TrainerScope>("global");

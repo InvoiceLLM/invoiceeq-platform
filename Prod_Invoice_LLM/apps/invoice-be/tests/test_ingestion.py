@@ -141,6 +141,97 @@ def test_free_plan_quota_decrement(db_session):
         assert tenant.free_invoices_remaining == 0
 
 
+def test_free_plan_duplicate_does_not_burn_quota(db_session):
+    """Gap 189: re-uploading the same PDF is DUPLICATE and leaves quota unchanged."""
+    tenant = Tenant(
+        id=MOCK_TENANT_ID,
+        name="Test Tenant",
+        domain="test.com",
+        billing_plan="free",
+        free_invoices_remaining=5,
+    )
+    db_session.add(tenant)
+    db_session.commit()
+
+    pdf = b"%PDF-1.4 duplicate-quota-test"
+    files = {"files": ("invoice1.pdf", io.BytesIO(pdf), "application/pdf")}
+
+    with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
+         patch("routers.invoices.QueueClient"):
+        mock_storage.return_value = "mock/path/first.pdf"
+        client = TestClient(app)
+        first = client.post("/api/v1/invoices/upload", files=files)
+        assert first.status_code == 201
+        db_session.refresh(tenant)
+        assert tenant.free_invoices_remaining == 4
+
+        files2 = {"files": ("invoice1-again.pdf", io.BytesIO(pdf), "application/pdf")}
+        second = client.post("/api/v1/invoices/upload", files=files2)
+        assert second.status_code == 201
+        job_id = UUID(second.json()["job_ids"][0])
+        dup = db_session.get(Invoice, job_id)
+        assert dup is not None
+        assert dup.status == "DUPLICATE"
+        db_session.refresh(tenant)
+        assert tenant.free_invoices_remaining == 4
+
+
+def test_free_plan_mixed_batch_charges_only_billable(db_session):
+    """Gap 189: one new + one duplicate in the same request decrements by 1."""
+    tenant = Tenant(
+        id=MOCK_TENANT_ID,
+        name="Test Tenant",
+        domain="test.com",
+        billing_plan="free",
+        free_invoices_remaining=3,
+    )
+    db_session.add(tenant)
+    db_session.commit()
+
+    known = b"%PDF-1.4 already-known"
+    fresh = b"%PDF-1.4 brand-new-file"
+    client = TestClient(app)
+
+    with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
+         patch("routers.invoices.QueueClient"):
+        mock_storage.return_value = "mock/path/seed.pdf"
+        seed = client.post(
+            "/api/v1/invoices/upload",
+            files={"files": ("seed.pdf", io.BytesIO(known), "application/pdf")},
+        )
+        assert seed.status_code == 201
+        db_session.refresh(tenant)
+        assert tenant.free_invoices_remaining == 2
+
+        mock_storage.return_value = "mock/path/fresh.pdf"
+        mixed = client.post(
+            "/api/v1/invoices/upload",
+            files=[
+                ("files", ("dup.pdf", io.BytesIO(known), "application/pdf")),
+                ("files", ("new.pdf", io.BytesIO(fresh), "application/pdf")),
+            ],
+        )
+        assert mixed.status_code == 201
+        assert len(mixed.json()["job_ids"]) == 2
+        statuses = {
+            db_session.get(Invoice, UUID(jid)).status for jid in mixed.json()["job_ids"]
+        }
+        assert statuses == {"DUPLICATE", "PROCESSING"}
+        db_session.refresh(tenant)
+        assert tenant.free_invoices_remaining == 1
+
+
+def test_charge_free_quota_uses_for_update():
+    """Gap 189: charge path locks the Tenant row (SELECT FOR UPDATE)."""
+    from services.billing_quota import locked_tenant_select
+
+    stmt = locked_tenant_select(MOCK_TENANT_ID)
+    # SQLAlchemy 2 / SQLModel: for_update flag lives on the select
+    assert getattr(stmt, "_for_update_arg", None) is not None or "FOR UPDATE" in str(
+        stmt.compile(compile_kwargs={"literal_binds": True})
+    )
+
+
 def test_directory_watcher_disabled_by_default(db_session):
     """Gap 12: watcher endpoint returns 501 when WATCHER_ALLOWED_BASE_DIR is unset."""
     client = TestClient(app)

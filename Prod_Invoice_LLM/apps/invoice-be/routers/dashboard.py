@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice, ExtractionTemplate, AuditLog
+from services.invoice_visibility import invoice_not_deleted
 from utils.llm import get_llm
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ async def get_dashboard_metrics(
     full Invoice rows.
     """
     # 1. Shared filter conditions, scoped to the current tenant
-    conditions = [Invoice.tenant_id == context.tenant_id]
+    conditions = [Invoice.tenant_id == context.tenant_id, invoice_not_deleted()]
     if start_date:
         conditions.append(Invoice.invoice_date >= start_date)
     if end_date:
@@ -306,7 +307,7 @@ async def get_trainer_impact(
     # "recurring, not a one-off" reasoning as the Gap 27 suggested-rule
     # threshold, just applied at the vendor level instead of per-field.
     invoices = db_session.exec(
-        select(Invoice).where(Invoice.tenant_id == context.tenant_id)
+        select(Invoice).where(Invoice.tenant_id == context.tenant_id, invoice_not_deleted())
     ).all()
 
     flagged_counts: dict[str, int] = {}
@@ -374,7 +375,7 @@ async def get_dashboard_insights(
         logger.warning("Dashboard insights cache lookup failed, proceeding without cache: %s", e)
 
     invoices = db_session.exec(
-        select(Invoice).where(Invoice.tenant_id == context.tenant_id)
+        select(Invoice).where(Invoice.tenant_id == context.tenant_id, invoice_not_deleted())
     ).all()
 
     if not invoices:
