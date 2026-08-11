@@ -55,3 +55,19 @@ export function formatDate(dateStr: string | Date | null | undefined): string {
     day: "numeric",
   });
 }
+
+/**
+ * FE Gap 201: `date.toISOString().split("T")[0]` converts through UTC before
+ * slicing, so building a `YYYY-MM-DD` API param this way is off by a day for
+ * any non-UTC timezone whenever local and UTC land on different calendar
+ * dates (e.g. IST, UTC+5:30 -- the 1st of the month becomes the 30th/31st,
+ * and "today" between 00:00-05:29 is still yesterday in UTC). This reads the
+ * date's own local year/month/day instead, so the string always matches what
+ * the browser's clock says "today" is.
+ */
+export function toLocalDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}

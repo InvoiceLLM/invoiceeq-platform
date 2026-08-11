@@ -12,7 +12,6 @@ import {
   Info
 } from "lucide-react";
 import Link from "next/link";
-import { apiClient } from "../../lib/apiClient";
 import { formatCurrency } from "../../lib/utils";
 
 export interface StatusItem {
@@ -39,6 +38,11 @@ interface StatusTableProps {
   initialFiles: Array<{ name: string; size: number }>;
 }
 
+// Gap 207: statuses that mean "the pipeline is done with this file" -- these
+// jump straight to 100% progress instead of sitting at the SSE stream's
+// default in-progress value.
+const TERMINAL_STATUSES = ["COMPLETED", "AUDIT_REQUIRED", "DUPLICATE", "FAILED", "PAID", "REJECTED"];
+
 export default function StatusTable({
   batchId,
   jobIds = [],
@@ -47,7 +51,6 @@ export default function StatusTable({
   const [items, setItems] = useState<StatusItem[]>([]);
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const activePollsRef = useRef<{ [key: string]: boolean }>({});
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes";
@@ -80,7 +83,11 @@ export default function StatusTable({
     setExpandedRowId(null);
   }, [batchId, jobIds]);
 
-  // Handle Hybrid tracking: Polling (1-5 files) or SSE (6+ files)
+  // Gap 207: SSE for every batch size. This used to gate on `jobIds.length
+  // >= 6` and poll every 2s below that -- but `LogTerminal` already opens its
+  // own SSE connection on this same `/api/invoices/stream/{batchId}` endpoint
+  // regardless of batch size, so the threshold bought nothing except making
+  // the ledger lag up to 2s behind the log terminal scrolling live beside it.
   useEffect(() => {
     if (jobIds.length === 0 || !batchId) return;
 
@@ -90,47 +97,35 @@ export default function StatusTable({
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
-      activePollsRef.current = {};
     };
 
     cleanup();
 
-    const isSSE = jobIds.length >= 6;
+    const sseUrl = `/api/invoices/stream/${batchId}`;
 
-    if (isSSE) {
-      // --- SSE Connection for 6+ files ---
-      const sseUrl = `/api/invoices/stream/${batchId}`;
+    const es = new EventSource(sseUrl);
+    eventSourceRef.current = es;
 
-      const es = new EventSource(sseUrl);
-      eventSourceRef.current = es;
-
-      es.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload && payload.invoice_id) {
-            updateItemStatus(
-              payload.invoice_id,
-              payload.status,
-              payload.status === "COMPLETED" ? 100 : 60,
-              payload.alerts || []
-            );
-          }
-        } catch (e) {
-          console.error("Failed to parse SSE payload", e);
+    es.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload && payload.invoice_id) {
+          updateItemStatus(
+            payload.invoice_id,
+            payload.status,
+            TERMINAL_STATUSES.includes(payload.status) ? 100 : 60,
+            payload.alerts || []
+          );
         }
-      };
+      } catch (e) {
+        console.error("Failed to parse SSE payload", e);
+      }
+    };
 
-      es.onerror = (err) => {
-        console.error("SSE connection error", err);
-        es.close();
-      };
-    } else {
-      // --- Polling connection for 1-5 files ---
-      jobIds.forEach((jobId) => {
-        activePollsRef.current[jobId] = true;
-        pollJobStatus(jobId);
-      });
-    }
+    es.onerror = (err) => {
+      console.error("SSE connection error", err);
+      es.close();
+    };
 
     return cleanup;
   }, [batchId, jobIds]);
@@ -160,75 +155,6 @@ export default function StatusTable({
           : item
       )
     );
-  };
-
-  // Poll single job status every 2 seconds
-  const pollJobStatus = async (jobId: string) => {
-    if (!activePollsRef.current[jobId]) return;
-
-    try {
-      const res = await apiClient.get(`/invoices/status/${jobId}`);
-      const data = res.data;
-
-      const rawStatus = (data.status || "PROCESSING").toUpperCase();
-      let statusVal: StatusItem["status"] = "PROCESSING";
-      let progressVal = 40;
-
-      if (rawStatus === "COMPLETED" || rawStatus === "PAID") {
-        statusVal = "COMPLETED";
-        progressVal = 100;
-        activePollsRef.current[jobId] = false; // Stop polling
-      } else if (rawStatus === "AUDIT_REQUIRED") {
-        statusVal = "AUDIT_REQUIRED";
-        progressVal = 100;
-        activePollsRef.current[jobId] = false; // Stop polling
-      } else if (rawStatus === "DUPLICATE") {
-        // FE Gap 14: this branch was missing entirely -- a duplicate upload
-        // (batches under 6 files, which use this polling path rather than
-        // SSE) silently stayed on "PROCESSING" forever since none of the
-        // other branches matched, and polling never stopped for it either.
-        statusVal = "DUPLICATE";
-        progressVal = 100;
-        activePollsRef.current[jobId] = false; // Stop polling
-      } else if (rawStatus === "FAILED") {
-        statusVal = "FAILED";
-        progressVal = 100;
-        activePollsRef.current[jobId] = false; // Stop polling
-      }
-
-      // Format alerts nicely from JSON details if present
-      const alertsList = Array.isArray(data.alerts)
-        ? data.alerts.map((a: any) => typeof a === "string" ? a : a.message || "Extraction alert detected")
-        : [];
-
-      updateItemStatus(
-        jobId,
-        statusVal,
-        progressVal,
-        alertsList,
-        data.vendor_name,
-        data.grand_total,
-        data.currency
-      );
-      
-      // Increment progress on active polling slightly to simulate loading state
-      if (statusVal === "PROCESSING") {
-        setItems((prev) =>
-          prev.map((item) =>
-            item.id === jobId
-              ? { ...item, progress: Math.min(85, item.progress + 15) }
-              : item
-          )
-        );
-      }
-    } catch (e) {
-      console.error(`Failed to poll job status for ${jobId}`, e);
-    }
-
-    // Schedule next poll if active
-    if (activePollsRef.current[jobId]) {
-      setTimeout(() => pollJobStatus(jobId), 2000);
-    }
   };
 
   const getStatusBadge = (status: StatusItem["status"]) => {
@@ -319,7 +245,7 @@ export default function StatusTable({
             Ingestion Progress Queue
           </h3>
           <p className="text-[11px] text-slate-500">
-            Live extraction ledger pipeline ({jobIds.length >= 6 ? "SSE Connection" : "Polling Mode"}).
+            Live extraction ledger pipeline (SSE Connection).
           </p>
         </div>
 

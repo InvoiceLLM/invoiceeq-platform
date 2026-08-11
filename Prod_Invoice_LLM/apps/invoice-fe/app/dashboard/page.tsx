@@ -14,6 +14,7 @@ import ActionableInsightsPanel from "../../components/dashboard/ActionableInsigh
 import { usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
+import { toLocalDateString } from "../../lib/utils";
 
 interface SpendPoint {
   date: string;
@@ -44,10 +45,6 @@ interface DashboardMetrics {
   top_vendors: VendorSpend[];
   invoices_by_status: Record<string, number>;
 }
-
-// Fallback mock vendor list & tags if backend returns empty datasets
-const DEFAULT_VENDORS = ["Hardware Depot", "Cloud Hosting Inc", "Office Supply Corp", "Consulting LLC", "Telco Giants"];
-const DEFAULT_TAGS = ["Hardware", "Software", "Services", "Marketing", "Travel"];
 
 const defaultMetrics: DashboardMetrics = {
   totals_by_currency: [],
@@ -104,19 +101,19 @@ export default function DashboardPage() {
   const getDatesForRange = (range: string) => {
     const today = new Date();
     let startDate: string | undefined = undefined;
-    let endDate: string | undefined = today.toISOString().split("T")[0];
+    let endDate: string | undefined = toLocalDateString(today);
 
     if (range === "this_month") {
       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      startDate = firstDay.toISOString().split("T")[0];
+      startDate = toLocalDateString(firstDay);
     } else if (range === "last_30_days") {
       const prior = new Date();
       prior.setDate(today.getDate() - 30);
-      startDate = prior.toISOString().split("T")[0];
+      startDate = toLocalDateString(prior);
     } else if (range === "last_90_days") {
       const prior = new Date();
       prior.setDate(today.getDate() - 90);
-      startDate = prior.toISOString().split("T")[0];
+      startDate = toLocalDateString(prior);
     } else {
       endDate = undefined;
     }

@@ -8,13 +8,11 @@ import OutboundInvoicesTable, { OutboundStatusTab } from "../../components/dashb
 import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
+import { toLocalDateString } from "../../lib/utils";
 
 // Relocated from dashboard/page.tsx (Task 4.9, Dashboard/Audit split) --
 // Dashboard is overview-only now; this page is the actual invoice queue.
 const PAGE_SIZE = 8;
-
-const DEFAULT_VENDORS = ["Hardware Depot", "Cloud Hosting Inc", "Office Supply Corp", "Consulting LLC", "Telco Giants"];
-const DEFAULT_TAGS = ["Hardware", "Software", "Services", "Marketing", "Travel"];
 
 function tabToStatusParams(tab: StatusTab): { status?: string; status_in?: string } {
   if (tab === "paid") return { status: "PAID" };
@@ -94,19 +92,19 @@ export default function InvoicesPage() {
   const getDatesForRange = (range: string) => {
     const today = new Date();
     let startDate: string | undefined = undefined;
-    let endDate: string | undefined = today.toISOString().split("T")[0];
+    let endDate: string | undefined = toLocalDateString(today);
 
     if (range === "this_month") {
       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      startDate = firstDay.toISOString().split("T")[0];
+      startDate = toLocalDateString(firstDay);
     } else if (range === "last_30_days") {
       const prior = new Date();
       prior.setDate(today.getDate() - 30);
-      startDate = prior.toISOString().split("T")[0];
+      startDate = toLocalDateString(prior);
     } else if (range === "last_90_days") {
       const prior = new Date();
       prior.setDate(today.getDate() - 90);
-      startDate = prior.toISOString().split("T")[0];
+      startDate = toLocalDateString(prior);
     } else {
       endDate = undefined;
     }
@@ -239,17 +237,13 @@ export default function InvoicesPage() {
     .map((inv: any) => inv.vendor_name)
     .filter((name): name is string => typeof name === "string" && name.trim() !== "");
 
-  const uniqueVendors = Array.from(
-    new Set(realVendors.length > 0 ? realVendors : DEFAULT_VENDORS)
-  );
+  const uniqueVendors = Array.from(new Set(realVendors));
 
   const realTags = allInvoices
     .flatMap((inv: any) => inv.tags || [])
     .filter((t): t is string => typeof t === "string" && t.trim() !== "");
 
-  const uniqueTags = Array.from(
-    new Set(realTags.length > 0 ? realTags : DEFAULT_TAGS)
-  );
+  const uniqueTags = Array.from(new Set(realTags));
 
   const showTabs = receiveEnabled && sendEnabled;
   const showReceiving = !sendEnabled || invoicesTab === "receiving";
@@ -290,6 +284,7 @@ export default function InvoicesPage() {
             onFilterChange={handleFilterChange}
             availableVendors={uniqueVendors}
             availableTags={uniqueTags}
+            statusFilterDisabled={activeTab !== "all"}
           />
 
           <RecentInvoicesTable
