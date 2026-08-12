@@ -71,6 +71,7 @@ from services.billing_lifecycle import (
     extend_paid_through,
     is_free_quota_due,
     refresh_free_quota,
+    sweep_free_quotas,
 )
 
 # scripts/ is not a package (it is a folder of standalone entrypoints, see
@@ -401,3 +402,55 @@ def test_grant_moves_the_tenant_onto_a_paid_plan_for_n_cycles(db_session):
     assert abs((reloaded.paid_through - expected).total_seconds()) < 60
     # And the granted tenant is genuinely not lapsed, which is the entire point.
     assert reloaded.paid_through > datetime.utcnow()
+
+
+# ---------------------------------------------------------------------------
+# Gap 121: sweep_free_quotas (idle free tenants)
+# ---------------------------------------------------------------------------
+
+def test_sweep_free_quotas_refills_only_due_tenants(db_session):
+    due = _seed_tenant(
+        db_session,
+        tenant_id=uuid4(),
+        remaining=0,
+        free_quota_reset_at=datetime.utcnow() - timedelta(days=1),
+    )
+    not_due = _seed_tenant(
+        db_session,
+        tenant_id=uuid4(),
+        remaining=3,
+        free_quota_reset_at=datetime.utcnow() + timedelta(days=5),
+    )
+    no_clock = _seed_tenant(
+        db_session,
+        tenant_id=uuid4(),
+        remaining=0,
+        free_quota_reset_at=None,
+    )
+    paid = _seed_tenant(
+        db_session,
+        tenant_id=uuid4(),
+        plan="pro",
+        remaining=0,
+        free_quota_reset_at=datetime.utcnow() - timedelta(days=1),
+    )
+
+    refilled = sweep_free_quotas(db_session)
+
+    assert [t.id for t in refilled] == [due.id]
+    assert db_session.get(Tenant, due.id).free_invoices_remaining == settings.DEFAULT_FREE_INVOICES_LIMIT
+    assert db_session.get(Tenant, not_due.id).free_invoices_remaining == 3
+    assert db_session.get(Tenant, no_clock.id).free_quota_reset_at is None
+    assert db_session.get(Tenant, paid.id).billing_plan == "pro"
+
+
+def test_sweep_free_quotas_is_idempotent(db_session):
+    _seed_tenant(
+        db_session,
+        tenant_id=uuid4(),
+        remaining=0,
+        free_quota_reset_at=datetime.utcnow() - timedelta(days=1),
+    )
+
+    assert len(sweep_free_quotas(db_session)) == 1
+    assert sweep_free_quotas(db_session) == []

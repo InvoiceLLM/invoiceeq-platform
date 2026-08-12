@@ -682,8 +682,9 @@ def get_tenant_context_allow_unpaid(
     # Tenant row that has already been loaded above; the DB write only happens
     # on the single request that actually crosses the boundary, after which the
     # plan is 'unpaid' and is_lapsed() short-circuits on the plan check.
-    # scripts/sweep_lapsed_billing.py covers idle tenants who never make a
-    # request at all -- see services/billing_lifecycle.sweep_lapsed_tenants().
+    # scripts/sweep_billing_lifecycle.py (Gaps 119/121 ACA Job) covers idle
+    # tenants who never make a request -- see sweep_lapsed_tenants() /
+    # sweep_free_quotas().
     enforce_lapse(tenant, db_session)
 
     # Gap 118: the free tier's mirror of the same problem, checked in the same
@@ -697,7 +698,7 @@ def get_tenant_context_allow_unpaid(
     # ordered after enforce_lapse(): a tenant demoted to 'unpaid' on this very
     # request must not then be handed a fresh free allowance -- refresh_free_
     # quota() only acts on plan == 'free'. Idle free tenants who never make a
-    # request are Gap 121 (a scheduled sweep), not covered here.
+    # request are covered by Gap 121's scheduled sweep_free_quotas().
     refresh_free_quota(tenant, db_session)
 
     context = TenantContext(

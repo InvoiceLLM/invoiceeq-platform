@@ -5,6 +5,7 @@ from sqlalchemy import func, case, and_
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice, AuditLog
+from services.invoice_visibility import invoice_not_deleted
 
 router = APIRouter(prefix="/outbound-dashboard", tags=["Outbound Dashboard"])
 
@@ -62,7 +63,11 @@ async def list_outbound_invoices(
     (comma-separated) mirrors GET /invoices's own param, for the FE's
     "Pending" tab bundling several in-flight statuses into one server-side
     filter (see feature_4.1_vendor_flow_auditor.md's tab-grouping note)."""
-    conditions = [Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND"]
+    conditions = [
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "OUTBOUND",
+        invoice_not_deleted(),
+    ]
     if customer_name:
         conditions.append(Invoice.customer_name == customer_name)
     if start_date:
@@ -143,6 +148,7 @@ async def get_outbound_dashboard_metrics(
     conditions = [
         Invoice.tenant_id == context.tenant_id,
         Invoice.flow_direction == "OUTBOUND",
+        invoice_not_deleted(),
     ]
     if start_date:
         conditions.append(Invoice.invoice_date >= start_date)

@@ -29,8 +29,8 @@ Gap 118 added the free tier's mirror image to this same module. Lapse moves a
 paid tenant *down* when a date passes; the free-quota refill moves a free
 tenant's allowance back *up* when a date passes. Same inputs (a column on
 Tenant plus a cycle length from settings), same two call-site story (lazy in
-dependencies.py; a batch sweep for idle tenants, which is Gap 121 and does not
-exist yet), so they live together rather than in a second module that would
+dependencies.py; batch sweeps in scripts/sweep_billing_lifecycle.py for Gaps
+119/121), so they live together rather than in a second module that would
 inevitably drift on the date arithmetic.
 """
 import logging
@@ -268,3 +268,31 @@ def refresh_free_quota(tenant: Tenant, db_session: Session, now: datetime | None
         settings.FREE_QUOTA_CYCLE_DAYS,
     )
     return True
+
+
+def sweep_free_quotas(db_session: Session, now: datetime | None = None) -> list[Tenant]:
+    """
+    Gap 121: batch form of refresh_free_quota() for idle free tenants
+    (scripts/sweep_billing_lifecycle.py / scripts/sweep_free_quotas.py).
+
+    Selects free-plan tenants whose cycle clock has started (non-NULL
+    free_quota_reset_at). Tenants with a NULL clock are left alone here —
+    seeding happens on first live request via the lazy path, so the deploy
+    itself cannot mass-grant 50 invoices. Returns tenants that were actually
+    refilled (refresh_free_quota returned True).
+    """
+    now = now or datetime.utcnow()
+    candidates = db_session.exec(
+        select(Tenant).where(
+            Tenant.billing_plan == FREE_PLAN,
+            Tenant.free_quota_reset_at.is_not(None),  # type: ignore[union-attr]
+        )
+    ).all()
+
+    refilled = [tenant for tenant in candidates if refresh_free_quota(tenant, db_session, now)]
+    logger.info(
+        "Free quota sweep: %s candidate(s) checked, %s refilled.",
+        len(candidates),
+        len(refilled),
+    )
+    return refilled

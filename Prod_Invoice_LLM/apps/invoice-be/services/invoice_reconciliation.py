@@ -41,6 +41,7 @@ from sqlmodel import Session, select
 
 from config import get_settings
 from models import Invoice
+from services.invoice_visibility import invoice_not_deleted
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ def find_stuck_invoices(
     now = now or datetime.utcnow()
     cutoff = now - timedelta(minutes=settings.INVOICE_STUCK_AFTER_MINUTES)
 
-    conditions = [Invoice.status.in_(STUCK_STATUSES)]  # type: ignore[attr-defined]
+    conditions = [Invoice.status.in_(STUCK_STATUSES), invoice_not_deleted()]  # type: ignore[attr-defined]
     if tenant_id:
         conditions.append(Invoice.tenant_id == tenant_id)
 

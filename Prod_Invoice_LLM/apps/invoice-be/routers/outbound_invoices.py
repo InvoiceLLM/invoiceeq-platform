@@ -14,6 +14,7 @@ from dependencies import get_tenant_context, get_db_session, require_can_load, T
 from models import Invoice, Tenant, User
 from services.storage import upload_pdf_to_blob_storage
 from services.staff_notify import notify_auditor_action
+from services.invoice_visibility import invoice_not_deleted
 from azure.storage.queue import QueueClient
 from config import get_settings
 
@@ -159,7 +160,10 @@ async def confirm_send_outbound_invoice(
     """Feature 2.1 + Gap 125: VERIFIED/NEEDS_REVIEW → SENT. Staff notify only
     (registered outbound set); never emails the end customer."""
     statement = select(Invoice).where(
-        Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND",
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "OUTBOUND",
+        invoice_not_deleted(),
     )
     invoice = db_session.exec(statement).first()
     if not invoice:
@@ -209,7 +213,10 @@ async def mark_outbound_invoice_paid(
 ):
     """SENT → PAID + optional staff notify (Gap 125)."""
     statement = select(Invoice).where(
-        Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND",
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "OUTBOUND",
+        invoice_not_deleted(),
     )
     invoice = db_session.exec(statement).first()
     if not invoice:

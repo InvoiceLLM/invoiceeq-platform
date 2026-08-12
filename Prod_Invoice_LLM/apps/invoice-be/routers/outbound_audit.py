@@ -7,6 +7,7 @@ from datetime import datetime
 
 from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
+from services.invoice_visibility import invoice_not_deleted
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,10 @@ async def resolve_outbound_alert(
     reusable pieces, and no pattern-detection/suggestion logic here (that's
     an inbound-only concept, see the doc for why)."""
     statement = select(Invoice).where(
-        Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id, Invoice.flow_direction == "OUTBOUND",
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "OUTBOUND",
+        invoice_not_deleted(),
     )
     invoice = db_session.exec(statement).first()
     if not invoice:

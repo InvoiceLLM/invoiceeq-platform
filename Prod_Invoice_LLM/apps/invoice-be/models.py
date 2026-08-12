@@ -95,6 +95,9 @@ class Invoice(SQLModel, table=True):
     compliance_metadata: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = Field(default=None)
+    # Gap 192: soft delete. NULL = live; set to utcnow() hides the row from
+    # product queries while preserving the Invoice + AuditLog compliance trail.
+    deleted_at: datetime | None = Field(default=None, index=True)
 
     # FE Gaps 81/84: stuck-invoice reconciliation bookkeeping. `last_enqueued_at`
     # is when a queue message was last *sent* for this invoice (upload time, or

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from config import get_settings
 from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
+from services.invoice_visibility import invoice_not_deleted
 from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
 from pydantic import BaseModel, Field
@@ -333,7 +334,11 @@ async def resolve_audit_invoice(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
 
     # 2. Retrieve the target invoice with tenant isolation scope
-    statement = select(Invoice).where(Invoice.id == invoice_id, Invoice.tenant_id == context.tenant_id)
+    statement = select(Invoice).where(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        invoice_not_deleted(),
+    )
     invoice = db_session.exec(statement).first()
     if not invoice:
         raise HTTPException(

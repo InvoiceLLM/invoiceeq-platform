@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Bell, ChevronDown, User, LogOut, Settings } from "lucide-react";
 import { useClerk, useUser } from "@clerk/nextjs";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, clearAuth } from "@/hooks/useAuth";
 import PageHeader from "./PageHeader";
 import { usePageHeaderActionsRef, usePageHeaderMeta } from "./PageHeaderContext";
 
@@ -27,9 +28,15 @@ const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:300
  * for pagination, so `limit=1` is enough — no page of rows is fetched just to
  * count them. Settled independently: a receive-only tenant's outbound call may
  * 403, which must not suppress the inbound count.
+ *
+ * Gap 199: Header stays mounted under the app layout, so deps of `[enabled]`
+ * alone froze the badge across client navigations. Re-fetch on `pathname`
+ * change and on tab focus/visibility (debounced) so clearing a review queue
+ * updates the bell without a hard reload.
  */
 function useNeedsAttentionCount(enabled: boolean): number | null {
   const [count, setCount] = useState<number | null>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!enabled) {
@@ -37,6 +44,7 @@ function useNeedsAttentionCount(enabled: boolean): number | null {
       return;
     }
     let cancelled = false;
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
 
     const readTotal = async (url: string): Promise<number> => {
       const res = await fetch(url, { cache: "no-store" });
@@ -44,20 +52,39 @@ function useNeedsAttentionCount(enabled: boolean): number | null {
       return Number(res.headers.get("X-Total-Count") ?? "0") || 0;
     };
 
-    Promise.allSettled([
-      readTotal("/api/invoices?status=AUDIT_REQUIRED&limit=1"),
-      readTotal("/api/outbound-dashboard/invoices?status=NEEDS_REVIEW&limit=1"),
-    ]).then((results) => {
-      if (cancelled) return;
-      setCount(
-        results.reduce((sum, r) => sum + (r.status === "fulfilled" ? r.value : 0), 0)
-      );
-    });
+    const fetchCount = () => {
+      Promise.allSettled([
+        readTotal("/api/invoices?status=AUDIT_REQUIRED&limit=1"),
+        readTotal("/api/outbound-dashboard/invoices?status=NEEDS_REVIEW&limit=1"),
+      ]).then((results) => {
+        if (cancelled) return;
+        setCount(
+          results.reduce((sum, r) => sum + (r.status === "fulfilled" ? r.value : 0), 0)
+        );
+      });
+    };
+
+    fetchCount();
+
+    const onFocusOrVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (focusTimer) clearTimeout(focusTimer);
+      focusTimer = setTimeout(() => {
+        if (!cancelled) fetchCount();
+      }, 500);
+    };
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
 
     return () => {
       cancelled = true;
+      if (focusTimer) clearTimeout(focusTimer);
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
     };
-  }, [enabled]);
+  }, [enabled, pathname]);
 
   return count;
 }
@@ -110,21 +137,47 @@ function useDisplayIdentity() {
 
 export default function Header() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const { signOut } = useClerk();
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const pathname = usePathname();
+  const { signOut, openUserProfile } = useClerk();
   const { user } = useUser();
   // Gated on canAudit for the same reason Sidebar hides the Audit Queue item:
   // a user who cannot open the queue gains nothing from a count of it, and the
   // backend would 403 the calls anyway.
   const { canAudit, role, tenantName, loading: authLoading } = useAuth();
   const needsAttention = useNeedsAttentionCount(canAudit);
+  const isAdmin = role === "Admin";
 
   // FE Gap 110: the active route's title/badge/subtitle and its own header-row
   // controls, both fed up from the page through PageHeaderContext.
   const pageMeta = usePageHeaderMeta();
   const actionsRef = usePageHeaderActionsRef();
 
+  // Gap 142: dismiss the profile menu on navigation and outside click.
+  useEffect(() => {
+    setShowProfileMenu(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!showProfileMenu) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (
+        profileMenuRef.current &&
+        !profileMenuRef.current.contains(event.target as Node)
+      ) {
+        setShowProfileMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [showProfileMenu]);
+
   const handleSignOut = async () => {
     setShowProfileMenu(false);
+    // Gap 138: clear the module-level identity cache before tearing down the
+    // Clerk session so a later sign-in in the same tab cannot inherit stale
+    // role/plan from the previous user.
+    clearAuth();
     try {
       try {
         const response = await fetch("/api/auth/logout", {
@@ -146,6 +199,12 @@ export default function Header() {
     }
 
     window.location.href = `${WEBSITE_URL}/login`;
+  };
+
+  const handleOpenProfile = () => {
+    setShowProfileMenu(false);
+    // Gap 142: no in-app profile page — Clerk's account modal is the real dest.
+    openUserProfile();
   };
 
   const { isLoaded, email: userEmail, name: displayName, initials } = useDisplayIdentity();
@@ -223,8 +282,9 @@ export default function Header() {
         <div className="h-6 w-px bg-[#222D3D]"></div>
 
         {/* User Profile Card Dropdown */}
-        <div className="relative">
+        <div className="relative" ref={profileMenuRef}>
           <button
+            type="button"
             onClick={() => setShowProfileMenu(!showProfileMenu)}
             className="flex items-center gap-3.5 pl-2 py-1.5 pr-3 rounded-lg hover:bg-[#1E293B]/40 transition-all duration-200 group"
           >
@@ -252,7 +312,8 @@ export default function Header() {
             <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
           </button>
 
-          {/* Profile Menu Dropdown */}
+          {/* Profile Menu Dropdown — Gap 142: real destinations + dismiss on
+              outside click / route change (handlers above). */}
           {showProfileMenu && (
             <div className="absolute right-0 mt-2.5 w-52 bg-[#0F172A] border border-[#222D3D] rounded-xl shadow-xl py-2 z-20 animate-in fade-in slide-in-from-top-2 duration-150">
               <div className="px-4 py-2 border-b border-[#222D3D] mb-1.5">
@@ -263,22 +324,27 @@ export default function Header() {
                   {userEmail || (isLoaded ? "—" : "…")}
                 </p>
               </div>
-              <button 
-                onClick={() => setShowProfileMenu(false)}
+              <button
+                type="button"
+                onClick={handleOpenProfile}
                 className="w-full flex items-center gap-3 px-4 py-2 text-sm text-slate-300 hover:bg-[#1E293B]/70 hover:text-white transition-colors text-left"
               >
                 <User className="w-4 h-4 text-slate-400" />
                 My Profile
               </button>
-              <button 
-                onClick={() => setShowProfileMenu(false)}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-slate-300 hover:bg-[#1E293B]/70 hover:text-white transition-colors text-left"
-              >
-                <Settings className="w-4 h-4 text-slate-400" />
-                Account Settings
-              </button>
+              {isAdmin && (
+                <Link
+                  href="/settings"
+                  onClick={() => setShowProfileMenu(false)}
+                  className="w-full flex items-center gap-3 px-4 py-2 text-sm text-slate-300 hover:bg-[#1E293B]/70 hover:text-white transition-colors text-left"
+                >
+                  <Settings className="w-4 h-4 text-slate-400" />
+                  Account Settings
+                </Link>
+              )}
               <div className="h-px bg-[#222D3D] my-1.5"></div>
               <button
+                type="button"
                 onClick={handleSignOut}
                 className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-500 hover:bg-red-500/10 transition-colors text-left"
               >
