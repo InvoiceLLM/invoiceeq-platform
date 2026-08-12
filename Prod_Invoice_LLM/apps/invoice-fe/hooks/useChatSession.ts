@@ -187,19 +187,34 @@ export function useChatSession(): UseChatSessionReturn {
     [activeSessionId, isSending]
   );
 
+  // ---------------------------------------------------------------------------
+  // renameSession
+  // WHY: Renames a thread server-side, then reflects the saved title locally.
+  //   Gap 216: this used to update local state in BOTH the success and the
+  //   failure branch — and the failure branch was the one that always ran,
+  //   because app/api/chat/sessions/[sessionId]/route.ts exported no PUT and
+  //   Next.js answered 405. The rename therefore looked applied, with no error,
+  //   and silently reverted on the next reload. Now the PUT proxy exists
+  //   (backed by routers/chat.py::rename_session) and the catch surfaces the
+  //   failure instead of faking success — local state is only touched when the
+  //   backend confirms the write, and the title applied is the one the backend
+  //   echoes back, so any server-side normalisation is what ends up on screen.
+  // ---------------------------------------------------------------------------
   const renameSession = useCallback(async (id: string, newTitle: string) => {
-    if (!newTitle.trim()) return;
+    const title = newTitle.trim();
+    if (!title) return;
     setError(null);
     try {
-      await apiClient.put(`/chat/sessions/${id}`, { title: newTitle.trim() });
+      const res = await apiClient.put<Pick<ChatSession, "id" | "title">>(
+        `/chat/sessions/${id}`,
+        { title }
+      );
+      const savedTitle = res.data?.title ?? title;
       setSessions((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, title: newTitle.trim() } : s))
+        prev.map((s) => (s.id === id ? { ...s, title: savedTitle } : s))
       );
     } catch {
-      // Fallback: update local state if backend route returns 404/501
-      setSessions((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, title: newTitle.trim() } : s))
-      );
+      setError("Failed to rename this chat session.");
     }
   }, []);
 

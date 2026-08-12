@@ -119,6 +119,244 @@ def test_chat_message_routing_and_history_saving(db_session):
         assert history_list[1]["role"] == "assistant"
         assert history_list[1]["content"] == "Hello! I am your assistant."
 
+# ---------------------------------------------------------------------------
+# Atomic chat turn — no orphaned user message on a crash (Gap 209)
+# ---------------------------------------------------------------------------
+
+def _tenant_context():
+    from dependencies import TenantContext
+    return TenantContext(
+        tenant_id=MOCK_TENANT_ID, user_id="user_gap209", role="Admin", billing_plan="free"
+    )
+
+
+def test_user_message_and_assistant_reply_land_in_one_commit(db_session):
+    """Gap 209: the user turn must not be committed before the agent runs.
+
+    Asserted on the session's commit calls rather than on row visibility,
+    because this suite's sqlite engine uses a StaticPool -- a second Session
+    would share the one connection and therefore see uncommitted rows anyway,
+    so "not yet visible elsewhere" is not observable here. Counting commits is
+    the property that actually matters: none between staging the user row and
+    running the agent, exactly one after, so a crash mid-agent can only roll
+    the whole turn back.
+
+    The baseline is taken at the `add()` of the user row rather than at zero:
+    request-scoped dependencies (tenant resolution, usage tracking) commit on
+    this same session before the handler body starts, and those commits are
+    not what this test is about."""
+    from models import ChatMessage
+
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Atomicity"))
+    db_session.commit()
+
+    commits: list[int] = []
+    commits_when_user_row_staged: list[int] = []
+    real_commit = db_session.commit
+    real_add = db_session.add
+
+    def counting_commit():
+        commits.append(1)
+        return real_commit()
+
+    def recording_add(obj, *args, **kwargs):
+        if isinstance(obj, ChatMessage) and obj.role == "user" and not commits_when_user_row_staged:
+            commits_when_user_row_staged.append(len(commits))
+        return real_add(obj, *args, **kwargs)
+
+    commits_seen_by_agent = None
+
+    def fake_agent(**kwargs):
+        nonlocal commits_seen_by_agent
+        commits_seen_by_agent = len(commits)
+        return {"content": "Answer.", "generated_sql": None, "citations": []}
+
+    db_session.commit = counting_commit      # type: ignore[method-assign]
+    db_session.add = recording_add           # type: ignore[method-assign]
+    try:
+        with patch("routers.chat.run_query_agent", side_effect=fake_agent):
+            client = TestClient(app)
+            res = client.post(
+                f"/api/v1/chat/sessions/{session_id}/message", json={"content": "Hi there"}
+            )
+    finally:
+        db_session.commit = real_commit      # type: ignore[method-assign]
+        db_session.add = real_add            # type: ignore[method-assign]
+
+    assert res.status_code == 200
+    assert commits_when_user_row_staged, "the handler never staged a user ChatMessage"
+    baseline = commits_when_user_row_staged[0]
+    # The whole point of the fix: nothing was made durable while the agent ran.
+    assert commits_seen_by_agent == baseline
+    # ...and both rows then landed in a single commit, not two.
+    assert len(commits) == baseline + 1
+
+    rows = db_session.exec(
+        select(ChatMessage).where(ChatMessage.session_id == session_id)
+    ).all()
+    assert sorted(r.role for r in rows) == ["assistant", "user"]
+
+
+def test_process_crash_during_agent_leaves_no_orphan_user_message(db_session):
+    """Gap 209: simulate a true process-level abort (worker kill / OOM), which is
+    the only failure Gap 37's try/except cannot turn into a graceful reply.
+
+    A BaseException is used deliberately -- `except Exception` in the handler
+    must NOT catch it, so control leaves post_chat_message() the same way an
+    abrupt teardown would. The handler is called directly rather than through
+    TestClient so the raise isn't reshaped by the ASGI stack, and the explicit
+    rollback afterwards stands in for what `dependencies.get_db_session`'s
+    `with Session(engine)` block does on teardown (Session.close() rolls back
+    the in-progress transaction).
+
+    Before the fix this left a committed user row with no answer beside it."""
+    from models import ChatMessage
+    from routers.chat import post_chat_message, MessageCreate
+
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Crash Test"))
+    db_session.commit()
+
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    with patch("routers.chat.run_query_agent", side_effect=SimulatedProcessCrash()):
+        with pytest.raises(SimulatedProcessCrash):
+            post_chat_message(
+                session_id=session_id,
+                payload=MessageCreate(content="Which invoices need review?"),
+                db_session=db_session,
+                tenant_context=_tenant_context(),
+            )
+
+    db_session.rollback()
+
+    rows = db_session.exec(
+        select(ChatMessage).where(ChatMessage.session_id == session_id)
+    ).all()
+    assert rows == []
+    # The speculative title rename is part of the same transaction, so it must
+    # be gone too -- a renamed thread with no messages is its own orphan.
+    renamed = db_session.exec(select(ChatSession).where(ChatSession.id == session_id)).first()
+    assert renamed.title == "Crash Test"
+
+
+def test_agent_internal_rollback_does_not_drop_the_user_message(db_session):
+    """Gap 209 regression: run_query_agent()'s SQL repair loop rolls the session
+    back on a failed attempt (Task 6.9 / Gap 39), and SQLAlchemy's rollback
+    unwinds the topmost transaction -- expunging the now-uncommitted user row.
+    The handler re-stages it before the final commit; without that, holding the
+    commit back would have traded an orphaned user turn for a vanished one."""
+    from models import ChatMessage
+
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="New Chat"))
+    db_session.commit()
+
+    def rollback_then_answer(**kwargs):
+        # Force the pending row to flush first, exactly as the agent's own
+        # history/stats queries do, so the rollback has something to undo.
+        db_session.exec(select(ChatMessage).where(ChatMessage.session_id == session_id)).all()
+        db_session.rollback()
+        return {"content": "Recovered answer.", "generated_sql": "SELECT 1", "citations": []}
+
+    with patch("routers.chat.run_query_agent", side_effect=rollback_then_answer):
+        client = TestClient(app)
+        res = client.post(
+            f"/api/v1/chat/sessions/{session_id}/message",
+            json={"content": "How much did we spend last month on parts"},
+        )
+
+    assert res.status_code == 200
+    history = client.get(f"/api/v1/chat/sessions/{session_id}").json()
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert history[0]["content"] == "How much did we spend last month on parts"
+    assert history[1]["content"] == "Recovered answer."
+    # The auto-title derived from the first message survives the same rollback.
+    listed = client.get("/api/v1/chat/sessions").json()
+    assert next(s["title"] for s in listed if s["id"] == str(session_id)) == (
+        "How much did we spend last..."
+    )
+
+
+def test_agent_failure_still_pairs_a_fallback_reply_with_the_user_turn(db_session):
+    """Gap 37's graceful path must survive the Gap 209 restructure: an ordinary
+    exception still yields a saved user message AND a fallback assistant reply,
+    not a silently dropped turn."""
+    with patch("routers.chat.run_query_agent", side_effect=RuntimeError("LLM timeout")):
+        session_id = uuid4()
+        db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Fallback"))
+        db_session.commit()
+
+        client = TestClient(app)
+        res = client.post(f"/api/v1/chat/sessions/{session_id}/message", json={"content": "hi"})
+
+    assert res.status_code == 200
+    assert "something went wrong" in res.json()["content"]
+
+    history = client.get(f"/api/v1/chat/sessions/{session_id}").json()
+    assert [m["role"] for m in history] == ["user", "assistant"]
+
+
+# ---------------------------------------------------------------------------
+# Thread rename (FE Gap 216)
+# ---------------------------------------------------------------------------
+
+def test_rename_session_persists_and_is_tenant_scoped(db_session):
+    """FE Gap 216: `PUT /chat/sessions/{id}` did not exist at all, so the FE's
+    rename 405'd and only ever changed React state. The rename must survive a
+    fresh fetch, which is what the list re-read below is checking."""
+    client = TestClient(app)
+
+    created = client.post("/api/v1/chat/sessions", json={"title": "New Chat"})
+    session_id = created.json()["id"]
+
+    res = client.put(f"/api/v1/chat/sessions/{session_id}", json={"title": "  Q3 vendor disputes  "})
+    assert res.status_code == 200
+    # Whitespace is normalised server-side, and the saved value is echoed back
+    # so the FE renders exactly what was stored.
+    assert res.json()["title"] == "Q3 vendor disputes"
+
+    # Fresh read, not the response body -- proves it was actually written.
+    listed = client.get("/api/v1/chat/sessions").json()
+    assert next(s["title"] for s in listed if s["id"] == session_id) == "Q3 vendor disputes"
+
+    # Renaming does not disturb the thread's identity or ownership.
+    assert next(s["tenant_id"] for s in listed if s["id"] == session_id) == str(MOCK_TENANT_ID)
+
+
+def test_rename_session_rejects_blank_titles(db_session):
+    client = TestClient(app)
+    created = client.post("/api/v1/chat/sessions", json={"title": "Keep me"})
+    session_id = created.json()["id"]
+
+    # Empty string is rejected by the schema's min_length...
+    assert client.put(f"/api/v1/chat/sessions/{session_id}", json={"title": ""}).status_code == 422
+    # ...whitespace-only passes min_length, so the handler rejects it explicitly.
+    assert client.put(f"/api/v1/chat/sessions/{session_id}", json={"title": "   "}).status_code == 400
+
+    listed = client.get("/api/v1/chat/sessions").json()
+    assert next(s["title"] for s in listed if s["id"] == session_id) == "Keep me"
+
+
+def test_rename_session_forbidden_for_another_tenant(db_session):
+    """Same 404/403 ownership shape as the sibling handlers in this router."""
+    client = TestClient(app)
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=uuid4(), title="Other Tenant Thread"))
+    db_session.commit()
+
+    res = client.put(f"/api/v1/chat/sessions/{session_id}", json={"title": "Hijacked"})
+    assert res.status_code == 403
+
+    # And an id that does not exist at all is a 404, not a 403.
+    assert client.put(f"/api/v1/chat/sessions/{uuid4()}", json={"title": "Nope"}).status_code == 404
+
+    survivor = db_session.exec(select(ChatSession).where(ChatSession.id == session_id)).first()
+    assert survivor.title == "Other Tenant Thread"
+
+
 def test_message_feedback_upsert_and_clear(db_session):
     """Gap 54: per-answer thumbs up/down. Voting is idempotent per message (a
     second vote overwrites, not duplicates), the vote survives a reload via
@@ -338,6 +576,145 @@ def test_sql_guardrail_safety_enforcement(db_session):
     # Should execute successfully without raising ValueError (might return empty results description)
     res = execute_generated_sql(safe_sql, str(MOCK_TENANT_ID), db_session)
     assert "No records found" in res
+
+# ---------------------------------------------------------------------------
+# Case-normalization of LLM-generated string comparisons (Gap 210)
+# ---------------------------------------------------------------------------
+
+def _seed_case_mismatch_invoices(db_session):
+    """Rows whose stored casing/whitespace deliberately differs from how a user
+    (and therefore the LLM-generated SQL) would naturally type the vendor name."""
+    from models import Invoice
+    from datetime import date
+
+    for vendor, number in (("HARBOR TECH ", "hb-1"), ("metro office", "mo-2"), ("Globex", "gx-3")):
+        db_session.add(Invoice(
+            id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path=f"{number}.pdf",
+            vendor_name=vendor, invoice_number=number, grand_total=100.0,
+            status="COMPLETED", invoice_date=date(2026, 1, 1),
+        ))
+    db_session.commit()
+
+
+def _tenant_filter() -> str:
+    """Tenant predicate usable on the sqlite test DB.
+
+    `execute_generated_sql`'s isolation guard requires the literal dashed UUID to appear
+    as an equality predicate, but SQLModel persists UUIDs to sqlite as 32-char hex with
+    no dashes — so the dashed form alone satisfies the guard and then matches zero rows
+    here (on Postgres, whose native `uuid` type accepts the dashed literal, it matches).
+    Both spellings are OR'd so these tests exercise the real `execute_generated_sql` path
+    end-to-end instead of asserting against an always-empty result set."""
+    return f"(tenant_id = '{MOCK_TENANT_ID}' OR tenant_id = '{MOCK_TENANT_ID.hex}')"
+
+
+def test_normalize_string_equality_rewrites_equality_in_and_like():
+    """Gap 210: the rewrite must cover all three comparison shapes the model emits,
+    not just `=`. Asserted on the generated SQL text so the exact mechanism (which is
+    what makes the comparison case-insensitive) is pinned, not just the row count."""
+    from agents.query_agent import _normalize_string_equality
+
+    # `=` — pre-existing behaviour, must not regress
+    assert (
+        _normalize_string_equality("SELECT * FROM invoice WHERE vendor_name = 'Harbor Tech'")
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(vendor_name)) = TRIM(LOWER('Harbor Tech'))"
+    )
+
+    # `IN (...)` — every value gets the same treatment the single value got
+    assert (
+        _normalize_string_equality(
+            "SELECT * FROM invoice WHERE vendor_name IN ('Harbor Tech', 'Metro Office')"
+        )
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(vendor_name)) IN "
+           "(TRIM(LOWER('Harbor Tech')), TRIM(LOWER('Metro Office')))"
+    )
+
+    # `LIKE` — LOWER only on the pattern (TRIM would change what a pattern matches),
+    # and the wildcards survive verbatim
+    assert (
+        _normalize_string_equality("SELECT * FROM invoice WHERE vendor_name LIKE '%Harbor%'")
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(vendor_name)) LIKE LOWER('%Harbor%')"
+    )
+
+    # Negated forms are the same clause family and must not silently keep the old
+    # case-sensitive behaviour
+    assert "TRIM(LOWER(po_number)) NOT IN (TRIM(LOWER('PO-1')))" in _normalize_string_equality(
+        "SELECT * FROM invoice WHERE po_number NOT IN ('PO-1')"
+    )
+    assert "TRIM(LOWER(invoice_number)) NOT LIKE LOWER('US-%')" in _normalize_string_equality(
+        "SELECT * FROM invoice WHERE invoice_number NOT LIKE 'US-%'"
+    )
+
+
+def test_normalize_string_equality_leaves_unsupported_shapes_untouched():
+    """The IN pass only rewrites a plain list of string literals. A subquery or a
+    non-fuzzy column must pass through unchanged rather than be rewritten into
+    something malformed — `status` is our own enum and is deliberately excluded."""
+    from agents.query_agent import _normalize_string_equality
+
+    subquery = "SELECT * FROM invoice WHERE vendor_name IN (SELECT vendor_name FROM invoice)"
+    assert _normalize_string_equality(subquery) == subquery
+
+    status_sql = "SELECT * FROM invoice WHERE status IN ('PAID', 'COMPLETED') AND status = 'PAID'"
+    assert _normalize_string_equality(status_sql) == status_sql
+
+    # ILIKE is already case-insensitive; leave it alone
+    ilike = "SELECT * FROM invoice WHERE vendor_name ILIKE '%harbor%'"
+    assert _normalize_string_equality(ilike) == ilike
+
+
+def test_generated_sql_in_clause_matches_despite_case_mismatch(db_session):
+    """Gap 210: `IN ('Harbor Tech', 'Metro Office')` against rows stored as
+    'HARBOR TECH ' / 'metro office' used to return nothing at all."""
+    from agents.query_agent import execute_generated_sql
+
+    _seed_case_mismatch_invoices(db_session)
+    res = execute_generated_sql(
+        f"SELECT invoice_number FROM invoice WHERE {_tenant_filter()} "
+        "AND vendor_name IN ('Harbor Tech', 'Metro Office');",
+        str(MOCK_TENANT_ID), db_session,
+    )
+    assert "hb-1" in res
+    assert "mo-2" in res
+    assert "gx-3" not in res
+
+
+def test_generated_sql_like_clause_matches_despite_case_mismatch(db_session):
+    """Gap 210: a partial match must be case/whitespace-insensitive too — and the `%`
+    wildcards must still behave as wildcards after the rewrite.
+
+    Pattern chosen deliberately: sqlite's `LIKE` is already ASCII-case-insensitive, so a
+    `'%Harbor%'` pattern would pass here even unfixed (on Postgres it would not). The
+    trailing-anchored `'%Harbor Tech'` against the stored `'HARBOR TECH '` fails without
+    the rewrite on *both* engines — it is the column-side TRIM that makes it match — so
+    this stays a real regression test on the sqlite test DB. The case-insensitivity
+    mechanism itself is pinned by the SQL-text assertions above."""
+    from agents.query_agent import execute_generated_sql
+
+    _seed_case_mismatch_invoices(db_session)
+    res = execute_generated_sql(
+        f"SELECT invoice_number FROM invoice WHERE {_tenant_filter()} "
+        "AND vendor_name LIKE '%Harbor Tech';",
+        str(MOCK_TENANT_ID), db_session,
+    )
+    assert "hb-1" in res
+    assert "mo-2" not in res
+    assert "gx-3" not in res
+
+
+def test_generated_sql_equality_still_matches_despite_case_mismatch(db_session):
+    """No regression: the original `=` path this function was written for."""
+    from agents.query_agent import execute_generated_sql
+
+    _seed_case_mismatch_invoices(db_session)
+    res = execute_generated_sql(
+        f"SELECT invoice_number FROM invoice WHERE {_tenant_filter()} "
+        "AND vendor_name = 'harbor tech';",
+        str(MOCK_TENANT_ID), db_session,
+    )
+    assert "hb-1" in res
+    assert "mo-2" not in res
+
 
 def test_vector_metadata_tenant_isolation(db_session):
     """Verify that Chroma indexing and chunk queries enforce strict metadata isolation."""

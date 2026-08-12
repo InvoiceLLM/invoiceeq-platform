@@ -17,6 +17,11 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class SessionCreate(BaseModel):
     title: str | None = Field(default=None, max_length=255)
 
+class SessionRename(BaseModel):
+    """Gap 216: rename-only payload. Deliberately carries just `title` -- the
+    thread's tenant, id and created_at are never client-editable."""
+    title: str = Field(min_length=1, max_length=255)
+
 class SessionResponse(BaseModel):
     id: UUID
     tenant_id: UUID
@@ -81,6 +86,52 @@ def create_session(
     db_session.commit()
     db_session.refresh(db_session_obj)
     return db_session_obj
+
+@router.put("/sessions/{session_id}", response_model=SessionResponse)
+def rename_session(
+    session_id: UUID,
+    payload: SessionRename,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context)
+):
+    """
+    FE Gap 216: rename a chat thread. The FE has offered inline thread renaming
+    since FE Gap 149, but there was no endpoint behind it at all -- the proxy
+    route only exported GET/DELETE, so the PUT 405'd and the rename lived purely
+    in React state until the next reload. Title-only by design: it never touches
+    messages, feedback or ownership.
+
+    Same 404/403 ownership shape as the sibling handlers in this router.
+    """
+    session_statement = select(ChatSession).where(ChatSession.id == session_id)
+    chat_session = db_session.exec(session_statement).first()
+
+    if not chat_session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat session not found."
+        )
+
+    if chat_session.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat session."
+        )
+
+    # `min_length=1` only rejects an empty string -- "   " passes it and would
+    # persist a blank sidebar label, so the stripped value is checked too.
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Title must not be blank."
+        )
+
+    chat_session.title = title
+    db_session.add(chat_session)
+    db_session.commit()
+    db_session.refresh(chat_session)
+    return chat_session
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_session(
@@ -185,7 +236,16 @@ def post_chat_message(
             detail="Access forbidden to this chat session."
         )
         
-    # 2. Save user message to database
+    # 2. Stage the user message.
+    # Gap 209: deliberately NOT committed here. It used to be, which meant a
+    # true process-level crash (worker kill, OOM, mid-request redeploy) between
+    # this commit and the assistant-reply commit below left the turn orphaned --
+    # a user bubble in the thread with no answer and nothing to retry from.
+    # Staging it instead keeps both rows in one transaction that either lands
+    # whole at step 4 or never lands at all: an uncommitted transaction is
+    # rolled back by the connection teardown, so a crash leaves no orphan.
+    # The row is still autoflushed (not committed) by the agent's own queries
+    # below, so get_chat_history() sees this turn exactly as it did before.
     user_msg = ChatMessage(
         id=uuid4(),
         session_id=session_id,
@@ -193,8 +253,9 @@ def post_chat_message(
         content=payload.content
     )
     db_session.add(user_msg)
-    
+
     # Auto-generate session title if it uses the default placeholder or timestamp format
+    new_title = None
     if chat_session.title.startswith("Chat Session -") or chat_session.title == "New Chat":
         words = payload.content.strip().split()
         if words:
@@ -203,9 +264,7 @@ def post_chat_message(
                 new_title += "..."
             chat_session.title = new_title
             db_session.add(chat_session)
-            
-    db_session.commit()
-    
+
     # 3. Invoke multi-agent Query Agent routing pipeline.
     # Gap 37: the SQL/RAG/CHAT routes inside run_query_agent() each already
     # have their own try/except, but the call itself was unguarded here -
@@ -222,13 +281,32 @@ def post_chat_message(
         )
     except Exception as e:
         logger.error("run_query_agent failed unexpectedly for session %s: %s", session_id, e)
+        # Gap 209: the session may be left mid-failed-transaction (Gap 39's
+        # Postgres "current transaction is aborted" case), which would make the
+        # single commit at step 4 raise instead of saving the fallback answer.
+        # Rolling back guarantees a usable session; the staged rows it discards
+        # are re-staged just below.
+        db_session.rollback()
         agent_output = {
             "content": "Sorry, something went wrong answering that — please try again.",
             "generated_sql": None,
             "citations": [],
         }
-    
-    # 4. Save assistant response to database
+
+    # 4. Re-stage anything a rollback inside the agent discarded, then save the
+    # user turn and the assistant reply together in one transaction.
+    # Gap 209: run_query_agent()'s SQL repair loop calls db_session.rollback()
+    # on a failed attempt (Task 6.9 / Gap 39). SQLAlchemy's rollback always
+    # unwinds the topmost transaction, expunging pending rows -- so without
+    # this the previously-committed user message would now be silently dropped
+    # on any query that needed a repair retry. Both re-stages are no-ops when
+    # no rollback happened.
+    if user_msg not in db_session:
+        db_session.add(user_msg)
+    if new_title is not None and chat_session.title != new_title:
+        chat_session.title = new_title
+        db_session.add(chat_session)
+
     assistant_msg = ChatMessage(
         id=uuid4(),
         session_id=session_id,

@@ -25,6 +25,19 @@ export async function GET(
   return proxyJson(request, `/chat/sessions/${params.sessionId}`);
 }
 
+// PUT /api/chat/sessions/[sessionId]
+// WHY (Gap 216): useChatSession.renameSession() has called PUT on this path
+//   since the inline thread-rename UI landed (Gap 149), but this file only
+//   exported GET and DELETE — so Next.js answered 405 and the rename was never
+//   written anywhere. Backed by routers/chat.py::rename_session(), which takes
+//   `{ title }` and re-checks tenant ownership before writing.
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { sessionId: string } }
+) {
+  return proxyJson(request, `/chat/sessions/${params.sessionId}`);
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { sessionId: string } }
