@@ -820,7 +820,8 @@ Layer 9: AUDIT            Git-tracked IaC changes, Azure Activity Log
 │   │   ├── invoice-website.bicep # Website Container App
 │   │   ├── invoice-fe.bicep      # Frontend Container App
 │   │   ├── invoice-be.bicep      # Backend Container App
-│   │   └── queue-worker.bicep    # Worker Container App
+│   │   ├── queue-worker.bicep    # Worker Container App
+│   │   └── scheduled-job.bicep   # Microsoft.App/jobs, cron-triggered (Gap 126)
 │   │
 │   ├── data/
 │   │   ├── postgresql.bicep      # PostgreSQL Flexible Server

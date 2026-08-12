@@ -18,7 +18,8 @@
 - SQL Audit Drawer: `apps/invoice-fe/components/chat/SqlAuditDrawer.tsx` ✅ _(created 2026-07-22)_
 - State Hook: `apps/invoice-fe/hooks/useChatSession.ts` ✅ _(created 2026-07-22)_
 - Types: `apps/invoice-fe/types/chat.ts` ✅ _(created 2026-07-22)_
-- Proxy Routes: `app/api/chat/sessions/route.ts`, `app/api/chat/sessions/[sessionId]/route.ts`, `app/api/chat/sessions/[sessionId]/message/route.ts` ✅ _(all created 2026-07-22)_, `app/api/chat/messages/[messageId]/feedback/route.ts` ✅ _(created 2026-07-27, Gap 27)_
+- Proxy Routes: `app/api/chat/sessions/route.ts`, `app/api/chat/sessions/[sessionId]/route.ts` (`GET`/`DELETE`, plus `PUT` added 2026-08-12 for Gap 216), `app/api/chat/sessions/[sessionId]/message/route.ts` ✅ _(all created 2026-07-22)_, `app/api/chat/messages/[messageId]/feedback/route.ts` ✅ _(created 2026-07-27, Gap 27)_
+- E2E: `apps/invoice-fe/e2e/chat-thread-rename.spec.ts` ✅ _(created 2026-08-12, Gap 216)_
 
 ### P0 Fix: Chat never actually worked through the real UI (Gap 22, Jul 24, 2026)
 Everything above was built and marked complete on 2026-07-22, but never actually exercised against a live backend until real end-to-end browser testing on Jul 24 — the benchmark harness that reported "95.2% RAG chat passed" calls the backend directly, bypassing this entire FE layer, so this class of bug was invisible to it.
@@ -35,6 +36,16 @@ Fixed all five in `useChatSession.ts`, `types/chat.ts`, and `CitationPill.tsx` �
 Thread deletion (`ChatWindow.tsx`'s header button and the per-thread trash icon in `ThreadSidebar`, both → `useChatSession.ts::deleteSession` → `app/api/chat/sessions/[sessionId]/route.ts` → BE `DELETE /chat/sessions/{session_id}`, 204) deleted the row in Postgres but never removed it from the sidebar — it reappeared only after a reload, and kept matching the Gap 149 thread search in the meantime (that was the whole of Gap 180; the search filter itself was never broken). Nothing in this feature was at fault: the bug was in the shared proxy helper, which could not construct a 204 response and returned 500 for it — see `feature_1_layout_theme.md`'s "API Call Path → Null-body statuses" for the mechanism and the fix. `deleteSession` is unchanged; it now takes its success branch because the route handler finally returns the backend's real 204.
 
 In the same pass the header button was relabelled **"Clear Chat" → "Delete Chat"** (`ChatWindow.tsx`, in the slim SAGE agent strip). It has always called the same `onDeleteSession(activeSessionId)` handler as the sidebar trash icon — it deletes the entire thread. There is no clear-messages-keep-thread capability in the FE or the backend, and none was added: the label was corrected to describe what the button does, since per-thread delete already covers the need.
+
+### Fix: Renaming a chat thread never reached the backend (Gap 216, Aug 12, 2026)
+Inline thread rename (the pencil icon in `ChatWindow.tsx`'s `ThreadSidebar`, added by Gap 149 → `useChatSession.ts::renameSession` → `PUT /api/chat/sessions/{id}`) changed the sidebar label and nothing else: the title reverted on the next load, with no error shown in between. Two separate holes, both real:
+- `app/api/chat/sessions/[sessionId]/route.ts` exported only `GET` and `DELETE`, so Next.js rejected the method with a 405 before any handler ran.
+- **The backend had no rename endpoint either** — the tracker entry left this open; `routers/chat.py` turned out to have no `PUT` on a session at all. So this was not the proxy-only fix it first looked like.
+- `renameSession`'s `catch` applied the new title to local React state anyway. That branch was the one that always ran, which is exactly why the failure was silent.
+
+**Fixed**: `route.ts` gained a `PUT` export through the same `proxyJson` helper as its siblings, backed by a new `routers/chat.py::rename_session()` (`PUT /chat/sessions/{session_id}`, title-only, tenant-scoped 404/403, 400 on a whitespace-only title — see `apps/invoice-be/docs/feature_6_rag.md`). `renameSession` now awaits the real response, applies the title the backend echoes back (so server-side normalisation such as trimming is what lands on screen), and its `catch` sets `error` ("Failed to rename this chat session.") — rendered by ChatWindow's existing error banner — instead of faking success. Same shape as `deleteSession`, which already only mutated state on success.
+
+**Verified**: `npx tsc --noEmit` clean; new `e2e/chat-thread-rename.spec.ts` (3 tests) passing against a real dev server. The two page-driven tests were confirmed to fail against the un-fixed hook before being accepted. A scope limit was found and is documented in that spec's header rather than papered over: `page.route()` intercepts in the browser, *before* Next.js is reached, so a stubbed `PUT` cannot tell whether the proxy route exists — proven by deleting the `PUT` export and watching both page tests still pass. The third test therefore drives the dev server through Playwright's `request` fixture and asserts the response is not a 405; that one does fail without the export.
 
 ### Tasks
 
@@ -63,5 +74,6 @@ In the same pass the header button was relabelled **"Clear Chat" → "Delete Cha
 
 ### Verification Plan
 
-- **TypeScript Compile**: `npx tsc --noEmit` — ✅ **0 errors** (verified 2026-07-22)
+- **TypeScript Compile**: `npx tsc --noEmit` — ✅ **0 errors** (verified 2026-07-22; re-verified 2026-08-12 with the Gap 216 changes)
+- **E2E**: `npx playwright test e2e/chat-thread-rename.spec.ts` — ✅ 3 passed (2026-08-12). Needs the Next dev server on the configured Playwright port; no FastAPI backend is required (the page tests stub `/api/chat/**` in the browser, and the proxy-reachability test asserts "not 405", not a success status, precisely so it does not depend on one).
 - **Manual Verification**: Launch the Chat screen. Type a query (e.g., _"What is my total spend?"_), confirm the SQL drawer displays the query, and click a citation pill to check its behavior.
