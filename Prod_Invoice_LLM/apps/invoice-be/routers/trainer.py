@@ -3,7 +3,7 @@ import json
 import logging
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from pydantic import BaseModel
@@ -88,10 +88,21 @@ class ChatPayload(BaseModel):
     content: str
 
 
+class SessionModePayload(BaseModel):
+    session_mode: Literal["qa_test", "rule_creation"]
+
+
+class BehaviorCommitPayload(BaseModel):
+    response_length: Literal["brief", "balanced", "detailed"] = "balanced"
+    tone: Literal["formal", "conversational", "technical"] = "conversational"
+    custom_instructions: str = ""
+
+
 class RuleClassification(BaseModel):
     model_config = {"extra": "forbid"}
     is_instruction: bool
     reason: str
+    flagged_rule: str = ""
 
 
 # Gap 58: a committed rule is injected into every future Chat prompt as trusted
@@ -120,16 +131,22 @@ def _validate_rule_text(constraints: list[str]) -> None:
         "assistant\").\n\n"
         f"Rules submitted:\n{joined}\n\n"
         "Is ANY of the rules above an instruction rather than a data-interpretation "
-        "fact? Set is_instruction accordingly and give a one-sentence reason."
+        "fact? Set is_instruction accordingly, give a one-sentence reason, and "
+        "set flagged_rule to the exact rule text that failed (empty string if none)."
     )
     result = structured_llm.invoke(prompt)
     if result.is_instruction:
+        flagged = (result.flagged_rule or "").strip() or (constraints[0] if constraints else "")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "One or more rules look like behavioral instructions rather than "
-                f"data-interpretation facts, and were rejected: {result.reason}"
-            ),
+            detail={
+                "detail": (
+                    "One or more rules look like behavioral instructions rather than "
+                    f"data-interpretation facts, and were rejected: {result.reason}"
+                ),
+                "rejection_reason": "is_instruction",
+                "flagged_rule": flagged,
+            },
         )
 
 
@@ -213,6 +230,7 @@ def _serialize_session(s: dict) -> dict:
         "variables": _build_variables(s.get("extracted_data"), s.get("field_confidence"), s.get("corrected_keys")),
         "activeRules": s.get("constraints") or [],
         "chatHistory": s.get("chat_history") or [],
+        "sessionMode": s.get("session_mode", "rule_creation"),
     }
 
 
@@ -273,6 +291,48 @@ def _global_constraints(db_session: Session, tenant_id: UUID) -> list[str]:
     if tpl and isinstance(tpl.rules, dict):
         return tpl.rules.get("constraints", []) or []
     return []
+
+
+def _get_global_inbound_template(db_session: Session, tenant_id: UUID) -> ExtractionTemplate | None:
+    stmt = select(ExtractionTemplate).where(
+        ExtractionTemplate.tenant_id == tenant_id,
+        ExtractionTemplate.vendor_name.is_(None),
+        ExtractionTemplate.flow_direction == "INBOUND",
+    )
+    return db_session.exec(stmt).first()
+
+
+def _get_chat_style(db_session: Session, tenant_id: UUID) -> dict:
+    tpl = _get_global_inbound_template(db_session, tenant_id)
+    if tpl and isinstance(tpl.rules, dict):
+        style = tpl.rules.get("chat_style")
+        if isinstance(style, dict):
+            return style
+    return {
+        "response_length": "balanced",
+        "tone": "conversational",
+        "custom_instructions": "",
+    }
+
+
+def _save_chat_style(db_session: Session, tenant_id: UUID, style: dict) -> dict:
+    tpl = _get_global_inbound_template(db_session, tenant_id)
+    if not tpl:
+        tpl = ExtractionTemplate(
+            tenant_id=tenant_id,
+            vendor_name=None,
+            flow_direction="INBOUND",
+            rules={"constraints": [], "chat_style": style},
+        )
+        db_session.add(tpl)
+    else:
+        rules = dict(tpl.rules) if isinstance(tpl.rules, dict) else {}
+        rules["chat_style"] = style
+        tpl.rules = rules
+        tpl.updated_at = datetime.utcnow()
+        db_session.add(tpl)
+    db_session.commit()
+    return style
 
 
 def _resolve_changed_by(db_session: Session, context: TenantContext) -> str:
@@ -381,6 +441,7 @@ async def upload_transient_file(
         "extracted_data": extraction_res.get("extracted_data") or {},
         "chat_history": [_welcome_message("new_vendor", None, file.filename)],
         "created_at": datetime.utcnow().isoformat(),
+        "session_mode": "rule_creation",
     }
     trainer_sessions.save_session(session_id, session)
     return _serialize_session(session)
@@ -513,6 +574,7 @@ def start_from_production_session(
         "extracted_data": extracted_data,
         "chat_history": [_welcome_message("existing_vendor", vendor_name, None)],
         "created_at": datetime.utcnow().isoformat(),
+        "session_mode": "rule_creation",
     }
     trainer_sessions.save_session(session_id, session)
     return _serialize_session(session)
@@ -553,6 +615,66 @@ def list_trainer_vendors(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Chat response style (BE Gap 221) + session mode (BE Gap 218)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/chat-style")
+def get_chat_style(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session),
+):
+    """Return the tenant's saved Chat response style settings."""
+    return _get_chat_style(db_session, tenant_context.tenant_id)
+
+
+@router.post("/sessions/{session_id}/commit-behavior")
+def commit_behavior(
+    session_id: str,
+    payload: BehaviorCommitPayload,
+    tenant_context: TenantContext = Depends(require_paid_plan),
+    db_session: Session = Depends(get_db_session),
+):
+    """Persist Chat response style (length, tone, custom instructions) for the tenant."""
+    session = trainer_sessions.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Training session not found or expired.")
+    if session["tenant_id"] != str(tenant_context.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access forbidden to this session.")
+
+    style = {
+        "response_length": payload.response_length,
+        "tone": payload.tone,
+        "custom_instructions": (payload.custom_instructions or "").strip(),
+    }
+    saved = _save_chat_style(db_session, tenant_context.tenant_id, style)
+    _invalidate_chat_answer_cache(str(tenant_context.tenant_id))
+    return {"chatStyle": saved}
+
+
+@router.put("/sessions/{session_id}/mode")
+def set_session_mode(
+    session_id: str,
+    payload: SessionModePayload,
+    tenant_context: TenantContext = Depends(require_paid_plan),
+):
+    """Switch vendor session between QA test and rule-creation modes (BE Gap 218)."""
+    session = trainer_sessions.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Training session not found or expired.")
+    if session["tenant_id"] != str(tenant_context.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access forbidden to this session.")
+    if session.get("scope") == "global":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session mode applies to vendor sessions only.",
+        )
+
+    session["session_mode"] = payload.session_mode
+    trainer_sessions.save_session(session_id, session)
+    return {"updatedSession": _serialize_session(session)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Conversational correction — Task 10.5
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -580,6 +702,31 @@ def trainer_chat(
 
     chat_history = session.get("chat_history", [])
     chat_history.append(_msg("user", payload.content))
+
+    # BE Gap 218: QA test mode routes to the Chat agent instead of rule refinement.
+    if session.get("session_mode") == "qa_test":
+        from agents.query_agent import run_query_agent
+
+        vendor = session.get("vendor_name") or (session.get("extracted_data") or {}).get("vendor_name") or "this vendor"
+        scoped_message = f"[Trainer QA for vendor {vendor}] {payload.content}"
+        try:
+            result = run_query_agent(
+                f"trainer-qa-{session_id}",
+                scoped_message,
+                session["tenant_id"],
+                db_session,
+            )
+            reply = result.get("content") or "No response."
+        except Exception as e:
+            logger.error("Trainer QA test query failed: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to run QA test query: {str(e)}",
+            )
+        chat_history.append(_msg("assistant", reply))
+        session["chat_history"] = chat_history
+        trainer_sessions.save_session(session_id, session)
+        return {"updatedSession": _serialize_session(session), "newRuleCreated": None}
 
     try:
         result = run_trainer_agent(

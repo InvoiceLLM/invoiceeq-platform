@@ -557,3 +557,42 @@ def test_T18_job_calls_run_sync_per_tenant(db_session):
 
     assert len(call_log) == 2
     assert set(call_log) == {tenant_a, tenant_b}
+
+
+def test_T19_autopilot_sends_notify_email_after_import(db_session):
+    """BE Gap 220: notify_emails + send_approval_links trigger staff email after sync."""
+    from models import TenantEmailSender
+
+    db_session.add(
+        TenantEmailSender(
+            tenant_id=MOCK_TENANT_ID,
+            email_set="inbound",
+            email="ops@example.com",
+        )
+    )
+    db_session.commit()
+
+    _make_config(
+        db_session,
+        notify_emails=["ops@example.com"],
+        send_approval_links=True,
+    )
+    _make_connection(db_session)
+
+    remote_files = [{"id": "file-1", "name": "invoice.pdf", "type": "file", "size_bytes": 100}]
+    good_bytes = b"%PDF-1.4 mock"
+
+    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+         patch("services.autopilot_sync.list_google_drive_files", return_value=remote_files), \
+         patch("services.autopilot_sync.download_google_drive_file", return_value=good_bytes), \
+         patch("services.autopilot_sync.upload_pdf_to_blob_storage", return_value="blobs/t/x.pdf"), \
+         patch("services.autopilot_sync._dispatch_queue"), \
+         patch("services.staff_notify.sendgrid_configured", return_value=True), \
+         patch("services.staff_notify.send_email", return_value={"status": "queued"}) as m_send:
+        summary = run_sync(MOCK_TENANT_ID, db_session)
+
+    assert summary["processed"] == 1
+    m_send.assert_called_once()
+    _, kwargs = m_send.call_args
+    assert kwargs["to_addresses"] == ["ops@example.com"]
+    assert "/invoices/review/" in kwargs["plain_body"]

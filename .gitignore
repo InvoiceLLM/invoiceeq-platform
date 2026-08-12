@@ -3,3 +3,6 @@
 *.onetoc2
 *.onepkg
 data_extraction_pdf.ipynb
+
+# Cursor IDE local rules/config (keep on disk, don't track)
+.cursor/

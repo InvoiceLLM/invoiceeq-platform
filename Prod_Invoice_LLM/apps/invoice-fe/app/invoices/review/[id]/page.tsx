@@ -525,7 +525,7 @@ export default function AuditorReviewPage() {
                 ) : (
                   <CheckCircle size={13} />
                 )}
-                Mark Paid
+                Approve Invoice
               </button>
             </div>
           )}

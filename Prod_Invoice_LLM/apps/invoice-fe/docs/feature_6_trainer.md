@@ -4,8 +4,15 @@
 
 *(Redesigned 2026-07-13 to match `docs/feature_10_trainer.md` — supersedes the previous flat "one uploader, one commit button" design. See Rule Scope Selector below.)*
 
-### Rule Scope Selector
-The sandbox entry point is a 3-way choice, not a single uploader:
+### Rule Scope Selector *(redesigned Aug 12, 2026 — FE Gaps 220/221)*
+The sandbox entry point is now two sections, not a 3-tab scope bar:
+1. **Global Rules** — tenant-wide extraction rules. Sub-tabs: **Extraction Rules** (chat-only or optional PDF grounding) and **Chat Response Style** (length/tone/custom instructions via `ChatResponseStylePanel` → `POST commit-behavior`).
+2. **Vendor Rules** — select an existing vendor from a dropdown **or** upload a new PDF. Sub-tabs: **Test Chat** (`qa_test` — routes to Chat/RAG, no rule mutation) and **Add Rules** (`rule_creation` — existing trainer correction flow).
+
+Committing a Global or Existing Vendor session still queues re-audit per the rules above. `TrainerControlBar.tsx` replaces the old `ScopeSelector.tsx` 3-tab control; `ScopeSelector.tsx` is retained but no longer the primary entry UI.
+
+### Rule Scope Selector (legacy — pre Aug 12, 2026)
+The sandbox entry point was a 3-way choice, not a single uploader:
 1. **Global** — tenant-wide, vendor-agnostic rule (e.g. "VAT is a tax item, applied after discount"). Chat-only; a sample PDF is optional grounding, not required.
 2. **Existing Vendor** — refine rules for a vendor with production history. Vendor dropdown loads an already-extracted production invoice into the sandbox instead of a fresh upload.
 3. **New Vendor** — cold-start rules for a vendor with no production history. Requires a fresh PDF upload (the prior design's only path).
@@ -19,14 +26,16 @@ Committing a Global or Existing Vendor session queues a background re-audit (Glo
 
 ### File Coordinates
 * Trainer Page: [apps/invoice-fe/app/trainer/page.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/trainer/page.tsx)
-* Scope Selector: [apps/invoice-fe/components/trainer/ScopeSelector.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/ScopeSelector.tsx)
+* Control Bar (Global / Vendor sections): [apps/invoice-fe/components/trainer/TrainerControlBar.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/TrainerControlBar.tsx)
+* Chat Response Style panel: [apps/invoice-fe/components/trainer/ChatResponseStylePanel.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/ChatResponseStylePanel.tsx)
+* Scope Selector (legacy): [apps/invoice-fe/components/trainer/ScopeSelector.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/ScopeSelector.tsx)
 * Training Uploader: [apps/invoice-fe/components/trainer/TrainerUploader.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/TrainerUploader.tsx)
 * Q&A Console: [apps/invoice-fe/components/trainer/QnAPanel.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/QnAPanel.tsx)
 * Rule History Drawer: [apps/invoice-fe/components/trainer/RuleHistoryDrawer.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/trainer/RuleHistoryDrawer.tsx)
 * Commit Confirmation Modal: `apps/invoice-fe/components/trainer/CommitModal.tsx`
 * Document Viewer Panel: `apps/invoice-fe/components/trainer/PdfViewerPanel.tsx`
 * Shared trainer API client: `apps/invoice-fe/lib/trainer-service.ts`
-* Proxy Routes (**corrected 2026-08-01 — this section was badly stale**, all 8 exist and are live): `app/api/trainer/sessions/[id]/chat/route.ts`, `app/api/trainer/sessions/[id]/commit/route.ts`, `app/api/trainer/sessions/from-production/route.ts`, `app/api/trainer/sessions/global/route.ts`, `app/api/trainer/templates/[id]/rollback/[version]/route.ts`, `app/api/trainer/templates/history/route.ts`, `app/api/trainer/upload/route.ts`, `app/api/trainer/vendors/route.ts`.
+* Proxy Routes (**corrected 2026-08-01 — this section was badly stale**, all 8 exist and are live): `app/api/trainer/sessions/[id]/chat/route.ts`, `app/api/trainer/sessions/[id]/commit/route.ts`, `app/api/trainer/sessions/from-production/route.ts`, `app/api/trainer/sessions/global/route.ts`, `app/api/trainer/templates/[id]/rollback/[version]/route.ts`, `app/api/trainer/templates/history/route.ts`, `app/api/trainer/upload/route.ts`, `app/api/trainer/vendors/route.ts`. *(Aug 12, 2026 — added: `app/api/trainer/chat-style/route.ts`, `app/api/trainer/sessions/[id]/commit-behavior/route.ts`, `app/api/trainer/sessions/[id]/mode/route.ts`.)*
 
 ### Tasks
 **Status corrected 2026-08-01**: all of Tasks 6.1–6.8 below were shown unchecked (`[ ]`), implying nothing was built — false, and self-contradicting given this same doc's own "P0 Fixes" and "Gap 76" sections below describe real bugs found and fixed in this already-shipped code. `fe_features_tracker.md` (the actual status source of truth) has correctly tracked this feature as built for some time; this doc's own checkboxes were simply never brought current. Marking `[x]` to match reality.
@@ -107,6 +116,14 @@ Note on the horizontal part of the fix (`min-w-0`/`shrink-0`/`hidden sm:flex`): 
 **Deliberately out of scope**: OCR/extraction remains synchronous on the backend. Making it async/backgrounded is an architecture change; this gap is the loading-indicator UX only, and the copy under the progress bar sets the expectation honestly ("this can take up to a minute for a dense invoice") rather than implying the wait was removed.
 
 **Regression coverage**: `e2e/trainer-loading-state.spec.ts`, 2 tests, both passing. Each stubs the session-create route with a fixed delay (the assertion is about what shows *during* a known-length wait, which a real OCR round-trip cannot make deterministic), then drives a real upload via the file input and a real vendor `selectOption`, asserting the panel appears with its stage text, percentage and filename and is gone once the session lands. Navigation is retried inside `gotoTrainer()` — the first hit on `/trainer` in a run can be aborted by the Next dev server mid-compile, which is a dev-server artefact rather than a product behaviour.
+
+### Gaps 220 & 221 — Trainer UI restructure + Chat Response Style (closed 2026-08-12)
+
+**Gap 220 — section-based layout replaces 3-tab scope selector.** `TrainerControlBar.tsx` now exposes **Global Rules** and **Vendor Rules** sections. Vendor Rules: pick existing vendor from dropdown OR upload new PDF. Vendor sub-tabs **Test Chat** (`qa_test`) and **Add Rules** (`rule_creation`) call `PUT /api/trainer/sessions/{id}/mode` via `lib/trainer-service.ts::setSessionMode()`.
+
+**Gap 221 — Chat Response Style panel.** Global Rules → **Chat Response Style** sub-tab renders `ChatResponseStylePanel.tsx` (length/tone toggles, custom instructions textarea, amber disclaimer banner). Save calls `POST /api/trainer/sessions/{id}/commit-behavior` through new proxy routes.
+
+**BE Gap 217 — structured commit rejection.** `app/trainer/page.tsx` commit failure toast surfaces `flagged_rule` and `rejection_reason` from the backend's structured 400 body.
 
 ### Verification Plan
 * **Manual Verification**: Create a Global rule with no vendor context and confirm it applies to a brand-new vendor's next upload. Load an Existing Vendor session, submit a correction, commit, and confirm the re-audit toast appears. Open the Rule History drawer and roll back a version.

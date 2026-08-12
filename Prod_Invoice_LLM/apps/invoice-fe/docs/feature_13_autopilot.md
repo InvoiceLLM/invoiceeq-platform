@@ -75,7 +75,11 @@ CREATE INDEX idx_autopilot_log_hash ON tenant_autopilot_logs(content_hash);
   - `GET /api/v1/autopilot/config` & `PUT /api/v1/autopilot/config` (configuration manager)
   - `GET /api/v1/autopilot/history` (paginated runs log)
 - [ ] **Task 13.4: Azure Container Apps Job Bicep IaC** — Script `scripts/autopilot_job.py` built; Bicep IaC module deferred for production deployment.
-- [x] **Task 13.5: Folder Picker Integration** — Connected folder browsing with ConnectorBrowseBar pattern.
+- [x] **Task 13.5: Folder Picker Integration** — Connected folder browsing with ConnectorBrowseBar pattern. *(FE Gap 219, Aug 12, 2026: Autopilot config tab `source_ref` field now uses read-only folder name + Browse → `FolderTreeExplorer` with `selectionMode="folder"`; locked when connector inactive. `e2e/autopilot-folder-browser.spec.ts`.)*
 - [x] **Task 13.6: Autopilot UI & Sync History Table** — Built `AutopilotHistoryTable.tsx` component and Autopilot tab + config form on `/ingestion` screen.
-- [x] **Task 13.7: Automated Pytest Suite** — Created `tests/test_autopilot.py` with 18 unit/integration tests (100% pass rate).
+- [x] **Task 13.7: Automated Pytest Suite** — Created `tests/test_autopilot.py` with 18 unit/integration tests (100% pass rate). *(BE Gap 220, Aug 12, 2026: `test_T19_autopilot_sends_notify_email_after_import` — notify summary email with review deep links after sync; live SendGrid still Gap 125.)*
+
+### Recent Fixes (Aug 12, 2026)
+* **FE Gap 219 — Autopilot folder browser**: Autopilot config `source_ref` is no longer a raw ID text field. Read-only folder name + **Browse →** opens `FolderTreeExplorer` in `selectionMode="folder"`; inactive connectors show **Connect in Settings**.
+* **BE Gap 220 — notification emails after sync**: `services/autopilot_sync.py::run_sync()` collects newly imported invoices and calls `services/staff_notify.notify_autopilot_sync_summary()` when `notify_emails` is non-empty and `processed > 0`. Review deep links (`/invoices/review/{id}`) are included when `send_approval_links=True`. SendGrid missing → log warning, sync still succeeds. Live mail still depends on Gap 125.
 

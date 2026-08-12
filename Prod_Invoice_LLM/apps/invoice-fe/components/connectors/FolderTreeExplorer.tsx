@@ -45,12 +45,12 @@ interface FolderTreeExplorerProps {
    */
   onFolderSelected: (folder: FolderShortcut) => void;
   onClose: () => void;
-  /**
-   * Where to open. FE Gap 165: the saved folder had no effect on anything --
-   * every browse session started at Root regardless. Passing the saved
-   * shortcut in is what makes it more than a label.
-   */
   initialFolder?: FolderShortcut | null;
+  /**
+   * `import` (default): multi-file selection + queue import.
+   * `folder`: pick the current folder only (FE Gap 219 Autopilot source_ref).
+   */
+  selectionMode?: "import" | "folder";
 }
 
 export default function FolderTreeExplorer({
@@ -59,6 +59,7 @@ export default function FolderTreeExplorer({
   onFolderSelected,
   onClose,
   initialFolder = null,
+  selectionMode = "import",
 }: FolderTreeExplorerProps) {
   /**
    * The folders entered so far, root-first. Replaces the previous
@@ -174,6 +175,14 @@ export default function FolderTreeExplorer({
     }
   };
 
+  const handleSelectFolder = () => {
+    const folder = currentFolder ?? { id: null, name: "Root" };
+    onFolderSelected(folder);
+    onClose();
+  };
+
+  const isFolderMode = selectionMode === "folder";
+
   const formatSize = (bytes: number) => {
     if (bytes === 0) return "—";
     const kb = bytes / 1024;
@@ -274,7 +283,7 @@ export default function FolderTreeExplorer({
               >
                 <div className="flex items-center gap-3 min-w-0">
                   {/* Multiselect Checkboxes for Files */}
-                  {isFile && (
+                  {isFile && !isFolderMode && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -319,17 +328,19 @@ export default function FolderTreeExplorer({
       {/* Explorer Footer Action Bar */}
       <footer className="px-5 py-4 border-t border-[#1E293B]/70 bg-[#151B26] flex items-center justify-between">
         <span className="text-[10px] text-slate-400">
-          {selectedFileIds.length} file(s) selected
+          {isFolderMode
+            ? `Current folder: ${currentFolder?.name ?? "Root"}`
+            : `${selectedFileIds.length} file(s) selected`}
         </span>
 
         <div className="flex items-center gap-3">
-          {importCompleted && (
+          {!isFolderMode && importCompleted && (
             <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
               <CheckCircle className="w-3.5 h-3.5" /> Import request queued!
             </span>
           )}
 
-          {importError && (
+          {!isFolderMode && importError && (
             <span
               title={importError}
               className="text-[10px] text-rose-400 font-medium flex items-center gap-1 max-w-[320px] truncate"
@@ -338,18 +349,28 @@ export default function FolderTreeExplorer({
             </span>
           )}
 
-          <button
-            onClick={handleImportSelected}
-            disabled={selectedFileIds.length === 0 || isImporting}
-            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-md shadow-blue-900/10"
-          >
-            {isImporting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <DownloadCloud className="w-3.5 h-3.5" />
-            )}
-            Import Selected
-          </button>
+          {isFolderMode ? (
+            <button
+              onClick={handleSelectFolder}
+              className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-md shadow-violet-900/10"
+            >
+              <CornerDownRight className="w-3.5 h-3.5" />
+              Select This Folder
+            </button>
+          ) : (
+            <button
+              onClick={handleImportSelected}
+              disabled={selectedFileIds.length === 0 || isImporting}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-md shadow-blue-900/10"
+            >
+              {isImporting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <DownloadCloud className="w-3.5 h-3.5" />
+              )}
+              Import Selected
+            </button>
+          )}
         </div>
       </footer>
     </div>
