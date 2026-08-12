@@ -15,12 +15,13 @@ import logging
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, select, or_
 
 from dependencies import get_db_session, require_admin, TenantContext
-from models import AuditLog, User
+from models import AuditLog, DroppedInboundEmail, Tenant, TenantEmailSender, User
+from services.inbound_mail_security import sender_domain_of
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,26 @@ class AdminUserRemoved(BaseModel):
     clerk_user_id: str
     email: str
     detached: bool
+
+
+class DroppedEmailOut(BaseModel):
+    """One inbound mail that never became an invoice — Gap 124 item 6.
+
+    `attributed` says whether the drop is definitely this tenant's (the sender
+    was in its authorized set) or only *probably* (an unattributed drop shown
+    here because the sender's domain is one of this workspace's). The UI shows
+    the difference so an Admin doesn't read a domain-matched row as proof the
+    mail was addressed to them.
+    """
+    id: UUID
+    reason: str
+    detail: str
+    from_email: str | None = None
+    to_email: str | None = None
+    filename: str | None = None
+    content_length: int | None = None
+    attributed: bool
+    created_at: datetime
 
 
 # --- Endpoints -------------------------------------------------------------
@@ -256,3 +277,92 @@ async def remove_tenant_user(
         context.tenant_id, removed.detached,
     )
     return removed
+
+
+def _tenant_email_domains(db_session: Session, tenant_id: UUID) -> set[str]:
+    """Domains this workspace can legitimately claim mail from.
+
+    Its own `Tenant.domain` plus the domain of every address in its authorized
+    inbound/outbound sets. Used only to decide which *unattributed* dropped
+    mails to surface — never to grant access to another tenant's rows.
+    """
+    domains: set[str] = set()
+
+    tenant = db_session.get(Tenant, tenant_id)
+    if tenant and tenant.domain:
+        domains.add(tenant.domain.strip().lower())
+
+    senders = db_session.exec(
+        select(TenantEmailSender.email).where(TenantEmailSender.tenant_id == tenant_id)
+    ).all()
+    for address in senders:
+        domain = sender_domain_of(address)
+        if domain:
+            domains.add(domain)
+
+    return {d for d in domains if d}
+
+
+@router.get("/dropped-emails", response_model=list[DroppedEmailOut])
+async def list_dropped_emails(
+    limit: int = Query(default=50, ge=1, le=200),
+    context: TenantContext = Depends(require_admin),
+    db_session: Session = Depends(get_db_session),
+):
+    """Inbound mail that was rejected or skipped instead of becoming an invoice.
+
+    Gap 124 item 6. Before this, every drop path in the mailintegration webhook
+    ended at a `logger.warning` and a 200 — a vendor could email an invoice, the
+    webhook could refuse it for any of eight reasons, and no one outside the
+    container logs would ever know. This is the read side of that record.
+
+    **Visibility rule.** The app mailbox is platform-wide, so a drop is only
+    attributable to a tenant once the From address has matched
+    `tenant_email_senders`. Two kinds of row are therefore returned:
+
+      * `tenant_id == caller's tenant` — attributed, unambiguously theirs;
+      * `tenant_id IS NULL` **and** the sender's domain is one of this
+        workspace's (its own `Tenant.domain`, or the domain of any address in
+        its authorized sets).
+
+    The second case is what makes the common failure legible: someone at the
+    customer's own company emails from an address nobody registered, so the
+    webhook cannot attribute it, and without the domain match the row would be
+    invisible to the only person who could fix it. It is deliberately narrow —
+    an unattributed drop from an unrelated domain is shown to nobody rather
+    than to every Admin on the platform, because the From addresses of other
+    tenants' senders are not this tenant's business. Nothing is silently lost
+    either way: unattributed rows outside every tenant's domain set are still
+    in the table for a platform operator.
+    """
+    domains = _tenant_email_domains(db_session, context.tenant_id)
+
+    visibility = DroppedInboundEmail.tenant_id == context.tenant_id
+    if domains:
+        visibility = or_(
+            visibility,
+            (DroppedInboundEmail.tenant_id.is_(None))
+            & (DroppedInboundEmail.sender_domain.in_(sorted(domains))),
+        )
+
+    rows = db_session.exec(
+        select(DroppedInboundEmail)
+        .where(visibility)
+        .order_by(DroppedInboundEmail.created_at.desc())
+        .limit(limit)
+    ).all()
+
+    return [
+        DroppedEmailOut(
+            id=row.id,
+            reason=row.reason,
+            detail=row.detail,
+            from_email=row.from_email,
+            to_email=row.to_email,
+            filename=row.filename,
+            content_length=row.content_length,
+            attributed=row.tenant_id == context.tenant_id,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]

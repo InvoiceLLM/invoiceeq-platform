@@ -150,6 +150,33 @@ class Settings(BaseSettings):
     # tests (no GoDaddy domain auth required); domain auth improves deliverability.
     SENDGRID_API_KEY: str = ""
     SENDGRID_SENDING_DOMAIN: str = ""
+    # Gap 124 item 5: the shared secret POST /email/mailintegration requires.
+    # The name matches the container env var already wired in
+    # infra/modules/compute/invoice-be.bicep, which maps it to the Key Vault
+    # secret SENDGRID-INBOUND-SECRET -- that secret was provisioned but nothing
+    # in the application ever read it, so the webhook was open to anyone who
+    # could reach the website relay.
+    #
+    # SendGrid Inbound Parse lets you configure a Destination URL and nothing
+    # else -- no signing key, no signature header -- so the only place the
+    # secret can travel is the URL itself. Accepted, in order: an
+    # `X-Inbound-Secret` header, a `key`/`secret` query parameter, or the
+    # password half of HTTP Basic credentials embedded in the URL. See
+    # services/inbound_mail_security.py::presented_inbound_secret.
+    #
+    # Fail-closed, deliberately, the same choice as ALLOW_MOCK_AUTH above: an
+    # empty value does NOT mean "enforcement off", it means every inbound mail
+    # POST is rejected, because an empty shared secret cannot authenticate
+    # anything. A deployment that has not seeded the Key Vault secret yet is
+    # exactly the deployment that must not accept unauthenticated mail. The
+    # rejection is recorded (reason `secret_unconfigured`) and visible in the
+    # Admin console, so the misconfiguration surfaces instead of silently
+    # eating mail.
+    INBOUND_PARSE_SHARED_SECRET: str = ""
+    # Gap 124 item 7: hard ceiling on a single inbound mail POST, attachments
+    # included. 25 MiB matches SendGrid's own documented Inbound Parse limit --
+    # anything larger than this was never going to be a legitimate parse POST.
+    INBOUND_EMAIL_MAX_BYTES: int = 26_214_400
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

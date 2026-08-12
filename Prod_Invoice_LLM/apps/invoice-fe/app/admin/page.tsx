@@ -45,6 +45,42 @@ interface AdminUserDto {
   last_login: string | null;
 }
 
+/**
+ * Shape of a row from GET /api/admin/dropped-emails (backend DroppedEmailOut).
+ * BE Gap 124 item 6.
+ */
+interface DroppedEmailDto {
+  id: string;
+  reason: string;
+  detail: string;
+  from_email: string | null;
+  to_email: string | null;
+  filename: string | null;
+  content_length: number | null;
+  /** False when the row is shown only because the sender's domain matches. */
+  attributed: boolean;
+  created_at: string;
+}
+
+/**
+ * Human wording for `DroppedInboundEmail.reason`, whose values are a fixed
+ * vocabulary defined in `services/inbound_mail_security.py::DROP_REASONS`.
+ * An unknown code falls back to the raw string rather than being hidden, so a
+ * reason added backend-side still shows up here instead of rendering blank.
+ */
+const DROP_REASON_LABELS: Record<string, string> = {
+  secret_unconfigured: "Mail authentication not configured",
+  unverified_secret: "Failed authentication",
+  oversized: "Too large (over 25 MB)",
+  malformed: "Malformed request",
+  unknown_sender: "Sender not registered",
+  missing_tenant: "Workspace missing",
+  no_pdf_attachment: "No PDF attached",
+  quota_exhausted: "Free quota exhausted",
+  ingest_rejected: "Refused by settings",
+  ingest_failed: "Processing failed",
+};
+
 /** The three grantable permissions, in the order they render. */
 const PERMISSIONS = [
   { key: "canTrain" as const, field: "can_train" as const, label: "Trainer" },
@@ -324,6 +360,10 @@ export default function AdminDashboardPage() {
   const [accessDenied, setAccessDenied] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  // BE Gap 124 item 6: inbound mail that never became an invoice.
+  const [droppedEmails, setDroppedEmails] = useState<DroppedEmailDto[]>([]);
+  const [droppedError, setDroppedError] = useState<string | null>(null);
+  const [droppedLoaded, setDroppedLoaded] = useState(false);
 
   // Feature 1.1 Task 1.1.6: the user list used to be ephemeral client state
   // that vanished on reload, which left the edit-time permission checkboxes
@@ -369,12 +409,40 @@ export default function AdminDashboardPage() {
     }
   }, []);
 
+  /**
+   * BE Gap 124 item 6. Inbound mail the mailintegration webhook rejected or
+   * skipped used to end at a `logger.warning` inside the container -- a vendor
+   * could email an invoice, the webhook could refuse it for any of eight
+   * reasons, and nobody with access to this console would ever find out. This
+   * is the read side of the record that fixes that.
+   *
+   * A failure here is reported in its own panel and never touches
+   * `setAccessDenied`/`setListError`: this is a secondary list, and it must not
+   * be able to blank out the user table it renders below.
+   */
+  const loadDroppedEmails = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/dropped-emails", { cache: "no-store" });
+      if (!res.ok) {
+        setDroppedError("Could not load dropped inbound emails.");
+        return;
+      }
+      setDroppedError(null);
+      setDroppedEmails(await res.json());
+    } catch {
+      setDroppedError("Could not load dropped inbound emails.");
+    } finally {
+      setDroppedLoaded(true);
+    }
+  }, []);
+
   useEffect(() => {
     // Gap 167: don't fire an Admin-only call for a viewer we already know is
     // not an Admin -- the same shape `app/settings/webhooks/page.tsx` uses.
     if (authLoading || !isAdmin) return;
     void loadUsers();
-  }, [loadUsers, authLoading, isAdmin]);
+    void loadDroppedEmails();
+  }, [loadUsers, loadDroppedEmails, authLoading, isAdmin]);
 
   const handleTogglePermission = async (target: OrgUser, key: keyof PermissionState) => {
     const next: PermissionState = {
@@ -667,6 +735,79 @@ export default function AdminDashboardPage() {
         {(permError || listError) && (
           <div style={{ padding: "10px 24px", background: "rgba(239,68,68,0.08)", borderTop: `1px solid ${T.border}`, fontSize: "13px", color: T.red }}>
             ⚠️ {permError || listError}
+          </div>
+        )}
+      </div>
+
+      {/* Dropped inbound emails — BE Gap 124 item 6.
+          Same panel/table shape as the Users table above. Deliberately placed
+          in the Admin console rather than under Settings → Email Setup: the
+          rows that matter most are the ones nobody's email settings explain
+          (failed authentication, oversized payloads), and the Admin is the
+          only role that can act on them. */}
+      <div style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: "14px", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", borderBottom: `1px solid ${T.border}` }}>
+          <div>
+            <div style={{ fontSize: "15px", fontWeight: "700", color: T.textPrimary }}>📥 Dropped inbound emails</div>
+            <div style={{ fontSize: "12px", color: T.textDim, marginTop: "2px" }}>
+              Mail sent to your workspace mailbox that did not become an invoice, and why.
+            </div>
+          </div>
+          <button
+            id="btn-refresh-dropped-emails"
+            onClick={() => void loadDroppedEmails()}
+            style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: "8px", padding: "6px 14px", fontSize: "12px", color: T.textMuted, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            ↻ Refresh
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 2fr 2.6fr 1.2fr", padding: "10px 24px", borderBottom: `1px solid ${T.border}`, fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim }}>
+          <span>Reason</span>
+          <span>From</span>
+          <span>Detail</span>
+          <span>When</span>
+        </div>
+
+        {droppedEmails.length === 0 ? (
+          <div style={{ padding: "32px 24px", textAlign: "center", color: T.textDim, fontSize: "14px" }}>
+            <div style={{ fontSize: "28px", marginBottom: "8px" }}>✅</div>
+            {droppedLoaded ? "No inbound email has been dropped." : "Loading…"}
+          </div>
+        ) : (
+          droppedEmails.map((d) => (
+            <div key={d.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 2fr 2.6fr 1.2fr", padding: "12px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center", gap: "8px" }}>
+              <div>
+                <span style={{ background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: "6px", padding: "3px 8px", fontSize: "11px", color: T.yellow, fontWeight: "600" }}>
+                  {DROP_REASON_LABELS[d.reason] || d.reason}
+                </span>
+              </div>
+              <div style={{ fontSize: "13px", color: T.textMuted, overflowWrap: "anywhere" }}>
+                {d.from_email || "—"}
+                {/* An unattributed row is shown because the sender's DOMAIN
+                    matches this workspace, not because the address is
+                    registered to it. Saying so keeps the Admin from reading a
+                    domain match as proof the mail was meant for them. */}
+                {!d.attributed && (
+                  <span style={{ marginLeft: "6px", fontSize: "11px", color: T.textDim }} title="Sender is not in this workspace's authorized email set; matched on domain only.">
+                    (unregistered)
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: "12px", color: T.textDim, overflowWrap: "anywhere" }}>
+                {d.filename ? `${d.filename} — ` : ""}
+                {d.detail}
+              </div>
+              <div style={{ fontSize: "12px", color: T.textDim }}>
+                {new Date(d.created_at).toLocaleString()}
+              </div>
+            </div>
+          ))
+        )}
+
+        {droppedError && (
+          <div style={{ padding: "10px 24px", background: "rgba(239,68,68,0.08)", borderTop: `1px solid ${T.border}`, fontSize: "13px", color: T.red }}>
+            ⚠️ {droppedError}
           </div>
         )}
       </div>

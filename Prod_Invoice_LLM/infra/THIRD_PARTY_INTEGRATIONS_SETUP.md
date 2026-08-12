@@ -88,7 +88,10 @@ Inbound PDF receive and staff notify both use SendGrid. BE ingress is internal-o
    `https://ca-invoice-website-<env>.<caeDomain>/api/v1/email/mailintegration`
    Website route relays raw multipart to internal BE (`apps/invoice-website/app/api/v1/email/mailintegration/route.ts`). Do **not** use `/api/email/*` (Multi-Zone FE settings proxy).
 4. Optional: check “POST the raw, full MIME message” only if you change BE parsing — current BE expects SendGrid’s multipart `to`/`from` + file fields.
-5. Seed `SENDGRID-INBOUND-SECRET` in Key Vault when authenticity enforcement lands (Gap 124 item 5 — secret param exists in `05-secrets.bicep`; not enforced in code yet).
+5. **Seed `SENDGRID-INBOUND-SECRET` in Key Vault — now REQUIRED, not optional.** As of 2026-08-12 (Gap 124 item 5) the BE verifies this secret on every inbound POST and is **fail-closed**: an empty value rejects *all* mail with 401, it does not disable the check. Pick any long random string, seed it as `SENDGRID-INBOUND-SECRET` (param already in `05-secrets.bicep`; `invoice-be.bicep` maps it to env `INBOUND_PARSE_SHARED_SECRET`), then put it in the Destination URL from step 3 as a query parameter:
+   `https://ca-invoice-website-<env>.<caeDomain>/api/v1/email/mailintegration?key=<the-secret>`
+   The website relay forwards the query string and the `Authorization` / `X-Inbound-Secret` headers through to the BE. Basic credentials in the URL (`https://sendgrid:<secret>@…`) work too — only the password half is compared. Rejections are recorded and visible in the app's **Admin console → Dropped inbound emails**, so a wrong/missing secret shows up there rather than silently eating mail.
+6. Attachments are capped at 25 MiB per POST (`INBOUND_EMAIL_MAX_BYTES`, enforced at both the website relay and the BE); oversized mail is rejected with 413 and also listed in that Admin panel.
 
 ### Send (Mail Send / Gap 125)
 1. Create a SendGrid API key with Mail Send; seed as `SENDGRID-API-KEY` (already wired in bicep/KV).

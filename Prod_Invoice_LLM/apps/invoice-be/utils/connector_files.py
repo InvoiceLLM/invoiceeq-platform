@@ -78,6 +78,24 @@ def list_salesforce_files(access_token: str, instance_url: str) -> list[dict]:
     ]
 
 
+def verify_salesforce_instance(access_token: str, instance_url: str) -> None:
+    """Cheapest authenticated call that proves an (access_token, instance_url)
+    pair is actually usable before it is stored as an active connection
+    (Gap 197): the versioned REST resource index for the org, which returns a
+    small JSON map of available endpoints and requires a valid bearer token.
+
+    Returns None on success. Raises `httpx.HTTPStatusError` if the org rejects
+    the token (401/403) or the version path doesn't exist, and the other
+    `httpx.HTTPError` subclasses if the host doesn't resolve/connect at all --
+    the caller decides what to do with each.
+    """
+    url = f"{instance_url.rstrip('/')}/services/data/{SALESFORCE_API_VERSION}/"
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    response = httpx.get(url, headers=headers, timeout=10.0)
+    response.raise_for_status()
+
+
 def download_salesforce_file(access_token: str, instance_url: str, file_id: str) -> bytes:
     """Downloads the raw bytes of a Salesforce File (ContentVersion.VersionData)."""
     url = f"{instance_url}/services/data/{SALESFORCE_API_VERSION}/sobjects/ContentVersion/{file_id}/VersionData"

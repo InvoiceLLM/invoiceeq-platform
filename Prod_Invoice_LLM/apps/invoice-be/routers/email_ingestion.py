@@ -5,16 +5,37 @@ from uuid import UUID, uuid4
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
+# `fastapi.UploadFile` is a *subclass* of Starlette's, and `request.form()`
+# yields the Starlette one — so the isinstance check in _collect_attachments
+# must be against the base class or it matches nothing.
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from config import get_settings
 from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import Tenant, TenantEmailSender, Invoice
 from routers.invoices import _ingest_single_file
 from services.storage import upload_pdf_to_blob_storage
+from services.inbound_mail_security import (
+    REASON_INGEST_FAILED,
+    REASON_INGEST_REJECTED,
+    REASON_MALFORMED,
+    REASON_MISSING_TENANT,
+    REASON_NO_PDF_ATTACHMENT,
+    REASON_OVERSIZED,
+    REASON_QUOTA_EXHAUSTED,
+    REASON_SECRET_UNCONFIGURED,
+    REASON_UNKNOWN_SENDER,
+    describe_client,
+    declared_content_length,
+    max_inbound_bytes,
+    oversize_from_content_length,
+    record_dropped_email,
+    verify_inbound_secret,
+)
 from azure.storage.queue import QueueClient
 
 logger = logging.getLogger(__name__)
@@ -216,11 +237,31 @@ async def _ingest_outbound_email_pdf(
     return str(invoice_id)
 
 
+def _collect_attachments(form) -> list[StarletteUploadFile]:
+    """Every file part of the multipart body, whatever its field name.
+
+    Gap 124: the handler used to declare `files: list[UploadFile]`, which only
+    ever matched parts literally named `files`. Real SendGrid Inbound Parse
+    names them `attachment1`, `attachment2`, … — so the one field name the old
+    signature accepted was the one name SendGrid never sends. Collecting by
+    type instead of by name accepts both, which is why this webhook could not
+    have worked against live Parse traffic as written.
+    """
+    return [
+        value for _key, value in form.multi_items()
+        if isinstance(value, StarletteUploadFile)
+    ]
+
+
+def _attachment_size(file: StarletteUploadFile) -> int | None:
+    """Byte size of an uploaded part without reading it, when Starlette knows it."""
+    size = getattr(file, "size", None)
+    return int(size) if isinstance(size, int) else None
+
+
 @router.post("/mailintegration")
 async def email_mailintegration_webhook(
-    to: str = Form(..., description="The To recipient header of the email"),
-    from_header: str = Form(..., alias="from", description="The From sender header of the email"),
-    files: list[UploadFile] = File(default=[]),
+    request: Request,
     db_session: Session = Depends(get_db_session),
 ):
     """
@@ -228,11 +269,130 @@ async def email_mailintegration_webhook(
 
     Path: POST /api/v1/email/mailintegration
     One URL for both directions — email_set on From picks the pipeline.
+
+    Gap 124 items 5–7 — this endpoint has no authenticated caller (SendGrid
+    holds no Clerk session), so three guards stand in for one:
+
+      * **Shared secret** (`services/inbound_mail_security.verify_inbound_secret`).
+        Rejected requests get 401 and never reach the body. Fail-closed when
+        `INBOUND_PARSE_SHARED_SECRET` is unset — see that setting's comment.
+      * **25 MiB cap**, checked against the declared Content-Length *before*
+        the multipart is parsed (so an oversized body is refused without being
+        spooled to disk), then re-checked against the bytes actually read for
+        clients that send no Content-Length.
+      * **Every rejection is recorded** in `dropped_inbound_emails` and shown
+        by `GET /api/v1/admin/dropped-emails`. Previously each of these paths
+        was a `logger.warning` and a 200, i.e. the mail was gone with no trace
+        an Admin could ever see.
+
+    The body is parsed by hand (`await request.form()`) rather than declared as
+    `Form(...)`/`File(...)` parameters on purpose: FastAPI reads and parses the
+    body *before* it solves dependencies, so a declared-parameter signature
+    gives no point at which the size cap or the secret can be enforced ahead of
+    the parse. Parsing here is the only way those two guards run first.
     """
+    client = describe_client(request)
+
+    # --- Guard 1: size, from the declared Content-Length (body untouched) ---
+    oversized = oversize_from_content_length(request)
+    if oversized is not None:
+        record_dropped_email(
+            db_session,
+            reason=REASON_OVERSIZED,
+            detail=(
+                f"Declared Content-Length {oversized} bytes exceeds the "
+                f"{max_inbound_bytes()} byte limit. Sender: {client}."
+            ),
+            content_length=oversized,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Inbound email exceeds the {max_inbound_bytes()} byte limit.",
+        )
+
+    # --- Guard 2: shared secret ---------------------------------------------
+    verified, failure_reason = verify_inbound_secret(request)
+    if not verified:
+        if failure_reason == REASON_SECRET_UNCONFIGURED:
+            detail = (
+                "INBOUND_PARSE_SHARED_SECRET is not configured on this deployment, "
+                "so no inbound mail can be authenticated. Seed the Key Vault secret "
+                f"SENDGRID-INBOUND-SECRET. Sender: {client}."
+            )
+            message = "Inbound mail authentication is not configured on this deployment."
+        else:
+            detail = f"Missing or incorrect inbound shared secret. Sender: {client}."
+            message = "Inbound mail could not be authenticated."
+        record_dropped_email(
+            db_session,
+            reason=failure_reason,
+            detail=detail,
+            content_length=declared_content_length(request),
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=message)
+
+    # --- Body ---------------------------------------------------------------
+    try:
+        form = await request.form()
+    except Exception as exc:
+        record_dropped_email(
+            db_session,
+            reason=REASON_MALFORMED,
+            detail=f"Could not parse the request body: {exc}. Sender: {client}.",
+            content_length=declared_content_length(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inbound email body could not be parsed.",
+        )
+
+    to = str(form.get("to") or "").strip()
+    from_header = str(form.get("from") or "").strip()
+    files = _collect_attachments(form)
+
+    if not to or not from_header:
+        record_dropped_email(
+            db_session,
+            reason=REASON_MALFORMED,
+            detail=(
+                "Inbound mail POST is missing the 'to' and/or 'from' field. "
+                f"Sender: {client}."
+            ),
+            from_email=from_header or None,
+            to_email=to or None,
+            content_length=declared_content_length(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inbound email is missing the 'to' or 'from' field.",
+        )
+
     logger.info(
         "Received mailintegration webhook. To: %s, From: %s, Attachments: %d",
         to, from_header, len(files),
     )
+
+    # --- Guard 3: size again, measured ---------------------------------------
+    # Covers a caller that sent no Content-Length at all (guard 1 saw nothing to
+    # check). Uses Starlette's recorded part sizes so nothing is re-read.
+    known_sizes = [s for s in (_attachment_size(f) for f in files) if s is not None]
+    measured_total = sum(known_sizes)
+    if measured_total > max_inbound_bytes():
+        record_dropped_email(
+            db_session,
+            reason=REASON_OVERSIZED,
+            detail=(
+                f"Attachments total {measured_total} bytes, over the "
+                f"{max_inbound_bytes()} byte limit. Sender: {client}."
+            ),
+            from_email=_normalize_email_header(from_header),
+            to_email=to,
+            content_length=measured_total,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Inbound email exceeds the {max_inbound_bytes()} byte limit.",
+        )
 
     mailbox = _mailbox_address()
     to_normalized = _normalize_email_header(to)
@@ -249,7 +409,20 @@ async def email_mailintegration_webhook(
         select(TenantEmailSender).where(TenantEmailSender.email == sender_email)
     ).first()
     if not allowed_sender:
-        logger.warning("Dropping email from unauthorized sender '%s'", sender_email)
+        # Still a 200: SendGrid retries non-2xx responses, and an unregistered
+        # sender is a settled business outcome, not a transient failure. The
+        # record below is what makes the drop visible instead of silent.
+        record_dropped_email(
+            db_session,
+            reason=REASON_UNKNOWN_SENDER,
+            detail=(
+                "Sender is not in any workspace's authorized email set. Add it under "
+                "Settings → Email Setup to accept mail from this address."
+            ),
+            from_email=sender_email,
+            to_email=to,
+            content_length=measured_total or declared_content_length(request),
+        )
         return {
             "success": True,
             "status": "dropped",
@@ -259,7 +432,14 @@ async def email_mailintegration_webhook(
     tenant_id = allowed_sender.tenant_id
     tenant = db_session.get(Tenant, tenant_id)
     if not tenant:
-        logger.warning("Sender '%s' points at missing tenant '%s'", sender_email, tenant_id)
+        record_dropped_email(
+            db_session,
+            reason=REASON_MISSING_TENANT,
+            detail=f"Registered sender points at workspace {tenant_id}, which no longer exists.",
+            tenant_id=tenant_id,
+            from_email=sender_email,
+            to_email=to,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tenant not found.",
@@ -271,6 +451,17 @@ async def email_mailintegration_webhook(
 
     pdf_files = [f for f in files if f.filename and f.filename.lower().endswith(".pdf")]
     if not pdf_files:
+        record_dropped_email(
+            db_session,
+            reason=REASON_NO_PDF_ATTACHMENT,
+            detail=(
+                f"Mail carried {len(files)} attachment(s), none of them a PDF. "
+                "Only PDF attachments are ingested."
+            ),
+            tenant_id=tenant_id,
+            from_email=sender_email,
+            to_email=to,
+        )
         return {
             "success": True,
             "status": "skipped",
@@ -307,9 +498,18 @@ async def email_mailintegration_webhook(
             else:
                 if tenant.billing_plan == "free":
                     if tenant.free_invoices_remaining <= 0:
-                        logger.warning(
-                            "Tenant %s free quota exhausted. Dropping email attachment %s.",
-                            tenant_id, file.filename,
+                        record_dropped_email(
+                            db_session,
+                            reason=REASON_QUOTA_EXHAUSTED,
+                            detail=(
+                                "Workspace has no free invoices left this cycle, so this "
+                                "attachment was not ingested. Upgrade the plan or wait for "
+                                "the quota to refill."
+                            ),
+                            tenant_id=tenant_id,
+                            from_email=sender_email,
+                            to_email=to,
+                            filename=file.filename,
                         )
                         continue
                     tenant.free_invoices_remaining -= 1
@@ -327,10 +527,31 @@ async def email_mailintegration_webhook(
                     submitted_by_email=sender_email,
                 )
                 job_ids.append(job_id)
-        except HTTPException:
+        except HTTPException as http_exc:
+            # e.g. _ingest_outbound_email_pdf's 403 when Send Invoices is off
+            # for the tenant. Recorded before re-raising so the Admin sees why
+            # the mail was refused, not just a 403 in the SendGrid logs.
+            record_dropped_email(
+                db_session,
+                reason=REASON_INGEST_REJECTED,
+                detail=f"Attachment refused ({http_exc.status_code}): {http_exc.detail}",
+                tenant_id=tenant_id,
+                from_email=sender_email,
+                to_email=to,
+                filename=file.filename,
+            )
             raise
         except Exception as e:
             logger.error("Failed to ingest email attachment %s: %s", file.filename, e)
+            record_dropped_email(
+                db_session,
+                reason=REASON_INGEST_FAILED,
+                detail=f"Attachment failed to ingest: {e}",
+                tenant_id=tenant_id,
+                from_email=sender_email,
+                to_email=to,
+                filename=file.filename,
+            )
 
     return {
         "success": True,
