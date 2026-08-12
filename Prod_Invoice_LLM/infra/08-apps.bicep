@@ -90,6 +90,18 @@ param frontendMinReplicas int = 1
 @description('Frontend Container App maximum replica count.')
 param frontendMaxReplicas int = 2
 
+// Gap 126: scheduled work. Kept as its own knob set (not folded into the
+// backend's) because a job's schedule is the thing most likely to be tuned per
+// environment -- e.g. a prod run at a quieter hour, or a dev run left disabled.
+@description('Cron schedule (UTC) for the outbound overdue-webhook sweep. Daily at 02:00 UTC by default -- after any given business day has ended in the tenant time zones this product currently serves, so an invoice due "today" is not notified while today is still in progress somewhere.')
+param overdueSweepCron string = '0 2 * * *'
+
+@description('vCPU allocation for scheduled jobs.')
+param scheduledJobCpu string = '0.5'
+
+@description('Memory allocation for scheduled jobs.')
+param scheduledJobMemory string = '1.0Gi'
+
 @description('Website Container App vCPU allocation.')
 param websiteCpu string = '0.5'
 @description('Website Container App memory allocation.')
@@ -247,6 +259,44 @@ module websiteApp './modules/compute/invoice-website.bicep' = {
     memory: websiteMemory
     minReplicas: websiteMinReplicas
     maxReplicas: websiteMaxReplicas
+  }
+}
+
+// Gap 126: the outbound overdue-webhook sweep, and the first scheduled job in
+// this environment. Runs the invoice-be image (that is where
+// scripts/sweep_outbound_overdue.py ships) with a cron trigger instead of an
+// HTTP/queue one -- `outbound_invoice.overdue` is derived from a date passing,
+// so nothing in the request path could ever have fired it.
+//
+// It reuses `backendImage` rather than taking an image param of its own so the
+// job always runs the same backend build as ca-invoice-be. Note that
+// .github/workflows/_deploy-service.yml updates *container apps* only
+// (`az containerapp update`), so on a CI push this job keeps whatever image
+// reference this template last set. With the `:latest` tag used by
+// params.dev.json that still resolves to the newest pushed backend image at
+// execution time, since a job pulls the image when it starts a replica.
+module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
+  name: 'overdue-sweep-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-overdue-sweep-${environment}'
+    containerName: 'overdue-sweep'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/sweep_outbound_overdue.py'
+    ]
+    cronExpression: overdueSweepCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
   }
 }
 

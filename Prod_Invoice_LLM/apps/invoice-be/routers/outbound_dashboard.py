@@ -160,7 +160,11 @@ async def get_outbound_dashboard_metrics(
     # at_risk_receivables reuses feature_7.1's read-time overdue rule (SENT
     # past its due_date), the same predicate list_outbound_invoices() applies
     # for its virtual `status=overdue` filter, so the two can never disagree.
-    # No persisted OVERDUE status, no scheduled job.
+    # Still no persisted OVERDUE status: Gap 126's daily sweep
+    # (services/outbound_overdue.py) reuses this same predicate to fire the
+    # `outbound_invoice.overdue` webhook and writes only its own
+    # `overdue_notified_at` marker -- it never touches `Invoice.status`, so
+    # nothing here (or in any other status filter) changes shape because of it.
     currency_expr = _currency_expr()
     totals_by_currency = [
         {

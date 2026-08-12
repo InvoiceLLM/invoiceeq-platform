@@ -40,11 +40,13 @@ def _submitter_email_from_context(db_session: Session, context: TenantContext) -
 
 def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type: str) -> None:
     """Feature 15 (Task 15.4): fires right after the commit that actually
-    changed the status. `outbound_invoice.overdue` has no call site here --
-    overdue is a virtual, read-time-only computation (Feature 7.1/8.1), not
-    a real status transition, so there's no single moment to fire it from
-    without a new scheduled job -- deliberately out of scope for this pass,
-    same as the rest of this codebase's OVERDUE-status deferrals."""
+    changed the status. `outbound_invoice.overdue` still has no call site here,
+    and correctly so -- overdue is a virtual, read-time-only computation
+    (Feature 7.1/8.1), not a status transition, so there is no commit in this
+    router to hang it off. Gap 126 gave it the scheduled trigger it needed
+    instead: services/outbound_overdue.py, run daily by
+    scripts/sweep_outbound_overdue.py. Overdue is still never written to
+    `Invoice.status`."""
     try:
         from services.webhooks import dispatch_webhook_event
         dispatch_webhook_event(db_session, invoice.tenant_id, event_type, {
