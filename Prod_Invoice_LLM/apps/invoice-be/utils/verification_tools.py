@@ -36,11 +36,17 @@ def verify_line_items_math(items: list[dict], subtotal: float | None, invoice_ta
                 
                 line_subtotal = qty * unit_price
                 
-                # Apply item-level discount if present
+                # Apply item-level discount if present.
+                # BUG-CORE-08 / Gap 214: when line_subtotal is negative (trade
+                # discount, rebate, or credit line), applying a percentage discount
+                # on top of an already-negative base double-flips the sign and
+                # produces an incorrect expected amount. Skip discount_percent in
+                # that case; discount_amount is an absolute delta and is safe to
+                # apply regardless of sign.
                 discount_percent = item.get("discount_percent")
                 discount_amount = item.get("discount_amount")
                 discounted_subtotal = line_subtotal
-                if discount_percent is not None:
+                if discount_percent is not None and line_subtotal >= 0:
                     discounted_subtotal -= line_subtotal * (float(discount_percent) / 100.0)
                 elif discount_amount is not None:
                     discounted_subtotal -= float(discount_amount)

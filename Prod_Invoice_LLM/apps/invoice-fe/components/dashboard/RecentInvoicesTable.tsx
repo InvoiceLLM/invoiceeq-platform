@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   FileText,
   MoreHorizontal,
@@ -22,6 +23,14 @@ export interface InvoiceRecord {
   invoice_number?: string;
   vendor_name?: string;
   invoice_date?: string;
+  /**
+   * Gap 202: Ingest date — when the invoice was uploaded / created in the system.
+   */
+  created_at?: string;
+  /**
+   * Gap 202: Payment due date from the extracted invoice data.
+   */
+  due_date?: string;
   grand_total?: number;
   /**
    * FE Gap 183: ISO-4217 code from Invoice.currency. The backend has always
@@ -71,6 +80,7 @@ export default function RecentInvoicesTable({
 }: RecentInvoicesTableProps) {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const router = useRouter();
 
   // FE Gap 29: `invoices` is now a single real server-paginated page (already
   // filtered by activeTab and limited/offset by currentPage on the backend),
@@ -206,6 +216,10 @@ export default function RecentInvoicesTable({
               <th className="px-6 py-3.5">Invoice #</th>
               <th className="px-6 py-3.5">Client / Vendor</th>
               <th className="px-6 py-3.5">Issue Date</th>
+              {/* Gap 202: Ingest Date column */}
+              <th className="px-6 py-3.5">Ingest Date</th>
+              {/* Gap 202: Payment Due Date column */}
+              <th className="px-6 py-3.5">Due Date</th>
               <th className="px-6 py-3.5">Amount</th>
               <th className="px-6 py-3.5">AI Status</th>
               <th className="px-6 py-3.5 text-right">Actions</th>
@@ -218,6 +232,8 @@ export default function RecentInvoicesTable({
                   <td className="px-6 py-4"><div className="h-4 bg-slate-800 rounded w-16"></div></td>
                   <td className="px-6 py-4"><div className="h-4 bg-slate-800 rounded w-32"></div></td>
                   <td className="px-6 py-4"><div className="h-4 bg-slate-800 rounded w-20"></div></td>
+                  <td className="px-6 py-4"><div className="h-4 bg-slate-800 rounded w-20"></div></td>
+                  <td className="px-6 py-4"><div className="h-4 bg-slate-800 rounded w-20"></div></td>
                   <td className="px-6 py-4"><div className="h-4 bg-slate-800 rounded w-16"></div></td>
                   <td className="px-6 py-4"><div className="h-6 bg-slate-800 rounded w-24"></div></td>
                   <td className="px-6 py-4 text-right"><div className="h-4 bg-slate-800 rounded w-8 ml-auto"></div></td>
@@ -225,7 +241,7 @@ export default function RecentInvoicesTable({
               ))
             ) : pageInvoices.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
                   No invoices matched the active filters.
                 </td>
               </tr>
@@ -233,7 +249,9 @@ export default function RecentInvoicesTable({
               pageInvoices.map((inv) => (
                 <tr 
                   key={inv.id}
-                  className={`hover:bg-slate-900/30 transition-colors duration-150 group ${activeMenuId === inv.id ? "relative z-30" : ""}`}
+                  {/* Gap 206: entire row is clickable — navigates to the Auditor Review Console */}
+                  onClick={() => router.push(`/invoices/review/${inv.id}`)}
+                  className={`hover:bg-slate-900/30 transition-colors duration-150 group cursor-pointer ${activeMenuId === inv.id ? "relative z-30" : ""}`}
                 >
                   {/* Invoice # */}
                   <td className="px-6 py-4 font-mono font-medium text-white group-hover:text-[#3B82F6] transition-colors">
@@ -263,6 +281,16 @@ export default function RecentInvoicesTable({
                   <td className="px-6 py-4 font-medium text-slate-400">
                     {formatDate(inv.invoice_date)}
                   </td>
+
+                  {/* Gap 202: Ingest Date */}
+                  <td className="px-6 py-4 font-medium text-slate-400">
+                    {inv.created_at ? formatDate(inv.created_at) : "—"}
+                  </td>
+
+                  {/* Gap 202: Payment Due Date */}
+                  <td className="px-6 py-4 font-medium text-slate-400">
+                    {inv.due_date ? formatDate(inv.due_date) : "—"}
+                  </td>
                   
                   {/* Amount */}
                   <td className="px-6 py-4 font-bold text-slate-200 font-mono">
@@ -274,8 +302,13 @@ export default function RecentInvoicesTable({
                     {getStatusBadge(inv.status)}
                   </td>
                   
-                  {/* Actions Dropdown */}
-                  <td className="px-6 py-4 text-right relative">
+                  {/* Actions Dropdown — Gap 153: dropdown opens upward only on the last rows;
+                      for row 1 (first row visible), we switch to open downward using a
+                      data-driven position class so the menu never clips against the sticky header. */}
+                  <td
+                    className="px-6 py-4 text-right relative"
+                    onClick={(e) => e.stopPropagation()} {/* prevent row click when interacting with actions */}
+                  >
                     <button
                       onClick={(e) => toggleMenu(inv.id, e)}
                       className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
@@ -285,7 +318,16 @@ export default function RecentInvoicesTable({
                     
                     {activeMenuId === inv.id && (
                       <div 
-                        className="absolute right-6 bottom-10 w-44 bg-[#0F172A] border border-[#222D3D] rounded-lg shadow-2xl py-1 z-50 animate-in fade-in slide-in-from-bottom-1 duration-150 text-left"
+                        className="absolute right-6 w-44 bg-[#0F172A] border border-[#222D3D] rounded-lg shadow-2xl py-1 z-50 animate-in fade-in duration-150 text-left"
+                        style={{
+                          // Gap 153: calculate whether there is room to open upward.
+                          // If the row is one of the first 2 visible rows, open downward (top-full)
+                          // to avoid clipping against the sticky header.
+                          top: pageInvoices.indexOf(inv) < 2 ? "100%" : "auto",
+                          bottom: pageInvoices.indexOf(inv) < 2 ? "auto" : "100%",
+                          marginTop: pageInvoices.indexOf(inv) < 2 ? "4px" : undefined,
+                          marginBottom: pageInvoices.indexOf(inv) < 2 ? undefined : "4px",
+                        }}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <Link
