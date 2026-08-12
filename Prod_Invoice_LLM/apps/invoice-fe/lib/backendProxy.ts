@@ -19,6 +19,19 @@ export function backendUrl(path: string, search = ""): string {
 }
 
 /**
+ * Builds a backend URL *without* the `/api/v1` prefix.
+ *
+ * Gap 184 (Docs Hub): FastAPI publishes `/openapi.json` and `/docs` at the
+ * service root, outside the prefix every product route lives under, so
+ * `backendUrl()` cannot reach them. Same env var and same localhost fallback as
+ * everything else here — only the prefix differs.
+ */
+export function backendRootUrl(path: string): string {
+  const url = process.env.BACKEND_API_URL || DEFAULT_LOCAL_BACKEND_URL;
+  return `${url.replace(/\/$/, "")}${path}`;
+}
+
+/**
  * Builds the outbound headers for a backend call.
  *
  * Clerk-list Gap 4 (B1): invoice-fe previously sent no Authorization header to

@@ -736,6 +736,127 @@ def get_tenant_context(
     return context
 
 
+# --- Gap 184: programmatic API-key authentication --------------------------
+#
+# A PARALLEL auth path to the Clerk one above, not a replacement. Clerk session
+# JWTs authenticate a *person* in a browser; an API key authenticates a
+# *tenant's own integration* with no browser and no session to refresh. Both
+# produce the same TenantContext so downstream handlers cannot tell (or need to
+# tell) which door a request came through.
+#
+# Two header spellings are accepted because both are in common use for this and
+# integrators reach for one or the other without checking:
+#   Authorization: Bearer inv_live_...
+#   X-API-Key: inv_live_...
+# The `inv_live_` prefix is what distinguishes an API key from a Clerk JWT in
+# the shared Authorization header -- a Clerk token can never start with it.
+
+# The `user_id` an API-key request runs as. It is not a real Clerk user (there
+# is no human on this request), and it is deliberately distinct from
+# MOCK_USER_ID so audit rows written by an integration are attributable.
+API_KEY_USER_ID = "api_key_client"
+
+
+def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
+    """
+    Resolve a raw API key to its tenant's context, or raise 401.
+
+    Lookup is by the non-secret `api_key_prefix` (indexed) to find the single
+    candidate row, then a constant-time digest comparison decides. A wrong key,
+    an unknown prefix and a tenant that never issued a key are all the same 401
+    with the same message -- the response must not reveal which tenants have
+    keys.
+
+    Role is deliberately "Viewer" with no can_train/can_audit/can_load. The key
+    proves "this request comes from the tenant's own system", which is not the
+    same claim as "an Admin approved this specific action": Admin-gated routes
+    (require_admin) and permission-gated ones (require_can_*) must not become
+    reachable just because a key exists. Widening that is a deliberate,
+    separately-reviewed decision, not a side effect of issuing a key.
+    """
+    from services.api_keys import key_prefix, verify_api_key
+
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or revoked API key.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    prefix = key_prefix(raw_key)
+    tenant = db_session.exec(select(Tenant).where(Tenant.api_key_prefix == prefix)).first()
+    if not tenant or not verify_api_key(raw_key, tenant.api_key_salt, tenant.api_key_hash):
+        raise unauthorized
+
+    tenant.api_key_last_used_at = datetime.utcnow()
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+
+    # Same billing lifecycle the Clerk path runs, for the same reasons -- an
+    # integration must not be a way to keep using a lapsed tenant, and a free
+    # tenant's monthly allowance must refill whichever door traffic arrives at.
+    enforce_lapse(tenant, db_session)
+    refresh_free_quota(tenant, db_session)
+
+    if tenant.billing_plan == "unpaid":
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Tenant subscription is unpaid. Access blocked.",
+        )
+
+    role = "Viewer"
+    can_train, can_audit, can_load = resolve_permissions(role, None)
+
+    return TenantContext(
+        tenant_id=tenant.id,
+        user_id=API_KEY_USER_ID,
+        db_user_id=None,
+        role=role,
+        billing_plan=tenant.billing_plan,
+        tenant_name=tenant.name,
+        can_train=can_train,
+        can_audit=can_audit,
+        can_load=can_load,
+    )
+
+
+def get_api_key_context(
+    authorization: str | None = Header(None),
+    x_api_key: str | None = Header(None),
+    db_session: Session = Depends(get_db_session),
+) -> TenantContext:
+    """
+    Auth dependency for programmatic (non-browser) callers, Gap 184.
+
+    Accepts `X-API-Key: <key>` or `Authorization: Bearer <key>`; X-API-Key wins
+    when both are present, since a proxy-injected Authorization header is the
+    likelier accident of the two. Missing/malformed credentials are 401 -- there
+    is no mock fallback on this path at all, deliberately: unlike the Clerk
+    dependency there is no local-development story that needs one.
+    """
+    from services.api_keys import looks_like_api_key
+
+    raw_key: str | None = None
+    if x_api_key:
+        raw_key = x_api_key.strip()
+    elif authorization and authorization.startswith("Bearer "):
+        candidate = authorization.split(" ", 1)[1].strip()
+        if looks_like_api_key(candidate):
+            raw_key = candidate
+
+    if not raw_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Missing API key. Send it as 'X-API-Key: <key>' or "
+                "'Authorization: Bearer <key>'."
+            ),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return resolve_api_key_context(raw_key, db_session)
+
+
 # --- Feature 1.1 (Task 1.1.2): permission-check dependencies ---------------
 #
 # Same shape as the existing inline `context.role != "Admin"` checks in

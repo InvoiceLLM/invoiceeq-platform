@@ -1,9 +1,38 @@
 "use client";
 
-import React, { useState } from "react";
-import { ShieldCheck, Key, Lock, Eye, CheckCircle2, Copy, Check, RefreshCw, FileText } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { ShieldCheck, Key, Lock, CheckCircle2, Copy, Check, RefreshCw, FileText, AlertTriangle, Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
+
+/**
+ * Gap 184: metadata about the tenant's live API key, as returned by
+ * GET /api/settings/security/api-key. There is deliberately no field here that
+ * could carry the key itself — the raw value is returned by exactly one
+ * response in the whole app (the rotate call) and is unrecoverable afterwards.
+ */
+interface ApiKeyStatus {
+  has_key: boolean;
+  key_prefix: string | null;
+  masked_key: string | null;
+  rotated_at: string | null;
+  last_used_at: string | null;
+  can_rotate: boolean;
+}
+
+interface ApiKeyRotateResponse extends ApiKeyStatus {
+  api_key: string;
+}
+
+const API_KEY_URL = "/api/settings/security/api-key";
+const API_KEY_ROTATE_URL = "/api/settings/security/api-key/rotate";
+
+function formatTimestamp(value: string | null): string {
+  if (!value) return "Never";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Unknown";
+  return parsed.toLocaleString();
+}
 
 export default function SecuritySettingsPage() {
   usePageHeader({
@@ -12,28 +41,82 @@ export default function SecuritySettingsPage() {
     backHref: "/settings",
   });
 
-  const { tenantId, role } = useAuth();
-  const isAdmin = role === "Admin";
-  const [apiKey, setApiKey] = useState("inv_live_9f8a3b2c1d0e4f5a6b7c8d9e0f");
+  const { role } = useAuth();
+  const [activeTab, setActiveTab] = useState<"access" | "docs">("access");
+
+  // Gap 184: all of this used to be a hardcoded `inv_live_9f8a...` string that
+  // the "Rotate" button replaced with a Math.random() value in local state —
+  // nothing ever reached the backend, and the key shown authenticated nothing.
+  const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  // The raw key, held only for as long as this page stays mounted after a
+  // rotation. It is never written to storage — the backend cannot re-issue it,
+  // so this is genuinely the user's one chance to copy it.
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [isRotating, setIsRotating] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+
+  // `can_rotate` comes from the backend (which is the thing that enforces it);
+  // the local role is only a fallback for rendering before the first response.
+  const canRotate = keyStatus?.can_rotate ?? role === "Admin";
+
+  const loadStatus = useCallback(async () => {
+    setIsLoadingStatus(true);
+    setStatusError(null);
+    try {
+      const response = await fetch(API_KEY_URL, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Request failed (HTTP ${response.status})`);
+      }
+      setKeyStatus((await response.json()) as ApiKeyStatus);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : "Could not load API key status.");
+    } finally {
+      setIsLoadingStatus(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
 
   const handleCopyKey = () => {
-    if (typeof window !== "undefined") {
-      navigator.clipboard.writeText(apiKey);
-      setCopiedKey(true);
-      setTimeout(() => setCopiedKey(false), 2000);
-    }
+    if (typeof window === "undefined" || !revealedKey) return;
+    navigator.clipboard.writeText(revealedKey);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2000);
   };
 
-  const handleRegenerateKey = () => {
-    if (!isAdmin) return;
-    setIsGenerating(true);
-    setTimeout(() => {
-      const newKey = "inv_live_" + Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-      setApiKey(newKey);
-      setIsGenerating(false);
-    }, 600);
+  const handleRotateKey = async () => {
+    if (!canRotate || isRotating) return;
+    setIsRotating(true);
+    setRotateError(null);
+    try {
+      const response = await fetch(API_KEY_ROTATE_URL, { method: "POST" });
+      if (!response.ok) {
+        // The backend's own message is the useful one here (403 for a
+        // non-Admin, 402 for a lapsed plan), so surface it rather than a
+        // generic string.
+        let detail = `Rotation failed (HTTP ${response.status})`;
+        try {
+          const body = await response.json();
+          if (body?.detail) detail = String(body.detail);
+        } catch {
+          /* non-JSON error body — keep the status-code message */
+        }
+        throw new Error(detail);
+      }
+      const data = (await response.json()) as ApiKeyRotateResponse;
+      setRevealedKey(data.api_key);
+      const { api_key: _rawKey, ...status } = data;
+      setKeyStatus(status);
+    } catch (err) {
+      setRotateError(err instanceof Error ? err.message : "Rotation failed.");
+    } finally {
+      setIsRotating(false);
+    }
   };
 
   const roleMatrix = [
@@ -47,38 +130,162 @@ export default function SecuritySettingsPage() {
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
       <main className="flex-1 px-6 py-8 max-w-4xl w-full mx-auto space-y-6">
 
+        {/* Gap 184: API Access / API Docs tabs */}
+        <div role="tablist" aria-label="Security settings sections" className="flex items-center gap-2 border-b border-[#222D3D]">
+          <button
+            role="tab"
+            id="tab-access"
+            aria-selected={activeTab === "access"}
+            aria-controls="panel-access"
+            onClick={() => setActiveTab("access")}
+            className={`px-4 py-2.5 text-xs font-semibold flex items-center gap-2 border-b-2 -mb-px transition-all ${
+              activeTab === "access"
+                ? "border-emerald-400 text-white"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Key className="w-3.5 h-3.5" /> API Access
+          </button>
+          <button
+            role="tab"
+            id="tab-docs"
+            aria-selected={activeTab === "docs"}
+            aria-controls="panel-docs"
+            onClick={() => setActiveTab("docs")}
+            className={`px-4 py-2.5 text-xs font-semibold flex items-center gap-2 border-b-2 -mb-px transition-all ${
+              activeTab === "docs"
+                ? "border-emerald-400 text-white"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" /> API Docs
+          </button>
+        </div>
+
+        {activeTab === "docs" ? (
+          /* Docs Hub — the backend's own FastAPI Swagger UI, proxied same-origin
+             by /api/docs/ui so it renders inside the app and shows the REST
+             routes and outbound webhook payload schemas in one place. */
+          <section
+            role="tabpanel"
+            id="panel-docs"
+            aria-labelledby="tab-docs"
+            className="bg-[#151B26] border border-[#222D3D] rounded-2xl p-5 space-y-4 shadow-lg"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h2 className="font-semibold text-sm text-white">API &amp; Webhook Reference</h2>
+                <p className="text-xs text-slate-400">
+                  Live OpenAPI schema for every programmatic REST endpoint and outbound webhook payload
+                </p>
+              </div>
+              <a
+                href="/api/docs/openapi"
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] text-slate-300 hover:text-white border border-[#222D3D] text-xs font-semibold transition-all shrink-0"
+              >
+                Raw schema
+              </a>
+            </div>
+
+            <iframe
+              src="/api/docs/ui"
+              title="API documentation"
+              className="w-full h-[70vh] rounded-xl bg-white border border-[#222D3D]"
+            />
+          </section>
+        ) : (
+        <>
         {/* API Credentials */}
-        <section aria-labelledby="api-keys-heading" className="bg-[#151B26] border border-[#222D3D] rounded-2xl p-5 space-y-4 shadow-lg">
+        <section role="tabpanel" id="panel-access" aria-labelledby="tab-access" className="bg-[#151B26] border border-[#222D3D] rounded-2xl p-5 space-y-4 shadow-lg">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
               <Key className="w-5 h-5" />
             </div>
             <div>
               <h2 id="api-keys-heading" className="font-semibold text-sm text-white">API Authentication Key</h2>
-              <p className="text-xs text-slate-400">Use this token to authenticate programmatic REST API requests</p>
+              <p className="text-xs text-slate-400">
+                Send this key as <span className="font-mono">X-API-Key</span> or{" "}
+                <span className="font-mono">Authorization: Bearer</span> to authenticate programmatic REST API requests
+              </p>
             </div>
           </div>
 
+          {/* The raw key, shown once. The backend stores only a salted hash and
+              cannot re-issue this value, so the warning is literal, not advisory. */}
+          {revealedKey && (
+            <div className="bg-emerald-500/5 border border-emerald-500/30 rounded-xl p-3.5 space-y-2">
+              <p className="text-[11px] text-emerald-300 font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Copy this key now — it is shown once and cannot be retrieved again.
+              </p>
+              <div className="flex items-center gap-3">
+                <span data-testid="revealed-api-key" className="font-mono text-xs text-slate-100 truncate flex-1">{revealedKey}</span>
+                <button
+                  onClick={handleCopyKey}
+                  className="p-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] text-slate-400 hover:text-white border border-[#222D3D] transition-all flex items-center justify-center shrink-0"
+                  title="Copy Key"
+                >
+                  {copiedKey ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-3 bg-[#0B0F19] border border-[#222D3D] rounded-xl p-3.5 pl-4">
-            <span className="font-mono text-xs text-slate-200 truncate flex-1">{apiKey}</span>
-            <button
-              onClick={handleCopyKey}
-              className="p-2 rounded-lg bg-[#1E293B] hover:bg-[#2D3F55] text-slate-400 hover:text-white border border-[#222D3D] transition-all flex items-center justify-center shrink-0"
-              title="Copy Key"
-            >
-              {copiedKey ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-            </button>
-            {isAdmin && (
+            <span data-testid="api-key-display" className="font-mono text-xs text-slate-200 truncate flex-1">
+              {isLoadingStatus ? (
+                <span className="text-slate-500 flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading key status…
+                </span>
+              ) : statusError ? (
+                <span className="text-rose-300">{statusError}</span>
+              ) : keyStatus?.has_key ? (
+                keyStatus.masked_key
+              ) : (
+                <span className="text-slate-500">
+                  No API key issued yet{canRotate ? " — generate one to start using the REST API." : "."}
+                </span>
+              )}
+            </span>
+            {canRotate && (
               <button
-                onClick={handleRegenerateKey}
-                disabled={isGenerating}
+                onClick={handleRotateKey}
+                disabled={isRotating || isLoadingStatus}
                 className="px-3 py-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isGenerating ? "animate-spin" : ""}`} />
-                Rotate Key
+                <RefreshCw className={`w-3.5 h-3.5 ${isRotating ? "animate-spin" : ""}`} />
+                {keyStatus?.has_key ? "Rotate Key" : "Generate Key"}
               </button>
             )}
           </div>
+
+          {rotateError && (
+            <p className="text-xs text-rose-300 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" /> {rotateError}
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-[#0B0F19] border border-[#222D3D] rounded-xl p-3.5 space-y-1">
+              <span className="text-[10px] uppercase font-mono text-slate-500 tracking-wider">Last Rotated</span>
+              <p className="text-xs font-semibold text-white">{formatTimestamp(keyStatus?.rotated_at ?? null)}</p>
+            </div>
+            <div className="bg-[#0B0F19] border border-[#222D3D] rounded-xl p-3.5 space-y-1">
+              <span className="text-[10px] uppercase font-mono text-slate-500 tracking-wider">Last Used</span>
+              <p className="text-xs font-semibold text-white">{formatTimestamp(keyStatus?.last_used_at ?? null)}</p>
+            </div>
+          </div>
+
+          {keyStatus?.has_key && canRotate && (
+            <p className="text-[11px] text-slate-500">
+              Rotating immediately invalidates the previous key — any integration still using it will start receiving 401 responses.
+            </p>
+          )}
         </section>
 
         {/* Tenant Isolation Status */}
@@ -150,6 +357,8 @@ export default function SecuritySettingsPage() {
             </table>
           </div>
         </section>
+        </>
+        )}
       </main>
     </div>
   );
