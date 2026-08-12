@@ -247,9 +247,9 @@ export default function RecentInvoicesTable({
               </tr>
             ) : (
               pageInvoices.map((inv) => (
-                <tr 
+                <tr
                   key={inv.id}
-                  {/* Gap 206: entire row is clickable — navigates to the Auditor Review Console */}
+                  // Gap 206: entire row is clickable — navigates to the Auditor Review Console
                   onClick={() => router.push(`/invoices/review/${inv.id}`)}
                   className={`hover:bg-slate-900/30 transition-colors duration-150 group cursor-pointer ${activeMenuId === inv.id ? "relative z-30" : ""}`}
                 >
@@ -307,7 +307,8 @@ export default function RecentInvoicesTable({
                       data-driven position class so the menu never clips against the sticky header. */}
                   <td
                     className="px-6 py-4 text-right relative"
-                    onClick={(e) => e.stopPropagation()} {/* prevent row click when interacting with actions */}
+                    // prevent row click when interacting with actions
+                    onClick={(e) => e.stopPropagation()}
                   >
                     <button
                       onClick={(e) => toggleMenu(inv.id, e)}

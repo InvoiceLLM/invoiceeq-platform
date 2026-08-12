@@ -49,8 +49,10 @@ _RULE_SUGGESTION_LOOKBACK_DAYS = 90
 class AuditResolutionPayload(BaseModel):
     status: Optional[str] = Field(
         default=None,
-        description="Target status: PAID or REJECTED. Omit to just dismiss alerts "
-                     "and/or save corrections without finalizing the invoice.",
+        description="Target status: PAID, REJECTED, or AUDIT_REQUIRED (Gap 193: "
+                     "Admin-only reopen of an already-resolved invoice). Omit to "
+                     "just dismiss alerts and/or save corrections without "
+                     "finalizing the invoice.",
     )
     dismissed_alerts: Optional[List[str]] = Field(default=None, description="Alert messages, types, or IDs to dismiss")
     corrections: Optional[Dict[str, Any]] = Field(
@@ -309,19 +311,29 @@ async def resolve_audit_invoice(
     finalizing (e.g. a single alert's "Dismiss" button on a still-AUDIT_REQUIRED
     invoice, which previously always failed because it forced a PAID/REJECTED
     transition even when the auditor wasn't ready to close the invoice out).
+
+    Gap 193: `status=AUDIT_REQUIRED` reopens an already-resolved (PAID/REJECTED)
+    invoice — Admin-only, since it undoes another auditor's finalized decision,
+    and only valid from a terminal state (reopening a non-terminal invoice is a
+    no-op the FE should never send, rejected here rather than silently accepted).
     """
     # 1. Validate status, if one was actually provided
     target_status = None
     if payload.status is not None:
         target_status = payload.status.upper()
-        if target_status not in ["PAID", "REJECTED"]:
+        if target_status not in ["PAID", "REJECTED", "AUDIT_REQUIRED"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid target status '{payload.status}'. Must be PAID or REJECTED."
+                detail=f"Invalid target status '{payload.status}'. Must be PAID, REJECTED, or AUDIT_REQUIRED."
+            )
+        if target_status == "AUDIT_REQUIRED" and context.role != "Admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only an Admin can reopen a resolved invoice."
             )
 
     # Gap 125: validate notify list before mutating (only meaningful on finalize).
-    if target_status is not None and payload.notify_emails:
+    if target_status in ("PAID", "REJECTED") and payload.notify_emails:
         try:
             from services.staff_notify import validate_notify_emails
             validate_notify_emails(
@@ -344,6 +356,12 @@ async def resolve_audit_invoice(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invoice not found or access denied."
+        )
+
+    if target_status == "AUDIT_REQUIRED" and invoice.status not in ("PAID", "REJECTED"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot reopen an invoice with status '{invoice.status}' — only PAID or REJECTED invoices can be reopened."
         )
 
     # 3. Dismiss specified warnings
@@ -403,7 +421,7 @@ async def resolve_audit_invoice(
         invoice_id=invoice_id,
         actor_user_id=context.db_user_id,
         actor_role=context.role,
-        action="RESOLVE_INVOICE",
+        action="REOPEN_INVOICE" if target_status == "AUDIT_REQUIRED" else "RESOLVE_INVOICE",
         details=log_details,
         timestamp=datetime.utcnow()
     )
@@ -415,8 +433,9 @@ async def resolve_audit_invoice(
     # Feature 15 (Task 15.4): only fires on an actual PAID/REJECTED
     # finalization -- a plain alert-dismiss/correction (target_status=None)
     # doesn't change the invoice's terminal outcome and isn't one of this
-    # feature's subscribable event types.
-    if target_status is not None:
+    # feature's subscribable event types. Gap 193's AUDIT_REQUIRED reopen is
+    # deliberately excluded too -- it undoes a finalization, it isn't one.
+    if target_status in ("PAID", "REJECTED"):
         try:
             from services.webhooks import dispatch_webhook_event
             event_type = "invoice.paid" if target_status == "PAID" else "invoice.rejected"
@@ -430,7 +449,7 @@ async def resolve_audit_invoice(
             logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
 
     email_notify = None
-    if target_status is not None:
+    if target_status in ("PAID", "REJECTED"):
         try:
             from services.staff_notify import notify_auditor_action
             email_notify = notify_auditor_action(

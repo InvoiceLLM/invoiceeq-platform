@@ -127,6 +127,100 @@ def test_resolve_invalid_status(db_session):
     assert response.status_code == 400
     assert "Invalid target status" in response.json()["detail"]
 
+
+# ---------------------------------------------------------------------------
+# Gap 193: reopen (AUDIT_REQUIRED) a resolved invoice — Admin-only, terminal-only
+# ---------------------------------------------------------------------------
+
+VIEWER = {"Authorization": "Bearer test_viewer"}
+
+
+def _viewer_row_with_audit_permission(db_session):
+    """Provisions the mock Viewer identity, then grants it can_audit=True so it
+    passes the router's require_can_audit gate while staying role='Viewer' —
+    isolates the Admin-only check in resolve_audit_invoke from the unrelated
+    can_audit gate a plain Viewer would otherwise fail on first."""
+    from models import User
+    client.get("/auth/me", headers=VIEWER)
+    user = db_session.exec(select(User).where(User.clerk_user_id == MOCK_USER_ID)).first()
+    assert user is not None
+    user.can_audit = True
+    db_session.add(user)
+    db_session.commit()
+
+
+def test_reopen_requires_admin(db_session):
+    """A non-Admin with can_audit=True can still resolve invoices, but cannot reopen one."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="PAID", sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    _viewer_row_with_audit_permission(db_session)
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "AUDIT_REQUIRED", "dismissed_alerts": []},
+        headers=VIEWER,
+    )
+    assert response.status_code == 403
+    assert "Admin" in response.json()["detail"]
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "PAID"  # unchanged
+
+
+def test_reopen_rejects_non_terminal_invoice(db_session):
+    """Reopening only makes sense from PAID/REJECTED — reject it on anything else."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "AUDIT_REQUIRED", "dismissed_alerts": []},
+    )
+    assert response.status_code == 400
+    assert "Cannot reopen" in response.json()["detail"]
+
+
+def test_reopen_success_as_admin(db_session):
+    """Admin can reopen a PAID invoice; logs REOPEN_INVOICE, not RESOLVE_INVOICE;
+    does not dispatch invoice.paid/invoice.rejected or send a staff notification —
+    a reopen undoes a finalization, it isn't one."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="PAID", sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("services.webhooks.dispatch_webhook_event") as m_webhook, \
+         patch("services.staff_notify.notify_auditor_action") as m_notify:
+        response = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": "AUDIT_REQUIRED", "dismissed_alerts": []},
+        )
+        assert response.status_code == 200
+        m_webhook.assert_not_called()
+        m_notify.assert_not_called()
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "AUDIT_REQUIRED"
+
+    audit_logs = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id)).all()
+    assert len(audit_logs) == 1
+    assert audit_logs[0].action == "REOPEN_INVOICE"
+    assert audit_logs[0].details["target_status"] == "AUDIT_REQUIRED"
+
 def test_resolve_tenant_isolation(db_session):
     """Verify that tenant isolation prevents updating other tenant's invoice."""
     other_tenant_id = uuid4()

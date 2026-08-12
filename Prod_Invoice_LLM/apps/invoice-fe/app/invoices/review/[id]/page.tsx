@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import { formatCurrency } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import AlertConsole, { AlertCorrectionPreview } from "@/components/audit/AlertConsole";
@@ -249,6 +250,10 @@ function EditableField({
 export default function AuditorReviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  // Gap 193: Reopen Audit is Admin-only server-side; gate the button the same
+  // way client-side rather than showing it to everyone and letting it 403.
+  const { role } = useAuth();
+  const isAdmin = role === "Admin";
 
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
   const [alerts, setAlerts] = useState<{ type: string; message: string; field?: string }[]>([]);
@@ -474,7 +479,7 @@ export default function AuditorReviewPage() {
             {invoice.status.replace("_", " ")}
           </span>
           {/* Gap 193: Reopen Audit / Undo Decision button for Admins when invoice is terminal (PAID or REJECTED) */}
-          {isResolved && (
+          {isResolved && isAdmin && (
             <button
               onClick={async () => {
                 if (!window.confirm("Reopen this invoice for audit? Its status will be reset to AUDIT_REQUIRED.")) return;
@@ -485,9 +490,9 @@ export default function AuditorReviewPage() {
                   });
                   setInvoice((prev) => prev ? { ...prev, status: "AUDIT_REQUIRED" } : prev);
                   setAlerts(invoice.sa_alerts ?? []);
-                } catch (err) {
+                } catch (err: any) {
                   console.error("Reopen failed:", err);
-                  window.alert("Failed to reopen invoice. Please try again.");
+                  window.alert(err?.message || "Failed to reopen invoice. Please try again.");
                 }
               }}
               className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-500/50 bg-amber-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-amber-300 transition hover:bg-amber-600/30"
@@ -634,8 +639,8 @@ export default function AuditorReviewPage() {
                       focusNonce={
                         focusRequest?.field === (key as string) ? focusRequest.nonce : undefined
                       }
-                      {/* Gap 208: pass correct native input type for date/number fields
-                          so the browser renders a calendar picker or numeric input */}
+                      // Gap 208: pass correct native input type for date/number fields
+                      // so the browser renders a calendar picker or numeric input
                       inputType={type}
                     />
                   );
