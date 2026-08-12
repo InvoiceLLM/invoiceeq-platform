@@ -37,6 +37,23 @@ class Tenant(SQLModel, table=True):
     receive_invoices_enabled: bool = Field(default=True)   # Inbound (AP) — on by default, preserves existing behaviour
     send_invoices_enabled: bool = Field(default=False)     # Outbound (AR) — opt-in, requires pro_combined plan
     outbound_sender_email: str | None = Field(default=None, max_length=255)  # Legacy Gap 125 Reply-To placeholder; Email Setup uses TenantEmailSender sets
+    # Gap 184: programmatic API key for this tenant. The raw key is NEVER stored
+    # -- only a PBKDF2-HMAC-SHA256 digest of it (`api_key_hash`) plus the
+    # per-key random `api_key_salt` it was derived with, so a database dump
+    # cannot be replayed as credentials. `api_key_prefix` is the leading,
+    # deliberately non-secret slice of the raw key (`inv_live_` + 6 chars),
+    # kept only so the UI can show *which* key is active without being able to
+    # reconstruct it; the raw value exists in exactly one response, the one that
+    # created or rotated it (same "shown once" rule as WebhookSubscription.secret).
+    # NULL across all of these means "this tenant has never issued a key".
+    api_key_hash: str | None = Field(default=None, max_length=255)
+    api_key_salt: str | None = Field(default=None, max_length=64)
+    api_key_prefix: str | None = Field(default=None, max_length=32, index=True)
+    api_key_rotated_at: datetime | None = Field(default=None)
+    # Last time the key successfully authenticated a request. Purely
+    # observational (lets an Admin spot a key that is still in use before
+    # rotating it, or one that has never been used at all).
+    api_key_last_used_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -105,6 +122,14 @@ class Invoice(SQLModel, table=True):
     # those transitions, never estimated.
     sent_at: datetime | None = Field(default=None)
     paid_at: datetime | None = Field(default=None)
+    # Gap 126: when the `outbound_invoice.overdue` webhook was fired for this
+    # invoice by the scheduled sweep (services/outbound_overdue.py). NULL means
+    # "never fired". This is bookkeeping for the sweep only -- overdue itself
+    # stays a virtual, read-time computation (Feature 7.1/8.1: SENT past
+    # due_date); no OVERDUE value is ever written to `status`. Without this
+    # column the daily sweep would re-fire the same event for the same invoice
+    # every single day it stays unpaid.
+    overdue_notified_at: datetime | None = Field(default=None)
     # Gap 125: email (or UI) submitter — process-complete staff notify target.
     # Never used to email end customers from the app.
     submitted_by_email: str | None = Field(default=None, max_length=255)
@@ -264,6 +289,48 @@ class TenantEmailSender(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class DroppedInboundEmail(SQLModel, table=True):
+    """Gap 124 item 6: one inbound-mail POST that never became an invoice.
+
+    Every rejection path in `routers/email_ingestion.py::email_mailintegration_webhook`
+    used to end at a `logger.warning` and a 200 with `status: dropped` — the mail
+    vanished with no trace anyone outside the container logs could see, which is
+    the worst possible failure mode for a channel whose whole job is unattended
+    ingestion. Each of those paths now also writes a row here, and
+    `routers/admin.py::list_dropped_emails` renders them in the Admin console.
+
+    `tenant_id` is nullable on purpose: the mailbox is platform-wide, so the
+    tenant is only known once the From address has been matched against
+    `tenant_email_senders`. A request rejected *before* that point (bad shared
+    secret, oversized body, unparseable multipart, unregistered sender) belongs
+    to no tenant at all. `sender_domain` is stored alongside so those
+    unattributed rows can still be surfaced to the one tenant they plausibly
+    concern — see list_dropped_emails for that visibility rule.
+
+    Deliberately not an `AuditLog`: that table requires a real
+    `actor_user_id` FK (a human who acted on an invoice) and an `invoice_id`.
+    A dropped mail has neither — there is no actor and, by definition, no
+    invoice.
+    """
+    __tablename__ = "dropped_inbound_emails"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID | None = Field(default=None, index=True)
+    # One of services.inbound_mail_security.DROP_REASONS.
+    reason: str = Field(max_length=64, index=True)
+    detail: str = Field(default="", max_length=1024)
+    from_email: str | None = Field(default=None, max_length=320, index=True)
+    to_email: str | None = Field(default=None, max_length=320)
+    # Lowercased domain half of from_email, denormalised so the Admin list can
+    # filter unattributed rows without re-parsing every address in SQL.
+    sender_domain: str | None = Field(default=None, max_length=255, index=True)
+    filename: str | None = Field(default=None, max_length=512)
+    # Declared Content-Length of the POST, or the measured attachment byte
+    # total when the request was rejected after parsing. NULL when neither is
+    # known (e.g. a malformed request with no Content-Length header).
+    content_length: int | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class WebhookSubscription(SQLModel, table=True):
     """Feature 15 (Task 15.1): a tenant-registered HTTP endpoint that receives
     real-time invoice status-change notifications instead of polling the API.
@@ -275,6 +342,14 @@ class WebhookSubscription(SQLModel, table=True):
     outbound_invoice.sent, outbound_invoice.overdue, outbound_invoice.paid.
     `consecutive_failures` drives Task 15.5's auto-disable-after-10 rule;
     reset to 0 on any successful delivery.
+
+    Gap 194: failure tracking is now counted per *event type* in
+    `event_failure_counts` ({event_type: consecutive failures}), not as one
+    flat counter. `consecutive_failures` is kept as the denormalised
+    max(event_failure_counts.values()) so the existing settings-page health
+    warning and the public API shape are unchanged, but the auto-disable
+    decision reads the per-event map -- see
+    services/webhooks.record_delivery_result().
     """
     __tablename__ = "webhook_subscriptions"
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -284,8 +359,37 @@ class WebhookSubscription(SQLModel, table=True):
     subscribed_events: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     enabled: bool = Field(default=True)
     consecutive_failures: int = Field(default=0)
+    event_failure_counts: dict = Field(default_factory=dict, sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WebhookDeliveryLog(SQLModel, table=True):
+    """Gap 194: one row per completed delivery *attempt series* (the 3-attempt
+    retry sequence in services/webhooks._deliver_with_retry counts as one row,
+    with `attempts` recording how many HTTP calls it took).
+
+    Before this table existed there was no way, from inside the product, to
+    answer "did this event actually fire?" -- delivery errors are swallowed by
+    design so an invoice operation never fails because a subscriber is down,
+    which meant a completely broken fan-out looked identical to a clean one.
+
+    `error` is a short diagnostic string (transport error text, or the HTTP
+    status line for a non-2xx). Never contains the payload or the signing
+    secret. Rows are tenant-scoped so the settings UI can read them under the
+    normal tenant context.
+    """
+    __tablename__ = "webhook_delivery_logs"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    subscription_id: UUID = Field(index=True)
+    event_type: str = Field(max_length=100)
+    success: bool = Field(default=False)
+    status_code: int | None = Field(default=None)
+    attempts: int = Field(default=0)
+    duration_ms: int | None = Field(default=None)
+    error: str | None = Field(default=None, max_length=1000)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class RoleMapper:
