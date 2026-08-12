@@ -27,6 +27,11 @@ export default function PdfViewerCanvas({
   const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // Gap 154/155: isolated modal transform state — these are completely separate from
+  // the inline viewer state so that rotating in the modal does not leak back into
+  // the background viewer and vice-versa.
+  const [modalZoom, setModalZoom] = useState(100);
+  const [modalRotation, setModalRotation] = useState(0);
 
   const isRotated = rotation % 180 !== 0;
   const pdfUrl = `/api/invoices/${invoiceId}/pdf`;
@@ -43,6 +48,25 @@ export default function PdfViewerCanvas({
   const handleZoomIn = () => setZoom((z) => Math.min(z + 15, 250));
   const handleZoomOut = () => setZoom((z) => Math.max(z - 15, 50));
   const handleRotate = () => setRotation((r) => (r + 90) % 360);
+
+  // Gap 154/155: isolated modal controls — only affect modalZoom / modalRotation.
+  const handleModalZoomIn = () => setModalZoom((z) => Math.min(z + 15, 250));
+  const handleModalZoomOut = () => setModalZoom((z) => Math.max(z - 15, 50));
+  const handleModalRotate = () => setModalRotation((r) => (r + 90) % 360);
+
+  const handleOpenModal = () => {
+    // Reset modal to default view on open so it starts clean regardless of inline viewer state.
+    setModalZoom(100);
+    setModalRotation(0);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    // Explicitly reset so reopening starts fresh and inline viewer is unaffected.
+    setModalZoom(100);
+    setModalRotation(0);
+  };
 
   return (
     <div className="flex h-full min-h-[500px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]">
@@ -97,7 +121,7 @@ export default function PdfViewerCanvas({
         {/* Gap 155: Fullscreen Lightbox Modal Button */}
         <button
           type="button"
-          onClick={() => setIsModalOpen(true)}
+          onClick={handleOpenModal}
           className="ml-auto flex items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-xs text-blue-300 transition hover:bg-blue-500/20"
         >
           <Maximize2 size={13} /> Expand PDF
@@ -139,39 +163,47 @@ export default function PdfViewerCanvas({
         </div>
       </div>
 
-      {/* Gap 155: Lightbox Modal Pop-out */}
+      {/* Gap 154/155: Lightbox Modal Pop-out — with isolated zoom/rotation state */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-md p-6">
           <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold text-white">{title || "Invoice PDF Preview"}</span>
-              <span className="text-xs font-mono text-slate-400">{zoom}%</span>
+              {/* Gap 154: show modal-specific zoom level, not inline viewer's */}
+              <span className="text-xs font-mono text-slate-400">{modalZoom}%</span>
+              {modalRotation > 0 && (
+                <span className="text-xs font-mono text-slate-500">{modalRotation}°</span>
+              )}
             </div>
             <div className="flex items-center gap-2">
+              {/* Gap 154: modal zoom/rotate controls use isolated handlers */}
               <button
                 type="button"
-                onClick={handleZoomIn}
+                onClick={handleModalZoomIn}
                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                title="Zoom In (modal)"
               >
                 <ZoomIn size={16} />
               </button>
               <button
                 type="button"
-                onClick={handleZoomOut}
+                onClick={handleModalZoomOut}
                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                title="Zoom Out (modal)"
               >
                 <ZoomOut size={16} />
               </button>
               <button
                 type="button"
-                onClick={handleRotate}
+                onClick={handleModalRotate}
                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                title="Rotate (modal only — does not affect background viewer)"
               >
                 <RotateCw size={16} />
               </button>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={handleCloseModal}
                 className="p-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 ml-2"
               >
                 <X size={16} />
@@ -179,11 +211,25 @@ export default function PdfViewerCanvas({
             </div>
           </div>
           <div className="flex-1 overflow-auto flex items-center justify-center p-4">
-            <iframe
-              src={pdfUrl}
-              className="h-full w-full max-w-5xl rounded-xl border border-slate-800 bg-white shadow-2xl"
-              title="Expanded Invoice PDF"
-            />
+            {/* Gap 154: apply transform to the wrapper div, not the iframe itself,
+                so the full PDF (including scrollable content) scales and rotates correctly. */}
+            <div
+              style={{
+                width: `${modalZoom}%`,
+                minWidth: "300px",
+                maxWidth: "100%",
+                transform: `rotate(${modalRotation}deg)`,
+                transformOrigin: "center center",
+                transition: "transform 0.2s ease, width 0.2s ease",
+              }}
+              className="h-full"
+            >
+              <iframe
+                src={pdfUrl}
+                className="h-full w-full min-h-[70vh] rounded-xl border border-slate-800 bg-white shadow-2xl"
+                title="Expanded Invoice PDF"
+              />
+            </div>
           </div>
         </div>
       )}

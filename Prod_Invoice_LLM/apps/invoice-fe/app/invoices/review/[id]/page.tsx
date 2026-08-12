@@ -35,6 +35,7 @@ interface InvoiceDetail {
   invoice_date: string | null;
   due_date: string | null;
   grand_total: number | null;
+  subtotal: number | null;
   tax_amount: number | null;
   po_number: string | null;
   /**
@@ -44,6 +45,17 @@ interface InvoiceDetail {
    * regardless of what the document said.
    */
   currency?: string | null;
+  /**
+   * Gap 205: Extended metadata fields from full InvoiceExtractionSchema.
+   */
+  discount_amount?: number | null;
+  discount_percent?: number | null;
+  taxes?: { tax_type: string; rate_percent?: number; amount: number }[];
+  discounts?: { discount_type: string; percent?: number; amount: number }[];
+  tax_ids?: { id_type: string; value: string; party?: string }[];
+  payment_instructions?: { method_type: string; details: string }[];
+  references?: { ref_type: string; value: string }[];
+  compliance_metadata?: { key: string; value: string }[];
   // FE Gap 112 item 4: `field` was always on the wire -- every producer in
   // `utils/verification_tools.py` sets it and `sa_alerts` is a raw JSON column
   // -- the FE just never declared or read it. It is what links an alert to the
@@ -80,6 +92,8 @@ const CORRECTABLE_FIELDS: { key: keyof InvoiceDetail; label: string; azureKey: s
   { key: "po_number", label: "PO Number", azureKey: "PurchaseOrder", type: "text" },
   { key: "grand_total", label: "Total Amount", azureKey: "InvoiceTotal", type: "number" },
   { key: "tax_amount", label: "Tax Amount", azureKey: "TotalTax", type: "number" },
+  // Gap 205: subtotal was always extracted but never shown in the correction panel.
+  { key: "subtotal", label: "Subtotal", azureKey: "SubTotal", type: "number" },
 ];
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -459,6 +473,29 @@ export default function AuditorReviewPage() {
           >
             {invoice.status.replace("_", " ")}
           </span>
+          {/* Gap 193: Reopen Audit / Undo Decision button for Admins when invoice is terminal (PAID or REJECTED) */}
+          {isResolved && (
+            <button
+              onClick={async () => {
+                if (!window.confirm("Reopen this invoice for audit? Its status will be reset to AUDIT_REQUIRED.")) return;
+                try {
+                  await apiClient.put(`/audit/resolve/${invoice.id}`, {
+                    status: "AUDIT_REQUIRED",
+                    dismissed_alerts: [],
+                  });
+                  setInvoice((prev) => prev ? { ...prev, status: "AUDIT_REQUIRED" } : prev);
+                  setAlerts(invoice.sa_alerts ?? []);
+                } catch (err) {
+                  console.error("Reopen failed:", err);
+                  window.alert("Failed to reopen invoice. Please try again.");
+                }
+              }}
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-500/50 bg-amber-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-amber-300 transition hover:bg-amber-600/30"
+            >
+              <Undo2 size={13} />
+              Reopen Audit
+            </button>
+          )}
           {!isResolved && (
             <div className="flex items-center gap-2">
               <button
@@ -564,7 +601,9 @@ export default function AuditorReviewPage() {
               </span>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            {/* Gap 156: max-h ensures internal scroll on non-XL screens so the section
+                doesn't grow unbounded and force the whole page to scroll. */}
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 max-h-[calc(100vh-180px)] xl:max-h-none">
               {/* Metadata Fields — editable (Task 4.6), confidence-flagged
                   (Task 4.5), alert-flagged and correction-visible (Gap 112
                   item 4). Single column now that this is a dedicated panel
@@ -595,7 +634,9 @@ export default function AuditorReviewPage() {
                       focusNonce={
                         focusRequest?.field === (key as string) ? focusRequest.nonce : undefined
                       }
-                      inputType={type === "number" ? "text" : type === "date" ? "text" : "text"}
+                      {/* Gap 208: pass correct native input type for date/number fields
+                          so the browser renders a calendar picker or numeric input */}
+                      inputType={type}
                     />
                   );
                 })}
@@ -650,6 +691,84 @@ export default function AuditorReviewPage() {
                 </div>
               )}
             </div>
+
+            {/* Gap 205: Extended extracted metadata panel — currency, discounts, tax IDs, payment instructions */}
+            {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
+              <div className="mx-4 mb-4 flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
+
+                {/* Currency */}
+                {invoice.currency && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Currency</span>
+                    <span className="font-mono text-slate-300">{invoice.currency}</span>
+                  </div>
+                )}
+
+                {/* Discount Amount / Percent */}
+                {(invoice.discount_amount != null || invoice.discount_percent != null) && (
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-500">Invoice Discount</span>
+                    <span className="font-mono text-slate-300">
+                      {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
+                      {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
+                    </span>
+                  </div>
+                )}
+
+                {/* Tax IDs */}
+                {invoice.tax_ids && invoice.tax_ids.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
+                    {invoice.tax_ids.map((t, i) => (
+                      <div key={i} className="flex justify-between text-xs">
+                        <span className="text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
+                        <span className="font-mono text-slate-300">{t.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Taxes breakdown */}
+                {invoice.taxes && invoice.taxes.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
+                    {invoice.taxes.map((t, i) => (
+                      <div key={i} className="flex justify-between text-xs">
+                        <span className="text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
+                        <span className="font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Payment Instructions */}
+                {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
+                    {invoice.payment_instructions.map((p, i) => (
+                      <div key={i} className="flex flex-col text-xs">
+                        <span className="text-slate-500">{p.method_type}</span>
+                        <span className="font-mono text-slate-400 break-all">{p.details}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Compliance Metadata */}
+                {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
+                    {invoice.compliance_metadata.map((c, i) => (
+                      <div key={i} className="flex justify-between text-xs">
+                        <span className="text-slate-500">{c.key}</span>
+                        <span className="font-mono text-slate-300 break-all">{c.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Pending-corrections footer, pinned to the bottom of this panel
                 rather than scrolling away with the fields it summarises. */}

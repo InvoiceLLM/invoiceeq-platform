@@ -296,16 +296,26 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
         elif isinstance(result, dict):
             extracted_data = result
         else:
+            # Gap 70: include the active ExtractionTemplate constraints in the alert
+            # so auditors can see which rules were active when extraction failed.
+            active_constraints = (
+                rules.get("constraints", []) if isinstance(rules, dict) else []
+            )
             alerts.append({
                 "type": "extraction_failed",
-                "message": "Structured extraction failed to parse model response."
+                "message": "Structured extraction failed to parse model response.",
+                "active_constraints": active_constraints,
             })
             
     except Exception as e:
         logger.warning("Structured extraction failed: %s.", e)
+        active_constraints = (
+            rules.get("constraints", []) if isinstance(rules, dict) else []
+        )
         alerts.append({
             "type": "extraction_failed",
-            "message": f"Structured extraction failed due to error: {str(e)}."
+            "message": f"Structured extraction failed due to error: {str(e)}.",
+            "active_constraints": active_constraints,
         })
 
     # Doc Intelligence tax-anchor backfill: Doc Intelligence isolates each printed
