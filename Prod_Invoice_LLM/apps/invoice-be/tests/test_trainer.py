@@ -256,6 +256,85 @@ def test_versioning_history_and_rollback(trainer_mocks, db_session):
     assert tpl.rules["constraints"] == ["R1"]
 
 
+# ── Chat answer-cache invalidation on every scope (Gap 213) ──────────────────
+
+_CACHED_ANSWER_KEY = f"chat_answer_cache:{MOCK_TENANT_ID}:what did i pay acme last month"
+
+
+@pytest.fixture(name="answer_cache")
+def answer_cache_fixture():
+    """Stub the Redis client `_invalidate_chat_answer_cache()` builds.
+
+    It imports `redis` lazily and swallows every exception (best-effort by design),
+    so without a stub a *missing* invalidation looks exactly like a failed one.
+    Patching `redis.Redis.from_url` makes the key scan + delete observable.
+    """
+    fake = MagicMock()
+    fake.keys.return_value = [_CACHED_ANSWER_KEY]
+    with patch("redis.Redis.from_url", return_value=fake):
+        yield fake
+
+
+def _assert_answer_cache_flushed(fake):
+    # Key pattern is tenant-scoped with no vendor dimension (agents/query_agent.py
+    # `_cache_key()`), which is why a vendor-scoped rule change must flush it too.
+    fake.keys.assert_called_once_with(f"chat_answer_cache:{MOCK_TENANT_ID}:*")
+    fake.delete.assert_called_once_with(_CACHED_ANSWER_KEY)
+
+
+def _start_session(scope: str, db_session) -> str:
+    """Open a trainer session through the real entry point for the given scope."""
+    if scope == "global":
+        return client.post(
+            "/api/v1/trainer/sessions/global", files={"placeholder": (None, "1")}
+        ).json()["sessionId"]
+    if scope == "new_vendor":
+        return client.post(
+            "/api/v1/trainer/upload", files={"file": ("i.pdf", b"%PDF mock", "application/pdf")}
+        ).json()["sessionId"]
+    db_session.add(Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="blob/acme.pdf", status="COMPLETED",
+        vendor_name="ACME Corporation", invoice_number="INV-9", grand_total=110.0, field_confidence={},
+    ))
+    db_session.commit()
+    return client.post(
+        "/api/v1/trainer/sessions/from-production", params={"vendor_name": "ACME Corporation"}
+    ).json()["sessionId"]
+
+
+@pytest.mark.parametrize("scope", ["global", "existing_vendor", "new_vendor"])
+def test_commit_invalidates_chat_answer_cache_for_every_scope(scope, trainer_mocks, db_session, answer_cache):
+    """Gap 213: the flush used to sit inside `if scope == "global"`, so an Existing
+    Vendor / New Vendor commit left Chat serving pre-correction answers for the rest
+    of the 1hr TTL. Every scope must flush."""
+    sid = _start_session(scope, db_session)
+    assert client.post(f"/api/v1/trainer/sessions/{sid}/commit").status_code == 200
+    _assert_answer_cache_flushed(answer_cache)
+
+
+@pytest.mark.parametrize(
+    "scope,history_params",
+    [
+        ("global", {"scope": "global"}),
+        # Any vendor-scoped template exercises the same previously-skipped branch
+        # (`if template.vendor_name is None`); New Vendor is the cheapest to set up.
+        ("new_vendor", {"scope": "existing_vendor", "vendor_name": "ACME Corporation"}),
+    ],
+)
+def test_rollback_invalidates_chat_answer_cache_for_every_scope(
+    scope, history_params, trainer_mocks, db_session, answer_cache
+):
+    """Same defect on the rollback path, which gated on `template.vendor_name is None`."""
+    sid = _start_session(scope, db_session)
+    assert client.post(f"/api/v1/trainer/sessions/{sid}/commit").status_code == 200
+
+    template_id = client.get("/api/v1/trainer/templates/history", params=history_params).json()[0]["templateId"]
+
+    answer_cache.reset_mock()  # isolate the rollback's flush from the commit's
+    assert client.post(f"/api/v1/trainer/templates/{template_id}/rollback/1").status_code == 200
+    _assert_answer_cache_flushed(answer_cache)
+
+
 # ── Commit-time rule validation (Gap 58) ─────────────────────────────────────
 
 def _mock_structured_llm(is_instruction: bool, reason: str = "test reason"):
@@ -357,6 +436,102 @@ def test_build_system_prompt_is_scope_aware():
     vendor_prompt = _build_system_prompt("existing_vendor", ["Global rule X"])
     assert "read-only context" in vendor_prompt.lower()
     assert "Global rule X" in vendor_prompt
+
+
+# ── Gap 212: refinement fails closed, never appends raw chat text as a rule ───
+#
+# Both failure paths used to `return current_constraints + [user_message]`, so a
+# correction like "Remove the rule requiring PO prefix" sent during an LLM outage
+# was stored verbatim as a NEW extraction rule for that vendor. They must now leave
+# the constraints untouched and surface the failure to the user instead.
+
+def _llm_that_raises(exc: Exception):
+    fake_llm = MagicMock()
+    fake_llm.with_structured_output.return_value.invoke.side_effect = exc
+    return fake_llm
+
+
+def _llm_returning(result):
+    fake_llm = MagicMock()
+    fake_llm.with_structured_output.return_value.invoke.return_value = result
+    return fake_llm
+
+
+# A structured response that came back without the expected `constraints` field.
+# Deliberately not a MagicMock: MagicMock answers hasattr() for anything, so it
+# could never exercise this path.
+_MALFORMED_LLM_RESULT = {"rules": ["something else entirely"]}
+
+USER_CORRECTION = "Remove the rule requiring PO prefix"
+EXISTING_RULES = ["The invoice_number field is always prefixed with INV-"]
+
+
+def test_refine_constraints_raises_and_keeps_rules_when_llm_call_fails():
+    from agents.trainer_agent import refine_constraints, ConstraintRefinementError
+
+    current = list(EXISTING_RULES)
+    with patch("agents.trainer_agent.get_llm", return_value=_llm_that_raises(RuntimeError("upstream 503"))):
+        with pytest.raises(ConstraintRefinementError):
+            refine_constraints(USER_CORRECTION, current, scope="existing_vendor")
+
+    assert current == EXISTING_RULES  # untouched, and the chat text was not appended
+
+
+def test_refine_constraints_raises_and_keeps_rules_when_response_lacks_constraints():
+    from agents.trainer_agent import refine_constraints, ConstraintRefinementError
+
+    current = list(EXISTING_RULES)
+    with patch("agents.trainer_agent.get_llm", return_value=_llm_returning(_MALFORMED_LLM_RESULT)):
+        with pytest.raises(ConstraintRefinementError):
+            refine_constraints(USER_CORRECTION, current, scope="existing_vendor")
+
+    assert current == EXISTING_RULES
+
+
+def _seed_chat_session(session_id: str) -> dict:
+    session = {
+        "session_id": session_id,
+        "tenant_id": str(MOCK_TENANT_ID),
+        "scope": "global",
+        "vendor_name": None,
+        "file_path": None,
+        "ocr_text": "",
+        "constraints": list(EXISTING_RULES),
+        "corrected_keys": [],
+        "extracted_data": {},
+        "chat_history": [],
+    }
+    trainer_sessions.save_session(session_id, session)
+    return session
+
+
+@pytest.mark.parametrize(
+    "fake_llm_factory",
+    [
+        lambda: _llm_that_raises(RuntimeError("upstream 503")),
+        lambda: _llm_returning(_MALFORMED_LLM_RESULT),
+    ],
+    ids=["llm_exception", "response_missing_constraints"],
+)
+def test_chat_surfaces_refinement_failure_instead_of_storing_raw_message(fake_llm_factory):
+    session_id = "sess-gap212"
+    _seed_chat_session(session_id)
+
+    with patch("agents.trainer_agent.get_llm", return_value=fake_llm_factory()):
+        resp = client.post(
+            f"/api/v1/trainer/sessions/{session_id}/chat",
+            json={"content": USER_CORRECTION},
+        )
+
+    assert resp.status_code == 502
+    assert "retry" in resp.json()["detail"].lower()
+
+    # The session must be exactly as it was: same rules, no raw chat text promoted
+    # to a rule, and no half-turn (user message with no answer) persisted.
+    stored = trainer_sessions.get_session(session_id)
+    assert stored["constraints"] == EXISTING_RULES
+    assert USER_CORRECTION not in stored["constraints"]
+    assert stored["chat_history"] == []
 
 
 # ── FE Gap 115: paid-plan gate ───────────────────────────────────────────────

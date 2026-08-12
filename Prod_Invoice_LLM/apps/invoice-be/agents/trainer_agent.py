@@ -12,6 +12,26 @@ class ConstraintList(BaseModel):
     model_config = {"extra": "forbid"}
     constraints: List[str] = Field(description="The refined list of layout constraints/rules")
 
+
+class ConstraintRefinementError(RuntimeError):
+    """Raised when a user's correction could not be turned into a constraint update.
+
+    Gap 212: both failure paths in ``refine_constraints`` used to fall back to
+    ``current_constraints + [user_message]`` -- the user's raw chat text was appended
+    as if it were an extraction rule. A user typing "Remove the rule requiring PO
+    prefix" during a network blip got that sentence added as a *new* constraint,
+    silently corrupting the vendor's extraction template. Refinement now fails
+    closed: the existing constraints are left exactly as they were and the caller
+    surfaces the failure so the user can retry.
+    """
+
+
+# Shown to the user (via the router's HTTP detail) when refinement fails. Deliberately
+# free of internal detail -- the underlying exception is logged, not returned.
+REFINEMENT_FAILURE_MESSAGE = (
+    "Couldn't process that correction — your existing rules are unchanged. Please retry."
+)
+
 SYSTEM_PROMPT = (
     "You are an AI Trainer Agent for an invoice processing pipeline.\n"
     "Your task is to maintain a set of layout extraction constraints or templates "
@@ -59,6 +79,11 @@ def refine_constraints(
     ``scope`` and ``global_constraints`` make the refinement scope-aware (Task 10.5): a
     Global session keeps rules vendor-agnostic, while a vendor session receives the tenant's
     Global rules as read-only context so it avoids duplicating them.
+
+    Raises ``ConstraintRefinementError`` (Gap 212) if the LLM call fails or returns a
+    response without a usable ``constraints`` field. Both are fail-closed: nothing is
+    added to ``current_constraints``, and the caller is expected to tell the user to
+    retry rather than persist a half-understood correction.
     """
     global_constraints = global_constraints or []
     llm = get_llm()
@@ -71,14 +96,24 @@ def refine_constraints(
             HumanMessage(content=prompt)
         ]
         result = structured_llm.invoke(messages)
-        if hasattr(result, "constraints"):
-            return result.constraints
-        elif isinstance(result, dict) and "constraints" in result:
-            return result["constraints"]
-        return current_constraints + [user_message]
     except Exception as e:
-        logger.warning("Failed to refine constraints via LLM: %s. Appending user message directly.", e)
-        return current_constraints + [user_message]
+        # Network blip, provider outage, schema-validation failure inside the
+        # structured-output wrapper -- anything that means we never got a refined list.
+        logger.warning("Failed to refine constraints via LLM: %s. Constraints left unchanged.", e)
+        raise ConstraintRefinementError(REFINEMENT_FAILURE_MESSAGE) from e
+
+    # The shape check lives outside the try so a ConstraintRefinementError raised here
+    # is not re-swallowed by the except above.
+    if hasattr(result, "constraints"):
+        return result.constraints
+    if isinstance(result, dict) and "constraints" in result:
+        return result["constraints"]
+
+    logger.warning(
+        "Trainer LLM returned a response with no 'constraints' field (type=%s). Constraints left unchanged.",
+        type(result).__name__,
+    )
+    raise ConstraintRefinementError(REFINEMENT_FAILURE_MESSAGE)
 
 def run_trainer_agent(
     file_path: Optional[str],
@@ -95,6 +130,10 @@ def run_trainer_agent(
 
     ``scope`` is one of "global" | "existing_vendor" | "new_vendor"; ``global_constraints``
     is the tenant's current Global-template rules, passed as read-only context for vendor scopes.
+
+    Propagates ``ConstraintRefinementError`` from ``refine_constraints`` (Gap 212): if the
+    correction could not be refined, no extraction is re-run and the session keeps its
+    existing constraints -- the router turns this into a user-facing "please retry".
     """
     updated_constraints = refine_constraints(
         user_message, current_constraints, scope=scope, global_constraints=global_constraints

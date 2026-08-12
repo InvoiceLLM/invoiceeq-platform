@@ -15,7 +15,7 @@ from dependencies import get_db_session, get_tenant_context, require_can_train, 
 from models import ExtractionTemplate, ExtractionTemplateVersion, Invoice, User
 from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
-from agents.trainer_agent import run_trainer_agent
+from agents.trainer_agent import run_trainer_agent, ConstraintRefinementError
 from services.storage import LOCAL_STORAGE_DIR
 from services import trainer_sessions
 from services.billing_lifecycle import PAID_PLANS
@@ -304,13 +304,21 @@ def _enqueue_reaudit(tenant_id: str, vendor_name: str | None) -> bool:
 
 
 def _invalidate_chat_answer_cache(tenant_id: str) -> None:
-    """Committing a Global rule changes how `agents/query_agent.py` should answer
-    questions (see `_get_global_business_rules()`), but the SQL/RAG answer cache
-    (Task 6.11, `chat_answer_cache:{tenant_id}:{query}`, 1hr TTL) has no way to know
-    that on its own — without this, a question asked again within the hour would
-    silently keep getting the pre-rule cached answer. Best-effort: a cache miss is
-    never a correctness problem, only a cache flush failure would be, and that's
-    not worth failing the commit over.
+    """Committing or rolling back *any* rule changes how `agents/query_agent.py`
+    should answer questions (see `_get_global_business_rules()`), but the SQL/RAG
+    answer cache (Task 6.11, `chat_answer_cache:{tenant_id}:{query}`, 1hr TTL) has no
+    way to know that on its own — without this, a question asked again within the
+    hour would silently keep getting the pre-rule cached answer. Best-effort: a cache
+    miss is never a correctness problem, only a cache flush failure would be, and
+    that's not worth failing the commit over.
+
+    Gap 213: this used to be called only on the Global-scope branches, so an
+    Existing Vendor / New Vendor commit left that vendor's answers stale for up to
+    the full TTL. The cache key is tenant-scoped and *not* vendor-partitioned
+    (`_cache_key()` hashes only tenant + normalized query), so there is no narrower
+    key set to target for a vendor-scoped change — flushing the tenant's answers is
+    both the correct and the only available granularity. Callers therefore invoke
+    this unconditionally, for every scope.
     """
     try:
         import redis
@@ -577,6 +585,16 @@ def trainer_chat(
             scope=scope,
             global_constraints=global_constraints,
         )
+    except ConstraintRefinementError as e:
+        # Gap 212: the agent could not turn this correction into a rule change (LLM
+        # outage, or a structured response with no `constraints` field). It used to
+        # fall back to appending the raw chat text as a constraint, silently
+        # corrupting the template. Now nothing is written -- the session is left
+        # exactly as it was (not re-saved below, so the user turn is not persisted
+        # either) and the user is told to retry. 502 because the failure is upstream
+        # (the LLM provider), matching routers/connectors.py's provider-failure path.
+        logger.warning("Trainer constraint refinement failed for session %s: %s", session_id, e)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
     except Exception as e:
         logger.error("Trainer Agent failed during chat correction: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process chat feedback: {str(e)}")
@@ -695,9 +713,13 @@ def trainer_commit(
     reaudit_queued = False
     if scope == "global":
         reaudit_queued = _enqueue_reaudit(str(tenant_context.tenant_id), None)
-        _invalidate_chat_answer_cache(str(tenant_context.tenant_id))
     elif scope == "existing_vendor":
         reaudit_queued = _enqueue_reaudit(str(tenant_context.tenant_id), vendor_name)
+
+    # Every scope invalidates, not just Global (Gap 213) — the answer cache is keyed
+    # per tenant + query with no vendor dimension, so a vendor rule change can just as
+    # easily have stale answers sitting in it.
+    _invalidate_chat_answer_cache(str(tenant_context.tenant_id))
 
     # Clean up only transient uploaded files — never a production invoice's blob.
     file_path = session.get("file_path")
@@ -794,8 +816,9 @@ def rollback_template(
     db_session.refresh(template)
 
     reaudit_queued = _enqueue_reaudit(str(tenant_context.tenant_id), template.vendor_name)
-    if template.vendor_name is None:
-        _invalidate_chat_answer_cache(str(tenant_context.tenant_id))
+    # Unconditional, same reasoning as trainer_commit() (Gap 213): a vendor-scoped
+    # rollback changes answers just as a Global one does, and the cache is tenant-keyed.
+    _invalidate_chat_answer_cache(str(tenant_context.tenant_id))
 
     return {
         "status": "success",
