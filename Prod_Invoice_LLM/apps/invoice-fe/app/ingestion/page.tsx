@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send, ChevronDown } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send, ChevronDown, Bot, Zap, Settings2 } from "lucide-react";
 import TagSelector from "../../components/ingestion/TagSelector";
 import DropZone from "../../components/ingestion/DropZone";
 import StatusTable from "../../components/ingestion/StatusTable";
@@ -9,10 +9,11 @@ import PendingLedger from "../../components/ingestion/PendingLedger";
 import LogTerminal from "../../components/ingestion/LogTerminal";
 import SendInvoiceStatusTable from "../../components/ingestion/SendInvoiceStatusTable";
 import ConnectorBrowseBar from "../../components/ingestion/ConnectorBrowseBar";
+import AutopilotHistoryTable from "../../components/ingestion/AutopilotHistoryTable";
 import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 
-type IngestionTab = "receiving" | "sending";
+type IngestionTab = "receiving" | "sending" | "autopilot";
 
 // Module-level cache to persist selected files/tags across page navigations (Gap 146)
 let cachedFiles: File[] = [];
@@ -58,7 +59,91 @@ export default function IngestionPage() {
   const [sendEnabled, setSendEnabled] = useState(false);
   const [activeTab, setActiveTab] = useState<IngestionTab>("receiving");
 
-  // Outbound (Sending) state
+  // Feature 13: Autopilot config state
+  const [autopilotConfig, setAutopilotConfig] = useState({
+    source_type: "gdrive",
+    source_ref: "",
+    flow_direction: "INBOUND",
+    trigger_mode: "interval",
+    trigger_value: "60",
+    notify_emails_raw: "",  // comma-separated string for the input
+    send_approval_links: false,
+  });
+  const [autopilotConfigLoading, setAutopilotConfigLoading] = useState(false);
+  const [autopilotSaving, setAutopilotSaving] = useState(false);
+  const [autopilotSyncing, setAutopilotSyncing] = useState(false);
+  const [autopilotSyncResult, setAutopilotSyncResult] = useState<string | null>(null);
+  const [autopilotError, setAutopilotError] = useState<string | null>(null);
+  const [autopilotHistoryKey, setAutopilotHistoryKey] = useState(0); // bump to force table refresh
+
+  // Load existing autopilot config on mount
+  const loadAutopilotConfig = useCallback(async () => {
+    try {
+      setAutopilotConfigLoading(true);
+      const res = await apiClient.get("/autopilot/config");
+      if (res.data) {
+        setAutopilotConfig({
+          source_type: res.data.source_type || "gdrive",
+          source_ref: res.data.source_ref || "",
+          flow_direction: res.data.flow_direction || "INBOUND",
+          trigger_mode: res.data.trigger_mode || "interval",
+          trigger_value: res.data.trigger_value || "60",
+          notify_emails_raw: (res.data.notify_emails || []).join(", "),
+          send_approval_links: res.data.send_approval_links ?? false,
+        });
+      }
+    } catch {
+      // No config yet — defaults are fine
+    } finally {
+      setAutopilotConfigLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAutopilotConfig();
+  }, [loadAutopilotConfig]);
+
+  const handleSaveAutopilotConfig = async () => {
+    setAutopilotSaving(true);
+    setAutopilotError(null);
+    setAutopilotSyncResult(null);
+    try {
+      await apiClient.put("/autopilot/config", {
+        source_type: autopilotConfig.source_type,
+        source_ref: autopilotConfig.source_ref.trim(),
+        flow_direction: autopilotConfig.flow_direction,
+        trigger_mode: autopilotConfig.trigger_mode,
+        trigger_value: autopilotConfig.trigger_value.trim(),
+        notify_emails: autopilotConfig.notify_emails_raw
+          .split(",")
+          .map((e: string) => e.trim())
+          .filter(Boolean),
+        send_approval_links: autopilotConfig.send_approval_links,
+      });
+      setAutopilotSyncResult("Configuration saved successfully.");
+      setTimeout(() => setAutopilotSyncResult(null), 4000);
+    } catch (err: any) {
+      setAutopilotError(err?.response?.data?.detail || "Failed to save configuration.");
+    } finally {
+      setAutopilotSaving(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    setAutopilotSyncing(true);
+    setAutopilotError(null);
+    setAutopilotSyncResult(null);
+    try {
+      const res = await apiClient.post("/autopilot/sync");
+      setAutopilotSyncResult(res.data.message);
+      setAutopilotHistoryKey((k) => k + 1); // refresh history table
+    } catch (err: any) {
+      setAutopilotError(err?.response?.data?.detail || "Sync failed. Please check your configuration.");
+    } finally {
+      setAutopilotSyncing(false);
+    }
+  };
+
   const [outboundFiles, setOutboundFiles] = useState<File[]>(() => cachedOutboundFiles);
   const [outboundInvoices, setOutboundInvoices] = useState<Array<{ id: string; batchId: string; name: string }>>([]);
   const [isOutboundUploading, setIsOutboundUploading] = useState(false);
@@ -231,20 +316,16 @@ export default function IngestionPage() {
   };
 
   const showTabs = receiveEnabled && sendEnabled;
-  const showReceiving = !sendEnabled || activeTab === "receiving";
-  const showSending = (sendEnabled && !receiveEnabled) || (showTabs && activeTab === "sending");
+  const showReceiving = activeTab === "receiving" && (receiveEnabled || !sendEnabled);
+  const showSending = activeTab === "sending" && sendEnabled;
+  const showAutopilot = activeTab === "autopilot";
 
   return (
     <div className="space-y-6">
-      {/* FE Gap 86 (preserved through Gap 110): the Receiving/Sending toggle
-          must stay on the same row as the title, not start a row of its own.
-          The title now lives in Shell's shared header, so the toggle follows it
-          there through the header's actions portal rather than through the old
-          `actions` prop. Still gated on showTabs, so a single-service tenant
-          sees exactly what it did before. */}
-      {showTabs && (
-        <PageHeaderActions>
-          <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
+      {/* Tab toggle in header — always shown (Autopilot is always available) */}
+      <PageHeaderActions>
+        <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
+          {receiveEnabled && (
             <button
               onClick={() => setActiveTab("receiving")}
               className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
@@ -253,6 +334,8 @@ export default function IngestionPage() {
             >
               Receiving
             </button>
+          )}
+          {sendEnabled && (
             <button
               onClick={() => setActiveTab("sending")}
               className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
@@ -261,9 +344,19 @@ export default function IngestionPage() {
             >
               Sending
             </button>
-          </div>
-        </PageHeaderActions>
-      )}
+          )}
+          {/* Feature 13: Autopilot tab — always visible */}
+          <button
+            onClick={() => setActiveTab("autopilot")}
+            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1 ${
+              activeTab === "autopilot" ? "bg-violet-600 text-white" : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Bot className="w-3 h-3" />
+            Autopilot
+          </button>
+        </div>
+      </PageHeaderActions>
 
       {showSending && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -589,6 +682,168 @@ export default function IngestionPage() {
           )}
         </div>
       </div>
+      )}
+      {/* ------------------------------------------------------------------ */}
+      {/* Feature 13: Autopilot Tab                                           */}
+      {/* ------------------------------------------------------------------ */}
+      {showAutopilot && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left: Config Form */}
+          <div className="space-y-4">
+            <div className="glass-panel rounded-xl border border-[#222D3D] p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-violet-400" />
+                <h3 className="text-sm font-semibold text-white">Autopilot Configuration</h3>
+              </div>
+
+              {autopilotConfigLoading ? (
+                <div className="flex items-center gap-2 text-xs text-slate-500 py-4">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading config…
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Source type */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Cloud Source</label>
+                    <div className="flex gap-3">
+                      {(["gdrive", "salesforce"] as const).map((src) => (
+                        <button
+                          key={src}
+                          onClick={() => setAutopilotConfig((c) => ({ ...c, source_type: src }))}
+                          className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${
+                            autopilotConfig.source_type === src
+                              ? "bg-violet-600/20 border-violet-500/40 text-violet-300"
+                              : "bg-slate-900/40 border-[#222D3D] text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          {src === "gdrive" ? "Google Drive" : "Salesforce"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Folder ID */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">
+                      {autopilotConfig.source_type === "gdrive" ? "Google Drive Folder ID" : "Salesforce Directory ID"}
+                    </label>
+                    <input
+                      type="text"
+                      value={autopilotConfig.source_ref}
+                      onChange={(e) => setAutopilotConfig((c) => ({ ...c, source_ref: e.target.value }))}
+                      placeholder={autopilotConfig.source_type === "gdrive" ? "e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74" : "e.g. 0690v000001zXbcAAE"}
+                      className="w-full bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/60"
+                    />
+                  </div>
+
+                  {/* Flow direction */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Flow Direction</label>
+                    <div className="flex gap-3">
+                      {(["INBOUND", "OUTBOUND"] as const).map((dir) => (
+                        <button
+                          key={dir}
+                          onClick={() => setAutopilotConfig((c) => ({ ...c, flow_direction: dir }))}
+                          className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${
+                            autopilotConfig.flow_direction === dir
+                              ? "bg-blue-600/20 border-blue-500/40 text-blue-300"
+                              : "bg-slate-900/40 border-[#222D3D] text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          {dir === "INBOUND" ? "Inbound (AP)" : "Outbound (AR)"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Schedule */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Schedule</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={autopilotConfig.trigger_mode}
+                        onChange={(e) => setAutopilotConfig((c) => ({ ...c, trigger_mode: e.target.value }))}
+                        className="bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500/60"
+                      >
+                        <option value="interval">Interval (minutes)</option>
+                        <option value="cron">Cron expression</option>
+                      </select>
+                      <input
+                        type="text"
+                        value={autopilotConfig.trigger_value}
+                        onChange={(e) => setAutopilotConfig((c) => ({ ...c, trigger_value: e.target.value }))}
+                        placeholder={autopilotConfig.trigger_mode === "interval" ? "60" : "0 * * * *"}
+                        className="flex-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/60"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Notification emails */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Notification Emails</label>
+                    <input
+                      type="text"
+                      value={autopilotConfig.notify_emails_raw}
+                      onChange={(e) => setAutopilotConfig((c) => ({ ...c, notify_emails_raw: e.target.value }))}
+                      placeholder="email@example.com, another@example.com"
+                      className="w-full bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/60"
+                    />
+                  </div>
+
+                  {/* Approval links toggle */}
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autopilotConfig.send_approval_links}
+                      onChange={(e) => setAutopilotConfig((c) => ({ ...c, send_approval_links: e.target.checked }))}
+                      className="w-4 h-4 rounded border-[#222D3D] accent-violet-500"
+                    />
+                    <span className="text-xs text-slate-300">Include manual approval link in notification emails</span>
+                  </label>
+
+                  {/* Result / error banners */}
+                  {autopilotSyncResult && (
+                    <div className="flex items-center gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-xs">
+                      <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                      <span>{autopilotSyncResult}</span>
+                    </div>
+                  )}
+                  {autopilotError && (
+                    <div className="flex items-center gap-2 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-xs">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <span>{autopilotError}</span>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      onClick={handleSaveAutopilotConfig}
+                      disabled={autopilotSaving}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-semibold border border-violet-500/40 bg-violet-600/20 text-violet-300 hover:bg-violet-600/30 disabled:opacity-50 disabled:cursor-wait transition-all"
+                    >
+                      {autopilotSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Settings2 className="w-3.5 h-3.5" />}
+                      {autopilotSaving ? "Saving…" : "Save Config"}
+                    </button>
+                    <button
+                      onClick={handleSyncNow}
+                      disabled={autopilotSyncing}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-semibold border border-blue-500/40 bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 disabled:opacity-50 disabled:cursor-wait transition-all"
+                    >
+                      {autopilotSyncing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                      {autopilotSyncing ? "Syncing…" : "Sync Now"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right: Sync History Table */}
+          <div>
+            <AutopilotHistoryTable key={autopilotHistoryKey} autoRefresh={autopilotSyncing} />
+          </div>
+        </div>
       )}
     </div>
   );

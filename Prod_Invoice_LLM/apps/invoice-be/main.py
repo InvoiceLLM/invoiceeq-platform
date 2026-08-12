@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import get_settings
-from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion, outbound_invoices, outbound_audit, outbound_dashboard, webhooks, billing, admin, webhook_docs
+from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion, outbound_invoices, outbound_audit, outbound_dashboard, webhooks, billing, admin, webhook_docs, autopilot
 from routers import settings as settings_router
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,7 @@ app.include_router(outbound_dashboard.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1")
 app.include_router(billing.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(autopilot.router, prefix="/api/v1")  # Feature 13: Tenant Autopilot
 
 # Gap 184: documentation-only. `app.webhooks` contributes an OpenAPI 3.1
 # "webhooks" section describing the events this platform SENDS -- nothing is
