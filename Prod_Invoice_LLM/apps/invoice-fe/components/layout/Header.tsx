@@ -193,7 +193,12 @@ export default function Header() {
         console.warn("Backend logout failed (non-blocking):", backendErr);
       }
 
-      await signOut();
+      // Gap 151: signOut() with no destination let Clerk's own post-sign-out
+      // navigation win the race against the window.location.href line below,
+      // landing on Clerk's hosted Account Portal instead of this app's
+      // /login. Telling Clerk the destination directly avoids the race.
+      await signOut({ redirectUrl: `${WEBSITE_URL}/login` });
+      return;
     } catch (err) {
       console.error("Sign out error", err);
     }
