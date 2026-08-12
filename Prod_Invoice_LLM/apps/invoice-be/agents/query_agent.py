@@ -660,7 +660,13 @@ Conversation History for Context:
                         db_result = fallback_result
 
             # Formulate final output matching the raw numbers
-            summary_prompt = f"""Format a friendly summary explaining these database query results:
+            # Gap 219: the raw numbers are already shown verbatim in the
+            # "### Query Results" table appended below (line ~671) -- this
+            # summary is prose framing, not the data source, so it stays short.
+            summary_prompt = f"""Format a friendly summary explaining these database query results.
+Keep it to 1-2 sentences. Do not restate every row -- the full results table is
+shown to the user separately right after your summary. Do not explain your
+reasoning or how the query was constructed.
 Results:
 {db_result}
 {rules_block}
@@ -689,6 +695,8 @@ User Query: {user_message}
             
         system_prompt = f"""You are an assistant answering questions about invoice documents.
 Use the following extracted context chunks and short-term conversation history to answer the user's query.
+
+Answer in 1-3 sentences. Be direct. Do not explain your reasoning unless asked.
 
 Extracted Document Context (Long-term Facts):
 {context_str}
@@ -726,6 +734,10 @@ Conversation History (Short-term context):
             
     else:  # CHAT
         system_prompt = f"""You are a helpful assistant for an AI Invoice Processing platform. Keep your conversation brief, polite, and directly address the user's message.
+
+Match the brevity of the user's message -- a short question gets a short answer.
+Default to 1-3 sentences unless the user actually asks for detail or a list.
+Do not pad a simple answer with unrequested explanation or caveats.
 
 {tenant_stats}
 {_INJECTION_GUARD_INSTRUCTION}
