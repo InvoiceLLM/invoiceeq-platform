@@ -836,3 +836,60 @@ def handle_reaudit_templates(tenant_id: str, vendor_name: str = None) -> dict:
         "enqueued": enqueued,
         "total": len(targets),
     }
+
+
+def handle_deliver_webhook(
+    tenant_id: str,
+    subscription_id: str,
+    event_type: str,
+    payload: dict,
+    db_session: Optional[Session] = None,
+) -> dict:
+    """Gap 194 — queue-worker job for one outbound webhook delivery.
+
+    ``services.webhooks.dispatch_webhook_event`` used to make the subscriber
+    HTTP call inline on whatever thread had just committed the invoice (this
+    module's own ``handle_process_invoice``, routers/audit.py,
+    routers/outbound_invoices.py, services/outbound_overdue.py). With a 5s
+    timeout, 3 attempts and 1s/2s backoff, one slow subscriber added up to
+    ~19s to the operation that triggered it — per subscription. That work
+    lives here now: the dispatcher only enqueues, and this handler owns the
+    retries, the failure accounting and the delivery-log row.
+
+    Errors are logged and swallowed rather than re-raised: a raise would leave
+    the queue message undeleted and redeliver the same event to a subscriber
+    that may already have received it. The retry policy for a bad subscriber
+    is ``_deliver_with_retry``'s 3 attempts, not queue redelivery.
+
+    ``db_session`` is injectable for tests; production (queue-worker) calls
+    leave it as None and get a real, short-lived ``Session(engine)``.
+    """
+    from services.webhooks import deliver_webhook_now
+
+    def _run(session: Session) -> dict:
+        result = deliver_webhook_now(
+            session,
+            UUID(subscription_id),
+            event_type,
+            payload or {},
+        )
+        if result is None:
+            return {"delivered": False, "skipped": True}
+        return {
+            "delivered": result.success,
+            "skipped": False,
+            "status_code": result.status_code,
+            "attempts": result.attempts,
+        }
+
+    try:
+        if db_session is not None:
+            return _run(db_session)
+        with Session(engine) as session:
+            return _run(session)
+    except Exception as e:
+        logger.error(
+            "Webhook delivery job failed (tenant=%s, subscription=%s, event=%s): %s",
+            tenant_id, subscription_id, event_type, e,
+        )
+        return {"delivered": False, "skipped": False, "error": str(e)}

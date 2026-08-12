@@ -9,6 +9,7 @@ from queue_worker.handlers import (
     handle_process_invoice,
     handle_import_connector_file,
     handle_reaudit_templates,
+    handle_deliver_webhook,
 )
 from queue_worker.outbound_handlers import handle_process_outbound_invoice
 
@@ -146,6 +147,16 @@ def _process_message(queue_client: QueueClient, msg) -> None:
             handle_reaudit_templates(
                 tenant_id=tenant_id,
                 vendor_name=kwargs.get("vendor_name")
+            )
+        elif task_name == "deliver_webhook":
+            # Gap 194: outbound webhook delivery. Runs here rather than inline
+            # in the thread that committed the invoice, so a slow subscriber
+            # (up to ~19s of retries/backoff) can't back-pressure ingestion.
+            handle_deliver_webhook(
+                tenant_id=tenant_id,
+                subscription_id=kwargs.get("subscription_id"),
+                event_type=kwargs.get("event_type"),
+                payload=kwargs.get("payload") or {},
             )
         else:
             logger.warning(f"Unknown task {task_name}")

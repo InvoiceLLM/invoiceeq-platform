@@ -10,10 +10,12 @@ import {
   Trash2, 
   AlertCircle, 
   ShieldAlert, 
-  Settings, 
+  Settings,
   Info,
   Power,
-  RotateCw
+  Pencil,
+  RotateCw,
+  History
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
@@ -24,9 +26,24 @@ interface WebhookSub {
   subscribed_events: string[];
   enabled: boolean;
   consecutive_failures: number;
+  // Gap 194: {event_type: consecutive failures}. Optional so a response from a
+  // backend that predates the field doesn't break the row.
+  event_failure_counts?: Record<string, number>;
   created_at: string;
   updated_at: string;
   secret?: string; // only present upon creation
+}
+
+/** Gap 194: one row of GET /api/webhooks/{id}/deliveries. */
+interface WebhookDelivery {
+  id: string;
+  event_type: string;
+  success: boolean;
+  status_code: number | null;
+  attempts: number;
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
 }
 
 const ALLOWED_EVENTS = [
@@ -42,8 +59,10 @@ const ALLOWED_EVENTS = [
 const GENERIC_ERRORS = {
   load: "Failed to load webhooks. Please try again.",
   create: "Failed to create webhook. Please try again.",
+  update: "Failed to update webhook. Please try again.",
   toggle: "Failed to update the webhook's status. Please try again.",
-  delete: "Failed to delete webhook. Please try again."
+  delete: "Failed to delete webhook. Please try again.",
+  deliveries: "Failed to load delivery history. Please try again."
 };
 
 /**
@@ -94,12 +113,26 @@ export default function WebhooksPage() {
 
   // Form state
   const [showCreateModal, setShowCreateModal] = useState(false);
+  // FE Gap 203: the same modal serves create and edit. `null` means create;
+  // a webhook id means the form is editing that existing subscription and
+  // submits PUT /webhooks/{id} instead of POST /webhooks.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [targetUrl, setTargetUrl] = useState("");
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
   const [copiedSecret, setCopiedSecret] = useState(false);
   const [copiedUrlId, setCopiedUrlId] = useState<string | null>(null);
+
+  // FE Gap 194: delivery history, fetched lazily per subscription the first
+  // time its panel is opened (the list endpoint returns subscriptions only, and
+  // a tenant can have many endpoints -- no reason to fetch logs nobody asked
+  // for). `expandedId` is the one open panel; keyed state so re-opening a panel
+  // shows what was already loaded instead of flashing a spinner.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [deliveries, setDeliveries] = useState<Record<string, WebhookDelivery[]>>({});
+  const [loadingDeliveriesId, setLoadingDeliveriesId] = useState<string | null>(null);
+  const [deliveriesError, setDeliveriesError] = useState<Record<string, string>>({});
 
   const fetchWebhooks = async () => {
     try {
@@ -130,7 +163,34 @@ export default function WebhooksPage() {
     }
   }, [isAdmin]);
 
-  const handleCreateWebhook = async (e: React.FormEvent) => {
+  // FE Gap 203: single entry point for both modal modes, so the form never
+  // opens carrying the previous session's values.
+  const openCreateModal = () => {
+    setEditingId(null);
+    setCreatedSecret(null);
+    setTargetUrl("");
+    setSelectedEvents([]);
+    setShowCreateModal(true);
+  };
+
+  const openEditModal = (webhook: WebhookSub) => {
+    setEditingId(webhook.id);
+    // The secret is only ever returned once, at creation -- an edit can never
+    // show it, so this view must always be the form, not the secret panel.
+    setCreatedSecret(null);
+    setTargetUrl(webhook.target_url);
+    setSelectedEvents([...webhook.subscribed_events]);
+    setShowCreateModal(true);
+  };
+
+  const closeModal = () => {
+    setShowCreateModal(false);
+    setEditingId(null);
+    setTargetUrl("");
+    setSelectedEvents([]);
+  };
+
+  const handleSubmitWebhook = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetUrl) return;
     if (selectedEvents.length === 0) {
@@ -138,11 +198,14 @@ export default function WebhooksPage() {
       return;
     }
 
+    const isEdit = editingId !== null;
+    const genericError = isEdit ? GENERIC_ERRORS.update : GENERIC_ERRORS.create;
+
     try {
       setSubmitting(true);
       setError(null);
-      const res = await fetch("/api/webhooks", {
-        method: "POST",
+      const res = await fetch(isEdit ? `/api/webhooks/${editingId}` : "/api/webhooks", {
+        method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           target_url: targetUrl,
@@ -151,18 +214,27 @@ export default function WebhooksPage() {
       });
 
       if (!res.ok) {
-        throw new Error(await errorMessage(res, GENERIC_ERRORS.create));
+        throw new Error(await errorMessage(res, genericError));
       }
 
-      const newWebhook = await res.json();
-      setWebhooks(prev => [...prev, newWebhook]);
-      setCreatedSecret(newWebhook.secret);
-      
+      const saved = await res.json();
+
+      if (isEdit) {
+        // PUT returns the public dict (no secret) -- merge it over the row so
+        // the list reflects the new URL/events without a refetch.
+        setWebhooks(prev => prev.map(w => (w.id === editingId ? { ...w, ...saved } : w)));
+        closeModal();
+        return;
+      }
+
+      setWebhooks(prev => [...prev, saved]);
+      setCreatedSecret(saved.secret);
+
       // Reset form
       setTargetUrl("");
       setSelectedEvents([]);
     } catch (err: any) {
-      alert(typeof err?.message === "string" && err.message ? err.message : GENERIC_ERRORS.create);
+      alert(typeof err?.message === "string" && err.message ? err.message : genericError);
     } finally {
       setSubmitting(false);
     }
@@ -201,8 +273,53 @@ export default function WebhooksPage() {
       }
 
       setWebhooks(prev => prev.filter(w => w.id !== id));
+      // FE Gap 194: drop the deleted endpoint's cached delivery history too,
+      // so a newly created webhook can't inherit it if an id is ever reused.
+      setDeliveries(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setExpandedId(prev => (prev === id ? null : prev));
     } catch (err: any) {
       alert(typeof err?.message === "string" && err.message ? err.message : GENERIC_ERRORS.delete);
+    }
+  };
+
+  // FE Gap 194: fetches on first open and on every explicit refresh, so the
+  // panel can be re-checked after a fix without reloading the page.
+  const loadDeliveries = async (id: string) => {
+    try {
+      setLoadingDeliveriesId(id);
+      setDeliveriesError(prev => ({ ...prev, [id]: "" }));
+      const res = await fetch(`/api/webhooks/${id}/deliveries?limit=25`);
+      if (!res.ok) {
+        throw new Error(await errorMessage(res, GENERIC_ERRORS.deliveries));
+      }
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.includes("application/json")) {
+        throw new Error(GENERIC_ERRORS.deliveries);
+      }
+      const data = await res.json();
+      setDeliveries(prev => ({ ...prev, [id]: Array.isArray(data) ? data : [] }));
+    } catch (err: any) {
+      setDeliveriesError(prev => ({
+        ...prev,
+        [id]: typeof err?.message === "string" && err.message ? err.message : GENERIC_ERRORS.deliveries
+      }));
+    } finally {
+      setLoadingDeliveriesId(null);
+    }
+  };
+
+  const handleToggleDeliveries = (id: string) => {
+    if (expandedId === id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(id);
+    if (!deliveries[id]) {
+      loadDeliveries(id);
     }
   };
 
@@ -260,10 +377,7 @@ export default function WebhooksPage() {
           Endpoint" portals up into it so it keeps sitting beside the title. */}
       <PageHeaderActions>
         <button
-          onClick={() => {
-            setCreatedSecret(null);
-            setShowCreateModal(true);
-          }}
+          onClick={openCreateModal}
           className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-md active:scale-95 shrink-0"
         >
           <Plus className="w-4 h-4" />
@@ -301,10 +415,7 @@ export default function WebhooksPage() {
               </p>
             </div>
             <button
-              onClick={() => {
-                setCreatedSecret(null);
-                setShowCreateModal(true);
-              }}
+              onClick={openCreateModal}
               className="px-4 py-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 rounded-xl text-blue-400 text-xs font-semibold transition-all inline-flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
@@ -350,6 +461,30 @@ export default function WebhooksPage() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 shrink-0">
+                    {/* FE Gap 194: delivery history for this endpoint. */}
+                    <button
+                      onClick={() => handleToggleDeliveries(sub.id)}
+                      className={`p-2 rounded-xl border flex items-center justify-center transition-all ${
+                        expandedId === sub.id
+                          ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
+                          : "bg-slate-500/10 border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-white"
+                      }`}
+                      title="Recent deliveries"
+                      aria-label="Recent deliveries"
+                      aria-expanded={expandedId === sub.id}
+                    >
+                      <History className="w-4 h-4" />
+                    </button>
+                    {/* FE Gap 203: edit affordance -- opens the same modal
+                        prefilled, submitting PUT /webhooks/{id}. */}
+                    <button
+                      onClick={() => openEditModal(sub)}
+                      className="p-2 rounded-xl bg-slate-500/10 border border-slate-500/20 text-slate-400 hover:bg-slate-500/20 hover:text-white flex items-center justify-center transition-all"
+                      title="Edit webhook"
+                      aria-label="Edit webhook"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => handleToggleWebhook(sub)}
                       className={`p-2 rounded-xl border flex items-center justify-center transition-all ${
@@ -371,13 +506,94 @@ export default function WebhooksPage() {
                   </div>
                 </div>
 
-                {/* Health Warning */}
+                {/* Health Warning. FE Gap 194: failures are now counted per
+                    event type on the backend, and the endpoint is only
+                    auto-disabled once no event type is still delivering — so
+                    name the failing events instead of implying the whole
+                    endpoint is 10 failures from being switched off. */}
                 {sub.consecutive_failures > 0 && (
-                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/10 text-[11px] text-amber-300">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
-                    <span>
-                      Warning: Webhook failed {sub.consecutive_failures} consecutive times. Auto-disables at 10 failures.
-                    </span>
+                  <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/10 text-[11px] text-amber-300">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                    <div className="space-y-1">
+                      <p>
+                        Warning: {sub.consecutive_failures} consecutive delivery failure
+                        {sub.consecutive_failures === 1 ? "" : "s"}. An endpoint is auto-disabled once an
+                        event type reaches 10 failures and no other event type is still being delivered.
+                      </p>
+                      {(() => {
+                        const failing = Object.entries(sub.event_failure_counts || {}).filter(
+                          ([, count]) => count > 0
+                        );
+                        if (failing.length === 0) return null;
+                        return (
+                          <p className="font-mono text-[10px] text-amber-200/80">
+                            {failing.map(([evt, count]) => `${evt}: ${count}`).join(" · ")}
+                          </p>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {/* FE Gap 194: delivery history. Before this existed, delivery
+                    errors were swallowed by design (a dead subscriber must
+                    never fail the invoice operation that fired the event), so
+                    a totally broken fan-out looked identical to a clean one. */}
+                {expandedId === sub.id && (
+                  <div className="rounded-xl bg-[#0B0F19] border border-[#222D3D] p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold font-mono">
+                        Recent Deliveries
+                      </span>
+                      <button
+                        onClick={() => loadDeliveries(sub.id)}
+                        disabled={loadingDeliveriesId === sub.id}
+                        className="text-[10px] text-slate-400 hover:text-white font-semibold inline-flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        <RotateCw className={`w-3 h-3 ${loadingDeliveriesId === sub.id ? "animate-spin" : ""}`} />
+                        Refresh
+                      </button>
+                    </div>
+
+                    {deliveriesError[sub.id] ? (
+                      <p className="text-[11px] text-red-300">{deliveriesError[sub.id]}</p>
+                    ) : loadingDeliveriesId === sub.id && !deliveries[sub.id] ? (
+                      <p className="text-[11px] text-slate-500">Loading delivery history...</p>
+                    ) : (deliveries[sub.id] || []).length === 0 ? (
+                      <p className="text-[11px] text-slate-500">
+                        No delivery attempts recorded yet for this endpoint.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                        {(deliveries[sub.id] || []).map((d) => (
+                          <div
+                            key={d.id}
+                            className="flex items-start justify-between gap-3 rounded-lg bg-[#151B26] border border-[#222D3D] px-2.5 py-2"
+                          >
+                            <div className="min-w-0 space-y-0.5">
+                              <p className="font-mono text-[10px] text-slate-300 truncate">{d.event_type}</p>
+                              <p className="text-[10px] text-slate-500">
+                                {new Date(d.created_at).toLocaleString()}
+                                {d.attempts > 0 && ` · ${d.attempts} attempt${d.attempts === 1 ? "" : "s"}`}
+                                {d.duration_ms !== null && ` · ${d.duration_ms}ms`}
+                              </p>
+                              {!d.success && d.error && (
+                                <p className="text-[10px] text-red-300/80 break-all">{d.error}</p>
+                              )}
+                            </div>
+                            <span
+                              className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold border ${
+                                d.success
+                                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                                  : "bg-red-500/10 border-red-500/20 text-red-400"
+                              }`}
+                            >
+                              {d.status_code !== null ? d.status_code : d.success ? "OK" : "FAILED"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -395,10 +611,10 @@ export default function WebhooksPage() {
             <div className="p-6 border-b border-[#222D3D] flex items-center justify-between shrink-0">
               <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                 <Webhook className="w-4.5 h-4.5 text-blue-400" />
-                Configure New Webhook
+                {editingId ? "Edit Webhook" : "Configure New Webhook"}
               </h2>
-              <button 
-                onClick={() => setShowCreateModal(false)}
+              <button
+                onClick={closeModal}
                 className="text-slate-400 hover:text-white transition-colors text-xs font-semibold"
               >
                 Close
@@ -439,8 +655,8 @@ export default function WebhooksPage() {
 
                   <button
                     onClick={() => {
+                      closeModal();
                       setCreatedSecret(null);
-                      setShowCreateModal(false);
                       fetchWebhooks();
                     }}
                     className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all shadow-md"
@@ -449,8 +665,8 @@ export default function WebhooksPage() {
                   </button>
                 </div>
               ) : (
-                /* Creation form */
-                <form onSubmit={handleCreateWebhook} className="space-y-5">
+                /* Create / edit form */
+                <form onSubmit={handleSubmitWebhook} className="space-y-5">
                   <div className="space-y-2">
                     <label htmlFor="target-url-input" className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold font-mono">Target URL</label>
                     <input
@@ -504,7 +720,7 @@ export default function WebhooksPage() {
                   <div className="flex items-center gap-3 pt-3">
                     <button
                       type="button"
-                      onClick={() => setShowCreateModal(false)}
+                      onClick={closeModal}
                       className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-[#222D3D] text-xs font-semibold transition-all"
                     >
                       Cancel
@@ -514,7 +730,13 @@ export default function WebhooksPage() {
                       disabled={submitting || !targetUrl}
                       className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all shadow-md active:scale-95 disabled:opacity-55 disabled:pointer-events-none"
                     >
-                      {submitting ? "Registering..." : "Register Endpoint"}
+                      {editingId
+                        ? submitting
+                          ? "Saving..."
+                          : "Save Changes"
+                        : submitting
+                        ? "Registering..."
+                        : "Register Endpoint"}
                     </button>
                   </div>
                 </form>
