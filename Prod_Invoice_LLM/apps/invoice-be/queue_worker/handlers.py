@@ -688,7 +688,10 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.status = status
                 invoice.completed_at = datetime.utcnow()
                 invoice.sa_alerts = alerts
-                invoice.tags = extracted_data.get("tags", [])
+                # Gap 190: this used to be a plain overwrite, which discarded
+                # every user-applied tag the moment extraction completed --
+                # merge (order-preserving, deduped) instead of replace.
+                invoice.tags = list(dict.fromkeys((invoice.tags or []) + extracted_data.get("tags", [])))
                 invoice.items = extracted_data.get("items", [])
                 
                 session.add(invoice)

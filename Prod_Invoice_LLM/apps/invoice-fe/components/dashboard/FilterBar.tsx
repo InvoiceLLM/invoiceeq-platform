@@ -16,6 +16,12 @@ interface FilterBarProps {
   availableTags: string[];
   /** Compact variant: no outer panel/label, meant to share a row with a PageHeader title. */
   compact?: boolean;
+  /**
+   * Gap 200: a status sub-tab above this bar (e.g. "Rejected") already pins
+   * the status server-side, which silently overrides whatever this dropdown
+   * is set to. Disable it in that case instead of leaving it looking live.
+   */
+  statusFilterDisabled?: boolean;
 }
 
 const LOCAL_STORAGE_KEY = "invoice_dashboard_filters";
@@ -33,6 +39,8 @@ const STATUSES = [
   { value: "COMPLETED", label: "Completed" },
   { value: "AUDIT_REQUIRED", label: "Audit Required" },
   { value: "PAID", label: "Paid" },
+  { value: "REJECTED", label: "Rejected" },
+  { value: "DUPLICATE", label: "Duplicate" },
   { value: "FAILED", label: "Failed" },
 ];
 
@@ -41,6 +49,7 @@ export default function FilterBar({
   availableVendors = [],
   availableTags = [],
   compact = false,
+  statusFilterDisabled = false,
 }: FilterBarProps) {
   const [filters, setFilters] = useState<FilterState>({
     vendorName: "",
@@ -150,7 +159,9 @@ export default function FilterBar({
           <select
             value={filters.status}
             onChange={(e) => handleChange("status", e.target.value)}
-            className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+            disabled={statusFilterDisabled}
+            title={statusFilterDisabled ? "Status is already set by the selected tab above" : undefined}
+            className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#222D3D]"
           >
             {STATUSES.map((status) => (
               <option key={status.value} value={status.value}>

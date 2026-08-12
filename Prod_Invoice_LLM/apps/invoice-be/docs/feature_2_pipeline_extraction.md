@@ -204,6 +204,8 @@ Until this landed, an invoice could leave the pipeline without ever reaching a t
 
 * **P2 Retry loop wasted 2 extraction attempts on every low-confidence-field invoice (Gap 47, found + resolved Jul 24, 2026)**: found alongside Gap 46. `route_after_verification()` only excluded `extraction_failed` from the retry trigger; Gap 3's `low_confidence_field` alert wasn't excluded, so an invoice flagged purely for OCR confidence burned up to 2 pointless re-extraction LLM calls before landing on `AUDIT_REQUIRED` anyway — OCR confidence can't change on re-extraction, since the OCR pass itself doesn't re-run. Fixed by generalizing the exclusion to `NON_RETRYABLE_ALERT_TYPES = {"extraction_failed", "low_confidence_field"}`, retrying only if *at least one* alert isn't in that set — a genuine math/faithfulness alert on the same invoice still correctly triggers a retry even when a low-confidence alert is also present.
 
+* **P3 User-applied ingestion tags overwritten by the extractor on completion (Gap 190, Resolved 2026-08-11)**: `routers/invoices.py` persists the user's `tags` at upload; `queue_worker/handlers.py:691` then ran `invoice.tags = extracted_data.get("tags", [])` unconditionally on completion — every user-applied tag was discarded the moment extraction finished, exactly when the invoice reached the Audit Queue. Fixed to merge instead of replace: `invoice.tags = list(dict.fromkeys((invoice.tags or []) + extracted_data.get("tags", [])))`, an order-preserving deduped union. Kept as a single `tags` column rather than splitting user vs. extracted tags into separate columns — smaller change, no migration needed.
+
 
 ### Verification Plan
 * **Automated Tests**:

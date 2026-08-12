@@ -19,6 +19,14 @@ let cachedFiles: File[] = [];
 let cachedTags: string[] = [];
 let cachedOutboundFiles: File[] = [];
 
+// Gap 204: same module-level pattern as Gap 146 above, but for a batch that's
+// already been submitted and is actively processing -- without this, leaving
+// the Ingestion screen mid-batch and coming back showed an empty ledger and a
+// dead log terminal even though the worker was still running.
+let cachedBatchId: string | null = null;
+let cachedJobIds: string[] = [];
+let cachedTrackedFiles: Array<{ name: string; size: number }> = [];
+
 export default function IngestionPage() {
   // FE Gap 110: title + NOVA badge now live in Shell's one shared header.
   usePageHeader({
@@ -120,9 +128,24 @@ export default function IngestionPage() {
   };
 
   // States to pass to the active StatusTable
-  const [batchId, setBatchId] = useState<string | null>(null);
-  const [jobIds, setJobIds] = useState<string[]>([]);
-  const [trackedFiles, setTrackedFiles] = useState<Array<{ name: string; size: number }>>([]);
+  const [batchId, setBatchId] = useState<string | null>(() => cachedBatchId);
+  const [jobIds, setJobIds] = useState<string[]>(() => cachedJobIds);
+  const [trackedFiles, setTrackedFiles] = useState<Array<{ name: string; size: number }>>(() => cachedTrackedFiles);
+
+  // Gap 204: keep the module-level cache in sync so an in-flight batch
+  // reattaches (StatusTable/LogTerminal) instead of resetting to empty when
+  // the user navigates away and back.
+  useEffect(() => {
+    cachedBatchId = batchId;
+  }, [batchId]);
+
+  useEffect(() => {
+    cachedJobIds = jobIds;
+  }, [jobIds]);
+
+  useEffect(() => {
+    cachedTrackedFiles = trackedFiles;
+  }, [trackedFiles]);
 
   // Gap 12/FE Gap 1: directory watcher — bulk-ingest a server-accessible folder
   // in one pass, without per-file drag-and-drop.
@@ -375,16 +398,32 @@ export default function IngestionPage() {
                 }
               }}
               onChange={(e) => {
-                const selectedList = Array.from(e.target.files || []);
-                const pdfs = selectedList.filter(
-                  (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
-                );
-                if (pdfs.length > 0) {
-                  setFiles((prev) => [...prev, ...pdfs]);
-                  setWatcherResult({ files_found: selectedList.length, files_queued: pdfs.length });
-                  setWatcherError(null);
-                } else if (selectedList.length > 0) {
-                  setWatcherError("No PDF files found in selected folder.");
+                // Gap 181: this had no error handling at all -- if reading the
+                // selected folder ever throws (browser-specific security
+                // policy, a huge/unusual directory, etc.), it surfaced as an
+                // uncaught exception with no user-facing message, which is
+                // consistent with reports of a bare "system error." Root
+                // cause of the original report is still unconfirmed pending
+                // a live repro; this ensures a failure here is never silent
+                // or uncaught, whatever the underlying cause turns out to be.
+                try {
+                  const selectedList = Array.from(e.target.files || []);
+                  const pdfs = selectedList.filter(
+                    (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
+                  );
+                  if (pdfs.length > 0) {
+                    setFiles((prev) => [...prev, ...pdfs]);
+                    setWatcherResult({ files_found: selectedList.length, files_queued: pdfs.length });
+                    setWatcherError(null);
+                  } else if (selectedList.length > 0) {
+                    setWatcherError("No PDF files found in selected folder.");
+                  }
+                } catch (err) {
+                  console.error("Failed to read selected folder", err);
+                  setWatcherError("Couldn't read the selected folder. Try again, or use the server directory path below instead.");
+                } finally {
+                  // Reset so re-selecting the same folder fires onChange again.
+                  e.target.value = "";
                 }
               }}
               className="hidden"
