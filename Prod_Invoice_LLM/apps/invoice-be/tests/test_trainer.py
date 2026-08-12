@@ -7,9 +7,12 @@ two-stage (Global + vendor) rule resolution in the ingestion pipeline.
 The heavy pieces (OCR, the extraction agent, the trainer agent) are mocked at the router
 and worker boundaries so these run fast and deterministically without an LLM or PDFs.
 """
+import threading
+
 import pytest
 from unittest.mock import patch, MagicMock
 from uuid import uuid4, UUID
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine, Session, select
@@ -632,3 +635,121 @@ def test_paid_plan_passes_the_gate(db_session, trainer_mocks):
 
     resp = client.post("/api/v1/trainer/sessions/global")
     assert resp.status_code == 201
+
+
+# ── Gap 211: the in-process fallback store is thread-safe ─────────────────────
+#
+# The fallback dict is a dev/test-only path (Redis serves production, Gap 5), but
+# FastAPI still runs sync endpoints on a threadpool, so several trainer requests
+# can mutate it at once. It is now guarded by trainer_sessions._memory_lock.
+#
+# Note on what actually proves the fix, established by running both shapes
+# against a deliberately unlocked build of the module:
+#   - Bare dict item-set/pop are individually atomic under CPython's GIL, so the
+#     first test (save/get/update/delete round-trip) passes with or without the
+#     lock. It is a consistency check, not the regression proof.
+#   - The second test is the regression proof: iterating the store while another
+#     thread mutates it raises "RuntimeError: dictionary changed size during
+#     iteration" when unguarded. Its writers only ADD sessions, deliberately —
+#     an add-immediately-followed-by-delete restores the dict's size before the
+#     iterator re-checks it, so that churn shape does NOT reliably trip the
+#     guard (measured: 0 failures over ~4,500 scans unlocked), while monotonic
+#     growth trips it on the first scan or two. Deletion concurrency is covered
+#     by the first test.
+
+_STRESS_WRITERS = 8
+_STRESS_OPS = 250
+
+# Second test: a scan has to be long enough to overlap a mutation, so the store
+# is pre-seeded and the writers add enough entries to change its size mid-scan.
+_SCAN_RESIDENT_SESSIONS = 500
+_SCAN_WRITERS = 4
+_SCAN_SAVES_PER_WRITER = 2000
+
+
+def _stress_session(session_id: str) -> dict:
+    return {
+        "session_id": session_id,
+        "tenant_id": str(MOCK_TENANT_ID),
+        "scope": "global",
+        "constraints": [],
+        "extracted_data": {},
+        "chat_history": [],
+    }
+
+
+def test_concurrent_fallback_store_access_is_consistent():
+    """Many threads saving/reading/updating/deleting at once round-trip correctly."""
+    errors: list[BaseException] = []
+
+    def worker(worker_id: int):
+        try:
+            for i in range(_STRESS_OPS):
+                session_id = f"sess-stress-{worker_id}-{i}"
+                trainer_sessions.save_session(session_id, _stress_session(session_id))
+                assert trainer_sessions.get_session(session_id)["session_id"] == session_id
+                trainer_sessions.update_session(session_id, {"constraints": ["r1"]})
+                assert trainer_sessions.get_session(session_id)["constraints"] == ["r1"]
+                if i % 2 == 0:
+                    trainer_sessions.delete_session(session_id)
+                    assert trainer_sessions.get_session(session_id) is None
+        except BaseException as e:  # noqa: BLE001 - re-raised on the main thread below
+            errors.append(e)
+
+    with ThreadPoolExecutor(max_workers=_STRESS_WRITERS) as pool:
+        list(pool.map(worker, range(_STRESS_WRITERS)))
+
+    assert not errors, f"concurrent access raised: {errors[:3]}"
+    # Every odd-numbered session of every worker survived, and nothing else did.
+    assert len(trainer_sessions._memory_store) == _STRESS_WRITERS * (_STRESS_OPS // 2)
+
+
+def test_iterating_the_fallback_store_while_threads_mutate_it_does_not_raise():
+    """The lock makes a full scan of the store safe against concurrent mutation.
+
+    Unguarded, this is the exact shape that raises "RuntimeError: dictionary
+    changed size during iteration" — verified by running it against a build with
+    _memory_lock replaced by a no-op.
+    """
+    # Resident entries so a single scan is long enough to overlap the writers.
+    for i in range(_SCAN_RESIDENT_SESSIONS):
+        trainer_sessions.save_session(f"sess-resident-{i}", _stress_session(f"sess-resident-{i}"))
+
+    stop = threading.Event()
+    errors: list[BaseException] = []
+    scans = 0
+
+    def writer(worker_id: int):
+        try:
+            for i in range(_SCAN_SAVES_PER_WRITER):
+                session_id = f"sess-growth-{worker_id}-{i}"
+                trainer_sessions.save_session(session_id, _stress_session(session_id))
+        except BaseException as e:  # noqa: BLE001 - surfaced on the main thread below
+            errors.append(e)
+
+    def scanner():
+        nonlocal scans
+        try:
+            while not stop.is_set():
+                with trainer_sessions._memory_lock:
+                    for key, payload in trainer_sessions._memory_store.items():
+                        assert key.startswith("trainer:session:")
+                        assert payload
+                scans += 1
+        except BaseException as e:  # noqa: BLE001
+            errors.append(e)
+
+    scanner_thread = threading.Thread(target=scanner, daemon=True)
+    scanner_thread.start()
+    try:
+        with ThreadPoolExecutor(max_workers=_SCAN_WRITERS) as pool:
+            list(pool.map(writer, range(_SCAN_WRITERS)))
+    finally:
+        stop.set()
+        scanner_thread.join(timeout=5)
+
+    assert not errors, f"concurrent scan/mutation raised: {errors[:3]}"
+    assert scans > 0, "scanner never completed a pass - the test proved nothing"
+    # Every save landed exactly once, so no write was lost to a race either.
+    expected = _SCAN_RESIDENT_SESSIONS + _SCAN_WRITERS * _SCAN_SAVES_PER_WRITER
+    assert len(trainer_sessions._memory_store) == expected

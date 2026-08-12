@@ -31,6 +31,7 @@ single-process local/test runs — it never silently degrades production.
 
 import json
 import logging
+import threading
 from typing import Any
 
 import redis
@@ -50,6 +51,13 @@ _KEY_PREFIX = "trainer:session:"
 _redis_client: Any = None
 
 # Dev/test-only fallback used when Redis is unavailable. Not shared across replicas.
+#
+# Guarded by _memory_lock: FastAPI runs sync endpoints on a threadpool, so two
+# requests can hit the fallback concurrently. Plain dict mutation from several
+# threads can raise "RuntimeError: dictionary changed size during iteration"
+# (Gap 211). Every read/write/delete below takes the lock; the critical sections
+# are single dict operations, so contention is negligible.
+_memory_lock = threading.Lock()
 _memory_store: dict[str, str] = {}
 
 
@@ -80,13 +88,18 @@ def save_session(session_id: str, data: dict, ttl_seconds: int = SESSION_TTL_SEC
     if client is not None:
         client.set(_key(session_id), payload, ex=ttl_seconds)
     else:
-        _memory_store[_key(session_id)] = payload
+        with _memory_lock:
+            _memory_store[_key(session_id)] = payload
 
 
 def get_session(session_id: str) -> dict | None:
     """Load a session by id, or None if it doesn't exist / has expired."""
     client = _get_redis()
-    raw = client.get(_key(session_id)) if client is not None else _memory_store.get(_key(session_id))
+    if client is not None:
+        raw = client.get(_key(session_id))
+    else:
+        with _memory_lock:
+            raw = _memory_store.get(_key(session_id))
     if not raw:
         return None
     try:
@@ -115,4 +128,5 @@ def delete_session(session_id: str) -> None:
     if client is not None:
         client.delete(_key(session_id))
     else:
-        _memory_store.pop(_key(session_id), None)
+        with _memory_lock:
+            _memory_store.pop(_key(session_id), None)
