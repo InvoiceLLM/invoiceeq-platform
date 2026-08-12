@@ -284,6 +284,10 @@ async def email_mailintegration_webhook(
         db_user_id=None,
         role="System",
         billing_plan=tenant.billing_plan,
+        # Gap 133: TenantContext.tenant_name exists for the FE's identity
+        # display; this machine-to-machine context never reaches a browser, but
+        # populate it anyway so the model has one meaning everywhere.
+        tenant_name=tenant.name,
     )
 
     for file in pdf_files:

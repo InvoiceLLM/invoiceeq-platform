@@ -22,6 +22,13 @@ class TenantContext(BaseModel):
     db_user_id: UUID | None = None
     role: str
     billing_plan: str
+    # Gap 133: the display name of the tenant the backend ACTUALLY resolved.
+    # The FE used to render Clerk's `unsafeMetadata.orgName` (written at
+    # sign-up, never reconciled with the backend), so a user whose org failed
+    # to provision saw the org name they signed up with while their data lived
+    # somewhere else entirely -- the mismatch was invisible. Populated from the
+    # Tenant row this request already loaded, so it costs no extra query.
+    tenant_name: str | None = None
     # Feature 1.1 (Task 1.1.3): per-area permissions, resolved from the User
     # row rather than the JWT -- permissions are our data, not Clerk's, so an
     # Admin's grant takes effect on the very next request without waiting for
@@ -104,12 +111,210 @@ def get_jwk(kid: str) -> dict:
     
     return _jwks_cache[kid]
 
+def verify_clerk_jwt(token: str) -> dict:
+    """
+    Verify a real Clerk session token and return its claims.
+
+    Extracted from get_tenant_context_allow_unpaid() by Gap 133 so that
+    POST /auth/provision can authenticate its caller with exactly the same
+    verification (issuer pinned, signature checked against the live JWKS,
+    fail-closed on incomplete config) instead of running unauthenticated. The
+    body is unchanged from the inline version it replaces, diagnostics included.
+    """
+    # Gap 4: fail closed before touching the token -- incomplete config
+    # must never soften verification (see require_clerk_jwt_config).
+    require_clerk_jwt_config()
+    try:
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        # Diagnostic logging, kept intentionally for future auth-issue debugging: unverified claims are
+        # safe to log (no signature/secret exposure) and show exactly
+        # what the token claims before we judge whether it's valid.
+        # print(), not logger.warning() -- confirmed live that this
+        # container's log stream only captures stdout (uvicorn's own
+        # access-log lines), not Python logging module output.
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+            # Gap 133: email_present is here because a missing `email` claim is
+            # what produced the synthetic `user_<id>@domain.com` addresses that
+            # the (now removed) email-domain fallback then merged on. The
+            # fallback is gone, but the claim being absent is still the signal
+            # that this deployment's Clerk JWT Template needs checking.
+            print(
+                f"[jwt-diag] kid={kid} token_iss={unverified.get('iss')!r} "
+                f"expected_iss={settings.CLERK_JWT_ISSUER!r} exp={unverified.get('exp')} "
+                f"now={int(datetime.utcnow().timestamp())} org_id={unverified.get('org_id')!r} "
+                f"org_role={unverified.get('org_role')!r} sub={unverified.get('sub')!r} "
+                f"email_present={bool(unverified.get('email') or unverified.get('email_address'))}",
+                flush=True,
+            )
+        except Exception as diag_e:
+            print(f"[jwt-diag] could not decode unverified claims: {diag_e}", flush=True)
+        if not kid:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing key ID (kid) in token header."
+            )
+
+        jwk_dict = get_jwk(kid)
+        public_key = RSAAlgorithm.from_jwk(jwk_dict)
+
+        # Gap 4: issuer verification is now unconditional. It was
+        # previously `bool(settings.CLERK_JWT_ISSUER)`, which silently
+        # disabled the check whenever the setting was empty.
+        # require_clerk_jwt_config() above guarantees it is non-empty.
+        return jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            issuer=settings.CLERK_JWT_ISSUER,
+            options={"verify_iss": True}
+        )
+    except jwt.ExpiredSignatureError:
+        print("[jwt-diag] ExpiredSignatureError", flush=True)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token signature has expired."
+        )
+    except jwt.InvalidTokenError as e:
+        print(f"[jwt-diag] InvalidTokenError: {e}", flush=True)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}"
+        )
+
+
+class AuthenticatedClerkIdentity(BaseModel):
+    """
+    Gap 133 (Checkpoint 3c): the claims POST /auth/provision is allowed to trust.
+
+    Checkpoint 3b returned only the verified `sub` from this dependency, which
+    authenticated *who* was calling but nothing about *what they were allowed to
+    claim* -- the caller still supplied `clerk_org_id` and `admin_email` freely
+    in the request body. Carrying `org_id` and `email` out of the same verified
+    payload is what lets the handler bind both to the token instead.
+
+    `is_mock` is True only on the ALLOW_MOCK_AUTH path (default off), where
+    there is no token to bind anything to; the handler treats it exactly as
+    every other dependency here treats mock auth.
+    """
+    clerk_user_id: str | None = None
+    org_id: str | None = None
+    email: str | None = None
+    is_mock: bool = False
+
+
+def get_authenticated_clerk_identity(
+    authorization: str | None = Header(None),
+) -> AuthenticatedClerkIdentity:
+    """
+    Gap 133: authenticate a caller that has no tenant yet.
+
+    POST /auth/provision runs at sign-up, before any Tenant/User row exists, so
+    it cannot use get_tenant_context(). It previously took no auth dependency at
+    all -- reproduced in Checkpoint 3a: an anonymous caller could POST an
+    arbitrary clerk_org_id/org_name and rename or claim an existing tenant.
+
+    Returns the verified `sub`/`org_id`/`email` so the handler can check the
+    request body against the token rather than trusting it. Returns
+    `is_mock=True` with everything None only on the mock path (ALLOW_MOCK_AUTH,
+    default False), which the handler treats as "identity check skipped" the
+    same way every other dependency here treats mock auth.
+
+    Checkpoint 3c renamed this from `get_authenticated_clerk_user_id()` (which
+    returned the bare `sub`): a name promising only a user id is the reason the
+    org/email binding was missed in 3b.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        print(f"[jwt-diag] provision header branch: authorization={authorization!r}", flush=True)
+        if not settings.ALLOW_MOCK_AUTH:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or malformed Authorization header. Expected 'Bearer <token>'.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return AuthenticatedClerkIdentity(is_mock=True)
+
+    token = authorization.split(" ")[1]
+
+    if token.startswith("test_"):
+        if not settings.ALLOW_MOCK_AUTH:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Test tokens are rejected when ALLOW_MOCK_AUTH is disabled.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return AuthenticatedClerkIdentity(is_mock=True)
+
+    payload = verify_clerk_jwt(token)
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token carries no subject (sub) claim.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return AuthenticatedClerkIdentity(
+        clerk_user_id=sub,
+        org_id=payload.get("org_id"),
+        # Same claim pair and precedence as the real-token branch of
+        # get_tenant_context_allow_unpaid() below -- deliberately one pattern,
+        # not two, so a JWT Template that omits `email` behaves identically in
+        # both places.
+        email=payload.get("email") or payload.get("email_address"),
+        is_mock=False,
+    )
+
+
 def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool]:
     """
     Feature 1.1 (Task 1.1.3) / Gap 73: resolve (can_train, can_audit, can_load).
     Delegates to RoleMapper for enterprise-scale role mapping and fallback permissions.
     """
     return RoleMapper.resolve_permissions(role, user)
+
+
+def reconcile_role_with_org(
+    token_role: str,
+    user: User | None,
+    tenant: Tenant | None,
+    clerk_org_id: str | None,
+    is_mock_identity: bool,
+) -> str:
+    """
+    Gap 133 (Checkpoint 3c): the role this request actually runs as.
+
+    Gap 173 already established that `org_role` describes whichever Clerk
+    Organization is *active on the session*, and that any signed-in user can
+    self-serve create a new org and be made its `org:admin` by Clerk. It also
+    already computed `org_matches` -- but only used it to gate *persisting*
+    `user.role` to the database. The role handed to `TenantContext` for the
+    current request was still taken straight from the token, so the escalation
+    the check was written to stop worked anyway: a Viewer creates a throwaway
+    org, switches their active org to it, and every request that session carries
+    `org_role=org:admin`. The tenant resolved is still their real one (from
+    `user.tenant_id`), so they got Admin `TenantContext` -- and, through
+    resolve_permissions(), can_train/can_audit/can_load -- on somebody else's
+    workspace. The stored role was correctly left alone the whole time, which is
+    precisely why nothing looked wrong.
+
+    So: a token's role claim is only usable when the token's `org_id` is the org
+    the resolved tenant is actually tied to. Otherwise fall back to the role we
+    persisted for this user (our own data, unforgeable from a browser), and to
+    "Viewer" if there is none.
+
+    Mock/test identities (ALLOW_MOCK_AUTH, default off) are exempt: they have no
+    org and no token, and gating them would just disable the whole suite's
+    Admin context.
+    """
+    if is_mock_identity:
+        return token_role
+
+    if tenant is not None and tenant.clerk_org_id == clerk_org_id:
+        return token_role
+
+    persisted_role = getattr(user, "role", None)
+    return RoleMapper.normalize_role(persisted_role) if persisted_role else "Viewer"
 
 
 def get_tenant_context_allow_unpaid(
@@ -153,6 +358,13 @@ def get_tenant_context_allow_unpaid(
         last_name = "User"
         clerk_org_id = None
         raw_org_role = None
+        # Gap 133: the mock/test identities below have no Clerk org and no real
+        # email, so they can never satisfy the org/tenant-claim lookup that real
+        # tokens are now required to satisfy. They keep the old auto-provision
+        # behaviour (they are the whole point of ALLOW_MOCK_AUTH, which defaults
+        # off); only real tokens are gated.
+        is_mock_identity = True
+        email_is_placeholder = True
     else:
         token = authorization.split(" ")[1]
 
@@ -180,64 +392,16 @@ def get_tenant_context_allow_unpaid(
             email = "test@example.com"
             first_name = "Test"
             last_name = "User"
+            is_mock_identity = True
+            email_is_placeholder = True
         else:
             # 2. Live JWT Decoding & Verification
-            # Gap 4: fail closed before touching the token -- incomplete config
-            # must never soften verification (see require_clerk_jwt_config).
-            require_clerk_jwt_config()
-            try:
-                header = jwt.get_unverified_header(token)
-                kid = header.get("kid")
-                # Diagnostic logging, kept intentionally for future auth-issue debugging: unverified claims are
-                # safe to log (no signature/secret exposure) and show exactly
-                # what the token claims before we judge whether it's valid.
-                # print(), not logger.warning() -- confirmed live that this
-                # container's log stream only captures stdout (uvicorn's own
-                # access-log lines), not Python logging module output.
-                try:
-                    unverified = jwt.decode(token, options={"verify_signature": False})
-                    print(
-                        f"[jwt-diag] kid={kid} token_iss={unverified.get('iss')!r} "
-                        f"expected_iss={settings.CLERK_JWT_ISSUER!r} exp={unverified.get('exp')} "
-                        f"now={int(datetime.utcnow().timestamp())} org_id={unverified.get('org_id')!r} "
-                        f"org_role={unverified.get('org_role')!r} sub={unverified.get('sub')!r}",
-                        flush=True,
-                    )
-                except Exception as diag_e:
-                    print(f"[jwt-diag] could not decode unverified claims: {diag_e}", flush=True)
-                if not kid:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Missing key ID (kid) in token header."
-                    )
+            # Gap 133: the decode/verify body moved verbatim into
+            # verify_clerk_jwt() so POST /auth/provision can authenticate its
+            # caller with the identical checks.
+            payload = verify_clerk_jwt(token)
+            is_mock_identity = False
 
-                jwk_dict = get_jwk(kid)
-                public_key = RSAAlgorithm.from_jwk(jwk_dict)
-
-                # Gap 4: issuer verification is now unconditional. It was
-                # previously `bool(settings.CLERK_JWT_ISSUER)`, which silently
-                # disabled the check whenever the setting was empty.
-                # require_clerk_jwt_config() above guarantees it is non-empty.
-                payload = jwt.decode(
-                    token,
-                    public_key,
-                    algorithms=["RS256"],
-                    issuer=settings.CLERK_JWT_ISSUER,
-                    options={"verify_iss": True}
-                )
-            except jwt.ExpiredSignatureError:
-                print("[jwt-diag] ExpiredSignatureError", flush=True)
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token signature has expired."
-                )
-            except jwt.InvalidTokenError as e:
-                print(f"[jwt-diag] InvalidTokenError: {e}", flush=True)
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid token: {str(e)}"
-                )
-            
             # 3. Extract tenant parameters from JWT claims
             # clerk_org_id (e.g. "org_2abc...") is a Clerk-assigned string, not a UUID --
             # kept separate from tenant_id (only ever populated from a custom "tenant_id"
@@ -245,6 +409,18 @@ def get_tenant_context_allow_unpaid(
             clerk_org_id = payload.get("org_id")
             tenant_id = None
 
+            # Gap 133 (Checkpoint 3c), finding 8 -- no functional change, this
+            # claim is inert today: the Clerk JWT Template does not emit
+            # `tenant_id` at all, so this branch never fires in any deployed
+            # environment. It is documented here because the day it IS added it
+            # becomes a direct tenant selector, trusted verbatim below (Priority
+            # 2 loads whatever tenant it names). If that day comes, it MUST be
+            # sourced from Clerk `public_metadata` (backend-writable only) or
+            # from an org shortcode -- never from `unsafe_metadata`, which any
+            # signed-in user can rewrite on themselves from a browser console
+            # via Clerk.user.update(). That is not hypothetical: it is exactly
+            # what the `role` claim just below was sourced from, and Gap 173 was
+            # opened because it let any user grant themselves Admin.
             tenant_id_str = payload.get("tenant_id")
             if tenant_id_str:
                 try:
@@ -274,7 +450,17 @@ def get_tenant_context_allow_unpaid(
                 if role == "Admin":
                     role = "Viewer"
             plan = payload.get("billing_plan", "free")
-            email = payload.get("email") or payload.get("email_address") or f"{user_id}@domain.com"
+            # Gap 133: track at the source whether this is a real email or the
+            # synthetic `user_<clerkid>@domain.com` placeholder. The placeholder
+            # is what the old Priority-3 email-domain fallback matched on --
+            # every user with a missing `email` claim shared the literal domain
+            # "domain.com" and so got merged into one unrelated "Domain
+            # Workspace" tenant. The fallback is gone (see below), so this is
+            # now diagnostic only: it tells us whether the Clerk JWT Template is
+            # still failing to emit an `email` claim.
+            email_claim = payload.get("email") or payload.get("email_address")
+            email_is_placeholder = not email_claim
+            email = email_claim or f"{user_id}@domain.com"
             first_name = payload.get("first_name") or payload.get("given_name")
             last_name = payload.get("last_name") or payload.get("family_name")
 
@@ -296,11 +482,38 @@ def get_tenant_context_allow_unpaid(
         if not tenant and tenant_id:
             tenant = db_session.get(Tenant, tenant_id)
 
-        # Priority 3: look up by email domain (legacy fallback)
-        if not tenant:
-            tenant = db_session.exec(select(Tenant).where(Tenant.domain == domain)).first()
+        # Gap 133: there is deliberately no Priority 3 any more. It used to look
+        # the tenant up by email domain and, failing that, CREATE one -- which
+        # is how a user whose Clerk Organization never provisioned silently
+        # ended up inside an unrelated tenant (confirmed live: two unrelated
+        # sign-ups both landed in one generic "Domain Workspace" tenant, because
+        # their synthetic placeholder emails shared the literal domain
+        # "domain.com"). Neither adopting a domain-matched tenant nor
+        # auto-creating one at request time is an identity decision this
+        # function is entitled to make: provisioning happens once, explicitly,
+        # at sign-up via POST /auth/provision. If that did not happen, fail
+        # loudly here rather than inventing an answer.
+        if not tenant and not is_mock_identity:
+            print(
+                "[jwt-diag] provision-gate: no tenant for "
+                f"sub={user_id!r} org_id={clerk_org_id!r} tenant_id_claim={tenant_id!r} "
+                f"email_placeholder={email_is_placeholder}",
+                flush=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Your account is not linked to a provisioned organisation. "
+                    "Sign-up did not finish registering this organisation with the "
+                    f"backend (Clerk org id: {clerk_org_id or 'none on this token'}). "
+                    "Sign up again and use Retry if provisioning fails, or contact "
+                    "support with that org id -- access is refused rather than "
+                    "placing your data in an unrelated workspace."
+                ),
+            )
 
         if not tenant:
+            # Mock/test identities only (ALLOW_MOCK_AUTH, default off).
             if not tenant_id:
                 import uuid
                 tenant_id = uuid.uuid4()
@@ -322,7 +535,15 @@ def get_tenant_context_allow_unpaid(
                 db_session.add(tenant)
                 db_session.commit()
                 db_session.refresh(tenant)
-            
+
+        # Gap 133 (Checkpoint 3c): the same rule reconcile_role_with_org()
+        # applies to the request's own role, applied here *before* the row is
+        # written -- a first-login role claim for an org that is not this
+        # tenant's must not be persisted either, or the fallback below would
+        # later read back the very value it was meant to distrust. There is no
+        # persisted role yet on this path, so a mismatch clamps to Viewer.
+        role = reconcile_role_with_org(role, None, tenant, clerk_org_id, is_mock_identity)
+
         user = User(
             clerk_user_id=user_id,
             email=email,
@@ -398,9 +619,32 @@ def get_tenant_context_allow_unpaid(
                 ).first()
 
             if not tenant:
-                if not tenant_id:
+                if not tenant_id and is_mock_identity:
                     tenant_id = MOCK_TENANT_ID
-                tenant = db_session.get(Tenant, tenant_id)
+                tenant = db_session.get(Tenant, tenant_id) if tenant_id else None
+
+            # Gap 133: same gate as the new-user path above, for the same
+            # reason. This branch used to fall through to MOCK_TENANT_ID and
+            # then to creating a "Tenant Account" row -- i.e. a real user whose
+            # org never provisioned got silently attached to whatever tenant
+            # happened to sit on the mock UUID.
+            if not tenant and not is_mock_identity:
+                print(
+                    "[jwt-diag] provision-gate (tenant-less user): "
+                    f"sub={user_id!r} org_id={clerk_org_id!r} tenant_id_claim={tenant_id!r} "
+                    f"email_placeholder={email_is_placeholder}",
+                    flush=True,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Your account is not linked to a provisioned organisation. "
+                        "Sign-up did not finish registering this organisation with the "
+                        f"backend (Clerk org id: {clerk_org_id or 'none on this token'}). "
+                        "Contact support with that org id -- access is refused rather "
+                        "than placing your data in an unrelated workspace."
+                    ),
+                )
 
             if not tenant:
                 tenant = Tenant(
@@ -418,6 +662,14 @@ def get_tenant_context_allow_unpaid(
             user.tenant_id = tenant_id
             db_session.add(user)
             db_session.commit()
+
+    # Gap 133 (Checkpoint 3c): decide the role this request runs as against the
+    # tenant that was ACTUALLY resolved above, not against the token alone. The
+    # org_matches check further up only ever gated the DB write; without this,
+    # an org_role claim from an unrelated (e.g. self-created throwaway) org
+    # still produced an Admin TenantContext -- and therefore all three
+    # permissions -- on the user's real tenant. See reconcile_role_with_org().
+    role = reconcile_role_with_org(role, user, tenant, clerk_org_id, is_mock_identity)
 
     can_train, can_audit, can_load = resolve_permissions(role, user)
 
@@ -454,6 +706,8 @@ def get_tenant_context_allow_unpaid(
         db_user_id=user.id,
         role=role,
         billing_plan=tenant.billing_plan,
+        # Gap 133: from the Tenant row already loaded above -- no extra query.
+        tenant_name=tenant.name,
         can_train=can_train,
         can_audit=can_audit,
         can_load=can_load,

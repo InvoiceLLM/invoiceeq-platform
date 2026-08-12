@@ -76,6 +76,9 @@ async function stubReviewApis(page: Page, overrides: Record<string, unknown> = {
     route.fulfill(
       json({
         tenant_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        // BE Gap 133: the header/admin console now render the backend-resolved
+        // tenant name instead of Clerk unsafeMetadata.orgName.
+        tenant_name: "E2E Workspace",
         user_id: "user_e2e_admin",
         role: "Admin",
         billing_plan: "active",

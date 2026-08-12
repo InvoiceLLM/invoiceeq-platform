@@ -312,7 +312,7 @@ export default function AdminDashboardPage() {
   // FE Gap 167: the real, backend-resolved identity of whoever is looking at
   // this page. This screen used to describe the viewer as the org's Admin
   // unconditionally; every role/permission label below now comes from here.
-  const { role, canTrain, canAudit, canLoad, loading: authLoading } = useAuth();
+  const { role, canTrain, canAudit, canLoad, tenantName, loading: authLoading } = useAuth();
   const isAdmin = role === "Admin";
 
   const [users, setUsers] = useState<OrgUser[]>([]);
@@ -398,8 +398,16 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // Extract org metadata from Clerk user
-  const orgName = (user?.unsafeMetadata?.orgName as string) || "Your Organisation";
+  // BE Gap 133: the workspace name is the backend's resolved tenant, same fix as
+  // Header.tsx -- Clerk's `unsafeMetadata.orgName` is written at sign-up and
+  // never reconciled with the tenant the data actually lives in, so this console
+  // could confidently name an organisation that owns none of the users listed
+  // below it. Metadata is only the pre-resolution placeholder now.
+  // (orgType/country below have no backend equivalent and stay on metadata.)
+  const orgName =
+    (authLoading
+      ? (user?.unsafeMetadata?.orgName as string)
+      : tenantName || (user?.unsafeMetadata?.orgName as string)) || "Your Organisation";
   const orgType = (user?.unsafeMetadata?.orgType as string) || "—";
   const country = (user?.unsafeMetadata?.country as string) || "—";
   const adminEmail = user?.primaryEmailAddress?.emailAddress || "—";

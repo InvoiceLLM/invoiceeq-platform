@@ -55,6 +55,7 @@ const S: Record<string, React.CSSProperties> = {
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" },
   errorBox: { display: "flex", alignItems: "flex-start", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "10px", padding: "10px 14px", fontSize: "13px", color: T.red, marginTop: "10px" },
   btn: { width: "100%", background: "linear-gradient(135deg, #10B981 0%, #059669 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: "22px", letterSpacing: "0.2px", transition: "opacity 0.2s, transform 0.15s", boxShadow: "0 4px 20px rgba(16,185,129,0.25)" },
+  retryBtn: { alignSelf: "flex-start", background: "rgba(239,68,68,0.14)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: "8px", padding: "7px 14px", fontSize: "13px", fontWeight: 600, color: T.red, cursor: "pointer" },
   loginRow: { textAlign: "center", marginTop: "20px", fontSize: "13px", color: T.textDim },
   loginLink: { color: T.blue, textDecoration: "none", fontWeight: 600 },
 };
@@ -71,6 +72,59 @@ const COUNTRIES = [
   "Germany", "France", "Singapore", "UAE", "Other",
 ];
 
+/** Exactly the body POST /auth/provision expects (snake_case, FastAPI side). */
+interface ProvisionPayload {
+  clerk_org_id: string;
+  org_name: string;
+  admin_email: string;
+  clerk_user_id: string;
+}
+
+/**
+ * Gap 133: POST the provision request with a real Clerk session token.
+ *
+ * The token is minted here, client-side, immediately after `setActive` -- the
+ * proxy route can also mint one from the session cookie, but that cookie lags a
+ * just-completed `setActive` (Gap 157 proved this live), and sign-up is the
+ * single moment where the lag is guaranteed to be at its worst. The backend
+ * checks the token's `sub` against `clerk_user_id` in the body, so an anonymous
+ * caller can no longer claim or rename somebody else's tenant.
+ *
+ * Throws on any non-2xx so both call sites (initial sign-up and Retry) handle
+ * failure identically -- and visibly.
+ */
+async function provisionTenant(payload: ProvisionPayload): Promise<void> {
+  let token: string | null = null;
+  try {
+    // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
+    token = (await window.Clerk?.session?.getToken({ template: "invoice-app" })) || null;
+  } catch (tokenErr) {
+    console.error("Could not mint a Clerk session token for provisioning:", tokenErr);
+  }
+
+  const response = await fetch("/api/auth/provision", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({} as { detail?: string }));
+    throw new Error(data?.detail || `provisioning failed with HTTP ${response.status}`);
+  }
+}
+
+function provisionFailureMessage(err: unknown, orgId: string): string {
+  const detail = err instanceof Error ? err.message : String(err);
+  return (
+    `Your account was created, but we couldn't finish setting up your organisation (${detail}). ` +
+    `Click Retry — if it keeps failing, contact support and quote org id ${orgId}.`
+  );
+}
+
 export default function SignupPage() {
   const { isLoaded, signUp, setActive } = useSignUp();
   const router = useRouter();
@@ -85,6 +139,12 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState<string | null>(null);
+  // Gap 133: set when the Clerk account exists but the backend never registered
+  // the organisation. Holds everything the retry needs, so Retry re-POSTs
+  // /api/auth/provision for the org that already exists client-side rather than
+  // re-running sign-up (which would fail -- the email is taken by then).
+  const [pendingProvision, setPendingProvision] = useState<ProvisionPayload | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
   const inputStyle = (id: string) => ({ ...S.input, ...(focused === id ? S.inputFocus : {}) });
   const selectStyle = (id: string) => ({ ...S.select, ...(focused === id ? S.inputFocus : {}) });
@@ -96,6 +156,7 @@ export default function SignupPage() {
 
     setLoading(true);
     setError(null);
+    setPendingProvision(null);
     try {
       const result = await signUp.create({
         emailAddress: email,
@@ -116,8 +177,34 @@ export default function SignupPage() {
           orgId = org.id;
           // @ts-expect-error -- see above
           await window.Clerk.setActive({ organization: org.id });
-        } catch (orgErr) {
-          console.warn("Clerk Org creation failed (is Organizations enabled in Clerk Dashboard?)", orgErr);
+        } catch (orgErr: any) {
+          // Gap 133: this used to be a console.warn and the flow carried on to
+          // /login. With no org there is no clerk_org_id, so the backend can
+          // never resolve a tenant for this user and every request after login
+          // is refused -- landing the user in a broken account with no idea
+          // why. Fail here, visibly, instead.
+          console.error("Clerk Org creation failed (is Organizations enabled in Clerk Dashboard?)", orgErr);
+          setError(
+            "Your account was created, but we couldn't create your organisation " +
+              `(${orgErr?.errors?.[0]?.longMessage || orgErr?.message || "unknown error"}). ` +
+              "Organisations may be disabled for this Clerk instance. Please contact support " +
+              `and quote the email ${email} — do not sign up again with this address.`
+          );
+          return;
+        }
+
+        if (!orgId) {
+          // Defensive twin of the catch above: createOrganization resolving
+          // without an id is the same outcome for the user (no clerk_org_id ->
+          // no tenant is resolvable, ever), so it gets the same blocking stop
+          // rather than being carried into a provision call that cannot work.
+          console.error("Clerk Org creation returned no organisation id");
+          setError(
+            "Your account was created, but your organisation could not be created " +
+              `(no organisation id was returned). Please contact support and quote the email ${email} — ` +
+              "do not sign up again with this address."
+          );
+          return;
         }
 
         try {
@@ -126,28 +213,43 @@ export default function SignupPage() {
             unsafeMetadata: { orgId, orgName: finalOrgName, orgType, country, role: "admin" },
           });
         } catch (metaErr) {
+          // Still non-blocking: this metadata is display-only, and Gap 133 moved
+          // the app's org-name display onto the backend's resolved tenant name.
           console.warn("Metadata update failed:", metaErr);
         }
 
-        if (orgId && result.createdUserId) {
-          try {
-            const provisionResponse = await fetch("/api/auth/provision", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                clerk_org_id: orgId,
-                org_name: finalOrgName,
-                admin_email: email,
-                clerk_user_id: result.createdUserId,
-              }),
-            });
-            if (!provisionResponse.ok) {
-              const errorData = await provisionResponse.json().catch(() => ({}));
-              console.warn("Tenant provisioning failed:", provisionResponse.status, errorData);
-            }
-          } catch (provisionErr) {
-            console.warn("Backend provision call failed:", provisionErr);
-          }
+        // Gap 133: `result.createdUserId` was the only source here, and if it
+        // came back null the whole provision call was skipped silently. The
+        // live Clerk client knows the id either way once the session is active.
+        // @ts-expect-error -- see above
+        const clerkUserId: string | null = result.createdUserId || window.Clerk?.user?.id || null;
+
+        if (!clerkUserId) {
+          setError(
+            "Your account was created, but we couldn't read its user id to finish " +
+              "setting up your organisation. Please contact support and quote org id " +
+              `${orgId}.`
+          );
+          return;
+        }
+
+        const payload: ProvisionPayload = {
+          clerk_org_id: orgId,
+          org_name: finalOrgName,
+          admin_email: email,
+          clerk_user_id: clerkUserId,
+        };
+
+        try {
+          await provisionTenant(payload);
+        } catch (provisionErr: any) {
+          // Gap 133: blocking. Redirecting to /login on a failed provision is
+          // what made this invisible -- the user reached a working-looking app
+          // whose data lived in an unrelated tenant (or nowhere).
+          console.error("Tenant provisioning failed:", provisionErr);
+          setPendingProvision(payload);
+          setError(provisionFailureMessage(provisionErr, orgId));
+          return;
         }
 
         router.push("/login");
@@ -158,6 +260,29 @@ export default function SignupPage() {
       setError(err?.errors?.[0]?.longMessage || err?.message || "Signup failed. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  /**
+   * Gap 133: retry only the backend call. The Clerk user, the Clerk
+   * Organization and the active session all already exist at this point, so
+   * re-running sign-up would fail on a duplicate email; the only thing that
+   * failed is POST /auth/provision, and that endpoint is idempotent on
+   * clerk_org_id.
+   */
+  const handleRetryProvision = async () => {
+    if (!pendingProvision) return;
+    setRetrying(true);
+    setError(null);
+    try {
+      await provisionTenant(pendingProvision);
+      setPendingProvision(null);
+      router.push("/login");
+    } catch (retryErr: any) {
+      console.error("Tenant provisioning retry failed:", retryErr);
+      setError(provisionFailureMessage(retryErr, pendingProvision.clerk_org_id));
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -295,7 +420,21 @@ export default function SignupPage() {
             {error && (
               <div style={S.errorBox}>
                 <span>⚠️</span>
-                <span>{error}</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <span>{error}</span>
+                  {/* Gap 133: only the backend provision call is retried -- the
+                      Clerk account and organisation already exist by now. */}
+                  {pendingProvision && (
+                    <button
+                      type="button"
+                      onClick={handleRetryProvision}
+                      disabled={retrying}
+                      style={{ ...S.retryBtn, opacity: retrying ? 0.7 : 1 }}
+                    >
+                      {retrying ? "⏳ Retrying…" : "↻ Retry setup"}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 

@@ -24,6 +24,13 @@ import { useEffect, useState } from "react";
 export interface AuthContextType {
   tenantId: string;
   userId: string;
+  /**
+   * Display name of the tenant the backend actually resolved this request to
+   * (BE Gap 133). Not Clerk's `unsafeMetadata.orgName`, which is written once at
+   * sign-up and never reconciled -- when provisioning failed, the two diverged
+   * and the UI kept showing the org the user *thought* they were in.
+   */
+  tenantName: string;
   role: string;
   canTrain: boolean;
   canAudit: boolean;
@@ -35,6 +42,7 @@ export interface AuthContextType {
 /** Backend TenantContext, snake_case as FastAPI serialises it. */
 interface AuthMeResponse {
   tenant_id?: string;
+  tenant_name?: string | null;
   user_id?: string;
   role?: string;
   billing_plan?: string;
@@ -52,6 +60,7 @@ interface AuthMeResponse {
  */
 const ANONYMOUS: AuthContextType = {
   tenantId: "",
+  tenantName: "",
   userId: "",
   role: "",
   canTrain: false,
@@ -70,6 +79,7 @@ const subscribers = new Set<(auth: AuthContextType) => void>();
 function normalise(data: AuthMeResponse): AuthContextType {
   return {
     tenantId: data.tenant_id ?? "",
+    tenantName: data.tenant_name ?? "",
     userId: data.user_id ?? "",
     role: data.role ?? "",
     canTrain: data.can_train === true,

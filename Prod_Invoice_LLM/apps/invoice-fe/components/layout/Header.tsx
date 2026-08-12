@@ -115,7 +115,7 @@ export default function Header() {
   // Gated on canAudit for the same reason Sidebar hides the Audit Queue item:
   // a user who cannot open the queue gains nothing from a count of it, and the
   // backend would 403 the calls anyway.
-  const { canAudit, role, loading: authLoading } = useAuth();
+  const { canAudit, role, tenantName, loading: authLoading } = useAuth();
   const needsAttention = useNeedsAttentionCount(canAudit);
 
   // FE Gap 110: the active route's title/badge/subtitle and its own header-row
@@ -150,13 +150,19 @@ export default function Header() {
 
   const { isLoaded, email: userEmail, name: displayName, initials } = useDisplayIdentity();
 
-  // orgName is genuinely written at sign-up (invoice-website's signup page puts
-  // it in unsafeMetadata), so it is real data when present. The role is not:
-  // that same metadata holds the literal string "admin,user", so the old
-  // `unsafeMetadata.role` read would have rendered "admin,user" to a real user.
-  // The authoritative role is the backend's, which useAuth() already resolves
-  // from GET /auth/me and Sidebar already filters on.
-  const orgName = (user?.unsafeMetadata?.orgName as string) || "";
+  // BE Gap 133: the org name shown here is the backend's *resolved tenant*, not
+  // Clerk's `unsafeMetadata.orgName`. Those were two independent sources: the
+  // metadata is written once at sign-up and never reconciled, so a user whose
+  // organisation failed to provision saw the org they signed up with while
+  // their invoices lived in an entirely different tenant -- with nothing in the
+  // UI able to reveal the divergence. `unsafeMetadata.orgName` is kept only as
+  // a placeholder for the moment before /auth/me resolves, so the header does
+  // not flicker empty on every page load.
+  // (The role beside it is the backend's for a related reason -- that same
+  // metadata holds the literal string "admin,user".)
+  const orgName = authLoading
+    ? (user?.unsafeMetadata?.orgName as string) || ""
+    : tenantName || "";
   const orgLine = [orgName, !authLoading && role ? `(${role})` : ""]
     .filter(Boolean)
     .join(" ");
