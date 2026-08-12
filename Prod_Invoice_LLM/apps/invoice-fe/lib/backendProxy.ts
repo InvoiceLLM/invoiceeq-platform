@@ -108,6 +108,13 @@ export async function clerkSessionToken(): Promise<string | null> {
   }
 }
 
+/**
+ * HTTP statuses the Fetch spec defines as "null body status" -- a Response for
+ * one of these cannot be constructed with a non-null body, and `""` counts as
+ * non-null. See `proxyJson` below.
+ */
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
 /** Proxies a plain JSON request/response to the backend, forwarding method, query string, body, and auth header. */
 export async function proxyJson(request: NextRequest, path: string): Promise<NextResponse> {
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
@@ -128,5 +135,16 @@ export async function proxyJson(request: NextRequest, path: string): Promise<Nex
   const totalCount = response.headers.get("x-total-count");
   if (totalCount) headers["X-Total-Count"] = totalCount;
 
-  return new NextResponse(data, { status: response.status, headers });
+  // FE Gap 177: `new NextResponse("", { status: 204 })` throws
+  // `TypeError: Response constructor: Invalid response status code 204` --
+  // 204/205/304 are null-body statuses and `""` is not null. Every route
+  // handler sharing this helper therefore returned a 500 for any backend 204,
+  // *after* the backend had already committed the write (DELETE /chat/sessions/{id},
+  // DELETE /webhooks/{id}, ...), so callers that only update local state on
+  // success left the deleted row on screen until a reload. Pass null instead.
+  // An empty body on any other status is byte-identical over the wire either
+  // way, so this is behaviour-preserving outside the null-body statuses.
+  const body = NULL_BODY_STATUSES.has(response.status) || data === "" ? null : data;
+
+  return new NextResponse(body, { status: response.status, headers });
 }

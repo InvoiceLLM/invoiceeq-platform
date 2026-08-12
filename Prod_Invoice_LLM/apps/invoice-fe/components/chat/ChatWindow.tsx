@@ -489,7 +489,12 @@ export default function ChatWindow({
               className="flex items-center gap-1 text-[10px] text-rose-400 hover:text-rose-300 font-semibold px-2 py-0.5 border border-rose-800/30 rounded bg-rose-950/15 hover:bg-rose-950/30 transition-all duration-150"
             >
               <Trash2 className="w-3 h-3" />
-              Clear Chat
+              {/* FE Gap 177 (N-19): labelled "Clear Chat" but wired to the same
+                  onDeleteSession handler as the sidebar trash icon -- it deletes
+                  the whole thread. There is no clear-messages-keep-thread path in
+                  the FE or backend, so the label was corrected to match behaviour
+                  rather than a new capability being invented. */}
+              Delete Chat
             </button>
           )}
         </div>
