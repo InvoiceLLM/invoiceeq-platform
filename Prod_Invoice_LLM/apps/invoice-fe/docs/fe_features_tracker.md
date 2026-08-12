@@ -11,7 +11,7 @@ This document tracks the implementation progress of all frontend features for th
 - `[x]` [Feature 1: Global Theme & Core Shell Layout](feature_1_layout_theme.md)
 - `[x]` [Feature 2: Dashboard Analytics Command Center](feature_2_dashboard.md)
 - `[x]` [Feature 3: File Ingestion Portal & Active Tagging — **NOVA**](feature_3_ingestion.md)
-- `[ ]` [Feature 13: Tenant Autopilot — Ingestion & Scheduled Sync](feature_13_autopilot.md) — opened 2026-08-10. Combined manual upload + scheduled folder sync (Drive or Salesforce), folder picker APIs, and deterministic config-based folder synchronization run log history. Not started.
+- `[x]` [Feature 13: Tenant Autopilot — Ingestion & Scheduled Sync](feature_13_autopilot.md) — completed 2026-08-12. Unified manual invoice upload + scheduled folder sync (Google Drive or Salesforce), Autopilot tab + config form in `/ingestion`, `AutopilotHistoryTable` component with polling, API endpoints, backend sync engine, ACA Job script, and 18/18 pytest test suite.
 - `[x]` [Feature 4: Split-Screen Auditor Review Console — **SENTINEL**](feature_4_auditor.md)
 - `[x]` [Feature 5: Semantic Chat Assistant & SQL Audit Drawer — **SAGE**](feature_5_chat.md)
 - `[x]` [Feature 6: AI Trainer Interactive Sandbox — **EVOLVE**](feature_6_trainer.md)

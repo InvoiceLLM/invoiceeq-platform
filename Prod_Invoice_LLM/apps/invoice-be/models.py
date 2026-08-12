@@ -395,6 +395,66 @@ class WebhookDeliveryLog(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+# Feature 13: Tenant Autopilot — Ingestion & Scheduled Sync
+# Stores per-tenant cloud folder sync configuration. One config row per tenant
+# (enforced via UNIQUE on tenant_id). Supports Google Drive and Salesforce as
+# source types. trigger_mode is 'interval' (minutes) or 'cron' (cron expression).
+# flow_direction mirrors Invoice.flow_direction: INBOUND (AP) or OUTBOUND (AR).
+class TenantAutopilotConfig(SQLModel, table=True):
+    __tablename__ = "tenant_autopilot_configs"
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", name="uq_autopilot_config_tenant"),
+        sa.Index("idx_autopilot_config_tenant", "tenant_id"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id")
+    # 'gdrive' | 'salesforce'
+    source_type: str = Field(max_length=50)
+    # Google Drive Folder ID or Salesforce Directory ID
+    source_ref: str = Field(max_length=1024)
+    # 'INBOUND' (AP — invoices coming in) | 'OUTBOUND' (AR — invoices going out)
+    flow_direction: str = Field(default="INBOUND", max_length=10)
+    # 'interval' (run every N minutes) | 'cron' (cron expression e.g. '0 * * * *')
+    trigger_mode: str = Field(max_length=20)
+    # cron expression string OR interval in minutes as a string (e.g. '60')
+    trigger_value: str = Field(max_length=100)
+    # array of email strings to notify on sync completion
+    notify_emails: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # if True, sync notification emails include a manual audit approval link
+    send_approval_links: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Feature 13: Tenant Autopilot — Deduplication Ledger
+# One row per file processed (or attempted) by Autopilot — both scheduled and
+# manual "Sync Now" runs. Two-layer deduplication:
+#   Layer 1: source_file_id match (same file seen before by ID)
+#   Layer 2: content_hash match (same PDF bytes, even if renamed/moved)
+# status values: 'SUCCESS' | 'SKIPPED_DUPLICATE' | 'FAILED'
+class TenantAutopilotLog(SQLModel, table=True):
+    __tablename__ = "tenant_autopilot_logs"
+    __table_args__ = (
+        # Composite index: dedup layer 1 lookup (tenant + file ID)
+        sa.Index("idx_autopilot_log_tenant_file", "tenant_id", "source_file_id"),
+        # Index for dedup layer 2 lookup (content hash across tenant)
+        sa.Index("idx_autopilot_log_hash", "content_hash"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
+    # 'gdrive' | 'salesforce' | 'manual' (for manually triggered syncs)
+    source_type: str = Field(max_length=50)
+    # Google Drive fileId or Salesforce record ID
+    source_file_id: str = Field(max_length=255)
+    # SHA-256 hash of raw document bytes — reuses email attachment dedup logic
+    content_hash: str = Field(max_length=64)
+    ingested_at: datetime = Field(default_factory=datetime.utcnow)
+    # 'SUCCESS' | 'SKIPPED_DUPLICATE' | 'FAILED'
+    status: str = Field(max_length=50)
+    # populated only on FAILED rows — stores the exception message
+    error_detail: str | None = Field(default=None)
+
+
 class RoleMapper:
     """
     Enterprise Role & Permission Engine (Gap 108).
