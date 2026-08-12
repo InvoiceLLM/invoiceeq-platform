@@ -72,6 +72,11 @@ class Invoice(SQLModel, table=True):
     due_date: date | None = Field(default=None)
     tax_amount: float | None = Field(default=None)
     po_number: str | None = Field(default=None)
+    # Gap 195: nullable self-reference, set only on status=DUPLICATE rows
+    # (see routers/invoices.py::_ingest_single_file's duplicate branch) --
+    # gives webhook subscribers and any future UI a structured pointer to
+    # the original invoice instead of the prose inside sa_alerts.
+    duplicate_of_invoice_id: UUID | None = Field(default=None, foreign_key="invoice.id", nullable=True, index=True)
     status: str = Field(default="PROCESSING")
     sa_alerts: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     tags: list = Field(default=[], sa_column=Column(JSON_VARIANT))

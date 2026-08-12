@@ -444,6 +444,9 @@ async def resolve_audit_invoice(
                 "status": target_status,
                 "vendor_name": invoice.vendor_name,
                 "grand_total": invoice.grand_total,
+                # Gap 215: without this, a subscriber can't tell 40000 apart
+                # from ₹40000 vs $40000 on a blended multi-currency tenant.
+                "currency": invoice.currency or "USD",
             })
         except Exception as we:
             logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)

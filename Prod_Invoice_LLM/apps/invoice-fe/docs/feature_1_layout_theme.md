@@ -61,6 +61,7 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
 - [x] **Task 1.3: Build Header Top Bar**
   - Notifications tray icon and user profile metadata card. The search field was removed (Gap 87/95, dead element) and the help indicator was removed as a duplicate of the Sidebar's Help tab (Gap 110) — see Functionality above.
   - Profile dropdown retrieves details from Clerk (`useUser()`); Sign Out wired to real Clerk `signOut()` + backend logout. Gap 116 replaced the invented fallback identity with an `isLoaded` skeleton and an email-derived name.
+  - **Gap 151 (fixed 2026-08-12)**: `signOut()` was called with no destination, so Clerk's own post-sign-out navigation (falling back to its hosted Account Portal) raced and won against the following manual `window.location.href` line, landing users on an unbranded Clerk page instead of `/login`. Now calls `signOut({ redirectUrl: \`${WEBSITE_URL}/login\` })` directly; the manual redirect survives only as a fallback if that call throws. `app/layout.tsx`'s `<ClerkProvider>` also gained `afterSignOutUrl` as a second layer for any sign-out path other than this button.
 - [x] **Task 1.4: One shared page header for every screen** — added 2026-08-04 (Gap 110). `PageHeaderContext.tsx` + `usePageHeader()` + `<PageHeaderActions>`; `PageHeader.tsx` reduced to the title cluster and rendered once by `Header`; all 12 screens converted off their own title markup.
 
 ### Verification Plan

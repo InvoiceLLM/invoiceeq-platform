@@ -17,8 +17,10 @@ router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 # Feature 15: the full set of events a subscription can register for.
 ALLOWED_EVENT_TYPES = {
+    "invoice.processing",
     "invoice.completed",
     "invoice.audit_required",
+    "invoice.duplicate",
     "invoice.paid",
     "invoice.rejected",
     "outbound_invoice.sent",

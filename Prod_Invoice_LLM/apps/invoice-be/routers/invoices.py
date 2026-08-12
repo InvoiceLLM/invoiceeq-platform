@@ -86,6 +86,9 @@ async def _ingest_single_file(
             # never goes through extraction again to recover it.
             currency=existing_invoice.currency,
             status="DUPLICATE",
+            # Gap 195: structured pointer to the original, alongside the
+            # existing prose message below (kept for the alert UI).
+            duplicate_of_invoice_id=existing_invoice.id,
             sa_alerts=[{
                 "type": "duplicate",
                 "message": f"This file is a duplicate of a previously uploaded invoice (ID: {existing_invoice.id})."
@@ -97,6 +100,19 @@ async def _ingest_single_file(
         db_session.add(db_invoice)
         await run_in_threadpool(db_session.commit)
         db_session.refresh(db_invoice)
+
+        try:
+            from services.webhooks import dispatch_webhook_event
+            dispatch_webhook_event(db_session, context.tenant_id, "invoice.duplicate", {
+                "invoice_id": str(invoice_id),
+                "duplicate_of_invoice_id": str(existing_invoice.id),
+                "status": "DUPLICATE",
+                "vendor_name": existing_invoice.vendor_name,
+                "grand_total": existing_invoice.grand_total,
+                "currency": existing_invoice.currency,
+            })
+        except Exception as we:
+            logger.error("Webhook dispatch failed for invoice %s: %s", invoice_id, we)
 
         try:
             import redis

@@ -563,6 +563,21 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
             "level": "info",
         })
 
+    # Gap 196: earliest "work started" signal for webhook subscribers, fired
+    # at the same lifecycle point as the PROCESSING_OCR SSE event below (the
+    # established "processing started" moment for the FE side). No
+    # vendor_name/grand_total yet -- extraction hasn't run.
+    if _invoice_id_for_log:
+        try:
+            from services.webhooks import dispatch_webhook_event
+            with Session(engine) as ws_session:
+                dispatch_webhook_event(ws_session, UUID(tenant_id), "invoice.processing", {
+                    "invoice_id": str(_invoice_id_for_log),
+                    "status": "PROCESSING",
+                })
+        except Exception as we:
+            logger.error("Webhook dispatch failed for invoice.processing %s: %s", _invoice_id_for_log, we)
+
     # 1. Update status: processing OCR
     _publish_sse_events(batch_id, {"status": "PROCESSING_OCR", "message": "Extracting text from PDF invoice..."})
     on_log("Starting OCR (Azure Document Intelligence)...")
@@ -709,6 +724,10 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                             "status": status,
                             "vendor_name": invoice.vendor_name,
                             "grand_total": invoice.grand_total,
+                            # Gap 215: extraction has run by this point, so
+                            # the real currency is known -- same fix as the
+                            # other two dispatch sites.
+                            "currency": invoice.currency or "USD",
                         })
                     except Exception as we:
                         logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)

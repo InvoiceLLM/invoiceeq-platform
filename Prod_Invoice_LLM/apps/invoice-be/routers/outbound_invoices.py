@@ -55,6 +55,9 @@ def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type
             "status": invoice.status,
             "customer_name": invoice.customer_name,
             "grand_total": invoice.grand_total,
+            # Gap 215: same fix as the inbound dispatch sites -- a bare
+            # grand_total is ambiguous on a blended multi-currency tenant.
+            "currency": invoice.currency or "USD",
         })
     except Exception as we:
         logger.error("Webhook dispatch failed for outbound invoice %s: %s", invoice.id, we)
