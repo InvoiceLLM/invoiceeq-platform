@@ -9,6 +9,7 @@ import {
   Globe,
   Sparkles,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { ExtractedVariable } from "@/lib/trainer-service";
 
@@ -17,7 +18,14 @@ import { ExtractedVariable } from "@/lib/trainer-service";
  *
  * FOR MANAGERS & DEVELOPERS:
  * This component renders the document column in the AI Trainer workspace.
- * It operates in two distinct visual modes:
+ * It operates in three distinct visual modes:
+ *
+ *   MODE 0 — Session Loading (FE Gap 139):
+ *     Shown while `isLoadingSession` is true, i.e. the page is awaiting a
+ *     `startSession` round-trip (New Vendor / Global upload, Existing Vendor
+ *     production-invoice load, or clearing a grounding document). Takes
+ *     precedence over both modes below, so the panel never sits on the
+ *     *previous* session's document with no sign that anything is happening.
  *
  *   MODE 1 — PDF Document Viewer Canvas:
  *     Shown when a real document is loaded (pdfUrl is set).
@@ -55,6 +63,13 @@ interface PdfViewerPanelProps {
   selectedVariable?: ExtractedVariable | null;
   scope?: "global" | "existing_vendor" | "new_vendor";
   vendorName?: string | null;
+  /**
+   * FE Gap 139: true while `app/trainer/page.tsx` is awaiting a session load
+   * (upload, vendor selection, or clearing the grounding file). Drives MODE 0.
+   */
+  isLoadingSession?: boolean;
+  /** Name of the file being uploaded, if the pending load is an upload. */
+  loadingFileName?: string;
 }
 
 export default function PdfViewerPanel({
@@ -64,6 +79,8 @@ export default function PdfViewerPanel({
   selectedVariable,
   scope = "global",
   vendorName,
+  isLoadingSession = false,
+  loadingFileName,
 }: PdfViewerPanelProps) {
   // Zoom level for the document canvas; range 75% – 175%
   const [zoom, setZoom] = useState(100);
@@ -114,6 +131,114 @@ export default function PdfViewerPanel({
         setPdfError("Failed to retrieve sample PDF.");
       });
   }, [pdfUrl]);
+
+  // ── Estimated progress while a session loads (FE Gap 139) ──────────────
+  // Same approach, and deliberately the same visual language, as QnAPanel's
+  // correction progress bar: the backend's session-create call
+  // (`routers/trainer.py::upload_transient_file` / `start_global_session` /
+  // `start_session`) runs `_run_ocr_split` + `run_extraction_agent`
+  // synchronously and reports no incremental progress, so this is a
+  // client-side elapsed-time estimate, not a server-reported percentage. It
+  // approaches 92% asymptotically and only reaches completion when the real
+  // response lands and this whole mode unmounts, so it can never claim to be
+  // finished while the user is still waiting.
+  const [progressPct, setProgressPct] = useState(0);
+  const ESTIMATED_DURATION_MS = 32000;
+  useEffect(() => {
+    if (!isLoadingSession) {
+      setProgressPct(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const pct = Math.min(92, Math.round((elapsed / ESTIMATED_DURATION_MS) * 92));
+      setProgressPct(pct);
+    }, 300);
+    return () => clearInterval(interval);
+  }, [isLoadingSession]);
+
+  // ── MODE 0: Session Loading ────────────────────────────────────────────
+  // Checked before every other mode: during a load the previous session's
+  // document (or empty-state card) is exactly what made this read as frozen.
+  if (isLoadingSession) {
+    const isUpload = Boolean(loadingFileName);
+    const heading = isUpload
+      ? "Processing Sample Document"
+      : scope === "existing_vendor"
+      ? "Loading Production Invoice"
+      : "Preparing Sandbox";
+
+    // Named stages, mapped onto the same elapsed-time estimate. The wording
+    // tracks what the backend is actually doing in that window rather than a
+    // generic spinner caption.
+    const stages = isUpload
+      ? ["Uploading document…", "Running OCR and page split…", "Extracting fields…", "Finalizing…"]
+      : scope === "existing_vendor"
+      ? ["Fetching production invoice…", "Running OCR and page split…", "Extracting fields…", "Finalizing…"]
+      : ["Clearing grounding document…", "Restarting sandbox session…", "Preparing rules…", "Finalizing…"];
+
+    const stageIndex =
+      progressPct < 20 ? 0 : progressPct < 55 ? 1 : progressPct < 85 ? 2 : 3;
+
+    return (
+      <div
+        data-testid="trainer-pdf-loading"
+        className="h-full flex flex-col items-center justify-center p-4 bg-[#070D1A]/90 border border-[#1E2D45] rounded-2xl text-center backdrop-blur-md relative overflow-hidden shadow-2xl shadow-black/30"
+      >
+        {/* Ambient radial glow orbs — decorative only, matching MODE 2 */}
+        <div className="absolute -top-28 -left-28 w-80 h-80 bg-blue-600/8 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-28 -right-28 w-80 h-80 bg-indigo-600/8 rounded-full blur-3xl pointer-events-none" />
+
+        {/* Central spinner badge */}
+        <div className="w-12 h-12 rounded-xl bg-[#111827] border border-blue-500/25 flex items-center justify-center text-blue-400 mb-4 shadow-2xl shadow-blue-500/15 shrink-0">
+          <Loader2 className="w-6 h-6 animate-spin" />
+        </div>
+
+        <h3 className="text-sm font-semibold text-white mb-1 tracking-tight">{heading}</h3>
+        {loadingFileName && (
+          <p
+            className="text-[11px] text-slate-400 max-w-full truncate mb-3"
+            title={loadingFileName}
+          >
+            {loadingFileName}
+          </p>
+        )}
+
+        {/* Staged progress — same bouncing dots + bar + percentage as QnAPanel's
+            "Analyzing correction…" indicator, so both waits in this workspace
+            read as the same thing happening. */}
+        <div className="w-full max-w-[240px] bg-[#111827] border border-[#1E2D45] rounded-2xl px-3 py-2.5 mt-1">
+          <div className="flex items-center gap-1.5">
+            {[0, 150, 300].map((delay) => (
+              <span
+                key={delay}
+                style={{ animationDelay: `${delay}ms` }}
+                className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce"
+              />
+            ))}
+            <span className="ml-2 text-[11px] text-slate-400 truncate">
+              {stages[stageIndex]}
+            </span>
+            <span className="ml-auto text-[10px] font-mono text-blue-400 shrink-0">
+              {progressPct}%
+            </span>
+          </div>
+          <div className="mt-2 h-1 bg-[#1E2D45] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-500 transition-all duration-300 ease-out rounded-full"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        </div>
+
+        <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
+          OCR and field extraction run on the server — this can take up to a
+          minute for a dense invoice.
+        </p>
+      </div>
+    );
+  }
 
   // ── MODE 2: Global Scope Chat-Only Empty State ──────────────────────────
   if (isGlobalScopeNoPdf || !pdfUrl) {

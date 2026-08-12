@@ -159,6 +159,23 @@ function TrainerContent() {
   const [isSending, setIsSending] = useState(false);
   const [selectedVariable, setSelectedVariable] = useState<ExtractedVariable | null>(null);
 
+  /**
+   * FE Gap 139: the session-loading handlers below (`handleSelectVendor`,
+   * `handleUploadFile`, `handleClearFile`) used to `await` their backend call
+   * with no state around it at all. That call runs OCR plus an LLM extraction
+   * synchronously, so for its whole duration the screen kept showing whatever
+   * was there before the click — a slow-but-working load and a genuinely stuck
+   * one looked identical, which is exactly what was reported. This flag is set
+   * around all three awaits and drives `PdfViewerPanel`'s loading mode;
+   * `loadingFileName` names the file when the pending load is an upload.
+   *
+   * Scoped to those three handlers deliberately: the initial mount already has
+   * its own skeleton, and this is a loading-indicator fix — OCR/extraction
+   * itself stays synchronous.
+   */
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [loadingFileName, setLoadingFileName] = useState<string | undefined>(undefined);
+
   // Overlay Component States (Commit Modal & History Drawer)
   const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
@@ -265,12 +282,22 @@ function TrainerContent() {
       return;
     }
 
+    // Gap 139: switching *into* Existing Vendor auto-selects a vendor and runs
+    // the identical production-invoice load `handleSelectVendor` does — same
+    // OCR + extraction wait, same frozen-looking screen — so it gets the same
+    // treatment even though the gap's write-up only named the three handlers
+    // below. The old session is dropped first so the loading panel isn't
+    // sitting on top of the scope the user just navigated away from.
+    setSession(null);
+    setIsLoadingSession(true);
     try {
       const newSess = await trainerService.startSession(newScope, vendor);
       setSession(newSess);
     } catch (err) {
       console.error("Failed to start session", err);
       showToast("Failed to start the training session.", "error");
+    } finally {
+      setIsLoadingSession(false);
     }
   };
 
@@ -280,12 +307,19 @@ function TrainerContent() {
    */
   const handleSelectVendor = async (vendorName: string) => {
     setSelectedVendorName(vendorName);
+    // Gap 139: clear the outgoing session first, so the panel can't keep
+    // showing the previous vendor's invoice underneath the loading state.
+    setSelectedVariable(null);
+    setSession(null);
+    setIsLoadingSession(true);
     try {
       const newSess = await trainerService.startSession("existing_vendor", vendorName);
       setSession(newSess);
     } catch (err) {
       console.error("Failed to load vendor session", err);
       showToast("Failed to load the vendor's production sample.", "error");
+    } finally {
+      setIsLoadingSession(false);
     }
   };
 
@@ -294,6 +328,9 @@ function TrainerContent() {
    * Uploads a sample PDF for cold-starting rules (New Vendor) or grounding (Global).
    */
   const handleUploadFile = async (file: File) => {
+    // Gap 139: name the file being processed while the upload is in flight.
+    setLoadingFileName(file.name);
+    setIsLoadingSession(true);
     try {
       const newSess = await trainerService.startSession(activeScope, selectedVendorName, file);
       setSession(newSess);
@@ -328,10 +365,14 @@ function TrainerContent() {
     } catch (err) {
       console.error("Failed to load sample file", err);
       showToast("Failed to process the uploaded sample.", "error");
+    } finally {
+      setIsLoadingSession(false);
+      setLoadingFileName(undefined);
     }
   };
 
   const handleClearFile = async () => {
+    setIsLoadingSession(true);
     try {
       const newSess = await trainerService.startSession(activeScope, selectedVendorName);
       setSession(newSess);
@@ -339,6 +380,8 @@ function TrainerContent() {
     } catch (err) {
       console.error("Failed to clear sample file", err);
       showToast("Failed to clear the sample file.", "error");
+    } finally {
+      setIsLoadingSession(false);
     }
   };
 
@@ -354,6 +397,13 @@ function TrainerContent() {
    */
   const chatDisabledReason: string | null = session
     ? null
+    : // Gap 139: while a session is loading, the two "nothing selected yet"
+      // reasons below are wrong — something *is* in flight, and the vendor
+      // handler now clears `session` up front so the stale document can't sit
+      // under the loading panel. Say so rather than telling the user to pick a
+      // vendor they just picked.
+      isLoadingSession
+    ? "Loading the sandbox session — one moment."
     : activeScope === "new_vendor"
     ? "Upload a sample invoice PDF to start a New Vendor session before teaching rules."
     : activeScope === "existing_vendor"
@@ -628,6 +678,8 @@ function TrainerContent() {
             selectedVariable={selectedVariable}
             scope={activeScope}
             vendorName={selectedVendorName}
+            isLoadingSession={isLoadingSession}
+            loadingFileName={loadingFileName}
           />
         </div>
 
