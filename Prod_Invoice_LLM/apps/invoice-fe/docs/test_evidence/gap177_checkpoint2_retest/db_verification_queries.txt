@@ -1,0 +1,18 @@
+=== Chat sessions deleted during this retest -- direct Postgres check (all 6 IDs across two script runs) ===
+ id | title 
+----+-------
+(0 rows)
+
+
+=== Webhook subscriptions deleted during this retest -- direct Postgres check (all 3 IDs) ===
+ id | target_url 
+----+------------
+(0 rows)
+
+
+=== Full webhook_subscriptions table (confirms no leftover test rows) ===
+ remaining_rows 
+----------------
+              0
+(1 row)
+

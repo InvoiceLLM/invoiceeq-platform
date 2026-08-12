@@ -31,6 +31,11 @@ Every single message send failed with `422 Unprocessable Entity`. Root cause: `u
 
 Fixed all five in `useChatSession.ts`, `types/chat.ts`, and `CitationPill.tsx` — see `be_features_tracker.md`/`fe_features_tracker.md` Gap 22 for the full writeup. Verified live: 3 real questions against a real ingested invoice, correct SQL-routed answers, zero console errors.
 
+### Fix: Deleting a chat thread left it on screen (Gap 177, Aug 11, 2026)
+Thread deletion (`ChatWindow.tsx`'s header button and the per-thread trash icon in `ThreadSidebar`, both → `useChatSession.ts::deleteSession` → `app/api/chat/sessions/[sessionId]/route.ts` → BE `DELETE /chat/sessions/{session_id}`, 204) deleted the row in Postgres but never removed it from the sidebar — it reappeared only after a reload, and kept matching the Gap 149 thread search in the meantime (that was the whole of Gap 180; the search filter itself was never broken). Nothing in this feature was at fault: the bug was in the shared proxy helper, which could not construct a 204 response and returned 500 for it — see `feature_1_layout_theme.md`'s "API Call Path → Null-body statuses" for the mechanism and the fix. `deleteSession` is unchanged; it now takes its success branch because the route handler finally returns the backend's real 204.
+
+In the same pass the header button was relabelled **"Clear Chat" → "Delete Chat"** (`ChatWindow.tsx`, in the slim SAGE agent strip). It has always called the same `onDeleteSession(activeSessionId)` handler as the sidebar trash icon — it deletes the entire thread. There is no clear-messages-keep-thread capability in the FE or the backend, and none was added: the label was corrected to describe what the button does, since per-thread delete already covers the need.
+
 ### Tasks
 
 - [x] **Task 5.1: Build Conversational Message Thread Interface**

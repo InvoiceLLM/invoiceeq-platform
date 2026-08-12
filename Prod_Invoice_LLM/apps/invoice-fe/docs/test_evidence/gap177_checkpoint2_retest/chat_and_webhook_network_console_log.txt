@@ -1,0 +1,29 @@
+2026-08-11T16:59:19.607Z GET http://localhost:3001/api/chat/sessions -> 200
+2026-08-11T16:59:19.715Z GET http://localhost:3001/api/chat/sessions -> 200
+2026-08-11T16:59:22.245Z POST http://localhost:3001/api/chat/sessions -> 201
+2026-08-11T16:59:24.014Z GET http://localhost:3001/api/chat/sessions/ec979f46-2a32-4c72-bb7f-d02d02550775 -> 200
+2026-08-11T16:59:24.051Z PUT http://localhost:3001/api/chat/sessions/ec979f46-2a32-4c72-bb7f-d02d02550775 -> 405
+2026-08-11T16:59:24.051Z [console.error] Failed to load resource: the server responded with a status of 405 (Method Not Allowed)
+2026-08-11T16:59:25.027Z DELETE http://localhost:3001/api/chat/sessions/ec979f46-2a32-4c72-bb7f-d02d02550775 -> 204
+2026-08-11T16:59:26.503Z [assert] trash-icon delete: rows before=20 after=19 stillVisible=0
+2026-08-11T16:59:26.652Z POST http://localhost:3001/api/chat/sessions -> 201
+2026-08-11T16:59:28.345Z GET http://localhost:3001/api/chat/sessions/eb7e06f4-264b-4e38-a9fa-48aeb31a085d -> 200
+2026-08-11T16:59:28.393Z PUT http://localhost:3001/api/chat/sessions/eb7e06f4-264b-4e38-a9fa-48aeb31a085d -> 405
+2026-08-11T16:59:28.393Z [console.error] Failed to load resource: the server responded with a status of 405 (Method Not Allowed)
+2026-08-11T16:59:29.194Z GET http://localhost:3001/api/chat/sessions/eb7e06f4-264b-4e38-a9fa-48aeb31a085d -> 200
+2026-08-11T16:59:30.124Z DELETE http://localhost:3001/api/chat/sessions/eb7e06f4-264b-4e38-a9fa-48aeb31a085d -> 204
+2026-08-11T16:59:31.697Z [assert] Delete Chat button: stillVisible=0
+2026-08-11T16:59:31.829Z POST http://localhost:3001/api/chat/sessions -> 201
+2026-08-11T16:59:33.550Z GET http://localhost:3001/api/chat/sessions/595da805-1a42-45ac-8091-491f5b3b516a -> 200
+2026-08-11T16:59:33.592Z PUT http://localhost:3001/api/chat/sessions/595da805-1a42-45ac-8091-491f5b3b516a -> 405
+2026-08-11T16:59:33.592Z [console.error] Failed to load resource: the server responded with a status of 405 (Method Not Allowed)
+2026-08-11T16:59:35.038Z [assert] gap180 search before delete: found=1
+2026-08-11T16:59:35.583Z DELETE http://localhost:3001/api/chat/sessions/595da805-1a42-45ac-8091-491f5b3b516a -> 204
+2026-08-11T16:59:37.566Z [assert] gap180 search after delete: found=0 noMatchMsgVisible=1
+2026-08-11T16:59:38.643Z GET http://localhost:3001/api/webhooks -> 200
+2026-08-11T16:59:41.557Z POST http://localhost:3001/api/webhooks -> 201
+2026-08-11T16:59:43.179Z GET http://localhost:3001/api/webhooks -> 200
+2026-08-11T16:59:44.200Z [assert] webhook present before delete: count=1
+2026-08-11T16:59:44.271Z [dialog] confirm: Are you sure you want to delete this webhook subscription?
+2026-08-11T16:59:44.365Z DELETE http://localhost:3001/api/webhooks/0ad43e6d-b764-4724-9700-d8cdf178ab07 -> 204
+2026-08-11T16:59:45.859Z [assert] webhook present after delete, no reload: count=0

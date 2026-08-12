@@ -1,0 +1,34 @@
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/chat/sessions/400fa3ed-61de-4eed-9c2a-282fb77e3326 204 in 119ms
+[clerkSessionToken] auth() resolved, userId: null
+--
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/chat/sessions/8243ffb7-c814-4198-82c2-3edb21073b93 204 in 92ms
+[clerkSessionToken] auth() resolved, userId: null
+--
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/chat/sessions/756e7fcc-1a0c-41a1-9c68-d5337399d66f 204 in 103ms
+ ○ Compiling /settings/webhooks ...
+--
+ ✓ Compiled /api/webhooks/[id] in 890ms (748 modules)
+ DELETE /api/webhooks/bee0f819-9839-4e31-9257-b8e2fbb21a3f 200 in 2198ms
+[clerkSessionToken] auth() resolved, userId: null
+--
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/webhooks/ca63482b-8463-4f9d-a683-92b515d167e2 204 in 137ms
+Clerk: Refreshing the session token resulted in an infinite redirect loop. This usually means that your Clerk instance keys do not match - make sure to copy the correct publishable and secret keys from the Clerk dashboard.
+--
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/chat/sessions/ec979f46-2a32-4c72-bb7f-d02d02550775 204 in 75ms
+[clerkSessionToken] auth() resolved, userId: null
+--
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/chat/sessions/eb7e06f4-264b-4e38-a9fa-48aeb31a085d 204 in 53ms
+[clerkSessionToken] auth() resolved, userId: null
+--
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/chat/sessions/595da805-1a42-45ac-8091-491f5b3b516a 204 in 84ms
+ GET /settings/webhooks 200 in 80ms
+--
+[clerkSessionToken] NO USERID -- no session recognised server-side
+ DELETE /api/webhooks/0ad43e6d-b764-4724-9700-d8cdf178ab07 204 in 72ms

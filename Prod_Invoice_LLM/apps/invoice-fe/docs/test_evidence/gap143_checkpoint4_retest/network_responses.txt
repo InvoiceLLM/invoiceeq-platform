@@ -1,0 +1,36 @@
+Gap 143 Checkpoint 4 -- real GET /api/billing/usage responses captured live
+(browser network layer, Playwright headless Chromium, invoice-fe dev server
+on :3001 proxying to real invoice-be on :8000, real Postgres on :5433).
+
+=== 1. Admin, tenant 00000000-0000-0000-0000-000000000000 ("Example
+    Workspace"), billing_plan=pro_combined (paid tier) ===
+GET http://localhost:3001/api/billing/usage -> 200
+{"plan":"pro_combined","metered":false,"used":null,"limit":null,"remaining":null,"resets_at":null}
+
+DB at time of capture (tenant row):
+ id                                   | billing_plan | free_invoices_remaining | free_quota_reset_at
+ 00000000-0000-0000-0000-000000000000 | pro_combined | 50                      | (null)
+
+=== 2. Same tenant, billing_plan flipped to 'free' for this test,
+    free_invoices_remaining=37, free_quota_reset_at=2026-09-01 00:00:00 ===
+GET http://localhost:3001/api/billing/usage -> 200
+{"plan":"free","metered":true,"used":13,"limit":50,"remaining":37,"resets_at":"2026-09-01T00:00:00"}
+
+DEFAULT_FREE_INVOICES_LIMIT in apps/invoice-be/config.py: 50 (line 32) --
+matches "limit":50 returned above. used = limit - remaining = 50 - 37 = 13,
+matching the DB's free_invoices_remaining=37 exactly. Not a client-side
+guess -- traced end to end: DB row -> routers/billing.py::get_billing_usage
+-> app/api/billing/usage/route.ts proxy -> page fetch -> rendered bar.
+
+=== 3. Simulated backend failure (Playwright context.route() forcing 500
+    on the browser->Next.js-route-handler leg only; real backend on :8000
+    was left running and untouched throughout) ===
+Request:  GET http://localhost:3001/api/billing/usage
+Response: 500 {"detail":"simulated failure for Gap 143 retest"}
+(captured twice -- React StrictMode/dev double-invoke; both real
+request/response pairs on the wire, nothing swallowed silently)
+
+=== 4. Non-Admin (Viewer role via mock `Authorization: Bearer test_viewer`,
+    same tenant, billing_plan restored to pro_combined) ===
+GET http://localhost:3001/api/auth/me -> 200
+{"tenant_id":"00000000-0000-0000-0000-000000000000","user_id":"user_test_default","db_user_id":"48837487-1d46-462d-b471-91577e8bc880","role":"Viewer","billing_plan":"pro_combined","tenant_name":"Example Workspace","can_train":false,"can_audit":false,"can_load":false}

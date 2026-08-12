@@ -1,0 +1,20 @@
+Backend log (uvicorn, local dev, port 8000) — GET /api/v1/connectors/auth-url/{provider}
+Requests made with no Authorization header -> ALLOW_MOCK_AUTH=true fallback -> MOCK_TENANT_ID.
+
+[jwt-diag] header branch: authorization=None
+INFO:     127.0.0.1:xxxxx - "GET /api/v1/connectors/auth-url/google_drive HTTP/1.1" 200 OK
+INFO:     127.0.0.1:xxxxx - "GET /api/v1/connectors/auth-url/salesforce HTTP/1.1" 200 OK
+
+Response bodies (curl, 2026-08-11):
+
+google_drive:
+{"auth_url":"https://accounts.google.com/o/oauth2/v2/auth?client_id=462421932899-l4l5oesadqrmfrbm2i6er3a6gpfmsm3m.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fapi%2Fv1%2Fconnectors%2Fcallback%2Fgoogle_drive&response_type=code&access_type=offline&prompt=consent&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.readonly"}
+
+salesforce:
+{"auth_url":"https://login.salesforce.com/services/oauth2/authorize?client_id=3MVG9.Houp75EVdZiPnzAXP1ly3NOyDA1TAh7PFpBvzsf6qxIjwVSJoxyMRmkvNbfU4twmqALTJ_SZtlRrylg&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fapi%2Fv1%2Fconnectors%2Fcallback%2Fsalesforce&response_type=code&code_challenge=...&code_challenge_method=S256&state=..."}
+
+Decoded redirect_uri sent to each provider (this is the exact param Google/Salesforce validate against their registered callback URLs, and the value that would trigger redirect_uri_mismatch if wrong):
+  google_drive: http://localhost:8000/api/v1/connectors/callback/google_drive
+  salesforce:   http://localhost:8000/api/v1/connectors/callback/salesforce
+
+Matches invoice-be/.env's GOOGLE_REDIRECT_URI / SALESFORCE_REDIRECT_URI exactly (routers/connectors.py::get_auth_url reads settings.GOOGLE_REDIRECT_URI / settings.SALESFORCE_REDIRECT_URI directly, no hardcoding).

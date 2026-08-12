@@ -1,0 +1,37 @@
+Next.js dev server log (invoice-fe, port 3001), 2026-08-11 — DELETE
+/api/chat/sessions/{id} for a real thread ("Zeta Corp Follow-up",
+id=e34dfdcd-442c-4178-8d6b-4b72d3288c21) clicked via the sidebar's trash icon:
+
+ ⨯ TypeError: Response constructor: Invalid response status code 204
+    at webidl.errors.exception (node:internal/deps/undici/undici:4720:14)
+    at initializeResponse (node:internal/deps/undici/undici:10884:31)
+    at new Response (node:internal/deps/undici/undici:10624:9)
+    at new NextResponse (webpack-internal:///(rsc)/./node_modules/next/dist/server/web/spec-extension/response.js:38:9)
+    at proxyJson (webpack-internal:///(rsc)/./lib/backendProxy.ts:129:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    ... (Next.js internal frames)
+ DELETE /api/chat/sessions/e34dfdcd-442c-4178-8d6b-4b72d3288c21 500 in 135ms
+
+This is exactly the failure Gap 177's root-cause analysis predicted
+(fe_features_tracker.md, "Root cause found 2026-08-10" by NEW_ISSUES_2026-08-10.md
+N-07): lib/backendProxy.ts's proxyJson() always does
+`const data = await response.text()` (empty string for a real 204 from
+routers/chat.py's DELETE /chat/sessions/{id}) then constructs
+`new NextResponse(data, {status: 204, ...})` — a null-body status
+constructed with a non-null (if empty) body, which the Fetch spec forbids.
+Confirmed live in this exact stack, not just in isolation.
+
+Direct Postgres query after the 500, confirming the backend HAD already
+committed the delete despite the 500 returned to the browser:
+
+  $ docker exec invoice-postgres-local psql -U postgres -d invoice_db \
+      -c "SELECT id, title FROM chatsession WHERE id = 'e34dfdcd-442c-4178-8d6b-4b72d3288c21';"
+   id | title
+  ----+-------
+  (0 rows)
+
+Row is gone server-side. The FE's local `sessions` state array is never
+updated (`useChatSession.ts::deleteSession()`'s catch block only sets an
+error string, never filters `sessions`), so the thread keeps rendering in
+the sidebar — and keeps matching the search filter — until a full page
+reload re-fetches the real (now-shorter) session list from the backend.

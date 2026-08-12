@@ -1,0 +1,15 @@
+2026-08-11T16:58:26.306Z [console.info] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold
+2026-08-11T16:58:26.565Z [console.warning] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview
+2026-08-11T16:58:27.245Z >> REQUEST GET http://localhost:3001/api/webhooks
+2026-08-11T16:58:27.723Z << RESPONSE GET http://localhost:3001/api/webhooks -> 200 body="[]"
+2026-08-11T16:58:30.723Z >> REQUEST POST http://localhost:3001/api/webhooks
+2026-08-11T16:58:30.853Z [assert] create response status=201
+2026-08-11T16:58:30.857Z << RESPONSE POST http://localhost:3001/api/webhooks -> 201 body="{\"id\":\"ca63482b-8463-4f9d-a683-92b515d167e2\",\"target_url\":\"https://example.com/gap177-retest-webhook-v2\",\"subscribed_events\":[\"invoice.completed\"],\"enabled\":true,\"consecutive_failures\":0,\"created_at\":"
+2026-08-11T16:58:31.810Z >> REQUEST GET http://localhost:3001/api/webhooks
+2026-08-11T16:58:31.878Z << RESPONSE GET http://localhost:3001/api/webhooks -> 200 body="[{\"id\":\"ca63482b-8463-4f9d-a683-92b515d167e2\",\"target_url\":\"https://example.com/gap177-retest-webhook-v2\",\"subscribed_events\":[\"invoice.completed\"],\"enabled\":true,\"consecutive_failures\":0,\"created_at\""
+2026-08-11T16:58:33.199Z [assert] webhook row present before delete: count=1
+2026-08-11T16:58:33.417Z [dialog] confirm: Are you sure you want to delete this webhook subscription?
+2026-08-11T16:58:33.426Z >> REQUEST DELETE http://localhost:3001/api/webhooks/ca63482b-8463-4f9d-a683-92b515d167e2
+2026-08-11T16:58:33.611Z [assert] delete response status=204
+2026-08-11T16:58:33.617Z << RESPONSE DELETE http://localhost:3001/api/webhooks/ca63482b-8463-4f9d-a683-92b515d167e2 -> 204 body=""
+2026-08-11T16:58:34.629Z [assert] webhook row present after delete (no reload): count=0
