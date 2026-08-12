@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import logging
 import uuid
+from datetime import datetime
 from typing import Literal
 
 import httpx
@@ -42,7 +43,7 @@ from sqlmodel import Session
 from config import settings
 from dependencies import get_tenant_context_allow_unpaid, get_db_session, TenantContext
 from models import Tenant, User
-from services.billing_lifecycle import extend_paid_through
+from services.billing_lifecycle import FREE_PLAN, extend_paid_through
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,33 @@ PAYU_VERIFY_URL = {
 
 class CheckoutSessionRequest(BaseModel):
     plan: Literal["pro", "pro_combined"]
+
+
+class BillingUsageResponse(BaseModel):
+    """Gap 143: what the Subscriptions & Billing screen's usage bar renders.
+
+    Every field is read straight off the same tenant row the ingestion gate
+    enforces against (`routers/invoices.py::upload_invoices`), so the number on
+    screen and the number that produces a 402 can never disagree. The frontend
+    previously derived this itself by counting invoice rows, which could not
+    reconcile with the gate by construction: the gate reads a monthly
+    decrement-only counter, while the list endpoint counts inbound invoices for
+    the lifetime of the account.
+
+    `metered` is the honest answer to "does this plan have an allowance at all".
+    Only `free` does -- `routers/invoices.py` checks `free_invoices_remaining`
+    exclusively under `billing_plan == "free"` -- so for every other plan the
+    numeric fields are None rather than a fabricated ceiling. Deliberately not
+    asserting anything about the Pro tier's advertised 1,000/month cap: that cap
+    does not exist in the software and is BE Gap 188's decision to make, not
+    this endpoint's to pre-empt.
+    """
+    plan: str
+    metered: bool
+    used: int | None = None
+    limit: int | None = None
+    remaining: int | None = None
+    resets_at: datetime | None = None
 
 
 class CheckoutSessionResponse(BaseModel):
@@ -132,6 +160,56 @@ async def _verify_payment_with_payu(txnid: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get("/usage", response_model=BillingUsageResponse)
+def get_billing_usage(
+    context: TenantContext = Depends(get_tenant_context_allow_unpaid),
+    db_session: Session = Depends(get_db_session),
+):
+    """The tenant's real invoice allowance and how much of it is spent.
+
+    Gap 143: the Subscriptions & Billing screen had no endpoint to ask, so it
+    counted invoice rows client-side against a hard-coded ceiling. Both halves
+    were wrong -- see BillingUsageResponse for why counting rows can never agree
+    with the gate, and `config.DEFAULT_FREE_INVOICES_LIMIT` (50) for the value
+    the screen was contradicting with a literal 25.
+
+    No Admin gate, unlike create-checkout-session below: this is a read of the
+    caller's own workspace allowance, and a non-Admin who can ingest invoices is
+    exactly who runs into the 402 that this number predicts. Changing the plan
+    stays Admin-only.
+
+    Depends on get_tenant_context_allow_unpaid for the same reason checkout
+    does (Gap 71): a lapsed tenant lands on this page precisely to fix their
+    billing, so the page's own data call must not 402 out from under them.
+
+    Reads only -- the counter is already correct by the time this runs, because
+    `dependencies.get_tenant_context_allow_unpaid()` calls
+    `refresh_free_quota()` (Gap 118) on every request, so a tenant whose cycle
+    elapsed while idle sees the refilled number here, not a stale one.
+    """
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+
+    if tenant.billing_plan != FREE_PLAN:
+        return BillingUsageResponse(plan=tenant.billing_plan, metered=False)
+
+    limit = settings.DEFAULT_FREE_INVOICES_LIMIT
+    # Clamped both ways: the spend-side decrement can currently drive the
+    # counter negative under concurrency (BE Gap 189, not fixed here), and a
+    # tenant seeded before DEFAULT_FREE_INVOICES_LIMIT was last changed can hold
+    # more than the current limit. Neither should render as a negative bar.
+    remaining = max(0, min(tenant.free_invoices_remaining, limit))
+    return BillingUsageResponse(
+        plan=tenant.billing_plan,
+        metered=True,
+        used=limit - remaining,
+        limit=limit,
+        remaining=remaining,
+        resets_at=tenant.free_quota_reset_at,
+    )
+
 
 @router.post("/create-checkout-session", response_model=CheckoutSessionResponse)
 async def create_checkout_session(

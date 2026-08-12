@@ -42,6 +42,16 @@ Non-success never mutates state
     no upgrade.
 19. A hash-valid, verified-success POST to the *furl* endpoint still does not
     upgrade (is_surl=False short-circuits).
+
+GET /billing/usage (Gap 143)
+20. A free tenant's used/limit/remaining come from the tenant row and
+    DEFAULT_FREE_INVOICES_LIMIT -- not the 25 the UI used to hard-code.
+21. Spending quota moves `used` in step with the counter the ingestion gate
+    reads, which is the whole point of the endpoint.
+22. A paid plan reports metered=False with no numbers, rather than inventing
+    the Pro tier's advertised-but-unimplemented cap (BE Gap 188).
+23. A non-Admin may read usage (unlike checkout, which is Admin-only).
+24. A counter outside [0, limit] is clamped instead of rendering negative.
 """
 import hashlib
 from urllib.parse import parse_qs, urlparse
@@ -103,12 +113,18 @@ def payu_credentials(monkeypatch):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _seed_tenant(db_session: Session, tenant_id: UUID = MOCK_TENANT_ID, plan: str = "free") -> Tenant:
+def _seed_tenant(
+    db_session: Session,
+    tenant_id: UUID = MOCK_TENANT_ID,
+    plan: str = "free",
+    remaining: int | None = None,
+) -> Tenant:
     tenant = Tenant(
         id=tenant_id,
         name="Test Workspace",
         domain=f"{tenant_id}.example.com",
         billing_plan=plan,
+        **({} if remaining is None else {"free_invoices_remaining": remaining}),
     )
     db_session.add(tenant)
     db_session.commit()
@@ -457,3 +473,88 @@ def test_furl_endpoint_never_upgrades_even_on_a_verified_success(db_session, ver
     db_session.refresh(tenant)
     assert tenant.billing_plan == "free"
     assert tenant.payu_subscription_id is None
+
+
+# ---------------------------------------------------------------------------
+# 20-24: GET /billing/usage (Gap 143)
+#
+# The point of this endpoint is that the number rendered on the billing screen
+# and the number the ingestion gate enforces are the *same* number, so these
+# assert against `free_invoices_remaining` and settings.DEFAULT_FREE_INVOICES_
+# LIMIT rather than against any literal the UI might carry.
+# ---------------------------------------------------------------------------
+
+def test_usage_reports_the_backend_limit_not_a_ui_literal(db_session):
+    """A fresh free tenant: full allowance, nothing used, limit straight from
+    config. The UI used to hard-code 25 against a real limit of 50."""
+    _seed_tenant(db_session)
+    response = client.get("/api/v1/billing/usage")
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    limit = billing.settings.DEFAULT_FREE_INVOICES_LIMIT
+    assert data["plan"] == "free"
+    assert data["metered"] is True
+    assert data["limit"] == limit
+    assert data["remaining"] == limit
+    assert data["used"] == 0
+    # Gap 118's cycle clock is seeded on first contact by refresh_free_quota(),
+    # so the screen always has a real reset date to show.
+    assert data["resets_at"] is not None
+
+
+def test_usage_tracks_the_same_counter_the_ingestion_gate_reads(db_session):
+    """Spending quota is immediately visible as `used` -- this is the property
+    that client-side invoice counting could never have."""
+    limit = billing.settings.DEFAULT_FREE_INVOICES_LIMIT
+    _seed_tenant(db_session, remaining=limit - 13)
+
+    data = client.get("/api/v1/billing/usage").json()
+    assert data["used"] == 13
+    assert data["remaining"] == limit - 13
+    assert data["limit"] == limit
+
+
+@pytest.mark.parametrize("plan", ["pro", "pro_combined", "unpaid"])
+def test_usage_on_a_non_free_plan_reports_no_metered_allowance(db_session, plan):
+    """routers/invoices.py only enforces free_invoices_remaining on the free
+    plan, so every other plan reports metered=False with no numbers at all --
+    deliberately not the Pro tier's advertised 1,000 cap, which does not exist
+    in the software (BE Gap 188)."""
+    _seed_tenant(db_session, plan=plan)
+    response = client.get("/api/v1/billing/usage")
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["plan"] == plan
+    assert data["metered"] is False
+    assert data["used"] is None
+    assert data["limit"] is None
+    assert data["remaining"] is None
+    assert data["resets_at"] is None
+
+
+def test_usage_is_readable_by_a_non_admin(db_session):
+    """Unlike create-checkout-session (403 for a Viewer above), reading your own
+    workspace's allowance is not an Admin action -- a non-Admin who can ingest
+    is exactly who hits the 402 this number predicts."""
+    _seed_tenant(db_session)
+    response = client.get(
+        "/api/v1/billing/usage",
+        headers={"Authorization": "Bearer test_viewer"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["metered"] is True
+
+
+@pytest.mark.parametrize("stored,expected_remaining", [(-3, 0), (10_000, None)])
+def test_usage_clamps_a_counter_outside_the_allowance(db_session, stored, expected_remaining):
+    """BE Gap 189 can drive the counter negative, and a row seeded before the
+    limit last changed can exceed it. Neither may render as a negative bar."""
+    limit = billing.settings.DEFAULT_FREE_INVOICES_LIMIT
+    _seed_tenant(db_session, remaining=stored)
+
+    data = client.get("/api/v1/billing/usage").json()
+    assert data["remaining"] == (limit if expected_remaining is None else expected_remaining)
+    assert data["used"] == limit - data["remaining"]
+    assert data["used"] >= 0

@@ -15,11 +15,14 @@ import { test, expect, Page } from "@playwright/test";
  *   Ingest                   -> can_load
  *   Audit Queue              -> can_audit
  *   AI Trainer               -> can_train
- *   Settings                 -> Admin only
+ *   Settings / Subscriptions -> Admin only
  */
 
 const ALWAYS_VISIBLE = ["Dashboard", "Chat", "Help"];
 const GRANTABLE = ["Ingest", "Audit Queue", "AI Trainer"];
+// FE Gap 143 added "Subscriptions" (/settings/subscriptions) as a direct nav
+// entry, gated on Admin exactly as Settings is.
+const ADMIN_ONLY = ["Settings", "Subscriptions"];
 
 interface Identity {
   role: string;
@@ -40,6 +43,9 @@ async function stubShell(page: Page, identity: Identity) {
       contentType: "application/json",
       body: JSON.stringify({
         tenant_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        // BE Gap 133: the header/admin console now render the backend-resolved
+        // tenant name instead of Clerk unsafeMetadata.orgName.
+        tenant_name: "E2E Workspace",
         user_id: "user_e2e",
         billing_plan: "active",
         can_train: false,
@@ -137,12 +143,12 @@ test.describe("Sidebar — permission-less user (the design's Viewer)", () => {
     expect((await visibleNavItems(page)).sort()).toEqual([...ALWAYS_VISIBLE].sort());
   });
 
-  test("Ingest, Audit Queue, AI Trainer and Settings are all absent", async ({ page }) => {
+  test("Ingest, Audit Queue, AI Trainer, Settings and Subscriptions are all absent", async ({ page }) => {
     await stubShell(page, { role: "Viewer" });
     await page.goto("/dashboard");
     await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
 
-    for (const name of [...GRANTABLE, "Settings"]) {
+    for (const name of [...GRANTABLE, ...ADMIN_ONLY]) {
       await expect(navLink(page, name)).toHaveCount(0);
     }
   });
@@ -163,21 +169,24 @@ test.describe("Sidebar — individually granted permissions", () => {
       expect((await visibleNavItems(page)).sort()).toEqual(
         [...ALWAYS_VISIBLE, label].sort()
       );
-      // Settings stays Admin-only regardless of granted permissions.
-      await expect(navLink(page, "Settings")).toHaveCount(0);
+      // Settings and Subscriptions stay Admin-only regardless of granted
+      // permissions.
+      for (const name of ADMIN_ONLY) {
+        await expect(navLink(page, name)).toHaveCount(0);
+      }
     });
   }
 });
 
 test.describe("Sidebar — Admin", () => {
-  test("sees every nav item, including Settings", async ({ page }) => {
+  test("sees every nav item, including Settings and Subscriptions", async ({ page }) => {
     // Admin implies all three permissions server-side
     // (dependencies.resolve_permissions), which is why the stub returns them.
     await stubShell(page, { role: "Admin", can_train: true, can_audit: true, can_load: true });
     await page.goto("/dashboard");
 
     expect((await visibleNavItems(page)).sort()).toEqual(
-      [...ALWAYS_VISIBLE, ...GRANTABLE, "Settings"].sort()
+      [...ALWAYS_VISIBLE, ...GRANTABLE, ...ADMIN_ONLY].sort()
     );
   });
 

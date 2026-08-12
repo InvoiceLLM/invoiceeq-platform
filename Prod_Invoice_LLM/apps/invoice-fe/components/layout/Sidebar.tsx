@@ -8,6 +8,7 @@ import {
   MessageSquare,
   GraduationCap,
   Settings,
+  CreditCard,
   HelpCircle,
   FileText,
   ListChecks
@@ -27,7 +28,7 @@ export default function Sidebar() {
   //   Ingest                   -> can_load
   //   Audit Queue              -> can_audit
   //   AI Trainer               -> can_train
-  //   Settings                 -> Admin only
+  //   Settings / Subscriptions -> Admin only
   // Admins pass all three permission checks (resolved backend-side in
   // dependencies.resolve_permissions, not re-derived here).
   // NOTE FOR DEVELOPERS: Feature 6 (AI Trainer Interactive Sandbox) route is registered at '/trainer'
@@ -46,6 +47,14 @@ export default function Sidebar() {
     { name: "AI Trainer", href: "/trainer", icon: GraduationCap, visible: canTrain },
     { name: "Chat", href: "/chat", icon: MessageSquare, visible: true },
     { name: "Settings", href: "/settings", icon: Settings, visible: role === "Admin" },
+    // FE Gap 143: the one page a paying tenant checks regularly -- plan, spend
+    // and remaining allowance -- was three clicks deep behind AI Trainer ->
+    // View Plan, or two behind the Settings tile grid, and invisible to anyone
+    // who doesn't already know it exists. Gated on Admin exactly as Settings
+    // is: the screen it lands on is the workspace's billing record, and no
+    // role that can't open Settings can act on it anyway (changing plan is
+    // Admin-only backend-side too, routers/billing.py::create_checkout_session).
+    { name: "Subscriptions", href: "/settings/subscriptions", icon: CreditCard, visible: role === "Admin" },
     { name: "Help", href: "/help", icon: HelpCircle, visible: true },
   ];
 
@@ -55,6 +64,14 @@ export default function Sidebar() {
   const visibleItems = menuItems.filter((item) =>
     loading ? item.href === "/dashboard" || item.href === "/chat" || item.href === "/help" : item.visible
   );
+
+  // FE Gap 143: the most specific matching item wins. "Settings" (/settings)
+  // and "Subscriptions" (/settings/subscriptions) both prefix-match while the
+  // subscriptions page is open, which would light up two nav items at once --
+  // the longer href is the one the user is actually on.
+  const activeHref = visibleItems
+    .filter((item) => pathname === item.href || pathname.startsWith(item.href + "/"))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 
   return (
     // data-auth-loading exposes whether identity has resolved yet. The nav is
@@ -76,7 +93,7 @@ export default function Sidebar() {
       <nav className="flex-1 px-4 py-6 space-y-1.5">
         {visibleItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+          const isActive = item.href === activeHref;
 
           return (
             <Link

@@ -6,6 +6,29 @@
  * Gap 120: Added a real plan picker (Pro / Pro Combined) so the "Change Plan"
  * CTA routes to PayU with the correct `?plan=` pre-selected, instead of always
  * hardcoding pro_combined.
+ *
+ * Gap 143: the usage bar now reads `GET /api/billing/usage` — the backend's own
+ * allowance counter — instead of deriving usage locally. The previous version
+ * was wrong twice over: it called `GET /api/invoices?limit=1` and looked for
+ * `data.total`/`data.invoices` in a body that is a bare array (the count is in
+ * the `X-Total-Count` *header*), so the count silently stayed at 0 forever; and
+ * it compared that count to a hard-coded `planLimit` whose free-tier value (25)
+ * was half the real limit the backend enforces (`DEFAULT_FREE_INVOICES_LIMIT`,
+ * 50). Even read correctly, an invoice-row count could never have agreed with
+ * the gate — the gate reads a monthly decrement-only counter, the list endpoint
+ * counts inbound invoices for the lifetime of the account. There are no
+ * client-side plan numbers left on this screen's usage bar as a result.
+ *
+ * Gap 188: the Pro plan card sold "Up to 1,000 invoices / month". No such cap
+ * exists anywhere in the software — `routers/invoices.py` only ever consults
+ * `free_invoices_remaining` under `billing_plan == "free"`, and
+ * `GET /billing/usage` reports `metered=False` with null numbers for `pro`.
+ * The commercial decision was to correct the copy rather than build enforcement,
+ * so the feature line now reads "Unlimited invoices", identical to the Pro card
+ * on invoice-website's `PricingTable.tsx` (the canonical pricing copy, which
+ * already said unlimited). This screen now states the same thing in all three
+ * places: the card, the usage bar's "Not metered on this plan", and its
+ * "This plan has no invoice allowance enforced on it." caption.
  */
 
 import React, { useState, useEffect } from "react";
@@ -20,7 +43,10 @@ const PLANS = [
     price: "₹4,999",
     period: "/ month",
     features: [
-      "Up to 1,000 invoices / month",
+      // Gap 188: was "Up to 1,000 invoices / month" — a cap the software has
+      // never enforced. Wording now matches invoice-website's PricingTable Pro
+      // card, which is the canonical pricing copy.
+      "Unlimited invoices",
       "Inbound AP processing",
       "AI Quality Rules & Trainer",
     ],
@@ -39,6 +65,18 @@ const PLANS = [
     accent: "violet",
   },
 ] as const;
+
+/** Gap 143: the shape of `GET /billing/usage` (routers/billing.py::BillingUsageResponse). */
+interface BillingUsage {
+  plan: string;
+  /** Whether this plan has an invoice allowance the backend actually enforces. */
+  metered: boolean;
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
+  /** ISO timestamp of the next allowance refill, or null when not metered. */
+  resets_at: string | null;
+}
 
 export default function SubscriptionsPage() {
   // FE Gap 110: own h-16 header bar replaced by the shared one.
@@ -63,8 +101,12 @@ export default function SubscriptionsPage() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutHint, setCheckoutHint] = useState<string | null>(null);
 
-  // Gap 143: real usage tracker state
-  const [invoicesCount, setInvoicesCount] = useState<number | null>(null);
+  // Gap 143: real usage tracker state — mirrors BillingUsageResponse in
+  // routers/billing.py. `metered` is false for every plan that has no enforced
+  // invoice allowance, in which case the numeric fields are null rather than a
+  // made-up ceiling; the component must not substitute one.
+  const [usage, setUsage] = useState<BillingUsage | null>(null);
+  const [usageState, setUsageState] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
     function onPayuMessage(event: MessageEvent) {
@@ -85,22 +127,29 @@ export default function SubscriptionsPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function fetchUsage() {
       try {
-        const res = await fetch("/api/invoices?limit=1");
-        if (res.ok) {
-          const data = await res.json();
-          if (typeof data.total === "number") {
-            setInvoicesCount(data.total);
-          } else if (Array.isArray(data.invoices)) {
-            setInvoicesCount(data.invoices.length);
-          }
-        }
+        const res = await fetch("/api/billing/usage", { cache: "no-store" });
+        if (!res.ok) throw new Error(`usage request failed: ${res.status}`);
+        const data: BillingUsage = await res.json();
+        if (cancelled) return;
+        setUsage(data);
+        setUsageState("ready");
       } catch {
-        // Fallback to 0 if fetch fails
+        if (cancelled) return;
+        // Deliberately surfaced rather than silently shown as 0 used: a zero is
+        // indistinguishable from a real "nothing used yet", which is exactly
+        // how the pre-Gap-143 version hid its own failure for weeks.
+        setUsageState("error");
       }
     }
+
     void fetchUsage();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const getPlanName = () => {
@@ -224,9 +273,24 @@ export default function SubscriptionsPage() {
     }
   };
 
-  const processedCount = invoicesCount ?? 0;
-  const planLimit = isProCombined ? 999999 : isPro ? 1000 : 25;
-  const usagePercentage = isProCombined ? 100 : Math.min(100, Math.round((processedCount / planLimit) * 100));
+  // Gap 143: every number below comes from the backend. A plan the backend
+  // reports as unmetered gets no invented ceiling to draw a bar against — that
+  // substitution is exactly what produced the "25 invoices" the free tier never
+  // had. Null-checked field by field so the numbers are typed as present from
+  // here on rather than asserted.
+  const meteredUsage =
+    usage && usage.metered && usage.used !== null && usage.limit !== null && usage.remaining !== null
+      ? { used: usage.used, limit: usage.limit, remaining: usage.remaining }
+      : null;
+  const usagePercentage =
+    meteredUsage && meteredUsage.limit > 0
+      ? Math.min(100, Math.round((meteredUsage.used / meteredUsage.limit) * 100))
+      : 0;
+  const resetsAt = usage?.resets_at ? new Date(usage.resets_at) : null;
+  const resetsLabel =
+    resetsAt && !Number.isNaN(resetsAt.getTime())
+      ? resetsAt.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+      : null;
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
@@ -258,20 +322,50 @@ export default function SubscriptionsPage() {
 
           <div className="h-px bg-[#222D3D] my-4" />
 
-          {/* Gap 143: Real Usage Limits Indicator */}
+          {/* Gap 143: usage indicator, rendered entirely from GET /billing/usage.
+              Four distinct states — loading, unreachable, metered, not metered —
+              because the old version collapsed all four into "0 processed",
+              which is why a broken fetch looked like a working empty account. */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">Usage Limit (Invoices Processed)</span>
+              <span className="text-slate-400">Invoice Allowance</span>
               <span className="font-semibold text-slate-200 font-mono">
-                {isProCombined ? `${processedCount} processed (Unlimited)` : `${processedCount} / ${planLimit} invoices processed`}
+                {usageState === "loading" && "Loading…"}
+                {usageState === "error" && (
+                  <span className="text-amber-400">Usage unavailable</span>
+                )}
+                {usageState === "ready" &&
+                  (meteredUsage
+                    ? `${meteredUsage.used} / ${meteredUsage.limit} invoices used`
+                    : "Not metered on this plan")}
               </span>
             </div>
-            <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-500 rounded-full transition-all duration-500"
-                style={{ width: `${usagePercentage}%` }}
-              />
-            </div>
+
+            {/* No bar when there is no allowance to draw one against. */}
+            {usageState === "ready" && meteredUsage && (
+              <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    usagePercentage >= 100
+                      ? "bg-rose-500"
+                      : usagePercentage >= 80
+                        ? "bg-amber-500"
+                        : "bg-blue-500"
+                  }`}
+                  style={{ width: `${usagePercentage}%` }}
+                />
+              </div>
+            )}
+
+            <p className="text-[10px] text-slate-500">
+              {usageState === "error"
+                ? "Couldn't reach the billing service — this figure is not a zero, it's unknown."
+                : usageState === "ready" && meteredUsage
+                  ? `${meteredUsage.remaining} remaining${resetsLabel ? ` · renews ${resetsLabel}` : ""}`
+                  : usageState === "ready"
+                    ? "This plan has no invoice allowance enforced on it."
+                    : ""}
+            </p>
           </div>
         </section>
 
