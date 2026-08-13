@@ -761,17 +761,19 @@ function TrainerContent() {
           />
         </div>
 
-        {/* 2. Extracted fields — its own column, no longer buried under the PDF */}
-        <div className="h-[280px] xl:h-full min-h-0 xl:w-[220px] xl:shrink-0">
-          <ExtractedFieldsPanel
-            variables={session?.variables || []}
-            selectedVariableId={selectedVariable?.id}
-            onSelectVariable={(v) => setSelectedVariable(v)}
-          />
-        </div>
+        {/* 2. Extracted fields — its own column, only shown for Extraction Rules */}
+        {!(activeSection === "vendor" && globalSubTab === "style") && (
+          <div className="h-[280px] xl:h-full min-h-0 xl:w-[220px] xl:shrink-0">
+            <ExtractedFieldsPanel
+              variables={session?.variables || []}
+              selectedVariableId={selectedVariable?.id}
+              onSelectVariable={(v) => setSelectedVariable(v)}
+            />
+          </div>
+        )}
 
-        {/* 3. Chat — everything left over */}
-        <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-0">
+        {/* 3. Chat — everything left over (secured with min-width to avoid squishing) */}
+        <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[350px]">
           <QnAPanel
             chatHistory={session?.chatHistory || []}
             onSendMessage={handleSendMessage}
