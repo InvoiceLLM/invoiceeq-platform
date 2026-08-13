@@ -1,0 +1,15 @@
+# Ground-truth test run artifacts (2026-08-12/13) — local test data/output only, not source.
+InvoiceEQ_Actual_Results.xlsx
+InvoiceEQ_Ground_Truth.xlsx
+_chat_data.json
+_extraction_data.json
+_report.html
+_report_final.html
+eu/
+india/
+us/
+run_chat_harness.py
+run_extraction_harness.py
+seed_test_tenants_local.py
+setup_test_tenants.py
+test_tenants_local.json
