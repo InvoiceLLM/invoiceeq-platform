@@ -721,7 +721,7 @@ function TrainerContent() {
         disabled={isLoadingSession}
       />
 
-      {activeSection === "global" && globalSubTab === "style" && session ? (
+      {activeSection === "vendor" && globalSubTab === "style" && session ? (
         <ChatResponseStylePanel
           sessionId={session.sessionId}
           onSaved={() => showToast("Chat response style saved.", "success")}
