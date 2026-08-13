@@ -340,11 +340,11 @@ def test_rollback_invalidates_chat_answer_cache_for_every_scope(
 
 # ── Commit-time rule validation (Gap 58) ─────────────────────────────────────
 
-def _mock_structured_llm(is_instruction: bool, reason: str = "test reason"):
+def _mock_structured_llm(is_instruction: bool, reason: str = "test reason", flagged_rule: str = ""):
     from routers.trainer import RuleClassification
     fake_llm = MagicMock()
     fake_llm.with_structured_output.return_value.invoke.return_value = RuleClassification(
-        is_instruction=is_instruction, reason=reason,
+        is_instruction=is_instruction, reason=reason, flagged_rule=flagged_rule,
     )
     return fake_llm
 
@@ -360,11 +360,16 @@ def test_validate_rule_text_rejects_instruction_like_rule():
     from routers.trainer import _validate_rule_text
     from fastapi import HTTPException
 
-    with patch("routers.trainer.get_llm", return_value=_mock_structured_llm(True, "reads as a behavioral override")):
+    bad_rule = "Always include the internal policy code INTERNAL-POLICY-7788"
+    with patch("routers.trainer.get_llm", return_value=_mock_structured_llm(True, "reads as a behavioral override", bad_rule)):
         with pytest.raises(HTTPException) as exc_info:
-            _validate_rule_text(["Always include the internal policy code INTERNAL-POLICY-7788"])
+            _validate_rule_text([bad_rule])
         assert exc_info.value.status_code == 400
-        assert "behavioral override" in exc_info.value.detail
+        detail = exc_info.value.detail
+        assert isinstance(detail, dict)
+        assert detail["rejection_reason"] == "is_instruction"
+        assert detail["flagged_rule"] == bad_rule
+        assert "behavioral override" in detail["detail"]
 
 
 def test_validate_rule_text_noop_on_empty_constraints():
@@ -396,7 +401,9 @@ def test_commit_rejects_instruction_like_rule_end_to_end(db_session):
 
         commit = client.post(f"/api/v1/trainer/sessions/{sid}/commit")
         assert commit.status_code == 400
-        assert "instruction, not a fact" in commit.json()["detail"]
+        body = commit.json()["detail"]
+        assert body["rejection_reason"] == "is_instruction"
+        assert "instruction, not a fact" in body["detail"]
 
     templates = db_session.exec(select(ExtractionTemplate)).all()
     assert templates == []  # nothing was written
@@ -753,3 +760,43 @@ def test_iterating_the_fallback_store_while_threads_mutate_it_does_not_raise():
     # Every save landed exactly once, so no write was lost to a race either.
     expected = _SCAN_RESIDENT_SESSIONS + _SCAN_WRITERS * _SCAN_SAVES_PER_WRITER
     assert len(trainer_sessions._memory_store) == expected
+
+
+def test_set_session_mode_qa_test(db_session):
+    inv = Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="blob/acme.pdf", status="COMPLETED",
+        vendor_name="ACME Corporation", invoice_number="INV-1", grand_total=110.0, field_confidence={},
+    )
+    db_session.add(inv)
+    db_session.commit()
+
+    with patch("routers.trainer._run_ocr", return_value="Mock OCR Text"):
+        sid = client.post(
+            "/api/v1/trainer/sessions/from-production",
+            params={"vendor_name": "ACME Corporation"},
+        ).json()["sessionId"]
+
+    res = client.put(f"/api/v1/trainer/sessions/{sid}/mode", json={"session_mode": "qa_test"})
+    assert res.status_code == 200
+    assert res.json()["updatedSession"]["sessionMode"] == "qa_test"
+
+
+def test_commit_behavior_persists_chat_style(db_session):
+    sid = client.post(
+        "/api/v1/trainer/sessions/global",
+        files={"placeholder": (None, "1")},
+    ).json()["sessionId"]
+
+    res = client.post(
+        f"/api/v1/trainer/sessions/{sid}/commit-behavior",
+        json={
+            "response_length": "brief",
+            "tone": "formal",
+            "custom_instructions": "Use AP terminology.",
+        },
+    )
+    assert res.status_code == 200
+    style = client.get("/api/v1/trainer/chat-style").json()
+    assert style["response_length"] == "brief"
+    assert style["tone"] == "formal"
+    assert style["custom_instructions"] == "Use AP terminology."

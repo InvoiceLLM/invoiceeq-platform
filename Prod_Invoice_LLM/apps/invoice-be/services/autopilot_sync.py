@@ -126,6 +126,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
     skipped = 0
     failed = 0
     batch_id = uuid4()
+    newly_imported: list[dict] = []
 
     for remote_file in remote_files:
         file_id = remote_file["id"]
@@ -210,6 +211,11 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                 file_id, content_hash=content_hash, status="SUCCESS",
             )
             processed += 1
+            newly_imported.append({
+                "invoice_id": str(invoice_id),
+                "file_name": file_name,
+                "flow_direction": config.flow_direction,
+            })
             logger.info("Autopilot: ingested %s → invoice %s", file_name, invoice_id)
 
         except Exception as exc:
@@ -220,6 +226,18 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                 error_detail=str(exc),
             )
             failed += 1
+
+    if newly_imported and (config.notify_emails or []):
+        from services.staff_notify import notify_autopilot_sync_summary
+
+        notify_autopilot_sync_summary(
+            db_session,
+            tenant_id=tenant_id,
+            notify_emails=config.notify_emails or [],
+            imported=newly_imported,
+            send_approval_links=bool(config.send_approval_links),
+            frontend_base_url=settings.FRONTEND_URL or settings.PUBLIC_APP_URL or "",
+        )
 
     summary = {"processed": processed, "skipped": skipped, "failed": failed}
     logger.info("Autopilot sync complete — tenant=%s summary=%s", tenant_id, summary)

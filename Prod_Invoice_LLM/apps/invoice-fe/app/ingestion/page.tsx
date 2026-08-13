@@ -10,6 +10,9 @@ import LogTerminal from "../../components/ingestion/LogTerminal";
 import SendInvoiceStatusTable from "../../components/ingestion/SendInvoiceStatusTable";
 import ConnectorBrowseBar from "../../components/ingestion/ConnectorBrowseBar";
 import AutopilotHistoryTable from "../../components/ingestion/AutopilotHistoryTable";
+import FolderTreeExplorer from "../../components/connectors/FolderTreeExplorer";
+import Link from "next/link";
+import { Lock, FolderOpen } from "lucide-react";
 import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 
@@ -75,6 +78,13 @@ export default function IngestionPage() {
   const [autopilotSyncResult, setAutopilotSyncResult] = useState<string | null>(null);
   const [autopilotError, setAutopilotError] = useState<string | null>(null);
   const [autopilotHistoryKey, setAutopilotHistoryKey] = useState(0); // bump to force table refresh
+  const [autopilotSourceRefName, setAutopilotSourceRefName] = useState("");
+  const [autopilotConnectorStatus, setAutopilotConnectorStatus] = useState<{
+    google_drive: string;
+    salesforce: string;
+  } | null>(null);
+  const [autopilotConnectorChecking, setAutopilotConnectorChecking] = useState(true);
+  const [autopilotBrowsing, setAutopilotBrowsing] = useState(false);
 
   // Load existing autopilot config on mount
   const loadAutopilotConfig = useCallback(async () => {
@@ -102,6 +112,27 @@ export default function IngestionPage() {
   useEffect(() => {
     loadAutopilotConfig();
   }, [loadAutopilotConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAutopilotConnectorChecking(true);
+    fetch("/api/connectors/status")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setAutopilotConnectorStatus(data);
+      })
+      .finally(() => {
+        if (!cancelled) setAutopilotConnectorChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const autopilotConnectorProvider =
+    autopilotConfig.source_type === "gdrive" ? "google_drive" : "salesforce";
+  const autopilotConnectorActive =
+    autopilotConnectorStatus?.[autopilotConnectorProvider as "google_drive" | "salesforce"] === "Active";
 
   const handleSaveAutopilotConfig = async () => {
     setAutopilotSaving(true);
@@ -722,18 +753,37 @@ export default function IngestionPage() {
                     </div>
                   </div>
 
-                  {/* Folder ID */}
+                  {/* Source folder — FE Gap 219 */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">
-                      {autopilotConfig.source_type === "gdrive" ? "Google Drive Folder ID" : "Salesforce Directory ID"}
+                      {autopilotConfig.source_type === "gdrive" ? "Google Drive Folder" : "Salesforce Directory"}
                     </label>
-                    <input
-                      type="text"
-                      value={autopilotConfig.source_ref}
-                      onChange={(e) => setAutopilotConfig((c) => ({ ...c, source_ref: e.target.value }))}
-                      placeholder={autopilotConfig.source_type === "gdrive" ? "e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74" : "e.g. 0690v000001zXbcAAE"}
-                      className="w-full bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/60"
-                    />
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0 rounded-lg border border-[#222D3D] bg-[#0B0F19] px-3 py-2 text-xs text-slate-200 truncate">
+                        {autopilotConfig.source_ref
+                          ? autopilotSourceRefName || autopilotConfig.source_ref
+                          : "No folder selected"}
+                      </div>
+                      {autopilotConnectorChecking ? (
+                        <span className="text-[10px] text-slate-500 shrink-0">Checking…</span>
+                      ) : autopilotConnectorActive ? (
+                        <button
+                          type="button"
+                          onClick={() => setAutopilotBrowsing(true)}
+                          className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-medium bg-violet-600/20 border border-violet-500/40 text-violet-300 hover:bg-violet-600/30 transition-colors"
+                        >
+                          <FolderOpen className="w-3.5 h-3.5" />
+                          Browse →
+                        </button>
+                      ) : (
+                        <span className="shrink-0 flex items-center gap-1 text-[10px] text-slate-500">
+                          <Lock className="w-3 h-3" />
+                          <Link href="/settings/connectors" className="underline hover:text-white">
+                            Connect in Settings
+                          </Link>
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Flow direction */}
@@ -843,6 +893,25 @@ export default function IngestionPage() {
           <div>
             <AutopilotHistoryTable key={autopilotHistoryKey} autoRefresh={autopilotSyncing} />
           </div>
+
+          {autopilotBrowsing && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+              <div className="w-full max-w-lg">
+                <FolderTreeExplorer
+                  provider={autopilotConnectorProvider as "google_drive" | "salesforce"}
+                  direction="inbound"
+                  selectionMode="folder"
+                  onFolderSelected={(folder) => {
+                    if (folder.id) {
+                      setAutopilotConfig((c) => ({ ...c, source_ref: folder.id as string }));
+                      setAutopilotSourceRefName(folder.name);
+                    }
+                  }}
+                  onClose={() => setAutopilotBrowsing(false)}
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

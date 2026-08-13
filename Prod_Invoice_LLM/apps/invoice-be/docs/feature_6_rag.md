@@ -46,6 +46,8 @@ Chat-history behaviour is deliberately unchanged: the staged row is still autofl
 
 **Update (Gap 52, fixed Jul 25, 2026)**: Vendor-scope rules now reach Chat too — `_get_vendor_business_rules()` does a heuristic substring match of vendor names (from that tenant's per-vendor `ExtractionTemplate` rows) against the user's message text, and any matched vendor's rules are merged in alongside the Global ones. This is a fixed follow-on, not an open gap anymore.
 
+**Update (Gap 219, Aug 12, 2026) — conciseness + per-tenant response style**: `agents/query_agent.py` injects `_CONCISENESS_INSTRUCTION` ("Answer in 1–3 sentences unless asked for detail") into SQL, RAG, and CHAT system prompts. `_get_chat_style_block()` reads `chat_style` from the tenant's global INBOUND template (saved via `POST /trainer/sessions/{id}/commit-behavior`, BE Gap 221) and adds length/tone/custom-instruction hints.
+
 ### Tasks
 - [x] **Task 6.1: Setup Chat Sessions & Threads API**
   - Implement endpoints:
@@ -90,6 +92,9 @@ Chat-history behaviour is deliberately unchanged: the staged row is still autofl
   - Verified: `pytest tests/test_rag.py::test_tenant_stats_summary_reflects_real_data` (real numbers, correct tenant isolation) plus a live chat question ("How is my invoice data looking overall?") that correctly reflected the tenant's real 8 invoices / $201,708.50 total.
 - [x] **Task 6.13: Per-answer chat feedback (Gap 54, 2026-07-27)**
   - New `chat_feedback` table (migration `b2c3d4e5f6a7`): `tenant_id`, `session_id`, `message_id` (unique — one vote per message), `vote` ("up"/"down"). `PUT /chat/messages/{message_id}/feedback` upserts a vote (overwrites, doesn't accumulate); `DELETE` clears it. Both validate message ownership via the parent `ChatSession`'s `tenant_id`, same pattern as `get_session_messages()`. Signal-only — no auto-fix from a vote, mirrors the "correction is a signal, Trainer commit is the action" pattern from the Auditor loop (Gap 26/27). `GET /chat/sessions/{id}` now attaches each message's current vote (`feedback: "up" | "down" | null`) so it survives a reload, via one extra query for the whole session rather than N+1 per message.
+
+### Recent Fixes (Aug 12, 2026)
+* **Gap 219 — Chat conciseness + per-tenant response style (fixed Aug 12, 2026)**: `agents/query_agent.py` injects `_CONCISENESS_INSTRUCTION` and `_get_chat_style_block()` (length/tone/custom instructions from `ExtractionTemplate.rules["chat_style"]`) into SQL, RAG, and CHAT system prompts. Style is set via `POST /trainer/sessions/{id}/commit-behavior` (BE Gap 221).
 
 ### Verification Plan
 * **Automated Tests**: Run `uv run pytest tests/test_rag.py` verifying that cross-tenant queries return empty context responses, that a chat turn commits atomically (Gap 209), and that a thread rename persists and stays tenant-scoped (FE Gap 216).

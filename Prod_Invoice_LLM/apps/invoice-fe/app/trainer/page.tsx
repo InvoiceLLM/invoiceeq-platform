@@ -27,7 +27,13 @@ import {
   PageHeaderActions,
   usePageHeader,
 } from "@/components/layout/PageHeaderContext";
-import TrainerControlBar from "@/components/trainer/TrainerControlBar";
+import TrainerControlBar, {
+  GlobalSubTab,
+  TrainerSection,
+  TrainerSessionMode,
+  VendorEntryMode,
+} from "@/components/trainer/TrainerControlBar";
+import ChatResponseStylePanel from "@/components/trainer/ChatResponseStylePanel";
 import PdfViewerPanel from "@/components/trainer/PdfViewerPanel";
 import ExtractedFieldsPanel from "@/components/trainer/ExtractedFieldsPanel";
 import QnAPanel from "@/components/trainer/QnAPanel";
@@ -162,6 +168,10 @@ function TrainerContent() {
 
   // Core Session State Management
   const [activeScope, setActiveScope] = useState<TrainerScope>("global");
+  const [activeSection, setActiveSection] = useState<TrainerSection>("global");
+  const [vendorEntryMode, setVendorEntryMode] = useState<VendorEntryMode>("existing");
+  const [globalSubTab, setGlobalSubTab] = useState<GlobalSubTab>("rules");
+  const [sessionMode, setSessionMode] = useState<TrainerSessionMode>("rule_creation");
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [selectedVendorName, setSelectedVendorName] = useState<string>("");
   const [session, setSession] = useState<TrainerSession | null>(null);
@@ -268,6 +278,8 @@ function TrainerContent() {
    */
   const handleScopeChange = async (newScope: TrainerScope) => {
     setActiveScope(newScope);
+    setActiveSection(newScope === "global" ? "global" : "vendor");
+    setVendorEntryMode(newScope === "new_vendor" ? "new" : "existing");
     setSelectedVariable(null);
 
     let vendor = selectedVendorName;
@@ -302,11 +314,46 @@ function TrainerContent() {
     try {
       const newSess = await trainerService.startSession(newScope, vendor);
       setSession(newSess);
+      setSessionMode(newSess.sessionMode === "qa_test" ? "qa_test" : "rule_creation");
     } catch (err) {
       console.error("Failed to start session", err);
       showToast("Failed to start the training session.", "error");
     } finally {
       setIsLoadingSession(false);
+    }
+  };
+
+  const handleSectionChange = async (section: TrainerSection) => {
+    setActiveSection(section);
+    setGlobalSubTab("rules");
+    if (section === "global") {
+      await handleScopeChange("global");
+    } else {
+      await handleScopeChange(vendorEntryMode === "new" ? "new_vendor" : "existing_vendor");
+    }
+  };
+
+  const handleVendorEntryModeChange = async (mode: VendorEntryMode) => {
+    setVendorEntryMode(mode);
+    if (activeSection === "vendor") {
+      await handleScopeChange(mode === "new" ? "new_vendor" : "existing_vendor");
+    }
+  };
+
+  const handleSessionModeChange = async (mode: TrainerSessionMode) => {
+    setSessionMode(mode);
+    if (!session) return;
+    try {
+      const updated = await trainerService.setSessionMode(session.sessionId, mode);
+      setSession({
+        ...session,
+        ...updated,
+        pdfUrl: session.pdfUrl,
+        fileName: session.fileName,
+      });
+    } catch (err) {
+      console.error("Failed to set session mode", err);
+      showToast("Failed to switch trainer mode.", "error");
     }
   };
 
@@ -555,9 +602,19 @@ function TrainerContent() {
       } else {
         setSession(null);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Commit failed", err);
-      showToast("Failed to commit rules to the registry.", "error");
+      const detail = err?.response?.data?.detail;
+      if (detail && typeof detail === "object" && detail.flagged_rule) {
+        showToast(
+          `${detail.detail || "Rule rejected."} Flagged: "${detail.flagged_rule}"`,
+          "error"
+        );
+      } else if (typeof detail === "string") {
+        showToast(detail, "error");
+      } else {
+        showToast("Failed to commit rules to the registry.", "error");
+      }
     } finally {
       setIsSubmittingCommit(false);
     }
@@ -646,16 +703,31 @@ function TrainerContent() {
       {/* FE Gap 77: one control bar, not a scope block and a grounding block
           the user has to connect for themselves. See TrainerControlBar. */}
       <TrainerControlBar
-        activeScope={activeScope}
-        onScopeChange={handleScopeChange}
+        activeSection={activeSection}
+        onSectionChange={handleSectionChange}
+        vendorEntryMode={vendorEntryMode}
+        onVendorEntryModeChange={handleVendorEntryModeChange}
+        globalSubTab={globalSubTab}
+        onGlobalSubTabChange={setGlobalSubTab}
+        sessionMode={sessionMode}
+        onSessionModeChange={handleSessionModeChange}
         vendors={vendors}
         selectedVendorName={selectedVendorName}
         onSelectVendor={handleSelectVendor}
         onUploadFile={handleUploadFile}
         onClearFile={handleClearFile}
         activeFileName={session?.fileName}
+        showVendorModeToggle={activeSection === "vendor" && !!session}
+        disabled={isLoadingSession}
       />
 
+      {activeSection === "global" && globalSubTab === "style" && session ? (
+        <ChatResponseStylePanel
+          sessionId={session.sessionId}
+          onSaved={() => showToast("Chat response style saved.", "success")}
+        />
+      ) : (
+      <>
       {/*
         FE Gap 111 — the agreed workspace: PDF → Extracted Fields → Chat, with
         a collapsed Rules rail on the far right.
@@ -731,6 +803,8 @@ function TrainerContent() {
           />
         </div>
       </main>
+      </>
+      )}
 
       {/* Commit Confirmation Overlay Modal */}
       <CommitModal

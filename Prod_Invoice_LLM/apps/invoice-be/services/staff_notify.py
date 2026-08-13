@@ -160,3 +160,63 @@ def notify_auditor_action(
     except Exception as e:
         logger.error("Auditor notify failed for invoice %s: %s", invoice.id, e)
         return {"sent": False, "error": str(e), "to": recipients}
+
+
+def notify_autopilot_sync_summary(
+    session: Session,
+    *,
+    tenant_id,
+    notify_emails: Sequence[str],
+    imported: Sequence[dict],
+    send_approval_links: bool,
+    frontend_base_url: str,
+) -> dict | None:
+    """
+    BE Gap 220: email staff after Autopilot ingests new files.
+    `imported` items: {invoice_id, file_name, vendor_name?}
+    """
+    if not imported or not notify_emails:
+        return None
+
+    email_set = "inbound" if all(
+        (item.get("flow_direction") or "INBOUND").upper() == "INBOUND" for item in imported
+    ) else "inbound"
+    try:
+        recipients = validate_notify_emails(
+            session,
+            tenant_id=tenant_id,
+            email_set=email_set,
+            notify_emails=notify_emails,
+        )
+    except ValueError as e:
+        logger.warning("Autopilot notify skipped — invalid emails: %s", e)
+        return {"sent": False, "error": str(e)}
+
+    if not recipients:
+        return None
+
+    if not sendgrid_configured():
+        logger.warning("Autopilot notify requested but SENDGRID_API_KEY missing")
+        return {"sent": False, "error": "SENDGRID_API_KEY is not configured.", "to": recipients}
+
+    base = (frontend_base_url or "").rstrip("/")
+    lines = [f"Autopilot imported {len(imported)} new invoice(s):\n"]
+    for item in imported:
+        name = item.get("file_name") or item.get("invoice_id")
+        line = f"- {name}"
+        if send_approval_links and base and item.get("invoice_id"):
+            line += f"\n  Review: {base}/invoices/review/{item['invoice_id']}"
+        lines.append(line)
+    lines.append("\nStaff notification only — the app does not email end customers.\n")
+    plain = "\n".join(lines)
+
+    try:
+        result = send_email(
+            to_addresses=recipients,
+            subject=f"[InvoiceEQ] Autopilot imported {len(imported)} invoice(s)",
+            plain_body=plain,
+        )
+        return {"sent": True, **result}
+    except Exception as e:
+        logger.error("Autopilot notify failed for tenant %s: %s", tenant_id, e)
+        return {"sent": False, "error": str(e), "to": recipients}

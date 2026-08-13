@@ -364,6 +364,56 @@ def _business_rules_block(business_rules: list[str]) -> str:
     )
 
 
+_CONCISENESS_INSTRUCTION = (
+    "\nKeep responses concise: answer in 1–3 sentences unless the user asks for "
+    "more detail. Be direct; do not explain your reasoning unless asked.\n"
+)
+
+_LENGTH_HINTS = {
+    "brief": "Keep every answer to 1–2 short sentences.",
+    "balanced": "Keep answers to 2–4 sentences unless more detail is needed.",
+    "detailed": "You may use fuller explanations when the question warrants it.",
+}
+
+_TONE_HINTS = {
+    "formal": "Use a formal, professional tone.",
+    "conversational": "Use a friendly, conversational tone.",
+    "technical": "Use precise, technical language suitable for finance/AP staff.",
+}
+
+
+def _get_chat_style_block(tenant_id: str, db_session) -> str:
+    """BE Gap 221: tenant Chat response style from Global template rules.chat_style."""
+    from models import ExtractionTemplate
+    from sqlmodel import select
+    from uuid import UUID
+
+    try:
+        stmt = select(ExtractionTemplate).where(
+            ExtractionTemplate.tenant_id == UUID(str(tenant_id)),
+            ExtractionTemplate.vendor_name.is_(None),
+            ExtractionTemplate.flow_direction == "INBOUND",
+        )
+        tpl = db_session.exec(stmt).first()
+        if not tpl or not isinstance(tpl.rules, dict):
+            return _CONCISENESS_INSTRUCTION
+        style = tpl.rules.get("chat_style") or {}
+        length = style.get("response_length", "balanced")
+        tone = style.get("tone", "conversational")
+        custom = (style.get("custom_instructions") or "").strip()
+        parts = [
+            _CONCISENESS_INSTRUCTION.strip(),
+            _LENGTH_HINTS.get(length, _LENGTH_HINTS["balanced"]),
+            _TONE_HINTS.get(tone, _TONE_HINTS["conversational"]),
+        ]
+        if custom:
+            parts.append(f"Additional style guidance from the tenant: {custom}")
+        return "\n" + "\n".join(parts) + "\n"
+    except Exception as e:
+        logger.warning("Failed to load chat style for tenant %s: %s", tenant_id, e)
+        return _CONCISENESS_INSTRUCTION
+
+
 # Task 6.10: prompt-injection guard. A keyword blocklist alone is trivially
 # bypassed and would false-positive on legitimate questions (e.g. "ignore
 # previous invoices, just look at this one"), so it isn't used to reject
@@ -568,6 +618,7 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
             business_rules.append(rule)
             
     rules_block = _business_rules_block(business_rules)
+    style_block = _get_chat_style_block(tenant_id, db_session)
     tenant_stats = _get_tenant_stats_summary(tenant_id, db_session)
     wrapped_user_message = _wrap_user_input(user_message, tenant_id)
 
@@ -616,6 +667,7 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
 
 {tenant_stats}
 {rules_block}
+{style_block}
 {_INJECTION_GUARD_INSTRUCTION}
 Conversation History for Context:
 {chat_history}
@@ -703,6 +755,7 @@ Extracted Document Context (Long-term Facts):
 
 {tenant_stats}
 {rules_block}
+{style_block}
 {_INJECTION_GUARD_INSTRUCTION}
 Conversation History (Short-term context):
 {chat_history}
@@ -733,13 +786,14 @@ Conversation History (Short-term context):
             response_text = f"Failed to run document lookup: {str(e)}"
             
     else:  # CHAT
-        system_prompt = f"""You are a helpful assistant for an AI Invoice Processing platform. Keep your conversation brief, polite, and directly address the user's message.
+        system_prompt = f"""You are a helpful assistant for an AI Invoice Processing platform.
 
 Match the brevity of the user's message -- a short question gets a short answer.
 Default to 1-3 sentences unless the user actually asks for detail or a list.
 Do not pad a simple answer with unrequested explanation or caveats.
 
 {tenant_stats}
+{style_block}
 {_INJECTION_GUARD_INSTRUCTION}
 Conversation History:
 {chat_history}

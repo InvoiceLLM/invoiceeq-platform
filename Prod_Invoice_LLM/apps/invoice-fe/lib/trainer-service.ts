@@ -99,6 +99,7 @@ export interface TrainerSession {
   variables: ExtractedVariable[];
   activeRules: string[];
   chatHistory: ChatMessage[];
+  sessionMode?: "qa_test" | "rule_creation";
 }
 
 /**
@@ -128,6 +129,7 @@ function normalizeSession(raw: any): TrainerSession {
     variables: Array.isArray(raw?.variables) ? raw.variables : [],
     activeRules: Array.isArray(raw?.activeRules) ? raw.activeRules : [],
     chatHistory: Array.isArray(raw?.chatHistory) ? raw.chatHistory : [],
+    sessionMode: raw?.sessionMode === "qa_test" ? "qa_test" : "rule_creation",
   };
 }
 
@@ -256,5 +258,15 @@ export const trainerService = {
       version: data?.version,
       reauditQueued: Boolean(data?.reaudit_queued),
     };
+  },
+
+  async setSessionMode(
+    sessionId: string,
+    sessionMode: "qa_test" | "rule_creation"
+  ): Promise<TrainerSession> {
+    const { data } = await apiClient.put(`/trainer/sessions/${sessionId}/mode`, {
+      session_mode: sessionMode,
+    });
+    return normalizeSession(data?.updatedSession ?? data);
   },
 };

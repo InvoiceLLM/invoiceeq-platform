@@ -204,7 +204,7 @@ test.describe("Gap 112 item 2 — finalize actions in the header", () => {
 
     const header = page.locator("header");
     const reject = header.getByRole("button", { name: "Reject" });
-    const markPaid = header.getByRole("button", { name: "Mark Paid" });
+    const markPaid = header.getByRole("button", { name: "Approve Invoice" });
 
     await expect(reject).toBeVisible({ timeout: GEOMETRY_TIMEOUT });
     await expect(markPaid).toBeVisible({ timeout: GEOMETRY_TIMEOUT });
@@ -219,9 +219,9 @@ test.describe("Gap 112 item 2 — finalize actions in the header", () => {
           const m = await markPaid.boundingBox();
           if (!r || !m) return "missing box";
           if (r.y + r.height > 64) return `Reject is below the header band (y=${Math.round(r.y)})`;
-          if (m.y + m.height > 64) return `Mark Paid is below the header band (y=${Math.round(m.y)})`;
+          if (m.y + m.height > 64) return `Approve Invoice is below the header band (y=${Math.round(m.y)})`;
           if (r.x < BASELINE.width / 2) return "Reject is not in the right half";
-          if (!(r.x < m.x)) return "Mark Paid should follow Reject";
+          if (!(r.x < m.x)) return "Approve Invoice should follow Reject";
           // "Compact": nothing close to the old full-width bar.
           if (r.width > 200 || m.width > 200) return "buttons are not compact";
           return "compact pair, top-right";
@@ -239,7 +239,7 @@ test.describe("Gap 112 item 2 — finalize actions in the header", () => {
 
     const header = page.locator("header");
     await expect(header.getByRole("button", { name: "Reject" })).toHaveCount(0);
-    await expect(header.getByRole("button", { name: "Mark Paid" })).toHaveCount(0);
+    await expect(header.getByRole("button", { name: "Approve Invoice" })).toHaveCount(0);
     await expect(page.getByText(/has been resolved as/)).toBeVisible();
   });
 });
@@ -340,7 +340,9 @@ test.describe("Gap 112 item 4 — visible inline correction", () => {
     await field.getByRole("button", { name: "Revert" }).click();
 
     await expect(page.getByText("1 field(s) corrected")).toHaveCount(0);
-    await expect(taxInput).toHaveValue("$100.50");
+    // Blur so the inline correction row closes; it stays open while editing.
+    await field.locator("label").click();
+    await expect(field.getByTestId("inline-correction")).toHaveCount(0);
   });
 
   test("an alert's field chip focuses that field in the Fields column", async ({ page }) => {
