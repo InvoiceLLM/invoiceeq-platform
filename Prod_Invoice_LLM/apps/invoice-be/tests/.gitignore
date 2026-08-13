@@ -13,3 +13,19 @@ run_extraction_harness.py
 seed_test_tenants_local.py
 setup_test_tenants.py
 test_tenants_local.json
+
+# Round 2/2b gap-verification scratch tooling and outputs (2026-08-13) — same
+# category as above: local investigation tooling and its output, not source.
+_adversarial_invoice.pdf
+_backend_restart_log.txt
+_chat_rerun_log*.txt
+_gap224_retest_log.txt
+_reprocess_log.txt
+_round2_log.txt
+_round2_results.json
+_round2b_log.txt
+_round2b_results.json
+run_chat_harness_round2.py
+run_chat_harness_round2b.py
+reprocess_two.py
+retest_gap224.py

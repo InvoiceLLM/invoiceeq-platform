@@ -91,9 +91,9 @@ async def get_dashboard_metrics(
     # 1. Shared filter conditions, scoped to the current tenant
     conditions = [Invoice.tenant_id == context.tenant_id, invoice_not_deleted()]
     if start_date:
-        conditions.append(Invoice.invoice_date >= start_date)
+        conditions.append(func.date(Invoice.created_at) >= start_date)
     if end_date:
-        conditions.append(Invoice.invoice_date <= end_date)
+        conditions.append(func.date(Invoice.created_at) <= end_date)
     if vendor_name:
         conditions.append(Invoice.vendor_name == vendor_name)
     if po_number:

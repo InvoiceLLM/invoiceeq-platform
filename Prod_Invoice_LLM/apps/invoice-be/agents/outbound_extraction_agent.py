@@ -11,6 +11,9 @@ from utils.verification_tools import (
     verify_line_item_amounts_in_source_text,
     verify_tax_amount_in_source_text,
     verify_field_confidence,
+    verify_line_items_math,
+    verify_totals_math,
+    verify_subtotal_in_source_text,
 )
 from utils.token_management import check_token_guardrails
 from agents.extraction_agent import pdf_to_base64_images, invoke_with_retry, GAP_46_VERBATIM_DIRECTIVE
@@ -30,8 +33,8 @@ class OutboundInvoiceLineItem(BaseModel):
     model_config = {"extra": "forbid"}
     description: str = Field(description="Description of the item or service")
     quantity: Optional[float] = Field(default=None, description="Quantity of the item")
-    unit_price: Optional[float] = Field(default=None, description="Unit price of the item")
-    amount: float = Field(description="Total amount for this line item. Transcribe printed figure verbatim.")
+    unit_price: Optional[float] = Field(default=None, description="Unit price of the item. CRITICAL: If the printed figure is negative (prefixed with '-' or in parentheses), you MUST extract it as a negative number (e.g., -5000.0).")
+    amount: float = Field(description="Total amount for this line item. Transcribe printed figure verbatim. CRITICAL: If the printed figure represents a credit, discount, negative adjustment, or credit-note/debit-note line (often prefixed with a minus sign '-' or enclosed in parentheses like '(5,000)'), you MUST extract it as a negative number (e.g. -5000.0). Do not strip the minus sign or convert it to a positive magnitude.")
 
 
 class OutboundInvoiceExtractionSchema(BaseModel):
@@ -40,6 +43,7 @@ class OutboundInvoiceExtractionSchema(BaseModel):
     invoice_number: Optional[str] = Field(default=None, description="Invoice number")
     invoice_date: Optional[str] = Field(default=None, description="Date of the invoice (YYYY-MM-DD format if possible)")
     due_date: Optional[str] = Field(default=None, description="Due date of the invoice (YYYY-MM-DD format if possible)")
+    subtotal: Optional[float] = Field(default=None, description="Subtotal amount (sum of line items before tax). Transcribe printed figure verbatim.")
     grand_total: Optional[float] = Field(default=None, description="Grand total amount. Transcribe the printed figure exactly as it appears.")
     tax_amount: Optional[float] = Field(default=None, description="Tax amount. Transcribe printed figure verbatim.")
     currency: Optional[str] = Field(default=None, description="ISO 4217 currency code (e.g. INR, EUR, USD)")
@@ -147,12 +151,21 @@ def verify_node(state: OutboundExtractionState) -> Dict[str, Any]:
     grand_total = data.get("grand_total")
     tax_amount = data.get("tax_amount")
 
-    # verify_line_items_math/verify_totals_math both require a subtotal to
-    # compare against, and this schema deliberately has no subtotal field
-    # (v1 scope cut -- see feature_2.1_vendor_flow_ingestion.md) -- calling
-    # them here would always be a no-op, so they're skipped rather than
-    # included as dead code. The source-text faithfulness checks below don't
-    # need subtotal and still catch a silently "corrected" total/tax.
+    subtotal = data.get("subtotal")
+
+    # Math consistency and source text checks
+    subtotal_source_alert = verify_subtotal_in_source_text(subtotal, state.get("ocr_text"))
+    if subtotal_source_alert:
+        alerts.append(subtotal_source_alert)
+
+    line_items_math_alert = verify_line_items_math(items, subtotal, tax_amount)
+    if line_items_math_alert:
+        alerts.append(line_items_math_alert)
+
+    totals_math_alert = verify_totals_math(subtotal, tax_amount, grand_total)
+    if totals_math_alert:
+        alerts.append(totals_math_alert)
+
     source_text_alert = verify_grand_total_in_source_text(grand_total, state.get("ocr_text"))
     if source_text_alert:
         alerts.append(source_text_alert)

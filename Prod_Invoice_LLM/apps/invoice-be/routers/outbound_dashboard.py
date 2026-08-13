@@ -1,4 +1,5 @@
 from datetime import date
+from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlmodel import Session, select
 from sqlalchemy import func, case, and_
@@ -51,6 +52,7 @@ async def list_outbound_invoices(
     end_date: date | None = None,
     status: str | None = None,
     status_in: str | None = None,
+    batch_id: UUID | None = None,
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session),
 ):
@@ -68,12 +70,14 @@ async def list_outbound_invoices(
         Invoice.flow_direction == "OUTBOUND",
         invoice_not_deleted(),
     ]
+    if batch_id:
+        conditions.append(Invoice.batch_id == batch_id)
     if customer_name:
         conditions.append(Invoice.customer_name == customer_name)
     if start_date:
-        conditions.append(Invoice.invoice_date >= start_date)
+        conditions.append(func.date(Invoice.created_at) >= start_date)
     if end_date:
-        conditions.append(Invoice.invoice_date <= end_date)
+        conditions.append(func.date(Invoice.created_at) <= end_date)
 
     if status and status.lower() == "overdue":
         conditions.append(Invoice.status == "SENT")
@@ -151,9 +155,9 @@ async def get_outbound_dashboard_metrics(
         invoice_not_deleted(),
     ]
     if start_date:
-        conditions.append(Invoice.invoice_date >= start_date)
+        conditions.append(func.date(Invoice.created_at) >= start_date)
     if end_date:
-        conditions.append(Invoice.invoice_date <= end_date)
+        conditions.append(func.date(Invoice.created_at) <= end_date)
     if customer_name:
         conditions.append(Invoice.customer_name == customer_name)
     if status:

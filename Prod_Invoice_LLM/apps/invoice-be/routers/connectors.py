@@ -19,7 +19,7 @@ from utils.connector_oauth import (
     GOOGLE_TOKEN_URL,
     SALESFORCE_TOKEN_URL,
 )
-from utils.connector_files import list_google_drive_files, list_salesforce_files
+from utils.connector_files import list_google_drive_files, list_salesforce_files, verify_salesforce_instance
 import json
 import redis
 from azure.storage.queue import QueueClient
@@ -212,6 +212,21 @@ async def oauth_callback(
         # Salesforce's API base is per-org and comes back as instance_url on
         # every token response; Google never returns this key.
         instance_url = token_data.get("instance_url")
+
+        if prov == "salesforce":
+            if not instance_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Salesforce OAuth response is missing instance_url."
+                )
+            try:
+                verify_salesforce_instance(access_token, instance_url)
+            except httpx.HTTPError as e:
+                logger.error("Salesforce instance verification failed during OAuth connect: %s", e)
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to verify Salesforce connection with the instance URL: {e}"
+                )
     else:
         # No real credentials configured yet for this provider -- keep the
         # simulated exchange so local/dev testing without a registered OAuth

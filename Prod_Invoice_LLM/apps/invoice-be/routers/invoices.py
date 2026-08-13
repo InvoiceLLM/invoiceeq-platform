@@ -492,33 +492,26 @@ async def list_invoices(
     status_in: str | None = None,
     tag: str | None = None,
     vendor_name: str | None = None,
+    batch_id: UUID | None = None,
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session)
 ):
     """
     Fetches a page of matching records for the requesting tenant, most recent
-    first. Supports pagination, date ranges, status/vendor filters, and search
-    tags.
-
-    FE Gap 29: the total matching count (ignoring limit/offset) is returned in
-    the X-Total-Count header so a caller can page through the tenant's full
-    result set via repeated limit/offset calls, instead of fetching one fixed
-    batch and re-slicing it client-side. `status_in` (comma-separated) exists
-    alongside the single-value `status` filter so the FE's "Pending" tab --
-    which spans several raw statuses (Processing/Completed/Audit Required/
-    Duplicate) rather than one -- can still be a real server-side filter
-    compatible with this pagination, instead of a client-side re-filter of an
-    already-paginated page.
+    first. Supports pagination, date ranges, status/vendor filters, search
+    tags, and batch_id.
     """
     conditions = [
         Invoice.tenant_id == context.tenant_id,
         Invoice.flow_direction == "INBOUND",
         invoice_not_deleted(),
     ]
+    if batch_id:
+        conditions.append(Invoice.batch_id == batch_id)
     if start_date:
-        conditions.append(Invoice.invoice_date >= start_date)
+        conditions.append(func.date(Invoice.created_at) >= start_date)
     if end_date:
-        conditions.append(Invoice.invoice_date <= end_date)
+        conditions.append(func.date(Invoice.created_at) <= end_date)
     if status:
         conditions.append(Invoice.status == status)
     if status_in:
@@ -541,6 +534,134 @@ async def list_invoices(
 
     query = query.order_by(Invoice.created_at.desc()).offset(offset).limit(limit)
     return db_session.exec(query).all()
+
+
+@router.get("/batches")
+async def list_batches(
+    response: Response,
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Lists upload batches for the current tenant, grouped by batch_id.
+    Returns: batch_id, created_at (min invoice created_at), invoice_count,
+    flow_direction, status_summary.
+    """
+    # count distinct batch_ids for pagination X-Total-Count
+    total_statement = (
+        select(func.count(func.distinct(Invoice.batch_id)))
+        .where(
+            Invoice.tenant_id == context.tenant_id,
+            Invoice.batch_id != None,
+            invoice_not_deleted()
+        )
+    )
+    total = db_session.exec(total_statement).one()
+    response.headers["X-Total-Count"] = str(total)
+
+    # get page of batches
+    batches_statement = (
+        select(
+            Invoice.batch_id,
+            func.min(Invoice.created_at).label("created_at"),
+            func.count(Invoice.id).label("invoice_count"),
+            Invoice.flow_direction
+        )
+        .where(
+            Invoice.tenant_id == context.tenant_id,
+            Invoice.batch_id != None,
+            invoice_not_deleted()
+        )
+        .group_by(Invoice.batch_id, Invoice.flow_direction)
+        .order_by(func.min(Invoice.created_at).desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    batch_rows = db_session.exec(batches_statement).all()
+
+    batch_ids = [row[0] for row in batch_rows if row[0]]
+    if not batch_ids:
+        return []
+
+    # Get status breakdown for the batch_ids
+    invoices_statement = (
+        select(Invoice.batch_id, Invoice.status, func.count(Invoice.id))
+        .where(Invoice.batch_id.in_(batch_ids), invoice_not_deleted())
+        .group_by(Invoice.batch_id, Invoice.status)
+    )
+    invoice_rows = db_session.exec(invoices_statement).all()
+
+    status_counts = {}
+    for b_id, status_val, count in invoice_rows:
+        if b_id not in status_counts:
+            status_counts[b_id] = {}
+        status_counts[b_id][status_val] = count
+
+    result = []
+    for b_id, created_at, invoice_count, flow_direction in batch_rows:
+        result.append({
+            "batch_id": b_id,
+            "created_at": created_at,
+            "invoice_count": invoice_count,
+            "flow_direction": flow_direction,
+            "status_summary": status_counts.get(b_id, {})
+        })
+    return result
+
+
+@router.delete("/batches/{batch_id}")
+async def rollback_batch(
+    batch_id: UUID,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session)
+):
+    """
+    Soft-deletes all active invoices in the specified batch, acting as a rollback.
+    """
+    if context.db_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user required to rollback a batch.",
+        )
+
+    query = select(Invoice).where(
+        Invoice.batch_id == batch_id,
+        Invoice.tenant_id == context.tenant_id,
+        invoice_not_deleted()
+    )
+    invoices = db_session.exec(query).all()
+    if not invoices:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active invoices found for the specified batch_id."
+        )
+
+    now = datetime.utcnow()
+    for invoice in invoices:
+        invoice.deleted_at = now
+        db_session.add(invoice)
+        db_session.add(
+            AuditLog(
+                tenant_id=context.tenant_id,
+                invoice_id=invoice.id,
+                actor_user_id=context.db_user_id,
+                actor_role=context.role,
+                action="DELETE_INVOICE",
+                details={
+                    "soft_delete": True,
+                    "batch_rollback": True,
+                    "batch_id": str(batch_id),
+                    "vendor_name": invoice.vendor_name,
+                    "invoice_number": invoice.invoice_number,
+                    "status": invoice.status,
+                },
+                timestamp=now,
+            )
+        )
+    await run_in_threadpool(db_session.commit)
+    return {"success": True, "count": len(invoices)}
 
 
 @router.get("/{invoice_id}", response_model=Invoice)

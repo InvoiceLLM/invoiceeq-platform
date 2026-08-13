@@ -115,7 +115,8 @@ def test_salesforce_pkce_flow(db_session):
         captured_payload.update(data or {})
         return FakeTokenResponse()
 
-    with patch("httpx.AsyncClient.post", new=fake_post):
+    with patch("httpx.AsyncClient.post", new=fake_post), \
+         patch("routers.connectors.verify_salesforce_instance"):
         response = client.get(
             f"/api/v1/connectors/callback/salesforce?code=real_code_123&state={state}",
             follow_redirects=False,
@@ -441,3 +442,46 @@ def test_handle_import_connector_file_refreshes_expired_token(mock_download, moc
     db_session.refresh(conn)
     assert decrypt_token(conn.encrypted_access_token) == "refreshed_access_token"
     assert conn.token_expiry > datetime.utcnow()
+
+
+def test_oauth_callback_salesforce_verification_failure(db_session):
+    """Verify that when Salesforce verification fails during OAuth connect,
+    the callback returns a 502 Bad Gateway and does not save the connection."""
+    import httpx
+
+    # Simulate get_auth_url PKCE state stashing
+    response = client.get("/api/v1/connectors/auth-url/salesforce")
+    auth_url = response.json()["auth_url"]
+    query = parse_qs(urlparse(auth_url).query)
+    state = query["state"][0]
+
+    class FakeTokenResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "access_token": "sf_real_token",
+                "refresh_token": "sf_real_refresh",
+                "instance_url": "https://example.my.salesforce.com",
+            }
+
+    async def fake_post(self, url, data=None, **kwargs):
+        return FakeTokenResponse()
+
+    # Mock token request post and make verify_salesforce_instance raise an error
+    with patch("httpx.AsyncClient.post", new=fake_post), \
+         patch("routers.connectors.verify_salesforce_instance", side_effect=httpx.HTTPError("Connection refused")):
+        response = client.get(
+            f"/api/v1/connectors/callback/salesforce?code=real_code_123&state={state}",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 502
+    assert "Failed to verify Salesforce connection" in response.json()["detail"]
+
+    # Verify no connection is active in the database
+    statement = select(TenantConnection).where(
+        TenantConnection.tenant_id == MOCK_TENANT_ID,
+        TenantConnection.provider == "salesforce"
+    )
+    conn = db_session.exec(statement).first()
+    assert conn is None or conn.status != "active"

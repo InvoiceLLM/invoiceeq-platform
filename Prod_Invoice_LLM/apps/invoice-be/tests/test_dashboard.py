@@ -45,6 +45,7 @@ def populate_mock_invoices(db_session):
         vendor_name="ACME",
         grand_total=1000.0,
         invoice_date=date(2026, 6, 20),
+        created_at=datetime(2026, 6, 20),
         status="PAID",
         po_number="PO-100",
         sa_alerts=[]
@@ -56,6 +57,7 @@ def populate_mock_invoices(db_session):
         vendor_name="Globex",
         grand_total=500.0,
         invoice_date=date(2026, 6, 22),
+        created_at=datetime(2026, 6, 22),
         status="AUDIT_REQUIRED",
         po_number="PO-200",
         sa_alerts=["Math mismatch"]
@@ -67,6 +69,7 @@ def populate_mock_invoices(db_session):
         vendor_name="ACME",
         grand_total=250.0,
         invoice_date=date(2026, 6, 25),
+        created_at=datetime(2026, 6, 25),
         status="COMPLETED",
         po_number="PO-100",
         sa_alerts=[]

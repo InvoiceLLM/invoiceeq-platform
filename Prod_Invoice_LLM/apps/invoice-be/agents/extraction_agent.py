@@ -29,7 +29,10 @@ GAP_46_VERBATIM_DIRECTIVE = (
     "CRITICAL VERBATIM EXTRACTION DIRECTIVE: You are a strict document transcriber, NOT a calculator. "
     "Transcribe all numerical figures (subtotal, tax_amount, grand_total, line-item amounts, unit prices) 100% verbatim "
     "as printed on the document. Do NOT recalculate, smooth, balance, or auto-correct any math, even if vendor arithmetic "
-    "is blatantly incorrect on the document. Downstream audit tools need to see exact printed numbers to flag vendor flaws.\n\n"
+    "is blatantly incorrect on the document. Downstream audit tools need to see exact printed numbers to flag vendor flaws.\n"
+    "CRITICAL NOTE ON NEGATIVE NUMBERS: If any line-item amount, unit price, tax, discount, or total is printed as a negative value "
+    "(e.g., prefixed with a minus sign like '-5,000.00', or enclosed in parentheses like '(5,000.00)'), you MUST extract it "
+    "as a negative float (e.g. -5000.0). Do NOT strip the minus sign/parentheses to make it positive, as this will break arithmetic checks.\n\n"
 )
 
 # 1. Structured Output Schema
@@ -43,8 +46,8 @@ class InvoiceLineItem(BaseModel):
     model_config = {"extra": "forbid"}
     description: str = Field(description="Description of the item or service")
     quantity: Optional[float] = Field(default=None, description="Quantity of the item")
-    unit_price: Optional[float] = Field(default=None, description="Unit price of the item")
-    amount: float = Field(description="Total amount for this line item. Transcribe printed figure verbatim; do not recalculate quantity * unit_price or auto-correct bad vendor math.")
+    unit_price: Optional[float] = Field(default=None, description="Unit price of the item. CRITICAL: If the printed figure is negative (prefixed with '-' or in parentheses), you MUST extract it as a negative number (e.g., -5000.0).")
+    amount: float = Field(description="Total amount for this line item. Transcribe printed figure verbatim; do not recalculate quantity * unit_price or auto-correct bad vendor math. CRITICAL: If the printed figure represents a credit, discount, negative adjustment, or credit-note/debit-note line (often prefixed with a minus sign '-' or enclosed in parentheses like '(5,000)'), you MUST extract it as a negative number (e.g. -5000.0). Do not strip the minus sign or convert it to a positive magnitude.")
     hsn_sac_code: Optional[str] = Field(default=None, description="HSN/SAC code (mandatory for Indian GST)")
     uom: Optional[str] = Field(default=None, description="Unit of measure (e.g., each, kg, hours)")
     discount_percent: Optional[float] = Field(default=None, description="Discount percentage applied to this line item")

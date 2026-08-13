@@ -54,28 +54,28 @@ def populate_mock_outbound_invoices(db_session):
     another tenant's outbound invoice, and this tenant's own inbound one."""
     db_session.add(_outbound(
         customer_name="Vertex Industries", grand_total=1000.0,
-        invoice_date=date(2026, 6, 20), status="PAID",
+        invoice_date=date(2026, 6, 20), created_at=datetime(2026, 6, 20), status="PAID",
         sent_at=datetime(2026, 6, 20, 12, 0, 0), paid_at=datetime(2026, 6, 30, 12, 0, 0),
     ))
     db_session.add(_outbound(
         customer_name="Northwind Ltd", grand_total=500.0,
-        invoice_date=date(2026, 6, 22), status="NEEDS_REVIEW",
+        invoice_date=date(2026, 6, 22), created_at=datetime(2026, 6, 22), status="NEEDS_REVIEW",
         sa_alerts=[{"type": "math_mismatch", "message": "totals do not reconcile"}],
     ))
     db_session.add(_outbound(
         customer_name="Vertex Industries", grand_total=250.0,
-        invoice_date=date(2026, 6, 25), status="VERIFIED",
+        invoice_date=date(2026, 6, 25), created_at=datetime(2026, 6, 25), status="VERIFIED",
     ))
     db_session.add(_outbound(
         customer_name="Northwind Ltd", grand_total=300.0,
-        invoice_date=date(2026, 6, 26), status="SENT",
+        invoice_date=date(2026, 6, 26), created_at=datetime(2026, 6, 26), status="SENT",
         due_date=date.today() - timedelta(days=5),  # overdue
         sent_at=datetime(2026, 6, 26, 9, 0, 0),
     ))
     # Another tenant's outbound invoice -- tenant isolation.
     db_session.add(_outbound(
         tenant_id=uuid4(), customer_name="Northwind Ltd", grand_total=9999.0,
-        invoice_date=date(2026, 6, 22), status="PAID",
+        invoice_date=date(2026, 6, 22), created_at=datetime(2026, 6, 22), status="PAID",
     ))
     # This tenant's own INBOUND invoice -- direction isolation. This is the
     # whole point of the feature: an AP invoice must never be reported as a
@@ -83,7 +83,7 @@ def populate_mock_outbound_invoices(db_session):
     db_session.add(Invoice(
         id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="mock/in.pdf",
         flow_direction="INBOUND", vendor_name="Hardware Depot", grand_total=7777.0,
-        invoice_date=date(2026, 6, 21), status="PAID", sa_alerts=[],
+        invoice_date=date(2026, 6, 21), created_at=datetime(2026, 6, 21), status="PAID", sa_alerts=[],
     ))
     db_session.commit()
 

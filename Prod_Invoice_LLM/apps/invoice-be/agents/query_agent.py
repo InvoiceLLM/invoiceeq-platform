@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from utils.llm import get_llm
@@ -54,7 +55,8 @@ class QueryRoutingSchema(BaseModel):
 
 class SQLGenerationSchema(BaseModel):
     model_config = {"extra": "forbid"}
-    sql: str = Field(description="The exact read-only SELECT SQL statement to execute. Must filter strictly by tenant_id.")
+    sql: Optional[str] = Field(default=None, description="The exact read-only SELECT SQL statement to execute. Must filter strictly by tenant_id. Set to null if the query requires unsupported columns or filters.")
+    explanation_or_error: Optional[str] = Field(default=None, description="A brief explanation of the query if sql is not null, or explain why the query cannot be answered if sql is null.")
 
 # Gap 182: tried first, before ever calling an LLM. Deliberately the same two
 # lists that already existed as an LLM-failure fallback -- only the order
@@ -641,6 +643,7 @@ Given the 'invoice' table schema:
 - file_path: VARCHAR(1024)
 - vendor_name: VARCHAR (the vendor who sent this tenant an INBOUND invoice; NULL for OUTBOUND rows)
 - grand_total: FLOAT
+- currency: VARCHAR (ISO 4217 currency code of this invoice's amounts, e.g. 'USD', 'INR', 'EUR')
 - invoice_number: VARCHAR
 - invoice_date: DATE
 - due_date: DATE
@@ -652,6 +655,8 @@ Given the 'invoice' table schema:
 - flow_direction: VARCHAR ('INBOUND' = a vendor's invoice sent to this tenant; 'OUTBOUND' = this tenant's own invoice sent to a customer)
 - customer_name: VARCHAR (the customer this tenant sent an OUTBOUND invoice to; NULL for INBOUND rows)
 - customer_id: UUID (reserved, currently unused)
+- tags: JSONB (list of tags as strings, e.g. ["urgent", "software"])
+- items: JSONB (list of line item objects, each having: description, quantity, unit_price, amount)
 
 Write a SQL query to answer the user's question.
 CRITICAL RULES:
@@ -665,9 +670,14 @@ SELECT
   SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_owed_to_us
 FROM invoice WHERE tenant_id = '{tenant_id}'
 
+6. If the user query refers to a tag or line-item description/detail, you can query the tags and items JSONB columns using simple LIKE filters. ALWAYS wrap both sides in LOWER(...) -- tags and line-item descriptions are free text and are not reliably lowercase (e.g. "Ergonomic Office Chair"), and a case-sensitive match will silently miss real rows:
+   - To check if a tag (e.g. 'hardware') is in tags: LOWER(tags) LIKE LOWER('%"hardware"%') (works in both SQLite and Postgres)
+   - To search for a keyword (e.g. 'laptop') in line-item descriptions: LOWER(items) LIKE LOWER('%laptop%') (works in both SQLite and Postgres)
+7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
+8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
+
 {tenant_stats}
 {rules_block}
-{style_block}
 {_INJECTION_GUARD_INSTRUCTION}
 Conversation History for Context:
 {chat_history}
@@ -681,6 +691,11 @@ Conversation History for Context:
             try:
                 structured_sql = llm.with_structured_output(SQLGenerationSchema)
                 res = structured_sql.invoke(current_prompt)
+                if not res.sql:
+                    response_text = res.explanation_or_error or "I'm sorry, but I cannot answer that question with the available database fields."
+                    route_succeeded = True
+                    break
+                
                 generated_sql = res.sql
                 logger.info("Generated SQL (attempt %d): %s", attempt + 1, generated_sql)
                 
@@ -694,43 +709,45 @@ Conversation History for Context:
                 # Feed the error back to the LLM
                 current_prompt += f"\n\nPrevious attempt failed with error:\n{e}\nPlease correct the SQL query and try again."
         
-        if db_result is None:
-            logger.error("SQL path execution failed after %d attempts: %s", max_attempts, last_error)
-            response_text = f"Failed to execute database check: {str(last_error)}"
-        else:
-            # Deterministic fallback: if the LLM-generated SQL found nothing but the
-            # question plainly names a specific invoice, try a direct trimmed/
-            # case-insensitive lookup before giving up. Catches whatever formatting
-            # quirk (extra clause, wrong join, subtly malformed literal) caused the
-            # generated SQL to miss an invoice that does exist.
-            if db_result == "No records found matching the query criteria.":
-                candidate = _find_invoice_number_candidate(user_message)
-                if candidate:
-                    fallback_result = lookup_invoice_by_number_fallback(candidate, tenant_id, db_session)
-                    if fallback_result:
-                        logger.info("SQL route found 0 rows; direct invoice_number fallback matched '%s'", candidate)
-                        db_result = fallback_result
+        if not route_succeeded:
+            if db_result is None:
+                logger.error("SQL path execution failed after %d attempts: %s", max_attempts, last_error)
+                response_text = f"Failed to execute database check: {str(last_error)}"
+            else:
+                # Deterministic fallback: if the LLM-generated SQL found nothing but the
+                # question plainly names a specific invoice, try a direct trimmed/
+                # case-insensitive lookup before giving up. Catches whatever formatting
+                # quirk (extra clause, wrong join, subtly malformed literal) caused the
+                # generated SQL to miss an invoice that does exist.
+                if db_result == "No records found matching the query criteria.":
+                    candidate = _find_invoice_number_candidate(user_message)
+                    if candidate:
+                        fallback_result = lookup_invoice_by_number_fallback(candidate, tenant_id, db_session)
+                        if fallback_result:
+                            logger.info("SQL route found 0 rows; direct invoice_number fallback matched '%s'", candidate)
+                            db_result = fallback_result
 
-            # Formulate final output matching the raw numbers
-            # Gap 219: the raw numbers are already shown verbatim in the
-            # "### Query Results" table appended below (line ~671) -- this
-            # summary is prose framing, not the data source, so it stays short.
-            summary_prompt = f"""Format a friendly summary explaining these database query results.
-Keep it to 1-2 sentences. Do not restate every row -- the full results table is
+                # Formulate final output matching the raw numbers
+                summary_prompt = f"""Format a friendly summary explaining these database query results.
+{style_block}
+Do not restate every row -- the full results table is
 shown to the user separately right after your summary. Do not explain your
 reasoning or how the query was constructed.
+
+CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) returned in the results. Never default to '$' if the results show a different currency or if the currency is specified.
+
 Results:
 {db_result}
 {rules_block}
 User Query: {user_message}
 """
-            try:
-                final_res = llm.invoke(summary_prompt)
-                response_text = final_res.content + f"\n\n### Query Results\n{db_result}"
-                route_succeeded = True
-            except Exception as e:
-                logger.error("SQL summary synthesis failed: %s", e)
-                response_text = f"Failed to format database check: {str(e)}"
+                try:
+                    final_res = llm.invoke(summary_prompt)
+                    response_text = final_res.content + f"\n\n### Query Results\n{db_result}"
+                    route_succeeded = True
+                except Exception as e:
+                    logger.error("SQL summary synthesis failed: %s", e)
+                    response_text = f"Failed to format database check: {str(e)}"
 
     elif route == "RAG":
         # Vector search (Long-term semantic facts)
@@ -749,6 +766,8 @@ User Query: {user_message}
 Use the following extracted context chunks and short-term conversation history to answer the user's query.
 
 Answer in 1-3 sentences. Be direct. Do not explain your reasoning unless asked.
+
+CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) being discussed in the context. Never default to '$' if the context shows a different currency.
 
 Extracted Document Context (Long-term Facts):
 {context_str}
@@ -788,9 +807,7 @@ Conversation History (Short-term context):
     else:  # CHAT
         system_prompt = f"""You are a helpful assistant for an AI Invoice Processing platform.
 
-Match the brevity of the user's message -- a short question gets a short answer.
-Default to 1-3 sentences unless the user actually asks for detail or a list.
-Do not pad a simple answer with unrequested explanation or caveats.
+CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) being discussed. Never default to '$' if the context or conversation history indicates a different currency.
 
 {tenant_stats}
 {style_block}

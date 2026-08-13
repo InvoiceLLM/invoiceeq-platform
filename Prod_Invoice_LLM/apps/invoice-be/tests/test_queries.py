@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch
 from uuid import uuid4
-from datetime import date
+from datetime import date, datetime
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy.pool import StaticPool
@@ -48,6 +48,7 @@ def test_get_invoices_list_and_filters(db_session):
         grand_total=100.0,
         status="COMPLETED",
         invoice_date=date(2026, 6, 1),
+        created_at=datetime(2026, 6, 1, 12, 0, 0),
         tags=["urgent", "hardware"]
     )
     inv2 = Invoice(
@@ -58,6 +59,7 @@ def test_get_invoices_list_and_filters(db_session):
         grand_total=200.0,
         status="PROCESSING",
         invoice_date=date(2026, 6, 15),
+        created_at=datetime(2026, 6, 15, 12, 0, 0),
         tags=["software"]
     )
     inv3 = Invoice(
@@ -68,6 +70,7 @@ def test_get_invoices_list_and_filters(db_session):
         grand_total=300.0,
         status="COMPLETED",
         invoice_date=date(2026, 6, 30),
+        created_at=datetime(2026, 6, 30, 12, 0, 0),
         tags=["hardware"]
     )
     

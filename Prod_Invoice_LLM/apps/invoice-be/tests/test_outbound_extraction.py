@@ -37,6 +37,7 @@ def test_clean_outbound_invoice_reaches_verified():
         invoice_number="OUT-1001",
         invoice_date="2026-07-01",
         due_date="2026-07-31",
+        subtotal=100.00,
         grand_total=110.00,
         tax_amount=10.00,
         currency="USD",
@@ -96,3 +97,30 @@ def test_token_limit_exceeded_short_circuits():
     assert result["status"] == "NEEDS_REVIEW"
     assert result["alerts"][0]["type"] == "token_limit_exceeded"
     assert result["extracted_data"] is None
+
+
+def test_outbound_invoice_math_mismatch_flags_needs_review():
+    ocr_text = (
+        "INVOICE\nBill To: Vertex Industries\nInvoice #: OUT-1001\n"
+        "Line 1   1   100.00   100.00\n"
+        "Subtotal: 100.00\n"
+        "Tax: 10.00\nTotal: 150.00"
+    )
+    schema = OutboundInvoiceExtractionSchema(
+        customer_name="Vertex Industries",
+        invoice_number="OUT-1001",
+        invoice_date="2026-07-01",
+        due_date="2026-07-31",
+        subtotal=100.00,
+        grand_total=150.00,
+        tax_amount=10.00,
+        currency="USD",
+        items=[OutboundInvoiceLineItem(description="Line 1", quantity=1.0, unit_price=100.00, amount=100.00)],
+    )
+
+    with patch("agents.outbound_extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.outbound_extraction_agent.get_llm", return_value=_mock_llm(schema)):
+        result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
+
+    assert result["status"] == "NEEDS_REVIEW"
+    assert any("does not match Grand Total" in a.get("message", "") for a in result["alerts"])
