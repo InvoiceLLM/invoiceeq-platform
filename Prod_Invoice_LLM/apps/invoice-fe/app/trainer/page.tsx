@@ -721,13 +721,6 @@ function TrainerContent() {
         disabled={isLoadingSession}
       />
 
-      {activeSection === "vendor" && globalSubTab === "style" && session ? (
-        <ChatResponseStylePanel
-          sessionId={session.sessionId}
-          onSaved={() => showToast("Chat response style saved.", "success")}
-        />
-      ) : (
-      <>
       {/*
         FE Gap 111 — the agreed workspace: PDF → Extracted Fields → Chat, with
         a collapsed Rules rail on the far right.
@@ -748,6 +741,10 @@ function TrainerContent() {
         Below `xl` this stacks into a normal scrolling column: three fixed
         columns plus a rail do not fit a laptop width, and squeezing them would
         undo the readability this gap is about.
+
+        The 4th column swaps between RulesRail (Extraction Rules sub-tab) and
+        ChatResponseStylePanel (Chat Response Style sub-tab) so the PDF and
+        fields always stay visible.
       */}
       <main className="flex-1 p-3 min-h-0 overflow-y-auto xl:overflow-hidden flex flex-col xl:flex-row gap-3">
         {/* 1. Document preview — fixed ~300px, own internal scroll */}
@@ -783,28 +780,36 @@ function TrainerContent() {
           />
         </div>
 
-        {/* 4. Rule candidates — slim rail, count badge only until expanded.
-               Below xl there is no fourth column, so the same component
-               renders as a plain always-open panel at the end of the stack
-               rather than disappearing (see RulesRail's `stacked` prop). */}
-        <div className="hidden xl:block h-full min-h-0">
-          <RulesRail
-            activeRules={session?.activeRules || []}
-            isExpanded={isRulesRailExpanded}
-            onToggle={() => setIsRulesRailExpanded((v) => !v)}
-          />
-        </div>
-        <div className="xl:hidden h-[220px] min-h-0">
-          <RulesRail
-            activeRules={session?.activeRules || []}
-            isExpanded
-            onToggle={() => undefined}
-            stacked
-          />
-        </div>
+        {/* 4. Right panel — swaps between RulesRail and ChatResponseStylePanel
+               depending on the active vendor sub-tab. PDF and fields remain
+               visible in both cases. */}
+        {activeSection === "vendor" && globalSubTab === "style" && session ? (
+          <div className="h-[480px] xl:h-full min-h-0 xl:w-[320px] xl:shrink-0 overflow-y-auto rounded-xl border border-[#1E2D45] bg-[#0D131F]">
+            <ChatResponseStylePanel
+              sessionId={session.sessionId}
+              onSaved={() => showToast("Chat response style saved.", "success")}
+            />
+          </div>
+        ) : (
+          <>
+            <div className="hidden xl:block h-full min-h-0">
+              <RulesRail
+                activeRules={session?.activeRules || []}
+                isExpanded={isRulesRailExpanded}
+                onToggle={() => setIsRulesRailExpanded((v) => !v)}
+              />
+            </div>
+            <div className="xl:hidden h-[220px] min-h-0">
+              <RulesRail
+                activeRules={session?.activeRules || []}
+                isExpanded
+                onToggle={() => undefined}
+                stacked
+              />
+            </div>
+          </>
+        )}
       </main>
-      </>
-      )}
 
       {/* Commit Confirmation Overlay Modal */}
       <CommitModal
