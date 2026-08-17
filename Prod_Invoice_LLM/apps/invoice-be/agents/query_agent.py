@@ -128,7 +128,17 @@ def classify_query(query: str) -> str:
 # casing, or picks up incidental whitespace). `status` is deliberately excluded — it's
 # an enum our own code writes, not something sourced from a document, so exact match
 # is correct and loosening it would risk matching the wrong status.
-_FUZZY_STRING_COLUMNS = ("invoice_number", "vendor_name", "po_number")
+#
+# Split into two groups (Gap 238). Identifiers are only ever off by case/whitespace,
+# never a genuinely different string, so `=` stays `=` here (just normalized).
+# Human/entity names are routinely typed shorter than the stored value (e.g. a user
+# asking about "Cascade Manufacturing" when the stored value is "Cascade Manufacturing
+# Co") -- for these, exact match on a name the user abbreviated is the wrong semantics
+# to begin with, not just a drift issue, so `=` is rewritten to a substring `LIKE`
+# instead of just case/whitespace-normalized `=`.
+_EXACT_FUZZY_COLUMNS = ("invoice_number", "po_number")
+_SUBSTRING_FUZZY_COLUMNS = ("vendor_name", "customer_name")
+_FUZZY_STRING_COLUMNS = _EXACT_FUZZY_COLUMNS + _SUBSTRING_FUZZY_COLUMNS
 
 # Matches an invoice-number-shaped token in a user's question, e.g. "US-20260722-001",
 # "INDIA-20260722-003" — used only as a deterministic fallback when the LLM-generated
@@ -153,6 +163,13 @@ def _normalize_string_equality(sql: str) -> str:
     missing rows the way exact-match ones did before this function existed):
 
     - `column = 'value'`            -> `TRIM(LOWER(column)) = TRIM(LOWER('value'))`
+      (exact-fuzzy columns only -- `invoice_number`, `po_number`)
+    - `column = 'value'`            -> `TRIM(LOWER(column)) LIKE LOWER('%value%')`
+      (substring-fuzzy columns -- `vendor_name`, `customer_name`; Gap 238 -- a name
+      filter built from `=` is almost always the model matching a user's shortened
+      reference against a longer stored value, e.g. "Cascade Manufacturing" vs.
+      "Cascade Manufacturing Co", so exact match is the wrong semantics here, not
+      just a case/whitespace drift issue)
     - `column IN ('a', 'b')`        -> `TRIM(LOWER(column)) IN (TRIM(LOWER('a')), TRIM(LOWER('b')))`
     - `column LIKE '%value%'`       -> `TRIM(LOWER(column)) LIKE LOWER('%value%')`
 
@@ -168,10 +185,16 @@ def _normalize_string_equality(sql: str) -> str:
     """
     for column in _FUZZY_STRING_COLUMNS:
         equality = re.compile(rf"\b{column}\s*=\s*'([^']*)'", re.IGNORECASE)
-        sql = equality.sub(
-            lambda m, col=column: f"TRIM(LOWER({col})) = TRIM(LOWER('{m.group(1)}'))",
-            sql,
-        )
+        if column in _SUBSTRING_FUZZY_COLUMNS:
+            sql = equality.sub(
+                lambda m, col=column: f"TRIM(LOWER({col})) LIKE LOWER('%{m.group(1)}%')",
+                sql,
+            )
+        else:
+            sql = equality.sub(
+                lambda m, col=column: f"TRIM(LOWER({col})) = TRIM(LOWER('{m.group(1)}'))",
+                sql,
+            )
 
         def _rewrite_in(m, col=column):
             negation = "NOT " if m.group(1) else ""
@@ -879,6 +902,7 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
 6. If the user query refers to a tag or line-item description/detail, you can query the tags and items JSONB columns using simple LIKE filters. ALWAYS wrap both sides in LOWER(...) -- tags and line-item descriptions are free text and are not reliably lowercase (e.g. "Ergonomic Office Chair"), and a case-sensitive match will silently miss real rows:
    - To check if a tag (e.g. 'hardware') is in tags: LOWER(tags) LIKE LOWER('%"hardware"%') (works in both SQLite and Postgres)
    - To search for a keyword (e.g. 'laptop') in line-item descriptions: LOWER(items) LIKE LOWER('%laptop%') (works in both SQLite and Postgres)
+6a. IMPORTANT -- vendor_name/customer_name filters: NEVER use exact equality (=) to filter by vendor_name or customer_name. Users routinely refer to a vendor/customer by a shortened or informal name (e.g. "Cascade Manufacturing" when the stored value is "Cascade Manufacturing Co") -- an exact match will silently return zero rows for a real, existing vendor. ALWAYS use a case-insensitive partial match instead: LOWER(vendor_name) LIKE LOWER('%Cascade Manufacturing%'). This applies even when the user's question phrases it as if it were an exact name.
 7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 
@@ -970,7 +994,7 @@ User Query: {user_message}
     elif route == "RAG":
         # Vector search (Long-term semantic facts)
         chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
-        
+
         context_str = ""
         for chunk in chunks:
             context_str += f"--- CHUNK ---\n{chunk['document']}\n"
@@ -979,11 +1003,58 @@ User Query: {user_message}
                 "vendor_name": chunk["metadata"].get("vendor_name"),
                 "page": chunk["metadata"].get("page")
             })
-            
+
+        # Gap 239 (BE): Chroma is queried independently of Postgres above, so a
+        # chunk can cite an invoice_id that has no corresponding Invoice row at
+        # all (not soft-deleted -- genuinely absent, e.g. leftover embeddings
+        # from a desync). Existence check only, deliberately not
+        # invoice_not_deleted() -- a soft-deleted invoice (Gap 192) is still a
+        # legitimate citation; only a truly nonexistent row is the bug. Same
+        # "existence, not visibility" pattern as routers/chat.py's
+        # _snapshot_invoices().
+        if citations:
+            from models import Invoice
+            from sqlmodel import select
+            from uuid import UUID as _UUID
+
+            cited_ids = {c["invoice_id"] for c in citations if c.get("invoice_id")}
+            existing_ids = set()
+            if cited_ids:
+                # Invoice.tenant_id/id are UUID-typed columns; this file's
+                # tenant_id param is a plain str and Chroma metadata ids are
+                # plain strings too -- both need casting to real UUID objects
+                # for the ORM comparison (a raw str bind failed with
+                # AttributeError: 'str' object has no attribute 'hex').
+                # Malformed ids from bad metadata are skipped, not fatal.
+                cited_uuids = set()
+                for cid in cited_ids:
+                    try:
+                        cited_uuids.add(_UUID(str(cid)))
+                    except (ValueError, AttributeError):
+                        continue
+                if cited_uuids:
+                    rows = db_session.exec(
+                        select(Invoice.id).where(
+                            Invoice.tenant_id == _UUID(str(tenant_id)),
+                            Invoice.id.in_(cited_uuids),
+                        )
+                    ).all()
+                    existing_ids = {str(r) for r in rows}
+            dropped = [c for c in citations if str(c.get("invoice_id")) not in existing_ids]
+            if dropped:
+                logger.warning(
+                    "Dropped %d RAG citation(s) with no matching Invoice row: %s",
+                    len(dropped), [c.get("invoice_id") for c in dropped],
+                )
+            citations[:] = [c for c in citations if str(c.get("invoice_id")) in existing_ids]
+
+
         system_prompt = f"""You are an assistant answering questions about invoice documents.
 Use the following extracted context chunks and short-term conversation history to answer the user's query.
 
 Answer in 1-3 sentences. Be direct. Do not explain your reasoning unless asked.
+
+FORMATTING: Format your answer in Markdown. Use a bullet list when listing multiple items (e.g. multiple invoices or vendors) rather than a run-on sentence.
 
 CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) being discussed in the context. Never default to '$' if the context shows a different currency.
 
@@ -1027,6 +1098,8 @@ Conversation History (Short-term context):
 
 CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) being discussed. Never default to '$' if the context or conversation history indicates a different currency.
 
+FORMATTING: Format your answer in Markdown. Use a bullet list when listing multiple items rather than a run-on sentence.
+
 {tenant_stats}
 {style_block}
 {_INJECTION_GUARD_INSTRUCTION}
@@ -1047,6 +1120,53 @@ Conversation History:
         invoice_id = citation.get("invoice_id")
         if invoice_id and str(invoice_id) not in result_invoice_ids:
             result_invoice_ids.append(str(invoice_id))
+
+    # Gap 237 (BE) safety net: SQL/RAG regenerate their filter fresh from
+    # free-text chat_history every turn (no code path reuses/narrows the prior
+    # turn's exact WHERE clause), so a narrowing follow-up can silently drop a
+    # condition the LLM "simplifies away" -- confirmed live: "3 USD invoices
+    # totaling $2,655,637.56" one turn, then "I see 2 USD inbound invoices
+    # totaling USD 2,586,625.13" the next, exactly one real invoice missing,
+    # asserted with no hedge. This does not fix the root cause (that needs a
+    # live seeded-tenant repro to confirm before the WHERE-clause-reuse fix can
+    # be designed -- not done here) -- it catches the specific failure shape
+    # already seen: the user explicitly references a count from the prior
+    # answer (e.g. "the 3 ...", "those 2 ...") and the new turn's real result
+    # count doesn't match what they referenced, which is exactly when an
+    # unqualified answer would be actively misleading rather than just
+    # incomplete.
+    if route in ("SQL", "RAG") and route_succeeded and response_text:
+        try:
+            from models import ChatMessage
+            from sqlmodel import select
+            from uuid import UUID as _UUID
+
+            referenced_number_matches = re.findall(r"\b(?:the|those)\s+(\d{1,3})\b", user_message.lower())
+            referenced_counts = {int(n) for n in referenced_number_matches}
+            if referenced_counts:
+                prior = db_session.exec(
+                    select(ChatMessage)
+                    .where(ChatMessage.session_id == _UUID(session_id), ChatMessage.role == "assistant")
+                    .order_by(ChatMessage.created_at.desc())
+                    .limit(1)
+                ).first()
+                current_count = len(result_invoice_ids)
+                if (
+                    prior is not None
+                    and prior.result_invoice_ids
+                    and len(prior.result_invoice_ids) in referenced_counts
+                    and current_count != len(prior.result_invoice_ids)
+                    and current_count not in referenced_counts
+                ):
+                    response_text += (
+                        f"\n\n_Heads up: you referenced {len(prior.result_invoice_ids)} from the previous "
+                        f"answer, but this follow-up only found {current_count}. The filter may have "
+                        f"narrowed unexpectedly -- worth double-checking against the full list if this "
+                        f"looks off._"
+                    )
+        except Exception as e:
+            # Never let the safety net itself break a working answer.
+            logger.warning("Gap 237 follow-up reconciliation check failed: %s", e)
 
     result = {
         "content": response_text,

@@ -47,6 +47,20 @@ Inline thread rename (the pencil icon in `ChatWindow.tsx`'s `ThreadSidebar`, add
 
 **Verified**: `npx tsc --noEmit` clean; new `e2e/chat-thread-rename.spec.ts` (3 tests) passing against a real dev server. The two page-driven tests were confirmed to fail against the un-fixed hook before being accepted. A scope limit was found and is documented in that spec's header rather than papered over: `page.route()` intercepts in the browser, *before* Next.js is reached, so a stubbed `PUT` cannot tell whether the proxy route exists — proven by deleting the `PUT` export and watching both page tests still pass. The third test therefore drives the dev server through Playwright's `request` fixture and asserts the response is not a 405; that one does fail without the export.
 
+### Fix: Thumbs-down crashed the chat screen instead of opening the triage dialog (Gap 239, Aug 17, 2026)
+`components/chat/ThumbsDownTriage.tsx` is mounted unconditionally in `MessageBubble.tsx` (kept in the tree, toggled via an `isOpen` prop, not conditionally rendered) so its state survives being opened/closed repeatedly. It had an early return (`if (!isOpen) return null;`) with a `useEffect` (the one loading the category vocabulary) declared *after* it. While closed, React ran the hooks up to the early return and stopped there; the moment thumbs-down flipped `isOpen` to `true`, the same component instance re-rendered, ran the same hooks, but no longer returned early — calling one more hook than the previous render. A differing hook count across renders of one instance is a React Rules-of-Hooks violation, thrown during render/commit ("Rendered fewer hooks than expected" / minified #310) — exactly the reported generic "Application error: a client-side exception has occurred," and consistent with everything already ruled out on the API/type/Provider side before this was found.
+
+**Fixed**: moved the effect (and the `ensureCategories` helper it calls) to above the early return, alongside the component's other unconditional hooks — pure reordering, no logic change. Also confirmed why this shipped unnoticed: `package.json` has no ESLint/`eslint-plugin-react-hooks` at all, and no Playwright spec exercised the thumbs-down click — both worth a fast-follow.
+
+**Verified**: `npx tsc --noEmit` clean.
+
+### Fix: Chat replies had no rich formatting — worse, they leaked raw markdown syntax (Gap 229, Aug 17, 2026)
+`MessageBubble.tsx`'s renderer was a hand-rolled regex supporting only `**bold**`/`` `code` ``/`*italic*`. The backend was already sending real GFM markdown this renderer couldn't handle: SQL-route replies append a real pipe table (`### Query Results` + `|`-delimited rows, `agents/query_agent.py`), RAG-route replies append real markdown links (`[Source: ...](file:///...)`) — so users saw literal `###`/`|`/`[...](...)` characters, not just plain-feeling prose. The renderer's own comment cited "no react-markdown installed, avoid an ES-module dep + `transpilePackages`" as the reason for the regex approach; didn't hold up on inspection — `react-markdown` is plain ESM/CJS-dual and works in a `"use client"` component on Next 14.2.3 with no extra config.
+
+**Fixed**: added `react-markdown` + `remark-gfm` (tables/strikethrough), swapped the renderer, added a `components` map to keep the existing dark-theme palette for bold/code and add matching styles for the newly-renderable elements (lists, tables, headings, links, blockquotes). Also added a `FORMATTING` line to the backend's RAG/CHAT system prompts instructing bullet lists for multi-item answers — the renderer swap alone only fixes backend-constructed markdown, not LLM-authored prose structure (see `apps/invoice-be/docs/feature_6_rag.md`).
+
+**Verified**: `npx tsc --noEmit` clean.
+
 ### Tasks
 
 - [x] **Task 5.1: Build Conversational Message Thread Interface**

@@ -136,6 +136,44 @@ def test_new_vendor_upload_returns_session_shape(trainer_mocks, db_session):
     assert db_session.exec(select(Invoice)).all() == []
 
 
+def test_qa_test_turn_on_upload_path_answers_from_session_data(trainer_mocks, db_session):
+    """Gap 236: the upload path (Scope #3, New Vendor) has no `sample_invoice_id`
+    and deliberately no real Invoice row (see Gap 228) -- QA questions right
+    after uploading must answer from the session's own extracted_data instead
+    of silently coming back empty because run_query_agent() had nothing in the
+    real DB to find."""
+    from models import ChatMessage
+
+    upload = client.post(
+        "/api/v1/trainer/upload",
+        files={"file": ("inv.pdf", b"%PDF-1.4 mock", "application/pdf")},
+    )
+    sid = upload.json()["sessionId"]
+    assert upload.json().get("sampleInvoiceId") is None
+    client.put(f"/api/v1/trainer/sessions/{sid}/mode", json={"session_mode": "qa_test"})
+
+    with patch("routers.trainer.get_llm") as m_llm, \
+         patch("agents.query_agent.run_query_agent") as m_agent:
+        mock_response = MagicMock(content="ACME Corporation billed a total of $110.00 on this invoice.")
+        m_llm.return_value.invoke.return_value = mock_response
+
+        res = client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "what's the total?"})
+
+        assert res.status_code == 200
+        # The real DB-backed agent must never be reached for a session with no
+        # sample_invoice_id -- it has nothing to find and answering from it
+        # (silently empty) is exactly the bug being fixed.
+        m_agent.assert_not_called()
+
+    # The reply lives on the persisted ChatMessage row (this endpoint's own
+    # response body carries updatedSession/messageId, not the reply text
+    # directly -- same shape the sibling QA test above already asserts on).
+    messages = db_session.exec(select(ChatMessage)).all()
+    assert {m.role for m in messages} == {"user", "assistant"}
+    assistant_reply = next(m.content for m in messages if m.role == "assistant")
+    assert "110.00" in assistant_reply
+
+
 def test_from_invoice_session_and_chat(trainer_mocks, db_session):
     """Feature 18: the unified entry point, then a conversational refinement on it."""
     inv = _seed_invoice(db_session)

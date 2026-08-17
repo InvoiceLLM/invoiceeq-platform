@@ -232,8 +232,17 @@ def test_charge_free_quota_uses_for_update():
     )
 
 
-def test_directory_watcher_disabled_by_default(db_session):
-    """Gap 12: watcher endpoint returns 501 when WATCHER_ALLOWED_BASE_DIR is unset."""
+def test_directory_watcher_disabled_by_default(db_session, monkeypatch):
+    """Gap 12: watcher endpoint returns 501 when WATCHER_ALLOWED_BASE_DIR is unset.
+
+    Explicitly forced empty here (same pattern as the two tests below) rather
+    than relying on the ambient setting being unset -- FE Gap 181's fix set
+    WATCHER_ALLOWED_BASE_DIR=./watched_invoices in .env.example/.env for local
+    dev usability, which silently broke this test's original unstated
+    assumption that no one's .env would ever set it.
+    """
+    from config import get_settings
+    monkeypatch.setattr(get_settings(), "WATCHER_ALLOWED_BASE_DIR", "")
     client = TestClient(app)
     response = client.post("/api/v1/invoices/watcher/start", json={"directory_path": "/tmp/anything"})
     assert response.status_code == 501
