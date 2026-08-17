@@ -620,10 +620,17 @@ def test_normalize_string_equality_rewrites_equality_in_and_like():
     what makes the comparison case-insensitive) is pinned, not just the row count."""
     from agents.query_agent import _normalize_string_equality
 
-    # `=` — pre-existing behaviour, must not regress
+    # `=` — pre-existing behaviour, must not regress. Uses po_number (an
+    # exact-fuzzy column) rather than vendor_name here: Gap 238 deliberately
+    # changed vendor_name/customer_name's `=` rewrite to a substring LIKE
+    # (see test_normalize_string_equality_rewrites_name_equality_to_substring_like
+    # below) since a short vendor reference is routinely a genuinely different
+    # string from the stored value, not just case/whitespace drift the way
+    # identifiers are -- this assertion's job is pinning the case/whitespace-
+    # only mechanism itself, which po_number/invoice_number still use.
     assert (
-        _normalize_string_equality("SELECT * FROM invoice WHERE vendor_name = 'Harbor Tech'")
-        == "SELECT * FROM invoice WHERE TRIM(LOWER(vendor_name)) = TRIM(LOWER('Harbor Tech'))"
+        _normalize_string_equality("SELECT * FROM invoice WHERE po_number = 'PO-42'")
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(po_number)) = TRIM(LOWER('PO-42'))"
     )
 
     # `IN (...)` — every value gets the same treatment the single value got
@@ -650,6 +657,59 @@ def test_normalize_string_equality_rewrites_equality_in_and_like():
     assert "TRIM(LOWER(invoice_number)) NOT LIKE LOWER('US-%')" in _normalize_string_equality(
         "SELECT * FROM invoice WHERE invoice_number NOT LIKE 'US-%'"
     )
+
+
+def test_normalize_string_equality_rewrites_name_equality_to_substring_like():
+    """Gap 238: vendor_name/customer_name `=` must become a substring LIKE, not
+    just a case/whitespace-normalized `=` -- a user's short reference
+    ("Cascade Manufacturing") is routinely a genuinely different string from
+    the stored value ("Cascade Manufacturing Co"), not just a case/whitespace
+    drift the way invoice_number/po_number typically are."""
+    from agents.query_agent import _normalize_string_equality
+
+    assert (
+        _normalize_string_equality("SELECT * FROM invoice WHERE vendor_name = 'Cascade Manufacturing'")
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(vendor_name)) LIKE LOWER('%Cascade Manufacturing%')"
+    )
+    assert (
+        _normalize_string_equality("SELECT * FROM invoice WHERE customer_name = 'Acme'")
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(customer_name)) LIKE LOWER('%Acme%')"
+    )
+    # Identifiers are NOT substring-fuzzy -- only case/whitespace, unchanged from before.
+    assert (
+        _normalize_string_equality("SELECT * FROM invoice WHERE invoice_number = 'CMC-330217'")
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(invoice_number)) = TRIM(LOWER('CMC-330217'))"
+    )
+    assert (
+        _normalize_string_equality("SELECT * FROM invoice WHERE po_number = 'PO-88342'")
+        == "SELECT * FROM invoice WHERE TRIM(LOWER(po_number)) = TRIM(LOWER('PO-88342'))"
+    )
+
+
+def test_generated_sql_vendor_suffix_matches_despite_exact_equality(db_session):
+    """Gap 238 live-execution regression: the exact scenario reported live --
+    a user asks about "Cascade Manufacturing" (typed shorter than the stored
+    value) via an exact-match `=` query the LLM generated; must still find the
+    row instead of "No records found matching the query criteria."."""
+    from agents.query_agent import execute_generated_sql
+    from models import Invoice
+    from datetime import date
+
+    db_session.add(Invoice(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="cmc.pdf",
+        vendor_name="Cascade Manufacturing Co", invoice_number="CMC-330217",
+        po_number="PO-88342", grand_total=2600.0,
+        status="COMPLETED", invoice_date=date(2026, 1, 1),
+    ))
+    db_session.commit()
+
+    res = execute_generated_sql(
+        f"SELECT po_number FROM invoice WHERE {_tenant_filter()} "
+        "AND vendor_name = 'Cascade Manufacturing';",
+        str(MOCK_TENANT_ID), db_session,
+    )
+    assert "No records found" not in res
+    assert "PO-88342" in res
 
 
 def test_normalize_string_equality_leaves_unsupported_shapes_untouched():
@@ -778,3 +838,61 @@ def test_vector_metadata_tenant_isolation(db_session):
     finally:
         if os.path.exists(temp_pdf_path):
             os.remove(temp_pdf_path)
+
+
+def test_rag_citations_drop_ids_with_no_matching_invoice_row(db_session):
+    """Gap 239: a Chroma chunk can cite an invoice_id with no corresponding
+    Postgres Invoice row at all (not soft-deleted -- genuinely absent, e.g.
+    leftover embeddings from a desync). The RAG route must validate citations
+    against real rows before returning them, keeping only the ones that
+    actually exist -- an existence check, not invoice_not_deleted(), since a
+    soft-deleted invoice (Gap 192) is still a legitimate citation."""
+    from datetime import date
+    from models import ChatSession, Invoice
+
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="RAG citation test"))
+
+    real_invoice_id = uuid4()
+    db_session.add(Invoice(
+        id=real_invoice_id, tenant_id=MOCK_TENANT_ID, file_path="real.pdf",
+        vendor_name="Blue Ridge Logistics", invoice_number="BRL-200981",
+        grand_total=500.0, status="COMPLETED", invoice_date=date(2026, 1, 1),
+    ))
+    db_session.commit()
+
+    dead_invoice_id = str(uuid4())  # deliberately never persisted
+
+    fake_chunks = [
+        {
+            "document": "freight charge line",
+            "metadata": {"invoice_id": str(real_invoice_id), "vendor_name": "Blue Ridge Logistics", "page": 1},
+        },
+        {
+            "document": "orphaned chunk, no backing row",
+            "metadata": {"invoice_id": dead_invoice_id, "vendor_name": "Blue Ridge Logistics", "page": 1},
+        },
+    ]
+
+    client = TestClient(app)
+    with patch("agents.query_agent.classify_query") as mock_class, \
+         patch("agents.query_agent.query_invoice_chunks") as mock_chunks, \
+         patch("agents.query_agent.get_llm") as mock_get_llm:
+        mock_class.return_value = "RAG"
+        mock_chunks.return_value = fake_chunks
+        mock_response = MagicMock(content="Blue Ridge Logistics has freight charges.")
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = mock_response
+        mock_get_llm.return_value = mock_llm
+
+        res = client.post(
+            f"/api/v1/chat/sessions/{session_id}/message",
+            json={"content": "Which vendors have freight charges?"},
+        )
+        assert res.status_code == 200
+        citations = res.json()["citations"]
+        cited_ids = {c["invoice_id"] for c in citations}
+        assert str(real_invoice_id) in cited_ids
+        assert dead_invoice_id not in cited_ids
+        # The dead citation's link text must not leak into the reply either.
+        assert dead_invoice_id not in res.json()["content"]

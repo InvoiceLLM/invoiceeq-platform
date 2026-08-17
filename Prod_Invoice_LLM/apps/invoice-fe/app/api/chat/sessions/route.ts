@@ -13,6 +13,8 @@
 import { type NextRequest } from "next/server";
 import { proxyJson } from "@/lib/backendProxy";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/chat/sessions
 // WHY: Returns the list of conversation threads for the sidebar panel.
 //   Called by useChatSession.fetchSessions() on component mount.

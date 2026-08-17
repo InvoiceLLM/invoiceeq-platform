@@ -38,6 +38,20 @@ def override_db_session(db_session):
     yield
     app.dependency_overrides.clear()
 
+
+@pytest.fixture
+def real_salesforce_credentials(monkeypatch):
+    """Forces has_real_credentials("salesforce", ...) to True so a test can
+    exercise the real PKCE branch of get_auth_url()/oauth_callback() instead
+    of the mock fallback. Without this, whether these tests pass depends on
+    ambient .env state (whether SALESFORCE_CLIENT_ID happens to be a real,
+    non-"placeholder" value on whatever machine runs them) rather than being
+    deterministic -- exactly the isolation gap that made these tests only
+    ever pass by accident on some machines and not others."""
+    from config import get_settings
+    monkeypatch.setattr(get_settings(), "SALESFORCE_CLIENT_ID", "real_test_salesforce_client_id")
+    monkeypatch.setattr(get_settings(), "SALESFORCE_CLIENT_SECRET", "real_test_salesforce_client_secret")
+
 def test_encryption_decryption():
     """Verify that credentials can be successfully encrypted and decrypted."""
     plain_token = "my-super-secret-oauth-refresh-token-12345"
@@ -83,12 +97,17 @@ def test_get_auth_url():
     assert "auth_url" in response.json()
     assert "google" in response.json()["auth_url"]
 
-def test_salesforce_pkce_flow(db_session):
+def test_salesforce_pkce_flow(db_session, real_salesforce_credentials):
     """Some Salesforce Connected Apps require PKCE on the authorization flow
     (real-world error hit: 'invalid_request: missing required code challenge').
     get_auth_url() must attach a code_challenge/state and stash the matching
     code_verifier server-side; oauth_callback() must retrieve it by state and
     include it in the token exchange payload.
+
+    Real PKCE branch only runs when has_real_credentials() sees a non-
+    placeholder SALESFORCE_CLIENT_ID (utils/connector_oauth.py) -- forced
+    deterministically via the real_salesforce_credentials fixture rather than
+    left to whatever happens to be in the ambient .env.
     """
     response = client.get("/api/v1/connectors/auth-url/salesforce")
     assert response.status_code == 200
@@ -444,7 +463,7 @@ def test_handle_import_connector_file_refreshes_expired_token(mock_download, moc
     assert conn.token_expiry > datetime.utcnow()
 
 
-def test_oauth_callback_salesforce_verification_failure(db_session):
+def test_oauth_callback_salesforce_verification_failure(db_session, real_salesforce_credentials):
     """Verify that when Salesforce verification fails during OAuth connect,
     the callback returns a 502 Bad Gateway and does not save the connection."""
     import httpx

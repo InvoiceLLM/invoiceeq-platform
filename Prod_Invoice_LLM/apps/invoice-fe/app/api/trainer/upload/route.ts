@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { backendUrl, forwardedHeaders } from "@/lib/backendProxy";
 
+export const dynamic = "force-dynamic";
+
 // POST /api/trainer/upload -> backend /trainer/upload
 // New-Vendor scope: forwards the multipart PDF upload untouched (fetch sets the
 // multipart boundary itself, so no Content-Type is added).

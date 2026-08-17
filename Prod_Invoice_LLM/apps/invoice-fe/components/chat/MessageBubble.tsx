@@ -7,18 +7,27 @@
 //     MessageBubble — renders a single ChatMessage
 //     MessageStream — renders the full ordered list with auto-scroll and a
 //                     typing indicator while the backend is processing
-//   WHY inline markdown renderer instead of react-markdown:
-//     The project has no react-markdown installed and adding an ES-module
-//     dependency requires Next.js transpilePackages config.  The backend
-//     assistant responses only use **bold**, *italic*, and `inline code` —
-//     a small regex-based renderer handles all three without any package
-//     install, keeping the bundle lean.
+//   MARKDOWN RENDERING (Gap 229, FE): previously a hand-rolled regex renderer
+//   covering only **bold**/*italic*/`code`, on the reasoning that adding
+//   react-markdown needed Next.js transpilePackages config. That reasoning
+//   didn't hold up: react-markdown is plain ESM/CJS-dual and works in a
+//   "use client" component on Next 14.2.3 with no extra config. Meanwhile the
+//   backend was already emitting real GFM markdown the old renderer mangled
+//   into literal text — SQL-route replies append a real pipe table
+//   (`### Query Results` + `|`-delimited rows), RAG-route replies append real
+//   markdown links (`[Source: ...](file:///...)`) — so users were seeing raw
+//   `###`/`|`/`[...](...)` syntax, not just "plain-feeling" prose. Swapped to
+//   `react-markdown` + `remark-gfm` (tables/strikethrough), with `components`
+//   overrides below to keep the existing dark-theme styling instead of
+//   react-markdown's unstyled defaults.
 // =============================================================================
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, User, ThumbsUp, ThumbsDown } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import CitationPill from "./CitationPill";
 import SqlAuditDrawer from "./SqlAuditDrawer";
 import ThumbsDownTriage from "./ThumbsDownTriage";
@@ -136,181 +145,66 @@ function FeedbackVote({ messageId, initialVote }: { messageId: string; initialVo
 }
 
 // =============================================================================
-// renderMarkdown — lightweight inline markdown processor
-// WHY: Covers the three patterns the backend LLM realistically produces:
-//   **bold text** → <strong>
-//   *italic text* → <em>
-//   `inline code` → <code> styled with the same dark bg/green text as the
-//                   SQL code block for visual consistency
-// Each call to text.split("\n") creates a line-level array; regex then
-// processes inline tokens within each line.  The result is a React node
-// array rendered directly inside the assistant bubble.
+// markdownComponents — style overrides for react-markdown (Gap 229)
+// WHY: react-markdown renders plain, unstyled HTML elements by default; these
+// overrides keep the same palette the old regex renderer used for bold/code
+// (white/semibold; dark bg + green mono text matching SqlAuditDrawer) and add
+// matching dark-theme styles for the elements that are now newly renderable
+// (lists, tables, headings, links, code blocks, blockquotes) instead of
+// leaving them to browser defaults, which would look out of place in the
+// bubble.
 // =============================================================================
+const markdownComponents = {
+  strong: (props: any) => <strong className="text-white font-semibold" {...props} />,
+  em: (props: any) => <em className="text-slate-300 italic" {...props} />,
+  code: ({ inline, className, children, ...props }: any) =>
+    inline ? (
+      <code
+        className="bg-[#0B0F19] text-[#10B981] px-1.5 py-0.5 rounded text-[11px] font-mono border border-[#222D3D]"
+        {...props}
+      >
+        {children}
+      </code>
+    ) : (
+      <code className="block bg-[#0B0F19] text-[#10B981] p-2 rounded-lg text-[11px] font-mono border border-[#222D3D] overflow-x-auto" {...props}>
+        {children}
+      </code>
+    ),
+  pre: (props: any) => <pre className="my-2 max-w-full" {...props} />,
+  p: (props: any) => <p className="mb-1 last:mb-0" {...props} />,
+  ul: (props: any) => <ul className="list-disc list-outside ml-4 my-1 space-y-0.5" {...props} />,
+  ol: (props: any) => <ol className="list-decimal list-outside ml-4 my-1 space-y-0.5" {...props} />,
+  li: (props: any) => <li className="text-slate-200" {...props} />,
+  h1: (props: any) => <h1 className="text-sm font-bold text-white mt-2 mb-1" {...props} />,
+  h2: (props: any) => <h2 className="text-sm font-bold text-white mt-2 mb-1" {...props} />,
+  h3: (props: any) => <h3 className="text-xs font-bold text-white uppercase tracking-wide mt-2 mb-1" {...props} />,
+  a: (props: any) => (
+    <a
+      className="text-[#3B82F6] hover:text-[#60A5FA] underline underline-offset-2"
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    />
+  ),
+  blockquote: (props: any) => (
+    <blockquote className="border-l-2 border-[#3B82F6]/40 pl-2 my-1 text-slate-400 italic" {...props} />
+  ),
+  table: (props: any) => (
+    <div className="overflow-x-auto my-2">
+      <table className="min-w-full text-xs border-collapse" {...props} />
+    </div>
+  ),
+  thead: (props: any) => <thead className="border-b border-[#222D3D]" {...props} />,
+  th: (props: any) => <th className="text-left font-semibold text-white px-2 py-1" {...props} />,
+  td: (props: any) => <td className="px-2 py-1 border-t border-[#222D3D]/60 text-slate-200" {...props} />,
+};
+
 function renderMarkdown(text: string): React.ReactNode {
-  const lines = text.split("\n");
-  const elements: React.ReactNode[] = [];
-  
-  let currentListItems: React.ReactNode[] = [];
-  let currentListType: "ul" | "ol" | null = null;
-  
-  let currentCodeLines: string[] = [];
-  let inCodeBlock = false;
-  let codeBlockLang = "";
-
-  const renderInline = (line: string, keyPrefix: string): React.ReactNode[] => {
-    const parts: React.ReactNode[] = [];
-    const pattern = /(\*\*(.+?)\*\*|`([^`]+)`|\*(.+?)\*)/g;
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = pattern.exec(line)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push(line.slice(lastIndex, match.index));
-      }
-
-      if (match[2]) {
-        parts.push(
-          <strong key={`${keyPrefix}-${match.index}-b`} className="text-white font-semibold">
-            {match[2]}
-          </strong>
-        );
-      } else if (match[3]) {
-        parts.push(
-          <code
-            key={`${keyPrefix}-${match.index}-c`}
-            className="bg-[#0B0F19] text-[#10B981] px-1.5 py-0.5 rounded text-[11px] font-mono border border-[#222D3D]"
-          >
-            {match[3]}
-          </code>
-        );
-      } else if (match[4]) {
-        parts.push(
-          <em key={`${keyPrefix}-${match.index}-i`} className="text-slate-300 italic">
-            {match[4]}
-          </em>
-        );
-      }
-      lastIndex = match.index + match[0].length;
-    }
-
-    if (lastIndex < line.length) {
-      parts.push(line.slice(lastIndex));
-    }
-    return parts.length > 0 ? parts : [line];
-  };
-
-  const flushList = (key: string) => {
-    if (currentListType === "ul") {
-      elements.push(
-        <ul key={key} className="list-disc pl-5 my-2 space-y-1 text-slate-300">
-          {currentListItems}
-        </ul>
-      );
-    } else if (currentListType === "ol") {
-      elements.push(
-        <ol key={key} className="list-decimal pl-5 my-2 space-y-1 text-slate-300">
-          {currentListItems}
-        </ol>
-      );
-    }
-    currentListItems = [];
-    currentListType = null;
-  };
-
-  for (let idx = 0; idx < lines.length; idx++) {
-    const line = lines[idx];
-
-    // 1. Handle Code Blocks
-    if (line.trim().startsWith("```")) {
-      if (inCodeBlock) {
-        elements.push(
-          <pre key={`code-${idx}`} className="bg-[#0B0F19] border border-[#222D3D] rounded-lg p-3 my-2 overflow-x-auto text-[11px] font-mono text-[#10B981] max-w-full">
-            <code className={codeBlockLang ? `language-${codeBlockLang}` : ""}>
-              {currentCodeLines.join("\n")}
-            </code>
-          </pre>
-        );
-        currentCodeLines = [];
-        inCodeBlock = false;
-      } else {
-        inCodeBlock = true;
-        codeBlockLang = line.trim().slice(3);
-        flushList(`list-before-code-${idx}`);
-      }
-      continue;
-    }
-
-    if (inCodeBlock) {
-      currentCodeLines.push(line);
-      continue;
-    }
-
-    // 2. Handle Bullet Lists
-    const ulMatch = line.match(/^(\s*)[-*•]\s+(.*)/);
-    if (ulMatch) {
-      if (currentListType && currentListType !== "ul") {
-        flushList(`list-switch-ul-${idx}`);
-      }
-      currentListType = "ul";
-      currentListItems.push(
-        <li key={`li-ul-${idx}-${Math.random()}`} className="text-slate-300">
-          {renderInline(ulMatch[2], `li-ul-inline-${idx}`)}
-        </li>
-      );
-      continue;
-    }
-
-    // 3. Handle Numbered Lists
-    const olMatch = line.match(/^(\s*)\d+\.\s+(.*)/);
-    if (olMatch) {
-      if (currentListType && currentListType !== "ol") {
-        flushList(`list-switch-ol-${idx}`);
-      }
-      currentListType = "ol";
-      currentListItems.push(
-        <li key={`li-ol-${idx}-${Math.random()}`} className="text-slate-300">
-          {renderInline(olMatch[2], `li-ol-inline-${idx}`)}
-        </li>
-      );
-      continue;
-    }
-
-    // 4. Handle Headers
-    const headerMatch = line.match(/^(#{1,6})\s+(.*)/);
-    if (headerMatch) {
-      flushList(`list-before-header-${idx}`);
-      const depth = headerMatch[1].length;
-      const content = renderInline(headerMatch[2], `header-inline-${idx}`);
-      const headerClasses =
-        depth === 1
-          ? "text-xl font-bold text-white mt-4 mb-2"
-          : depth === 2
-          ? "text-lg font-bold text-white mt-3 mb-2"
-          : "text-base font-semibold text-white mt-2 mb-1";
-      elements.push(
-        <div key={`header-${idx}`} className={headerClasses}>
-          {content}
-        </div>
-      );
-      continue;
-    }
-
-    // 5. Normal line
-    flushList(`list-before-line-${idx}`);
-    if (line.trim() === "") {
-      elements.push(<div key={`empty-${idx}`} className="h-2" />);
-    } else {
-      elements.push(
-        <p key={`p-${idx}`} className="text-slate-300 leading-relaxed mt-1">
-          {renderInline(line, `p-inline-${idx}`)}
-        </p>
-      );
-    }
-  }
-
-  flushList(`list-final`);
-
-  return <div className="space-y-1">{elements}</div>;
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {text}
+    </ReactMarkdown>
+  );
 }
 
 // =============================================================================
@@ -386,7 +280,8 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             // User messages are plain text — no markdown needed
             <span>{message.content}</span>
           ) : (
-            // Assistant messages run through renderMarkdown for bold/italic/code
+            // Assistant messages run through renderMarkdown (Gap 229: full GFM
+            // markdown now — bold/italic/code plus lists/tables/headings/links)
             <div className="space-y-0.5">
               {renderMarkdown(message.content)}
             </div>

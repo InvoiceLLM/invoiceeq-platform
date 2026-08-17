@@ -169,6 +169,28 @@ export default function ThumbsDownTriage({
     setRedirect(null);
   }, [isOpen]);
 
+  /** Lazily loads the category vocabulary if we reached this step without it. */
+  const ensureCategories = async () => {
+    if (categories.length > 0) return;
+    try {
+      setCategories(await chatTrainingService.getCategories());
+    } catch {
+      setError("Couldn't load the correction categories.");
+    }
+  };
+
+  // Gap 239 (FE): this effect used to sit after the `if (!isOpen) return
+  // null;` below, so it was skipped while the dialog was closed but ran once
+  // opened -- a differing hook count between renders of the same mounted
+  // component instance, which React treats as a hooks-order violation and
+  // throws ("Rendered fewer hooks than expected" / minified #310), surfacing
+  // to the user as a generic client-side exception instead of the dialog.
+  // All hooks must run unconditionally before any early return.
+  React.useEffect(() => {
+    if (step === "category") void ensureCategories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   if (!isOpen) return null;
 
   const selectedCategorySpec = categories.find((c) => c.key === category);
@@ -290,21 +312,6 @@ export default function ThumbsDownTriage({
       setBusy(false);
     }
   };
-
-  /** Lazily loads the category vocabulary if we reached this step without it. */
-  const ensureCategories = async () => {
-    if (categories.length > 0) return;
-    try {
-      setCategories(await chatTrainingService.getCategories());
-    } catch {
-      setError("Couldn't load the correction categories.");
-    }
-  };
-
-  React.useEffect(() => {
-    if (step === "category") void ensureCategories();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
 
   const handlePreview = async () => {
     setBusy(true);

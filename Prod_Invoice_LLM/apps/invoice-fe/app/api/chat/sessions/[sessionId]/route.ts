@@ -12,6 +12,8 @@
 import { type NextRequest } from "next/server";
 import { proxyJson } from "@/lib/backendProxy";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/chat/sessions/[sessionId]
 // WHY: Fetches a single session together with its full ChatMessage array.
 //   Called by useChatSession.selectSession(id) whenever the user switches

@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { proxyJson } from "@/lib/backendProxy";
 
+export const dynamic = "force-dynamic";
+
 interface RouteParams {
   params: {
     id: string;

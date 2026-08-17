@@ -17,6 +17,8 @@
 import { type NextRequest } from "next/server";
 import { proxyJson } from "@/lib/backendProxy";
 
+export const dynamic = "force-dynamic";
+
 // POST /api/chat/sessions/[sessionId]/message
 // WHY: Sends the user's typed message to the backend query agent.
 //   Called by useChatSession.sendMessage() after the optimistic user bubble

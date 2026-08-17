@@ -1400,6 +1400,74 @@ def _ensure_qa_chat_session(session_id: str, session: dict, db_session: Session,
     return chat_session.id
 
 
+def _answer_qa_from_session_data(session: dict, content: str) -> dict:
+    """Gap 236: upload-path (Scope #3, New Vendor) QA answers -- there is no
+    real `Invoice` row for this document to query (deliberately, per Gap 228,
+    so a sample upload doesn't burn free-invoice quota or appear on the
+    dashboard before the user commits anything), so `run_query_agent()` always
+    came back empty for it.
+
+    Mirrors `agents/query_agent.py::run_query_agent()`'s SQL-route summarize
+    step: build a `db_result`-shaped table (there, real query rows; here, this
+    session's already-extracted fields) and run it through the same
+    prompt/response shape, so an answer about a just-uploaded sample looks and
+    reads the same as a real chat answer about the same invoice would once
+    it's actually ingested -- not a differently-behaved parallel feature.
+    Deliberately not factored into a shared function with query_agent.py in
+    this pass (out of scope for this fix); if that file's summarize prompt
+    changes, this mirror needs to be updated alongside it.
+
+    Residual, honest gap: verification-alert generation only runs on real
+    async ingestion, so a freshly-uploaded sample has no alerts yet -- this
+    only answers from extracted fields, same as the tracker's own note that a
+    one-line UI caveat (not built here) is the right scope for that, not a
+    broad disclaimer on every answer.
+    """
+    extracted_data = session.get("extracted_data") or {}
+    if not extracted_data:
+        return {
+            "content": "I don't have any extracted data for this document yet -- try again once the upload finishes processing.",
+            "generated_sql": None,
+            "citations": [],
+            "result_invoice_ids": [],
+        }
+
+    rows = [
+        f"{field} | {value}"
+        for field, value in extracted_data.items()
+        if value not in (None, "", [], {})
+    ]
+    db_result = ("field | value\n--- | ---\n" + "\n".join(rows)) if rows else "No extracted fields available."
+
+    llm = get_llm()
+    summary_prompt = f"""Format a friendly summary answering the user's question about this ONE invoice document
+(a freshly-uploaded sample in the AI Trainer's QA panel -- it has not been fully ingested yet, so no audit/
+verification alerts exist for it, only the raw extracted fields below).
+Do not restate every field -- the full extracted data is shown to the user separately right after your summary.
+Do not explain your reasoning or how the data was extracted.
+
+CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching this document's actual currency. Never default to '$' if the extracted data shows a different currency.
+
+Extracted Fields:
+{db_result}
+
+User Question: {content}
+"""
+    try:
+        res = llm.invoke(summary_prompt)
+        reply = res.content + f"\n\n### Extracted Data\n{db_result}"
+    except Exception as e:
+        logger.error("Trainer QA upload-path summary failed: %s", e)
+        reply = f"Failed to answer from the extracted data: {str(e)}"
+
+    return {
+        "content": reply,
+        "generated_sql": None,
+        "citations": [],
+        "result_invoice_ids": [],
+    }
+
+
 def _handle_qa_test_turn(
     session_id: str,
     session: dict,
@@ -1420,14 +1488,22 @@ def _handle_qa_test_turn(
     db_session.add(user_msg)
 
     try:
-        result = run_query_agent(
-            # A real UUID, so get_chat_history() actually finds this thread's
-            # prior turns instead of silently returning "".
-            str(chat_session_id),
-            scoped_message,
-            session["tenant_id"],
-            db_session,
-        )
+        # Gap 236: existing-vendor sessions (a real sample_invoice_id, picked
+        # from history) keep going through the real DB-backed agent unchanged.
+        # Upload-path sessions (no sample_invoice_id -- Scope #3, New Vendor)
+        # branch to the in-memory answerer above instead of asking
+        # run_query_agent() to find a DB row that was never going to exist.
+        if session.get("sample_invoice_id"):
+            result = run_query_agent(
+                # A real UUID, so get_chat_history() actually finds this thread's
+                # prior turns instead of silently returning "".
+                str(chat_session_id),
+                scoped_message,
+                session["tenant_id"],
+                db_session,
+            )
+        else:
+            result = _answer_qa_from_session_data(session, content)
         reply = result.get("content") or "No response."
     except Exception as e:
         logger.error("Trainer QA test query failed: %s", e)
