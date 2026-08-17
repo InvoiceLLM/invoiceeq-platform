@@ -181,6 +181,19 @@ class ChatMessage(SQLModel, table=True):
     content: str
     generated_sql: str | None = Field(default=None)
     citations: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # Feature 18 (Gap 231): which invoices actually fed this reply, captured at
+    # answer time. Before this column, only the RAG route left any row identity
+    # behind (via `citations[].invoice_id`); the SQL route set `citations = []`
+    # and returned nothing but `generated_sql` plus a markdown table string --
+    # so for an aggregate answer like "total spend across 40 invoices" there was
+    # literally nothing to build a "which invoice was wrong?" picker from, which
+    # is exactly what the wrong-data triage flow needs.
+    #
+    # Best-effort by construction (see agents/query_agent.py::_harvest_invoice_ids):
+    # an empty list means "we could not determine the row set", never "no rows
+    # were involved". The triage API treats empty as "ask the user which invoice"
+    # rather than asserting a claim it can't back.
+    result_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ChatFeedback(SQLModel, table=True):
@@ -193,6 +206,21 @@ class ChatFeedback(SQLModel, table=True):
     session_id: UUID = Field(index=True)
     message_id: UUID = Field(index=True, unique=True)
     vote: str = Field(max_length=10)  # "up" or "down"
+    # Feature 18 (Gap 232): a thumbs-down is no longer signal-only -- it is the
+    # entry point to the chat-correction triage flow, and the three reasons below
+    # route to three structurally different destinations:
+    #   wrong_data          -> auto-diff against the stored DB value; may end up
+    #                          redirecting into the *extraction* flow instead if
+    #                          the stored data (not the reply) is what's wrong
+    #   wrong_interpretation-> a TenantChatRule about the agent's own reasoning
+    #   bad_tone            -> TenantChatSettings, not a rule at all
+    # NULL on every pre-Feature-18 row and on any thumbs-up (a positive vote has
+    # no reason to give), which is why it stays nullable rather than defaulted.
+    reason: str | None = Field(default=None, max_length=32)
+    # Optional free text. Deliberately secondary context only -- never the
+    # primary input to rule generation, so a blank note can't produce a rule and
+    # a prose note can't quietly become one.
+    note: str | None = Field(default=None, max_length=2000)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -277,6 +305,78 @@ class ExtractionTemplateVersion(SQLModel, table=True):
     rules: dict = Field(default={}, sa_column=Column(JSON_VARIANT))
     changed_by: str | None = Field(default=None, max_length=255)
     changed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TenantChatSettings(SQLModel, table=True):
+    """Feature 18 (Gap 230): the tenant's Chat response style, in its own table.
+
+    Replaces the storage location Gap 221 originally shipped: the style dict used
+    to live inside the Global INBOUND `ExtractionTemplate` row's
+    `rules["chat_style"]`. That was a reasonable place for it when the Global row
+    was the natural home for tenant-wide Trainer state -- but Feature 18 removes
+    Global-scope rule *creation* from the Trainer, so the Global row is no longer
+    something a user ever opens or edits, and hanging live chat configuration off
+    a row nobody visits (and which is otherwise about *extraction* rules, not
+    chat behaviour) is exactly the kind of coupling this redesign exists to undo.
+
+    The migration copies existing `rules["chat_style"]` dicts across and
+    deliberately **leaves the source key in place** -- it is tenant data, and a
+    non-destructive move means a rollback of this deploy loses nothing.
+
+    Shaped after `TenantAutopilotConfig` (one row per tenant, enforced by a
+    UNIQUE on `tenant_id`). It deliberately does NOT carry a `tenant.id` foreign
+    key, matching the closer analogues for tenant-scoped config that this table
+    actually sits alongside (`ExtractionTemplate`, `WebhookSubscription`,
+    `ChatSession`), all of which use a plain indexed `tenant_id`.
+    """
+    __tablename__ = "tenant_chat_settings"
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", name="uq_tenant_chat_settings_tenant"),
+        sa.Index("idx_tenant_chat_settings_tenant", "tenant_id"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    # 'brief' | 'balanced' | 'detailed'
+    response_length: str = Field(default="balanced", max_length=20)
+    # 'formal' | 'conversational' | 'technical'
+    tone: str = Field(default="conversational", max_length=20)
+    custom_instructions: str = Field(default="", max_length=2000)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TenantChatRule(SQLModel, table=True):
+    """Feature 18 (Gap 232): one committed chat-behaviour rule.
+
+    Structurally separate from `ExtractionTemplate.rules["constraints"]`, and
+    that separation is the point rather than an implementation detail: a chat
+    rule is about how the *answering agent* should reason, filter or scope a
+    question ("also search line-item descriptions", "invoices received means
+    INBOUND"). It has nothing to teach the extraction pipeline, and letting the
+    two share a table is how "the trainer taught chat something weird" and "the
+    trainer taught extraction something weird" became the same, undiagnosable
+    class of bug. Nothing in this table is ever read by the extraction agent, and
+    nothing in `ExtractionTemplate` is ever read by `_chat_rules_block()`.
+
+    `category` is one of a fixed vocabulary (see
+    `services/chat_rules.py::CHAT_RULE_CATEGORIES`) -- structured pick, not free
+    text. `pattern` is the specific thing the category applies to (e.g. the term
+    that should have been included). `context_text` is optional secondary colour
+    from the user, never the primary input.
+    """
+    __tablename__ = "tenant_chat_rules"
+    __table_args__ = (
+        sa.Index("idx_tenant_chat_rules_tenant_enabled", "tenant_id", "enabled"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    category: str = Field(max_length=64)
+    pattern: str = Field(default="", max_length=500)
+    context_text: str = Field(default="", max_length=2000)
+    created_by: str | None = Field(default=None, max_length=255)
+    enabled: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class TenantEmailSender(SQLModel, table=True):

@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from azure.storage.queue import QueueClient
 from models import Invoice, ExtractionTemplate, TenantConnection
 from agents.extraction_agent import run_extraction_agent
+from utils.rule_schema import merge_constraints
 
 
 logger = logging.getLogger(__name__)
@@ -310,6 +311,13 @@ def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | Non
     """Return the constraints list for a template scope, or [] if none exists.
 
     vendor_name=None resolves the tenant's single Global template (Task 10.8).
+
+    Feature 18: returns the RAW constraint entries (which may be legacy strings
+    or structured rule objects), not rendered text -- the raw form is what the
+    extraction agent needs, because `verify_node` reads the structured
+    tolerance/threshold/severity rules out of it while `extract_node` renders
+    only the prompt-relevant ones. Rendering here would have silently stripped
+    every non-prompt rule before it ever reached verification.
     """
     stmt = select(ExtractionTemplate).where(ExtractionTemplate.tenant_id == UUID(tenant_id))
     if vendor_name is None:
@@ -318,18 +326,20 @@ def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | Non
         stmt = stmt.where(ExtractionTemplate.vendor_name == vendor_name)
     tpl = session.exec(stmt).first()
     if tpl and isinstance(tpl.rules, dict):
-        return tpl.rules.get("constraints", []) or []
+        return list(tpl.rules.get("constraints", []) or [])
     return []
 
 
 def _merge_constraints(global_constraints: list, vendor_constraints: list) -> list:
     """Merge Global + vendor constraints. Vendor rules are appended last (they win on
-    conflict); exact duplicates are dropped."""
-    merged = list(global_constraints)
-    for c in vendor_constraints:
-        if c not in merged:
-            merged.append(c)
-    return merged
+    conflict); exact duplicates are dropped.
+
+    Feature 18: delegates to the shared `utils.rule_schema.merge_constraints`, so
+    de-duplication is by *rendered text* rather than object identity -- a
+    structured rule that renders to the same sentence as an existing legacy
+    string no longer gets applied twice.
+    """
+    return merge_constraints(global_constraints, vendor_constraints)
 
 
 def _enqueue_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> bool:

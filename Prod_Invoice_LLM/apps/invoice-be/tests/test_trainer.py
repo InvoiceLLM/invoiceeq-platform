@@ -85,6 +85,38 @@ def trainer_mocks():
         yield {"ocr": m_ocr, "extract": m_extract, "trainer": m_trainer}
 
 
+# ── Feature 18 helpers ───────────────────────────────────────────────────────
+
+def _seed_invoice(db_session, **overrides) -> Invoice:
+    """One stored, already-processed invoice — what a Feature 18 session anchors on."""
+    defaults = dict(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        file_path="blob/acme.pdf",
+        status="AUDIT_REQUIRED",
+        vendor_name="ACME Corporation",
+        invoice_number="INV-9",
+        grand_total=110.0,
+        tax_amount=10.0,
+        field_confidence={},
+        flow_direction="INBOUND",
+        sa_alerts=[],
+        items=[],
+    )
+    defaults.update(overrides)
+    invoice = Invoice(**defaults)
+    db_session.add(invoice)
+    db_session.commit()
+    return invoice
+
+
+def _start_from_invoice(invoice_id, session_mode="rule_creation"):
+    return client.post(
+        "/api/v1/trainer/sessions/from-invoice",
+        json={"invoice_id": str(invoice_id), "session_mode": session_mode},
+    )
+
+
 # ── Session entry points ─────────────────────────────────────────────────────
 
 def test_new_vendor_upload_returns_session_shape(trainer_mocks, db_session):
@@ -104,12 +136,14 @@ def test_new_vendor_upload_returns_session_shape(trainer_mocks, db_session):
     assert db_session.exec(select(Invoice)).all() == []
 
 
-def test_global_session_and_chat(trainer_mocks):
-    start = client.post("/api/v1/trainer/sessions/global", files={"placeholder": (None, "1")})
+def test_from_invoice_session_and_chat(trainer_mocks, db_session):
+    """Feature 18: the unified entry point, then a conversational refinement on it."""
+    inv = _seed_invoice(db_session)
+    start = _start_from_invoice(inv.id)
     assert start.status_code == 201
     started = start.json()
-    assert started["scope"] == "global"
-    assert started["variables"] == []  # chat-only, no grounding PDF
+    assert started["scope"] == "existing_vendor"
+    assert started["invoiceId"] == str(inv.id)
     sid = started["sessionId"]
 
     chat = client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "Dates are DD/MM/YYYY"})
@@ -120,47 +154,92 @@ def test_global_session_and_chat(trainer_mocks):
     assert len(body["updatedSession"]["chatHistory"]) >= 3  # welcome + user + assistant
 
 
-def test_from_production_session(trainer_mocks, db_session):
-    inv = Invoice(
-        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="blob/acme.pdf", status="COMPLETED",
-        vendor_name="ACME Corporation", invoice_number="INV-9", grand_total=110.0, field_confidence={},
-    )
-    db_session.add(inv)
-    db_session.commit()
-
-    resp = client.post("/api/v1/trainer/sessions/from-production", params={"vendor_name": "ACME Corporation"})
+def test_from_invoice_session_shape(trainer_mocks, db_session):
+    inv = _seed_invoice(db_session, sa_alerts=[
+        {"type": "tax_mismatch", "message": "does not match", "field": "tax_amount", "severity": "error"},
+    ])
+    resp = _start_from_invoice(inv.id)
     assert resp.status_code == 201
     data = resp.json()
     assert data["scope"] == "existing_vendor"
     assert data["vendorName"] == "ACME Corporation"
     assert data["pdfUrl"] == f"/api/invoices/{inv.id}/pdf"
+    assert data["flowDirection"] == "INBOUND"
     assert any(v["key"] == "invoice_number" and v["value"] == "INV-9" for v in data["variables"])
+    # The session lands on that invoice's real alerts, annotated from the registry.
+    assert len(data["alerts"]) == 1
+    alert = data["alerts"][0]
+    assert alert["type"] == "tax_mismatch"
+    assert alert["correctionForm"] == "tolerance"
+    assert alert["toleranceOverridable"] is True
 
 
-def test_from_production_unknown_vendor_404(trainer_mocks):
-    resp = client.post("/api/v1/trainer/sessions/from-production", params={"vendor_name": "Nope Inc"})
-    assert resp.status_code == 404
+def test_from_invoice_picks_the_specific_invoice_not_the_latest(trainer_mocks, db_session):
+    """Feature 18: the superseded /sessions/from-production could only ever open a
+    vendor's LATEST invoice (`order_by(created_at.desc()).first()`), so an alert on
+    an older one was unreachable. The replacement takes a specific invoice id."""
+    from datetime import datetime, timedelta
 
-
-def test_from_production_ocr_failure_returns_500_not_a_broken_session(db_session):
-    """Gap 137: an OCR failure re-running text for an existing vendor's sample
-    invoice used to be swallowed (session created anyway with ocr_text=""),
-    only breaking later, confusingly, inside chat. It must now fail loudly
-    at load time instead, matching the New Vendor / Global-with-file scopes."""
-    inv = Invoice(
-        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="blob/acme.pdf", status="COMPLETED",
-        vendor_name="ACME Corporation", invoice_number="INV-9", grand_total=110.0, field_confidence={},
+    older = _seed_invoice(
+        db_session,
+        invoice_number="INV-OLD",
+        created_at=datetime.utcnow() - timedelta(days=30),
+        sa_alerts=[{"type": "line_items_mismatch", "message": "old one", "field": "subtotal"}],
     )
-    db_session.add(inv)
-    db_session.commit()
+    _seed_invoice(db_session, invoice_number="INV-NEW", created_at=datetime.utcnow())
 
-    with patch("routers.trainer._run_ocr", side_effect=RuntimeError("BlobNotFound")):
-        resp = client.post("/api/v1/trainer/sessions/from-production", params={"vendor_name": "ACME Corporation"})
+    data = _start_from_invoice(older.id).json()
+    assert data["invoiceId"] == str(older.id)
+    assert any(v["key"] == "invoice_number" and v["value"] == "INV-OLD" for v in data["variables"])
+    assert data["alerts"][0]["message"] == "old one"
 
-    assert resp.status_code == 500
-    assert "ACME Corporation" in resp.json()["detail"]
-    # No half-broken session should have been persisted for later chat calls to hit.
-    assert trainer_sessions._memory_store == {}
+
+def test_from_invoice_unknown_invoice_404(trainer_mocks):
+    assert _start_from_invoice(uuid4()).status_code == 404
+
+
+def test_from_invoice_does_not_rerun_ocr(trainer_mocks, db_session):
+    """Feature 18: the history path must not reprocess.
+
+    The superseded /sessions/from-production re-ran a full Document Intelligence
+    pass on every load (Gap 137 hardened that call's failure handling, which is
+    what this test replaces). The replacement reads the already-stored extraction,
+    so OCR must never be invoked at all -- asserted here rather than assumed,
+    since the cost of a silent regression is a paid OCR call per session open.
+    """
+    inv = _seed_invoice(db_session)
+    with patch("routers.trainer._run_ocr", side_effect=AssertionError("OCR must not run")) as m_ocr:
+        resp = _start_from_invoice(inv.id)
+    assert resp.status_code == 201
+    m_ocr.assert_not_called()
+
+
+def test_upload_session_gets_a_server_side_pdf_url(trainer_mocks):
+    """Feature 18: both entry points return a real, server-side pdfUrl.
+
+    The upload path used to return `pdfUrl: None` and rely on the FE holding a
+    client-side object URL for the File it had just uploaded -- which survived
+    neither a reload nor opening the session anywhere else.
+    """
+    data = client.post(
+        "/api/v1/trainer/upload", files={"file": ("i.pdf", b"%PDF mock", "application/pdf")}
+    ).json()
+    assert data["pdfUrl"] == f"/api/trainer/sessions/{data['sessionId']}/pdf"
+
+
+def test_removed_global_and_from_production_endpoints_return_410(trainer_mocks, db_session):
+    """Feature 18: removed rule-creation entry points explain themselves.
+
+    410 rather than a deleted route, so a stale client gets told what replaced it
+    instead of a 404 that reads like a broken deploy.
+    """
+    g = client.post("/api/v1/trainer/sessions/global", files={"placeholder": (None, "1")})
+    assert g.status_code == 410
+    assert "from-invoice" in g.json()["detail"]
+
+    p = client.post("/api/v1/trainer/sessions/from-production", params={"vendor_name": "ACME Corporation"})
+    assert p.status_code == 410
+    assert "from-invoice" in p.json()["detail"]
 
 
 def test_vendors_endpoint(db_session):
@@ -179,27 +258,47 @@ def test_vendors_endpoint(db_session):
 
 # ── Commit → scope-based template rows ───────────────────────────────────────
 
-def test_commit_global_creates_null_vendor_template(trainer_mocks, db_session):
-    sid = client.post("/api/v1/trainer/sessions/global", files={"placeholder": (None, "1")}).json()["sessionId"]
-    client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "VAT after discount"})
+def test_commit_rejects_a_global_scope_session(trainer_mocks, db_session):
+    """Feature 18: even a session that somehow still carries scope='global' (e.g.
+    one created before this deploy and still inside its Redis TTL) cannot commit
+    a Global rule. The gate is on the write, not only on session creation."""
+    session_id = "sess-legacy-global"
+    trainer_sessions.save_session(session_id, {
+        "session_id": session_id,
+        "tenant_id": str(MOCK_TENANT_ID),
+        "scope": "global",
+        "constraints": ["VAT after discount"],
+        "extracted_data": {},
+        "chat_history": [],
+    })
 
-    commit = client.post(f"/api/v1/trainer/sessions/{sid}/commit")
-    assert commit.status_code == 200
-    body = commit.json()
-    assert body["scope"] == "global"
-    assert body["vendor_name"] is None
-    assert body["version"] == 1
+    commit = client.post(f"/api/v1/trainer/sessions/{session_id}/commit")
+    assert commit.status_code == 400
+    assert "from-invoice" in commit.json()["detail"]
+    assert db_session.exec(select(ExtractionTemplate)).all() == []
 
-    templates = db_session.exec(select(ExtractionTemplate).where(ExtractionTemplate.tenant_id == MOCK_TENANT_ID)).all()
-    assert len(templates) == 1
-    assert templates[0].vendor_name is None  # the Global row
-    assert "constraints" in templates[0].rules
 
-    versions = db_session.exec(select(ExtractionTemplateVersion)).all()
-    assert len(versions) == 1 and versions[0].version == 1
+def test_committed_global_rules_are_still_read_after_creation_is_removed(db_session):
+    """Feature 18 removed Global rule *creation*, NOT the Global row or its reads.
 
-    # Session is consumed on commit.
-    assert client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "x"}).status_code == 404
+    This is the regression that would hurt most quietly: a tenant's already-committed
+    Global rules must keep applying to extraction and to Chat exactly as before.
+    """
+    from agents.query_agent import _get_global_business_rules
+    from queue_worker.handlers import _get_template_rules
+
+    db_session.add(ExtractionTemplate(
+        id=uuid4(), tenant_id=MOCK_TENANT_ID, vendor_name=None, flow_direction="INBOUND",
+        rules={"constraints": ["Legacy global rule that must survive"]}, version=1,
+    ))
+    db_session.commit()
+
+    assert _get_global_business_rules(str(MOCK_TENANT_ID), db_session) == [
+        "Legacy global rule that must survive"
+    ]
+    assert _get_template_rules(db_session, str(MOCK_TENANT_ID), None) == [
+        "Legacy global rule that must survive"
+    ]
 
 
 def test_commit_new_vendor_creates_vendor_template(trainer_mocks, db_session):
@@ -256,7 +355,11 @@ def test_versioning_history_and_rollback(trainer_mocks, db_session):
 
     tpl = db_session.get(ExtractionTemplate, UUID(template_id))
     db_session.refresh(tpl)
-    assert tpl.rules["constraints"] == ["R1"]
+    # Feature 18: constraints are structured rule objects now; the rendered text
+    # is what has to match, and the shared normalizer is what renders it.
+    from utils.rule_schema import normalize_constraints
+
+    assert normalize_constraints(tpl.rules["constraints"]) == ["R1"]
 
 
 # ── Chat answer-cache invalidation on every scope (Gap 213) ──────────────────
@@ -286,52 +389,40 @@ def _assert_answer_cache_flushed(fake):
 
 
 def _start_session(scope: str, db_session) -> str:
-    """Open a trainer session through the real entry point for the given scope."""
-    if scope == "global":
-        return client.post(
-            "/api/v1/trainer/sessions/global", files={"placeholder": (None, "1")}
-        ).json()["sessionId"]
+    """Open a trainer session through the real entry point for the given scope.
+
+    Feature 18: the "global" scope is gone (`/sessions/global` is a 410), so the
+    surviving two are the upload path and the invoice-anchored history path.
+    """
     if scope == "new_vendor":
         return client.post(
             "/api/v1/trainer/upload", files={"file": ("i.pdf", b"%PDF mock", "application/pdf")}
         ).json()["sessionId"]
-    db_session.add(Invoice(
-        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="blob/acme.pdf", status="COMPLETED",
-        vendor_name="ACME Corporation", invoice_number="INV-9", grand_total=110.0, field_confidence={},
-    ))
-    db_session.commit()
-    return client.post(
-        "/api/v1/trainer/sessions/from-production", params={"vendor_name": "ACME Corporation"}
-    ).json()["sessionId"]
+    invoice = _seed_invoice(db_session)
+    return _start_from_invoice(invoice.id).json()["sessionId"]
 
 
-@pytest.mark.parametrize("scope", ["global", "existing_vendor", "new_vendor"])
+@pytest.mark.parametrize("scope", ["existing_vendor", "new_vendor"])
 def test_commit_invalidates_chat_answer_cache_for_every_scope(scope, trainer_mocks, db_session, answer_cache):
     """Gap 213: the flush used to sit inside `if scope == "global"`, so an Existing
     Vendor / New Vendor commit left Chat serving pre-correction answers for the rest
-    of the 1hr TTL. Every scope must flush."""
+    of the 1hr TTL. Every surviving scope must still flush."""
     sid = _start_session(scope, db_session)
+    client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "a rule"})
     assert client.post(f"/api/v1/trainer/sessions/{sid}/commit").status_code == 200
     _assert_answer_cache_flushed(answer_cache)
 
 
-@pytest.mark.parametrize(
-    "scope,history_params",
-    [
-        ("global", {"scope": "global"}),
-        # Any vendor-scoped template exercises the same previously-skipped branch
-        # (`if template.vendor_name is None`); New Vendor is the cheapest to set up.
-        ("new_vendor", {"scope": "existing_vendor", "vendor_name": "ACME Corporation"}),
-    ],
-)
-def test_rollback_invalidates_chat_answer_cache_for_every_scope(
-    scope, history_params, trainer_mocks, db_session, answer_cache
-):
+def test_rollback_invalidates_chat_answer_cache(trainer_mocks, db_session, answer_cache):
     """Same defect on the rollback path, which gated on `template.vendor_name is None`."""
-    sid = _start_session(scope, db_session)
+    sid = _start_session("new_vendor", db_session)
+    client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "a rule"})
     assert client.post(f"/api/v1/trainer/sessions/{sid}/commit").status_code == 200
 
-    template_id = client.get("/api/v1/trainer/templates/history", params=history_params).json()[0]["templateId"]
+    template_id = client.get(
+        "/api/v1/trainer/templates/history",
+        params={"scope": "existing_vendor", "vendor_name": "ACME Corporation"},
+    ).json()[0]["templateId"]
 
     answer_cache.reset_mock()  # isolate the rollback's flush from the commit's
     assert client.post(f"/api/v1/trainer/templates/{template_id}/rollback/1").status_code == 200
@@ -568,8 +659,9 @@ def free_plan_tenant(db_session):
     yield
 
 
-def test_free_plan_cannot_start_a_global_session(free_plan_tenant, trainer_mocks):
-    resp = client.post("/api/v1/trainer/sessions/global")
+def test_free_plan_cannot_start_a_session_from_an_invoice(free_plan_tenant, trainer_mocks, db_session):
+    inv = _seed_invoice(db_session)
+    resp = _start_from_invoice(inv.id)
     assert resp.status_code == 403
     assert "Pro" in resp.json()["detail"]
 
@@ -582,13 +674,22 @@ def test_free_plan_cannot_upload_a_new_vendor_sample(free_plan_tenant, trainer_m
     assert resp.status_code == 403
 
 
-def test_free_plan_cannot_seed_from_production(free_plan_tenant, db_session):
-    db_session.add(Invoice(id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="mock/acme.pdf",
-                           status="COMPLETED", vendor_name="ACME Corporation"))
-    db_session.commit()
+def test_free_plan_cannot_preview_or_correct(free_plan_tenant, db_session):
+    """The Feature 18 correction + preview endpoints are writes, so they sit behind
+    the same paid gate as commit -- checked explicitly rather than assumed from the
+    router-level dependency."""
+    session_id = "sess-free-correct"
+    trainer_sessions.save_session(session_id, {
+        "session_id": session_id, "tenant_id": str(MOCK_TENANT_ID), "scope": "existing_vendor",
+        "rule_scope": "vendor", "vendor_name": "ACME Corporation", "flow_direction": "INBOUND",
+        "constraints": [], "extracted_data": {}, "chat_history": [], "alerts": [],
+    })
 
-    resp = client.post("/api/v1/trainer/sessions/from-production?vendor_name=ACME%20Corporation")
-    assert resp.status_code == 403
+    assert client.post(
+        f"/api/v1/trainer/sessions/{session_id}/corrections/tolerance",
+        json={"alert_type": "tax_mismatch", "abs_tol": 5.0, "rel_tol": 0.01},
+    ).status_code == 403
+    assert client.post(f"/api/v1/trainer/sessions/{session_id}/preview").status_code == 403
 
 
 def test_free_plan_cannot_commit_a_session(free_plan_tenant, trainer_mocks):
@@ -639,9 +740,9 @@ def test_paid_plan_passes_the_gate(db_session, trainer_mocks):
 
     db_session.add(Tenant(id=MOCK_TENANT_ID, name="Pro Co", domain="pro.test", billing_plan="pro"))
     db_session.commit()
+    inv = _seed_invoice(db_session)
 
-    resp = client.post("/api/v1/trainer/sessions/global")
-    assert resp.status_code == 201
+    assert _start_from_invoice(inv.id).status_code == 201
 
 
 # ── Gap 211: the in-process fallback store is thread-safe ─────────────────────
@@ -763,18 +864,10 @@ def test_iterating_the_fallback_store_while_threads_mutate_it_does_not_raise():
 
 
 def test_set_session_mode_qa_test(db_session):
-    inv = Invoice(
-        id=uuid4(), tenant_id=MOCK_TENANT_ID, file_path="blob/acme.pdf", status="COMPLETED",
-        vendor_name="ACME Corporation", invoice_number="INV-1", grand_total=110.0, field_confidence={},
-    )
-    db_session.add(inv)
-    db_session.commit()
-
-    with patch("routers.trainer._run_ocr", return_value="Mock OCR Text"):
-        sid = client.post(
-            "/api/v1/trainer/sessions/from-production",
-            params={"vendor_name": "ACME Corporation"},
-        ).json()["sessionId"]
+    """BE Gap 218 is NOT superseded by Feature 18 -- dual-mode sessions stay, and
+    the QA-persistence work below builds directly on them."""
+    inv = _seed_invoice(db_session, invoice_number="INV-1")
+    sid = _start_from_invoice(inv.id).json()["sessionId"]
 
     res = client.put(f"/api/v1/trainer/sessions/{sid}/mode", json={"session_mode": "qa_test"})
     assert res.status_code == 200
@@ -782,10 +875,11 @@ def test_set_session_mode_qa_test(db_session):
 
 
 def test_commit_behavior_persists_chat_style(db_session):
-    sid = client.post(
-        "/api/v1/trainer/sessions/global",
-        files={"placeholder": (None, "1")},
-    ).json()["sessionId"]
+    """Gap 221's endpoint still works; Feature 18 only moved where it stores."""
+    from models import TenantChatSettings
+
+    inv = _seed_invoice(db_session)
+    sid = _start_from_invoice(inv.id).json()["sessionId"]
 
     res = client.post(
         f"/api/v1/trainer/sessions/{sid}/commit-behavior",
@@ -800,3 +894,445 @@ def test_commit_behavior_persists_chat_style(db_session):
     assert style["response_length"] == "brief"
     assert style["tone"] == "formal"
     assert style["custom_instructions"] == "Use AP terminology."
+
+    # Gap 230: it now lives in its own table, NOT on the Global INBOUND template row.
+    rows = db_session.exec(select(TenantChatSettings)).all()
+    assert len(rows) == 1 and rows[0].tone == "formal"
+    assert db_session.exec(select(ExtractionTemplate)).all() == []
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Feature 18: alert-anchored corrections, preview gate, QA persistence
+# ═════════════════════════════════════════════════════════════════════════════
+
+TAX_MISMATCH_ALERT = {
+    "type": "tax_mismatch",
+    "message": "Subtotal (100.00) + Tax (10.00) does not match Grand Total (115.00)",
+    "field": "tax_amount",
+    "severity": "error",
+}
+
+
+def _session_on_invoice(db_session, **invoice_kwargs) -> tuple[str, Invoice]:
+    invoice = _seed_invoice(db_session, **invoice_kwargs)
+    sid = _start_from_invoice(invoice.id).json()["sessionId"]
+    return sid, invoice
+
+
+# ── The alert-type registry ──────────────────────────────────────────────────
+
+def test_alert_type_registry_endpoint():
+    body = client.get("/api/v1/trainer/alert-types").json()
+    types = {t["type"]: t for t in body["alertTypes"]}
+
+    # Exactly three tolerance-overridable types, and they are the three that come
+    # out of the two tolerance-taking verification functions.
+    assert set(body["toleranceOverridable"]) == {
+        "line_item_calculation_mismatch", "line_items_mismatch", "tax_mismatch",
+    }
+    # low_confidence_field is threshold-overridable, NOT tolerance-overridable --
+    # a different parameter on a different function.
+    assert body["thresholdOverridable"] == ["low_confidence_field"]
+    assert types["low_confidence_field"]["correctionForm"] == "confidence_threshold"
+    assert types["low_confidence_field"]["toleranceOverridable"] is False
+
+    # The five source-text types are excluded from the tolerance path explicitly,
+    # with a reason -- a documented follow-up, not a silent omission.
+    assert set(body["toleranceExcluded"]) == {
+        "total_not_verified_in_source", "line_item_not_verified_in_source",
+        "subtotal_not_verified_in_source", "unit_price_not_verified_in_source",
+        "tax_amount_not_verified_in_source",
+    }
+    for excluded in body["toleranceExcluded"]:
+        assert types[excluded]["toleranceOverridable"] is False
+        assert types[excluded]["notCorrectableReason"]
+
+
+def test_registry_excludes_unflaggable_types_from_the_missed_alert_picker():
+    flaggable = {t["type"] for t in client.get(
+        "/api/v1/trainer/alert-types", params={"flaggable_only": True}
+    ).json()["alertTypes"]}
+    # A duplicate / crash / timeout isn't something a rule can teach us to notice.
+    assert "duplicate_invoice" not in flaggable
+    assert "processing_timeout" not in flaggable
+    assert "extraction_failed" not in flaggable
+    assert "tax_mismatch" in flaggable
+
+
+# ── Correction #1: tolerance ─────────────────────────────────────────────────
+
+def test_tolerance_correction_stages_a_structured_rule(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session, sa_alerts=[TAX_MISMATCH_ALERT])
+
+    res = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": "tax_mismatch", "field": "tax_amount", "abs_tol": 6.0, "rel_tol": 0.01},
+    )
+    assert res.status_code == 200
+    staged = res.json()["stagedRule"]
+    assert staged["kind"] == "tolerance_override"
+    assert staged["sourceAlertType"] == "tax_mismatch"
+    assert staged["params"] == {"abs_tol": 6.0, "rel_tol": 0.01}
+
+    # Staged only — nothing is written to a template before commit.
+    assert db_session.exec(select(ExtractionTemplate)).all() == []
+
+
+@pytest.mark.parametrize("alert_type", [
+    "total_not_verified_in_source",
+    "line_item_not_verified_in_source",
+    "subtotal_not_verified_in_source",
+    "unit_price_not_verified_in_source",
+    "tax_amount_not_verified_in_source",
+])
+def test_tolerance_correction_rejects_the_five_source_text_types(alert_type, trainer_mocks, db_session):
+    """These ask a verbatim-presence question with no numeric band to widen. They
+    must be refused with an explanation rather than accepted into a write that
+    would silently do nothing."""
+    sid, _ = _session_on_invoice(db_session)
+    res = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": alert_type, "abs_tol": 5.0, "rel_tol": 0.01},
+    )
+    assert res.status_code == 400
+    detail = res.json()["detail"]
+    assert detail["rejection_reason"] == "not_tolerance_overridable"
+    assert "verbatim" in detail["detail"]
+
+
+def test_tolerance_correction_redirects_low_confidence_to_the_threshold_form(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    res = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": "low_confidence_field", "abs_tol": 5.0, "rel_tol": 0.01},
+    )
+    assert res.status_code == 400
+    assert "confidence-threshold" in res.json()["detail"]["detail"]
+
+
+# ── Correction #2: confidence threshold ──────────────────────────────────────
+
+def test_confidence_threshold_correction(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    res = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/confidence-threshold",
+        json={"threshold": 0.2},
+    )
+    assert res.status_code == 200
+    assert res.json()["stagedRule"]["kind"] == "confidence_threshold_override"
+    assert res.json()["stagedRule"]["params"] == {"threshold": 0.2}
+
+
+def test_confidence_threshold_rejects_out_of_range(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    for bad in (0, 1.5, -0.2):
+        res = client.post(
+            f"/api/v1/trainer/sessions/{sid}/corrections/confidence-threshold",
+            json={"threshold": bad},
+        )
+        assert res.status_code == 422
+
+
+# ── Correction #3: severity / message ────────────────────────────────────────
+
+def test_alert_override_correction(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session, sa_alerts=[TAX_MISMATCH_ALERT])
+    res = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/alert-override",
+        json={"alert_type": "tax_mismatch", "severity": "warning", "message": "Known rounding quirk"},
+    )
+    assert res.status_code == 200
+    staged = res.json()["stagedRule"]
+    assert staged["kind"] == "alert_override"
+    assert staged["params"] == {"severity": "warning", "message": "Known rounding quirk"}
+
+
+def test_alert_override_rejects_an_empty_or_invalid_override(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    empty = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/alert-override",
+        json={"alert_type": "tax_mismatch"},
+    )
+    assert empty.status_code == 400
+
+    bad_sev = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/alert-override",
+        json={"alert_type": "tax_mismatch", "severity": "catastrophic"},
+    )
+    assert bad_sev.status_code == 400
+
+
+# ── Correction #4: flag as missed ────────────────────────────────────────────
+
+def _llm_drafting(rule_text: str):
+    from routers.trainer import MissedAlertRuleDraft
+
+    fake = MagicMock()
+    fake.with_structured_output.return_value.invoke.return_value = MissedAlertRuleDraft(rule_text=rule_text)
+    return fake
+
+
+def test_missed_alert_correction_produces_a_structured_extraction_rule(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    drafted = "On this vendor's invoices, tax_amount is printed as a CGST+SGST split and must be summed."
+
+    with patch("routers.trainer.get_llm", return_value=_llm_drafting(drafted)):
+        res = client.post(
+            f"/api/v1/trainer/sessions/{sid}/corrections/missed-alert",
+            json={"alert_type": "tax_mismatch", "field": "tax_amount", "context": "the split confuses it"},
+        )
+    assert res.status_code == 200
+    staged = res.json()["stagedRule"]
+    assert staged["kind"] == "extraction"
+    assert staged["origin"] == "trainer_missed_alert"
+    assert staged["sourceAlertType"] == "tax_mismatch"
+    assert staged["text"] == drafted
+
+
+def test_missed_alert_works_with_no_free_text_at_all(trainer_mocks, db_session):
+    """The registry pick + field are the primary input; the context box is secondary
+    and entirely optional."""
+    sid, _ = _session_on_invoice(db_session)
+    with patch("routers.trainer.get_llm", return_value=_llm_drafting("A grounded rule.")):
+        res = client.post(
+            f"/api/v1/trainer/sessions/{sid}/corrections/missed-alert",
+            json={"alert_type": "tax_mismatch", "field": "tax_amount"},
+        )
+    assert res.status_code == 200
+    assert res.json()["stagedRule"]["text"] == "A grounded rule."
+
+
+def test_missed_alert_fails_closed_when_the_llm_is_down(trainer_mocks, db_session):
+    """Same contract as Gap 212: nothing is staged, and the raw user input is
+    never promoted into a rule as a fallback."""
+    sid, _ = _session_on_invoice(db_session)
+    fake = MagicMock()
+    fake.with_structured_output.return_value.invoke.side_effect = RuntimeError("upstream 503")
+
+    with patch("routers.trainer.get_llm", return_value=fake):
+        res = client.post(
+            f"/api/v1/trainer/sessions/{sid}/corrections/missed-alert",
+            json={"alert_type": "tax_mismatch", "field": "tax_amount", "context": "please fix this"},
+        )
+    assert res.status_code == 502
+    stored = trainer_sessions.get_session(sid)
+    assert stored["constraints"] == []
+    assert not any("please fix this" in str(c) for c in stored["constraints"])
+
+
+def test_missed_alert_rejects_a_type_no_rule_could_teach(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    res = client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/missed-alert",
+        json={"alert_type": "duplicate_invoice", "field": "invoice_number"},
+    )
+    assert res.status_code == 400
+    assert "processing fact" in res.json()["detail"]
+
+
+# ── The preview gate ─────────────────────────────────────────────────────────
+
+def test_preview_computes_exact_impact_for_a_tolerance_rule(trainer_mocks, db_session):
+    """Math-class rules are replayed against stored columns -- a query and a loop,
+    no re-extraction and no LLM."""
+    # Three historical invoices, each with a line 5.00 off its qty*unit_price.
+    for i in range(3):
+        _seed_invoice(
+            db_session,
+            invoice_number=f"HIST-{i}",
+            items=[{"description": "x", "quantity": 2, "unit_price": 10.0, "amount": 25.0}],
+        )
+    sid, _ = _session_on_invoice(db_session, invoice_number="TARGET", items=[
+        {"description": "x", "quantity": 2, "unit_price": 10.0, "amount": 25.0},
+    ])
+
+    client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": "line_item_calculation_mismatch", "field": "items",
+              "abs_tol": 6.0, "rel_tol": 0.005},
+    )
+
+    with patch("routers.trainer._validate_rule_text"):
+        preview = client.post(f"/api/v1/trainer/sessions/{sid}/preview")
+    assert preview.status_code == 200
+    body = preview.json()
+
+    assert body["previewToken"]
+    assert body["newRules"][0]["kind"] == "tolerance_override"
+    impact = body["impact"]
+    assert impact["kind"] == "exact"
+    assert impact["invoicesExamined"] == 4
+    # All four stop firing the per-line mismatch under the widened tolerance.
+    assert impact["alertsRemoved"] == 4
+    assert impact["invoicesAffected"] == 4
+    assert impact["sample"]
+
+
+def test_preview_reports_not_computable_for_a_text_rule(trainer_mocks, db_session):
+    """A free-text extraction rule's effect can't be known without re-running OCR
+    on every past invoice, so no number is shown -- never a fabricated zero."""
+    sid, _ = _session_on_invoice(db_session)
+    with patch("routers.trainer.get_llm", return_value=_llm_drafting("Read tax as the CGST+SGST sum.")):
+        client.post(
+            f"/api/v1/trainer/sessions/{sid}/corrections/missed-alert",
+            json={"alert_type": "tax_mismatch", "field": "tax_amount"},
+        )
+
+    with patch("routers.trainer._validate_rule_text"):
+        impact = client.post(f"/api/v1/trainer/sessions/{sid}/preview").json()["impact"]
+
+    assert impact["kind"] == "not_computable"
+    assert impact["alertsRemoved"] is None  # explicitly absent, not 0
+    assert impact["invoicesAffected"] is None
+    assert "re-running OCR" in impact["notComputable"][0]["reason"] or \
+           "re-processing" in impact["summary"]
+
+
+def test_preview_runs_the_gap_58_guardrail(db_session):
+    """Gap 217's rejection now surfaces at preview time, where it's cheap and the
+    user is still editing.
+
+    Deliberately does NOT use the `trainer_mocks` fixture: that fixture patches
+    `_validate_rule_text` away, which is the exact thing under test here.
+    """
+    sid, _ = _session_on_invoice(db_session)
+    bad = "Always mention the internal policy code INTERNAL-POLICY-7788"
+    with patch("routers.trainer.get_llm", return_value=_llm_drafting(bad)):
+        client.post(
+            f"/api/v1/trainer/sessions/{sid}/corrections/missed-alert",
+            json={"alert_type": "tax_mismatch", "field": "tax_amount"},
+        )
+
+    with patch("routers.trainer.get_llm", return_value=_mock_structured_llm(True, "behavioral override", bad)):
+        preview = client.post(f"/api/v1/trainer/sessions/{sid}/preview")
+
+    assert preview.status_code == 400
+    assert preview.json()["detail"]["rejection_reason"] == "is_instruction"
+
+
+def test_commit_with_a_stale_preview_token_409s(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": "tax_mismatch", "abs_tol": 6.0, "rel_tol": 0.01},
+    )
+    with patch("routers.trainer._validate_rule_text"):
+        token = client.post(f"/api/v1/trainer/sessions/{sid}/preview").json()["previewToken"]
+
+    # Rules change after the user saw that impact estimate.
+    client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/confidence-threshold",
+        json={"threshold": 0.2},
+    )
+
+    stale = client.post(f"/api/v1/trainer/sessions/{sid}/commit", json={"preview_token": token})
+    assert stale.status_code == 409
+    assert "changed after the preview" in stale.json()["detail"]
+    assert db_session.exec(select(ExtractionTemplate)).all() == []
+
+
+def test_commit_with_a_fresh_preview_token_succeeds(trainer_mocks, db_session):
+    sid, _ = _session_on_invoice(db_session)
+    client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": "tax_mismatch", "abs_tol": 6.0, "rel_tol": 0.01},
+    )
+    with patch("routers.trainer._validate_rule_text"):
+        token = client.post(f"/api/v1/trainer/sessions/{sid}/preview").json()["previewToken"]
+
+    commit = client.post(f"/api/v1/trainer/sessions/{sid}/commit", json={"preview_token": token})
+    assert commit.status_code == 200
+    assert commit.json()["rule_scope"] == "vendor"
+
+    template = db_session.exec(
+        select(ExtractionTemplate).where(ExtractionTemplate.vendor_name == "ACME Corporation")
+    ).first()
+    assert template.rules["constraints"][0]["kind"] == "tolerance_override"
+
+
+def test_commit_without_a_token_still_works_for_direct_api_callers(trainer_mocks, db_session):
+    """The token is optional by design; Gap 217's 400 stays on commit as the
+    backstop for a caller that never previewed."""
+    sid, _ = _session_on_invoice(db_session)
+    client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": "tax_mismatch", "abs_tol": 6.0, "rel_tol": 0.01},
+    )
+    assert client.post(f"/api/v1/trainer/sessions/{sid}/commit").status_code == 200
+
+
+def test_committed_tolerance_rule_reaches_the_pipeline(trainer_mocks, db_session):
+    """End-to-end: commit a tolerance rule, then confirm the worker hands it to the
+    extraction agent, where verify_node consumes it."""
+    from queue_worker.handlers import _get_template_rules
+    from utils.rule_schema import tolerance_overrides
+
+    sid, _ = _session_on_invoice(db_session)
+    client.post(
+        f"/api/v1/trainer/sessions/{sid}/corrections/tolerance",
+        json={"alert_type": "tax_mismatch", "abs_tol": 6.0, "rel_tol": 0.01},
+    )
+    assert client.post(f"/api/v1/trainer/sessions/{sid}/commit").status_code == 200
+
+    stored = _get_template_rules(db_session, str(MOCK_TENANT_ID), "ACME Corporation")
+    assert tolerance_overrides(stored) == {"tax_mismatch": {"abs_tol": 6.0, "rel_tol": 0.01}}
+
+
+# ── QA-test mode persists real ChatMessage rows ──────────────────────────────
+
+def test_qa_test_turn_persists_real_chat_messages(trainer_mocks, db_session):
+    """Feature 18: QA turns were Redis-only with non-UUID ids, so a thumbs-down had
+    nothing to attach ChatFeedback to. They are real rows now."""
+    from models import ChatMessage, ChatSession
+
+    sid, _ = _session_on_invoice(db_session)
+    client.put(f"/api/v1/trainer/sessions/{sid}/mode", json={"session_mode": "qa_test"})
+
+    with patch("agents.query_agent.run_query_agent") as m_agent:
+        m_agent.return_value = {
+            "content": "You paid ACME $110.00 last month.",
+            "generated_sql": "SELECT ...",
+            "citations": [],
+            "result_invoice_ids": [],
+        }
+        res = client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "what did we pay acme"})
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["newRuleCreated"] is None
+
+    messages = db_session.exec(select(ChatMessage)).all()
+    assert {m.role for m in messages} == {"user", "assistant"}
+    assert len(db_session.exec(select(ChatSession)).all()) == 1
+
+    # The returned message id is a real UUID a thumbs-down can be attached to.
+    assistant_id = UUID(body["messageId"])
+    vote = client.put(f"/api/v1/chat/messages/{assistant_id}/feedback", json={"vote": "down"})
+    assert vote.status_code == 200
+
+
+def test_qa_test_passes_a_real_uuid_so_chat_history_actually_loads(trainer_mocks, db_session):
+    """The latent bug: the old code passed `f"trainer-qa-{session_id}"` into
+    get_chat_history(), which does UUID(session_id) inside a try/except ValueError
+    and returns "" -- so QA mode silently had NO conversational memory, ever.
+    """
+    from agents.query_agent import get_chat_history
+
+    # The old value: not a UUID, so history is unconditionally empty.
+    assert get_chat_history("trainer-qa-" + str(uuid4()), db_session) == ""
+
+    sid, _ = _session_on_invoice(db_session)
+    client.put(f"/api/v1/trainer/sessions/{sid}/mode", json={"session_mode": "qa_test"})
+
+    captured = {}
+
+    def _capture(session_id_arg, *args, **kwargs):
+        captured["session_id"] = session_id_arg
+        return {"content": "ok", "generated_sql": None, "citations": [], "result_invoice_ids": []}
+
+    with patch("agents.query_agent.run_query_agent", side_effect=_capture):
+        client.post(f"/api/v1/trainer/sessions/{sid}/chat", json={"content": "first question"})
+
+    # It is now a real ChatSession UUID, and history for it resolves to real turns.
+    chat_session_id = UUID(captured["session_id"])
+    assert get_chat_history(str(chat_session_id), db_session) != ""

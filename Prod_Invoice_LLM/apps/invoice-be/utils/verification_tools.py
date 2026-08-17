@@ -13,14 +13,52 @@ def _within_tolerance(actual: float, expected: float, abs_tol: float = 0.01, rel
     return abs(actual - expected) <= max(abs_tol, rel_tol * abs(expected))
 
 
-def verify_line_items_math(items: list[dict], subtotal: float | None, invoice_tax_amount: float | None = None) -> dict | None:
+# Feature 18: default tolerances, named so the override machinery and the
+# preview's historical replay both read the same numbers this module has always
+# used rather than re-declaring them.
+DEFAULT_ABS_TOLERANCE = 0.01
+
+
+def _tolerance_for(tolerances: dict | None, alert_type: str) -> tuple[float, float]:
+    """Resolve (abs_tol, rel_tol) for one alert type.
+
+    Feature 18: `tolerances` is `{alert_type: {"abs_tol": .., "rel_tol": ..}}`,
+    built from the tenant's committed tolerance-override rules by
+    `utils/rule_schema.tolerance_overrides()`. Passing None (or omitting a type)
+    yields the exact defaults this module used before the parameter existed, so
+    every existing caller and every untrained tenant is byte-for-byte unaffected.
+    """
+    entry = (tolerances or {}).get(alert_type) or {}
+    abs_tol = entry.get("abs_tol")
+    rel_tol = entry.get("rel_tol")
+    return (
+        DEFAULT_ABS_TOLERANCE if abs_tol is None else float(abs_tol),
+        REL_TOLERANCE if rel_tol is None else float(rel_tol),
+    )
+
+
+def verify_line_items_math(
+    items: list[dict],
+    subtotal: float | None,
+    invoice_tax_amount: float | None = None,
+    tolerances: dict | None = None,
+) -> dict | None:
     """
     Checks if sum(item.amount) == subtotal.
     Also verifies each item's amount matches qty * rate * (1 - discount) * (1 + tax) if details are present.
     Returns an alert dict if mismatch, else None.
+
+    `tolerances` (Feature 18, optional) widens the acceptance band per alert type
+    — `line_item_calculation_mismatch` for the per-line check and
+    `line_items_mismatch` for the subtotal-sum check, which are tuned separately
+    because they measure different things. The checks themselves are unchanged;
+    only the numbers they compare against are now overridable.
     """
     if subtotal is None:
         return None
+
+    line_abs_tol, line_rel_tol = _tolerance_for(tolerances, "line_item_calculation_mismatch")
+    sum_abs_tol, sum_rel_tol = _tolerance_for(tolerances, "line_items_mismatch")
 
     try:
         # 1. Verify individual line item math calculations
@@ -66,7 +104,10 @@ def verify_line_items_math(items: list[dict], subtotal: float | None, invoice_ta
                 elif tax_amount is not None:
                     expected_post_tax += float(tax_amount)
 
-                if not (_within_tolerance(amount, expected_pre_tax) or _within_tolerance(amount, expected_post_tax)):
+                if not (
+                    _within_tolerance(amount, expected_pre_tax, line_abs_tol, line_rel_tol)
+                    or _within_tolerance(amount, expected_post_tax, line_abs_tol, line_rel_tol)
+                ):
                     return {
                         "type": "line_item_calculation_mismatch",
                         "message": f"Line item '{item.get('description', '')}' amount ({amount:.2f}) does not match calculated amount ({expected_post_tax:.2f}) based on qty/unit_price/discount/tax",
@@ -80,8 +121,10 @@ def verify_line_items_math(items: list[dict], subtotal: float | None, invoice_ta
         # the line's post-tax figure (taxable value + that line's GST), so the sum only
         # reconciles against subtotal + invoice_tax_amount. Accept either convention.
         total_line_amount = sum(float(item.get("amount") or 0.0) for item in items)
-        matches_pre_tax = _within_tolerance(total_line_amount, subtotal)
-        matches_post_tax = invoice_tax_amount is not None and _within_tolerance(total_line_amount, subtotal + float(invoice_tax_amount))
+        matches_pre_tax = _within_tolerance(total_line_amount, subtotal, sum_abs_tol, sum_rel_tol)
+        matches_post_tax = invoice_tax_amount is not None and _within_tolerance(
+            total_line_amount, subtotal + float(invoice_tax_amount), sum_abs_tol, sum_rel_tol
+        )
         if not (matches_pre_tax or matches_post_tax):
             return {
                 "type": "line_items_mismatch",
@@ -101,10 +144,14 @@ def verify_totals_math(
     discount_amount: float | None = None,
     discount_percent: float | None = None,
     round_off: float | None = None,
+    tolerances: dict | None = None,
 ) -> dict | None:
     """
     Checks subtotal + tax_amount - discount + round_off == grand_total.
     Returns an alert dict if mismatch, else None.
+
+    `tolerances` (Feature 18, optional): `{"tax_mismatch": {"abs_tol": .., "rel_tol": ..}}`.
+    Omitted or None reproduces the pre-Feature-18 defaults exactly.
 
     Gap 31: `subtotal` is ambiguous across invoice conventions — the schema's own
     description says "before taxes/discounts" (pre-discount), but GST-style invoices
@@ -119,6 +166,8 @@ def verify_totals_math(
     if grand_total is None or subtotal is None:
         return None
 
+    abs_tol, rel_tol = _tolerance_for(tolerances, "tax_mismatch")
+
     try:
         tax = tax_amount or 0.0
         adjustment = round_off or 0.0
@@ -129,7 +178,9 @@ def verify_totals_math(
         expected_pre_discount = subtotal - discount + tax + adjustment
         expected_post_discount = subtotal + tax + adjustment
 
-        if _within_tolerance(grand_total, expected_pre_discount) or _within_tolerance(grand_total, expected_post_discount):
+        if _within_tolerance(grand_total, expected_pre_discount, abs_tol, rel_tol) or _within_tolerance(
+            grand_total, expected_post_discount, abs_tol, rel_tol
+        ):
             return None
 
         msg = f"Subtotal ({subtotal:.2f}) + Tax ({tax:.2f})"

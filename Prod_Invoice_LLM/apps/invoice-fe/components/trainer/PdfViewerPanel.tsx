@@ -57,11 +57,22 @@ interface PdfViewerPanelProps {
   fileName?: string;
   /** Blob URL or remote URL of the PDF document */
   pdfUrl?: string;
-  /** Flag indicating Global scope with no seed document loaded */
+  /**
+   * Feature 14: renamed in meaning, not in name-only — this now flags "no
+   * document is loaded on this session yet", which after the removal of Global
+   * scope is the only remaining way to have no PDF. Kept as an explicit prop
+   * rather than derived solely from `!pdfUrl` so the page can force the empty
+   * state while it resets between documents.
+   */
   isGlobalScopeNoPdf?: boolean;
   /** Currently selected variable, named in a callout over the document */
   selectedVariable?: ExtractedVariable | null;
-  scope?: "global" | "existing_vendor" | "new_vendor";
+  /**
+   * Feature 14: widened to include `outbound`. An outbound invoice has no
+   * vendor at all (the counterparty is the customer), so its session reports a
+   * scope of its own rather than being squeezed into `existing_vendor`.
+   */
+  scope?: "global" | "existing_vendor" | "new_vendor" | "outbound";
   vendorName?: string | null;
   /**
    * FE Gap 139: true while `app/trainer/page.tsx` is awaiting a session load
@@ -163,20 +174,22 @@ export default function PdfViewerPanel({
   // document (or empty-state card) is exactly what made this read as frozen.
   if (isLoadingSession) {
     const isUpload = Boolean(loadingFileName);
-    const heading = isUpload
-      ? "Processing Sample Document"
-      : scope === "existing_vendor"
-      ? "Loading Production Invoice"
-      : "Preparing Sandbox";
+    const heading = isUpload ? "Processing Sample Document" : "Loading Production Invoice";
 
     // Named stages, mapped onto the same elapsed-time estimate. The wording
     // tracks what the backend is actually doing in that window rather than a
     // generic spinner caption.
+    //
+    // Feature 14: the history path's stages no longer mention OCR, because it no
+    // longer runs any. `POST /trainer/sessions/from-invoice` reads the stored
+    // extraction result and stored alerts — no Document Intelligence call, no
+    // re-extraction (the backend asserts this with
+    // `test_from_invoice_does_not_rerun_ocr`). Claiming "Running OCR…" here
+    // would have described work that isn't happening, on the one path that is
+    // now fast.
     const stages = isUpload
       ? ["Uploading document…", "Running OCR and page split…", "Extracting fields…", "Finalizing…"]
-      : scope === "existing_vendor"
-      ? ["Fetching production invoice…", "Running OCR and page split…", "Extracting fields…", "Finalizing…"]
-      : ["Clearing grounding document…", "Restarting sandbox session…", "Preparing rules…", "Finalizing…"];
+      : ["Opening invoice…", "Loading stored extraction…", "Loading alerts…", "Finalizing…"];
 
     const stageIndex =
       progressPct < 20 ? 0 : progressPct < 55 ? 1 : progressPct < 85 ? 2 : 3;
@@ -240,45 +253,37 @@ export default function PdfViewerPanel({
     );
   }
 
-  // ── MODE 2: Global Scope Chat-Only Empty State ──────────────────────────
+  // ── MODE 2: No Document Loaded ─────────────────────────────────────────
+  //
+  // Feature 14: this used to be the "Global scope needs no PDF" empty state.
+  // That case no longer exists — every session is now anchored to a real
+  // document, because a rule with no document behind it is exactly what the
+  // redesign removed. What remains is the genuinely transient state: no session
+  // has been opened yet, or one is being swapped out.
   if (isGlobalScopeNoPdf || !pdfUrl) {
-    const isGlobal = scope === "global";
-    const isExisting = scope === "existing_vendor";
+    const isExisting = scope === "existing_vendor" || scope === "outbound";
 
     const getTitle = () => {
-      if (isGlobal) return "Global Rule Grounding Sandbox";
-      if (isExisting) return "Existing Vendor Sandbox";
+      if (isExisting) return "No Document Loaded";
       return "New Vendor Sandbox";
     };
 
-    // Gap 111: reworded for a ~300px column. The old copy said "chat directly
-    // on the right" and "browse a sample invoice PDF above", which described
-    // the two-panel layout this gap replaced -- chat is no longer immediately
-    // to the right of this panel (the extracted fields are), so the directions
-    // would have been actively wrong. It now names the control instead of its
-    // position, which stays true regardless of how the panels are arranged.
+    // Gap 111: worded to name the control rather than its position, so the copy
+    // stays true regardless of how the panels are arranged.
     const getDescription = () => {
-      if (isGlobal) {
-        return (
-          <>
-            Tenant-wide rules need no vendor PDF. Teach or refine them in the chat
-            panel, or ground this sandbox with a sample document.
-          </>
-        );
-      }
       if (isExisting) {
         return (
           <>
-            Refining rules for{" "}
-            <span className="text-blue-400 font-medium">{vendorName || "the selected vendor"}</span>
-            . Pick a vendor in the Ground step to load a real production invoice.
+            Training against{" "}
+            <span className="text-blue-400 font-medium">{vendorName || "this vendor"}</span>
+            . Choose one of their invoices to see it here, beside its alerts.
           </>
         );
       }
       return (
         <>
-          Cold-starting a new vendor. Use Browse PDF in the Ground step to load a
-          sample invoice and begin field extraction.
+          Every rule is anchored to a real document. Pick one of a vendor&apos;s
+          invoices, or upload a sample PDF, to begin.
         </>
       );
     };

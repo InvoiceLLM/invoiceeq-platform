@@ -1,3 +1,6 @@
+> [!CAUTION]
+> **Superseded 2026-08-13**: The rule-creation flow described in this doc (free-text chat → constraint) has been redesigned. See `feature_18_trainer_alert_anchored_training.md` for the current design. This file is kept for historical reference — session/session-mode mechanics may still be accurate, but rule creation itself works differently now.
+
 # Feature 10: AI Trainer Sandbox & Rules Registry — **EVOLVE Agent**
 
 **EVOLVE** is the Continuous Learning agent. Interactive sandbox for teaching the extraction agent rules, structured into three distinct rule-template scopes rather than one flat per-vendor registry.
@@ -63,6 +66,7 @@ Scopes #2 and #3 both write to the same per-vendor `ExtractionTemplate` row — 
   - A bad Global rule affects every vendor's invoices going forward; a bad vendor rule affects only that vendor — either way, someone needs to be able to see what changed and revert it without re-deriving the rule from scratch. Implemented: `ExtractionTemplateVersion` table, `GET /trainer/templates/history` and `POST /trainer/templates/{id}/rollback/{version}` (`get_template_history()`/`rollback_template()`).
 - [ ] **Task 10.11: Accept sessions seeded from an audit correction** *(new — closes the loop from `feature_7_audit.md` Task 7.4)*
   - When the FE surfaces a "Want to save this as a rule?" prompt (triggered by a detected correction pattern), it opens a trainer session pre-populated with the suggested scope (Global or Vendor) and the sample correction already in the chat context, instead of the user starting a blank sandbox session and re-describing what they just fixed.
+  - *Delivered 2026-08-13 by `feature_18_trainer_alert_anchored_training.md`* — `POST /trainer/sessions/from-invoice` opens a session seeded from a specific invoice and its stored alerts, and the chat triage flow's `source-verdict` step returns a pre-filled redirect into it.
 
 ### Recent Fixes (Jul 24-25, 2026)
 Tasks 10.1-10.10 above landed Jul 23-24, 2026 (the "Current Implementation" section header above is stale as of that merge — kept as historical record of the pre-redesign state, not current). Two hardening issues found during pre-merge review and live end-to-end testing:

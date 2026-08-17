@@ -309,7 +309,18 @@ def test_standing_rule_applied_when_safety_check_passes(db_session):
         select(ExtractionTemplate).where(ExtractionTemplate.vendor_name == "ACME Corp")
     ).all()
     assert len(templates) == 1
-    assert "grand total" in templates[0].rules["constraints"][0]
+    # Feature 18: the auditor's standing rule is now a structured rule object
+    # rather than a bare sentence. Its rendered `text` is byte-identical to the
+    # sentence this path always produced (so the extraction prompt is unchanged),
+    # and the field it came from is now recoverable structurally.
+    from utils.rule_schema import normalize_constraints
+
+    stored_rule = templates[0].rules["constraints"][0]
+    assert isinstance(stored_rule, dict)
+    assert stored_rule["field"] == "grand_total"
+    assert stored_rule["origin"] == "audit_correction"
+    assert stored_rule["kind"] == "extraction"
+    assert "grand total" in normalize_constraints(templates[0].rules["constraints"])[0]
 
     versions = db_session.exec(select(ExtractionTemplateVersion)).all()
     assert len(versions) == 1 and versions[0].version == 1

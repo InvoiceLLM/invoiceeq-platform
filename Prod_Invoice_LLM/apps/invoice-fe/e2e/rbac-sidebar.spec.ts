@@ -278,17 +278,12 @@ test.describe("Shared page header (Gap 110)", () => {
     await page.route("**/api/trainer/vendors**", (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
     );
-    await page.route("**/api/trainer/sessions/global**", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          session_id: "s1",
-          scope: "global",
-          variables: [],
-          chat_history: [],
-        }),
-      })
+    // Feature 14: no session is opened on mount any more, and
+    // POST /trainer/sessions/global is gone (410 on the backend, proxy route
+    // deleted). The header actions this test is about render regardless of
+    // whether a session is loaded, so an empty invoice list is enough.
+    await page.route("**/api/invoices?**", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
     );
 
     await page.goto("/trainer");
@@ -297,7 +292,7 @@ test.describe("Shared page header (Gap 110)", () => {
     await expect(page.locator("header h1")).toHaveText("AI Trainer");
     // Portalled up from app/trainer/page.tsx via <PageHeaderActions>.
     await expect(
-      page.locator("header").getByRole("button", { name: /Commit to Template Registry/ })
+      page.locator("header").getByRole("button", { name: /Review & Commit/ })
     ).toBeVisible();
     await expect(
       page.locator("header").getByRole("button", { name: /Rule History/ })

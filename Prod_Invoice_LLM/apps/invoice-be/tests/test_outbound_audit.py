@@ -95,7 +95,17 @@ def test_standing_rule_written_directly_no_safety_gate(db_session):
     ).all()
     assert len(templates) == 1
     assert templates[0].vendor_name is None  # Global-only
-    assert "customer name" in templates[0].rules["constraints"][0]
+    # Feature 18: structured rule object, scoped `outbound_global` -- an outbound
+    # invoice has no vendor_name, so the Global OUTBOUND row is the only row this
+    # rule can live on. Rendered text is unchanged from the pre-Feature-18 string.
+    from utils.rule_schema import normalize_constraints
+
+    stored_rule = templates[0].rules["constraints"][0]
+    assert isinstance(stored_rule, dict)
+    assert stored_rule["field"] == "customer_name"
+    assert stored_rule["scope"] == "outbound_global"
+    assert stored_rule["origin"] == "audit_correction_outbound"
+    assert "customer name" in normalize_constraints(templates[0].rules["constraints"])[0]
 
     versions = db_session.exec(select(ExtractionTemplateVersion)).all()
     assert len(versions) == 1 and versions[0].version == 1

@@ -156,6 +156,18 @@ This document tracks the implementation progress of the marketing website, SSO p
 
 ---
 
+- `[ ]` **Gap 177: 2FA "Back to Login" click auto-redirects back to the OTP screen after ~2 seconds** — opened 2026-08-14, user-reported. `app/login/page.tsx:348-362`: clicking "← Back to Login" from the 6-digit verification screen navigates back to credentials, but the active Clerk `signIn` instance is still in `needs_second_factor` status — the button only flips local component state, never resets/aborts the Clerk attempt — so a background token re-evaluation pushes the view back into OTP mode a couple seconds later. **Fix**: abort/reset the pending `signIn` attempt (or call `signOut()`) on the back-to-login click.
+
+- `[ ]` **Gap 178: Architectural Flow diagram layout is misaligned and formatting is broken** — opened 2026-08-14, user-reported. No further root-cause detail supplied yet — needs investigation.
+
+- `[ ]` **Gap 179: Architectural Flow diagram zoom buttons (0.5×/1×/2×/3×) don't respond to clicks** — opened 2026-08-14, user-reported. Same diagram as Gap 178; needs investigation into whether the zoom control handlers are wired at all.
+
+- `[ ]` **Gap 180: System Flow Visualization play button fails to render pipeline animations** — opened 2026-08-14, user-reported. Covers Inbound Pipeline, Outbound Pipeline, Chat/RAG Agent, and Direction-Aware Chat animations — none render on play. Needs investigation.
+
+- `[ ]` **Gap 181: In-page reload button does not refresh page data or update active state** — opened 2026-08-14, user-reported. Needs investigation into which page/component owns this control.
+
+- `[ ]` **Gap 182: Account signup fails even with a new, unused email address** — opened 2026-08-14, user-reported (55-invoice benchmark session). Distinct from the already-fixed Gap 9 (missing Clerk CAPTCHA element) and Gap 176 (silently-swallowed provisioning failure, now surfaced with Retry) — this is a fresh failure report against current code and needs a live repro to root-cause; may be a regression of either fixed gap or a new failure mode.
+
 ## Gap Items (Future)
 
 | # | Item | Status | Notes |

@@ -11,6 +11,13 @@ from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVers
 from services.invoice_visibility import invoice_not_deleted
 from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
+from utils.rule_schema import (
+    build_audit_correction_rule,
+    merge_constraints,
+    normalize_constraints,
+    ORIGIN_AUDIT_CORRECTION,
+    SCOPE_VENDOR,
+)
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -229,18 +236,32 @@ def _apply_standing_rule(
     if not vendor_name:
         return {"applied": False, "reason": "No vendor name on this invoice -- standing rules are vendor-scoped."}
 
+    # Feature 18: this was the second free-text rule producer in the codebase --
+    # it synthesised a sentence and dropped it into the same undifferentiated
+    # `constraints` bag the Trainer wrote to, so nothing downstream could tell an
+    # auditor-derived rule from a chat-derived one, or recover which field it was
+    # about. It now emits structured rule objects. The rendered `text` is
+    # byte-identical to the sentence this function has always produced, so the
+    # extraction prompt is unchanged; the field/old/new are simply also available
+    # structurally now.
     candidate_rules = [
-        f"For {field.replace('_', ' ')}, extract the value as {diff['new']!r}, not {diff['old']!r}."
+        build_audit_correction_rule(
+            field=field,
+            new_value=diff["new"],
+            old_value=diff["old"],
+            scope=SCOPE_VENDOR,
+            origin=ORIGIN_AUDIT_CORRECTION,
+        )
         for field, diff in correction_diff.items()
     ]
 
     existing_template = _get_vendor_template(db_session, tenant_context.tenant_id, vendor_name)
     existing_constraints = (
-        existing_template.rules.get("constraints", [])
+        list(existing_template.rules.get("constraints", []) or [])
         if existing_template and isinstance(existing_template.rules, dict)
         else []
     )
-    merged_constraints = existing_constraints + candidate_rules
+    merged_constraints = merge_constraints(existing_constraints, candidate_rules)
 
     try:
         ocr_text = _run_ocr_split(invoice.file_path)
@@ -294,7 +315,14 @@ def _apply_standing_rule(
         changed_by=changed_by,
     ))
 
-    return {"applied": True, "rules_added": candidate_rules}
+    # Feature 18: `rules_added` stays a list of plain sentences so the existing FE
+    # contract is unchanged; the structured objects that were actually persisted
+    # are exposed alongside it under a new key rather than replacing it.
+    return {
+        "applied": True,
+        "rules_added": normalize_constraints(candidate_rules, for_prompt=False),
+        "rules_added_structured": candidate_rules,
+    }
 
 
 @router.put("/resolve/{invoice_id}")

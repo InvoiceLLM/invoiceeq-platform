@@ -383,7 +383,13 @@ def test_message_feedback_upsert_and_clear(db_session):
     # 2. Cast a downvote
     down = client.put(f"/api/v1/chat/messages/{message_id}/feedback", json={"vote": "down"})
     assert down.status_code == 200
-    assert down.json() == {"success": True, "vote": "down"}
+    body = down.json()
+    assert body["success"] is True and body["vote"] == "down"
+    # Feature 18: a thumbs-down now also returns where triage should go next.
+    # `reason` stays None here -- the Gap 54 signal-only contract is unchanged for
+    # a client that doesn't opt in by sending one.
+    assert body["reason"] is None
+    assert body["triage"]["next"] == "category_pick"
 
     # 3. Survives a reload via session history, and doesn't touch message content
     history = client.get(f"/api/v1/chat/sessions/{session_id}").json()

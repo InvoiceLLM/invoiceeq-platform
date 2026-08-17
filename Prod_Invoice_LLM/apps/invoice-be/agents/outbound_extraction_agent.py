@@ -16,6 +16,12 @@ from utils.verification_tools import (
     verify_subtotal_in_source_text,
 )
 from utils.token_management import check_token_guardrails
+from utils.rule_schema import (
+    normalize_constraints,
+    tolerance_overrides,
+    confidence_threshold_override,
+    apply_alert_overrides,
+)
 from agents.extraction_agent import pdf_to_base64_images, invoke_with_retry, GAP_46_VERBATIM_DIRECTIVE
 
 logger = logging.getLogger(__name__)
@@ -78,9 +84,12 @@ def build_outbound_multimodal_prompt(ocr_text: str, images: List[str], rules: Op
         "Extract structured data aligning with the schema.\n\n"
         + GAP_46_VERBATIM_DIRECTIVE
     )
-    if rules and "constraints" in rules:
+    # Feature 18: same shared normalizer as the inbound path -- legacy strings
+    # and structured rule objects render identically.
+    prompt_constraints = normalize_constraints(rules)
+    if prompt_constraints:
         prompt_text += "You MUST respect the following layout extraction constraints/rules:\n"
-        for rule in rules["constraints"]:
+        for rule in prompt_constraints:
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
@@ -112,9 +121,10 @@ def extract_node(state: OutboundExtractionState) -> Dict[str, Any]:
                 "Extract structured details from the following OCR text:\n\n"
                 + GAP_46_VERBATIM_DIRECTIVE
             )
-            if rules and "constraints" in rules:
+            prompt_constraints = normalize_constraints(rules)
+            if prompt_constraints:
                 prompt += "You MUST respect the following layout extraction constraints/rules:\n"
-                for rule in rules["constraints"]:
+                for rule in prompt_constraints:
                     prompt += f"- {rule}\n"
                 prompt += "\n"
             prompt += state["ocr_text"]
@@ -138,8 +148,16 @@ def verify_node(state: OutboundExtractionState) -> Dict[str, Any]:
     data = state["extracted_data"] or {}
     alerts = list(state.get("alerts") or [])
 
+    # Feature 18: outbound gets the same tolerance/threshold/severity
+    # parameterization the inbound verify_node just gained. Gap 223 wired the
+    # math checks into this node but they ran with hardcoded tolerances, so an
+    # outbound "this alert is unnecessary" correction had nothing to act on.
+    rules = state.get("rules")
+    tolerances = tolerance_overrides(rules)
+    threshold_override = confidence_threshold_override(rules)
+
     if any(isinstance(a, dict) and a.get("type") == "extraction_failed" for a in alerts):
-        return {"alerts": alerts, "status": "NEEDS_REVIEW"}
+        return {"alerts": apply_alert_overrides(alerts, rules), "status": "NEEDS_REVIEW"}
 
     # Missing required field check -- a tenant's own invoice should always
     # have these, unlike an unpredictable vendor document.
@@ -158,11 +176,11 @@ def verify_node(state: OutboundExtractionState) -> Dict[str, Any]:
     if subtotal_source_alert:
         alerts.append(subtotal_source_alert)
 
-    line_items_math_alert = verify_line_items_math(items, subtotal, tax_amount)
+    line_items_math_alert = verify_line_items_math(items, subtotal, tax_amount, tolerances=tolerances)
     if line_items_math_alert:
         alerts.append(line_items_math_alert)
 
-    totals_math_alert = verify_totals_math(subtotal, tax_amount, grand_total)
+    totals_math_alert = verify_totals_math(subtotal, tax_amount, grand_total, tolerances=tolerances)
     if totals_math_alert:
         alerts.append(totals_math_alert)
 
@@ -180,9 +198,14 @@ def verify_node(state: OutboundExtractionState) -> Dict[str, Any]:
 
     ocr_result = state.get("ocr_result")
     field_confidence = ocr_result.get("field_confidence", {}) if isinstance(ocr_result, dict) else {}
-    confidence_alerts = verify_field_confidence(field_confidence)
+    if threshold_override is not None:
+        confidence_alerts = verify_field_confidence(field_confidence, threshold=threshold_override)
+    else:
+        confidence_alerts = verify_field_confidence(field_confidence)
     if confidence_alerts:
         alerts.extend(confidence_alerts)
+
+    alerts = apply_alert_overrides(alerts, rules)
 
     status = "NEEDS_REVIEW" if alerts else "VERIFIED"
     return {"alerts": alerts, "status": status}

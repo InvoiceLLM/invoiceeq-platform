@@ -8,6 +8,13 @@ from datetime import datetime
 from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from services.invoice_visibility import invoice_not_deleted
+from utils.rule_schema import (
+    build_audit_correction_rule,
+    merge_constraints,
+    normalize_constraints,
+    ORIGIN_AUDIT_CORRECTION_OUTBOUND,
+    SCOPE_OUTBOUND_GLOBAL,
+)
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -95,8 +102,19 @@ def _apply_standing_rule_direct(db_session: Session, tenant_context: TenantConte
     outbound invoice is the tenant's own single, consistent format, so
     there's no vendor-layout variability to de-risk against before
     committing. Global-only (vendor_name=NULL), flow_direction='OUTBOUND'."""
+    # Feature 18: structured rules, same as inbound's `_apply_standing_rule`.
+    # Scope is `outbound_global` rather than `vendor`: an outbound invoice has no
+    # `vendor_name` at all (the counterparty is `customer_name`, a different
+    # party), so the Global OUTBOUND template row is the only row an outbound
+    # rule can structurally live on. That row and every read of it are unchanged.
     candidate_rules = [
-        f"For {field.replace('_', ' ')}, extract the value as {diff['new']!r}, not {diff['old']!r}."
+        build_audit_correction_rule(
+            field=field,
+            new_value=diff["new"],
+            old_value=diff["old"],
+            scope=SCOPE_OUTBOUND_GLOBAL,
+            origin=ORIGIN_AUDIT_CORRECTION_OUTBOUND,
+        )
         for field, diff in correction_diff.items()
     ]
 
@@ -107,9 +125,11 @@ def _apply_standing_rule_direct(db_session: Session, tenant_context: TenantConte
     )
     template = db_session.exec(stmt).first()
     existing_constraints = (
-        template.rules.get("constraints", []) if template and isinstance(template.rules, dict) else []
+        list(template.rules.get("constraints", []) or [])
+        if template and isinstance(template.rules, dict)
+        else []
     )
-    merged_constraints = existing_constraints + candidate_rules
+    merged_constraints = merge_constraints(existing_constraints, candidate_rules)
 
     changed_by = _resolve_changed_by(db_session, tenant_context)
     if template:
@@ -138,7 +158,11 @@ def _apply_standing_rule_direct(db_session: Session, tenant_context: TenantConte
         changed_by=changed_by,
     ))
 
-    return {"applied": True, "rules_added": candidate_rules}
+    return {
+        "applied": True,
+        "rules_added": normalize_constraints(candidate_rules, for_prompt=False),
+        "rules_added_structured": candidate_rules,
+    }
 
 
 @router.put("/resolve/{invoice_id}")

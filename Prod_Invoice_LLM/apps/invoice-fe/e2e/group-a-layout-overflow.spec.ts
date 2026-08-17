@@ -91,18 +91,24 @@ async function stubIngestionApis(page: Page, flow: Record<string, unknown>) {
 async function stubTrainerApis(page: Page) {
   await stubAuthMe(page);
   await page.route("**/api/trainer/vendors**", (route) =>
-    route.fulfill(json([{ name: "Hardware Depot", invoice_count: 4 }]))
-  );
-  await page.route("**/api/trainer/sessions/global**", (route) =>
     route.fulfill(
-      json({
-        session_id: "sess-global-1",
-        scope: "global",
-        variables: [],
-        chat_history: [],
-      })
+      json([
+        {
+          id: "v1",
+          name: "Hardware Depot",
+          invoiceCount: 4,
+          sampleInvoiceId: "11111111-2222-3333-4444-555555555555",
+          sampleFileName: "hardware.pdf",
+          samplePdfUrl: "/api/invoices/11111111-2222-3333-4444-555555555555/pdf",
+        },
+      ])
     )
   );
+  // Feature 14: the page no longer opens a session on mount -- the old
+  // `**/api/trainer/sessions/global**` stub was removed along with the endpoint
+  // (now 410 Gone) and its proxy route. The landing state is the document
+  // picker, which is fed by the vendor list above plus this invoice list.
+  await page.route("**/api/invoices?**", (route) => route.fulfill(json([])));
   await page.route("**/api/trainer/templates/history**", (route) => route.fulfill(json([])));
 }
 
@@ -421,7 +427,7 @@ test.describe("Gap 76 — Trainer header clipping", () => {
       await page.setViewportSize(viewport);
       await page.goto("/trainer");
 
-      const commit = page.getByRole("button", { name: /Commit to Template Registry/ });
+      const commit = page.getByRole("button", { name: /Review & Commit/ });
       const history = page.getByRole("button", { name: /Rule History/ });
 
       await settle(page, commit);
@@ -430,7 +436,7 @@ test.describe("Gap 76 — Trainer header clipping", () => {
       // pushed content past the bottom edge (boundingBox().y went negative
       // once Shell's <main> scrolled), and a non-shrinking title could push
       // these past the right edge.
-      await expectFullyInViewport(commit, viewport, "Commit to Template Registry");
+      await expectFullyInViewport(commit, viewport, "Review & Commit");
       await expectFullyInViewport(history, viewport, "Rule History");
     });
   }
@@ -451,7 +457,7 @@ test.describe("Gap 76 — Trainer header clipping", () => {
     await page.setViewportSize(BASELINE);
     await page.goto("/trainer");
 
-    const commit = page.getByRole("button", { name: /Commit to Template Registry/ });
+    const commit = page.getByRole("button", { name: /Review & Commit/ });
     await settle(page, commit);
 
     // Try to scroll the app frame as far as it will go.
@@ -464,7 +470,7 @@ test.describe("Gap 76 — Trainer header clipping", () => {
     );
 
     // Post-fix there is nothing to scroll, so the button cannot move.
-    await expectFullyInViewport(commit, BASELINE, "Commit to Template Registry after scroll");
+    await expectFullyInViewport(commit, BASELINE, "Review & Commit after scroll");
   });
 
   test("the page frame itself does not scroll -- only the inner panels do", async ({ page }) => {
@@ -472,7 +478,7 @@ test.describe("Gap 76 — Trainer header clipping", () => {
     await page.setViewportSize(BASELINE);
     await page.goto("/trainer");
 
-    await settle(page, page.getByRole("button", { name: /Commit to Template Registry/ }));
+    await settle(page, page.getByRole("button", { name: /Review & Commit/ }));
 
     // Shell's <main> is the scroll container for every in-app route. With
     // h-screen the Trainer overflowed it by ~178px; with h-full it must fit,

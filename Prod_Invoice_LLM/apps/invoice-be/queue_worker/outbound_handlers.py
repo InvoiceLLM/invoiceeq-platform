@@ -24,7 +24,10 @@ def _get_outbound_global_rules(session: Session, tenant_id: str) -> list:
     )
     tpl = session.exec(stmt).first()
     if tpl and isinstance(tpl.rules, dict):
-        return tpl.rules.get("constraints", []) or []
+        # Feature 18: raw entries, same reasoning as handlers._get_template_rules
+        # -- verify_node needs the structured objects, extract_node renders only
+        # the prompt-relevant ones via the shared normalizer.
+        return list(tpl.rules.get("constraints", []) or [])
     return []
 
 

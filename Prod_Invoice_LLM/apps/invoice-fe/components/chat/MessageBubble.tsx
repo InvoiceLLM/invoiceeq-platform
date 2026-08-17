@@ -21,31 +21,47 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, User, ThumbsUp, ThumbsDown } from "lucide-react";
 import CitationPill from "./CitationPill";
 import SqlAuditDrawer from "./SqlAuditDrawer";
+import ThumbsDownTriage from "./ThumbsDownTriage";
 import { apiClient } from "@/lib/apiClient";
+import { useAuth } from "@/hooks/useAuth";
 import type { ChatMessage } from "@/types/chat";
 
 // =============================================================================
-// FeedbackVote — Gap 54: per-answer thumbs up/down, tied to that turn's
-// generated_sql/citations via message id (be_features_tracker.md Gap 54).
-// Signal-only: this records a vote, it never triggers any auto-fix. Clicking
-// the currently-active thumb again clears the vote (DELETE) rather than
-// re-sending the same vote, giving a normal toggle interaction.
+// FeedbackVote — Gap 54, extended by Feature 14 (FE) / Feature 18 (BE).
+//
+// Thumbs-**up** is unchanged and still signal-only: it records a vote and does
+// nothing else, exactly as Gap 54 specified.
+//
+// Thumbs-**down** is no longer a dead end. It now opens the triage flow
+// (`ThumbsDownTriage`), which asks *why* the answer was bad and routes on the
+// answer: a wrong value is diffed against the stored data automatically, a
+// wrong interpretation becomes a structured category pick, and bad tone goes to
+// the tenant's chat style rather than becoming a rule at all. The vote itself is
+// still written first, by the triage flow's own `submitFeedback` call — so a
+// user who abandons the dialog has still registered the complaint.
+//
+// Clicking the currently-active thumb again clears the vote (DELETE) rather
+// than re-sending it, giving a normal toggle interaction. Clearing a
+// thumbs-down does not re-open triage.
 // =============================================================================
 function FeedbackVote({ messageId, initialVote }: { messageId: string; initialVote: "up" | "down" | null | undefined }) {
   const [vote, setVote] = useState<"up" | "down" | null>(initialVote ?? null);
   const [submitting, setSubmitting] = useState(false);
+  const [triageOpen, setTriageOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const { canTrain } = useAuth();
 
-  const handleVote = async (next: "up" | "down") => {
+  const handleUp = async () => {
     if (submitting) return;
     setSubmitting(true);
-    const clearing = vote === next;
+    const clearing = vote === "up";
     const previous = vote;
-    setVote(clearing ? null : next); // optimistic
+    setVote(clearing ? null : "up"); // optimistic
     try {
       if (clearing) {
         await apiClient.delete(`/chat/messages/${messageId}/feedback`);
       } else {
-        await apiClient.put(`/chat/messages/${messageId}/feedback`, { vote: next });
+        await apiClient.put(`/chat/messages/${messageId}/feedback`, { vote: "up" });
       }
     } catch (err) {
       console.error("Failed to save chat feedback:", err);
@@ -55,29 +71,67 @@ function FeedbackVote({ messageId, initialVote }: { messageId: string; initialVo
     }
   };
 
+  const handleDown = async () => {
+    if (submitting) return;
+    // Clicking an active thumbs-down clears it, same toggle semantics as before.
+    if (vote === "down") {
+      setSubmitting(true);
+      setVote(null);
+      try {
+        await apiClient.delete(`/chat/messages/${messageId}/feedback`);
+      } catch (err) {
+        console.error("Failed to clear chat feedback:", err);
+        setVote("down");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+    // Optimistic: the triage flow writes the real vote (with its reason) as its
+    // own first step, so the mark is correct even if the user closes the dialog
+    // at the reason picker.
+    setVote("down");
+    setTriageOpen(true);
+  };
+
   return (
-    <div className="flex items-center gap-1 px-1">
-      <button
-        onClick={() => handleVote("up")}
-        disabled={submitting}
-        title="Good answer"
-        className={`p-1 rounded transition-colors disabled:opacity-50 ${
-          vote === "up" ? "text-emerald-400 bg-emerald-500/10" : "text-slate-600 hover:text-slate-400"
-        }`}
-      >
-        <ThumbsUp className="w-3 h-3" />
-      </button>
-      <button
-        onClick={() => handleVote("down")}
-        disabled={submitting}
-        title="Bad answer"
-        className={`p-1 rounded transition-colors disabled:opacity-50 ${
-          vote === "down" ? "text-rose-400 bg-rose-500/10" : "text-slate-600 hover:text-slate-400"
-        }`}
-      >
-        <ThumbsDown className="w-3 h-3" />
-      </button>
-    </div>
+    <>
+      <div className="flex items-center gap-1 px-1">
+        <button
+          onClick={handleUp}
+          disabled={submitting}
+          title="Good answer"
+          className={`p-1 rounded transition-colors disabled:opacity-50 ${
+            vote === "up" ? "text-emerald-400 bg-emerald-500/10" : "text-slate-600 hover:text-slate-400"
+          }`}
+        >
+          <ThumbsUp className="w-3 h-3" />
+        </button>
+        <button
+          onClick={handleDown}
+          disabled={submitting}
+          title="Bad answer"
+          data-testid="chat-thumbs-down"
+          className={`p-1 rounded transition-colors disabled:opacity-50 ${
+            vote === "down" ? "text-rose-400 bg-rose-500/10" : "text-slate-600 hover:text-slate-400"
+          }`}
+        >
+          <ThumbsDown className="w-3 h-3" />
+        </button>
+        {toast && <span className="text-[10px] text-emerald-400 ml-1">{toast}</span>}
+      </div>
+
+      <ThumbsDownTriage
+        isOpen={triageOpen}
+        messageId={messageId}
+        canTrain={canTrain}
+        onClose={() => setTriageOpen(false)}
+        onResolved={(summary) => {
+          setToast(summary);
+          setTimeout(() => setToast(null), 6000);
+        }}
+      />
+    </>
   );
 }
 

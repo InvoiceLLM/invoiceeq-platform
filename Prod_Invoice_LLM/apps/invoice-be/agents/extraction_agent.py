@@ -18,6 +18,12 @@ from utils.verification_tools import (
     verify_field_confidence,
 )
 from utils.token_management import check_token_guardrails
+from utils.rule_schema import (
+    normalize_constraints,
+    tolerance_overrides,
+    confidence_threshold_override,
+    apply_alert_overrides,
+)
 from services.storage import download_pdf_from_storage
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
@@ -178,12 +184,16 @@ def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Di
         "with the schema.\n\n"
         + GAP_46_VERBATIM_DIRECTIVE
     )
-    if rules and "constraints" in rules:
+    # Feature 18: one shared normalizer renders legacy free-text rules and
+    # structured rule objects into identical prompt lines, so a tenant's
+    # already-committed strings behave exactly as they did before.
+    prompt_constraints = normalize_constraints(rules)
+    if prompt_constraints:
         prompt_text += "You MUST respect the following layout extraction constraints/rules:\n"
-        for rule in rules["constraints"]:
+        for rule in prompt_constraints:
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
-        
+
     prompt_text += f"OCR Text:\n{ocr_text}"
     
     content = [
@@ -277,9 +287,10 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
                     "Extract structured details from the following standard invoice OCR text:\n\n"
                     + GAP_46_VERBATIM_DIRECTIVE
                 )
-                if rules and "constraints" in rules:
+                prompt_constraints = normalize_constraints(rules)
+                if prompt_constraints:
                     prompt += "You MUST respect the following layout extraction constraints/rules:\n"
-                    for rule in rules["constraints"]:
+                    for rule in prompt_constraints:
                         prompt += f"- {rule}\n"
                     prompt += "\n"
                 prompt += f"{state['ocr_text']}"
@@ -301,9 +312,9 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
         else:
             # Gap 70: include the active ExtractionTemplate constraints in the alert
             # so auditors can see which rules were active when extraction failed.
-            active_constraints = (
-                rules.get("constraints", []) if isinstance(rules, dict) else []
-            )
+            # Feature 18: `for_prompt=False` — an auditor wants every active rule,
+            # including the verification-tuning ones that never reach the prompt.
+            active_constraints = normalize_constraints(rules, for_prompt=False)
             alerts.append({
                 "type": "extraction_failed",
                 "message": "Structured extraction failed to parse model response.",
@@ -312,9 +323,7 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
             
     except Exception as e:
         logger.warning("Structured extraction failed: %s.", e)
-        active_constraints = (
-            rules.get("constraints", []) if isinstance(rules, dict) else []
-        )
+        active_constraints = normalize_constraints(rules, for_prompt=False)
         alerts.append({
             "type": "extraction_failed",
             "message": f"Structured extraction failed due to error: {str(e)}.",
@@ -351,18 +360,30 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
         
     data = state["extracted_data"] or {}
     alerts = list(state.get("alerts") or [])
-    
+
+    # Feature 18: this node never read `state["rules"]` at all, despite `rules`
+    # being part of ExtractionState and read by extract_node -- so a tenant could
+    # commit a "this alert is unnecessary" correction and nothing downstream
+    # would ever consult it. The three tolerance-overridable checks and the
+    # confidence threshold now resolve from the tenant's committed rules, with
+    # None/absent meaning the untouched defaults.
+    rules = state.get("rules")
+    tolerances = tolerance_overrides(rules)
+    threshold_override = confidence_threshold_override(rules)
+
     # If extraction failed already, don't perform math check, just return AUDIT_REQUIRED
     if any(isinstance(a, dict) and a.get("type") == "extraction_failed" for a in alerts):
-        return {"alerts": alerts, "status": "AUDIT_REQUIRED"}
-        
+        return {"alerts": apply_alert_overrides(alerts, rules), "status": "AUDIT_REQUIRED"}
+
     # 1. Verify line items math check
     items = data.get("items", [])
     subtotal = data.get("subtotal")
-    line_item_alert = verify_line_items_math(items, subtotal, invoice_tax_amount=data.get("tax_amount"))
+    line_item_alert = verify_line_items_math(
+        items, subtotal, invoice_tax_amount=data.get("tax_amount"), tolerances=tolerances
+    )
     if line_item_alert:
         alerts.append(line_item_alert)
-        
+
     # 2. Verify totals math check
     tax_amount = data.get("tax_amount")
     grand_total = data.get("grand_total")
@@ -373,6 +394,7 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
         discount_amount=data.get("discount_amount"),
         discount_percent=data.get("discount_percent"),
         round_off=data.get("round_off"),
+        tolerances=tolerances,
     )
     if totals_alert:
         alerts.append(totals_alert)
@@ -415,12 +437,22 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     # instead of blindly accepting the AI's uncertain guess.
     ocr_result = state.get("ocr_result")
     field_confidence = ocr_result.get("field_confidence", {}) if isinstance(ocr_result, dict) else {}
-    confidence_alerts = verify_field_confidence(field_confidence)
+    # Feature 18: threshold (not tolerance) -- a different parameter on a
+    # different function, which is why it has its own correction form.
+    if threshold_override is not None:
+        confidence_alerts = verify_field_confidence(field_confidence, threshold=threshold_override)
+    else:
+        confidence_alerts = verify_field_confidence(field_confidence)
     if confidence_alerts:
         alerts.extend(confidence_alerts)
 
+    # Feature 18: severity/message relabelling runs after every check, never
+    # inside them -- verification_tools.py's checks are deliberately left
+    # unrestructured.
+    alerts = apply_alert_overrides(alerts, rules)
+
     status = "AUDIT_REQUIRED" if alerts else "COMPLETED"
-    
+
     feedback = []
     if alerts:
         for alert in alerts:

@@ -10,14 +10,16 @@ import {
   AlertCircle,
   X,
   Lock,
-  ExternalLink,
+  ShieldAlert,
 } from "lucide-react";
 
 import {
   TrainerScope,
   TrainerSession,
+  TrainerAlert,
   VendorOption,
   ExtractedVariable,
+  PreviewResult,
   RuleVersion,
   trainerService,
 } from "@/lib/trainer-service";
@@ -28,20 +30,20 @@ import {
   usePageHeader,
 } from "@/components/layout/PageHeaderContext";
 import TrainerControlBar, {
-  GlobalSubTab,
-  TrainerSection,
   TrainerSessionMode,
-  VendorEntryMode,
+  VendorPanelTab,
 } from "@/components/trainer/TrainerControlBar";
 import ChatResponseStylePanel from "@/components/trainer/ChatResponseStylePanel";
 import PdfViewerPanel from "@/components/trainer/PdfViewerPanel";
 import ExtractedFieldsPanel from "@/components/trainer/ExtractedFieldsPanel";
-import QnAPanel from "@/components/trainer/QnAPanel";
+import TrainerEntryPanel from "@/components/trainer/TrainerEntryPanel";
+import AlertListPanel from "@/components/trainer/AlertListPanel";
+import AlertCorrectionModal from "@/components/trainer/AlertCorrectionModal";
+import FlagMissedAlertModal from "@/components/trainer/FlagMissedAlertModal";
+import QaChatPanel from "@/components/trainer/QaChatPanel";
 import RulesRail from "@/components/trainer/RulesRail";
 import CommitModal from "@/components/trainer/CommitModal";
 import RuleHistoryDrawer from "@/components/trainer/RuleHistoryDrawer";
-
-const WEBSITE_URL = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
 
 /**
  * FE Gap 115 — the plans that include the AI Trainer, mirroring the backend's
@@ -81,16 +83,16 @@ function TrainerUpgradePrompt() {
 
         <p className="text-slate-300 text-xs leading-relaxed mb-4">
           The <span className="text-violet-300 font-semibold">AI Trainer</span> lets
-          you teach extraction rules in plain language and commit them to your
-          template registry. It is included on the{" "}
+          you correct the alerts on a real invoice and turn those corrections into
+          rules. It is included on the{" "}
           <span className="text-white font-semibold">Pro</span> and{" "}
           <span className="text-white font-semibold">Pro Combined</span> plans.
         </p>
 
         <div className="bg-[#1E293B] border border-[#2D3F55] rounded-xl p-3 mb-5 space-y-1.5">
           {[
-            "Teach tenant-wide and per-vendor extraction rules",
-            "Cold-start a brand new vendor from one sample invoice",
+            "Correct a real alert on a real invoice",
+            "See a rule's effect on your history before saving it",
             "Versioned rule history with rollback and re-audit",
           ].map((feat) => (
             <div key={feat} className="flex items-center gap-2 text-xs text-slate-300">
@@ -121,27 +123,83 @@ function TrainerUpgradePrompt() {
 }
 
 /**
- * Feature 6 Main Page: AI Trainer Interactive Sandbox (app/trainer/page.tsx)
- * 
- * FOR MANAGERS & DEVELOPERS:
- * This component acts as the main application page and state management orchestrator for Feature 6.
- * It manages:
- *   1. Active Rule Scope State ('global' | 'existing_vendor' | 'new_vendor')
- *   2. Active Sandbox Session State & Variables Inspector updates
- *   3. Conversational Chat History & AI Response Synthesis
- *   4. Scope-Aware Registry Commit Modal & Background Re-Audit Notifications
- *   5. Rule History Drawer & Version Rollback (Task 6.7)
- *   6. Auditor Deep-Link Handoff parsing from URL search params (?from=audit&...) (Task 6.8)
+ * FE Gap 232: what a user *without* the training permission sees.
+ *
+ * The route previously gated on billing plan alone. `can_train` was never
+ * checked here, so anyone in a Pro tenant could navigate to /trainer directly,
+ * see the whole sandbox render, pick an invoice, fill in a correction — and only
+ * then hit a 403 from the first write call. The backend was always the real
+ * enforcement (`require_can_train` on commit), so nothing could actually be
+ * written; but presenting a fully interactive rule-authoring screen to someone
+ * who cannot save anything is a permission boundary that exists only in the API.
+ *
+ * Deliberately the same full-page-state pattern as `TrainerUpgradePrompt` above
+ * rather than a new one: both are "this entire route is not for you", and a
+ * dismissable overlay would just reveal a screen that fails on first use.
  */
+function TrainerPermissionPrompt() {
+  return (
+    <div className="h-full flex items-center justify-center p-6 bg-[#0B0F19] text-slate-100 font-sans">
+      <div className="w-full max-w-md bg-[#0F172A] border border-[#222D3D] rounded-2xl shadow-2xl p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+            <ShieldAlert className="w-5 h-5 text-amber-400" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-white font-semibold text-sm">Training Permission Required</h2>
+            <p className="text-slate-400 text-xs">AI Trainer</p>
+          </div>
+        </div>
 
+        <p className="text-slate-300 text-xs leading-relaxed mb-4">
+          The AI Trainer changes how invoices are read for your whole workspace, so
+          it needs the <span className="text-amber-300 font-semibold">Train</span>{" "}
+          permission. Your account doesn&apos;t have it yet.
+        </p>
+
+        <div className="bg-[#1E293B] border border-[#2D3F55] rounded-xl p-3 mb-5">
+          <p className="text-xs text-slate-400 leading-relaxed">
+            An Admin can grant it from the Admin console. You can still review
+            invoices and use Chat in the meantime.
+          </p>
+        </div>
+
+        <div className="flex gap-3">
+          <Link
+            href="/dashboard"
+            className="flex-1 py-2 rounded-lg border border-[#2D3F55] text-slate-400 text-xs hover:text-slate-200 hover:border-slate-500 transition-colors flex items-center justify-center"
+          >
+            Back to Dashboard
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Feature 14 Main Page: AI Trainer — alert-anchored rule creation
+ * (app/trainer/page.tsx)
+ *
+ * FOR MANAGERS & DEVELOPERS:
+ * The orchestrator for the redesigned Trainer. What it manages:
+ *   1. The route's two gates — billing plan (Gap 115) and `can_train` (Gap 232).
+ *   2. Session entry: pick a vendor invoice, or upload a PDF. Both land on the
+ *      same state — that invoice's alerts, beside that invoice's PDF.
+ *   3. The four correction flows, all of which only *stage* a rule.
+ *   4. The preview-before-commit gate, which every correction must clear.
+ *   5. The QA chat lane, structurally separate from rule creation.
+ *   6. Rule history & rollback.
+ *
+ * WHAT IS DELIBERATELY ABSENT: a Global rule-creation destination. It was
+ * removed from the backend (410 on session create, 400 on commit) because a
+ * rule with no document and no vendor behind it is anchored to nothing. Rules
+ * already committed to a Global template still apply and are still readable in
+ * Rule History — only authoring new ones is gone.
+ */
 function TrainerContent() {
   const searchParams = useSearchParams();
 
-  // FE Gap 110 (closing out Gaps 76/88): this page used to draw its own full
-  // h-16 header bar directly below Shell's global Header -- two stacked header
-  // bars on one screen. The title/EVOLVE badge now go up to the shared header,
-  // and the Rule History / Commit buttons follow them through its actions
-  // portal, so nothing is orphaned into a row of its own down here.
   usePageHeader({
     title: "AI Trainer",
     agentIcon: "🧬",
@@ -149,195 +207,184 @@ function TrainerContent() {
     agentRole: "Rules Trainer",
   });
 
-  // FE Gap 115: the Trainer is a paid-tier capability. Read the plan here so
-  // the whole screen can be gated below -- the backend already 403s every
-  // session-create/commit call for a free tenant (routers/trainer.py::
-  // require_paid_plan), so without this the screen would render fully and then
-  // fail on its own initialisation with no explanation.
-  const { billingPlan, loading: authLoading } = useAuth();
+  // Two independent gates, read together. `canTrain` is FE Gap 232 — see
+  // TrainerPermissionPrompt above for why the plan check alone was not enough.
+  const { billingPlan, canTrain, loading: authLoading } = useAuth();
   const hasTrainerPlan = TRAINER_PLANS.includes(billingPlan);
+  const isGated = !hasTrainerPlan || !canTrain;
 
-  // Gap 138: if the gate is up, re-fetch identity once — covers the live case
-  // where a plan was granted server-side but the tab still has a stale cache.
-  const triedStalePlanRefresh = useRef(false);
+  // Gap 138: if a gate is up, re-fetch identity once — covers the live case
+  // where a plan or permission was granted server-side but the tab still has a
+  // stale cache.
+  const triedStaleRefresh = useRef(false);
   useEffect(() => {
-    if (authLoading || hasTrainerPlan || triedStalePlanRefresh.current) return;
-    triedStalePlanRefresh.current = true;
+    if (authLoading || !isGated || triedStaleRefresh.current) return;
+    triedStaleRefresh.current = true;
     void refreshAuth();
-  }, [authLoading, hasTrainerPlan]);
+  }, [authLoading, isGated]);
 
-  // Core Session State Management
-  const [activeScope, setActiveScope] = useState<TrainerScope>("global");
-  const [activeSection, setActiveSection] = useState<TrainerSection>("global");
-  const [vendorEntryMode, setVendorEntryMode] = useState<VendorEntryMode>("existing");
-  const [globalSubTab, setGlobalSubTab] = useState<GlobalSubTab>("rules");
-  const [sessionMode, setSessionMode] = useState<TrainerSessionMode>("rule_creation");
+  // ── Session state ──────────────────────────────────────────────────────
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [selectedVendorName, setSelectedVendorName] = useState<string>("");
   const [session, setSession] = useState<TrainerSession | null>(null);
-  const [isSending, setIsSending] = useState(false);
+  const [panelTab, setPanelTab] = useState<VendorPanelTab>("rules");
+  const [sessionMode, setSessionMode] = useState<TrainerSessionMode>("rule_creation");
   const [selectedVariable, setSelectedVariable] = useState<ExtractedVariable | null>(null);
+  const [isSending, setIsSending] = useState(false);
 
-  /**
-   * FE Gap 139: the session-loading handlers below (`handleSelectVendor`,
-   * `handleUploadFile`, `handleClearFile`) used to `await` their backend call
-   * with no state around it at all. That call runs OCR plus an LLM extraction
-   * synchronously, so for its whole duration the screen kept showing whatever
-   * was there before the click — a slow-but-working load and a genuinely stuck
-   * one looked identical, which is exactly what was reported. This flag is set
-   * around all three awaits and drives `PdfViewerPanel`'s loading mode;
-   * `loadingFileName` names the file when the pending load is an upload.
-   *
-   * Scoped to those three handlers deliberately: the initial mount already has
-   * its own skeleton, and this is a loading-indicator fix — OCR/extraction
-   * itself stays synchronous.
-   */
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [loadingFileName, setLoadingFileName] = useState<string | undefined>(undefined);
 
-  // Overlay Component States (Commit Modal & History Drawer)
+  // ── Correction modals ──────────────────────────────────────────────────
+  const [correctionAlert, setCorrectionAlert] = useState<TrainerAlert | null>(null);
+  const [isFlagMissedOpen, setIsFlagMissedOpen] = useState(false);
+  const [prefillField, setPrefillField] = useState<string | null>(null);
+  const [isStaging, setIsStaging] = useState(false);
+  const [stagingError, setStagingError] = useState<string | null>(null);
+
+  // ── Preview / commit ───────────────────────────────────────────────────
   const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [isSubmittingCommit, setIsSubmittingCommit] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
+
+  // ── History drawer ─────────────────────────────────────────────────────
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [ruleHistory, setRuleHistory] = useState<RuleVersion[]>([]);
-  const [isSubmittingCommit, setIsSubmittingCommit] = useState(false);
 
-  // Gap 111: the Rules rail starts collapsed -- there is nothing in it until
-  // the user teaches something, and the chat beside it uses the space better.
   const [isRulesRailExpanded, setIsRulesRailExpanded] = useState(false);
 
-  // Toast Notification State
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "info" | "error" } | null>(null);
+  const [toastMessage, setToastMessage] = useState<{
+    text: string;
+    type: "success" | "info" | "error";
+  } | null>(null);
 
   const showToast = (text: string, type: "success" | "info" | "error" = "success") => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 5000);
   };
 
+  /** Pulls a usable message out of an axios error, including the structured
+   *  400 bodies the correction endpoints return. */
+  const errorMessage = (err: any, fallback: string): string => {
+    const detail = err?.response?.data?.detail;
+    if (typeof detail === "string") return detail;
+    if (detail && typeof detail === "object") {
+      if (typeof detail.detail === "string") return detail.detail;
+      if (detail.flagged_rule) return `Rule rejected. Flagged: "${detail.flagged_rule}"`;
+    }
+    return fallback;
+  };
+
   /**
-   * INITIALIZATION EFFECT:
-   * 1. Fetches available tenant vendors for Scope 2 dropdown.
-   * 2. Checks URL query parameters for deep-links coming from Auditor Console (Task 6.8).
-   *    If present (?from=audit&scope=...&vendor_name=...&correction=...), it pre-seeds 
-   *    the sandbox session with the suggested scope and correction prompt!
+   * INITIALISATION.
+   *
+   * Only the vendor list is fetched — no session is started. That is a real
+   * change: the page used to open a Global session on mount, which is now a 410,
+   * and more importantly the redesign has no "default" session. Every session is
+   * anchored to a document the user chose, so the landing state is the picker.
+   *
+   * Deep links are honoured here, including the chat lane's handoff
+   * (`?invoice_id=…&field=…&flag_missed=1`), which arrives when a chat complaint
+   * turned out to be an extraction problem.
    */
   useEffect(() => {
-    // Gap 115: don't initialise a sandbox we're about to hide. Waiting for
-    // `authLoading` matters as much as the plan check -- `billingPlan` is ""
-    // until GET /api/auth/me resolves, so firing on the first render would
-    // start a session for every tenant regardless of plan and only then find
-    // out it wasn't allowed (a guaranteed 403 in the console on every free
-    // tenant's page load).
-    if (authLoading || !hasTrainerPlan) return;
+    if (authLoading || isGated) return;
 
     const init = async () => {
       try {
         const vendorList = await trainerService.getTenantVendors();
         setVendors(vendorList);
 
-        // Task 6.8: Deep-link handling from Auditor Console resolution prompt
-        const fromAudit = searchParams.get("from") === "audit";
-        const paramScope = (searchParams.get("scope") as TrainerScope) || "existing_vendor";
-        const paramVendor = searchParams.get("vendor_name") || vendorList[0]?.name;
-        const paramCorrection = searchParams.get("correction");
+        const panelParam = searchParams.get("panel");
+        if (panelParam === "chat-style") setPanelTab("style");
 
-        if (fromAudit) {
-          setActiveScope(paramScope);
-          if (paramVendor) setSelectedVendorName(paramVendor);
+        const invoiceId = searchParams.get("invoice_id");
+        if (invoiceId) {
+          setIsLoadingSession(true);
+          try {
+            const newSess = await trainerService.startSessionFromInvoice(invoiceId);
+            setSession(newSess);
+            if (newSess.vendorName) setSelectedVendorName(newSess.vendorName);
 
-          const newSession = await trainerService.startSession(paramScope, paramVendor);
-
-          if (paramCorrection) {
-            const { updatedSession } = await trainerService.sendChatMessage(
-              newSession,
-              `Audit Correction: ${paramCorrection}`
-            );
-            setSession(updatedSession);
-          } else {
-            setSession(newSession);
+            // Handoff from the chat lane's "the PDF disagrees" verdict: open the
+            // missed-alert form straight away, pre-filled with the field the
+            // backend named, so the user doesn't have to re-find it.
+            if (searchParams.get("flag_missed") === "1") {
+              setPrefillField(searchParams.get("field"));
+              setIsFlagMissedOpen(true);
+              showToast("Opened from Chat — tell us which check should have caught this.", "info");
+            }
+          } finally {
+            setIsLoadingSession(false);
           }
-
-          showToast("Session pre-seeded from Auditor correction prompt", "info");
           return;
         }
 
-        // Default Global Scope Initialization
-        const defaultSess = await trainerService.startSession("global");
-        setSession(defaultSess);
+        // Otherwise pre-select the first vendor so the invoice picker has
+        // something in it, but do NOT open a session — choosing the document is
+        // the user's decision, and auto-opening one would re-introduce the
+        // "latest invoice only" behaviour this redesign removed.
+        if (vendorList.length > 0) setSelectedVendorName(vendorList[0].name);
       } catch (err) {
         console.error("Trainer initialization failed", err);
-        showToast("Failed to initialize the Trainer session.", "error");
+        showToast("Failed to load your vendors.", "error");
       }
     };
 
     init();
-  }, [searchParams, authLoading, hasTrainerPlan]);
+  }, [searchParams, authLoading, isGated]);
 
-  /**
-   * HANDLER: Scope Switching (Task 6.1)
-   * Resets active session state and switches between Global, Existing Vendor, and New Vendor modes.
-   */
-  const handleScopeChange = async (newScope: TrainerScope) => {
-    setActiveScope(newScope);
-    setActiveSection(newScope === "global" ? "global" : "vendor");
-    setVendorEntryMode(newScope === "new_vendor" ? "new" : "existing");
+  // ── Session entry ──────────────────────────────────────────────────────
+
+  const handlePickInvoice = async (invoiceId: string) => {
     setSelectedVariable(null);
-
-    let vendor = selectedVendorName;
-    // FE Gap 170: `selectedVendorName` can now hold a vendor detected from a New
-    // Vendor upload, which by definition has no production invoices yet -- so
-    // Existing Vendor must fall back to a known vendor rather than trying to
-    // start a production session for one that isn't in the list.
-    if (newScope === "existing_vendor" && !vendors.some((v) => v.name === vendor)) {
-      vendor = vendors[0]?.name || "";
-      setSelectedVendorName(vendor);
-    }
-
-    // New Vendor needs an uploaded PDF first; Existing Vendor needs a known vendor.
-    if (newScope === "new_vendor") {
-      setSession(null);
-      return;
-    }
-    if (newScope === "existing_vendor" && !vendor) {
-      setSession(null);
-      showToast("No production vendors available to train yet.", "info");
-      return;
-    }
-
-    // Gap 139: switching *into* Existing Vendor auto-selects a vendor and runs
-    // the identical production-invoice load `handleSelectVendor` does — same
-    // OCR + extraction wait, same frozen-looking screen — so it gets the same
-    // treatment even though the gap's write-up only named the three handlers
-    // below. The old session is dropped first so the loading panel isn't
-    // sitting on top of the scope the user just navigated away from.
     setSession(null);
     setIsLoadingSession(true);
     try {
-      const newSess = await trainerService.startSession(newScope, vendor);
+      const newSess = await trainerService.startSessionFromInvoice(invoiceId, sessionMode);
       setSession(newSess);
-      setSessionMode(newSess.sessionMode === "qa_test" ? "qa_test" : "rule_creation");
-    } catch (err) {
-      console.error("Failed to start session", err);
-      showToast("Failed to start the training session.", "error");
+      if (newSess.vendorName) setSelectedVendorName(newSess.vendorName);
+    } catch (err: any) {
+      console.error("Failed to open invoice session", err);
+      showToast(errorMessage(err, "Failed to open that invoice for training."), "error");
     } finally {
       setIsLoadingSession(false);
     }
   };
 
-  const handleSectionChange = async (section: TrainerSection) => {
-    setActiveSection(section);
-    setGlobalSubTab("rules");
-    if (section === "global") {
-      await handleScopeChange("global");
-    } else {
-      await handleScopeChange(vendorEntryMode === "new" ? "new_vendor" : "existing_vendor");
+  const handleUploadFile = async (file: File) => {
+    setSelectedVariable(null);
+    setSession(null);
+    setLoadingFileName(file.name);
+    setIsLoadingSession(true);
+    try {
+      const newSess = await trainerService.startSessionFromUpload(file);
+      setSession(newSess);
+      // FE Gap 170: an upload's vendor is discovered by the backend, not chosen
+      // by the user. Capturing it here is what keeps Rule History and the commit
+      // dialog pointed at the right template.
+      if (newSess.vendorName) setSelectedVendorName(newSess.vendorName);
+      showToast(
+        newSess.vendorName
+          ? `Loaded ${file.name} — vendor detected: ${newSess.vendorName}`
+          : `Loaded ${file.name}`,
+        "info"
+      );
+    } catch (err: any) {
+      console.error("Failed to process upload", err);
+      showToast(errorMessage(err, "Failed to process the uploaded sample."), "error");
+    } finally {
+      setIsLoadingSession(false);
+      setLoadingFileName(undefined);
     }
   };
 
-  const handleVendorEntryModeChange = async (mode: VendorEntryMode) => {
-    setVendorEntryMode(mode);
-    if (activeSection === "vendor") {
-      await handleScopeChange(mode === "new" ? "new_vendor" : "existing_vendor");
-    }
+  const handleChangeDocument = () => {
+    setSession(null);
+    setSelectedVariable(null);
+    setPreview(null);
   };
 
   const handleSessionModeChange = async (mode: TrainerSessionMode) => {
@@ -345,182 +392,201 @@ function TrainerContent() {
     if (!session) return;
     try {
       const updated = await trainerService.setSessionMode(session.sessionId, mode);
-      setSession({
-        ...session,
-        ...updated,
-        pdfUrl: session.pdfUrl,
-        fileName: session.fileName,
-      });
+      setSession({ ...session, ...updated });
     } catch (err) {
       console.error("Failed to set session mode", err);
       showToast("Failed to switch trainer mode.", "error");
     }
   };
 
-  /**
-   * HANDLER: Production Vendor Selection (Task 6.3)
-   * Loads an existing production invoice for the chosen vendor into the sandbox.
-   */
-  const handleSelectVendor = async (vendorName: string) => {
-    setSelectedVendorName(vendorName);
-    // Gap 139: clear the outgoing session first, so the panel can't keep
-    // showing the previous vendor's invoice underneath the loading state.
-    setSelectedVariable(null);
-    setSession(null);
-    setIsLoadingSession(true);
+  // ── Corrections (all four only stage) ──────────────────────────────────
+
+  const afterStage = (updatedSession: TrainerSession, label: string) => {
+    setSession(updatedSession);
+    // Any staged change invalidates a previous preview server-side, so drop the
+    // local copy too rather than letting a stale impact estimate be re-opened.
+    setPreview(null);
+    setCorrectionAlert(null);
+    setIsFlagMissedOpen(false);
+    setPrefillField(null);
+    showToast(`${label} staged. Review it before committing.`, "success");
+  };
+
+  const handleSubmitTolerance = async (payload: { absTol: number; relTol: number }) => {
+    if (!session || !correctionAlert?.type) return;
+    setIsStaging(true);
+    setStagingError(null);
     try {
-      const newSess = await trainerService.startSession("existing_vendor", vendorName);
-      setSession(newSess);
-    } catch (err) {
-      console.error("Failed to load vendor session", err);
-      showToast("Failed to load the vendor's production sample.", "error");
+      const { updatedSession } = await trainerService.correctTolerance(session.sessionId, {
+        alertType: correctionAlert.type,
+        field: correctionAlert.field,
+        absTol: payload.absTol,
+        relTol: payload.relTol,
+      });
+      afterStage(updatedSession, "Tolerance change");
+    } catch (err: any) {
+      setStagingError(errorMessage(err, "Couldn't stage that tolerance change."));
     } finally {
-      setIsLoadingSession(false);
+      setIsStaging(false);
     }
   };
 
-  /**
-   * HANDLER: PDF Upload (Tasks 6.2 & 6.4)
-   * Uploads a sample PDF for cold-starting rules (New Vendor) or grounding (Global).
-   */
-  const handleUploadFile = async (file: File) => {
-    // Gap 139: name the file being processed while the upload is in flight.
-    setLoadingFileName(file.name);
-    setIsLoadingSession(true);
+  const handleSubmitThreshold = async (payload: { threshold: number }) => {
+    if (!session) return;
+    setIsStaging(true);
+    setStagingError(null);
     try {
-      const newSess = await trainerService.startSession(activeScope, selectedVendorName, file);
-      setSession(newSess);
-
-      /**
-       * FE Gap 170: a New Vendor session's vendor is discovered by the backend,
-       * not chosen by the user -- `routers/trainer.py::upload_transient_file`
-       * reads `vendor_name` out of the extraction result and returns it on the
-       * session (`_serialize_session`). Nothing here ever read it, so
-       * `selectedVendorName` stayed "" for the whole New Vendor flow: Rule
-       * History called `getRuleHistory("new_vendor", "")`, and an empty
-       * vendor_name resolves, per `GET /templates/history`, to the tenant's
-       * *Global* template -- the drawer confidently showed the wrong timeline.
-       * CommitModal and RuleHistoryDrawer read the same value, so all three are
-       * fixed by capturing it here, exactly as `handleSelectVendor` does for
-       * the Existing Vendor flow.
-       *
-       * Scoped to new_vendor deliberately: a Global session may also carry a
-       * vendor name from its grounding PDF, but Global rules are tenant-wide
-       * and must not start keying off whichever sample was uploaded.
-       */
-      if (activeScope === "new_vendor" && newSess.vendorName) {
-        setSelectedVendorName(newSess.vendorName);
-      }
-
-      showToast(
-        activeScope === "new_vendor" && newSess.vendorName
-          ? `Loaded sample file ${file.name} — vendor detected: ${newSess.vendorName}`
-          : `Loaded sample file ${file.name}`,
-        "info"
+      const { updatedSession } = await trainerService.correctConfidenceThreshold(
+        session.sessionId,
+        { threshold: payload.threshold, field: correctionAlert?.field }
       );
-    } catch (err) {
-      console.error("Failed to load sample file", err);
-      showToast("Failed to process the uploaded sample.", "error");
+      afterStage(updatedSession, "Confidence threshold change");
+    } catch (err: any) {
+      setStagingError(errorMessage(err, "Couldn't stage that threshold change."));
     } finally {
-      setIsLoadingSession(false);
-      setLoadingFileName(undefined);
+      setIsStaging(false);
     }
   };
 
-  const handleClearFile = async () => {
-    setIsLoadingSession(true);
+  const handleSubmitOverride = async (payload: { severity?: string; message?: string }) => {
+    if (!session || !correctionAlert?.type) return;
+    setIsStaging(true);
+    setStagingError(null);
     try {
-      const newSess = await trainerService.startSession(activeScope, selectedVendorName);
-      setSession(newSess);
-      showToast("Cleared grounding document", "info");
-    } catch (err) {
-      console.error("Failed to clear sample file", err);
-      showToast("Failed to clear the sample file.", "error");
+      const { updatedSession } = await trainerService.correctAlertOverride(session.sessionId, {
+        alertType: correctionAlert.type,
+        field: correctionAlert.field,
+        severity: payload.severity,
+        message: payload.message,
+      });
+      afterStage(updatedSession, "Severity / message change");
+    } catch (err: any) {
+      setStagingError(errorMessage(err, "Couldn't stage that change."));
     } finally {
-      setIsLoadingSession(false);
+      setIsStaging(false);
     }
   };
+
+  const handleFlagMissed = async (payload: {
+    alertType: string;
+    field: string;
+    context: string;
+  }) => {
+    if (!session) return;
+    setIsStaging(true);
+    setStagingError(null);
+    try {
+      const { updatedSession } = await trainerService.flagMissedAlert(session.sessionId, payload);
+      afterStage(updatedSession, "Missed-alert rule");
+    } catch (err: any) {
+      // The backend fails closed here on an LLM failure (502) — nothing is
+      // staged, and saying so plainly matters more than a generic error.
+      setStagingError(
+        errorMessage(err, "Couldn't turn that into a rule right now — nothing was changed.")
+      );
+    } finally {
+      setIsStaging(false);
+    }
+  };
+
+  // ── Preview → commit ───────────────────────────────────────────────────
 
   /**
-   * FE Gap 171: why the chat is unusable right now, or null when it is usable.
-   *
-   * `session` is null in two ordinary situations -- New Vendor before a PDF is
-   * uploaded, and Existing Vendor with no vendor selected -- and the chat panel
-   * gave no hint of it: the input accepted text, cleared it on submit, and the
-   * message was dropped. Naming the reason here keeps the panel's disabled
-   * state, its placeholder and the backstop toast in `handleSendMessage`
-   * saying the same thing.
+   * Opening the commit dialog *runs the preview*. There is no path to the
+   * confirm button that skips it: the token it returns is what the commit is
+   * sent with, and the backend 409s if the rules moved since.
    */
+  const handleOpenCommit = async () => {
+    if (!session) return;
+    setIsCommitModalOpen(true);
+    setCommitError(null);
+    setPreview(null);
+    setIsLoadingPreview(true);
+    try {
+      const result = await trainerService.previewSession(session.sessionId);
+      setPreview(result);
+    } catch (err: any) {
+      // Gap 217's guardrail now runs at preview time, so a rejected rule is
+      // surfaced here — while the user is still editing — rather than at commit.
+      setCommitError(errorMessage(err, "Couldn't build a preview for these rules."));
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
+  const handleConfirmCommit = async () => {
+    if (!session || !preview) return;
+    setIsSubmittingCommit(true);
+    setCommitError(null);
+
+    try {
+      const result = await trainerService.commitSession(session, preview.previewToken);
+      setIsCommitModalOpen(false);
+
+      const versionNote = `v${result.version}`;
+      const vendorLabel = result.vendorName || selectedVendorName || "this vendor";
+      showToast(
+        result.reauditQueued
+          ? `Committed (${versionNote}). Background re-audit queued for ${vendorLabel}.`
+          : `Committed (${versionNote}) for ${vendorLabel}.`,
+        "success"
+      );
+
+      // The backend deletes the committed session immediately, so it can never
+      // be corrected into or re-committed — leaving it on screen would reference
+      // a session_id that no longer exists.
+      setSelectedVariable(null);
+      setPreview(null);
+      setSession(null);
+    } catch (err: any) {
+      console.error("Commit failed", err);
+      setCommitError(
+        errorMessage(err, "Failed to commit these rules. Nothing was changed.")
+      );
+    } finally {
+      setIsSubmittingCommit(false);
+    }
+  };
+
+  // ── QA chat ────────────────────────────────────────────────────────────
+
   const chatDisabledReason: string | null = session
     ? null
-    : // Gap 139: while a session is loading, the two "nothing selected yet"
-      // reasons below are wrong — something *is* in flight, and the vendor
-      // handler now clears `session` up front so the stale document can't sit
-      // under the loading panel. Say so rather than telling the user to pick a
-      // vendor they just picked.
-      isLoadingSession
-    ? "Loading the sandbox session — one moment."
-    : activeScope === "new_vendor"
-    ? "Upload a sample invoice PDF to start a New Vendor session before teaching rules."
-    : activeScope === "existing_vendor"
-    ? "Select a vendor to start a training session before teaching rules."
-    : "Starting a training session — one moment.";
+    : isLoadingSession
+    ? "Loading the session — one moment."
+    : "Pick an invoice or upload a PDF first.";
 
-  /**
-   * HANDLER: Natural Language Chat Correction (Task 6.5)
-   * Sends user instruction to LLM trainer agent, updating active rules & variables.
-   */
   const handleSendMessage = async (text: string) => {
-    // FE Gap 171: this was a bare `if (!session || isSending) return;` -- the
-    // panel had already cleared the input by then, so a typed correction with
-    // no active session vanished with no feedback at all. The primary fix is in
-    // QnAPanel (the input is disabled and explains itself while `chatDisabledReason`
-    // is set, so the text is never lost); this stays as the backstop for the
-    // suggestion chips and any future caller, and now says why nothing happened.
     if (!session) {
-      showToast(chatDisabledReason || "No active training session.", "error");
+      showToast(chatDisabledReason || "No active session.", "error");
       return;
     }
     if (isSending) return;
     setIsSending(true);
-
     try {
-      const { updatedSession, newRuleCreated } = await trainerService.sendChatMessage(session, text);
+      const { updatedSession } = await trainerService.sendChatMessage(session, text);
       setSession(updatedSession);
-
-      if (newRuleCreated) {
-        showToast(`Rule Candidate Created: "${newRuleCreated}"`, "success");
-      }
-    } catch (err) {
-      console.error("Failed to send chat correction", err);
-      showToast("Failed to process your correction. Please try again.", "error");
+    } catch (err: any) {
+      console.error("Failed to send message", err);
+      showToast(errorMessage(err, "Failed to answer that question. Please try again."), "error");
     } finally {
       setIsSending(false);
     }
   };
 
-  /**
-   * HANDLER: Open Rule History Drawer (Task 6.7)
-   */
+  // ── Rule history ───────────────────────────────────────────────────────
+
+  const historyScope: TrainerScope = session?.scope ?? "existing_vendor";
+
   const handleOpenHistory = async () => {
     setIsHistoryDrawerOpen(true);
-    // FE Gap 170: a vendor-scoped history request with an empty vendor_name is
-    // resolved by the backend to the tenant's Global template, so this used to
-    // present Global's timeline as if it were the new vendor's. With no vendor
-    // identified yet there is genuinely nothing to show -- say so.
-    if (activeScope !== "global" && !selectedVendorName) {
+    if (!selectedVendorName) {
       setRuleHistory([]);
-      showToast(
-        activeScope === "new_vendor"
-          ? "Upload a sample invoice first — a new vendor has no rule history yet."
-          : "Select a vendor to see its rule history.",
-        "info"
-      );
+      showToast("Open an invoice first — rule history is per vendor.", "info");
       return;
     }
     try {
-      const history = await trainerService.getRuleHistory(activeScope, selectedVendorName);
-      setRuleHistory(history);
+      setRuleHistory(await trainerService.getRuleHistory(historyScope, selectedVendorName));
     } catch (err) {
       console.error("Failed to load rule history", err);
       setRuleHistory([]);
@@ -528,9 +594,6 @@ function TrainerContent() {
     }
   };
 
-  /**
-   * HANDLER: Rollback Rule Version (Task 6.7)
-   */
   const handleRollback = async (version: RuleVersion) => {
     if (!version.templateId) {
       showToast("Cannot roll back: template reference is missing.", "error");
@@ -540,13 +603,11 @@ function TrainerContent() {
       const result = await trainerService.rollbackTemplate(version.templateId, version.version);
       showToast(
         result.reauditQueued
-          ? `Rolled back to rule v${version.version} (now v${result.version}). Background re-audit queued.`
-          : `Rolled back to rule v${version.version} (now v${result.version}).`,
+          ? `Rolled back to v${version.version} (now v${result.version}). Re-audit queued.`
+          : `Rolled back to v${version.version} (now v${result.version}).`,
         "success"
       );
-      // Refresh so the drawer reflects the new current version.
-      const history = await trainerService.getRuleHistory(activeScope, selectedVendorName);
-      setRuleHistory(history);
+      setRuleHistory(await trainerService.getRuleHistory(historyScope, selectedVendorName));
       setIsHistoryDrawerOpen(false);
     } catch (err) {
       console.error("Rollback failed", err);
@@ -554,76 +615,8 @@ function TrainerContent() {
     }
   };
 
-  /**
-   * HANDLER: Scope-Aware Registry Commit (Task 6.6)
-   * Commits session rules to database registry and displays scope-aware background re-audit toast.
-   */
-  const handleConfirmCommit = async () => {
-    if (!session) return;
-    setIsSubmittingCommit(true);
-
-    try {
-      const result = await trainerService.commitSession(session);
-      setIsCommitModalOpen(false);
-
-      const versionNote = `v${result.version}`;
-      if (result.scope === "global") {
-        showToast(
-          result.reauditQueued
-            ? `Global template committed (${versionNote}). Queued background re-audit across ALL tenant vendors.`
-            : `Global template committed (${versionNote}).`,
-          "success"
-        );
-      } else if (result.scope === "existing_vendor") {
-        const vendorLabel = result.vendorName || selectedVendorName || "vendor";
-        showToast(
-          result.reauditQueued
-            ? `Vendor template committed (${versionNote}). Queued background re-audit for ${vendorLabel}.`
-            : `Vendor template committed (${versionNote}) for ${vendorLabel}.`,
-          "success"
-        );
-      } else {
-        showToast(`New vendor template registered (${versionNote}).`, "success");
-      }
-
-      // The backend deletes the committed session immediately (routers/trainer.py::
-      // trainer_commit()), so it can never be chatted into or re-committed again —
-      // leaving it on screen would silently reference a session_id that no longer
-      // exists. Clear the workspace back to a clean starting point per scope.
-      setSelectedVariable(null);
-      if (result.scope === "global") {
-        // Global always has an active session (same as the initial page-mount
-        // behavior), so start a fresh one immediately rather than showing nothing.
-        const freshSession = await trainerService.startSession("global");
-        setSession(freshSession);
-      } else if (result.scope === "existing_vendor") {
-        setSession(null);
-        setSelectedVendorName("");
-      } else {
-        setSession(null);
-      }
-    } catch (err: any) {
-      console.error("Commit failed", err);
-      const detail = err?.response?.data?.detail;
-      if (detail && typeof detail === "object" && detail.flagged_rule) {
-        showToast(
-          `${detail.detail || "Rule rejected."} Flagged: "${detail.flagged_rule}"`,
-          "error"
-        );
-      } else if (typeof detail === "string") {
-        showToast(detail, "error");
-      } else {
-        showToast("Failed to commit rules to the registry.", "error");
-      }
-    } finally {
-      setIsSubmittingCommit(false);
-    }
-  };
-
-  // FE Gap 115: gate the whole route. Both returns are below every hook,
-  // including usePageHeader() above -- the shared header must still name the
-  // screen while identity is resolving and on the upgrade prompt, or the top
-  // bar would go blank on exactly the screens that most need explaining.
+  // ── Gates. Both returns sit below every hook, including usePageHeader(),
+  //    so the shared header still names the screen on the gated states. ────
   if (authLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-[#0B0F19]">
@@ -636,15 +629,23 @@ function TrainerContent() {
     return <TrainerUpgradePrompt />;
   }
 
+  // FE Gap 232: the permission gate. Checked after the plan gate so a Free-tier
+  // tenant still gets the upgrade explanation rather than a permissions one.
+  if (!canTrain) {
+    return <TrainerPermissionPrompt />;
+  }
+
+  const isStyleTab = panelTab === "style";
+  const showQa = sessionMode === "qa_test";
+  const stagedRuleCount = Math.max(
+    0,
+    (session?.activeRulesDetailed?.length ?? 0) -
+      (session?.activeRulesDetailed?.filter((r) => r.origin === "legacy_text").length ?? 0)
+  );
+
   return (
-    // FE Gap 76: h-full, not h-screen. This page renders inside Shell.tsx's
-    // <main className="flex-1 overflow-y-auto p-8">, which has already spent
-    // the global Header's 64px plus 32px of padding top and bottom. h-screen
-    // (100vh) here made the page ~128px taller than the space it actually has,
-    // pushing its own header row -- Rule History / Commit to Template Registry
-    // -- out of view. h-full sizes to the container instead of the viewport.
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-hidden font-sans">
-      {/* Toast Notification Bar */}
+      {/* Toast */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 animate-in slide-in-from-top duration-300">
           <div
@@ -672,10 +673,7 @@ function TrainerContent() {
         </div>
       )}
 
-      {/* FE Gap 110: Rule History / Commit to Template Registry render into
-          Shell's shared header row. They stay `shrink-0` there for the same
-          reason Gap 76 gave them that: they must never be the thing that gets
-          squeezed off the row when the title beside them grows. */}
+      {/* FE Gap 110: these render into Shell's shared header row. */}
       <PageHeaderActions>
         <button
           type="button"
@@ -685,151 +683,194 @@ function TrainerContent() {
           className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#1E293B] hover:bg-[#283548] text-slate-200 text-xs font-medium border border-[#222D3D] transition-colors cursor-pointer shrink-0"
         >
           <History className="w-4 h-4 text-[#3B82F6]" />
-          {/* Label collapses to the icon on narrow rows; the aria-label keeps
-              the button named either way. */}
           <span className="hidden lg:inline">Rule History</span>
         </button>
 
         <button
           type="button"
-          onClick={() => setIsCommitModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-medium shadow-md transition-all cursor-pointer shrink-0"
+          data-testid="trainer-review-commit"
+          onClick={handleOpenCommit}
+          disabled={!session}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#10B981] hover:bg-[#059669] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-md transition-all cursor-pointer shrink-0"
         >
           <Sparkles className="w-4 h-4" />
-          <span>Commit to Template Registry</span>
+          <span>Review &amp; Commit</span>
         </button>
       </PageHeaderActions>
 
-      {/* FE Gap 77: one control bar, not a scope block and a grounding block
-          the user has to connect for themselves. See TrainerControlBar. */}
       <TrainerControlBar
-        activeSection={activeSection}
-        onSectionChange={handleSectionChange}
-        vendorEntryMode={vendorEntryMode}
-        onVendorEntryModeChange={handleVendorEntryModeChange}
-        globalSubTab={globalSubTab}
-        onGlobalSubTabChange={setGlobalSubTab}
+        panelTab={panelTab}
+        onPanelTabChange={setPanelTab}
         sessionMode={sessionMode}
         onSessionModeChange={handleSessionModeChange}
-        vendors={vendors}
-        selectedVendorName={selectedVendorName}
-        onSelectVendor={handleSelectVendor}
-        onUploadFile={handleUploadFile}
-        onClearFile={handleClearFile}
+        vendorName={session?.vendorName || selectedVendorName}
         activeFileName={session?.fileName}
-        showVendorModeToggle={activeSection === "vendor" && !!session}
+        onChangeDocument={handleChangeDocument}
+        hasSession={!!session}
         disabled={isLoadingSession}
       />
 
       {/*
-        FE Gap 111 — the agreed workspace: PDF → Extracted Fields → Chat, with
-        a collapsed Rules rail on the far right.
+        The workspace. Same flex-row geometry FE Gap 111 established (each panel
+        `min-h-0` inside a `min-h-0` row so every one scrolls internally rather
+        than growing the page, per Gap 76), with the alert list taking the slot
+        the old free-text chat used to occupy.
 
-        A flex row rather than the old `grid-cols-2`, because the four panels
-        have deliberately different sizing rules: the first two are fixed-width
-        columns (a document preview and a field list have a natural width and
-        gain nothing from more), chat takes everything left over, and the rail
-        sizes itself from its own collapsed/expanded state. Expressing that as
-        grid template columns would have meant recomputing the template string
-        every time the rail toggles.
-
-        Every panel is `min-h-0` inside a `min-h-0` row, which is what lets each
-        one scroll internally instead of growing the page -- Gap 76's geometry
-        (Shell's <main> must not become scrollable on this route) still holds,
-        and a long PDF no longer moves anything beside it (Gap 111.2).
-
-        Below `xl` this stacks into a normal scrolling column: three fixed
-        columns plus a rail do not fit a laptop width, and squeezing them would
-        undo the readability this gap is about.
-
-        The 4th column swaps between RulesRail (Extraction Rules sub-tab) and
-        ChatResponseStylePanel (Chat Response Style sub-tab) so the PDF and
-        fields always stay visible.
+        Before any document is chosen the whole row is the entry picker — there
+        is no half-populated workspace to look at, because with no invoice there
+        are no alerts and no fields.
       */}
       <main className="flex-1 p-3 min-h-0 overflow-y-auto xl:overflow-hidden flex flex-col xl:flex-row gap-3">
-        {/* 1. Document preview — fixed ~300px, own internal scroll */}
-        <div className="h-[420px] xl:h-full min-h-0 xl:w-[300px] xl:shrink-0">
-          <PdfViewerPanel
-            fileName={session?.fileName}
-            pdfUrl={session?.pdfUrl}
-            isGlobalScopeNoPdf={!session?.pdfUrl}
-            selectedVariable={selectedVariable}
-            scope={activeScope}
-            vendorName={selectedVendorName}
-            isLoadingSession={isLoadingSession}
-            loadingFileName={loadingFileName}
-          />
-        </div>
-
-        {/* 2. Extracted fields — its own column, only shown for Extraction Rules */}
-        {!(activeSection === "vendor" && globalSubTab === "style") && (
-          <div className="h-[280px] xl:h-full min-h-0 xl:w-[220px] xl:shrink-0">
-            <ExtractedFieldsPanel
-              variables={session?.variables || []}
-              selectedVariableId={selectedVariable?.id}
-              onSelectVariable={(v) => setSelectedVariable(v)}
-            />
-          </div>
-        )}
-
-        {/* 3. Chat — everything left over (secured with min-width to avoid squishing) */}
-        <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[350px]">
-          <QnAPanel
-            chatHistory={session?.chatHistory || []}
-            onSendMessage={handleSendMessage}
-            isSending={isSending}
-            disabledReason={chatDisabledReason}
-          />
-        </div>
-
-        {/* 4. Right panel — swaps between RulesRail and ChatResponseStylePanel
-               depending on the active vendor sub-tab. PDF and fields remain
-               visible in both cases. */}
-        {activeSection === "vendor" && globalSubTab === "style" && session ? (
-          <div className="h-[480px] xl:h-full min-h-0 xl:w-[320px] xl:shrink-0 overflow-y-auto rounded-xl border border-[#1E2D45] bg-[#0D131F]">
-            <ChatResponseStylePanel
-              sessionId={session.sessionId}
-              onSaved={() => showToast("Chat response style saved.", "success")}
+        {!session && !isLoadingSession ? (
+          <div className="flex-1 min-h-0 rounded-2xl border border-[#1E2D45] bg-[#070D1A]/90">
+            <TrainerEntryPanel
+              vendors={vendors}
+              selectedVendorName={selectedVendorName}
+              onSelectVendor={setSelectedVendorName}
+              onPickInvoice={handlePickInvoice}
+              onUploadFile={handleUploadFile}
+              isBusy={isLoadingSession}
             />
           </div>
         ) : (
           <>
-            <div className="hidden xl:block h-full min-h-0">
-              <RulesRail
-                activeRules={session?.activeRules || []}
-                isExpanded={isRulesRailExpanded}
-                onToggle={() => setIsRulesRailExpanded((v) => !v)}
+            {/* 1. The document — always beside whatever is being corrected. */}
+            <div className="h-[420px] xl:h-full min-h-0 xl:w-[300px] xl:shrink-0">
+              <PdfViewerPanel
+                fileName={session?.fileName}
+                pdfUrl={session?.pdfUrl}
+                isGlobalScopeNoPdf={!session?.pdfUrl}
+                selectedVariable={selectedVariable}
+                scope={session?.scope}
+                vendorName={session?.vendorName || selectedVendorName}
+                isLoadingSession={isLoadingSession}
+                loadingFileName={loadingFileName}
               />
             </div>
-            <div className="xl:hidden h-[220px] min-h-0">
-              <RulesRail
-                activeRules={session?.activeRules || []}
-                isExpanded
-                onToggle={() => undefined}
-                stacked
-              />
-            </div>
+
+            {/* 2. Extracted fields — hidden on the chat-style tab, which is
+                   about answering behaviour and has nothing to do with them. */}
+            {!isStyleTab && (
+              <div className="h-[280px] xl:h-full min-h-0 xl:w-[220px] xl:shrink-0">
+                <ExtractedFieldsPanel
+                  variables={session?.variables || []}
+                  selectedVariableId={selectedVariable?.id}
+                  onSelectVariable={(v) => setSelectedVariable(v)}
+                />
+              </div>
+            )}
+
+            {/* 3. The main work surface. */}
+            {isStyleTab ? (
+              <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 overflow-y-auto rounded-xl border border-[#1E2D45] bg-[#0D131F]">
+                {session && (
+                  <ChatResponseStylePanel
+                    sessionId={session.sessionId}
+                    onSaved={() => showToast("Chat response style saved.", "success")}
+                  />
+                )}
+              </div>
+            ) : showQa ? (
+              <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[350px]">
+                <QaChatPanel
+                  chatHistory={session?.chatHistory || []}
+                  onSendMessage={handleSendMessage}
+                  isSending={isSending}
+                  disabledReason={chatDisabledReason}
+                  canTrain={canTrain}
+                  vendorName={session?.vendorName}
+                />
+              </div>
+            ) : (
+              <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[320px]">
+                <AlertListPanel
+                  alerts={session?.alerts || []}
+                  onTrainOnAlert={(alert) => {
+                    setStagingError(null);
+                    setCorrectionAlert(alert);
+                  }}
+                  onFlagMissed={() => {
+                    setStagingError(null);
+                    setPrefillField(null);
+                    setIsFlagMissedOpen(true);
+                  }}
+                  stagedRuleCount={stagedRuleCount}
+                  disabled={isLoadingSession}
+                />
+              </div>
+            )}
+
+            {/* 4. Rules rail — what this template already carries. */}
+            {!isStyleTab && (
+              <>
+                <div className="hidden xl:block h-full min-h-0">
+                  <RulesRail
+                    activeRules={session?.activeRules || []}
+                    isExpanded={isRulesRailExpanded}
+                    onToggle={() => setIsRulesRailExpanded((v) => !v)}
+                  />
+                </div>
+                <div className="xl:hidden h-[220px] min-h-0">
+                  <RulesRail
+                    activeRules={session?.activeRules || []}
+                    isExpanded
+                    onToggle={() => undefined}
+                    stacked
+                  />
+                </div>
+              </>
+            )}
           </>
         )}
       </main>
 
-      {/* Commit Confirmation Overlay Modal */}
+      {/* ── Correction modals ─────────────────────────────────────────── */}
+      <AlertCorrectionModal
+        isOpen={correctionAlert !== null}
+        alert={correctionAlert}
+        onClose={() => {
+          setCorrectionAlert(null);
+          setStagingError(null);
+        }}
+        onSubmitTolerance={handleSubmitTolerance}
+        onSubmitThreshold={handleSubmitThreshold}
+        onSubmitOverride={handleSubmitOverride}
+        isSubmitting={isStaging}
+        errorText={stagingError}
+      />
+
+      <FlagMissedAlertModal
+        isOpen={isFlagMissedOpen}
+        onClose={() => {
+          setIsFlagMissedOpen(false);
+          setPrefillField(null);
+          setStagingError(null);
+        }}
+        onSubmit={handleFlagMissed}
+        variables={session?.variables || []}
+        isSubmitting={isStaging}
+        errorText={stagingError}
+        prefillField={prefillField}
+      />
+
+      {/* ── The gate everything funnels through ───────────────────────── */}
       <CommitModal
         isOpen={isCommitModalOpen}
         onClose={() => setIsCommitModalOpen(false)}
         onConfirm={handleConfirmCommit}
-        scope={activeScope}
-        vendorName={selectedVendorName}
-        activeRules={session?.activeRules || []}
+        scope={session?.scope ?? "existing_vendor"}
+        vendorName={session?.vendorName || selectedVendorName}
+        preview={preview}
+        isLoadingPreview={isLoadingPreview}
         isSubmitting={isSubmittingCommit}
+        errorText={commitError}
       />
 
-      {/* Rule Version History & Rollback Drawer */}
       <RuleHistoryDrawer
         isOpen={isHistoryDrawerOpen}
         onClose={() => setIsHistoryDrawerOpen(false)}
         history={ruleHistory}
-        scope={activeScope}
+        scope={historyScope}
         vendorName={selectedVendorName}
         onRollback={handleRollback}
       />
