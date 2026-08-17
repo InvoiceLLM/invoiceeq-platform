@@ -12,6 +12,7 @@ param backendAppName string
 param workerAppName string
 param frontendAppName string
 param chromaDbAppName string
+param websiteAppName string = ''
 param postgresServerName string
 param redisName string
 param storageAccountName string
@@ -20,12 +21,16 @@ param docIntelName string
 param keyVaultName string
 param caeName string
 
-var containerApps = [
+var baseApps = [
   { name: backendAppName, includeHttp5xx: true }
   { name: workerAppName, includeHttp5xx: false }
   { name: frontendAppName, includeHttp5xx: false }
   { name: chromaDbAppName, includeHttp5xx: false }
 ]
+
+var containerApps = !empty(websiteAppName) ? concat(baseApps, [
+  { name: websiteAppName, includeHttp5xx: true }
+]) : baseApps
 
 // ---- Container Apps: restart-loop, CPU, memory (all 4 apps) ----
 resource restartAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in containerApps: {
@@ -127,6 +132,44 @@ resource backend5xxAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
     enabled: true
     scopes: [
       resourceId('Microsoft.App/containerApps', backendAppName)
+    ]
+    evaluationFrequency: 'PT5M'
+    windowSize: 'PT5M'
+    criteria: {
+      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
+      allOf: [
+        {
+          name: 'Http5xxCount'
+          metricName: 'Requests'
+          operator: 'GreaterThan'
+          threshold: 5
+          timeAggregation: 'Total'
+          criterionType: 'StaticThresholdCriterion'
+          dimensions: [
+            {
+              name: 'statusCodeCategory'
+              operator: 'Include'
+              values: [ '5xx' ]
+            }
+          ]
+        }
+      ]
+    }
+    actions: [
+      { actionGroupId: actionGroupId }
+    ]
+  }
+}
+
+// ---- Website only: HTTP 5xx rate ----
+resource website5xxAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = if (!empty(websiteAppName)) {
+  name: 'alert-${websiteAppName}-http-5xx-rate'
+  location: location
+  properties: {
+    severity: 1
+    enabled: true
+    scopes: [
+      resourceId('Microsoft.App/containerApps', websiteAppName)
     ]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
@@ -267,6 +310,43 @@ resource storageEgressAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
       'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
       allOf: [
         { name: 'Egress', metricName: 'Egress', operator: 'GreaterThan', threshold: 10737418240, timeAggregation: 'Total', criterionType: 'StaticThresholdCriterion' }
+      ]
+    }
+    actions: [ { actionGroupId: actionGroupId } ]
+  }
+}
+
+// ---- Dead-Letter Queue (DLQ): Poison Message Alert (Sev 1) ----
+// Fires immediately if any corrupted message is quarantined into extraction-tasks-deadletter-queue
+resource dlqPoisonAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
+  name: 'alert-${storageAccountName}-dlq-poison-message'
+  location: location
+  properties: {
+    severity: 1
+    enabled: true
+    scopes: [
+      resourceId('Microsoft.Storage/storageAccounts/queueServices', storageAccountName, 'default')
+    ]
+    evaluationFrequency: 'PT5M'
+    windowSize: 'PT5M'
+    criteria: {
+      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
+      allOf: [
+        {
+          name: 'DeadLetterMessages'
+          metricName: 'QueueMessageCount'
+          operator: 'GreaterThan'
+          threshold: 0
+          timeAggregation: 'Average'
+          criterionType: 'StaticThresholdCriterion'
+          dimensions: [
+            {
+              name: 'QueueName'
+              operator: 'Include'
+              values: [ 'extraction-tasks-deadletter-queue' ]
+            }
+          ]
+        }
       ]
     }
     actions: [ { actionGroupId: actionGroupId } ]

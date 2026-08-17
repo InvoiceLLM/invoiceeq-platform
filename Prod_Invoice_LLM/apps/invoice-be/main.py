@@ -1,12 +1,33 @@
 # pyrefly: ignore [missing-import]
+import os
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session, text
+from database import engine
 from config import get_settings
 from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion, outbound_invoices, outbound_audit, outbound_dashboard, webhooks, billing, admin, webhook_docs, autopilot
 from routers import settings as settings_router
+from utils.logging_config import TracingAndLoggingMiddleware, setup_structured_logging
 
 logger = logging.getLogger(__name__)
+
+# Feature 19 (Task 19.3): Initialize structured JSON logging
+setup_structured_logging(service_name="invoice-be")
+
+# Feature 19 (Task 19.2): OpenTelemetry auto-instrumentation for Azure Monitor Application Insights
+appinsights_conn_str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if appinsights_conn_str:
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        configure_azure_monitor(
+            connection_string=appinsights_conn_str,
+            logger_name="invoice_be_telemetry"
+        )
+        logger.info("Azure Monitor OpenTelemetry successfully configured.")
+    except Exception as e:
+        logger.warning(f"Could not configure Azure Monitor OpenTelemetry: {e}")
 
 app = FastAPI(
     title="Invoice AI",
@@ -30,6 +51,7 @@ app = FastAPI(
 
 settings = get_settings()
 
+app.add_middleware(TracingAndLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS.split(","),
@@ -68,6 +90,52 @@ app.webhooks.routes.extend(webhook_docs.router.routes)
 def read_root():
     return {"message": "Welcome to the Invoice AI API!"}
 
+# Feature 19 (Task 19.1 & 19.2): Health Probes for Container Lifecycle & ACA Self-Healing
 @app.get("/health")
-async def health():
+def health():
+    """Basic health probe endpoint for general availability and ACA Startup/Liveness probes."""
     return {"status": "ok"}
+
+@app.get("/health/liveness")
+def health_liveness():
+    """Liveness probe to ensure ASGI worker process is responsive."""
+    return {"status": "alive"}
+
+@app.get("/health/readiness")
+def health_readiness():
+    """Readiness probe checking database connectivity and Redis availability before routing traffic."""
+    checks = {}
+    is_healthy = True
+
+    # 1. PostgreSQL Database connectivity check
+    try:
+        with Session(engine) as session:
+            session.exec(text("SELECT 1")).first()
+        checks["database"] = "ok"
+    except Exception as e:
+        logger.error(f"Readiness probe database check failed: {e}")
+        checks["database"] = f"unhealthy: {str(e)}"
+        is_healthy = False
+
+    # 2. Redis availability check (non-fatal, degrades gracefully)
+    current_settings = get_settings()
+    if current_settings.REDIS_URL:
+        try:
+            import redis
+            r = redis.Redis.from_url(current_settings.REDIS_URL, decode_responses=True)
+            r.ping()
+            checks["redis"] = "ok"
+        except Exception as e:
+            logger.warning(f"Readiness probe Redis check warning: {e}")
+            checks["redis"] = f"degraded: {str(e)}"
+    else:
+        checks["redis"] = "disabled"
+
+    if not is_healthy:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "checks": checks}
+        )
+
+    return {"status": "ready", "checks": checks}
+

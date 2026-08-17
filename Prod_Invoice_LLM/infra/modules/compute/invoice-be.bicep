@@ -72,6 +72,9 @@ param publicAppUrl string = ''
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('Application Insights Connection String for OpenTelemetry APM tracing')
+param appInsightsConnectionString string = ''
+
 @description('vCPU allocation, e.g. \'1.0\'. Passed to json() below since Container Apps requires cpu as a decimal, not a string.')
 param cpu string = '1.0'
 
@@ -319,6 +322,45 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'FRONTEND_URL'
               value: frontendUrl
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: appInsightsConnectionString
+            }
+          ]
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/health'
+                port: 8000
+              }
+              initialDelaySeconds: 15
+              periodSeconds: 15
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/health/readiness'
+                port: 8000
+              }
+              initialDelaySeconds: 10
+              periodSeconds: 10
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
+            {
+              type: 'Startup'
+              httpGet: {
+                path: '/health'
+                port: 8000
+              }
+              initialDelaySeconds: 5
+              periodSeconds: 5
+              failureThreshold: 12
+              timeoutSeconds: 5
             }
           ]
         }
