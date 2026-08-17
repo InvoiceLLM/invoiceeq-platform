@@ -22,6 +22,7 @@ from services.billing_quota import charge_free_quota, count_billable_uploads
 from azure.storage.queue import QueueClient
 from config import get_settings
 from azure.core.exceptions import ResourceNotFoundError
+from database import engine
 
 logger = logging.getLogger(__name__)
 
@@ -383,10 +384,22 @@ async def _sse_aclose(resource, label: str) -> None:
 async def sse_event_generator(batch_id: str):
     """Async generator to yield Redis pub/sub messages as Server-Sent Events.
 
-    Gap 187: nested try/finally so pubsub and the Redis client always tear down,
-    even if unsubscribe raises or subscribe fails after the client was opened.
-    Cleanup errors are logged and swallowed so one failure cannot skip the other.
+    Gap 233: Keep stream open for multi-file batches until all invoices finish.
     """
+    # Query all active invoices in the batch at the start of the stream
+    tracking_invoices = {}
+    try:
+        with Session(engine) as session:
+            db_invoices = session.exec(
+                select(Invoice.id, Invoice.status).where(
+                    Invoice.batch_id == UUID(batch_id),
+                    invoice_not_deleted()
+                )
+            ).all()
+            tracking_invoices = {str(inv.id): inv.status for inv in db_invoices}
+    except Exception as e:
+        logger.warning("Failed to initialize invoice status tracking for batch %s: %s", batch_id, e)
+
     channel = f"invoice.update.{batch_id}"
     redis_client = None
     pubsub = None
@@ -401,13 +414,36 @@ async def sse_event_generator(batch_id: str):
                     data = message["data"]
                     yield f"data: {data}\n\n"
 
-                    # Terminate stream on final state
+                    # Terminate stream when all invoices in the batch have reached a terminal status
                     try:
                         payload = json.loads(data)
-                        if payload.get("status") in ["COMPLETED", "AUDIT_REQUIRED", "FAILED"]:
+                        status = payload.get("status")
+                        inv_id = payload.get("invoice_id")
+                        
+                        if status in ["COMPLETED", "AUDIT_REQUIRED", "FAILED", "DUPLICATE"]:
+                            if inv_id and inv_id in tracking_invoices:
+                                tracking_invoices[inv_id] = status
+                            elif len(tracking_invoices) == 1:
+                                # Single invoice batch: update its status directly even if invoice_id is missing/None
+                                only_id = list(tracking_invoices.keys())[0]
+                                tracking_invoices[only_id] = status
+                            else:
+                                # Fallback: query the DB to refresh all statuses if invoice_id is missing/unmatched
+                                with Session(engine) as session:
+                                    db_invoices = session.exec(
+                                        select(Invoice.id, Invoice.status).where(
+                                            Invoice.batch_id == UUID(batch_id),
+                                            invoice_not_deleted()
+                                        )
+                                    ).all()
+                                    for inv in db_invoices:
+                                        tracking_invoices[str(inv.id)] = inv.status
+                        
+                        # Break loop only when ALL tracked invoices are terminal
+                        if tracking_invoices and all(st in ["COMPLETED", "AUDIT_REQUIRED", "FAILED", "DUPLICATE"] for st in tracking_invoices.values()):
                             break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Error processing SSE message status check: %s", e)
                 else:
                     # Heartbeat keep-alive to keep connection open
                     yield ": keep-alive\n\n"

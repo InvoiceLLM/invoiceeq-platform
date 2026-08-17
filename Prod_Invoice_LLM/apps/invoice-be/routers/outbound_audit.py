@@ -1,3 +1,4 @@
+import json
 import logging
 from uuid import UUID, uuid4
 from typing import Any, Dict, Optional
@@ -35,8 +36,10 @@ _CORRECTABLE_FIELDS = {
     "invoice_number": "str",
     "invoice_date": "date",
     "due_date": "date",
+    "subtotal": "float",
     "grand_total": "float",
     "tax_amount": "float",
+    "items": "list",
 }
 
 
@@ -63,6 +66,16 @@ def _coerce_correction_value(field: str, raw_value: Any):
         return datetime.strptime(date_str, "%Y-%m-%d").date()
     if field_type == "float":
         return float(raw_value)
+    if field_type == "list":
+        if isinstance(raw_value, list):
+            return raw_value
+        try:
+            val = json.loads(str(raw_value))
+            if isinstance(val, list):
+                return val
+        except Exception:
+            pass
+        return [raw_value]
     return str(raw_value)
 
 

@@ -260,7 +260,7 @@ export default function AuditorReviewPage() {
   // FE Gap 112 item 4: which field an alert last asked to open, and a
   // monotonic nonce so re-clicking the same alert chip re-focuses.
   const [focusRequest, setFocusRequest] = useState<{ field: string; nonce: number } | null>(null);
-  const [corrections, setCorrections] = useState<Record<string, string>>({});
+  const [corrections, setCorrections] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
@@ -274,6 +274,56 @@ export default function AuditorReviewPage() {
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
   const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
+
+  const [isEditingItems, setIsEditingItems] = useState(false);
+  const [editedItems, setEditedItems] = useState<LineItem[]>([]);
+
+  const startEditingItems = () => {
+    setEditedItems(invoice?.items ? JSON.parse(JSON.stringify(invoice.items)) : []);
+    setIsEditingItems(true);
+  };
+
+  const updateItemField = (idx: number, field: keyof LineItem, value: any) => {
+    setEditedItems((prev) =>
+      prev.map((item, i) => {
+        if (i !== idx) return item;
+        const updated = { ...item, [field]: value };
+        if (field === "quantity" || field === "unit_price") {
+          const qty = updated.quantity;
+          const price = updated.unit_price;
+          if (qty != null && price != null) {
+            updated.amount = Number((qty * price).toFixed(2));
+          }
+        }
+        return updated;
+      })
+    );
+  };
+
+  const deleteLineItem = (idx: number) => {
+    setEditedItems((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const addLineItem = () => {
+    setEditedItems((prev) => [
+      ...prev,
+      { description: "", quantity: undefined, unit_price: undefined, amount: 0 },
+    ]);
+  };
+
+  const saveItems = () => {
+    if (!invoice) return;
+    const newItems = [...editedItems];
+    const newSubtotal = newItems.reduce((acc, item) => acc + (Number(item.amount) || 0), 0);
+    
+    setInvoice((prev) => prev ? { ...prev, items: newItems, subtotal: newSubtotal } : null);
+    setCorrections((prev) => ({
+      ...prev,
+      items: newItems,
+      subtotal: newSubtotal,
+    }));
+    setIsEditingItems(false);
+  };
 
   // FE Gap 110: this screen used to draw its own title + Back button + status
   // badge above the workspace, a second header under Shell's global one.
@@ -650,51 +700,173 @@ export default function AuditorReviewPage() {
               {/* Line Items (FE Gap 10): tabular view -- Description, Qty, Unit
                   Price, Total -- quantity/unit_price were already present on
                   LineItem but never rendered, only description + amount were. */}
-              {invoice.items && invoice.items.length > 0 && (
-                <div className="overflow-x-auto rounded-xl border border-[#222D3D] bg-[#0B1220] p-4">
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
+              <div className="overflow-x-auto rounded-xl border border-[#222D3D] bg-[#0B1220] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
                     Line Items
                   </p>
+                  {!isResolved && (
+                    isEditingItems ? (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={saveItems}
+                          className="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors"
+                        >
+                          Save Items
+                        </button>
+                        <button
+                          onClick={() => setIsEditingItems(false)}
+                          className="rounded bg-slate-700 px-2 py-1 text-xs font-semibold text-white hover:bg-slate-650 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={startEditingItems}
+                        className="flex items-center gap-1 rounded bg-[#3B82F6] px-2 py-1 text-xs font-semibold text-white hover:bg-blue-500 transition-colors"
+                      >
+                        <Pencil size={12} />
+                        Edit Items
+                      </button>
+                    )
+                  )}
+                </div>
+
+                {isEditingItems ? (
                   <table className="w-full border-collapse text-left">
                     <thead>
                       <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="pb-2 pr-3 font-medium">#</th>
+                        <th className="pb-2 pr-3 font-medium w-8">#</th>
                         <th className="pb-2 pr-3 font-medium">Description</th>
-                        <th className="pb-2 pr-3 text-right font-medium">Qty</th>
-                        <th className="pb-2 pr-3 text-right font-medium">Unit Price</th>
-                        <th className="pb-2 text-right font-medium">Total</th>
+                        <th className="pb-2 pr-3 text-right font-medium w-16">Qty</th>
+                        <th className="pb-2 pr-3 text-right font-medium w-24">Unit Price</th>
+                        <th className="pb-2 text-right font-medium w-24">Total</th>
+                        <th className="pb-2 text-center font-medium w-12">Delete</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#222D3D]/60">
-                      {invoice.items.map((item, idx) => (
+                      {editedItems.map((item, idx) => (
                         <tr key={idx} className="text-sm text-slate-300">
-                          <td className="py-2 pr-3 text-slate-500">{idx + 1}</td>
-                          <td className="py-2 pr-3">{item.description}</td>
-                          <td className="py-2 pr-3 text-right text-slate-400">
-                            {item.quantity ?? "—"}
+                          <td className="py-2 pr-3 text-slate-500 align-middle">{idx + 1}</td>
+                          <td className="py-2 pr-3 align-middle">
+                            <input
+                              type="text"
+                              value={item.description}
+                              onChange={(e) => updateItemField(idx, "description", e.target.value)}
+                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 focus:border-blue-500 outline-none"
+                            />
                           </td>
-                          <td className="py-2 pr-3 text-right text-slate-400">
-                            {item.unit_price != null ? fmt(item.unit_price, invoice.currency) : "—"}
+                          <td className="py-2 pr-3 align-middle">
+                            <input
+                              type="number"
+                              value={item.quantity ?? ""}
+                              onChange={(e) => {
+                                const qty = e.target.value === "" ? undefined : Number(e.target.value);
+                                updateItemField(idx, "quantity", qty);
+                              }}
+                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                            />
                           </td>
-                          <td className="py-2 text-right font-medium text-slate-200">
-                            {fmt(item.amount, invoice.currency)}
+                          <td className="py-2 pr-3 align-middle">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={item.unit_price ?? ""}
+                              onChange={(e) => {
+                                const price = e.target.value === "" ? undefined : Number(e.target.value);
+                                updateItemField(idx, "unit_price", price);
+                              }}
+                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                            />
+                          </td>
+                          <td className="py-2 align-middle text-right">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={item.amount}
+                              onChange={(e) => updateItemField(idx, "amount", Number(e.target.value))}
+                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                            />
+                          </td>
+                          <td className="py-2 text-center align-middle">
+                            <button
+                              onClick={() => deleteLineItem(idx)}
+                              className="text-rose-500 hover:text-rose-400 p-1 transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-[#222D3D]">
+                        <td colSpan={6} className="pt-3">
+                          <button
+                            onClick={addLineItem}
+                            className="text-xs text-blue-400 hover:text-blue-300 font-semibold"
+                          >
+                            + Add Line Item
+                          </button>
+                        </td>
+                      </tr>
+                      <tr className="border-t border-[#222D3D]">
                         <td colSpan={4} className="pt-2 text-xs text-slate-500">
                           Subtotal
                         </td>
                         <td className="pt-2 text-right text-xs font-medium text-slate-300">
-                          {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
+                          {fmt(editedItems.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
                         </td>
+                        <td></td>
                       </tr>
                     </tfoot>
                   </table>
-                </div>
-              )}
+                ) : (
+                  invoice.items && invoice.items.length > 0 ? (
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
+                          <th className="pb-2 pr-3 font-medium">#</th>
+                          <th className="pb-2 pr-3 font-medium">Description</th>
+                          <th className="pb-2 pr-3 text-right font-medium">Qty</th>
+                          <th className="pb-2 pr-3 text-right font-medium">Unit Price</th>
+                          <th className="pb-2 text-right font-medium">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#222D3D]/60">
+                        {invoice.items.map((item, idx) => (
+                          <tr key={idx} className="text-sm text-slate-300">
+                            <td className="py-2 pr-3 text-slate-500">{idx + 1}</td>
+                            <td className="py-2 pr-3">{item.description}</td>
+                            <td className="py-2 pr-3 text-right text-slate-400">
+                              {item.quantity ?? "—"}
+                            </td>
+                            <td className="py-2 pr-3 text-right text-slate-400">
+                              {item.unit_price != null ? fmt(item.unit_price, invoice.currency) : "—"}
+                            </td>
+                            <td className="py-2 text-right font-medium text-slate-200">
+                              {fmt(item.amount, invoice.currency)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-[#222D3D]">
+                          <td colSpan={4} className="pt-2 text-xs text-slate-500">
+                            Subtotal
+                          </td>
+                          <td className="pt-2 text-right text-xs font-medium text-slate-300">
+                            {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  ) : (
+                    <p className="text-xs text-slate-500 italic py-4">No line items extracted.</p>
+                  )
+                )}
+              </div>
             </div>
 
             {/* Gap 205: Extended extracted metadata panel — currency, discounts, tax IDs, payment instructions */}

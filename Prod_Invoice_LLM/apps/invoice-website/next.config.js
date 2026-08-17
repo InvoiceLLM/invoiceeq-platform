@@ -37,7 +37,7 @@ const nextConfig = {
     // invoice-fe. invoice-website has no app/api/webhooks/ of its own, so this
     // prefix cannot shadow a real local route. Re-diffed against
     // apps/invoice-fe/app/api/ on 2026-08-05: 14 folders, all 14 now listed.
-    const feApiPrefixes = ["admin", "audit", "auth", "chat", "connectors", "dashboard", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "trainer", "webhooks"];
+    const feApiPrefixes = ["admin", "audit", "auth", "chat", "connectors", "dashboard", "docs", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "trainer", "webhooks"];
 
     const pageRewrites = [
       ...fePages.flatMap((p) => [

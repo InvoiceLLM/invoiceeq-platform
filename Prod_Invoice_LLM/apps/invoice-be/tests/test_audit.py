@@ -259,27 +259,51 @@ def test_resolve_correction_only_on_completed_invoice(db_session):
         file_path="mock/invoice.pdf",
         vendor_name="ACME Corp",
         status="COMPLETED",
+        subtotal=80.0,
         grand_total=100.0,
+        items=[{"description": "Item 1", "amount": 80.0}],
         sa_alerts=[]
     )
     db_session.add(db_invoice)
     db_session.commit()
 
-    payload = {"corrections": {"grand_total": 150.0}}
+    payload = {
+        "corrections": {
+            "grand_total": 150.0,
+            "subtotal": 120.0,
+            "items": [{"description": "Item 1", "amount": 80.0}, {"description": "Item 2", "amount": 40.0}]
+        }
+    }
     response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
-    assert data["corrections_applied"] == {"grand_total": {"old": 100.0, "new": 150.0}}
+    assert data["corrections_applied"] == {
+        "grand_total": {"old": 100.0, "new": 150.0},
+        "subtotal": {"old": 80.0, "new": 120.0},
+        "items": {
+            "old": [{"description": "Item 1", "amount": 80.0}],
+            "new": [{"description": "Item 1", "amount": 80.0}, {"description": "Item 2", "amount": 40.0}]
+        }
+    }
 
     db_session.refresh(db_invoice)
     assert db_invoice.status == "COMPLETED"  # untouched -- no status was requested
     assert db_invoice.grand_total == 150.0
+    assert db_invoice.subtotal == 120.0
+    assert db_invoice.items == [{"description": "Item 1", "amount": 80.0}, {"description": "Item 2", "amount": 40.0}]
 
     audit_logs = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id)).all()
     assert len(audit_logs) == 1
     assert audit_logs[0].details["target_status"] is None
-    assert audit_logs[0].details["corrections"] == {"grand_total": {"old": 100.0, "new": 150.0}}
+    assert audit_logs[0].details["corrections"] == {
+        "grand_total": {"old": 100.0, "new": 150.0},
+        "subtotal": {"old": 80.0, "new": 120.0},
+        "items": {
+            "old": [{"description": "Item 1", "amount": 80.0}],
+            "new": [{"description": "Item 1", "amount": 80.0}, {"description": "Item 2", "amount": 40.0}]
+        }
+    }
 
 
 # ── Gap 62 / Task 7.5: standing-rule checkbox with safety re-extraction ──────

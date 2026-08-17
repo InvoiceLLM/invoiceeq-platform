@@ -29,7 +29,8 @@ def override_db_session(db_session):
     def get_db_session_override():
         yield db_session
     app.dependency_overrides[get_db_session] = get_db_session_override
-    yield
+    with patch("routers.invoices.engine", engine):
+        yield
     app.dependency_overrides.clear()
 
 def test_get_invoice_status(db_session):
@@ -283,3 +284,56 @@ def test_sse_stream_unknown_batch_denied(db_session):
     response = client.get(f"/api/v1/invoices/stream/{uuid4()}")
     assert response.status_code == 404
     assert response.json()["detail"] == "Invoice not found or access denied."
+
+
+def test_sse_stream_multi_file_batch(db_session):
+    """Gap 233: verify that the SSE stream remains open until all invoices in a batch finish."""
+    batch_id = uuid4()
+    inv_id1 = uuid4()
+    inv_id2 = uuid4()
+    db_session.add(
+        Invoice(
+            id=inv_id1,
+            tenant_id=MOCK_TENANT_ID,
+            batch_id=batch_id,
+            file_path="mock/file1.pdf",
+            status="PROCESSING",
+        )
+    )
+    db_session.add(
+        Invoice(
+            id=inv_id2,
+            tenant_id=MOCK_TENANT_ID,
+            batch_id=batch_id,
+            file_path="mock/file2.pdf",
+            status="PROCESSING",
+        )
+    )
+    db_session.commit()
+
+    from unittest.mock import MagicMock
+    mock_redis = MagicMock()
+    mock_redis.aclose = AsyncMock()
+    mock_redis.close = AsyncMock()
+    mock_pubsub = AsyncMock()
+    mock_pubsub.aclose = AsyncMock()
+    mock_pubsub.unsubscribe = AsyncMock()
+    mock_redis.pubsub.return_value = mock_pubsub
+
+    # 1. First event: inv_id1 COMPLETED. Stream should remain open because inv_id2 is still PROCESSING.
+    # 2. Second event: inv_id2 COMPLETED. Stream should break.
+    mock_pubsub.get_message.side_effect = [
+        {"data": json.dumps({"status": "COMPLETED", "invoice_id": str(inv_id1), "message": "First finished"})},
+        {"data": json.dumps({"status": "COMPLETED", "invoice_id": str(inv_id2), "message": "Second finished"})},
+    ]
+
+    with patch("routers.invoices.AsyncRedis.from_url") as mock_from_url:
+        mock_from_url.return_value = mock_redis
+
+        client = TestClient(app)
+        with client.stream("GET", f"/api/v1/invoices/stream/{batch_id}") as response:
+            assert response.status_code == 200
+            lines = list(response.iter_lines())
+            # Verify we received both events
+            assert any("First finished" in line for line in lines)
+            assert any("Second finished" in line for line in lines)

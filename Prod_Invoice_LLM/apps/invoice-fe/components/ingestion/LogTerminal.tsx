@@ -38,15 +38,23 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
       try {
         const payload = JSON.parse(event.data);
         if (payload?.message) {
-          setLines((prev) => [
-            ...prev,
-            {
-              id: `${Date.now()}-${prev.length}`,
-              invoiceId: payload.invoice_id ?? null,
-              message: payload.message ?? "",
-              level: payload.level ?? (payload.status === "FAILED" ? "error" : "info"),
-            },
-          ]);
+          setLines((prev) => {
+            const isDuplicate = prev.slice(-3).some(
+              (line) => line.invoiceId === (payload.invoice_id ?? null) && line.message === (payload.message ?? "")
+            );
+            if (isDuplicate) {
+              return prev;
+            }
+            return [
+              ...prev,
+              {
+                id: `${Date.now()}-${prev.length}-${Math.random()}`,
+                invoiceId: payload.invoice_id ?? null,
+                message: payload.message ?? "",
+                level: payload.level ?? (payload.status === "FAILED" ? "error" : "info"),
+              },
+            ];
+          });
         }
       } catch {
         // Non-JSON keep-alive comment lines are expected; ignore.

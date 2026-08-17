@@ -42,20 +42,27 @@ def test_resolve_correction_only_no_rule(db_session):
     invoice_id = uuid4()
     db_session.add(Invoice(
         id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/out.pdf", flow_direction="OUTBOUND",
-        status="NEEDS_REVIEW", customer_name="Wrong Co", grand_total=100.0,
+        status="NEEDS_REVIEW", customer_name="Wrong Co", subtotal=80.0, grand_total=100.0,
         sa_alerts=[{"type": "missing_required_field", "field": "customer_name", "message": "..."}],
     ))
     db_session.commit()
 
-    payload = {"corrections": {"customer_name": "Vertex Industries"}, "dismissed_alerts": ["missing_required_field"]}
+    payload = {
+        "corrections": {"customer_name": "Vertex Industries", "subtotal": 90.0},
+        "dismissed_alerts": ["missing_required_field"]
+    }
     response = client.put(f"/api/v1/outbound-audit/resolve/{invoice_id}", json=payload)
     assert response.status_code == 200
     data = response.json()
-    assert data["corrections_applied"] == {"customer_name": {"old": "Wrong Co", "new": "Vertex Industries"}}
+    assert data["corrections_applied"] == {
+        "customer_name": {"old": "Wrong Co", "new": "Vertex Industries"},
+        "subtotal": {"old": 80.0, "new": 90.0}
+    }
     assert data["standing_rule_result"] is None
 
     invoice = db_session.get(Invoice, invoice_id)
     assert invoice.customer_name == "Vertex Industries"
+    assert invoice.subtotal == 90.0
     assert invoice.sa_alerts == []
 
     templates = db_session.exec(select(ExtractionTemplate)).all()

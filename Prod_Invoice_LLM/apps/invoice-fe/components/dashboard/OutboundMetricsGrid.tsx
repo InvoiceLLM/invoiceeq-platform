@@ -240,11 +240,11 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
             </p>
           </div>
 
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 relative h-8">
             {/* FE Gap 183: legend -- each currency is its own line on its own
                 y scale, so heights are not comparable between series. */}
             {!isLoading && currencySeries.length > 1 && (
-              <div className="flex items-center gap-2 text-[10px] text-slate-400">
+              <div className="flex items-center gap-2 text-[10px] text-slate-400 mr-2">
                 {currencySeries.map((s) => (
                   <span key={s.currency} className="inline-flex items-center gap-1">
                     <span
@@ -259,7 +259,7 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
             )}
 
             {hoveredPoint && (
-              <div className="text-right text-xs bg-slate-800/80 border border-[#222D3D] px-2.5 py-1 rounded-lg animate-fade-in">
+              <div className="absolute right-0 top-1/2 -translate-y-1/2 text-right text-xs bg-slate-800/80 border border-[#222D3D] px-2.5 py-1 rounded-lg animate-fade-in z-10 whitespace-nowrap">
                 <span className="text-slate-400 mr-1.5">{hoveredPoint.date}:</span>
                 <span className="text-white font-bold">
                   {formatCurrency(hoveredPoint.amount, hoveredPoint.currency)}

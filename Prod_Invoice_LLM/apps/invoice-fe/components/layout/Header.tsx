@@ -296,8 +296,16 @@ export default function Header() {
             {/* Gap 116: while Clerk is still resolving, this shows a skeleton.
                 It used to show "AR"/"Alex R." -- a specific, plausible, wrong
                 person, indistinguishable from real data. */}
-            <div className="w-8 h-8 rounded-full bg-[#3B82F6]/10 border border-[#3B82F6]/30 flex items-center justify-center text-[#3B82F6] text-sm font-semibold select-none">
-              {isLoaded ? initials : <span className="w-4 h-4 rounded bg-slate-600/40 animate-pulse" />}
+            <div className="w-8 h-8 rounded-full bg-[#3B82F6]/10 border border-[#3B82F6]/30 flex items-center justify-center text-[#3B82F6] text-sm font-semibold select-none overflow-hidden">
+              {isLoaded ? (
+                user?.imageUrl ? (
+                  <img src={user.imageUrl} alt={displayName || "Profile"} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  initials
+                )
+              ) : (
+                <span className="w-4 h-4 rounded bg-slate-600/40 animate-pulse" />
+              )}
             </div>
             <div className="text-left hidden md:block">
               {isLoaded ? (

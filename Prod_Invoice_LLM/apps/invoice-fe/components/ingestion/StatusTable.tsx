@@ -20,7 +20,7 @@ export interface StatusItem {
   size: number;
   status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED" | "PAID" | "REJECTED";
   progress: number;
-  alerts?: string[];
+  alerts?: any[];
   vendorName?: string;
   total?: number;
   /**
@@ -135,7 +135,7 @@ export default function StatusTable({
     id: string,
     status: StatusItem["status"],
     progress: number,
-    alerts: string[] = [],
+    alerts: any[] = [],
     vendorName?: string,
     total?: number,
     currency?: string | null
@@ -365,9 +365,12 @@ export default function StatusTable({
                             
                             {item.alerts && item.alerts.length > 0 ? (
                               <ul className="list-disc pl-5 space-y-1 text-slate-300">
-                                {item.alerts.map((alert, idx) => (
-                                  <li key={idx}>{alert}</li>
-                                ))}
+                                {item.alerts.map((alert: any, idx: number) => {
+                                  const message = typeof alert === "object" && alert !== null
+                                    ? (alert.message || alert.code || JSON.stringify(alert))
+                                    : String(alert);
+                                  return <li key={idx}>{message}</li>;
+                                })}
                               </ul>
                             ) : (
                               <p className="text-slate-300">

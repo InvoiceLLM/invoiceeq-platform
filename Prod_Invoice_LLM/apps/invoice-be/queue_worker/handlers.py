@@ -679,6 +679,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                         status = "AUDIT_REQUIRED"
 
                 invoice.vendor_name = vendor_name
+                invoice.subtotal = extracted_data.get("subtotal")
                 invoice.grand_total = extracted_data.get("grand_total")
                 invoice.invoice_number = invoice_number
 

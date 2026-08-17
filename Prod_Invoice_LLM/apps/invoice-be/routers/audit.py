@@ -1,3 +1,4 @@
+import json
 import logging
 from uuid import UUID, uuid4
 from typing import Any, Dict, List, Optional
@@ -31,7 +32,7 @@ router = APIRouter(
     dependencies=[Depends(require_can_audit)],
 )
 
-# Fields an auditor is allowed to correct from the metadata inspector (Task 7.3),
+# Feature 4: standard inbound fields that are permitted to receive corrections,
 # matching exactly what fe_features/feature_4_auditor.md's ReadOnlyField list shows.
 # "date" fields are parsed as ISO YYYY-MM-DD (or a leading date segment of a
 # datetime string), same convention as queue_worker/handlers.py's own date parsing.
@@ -41,8 +42,10 @@ _CORRECTABLE_FIELDS = {
     "po_number": "str",
     "invoice_date": "date",
     "due_date": "date",
+    "subtotal": "float",
     "grand_total": "float",
     "tax_amount": "float",
+    "items": "list",
 }
 
 # Task 7.4: after N corrections on the same field, suggest saving it as a Trainer
@@ -93,6 +96,16 @@ def _coerce_correction_value(field: str, raw_value: Any):
         return datetime.strptime(date_str, "%Y-%m-%d").date()
     if field_type == "float":
         return float(raw_value)
+    if field_type == "list":
+        if isinstance(raw_value, list):
+            return raw_value
+        try:
+            val = json.loads(str(raw_value))
+            if isinstance(val, list):
+                return val
+        except Exception:
+            pass
+        return [raw_value]
     return str(raw_value)
 
 

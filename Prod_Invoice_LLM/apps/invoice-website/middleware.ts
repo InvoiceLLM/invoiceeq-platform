@@ -33,7 +33,7 @@ export default clerkMiddleware();
 // "auth") -- invoice-website has no app/api/webhooks/ route of its own.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)|api/admin|api/audit|api/auth/me|api/chat|api/connectors|api/dashboard|api/email|api/invoices|api/outbound-audit|api/outbound-dashboard|api/outbound-invoices|api/settings|api/trainer|api/webhooks).*)',
+    '/((?!_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)|api/admin|api/audit|api/auth/me|api/chat|api/connectors|api/dashboard|api/docs|api/email|api/invoices|api/outbound-audit|api/outbound-dashboard|api/outbound-invoices|api/settings|api/trainer|api/webhooks).*)',
     '/trpc/(.*)',
   ],
 };

@@ -47,7 +47,7 @@ export interface InvoiceRecord {
 // finalized as Paid/Rejected (Processing, Completed, Audit Required,
 // Duplicate) -- matches the AP mental model of "still in the pipeline"
 // vs. a closed-out invoice, rather than mapping 1:1 to every raw status enum.
-export type StatusTab = "all" | "paid" | "pending" | "rejected";
+export type StatusTab = "all" | "audit_required" | "paid" | "pending" | "rejected";
 
 interface RecentInvoicesTableProps {
   invoices: InvoiceRecord[];
@@ -59,10 +59,12 @@ interface RecentInvoicesTableProps {
   totalPages: number;
   totalCount: number;
   onPageChange: (page: number) => void;
+  isFullPage?: boolean;
 }
 
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "all", label: "All" },
+  { key: "audit_required", label: "Review Required" },
   { key: "paid", label: "Paid" },
   { key: "pending", label: "Pending" },
   { key: "rejected", label: "Rejected" },
@@ -78,6 +80,7 @@ export default function RecentInvoicesTable({
   totalPages,
   totalCount,
   onPageChange,
+  isFullPage = false,
 }: RecentInvoicesTableProps) {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -217,20 +220,20 @@ export default function RecentInvoicesTable({
       </div>
 
       {/* FE Gap 11: scroll-lock container -- fixed-height card with internal scroll */}
-      <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 320 }}>
+      <div className="overflow-x-auto overflow-y-auto" style={isFullPage ? {} : { maxHeight: 320 }}>
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="sticky top-0 z-10 border-b border-[#222D3D] bg-[#0F172A] text-slate-400 text-[10px] font-bold uppercase tracking-wider select-none">
-              <th className="px-6 py-3.5">Invoice #</th>
-              <th className="px-6 py-3.5">Client / Vendor</th>
-              <th className="px-6 py-3.5">Issue Date</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5`}>Invoice #</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5`}>Client / Vendor</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5`}>Issue Date</th>
               {/* Gap 202: Ingest Date column */}
-              <th className="px-6 py-3.5">Ingest Date</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5`}>Ingest Date</th>
               {/* Gap 202: Payment Due Date column */}
-              <th className="px-6 py-3.5">Due Date</th>
-              <th className="px-6 py-3.5">Amount</th>
-              <th className="px-6 py-3.5">AI Status</th>
-              <th className="px-6 py-3.5 text-right">Actions</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5`}>Due Date</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5`}>Amount</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5`}>AI Status</th>
+              <th className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-3.5 text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#222D3D]/50 text-slate-300 text-xs">
@@ -262,12 +265,12 @@ export default function RecentInvoicesTable({
                   className={`hover:bg-slate-900/30 transition-colors duration-150 group cursor-pointer ${activeMenuId === inv.id ? "relative z-30" : ""}`}
                 >
                   {/* Invoice # */}
-                  <td className="px-6 py-4 font-mono font-medium text-white group-hover:text-[#3B82F6] transition-colors">
+                  <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 font-mono font-medium text-white group-hover:text-[#3B82F6] transition-colors`}>
                     {inv.invoice_number || "INV-PENDING"}
                   </td>
                   
                   {/* Client / Vendor */}
-                  <td className="px-6 py-4">
+                  <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4`}>
                     <span className="font-semibold text-slate-200">
                       {inv.vendor_name || (inv.status === "PROCESSING" ? "Processing Vendor..." : "Unknown Vendor")}
                     </span>
@@ -286,27 +289,27 @@ export default function RecentInvoicesTable({
                   </td>
                   
                   {/* Issue Date */}
-                  <td className="px-6 py-4 font-medium text-slate-400">
+                  <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 font-medium text-slate-400`}>
                     {formatDate(inv.invoice_date)}
                   </td>
 
                   {/* Gap 202: Ingest Date */}
-                  <td className="px-6 py-4 font-medium text-slate-400">
+                  <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 font-medium text-slate-400`}>
                     {inv.created_at ? formatDate(inv.created_at) : "—"}
                   </td>
 
                   {/* Gap 202: Payment Due Date */}
-                  <td className="px-6 py-4 font-medium text-slate-400">
+                  <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 font-medium text-slate-400`}>
                     {inv.due_date ? formatDate(inv.due_date) : "—"}
                   </td>
                   
                   {/* Amount */}
-                  <td className="px-6 py-4 font-bold text-slate-200 font-mono">
+                  <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 font-bold text-slate-200 font-mono`}>
                     {formatCurrency(inv.grand_total, inv.currency)}
                   </td>
                   
                   {/* AI Status */}
-                  <td className="px-6 py-4">
+                  <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4`}>
                     {getStatusBadge(inv.status)}
                   </td>
                   
@@ -314,7 +317,7 @@ export default function RecentInvoicesTable({
                       for row 1 (first row visible), we switch to open downward using a
                       data-driven position class so the menu never clips against the sticky header. */}
                   <td
-                    className="px-6 py-4 text-right relative"
+                    className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 text-right relative`}
                     // prevent row click when interacting with actions
                     onClick={(e) => e.stopPropagation()}
                   >

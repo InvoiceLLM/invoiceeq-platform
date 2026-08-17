@@ -66,6 +66,7 @@ class Invoice(SQLModel, table=True):
     file_hash: str | None = Field(default=None, index=True, max_length=64)
 
     vendor_name: str | None = Field(default=None)
+    subtotal: float | None = Field(default=None)
     grand_total: float | None = Field(default=None)
     invoice_number: str | None = Field(default=None)
     invoice_date: date | None = Field(default=None)

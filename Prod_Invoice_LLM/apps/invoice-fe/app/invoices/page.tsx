@@ -17,7 +17,8 @@ const PAGE_SIZE = 8;
 function tabToStatusParams(tab: StatusTab): { status?: string; status_in?: string } {
   if (tab === "paid") return { status: "PAID" };
   if (tab === "rejected") return { status: "REJECTED" };
-  if (tab === "pending") return { status_in: "PROCESSING,COMPLETED,AUDIT_REQUIRED,DUPLICATE" };
+  if (tab === "audit_required") return { status: "AUDIT_REQUIRED" };
+  if (tab === "pending") return { status_in: "PROCESSING,COMPLETED,DUPLICATE" };
   return {};
 }
 
@@ -297,6 +298,7 @@ export default function InvoicesPage() {
             totalPages={totalPages}
             totalCount={totalCount}
             onPageChange={setCurrentPage}
+            isFullPage={true}
           />
         </>
       )}
