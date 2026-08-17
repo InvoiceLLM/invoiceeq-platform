@@ -146,41 +146,46 @@ function FeedbackVote({ messageId, initialVote }: { messageId: string; initialVo
 // processes inline tokens within each line.  The result is a React node
 // array rendered directly inside the assistant bubble.
 // =============================================================================
-function renderMarkdown(text: string): React.ReactNode[] {
-  return text.split("\n").map((line, lineIdx) => {
+function renderMarkdown(text: string): React.ReactNode {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  
+  let currentListItems: React.ReactNode[] = [];
+  let currentListType: "ul" | "ol" | null = null;
+  
+  let currentCodeLines: string[] = [];
+  let inCodeBlock = false;
+  let codeBlockLang = "";
+
+  const renderInline = (line: string, keyPrefix: string): React.ReactNode[] => {
     const parts: React.ReactNode[] = [];
-    // Matches **bold**, `code`, and *italic* in a single pass
     const pattern = /(\*\*(.+?)\*\*|`([^`]+)`|\*(.+?)\*)/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 
     while ((match = pattern.exec(line)) !== null) {
-      // Push any plain text that appeared before this match
       if (match.index > lastIndex) {
         parts.push(line.slice(lastIndex, match.index));
       }
 
       if (match[2]) {
-        // **bold** — white + semibold to stand out against the muted bubble text
         parts.push(
-          <strong key={`${lineIdx}-${match.index}-b`} className="text-white font-semibold">
+          <strong key={`${keyPrefix}-${match.index}-b`} className="text-white font-semibold">
             {match[2]}
           </strong>
         );
       } else if (match[3]) {
-        // `inline code` — same palette as SqlAuditDrawer for visual consistency
         parts.push(
           <code
-            key={`${lineIdx}-${match.index}-c`}
+            key={`${keyPrefix}-${match.index}-c`}
             className="bg-[#0B0F19] text-[#10B981] px-1.5 py-0.5 rounded text-[11px] font-mono border border-[#222D3D]"
           >
             {match[3]}
           </code>
         );
       } else if (match[4]) {
-        // *italic*
         parts.push(
-          <em key={`${lineIdx}-${match.index}-i`} className="text-slate-300 italic">
+          <em key={`${keyPrefix}-${match.index}-i`} className="text-slate-300 italic">
             {match[4]}
           </em>
         );
@@ -188,19 +193,124 @@ function renderMarkdown(text: string): React.ReactNode[] {
       lastIndex = match.index + match[0].length;
     }
 
-    // Push any trailing plain text after the last match
     if (lastIndex < line.length) {
       parts.push(line.slice(lastIndex));
     }
+    return parts.length > 0 ? parts : [line];
+  };
 
-    // WHY \u00A0 (non-breaking space): an empty <span> collapses to zero height,
-    // losing the visual line break.  A NBSP preserves the vertical rhythm.
-    return (
-      <span key={lineIdx} className={lineIdx > 0 ? "block mt-1" : "block"}>
-        {parts.length > 0 ? parts : line || "\u00A0"}
-      </span>
-    );
-  });
+  const flushList = (key: string) => {
+    if (currentListType === "ul") {
+      elements.push(
+        <ul key={key} className="list-disc pl-5 my-2 space-y-1 text-slate-300">
+          {currentListItems}
+        </ul>
+      );
+    } else if (currentListType === "ol") {
+      elements.push(
+        <ol key={key} className="list-decimal pl-5 my-2 space-y-1 text-slate-300">
+          {currentListItems}
+        </ol>
+      );
+    }
+    currentListItems = [];
+    currentListType = null;
+  };
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
+
+    // 1. Handle Code Blocks
+    if (line.trim().startsWith("```")) {
+      if (inCodeBlock) {
+        elements.push(
+          <pre key={`code-${idx}`} className="bg-[#0B0F19] border border-[#222D3D] rounded-lg p-3 my-2 overflow-x-auto text-[11px] font-mono text-[#10B981] max-w-full">
+            <code className={codeBlockLang ? `language-${codeBlockLang}` : ""}>
+              {currentCodeLines.join("\n")}
+            </code>
+          </pre>
+        );
+        currentCodeLines = [];
+        inCodeBlock = false;
+      } else {
+        inCodeBlock = true;
+        codeBlockLang = line.trim().slice(3);
+        flushList(`list-before-code-${idx}`);
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      currentCodeLines.push(line);
+      continue;
+    }
+
+    // 2. Handle Bullet Lists
+    const ulMatch = line.match(/^(\s*)[-*•]\s+(.*)/);
+    if (ulMatch) {
+      if (currentListType && currentListType !== "ul") {
+        flushList(`list-switch-ul-${idx}`);
+      }
+      currentListType = "ul";
+      currentListItems.push(
+        <li key={`li-ul-${idx}-${Math.random()}`} className="text-slate-300">
+          {renderInline(ulMatch[2], `li-ul-inline-${idx}`)}
+        </li>
+      );
+      continue;
+    }
+
+    // 3. Handle Numbered Lists
+    const olMatch = line.match(/^(\s*)\d+\.\s+(.*)/);
+    if (olMatch) {
+      if (currentListType && currentListType !== "ol") {
+        flushList(`list-switch-ol-${idx}`);
+      }
+      currentListType = "ol";
+      currentListItems.push(
+        <li key={`li-ol-${idx}-${Math.random()}`} className="text-slate-300">
+          {renderInline(olMatch[2], `li-ol-inline-${idx}`)}
+        </li>
+      );
+      continue;
+    }
+
+    // 4. Handle Headers
+    const headerMatch = line.match(/^(#{1,6})\s+(.*)/);
+    if (headerMatch) {
+      flushList(`list-before-header-${idx}`);
+      const depth = headerMatch[1].length;
+      const content = renderInline(headerMatch[2], `header-inline-${idx}`);
+      const headerClasses =
+        depth === 1
+          ? "text-xl font-bold text-white mt-4 mb-2"
+          : depth === 2
+          ? "text-lg font-bold text-white mt-3 mb-2"
+          : "text-base font-semibold text-white mt-2 mb-1";
+      elements.push(
+        <div key={`header-${idx}`} className={headerClasses}>
+          {content}
+        </div>
+      );
+      continue;
+    }
+
+    // 5. Normal line
+    flushList(`list-before-line-${idx}`);
+    if (line.trim() === "") {
+      elements.push(<div key={`empty-${idx}`} className="h-2" />);
+    } else {
+      elements.push(
+        <p key={`p-${idx}`} className="text-slate-300 leading-relaxed mt-1">
+          {renderInline(line, `p-inline-${idx}`)}
+        </p>
+      );
+    }
+  }
+
+  flushList(`list-final`);
+
+  return <div className="space-y-1">{elements}</div>;
 }
 
 // =============================================================================
