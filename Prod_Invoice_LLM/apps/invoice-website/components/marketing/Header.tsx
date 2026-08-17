@@ -113,13 +113,19 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
           >
             Features
           </Link>
-          <Link
-            href="#pricing"
+          <Link href="#pricing"
             onClick={() => setHash("#pricing")}
             aria-current={navCurrent("#pricing")}
             className={navLinkClass("#pricing")}
           >
             Pricing
+          </Link>
+          <Link
+            href="/contact"
+            aria-current={navCurrent("/contact")}
+            className={navLinkClass("/contact")}
+          >
+            Contact Us
           </Link>
           <Link href="/login" aria-current={navCurrent("/login")} className={navLinkClass("/login")}>
             Login
@@ -169,6 +175,14 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
               className={drawerLinkClass("#pricing")}
             >
               Pricing
+            </Link>
+            <Link
+              href="/contact"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-current={navCurrent("/contact")}
+              className={drawerLinkClass("/contact")}
+            >
+              Contact Us
             </Link>
             <Link
               href="/login"

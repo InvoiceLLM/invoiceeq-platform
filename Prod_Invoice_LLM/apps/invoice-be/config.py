@@ -178,6 +178,13 @@ class Settings(BaseSettings):
     # anything larger than this was never going to be a legitimate parse POST.
     INBOUND_EMAIL_MAX_BYTES: int = 26_214_400
 
+    # Feature 19 / Feature Website 5: Support Ticket & Inquiry Engine
+    # Destination inbox for all support alert emails (contact form submissions,
+    # chatbot escalations, and direct app tickets). Defaults to the platform's
+    # primary support address; override via env var in Key Vault for alternate
+    # environments. NEVER set to empty — that would silently swallow every ticket.
+    SUPPORT_NOTIFY_EMAIL: str = "Application@infinevocloud.com"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache()

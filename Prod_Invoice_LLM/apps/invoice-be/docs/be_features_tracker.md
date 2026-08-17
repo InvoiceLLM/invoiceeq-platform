@@ -34,6 +34,8 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 7.1: Service Flow — Outbound Auditor & Standing Rules — **SENTINEL**](feature_7.1_vendor_flow_auditor.md) — built 2026-07-29; extends Feature 7. All 5 tasks done, 9 automated tests passing; real end-to-end manual verification still outstanding.
 - `[x]` [Feature 8.1: Service Flow — Outbound Dashboard](feature_8.1_vendor_flow_dashboard.md) — built 2026-07-29; extends Feature 8. All tasks done: 8.1.1 (`sent_at`/`paid_at`) and 8.1.3 (confirm-send/mark-paid writes) landed with Feature 2.1's migration `c4d5e6f7a8b9`, 8.1.4 (`list_outbound_invoices()`) landed with Feature 7.1, and **8.1.2 `get_outbound_dashboard_metrics()`** — `GET /api/v1/outbound-dashboard/metrics`, added to the existing outbound router with zero edits to and zero imports from `routers/dashboard.py`. 14 tests passing in `tests/test_outbound_dashboard.py` (aggregates, tenant isolation, direction isolation, overdue boundary, `average_days_to_payment` only when both timestamps exist). Three spec deviations recorded in the feature doc — `outstanding_receivables` also counts `VERIFIED` (otherwise `collected + outstanding != total`), `verification_accuracy` keys off `sa_alerts` rather than the mutable `status`, and `revenue_over_time` was added as the mirror of inbound's `spend_over_time`. Real end-to-end manual verification against a live tenant with outbound invoices still outstanding. *(Reconciled 2026-07-30 from the `new-changes-29/07` branch, which independently built this same task with a real bug fix a same-day parallel build had missed — see that branch's merge note.)*
 - `[x]` [Feature 6.1: Service Flow — Direction-Aware Chat — **SAGE**](feature_6.1_vendor_flow_chat.md) — built 2026-07-29; extends Feature 6, the one narrow sanctioned edit to `query_agent.py` in the whole Service Flow effort. All 3 tasks done (found and fixed a real Global-rules lookup bug along the way), 8 new tests + zero regression on the existing 9 `test_rag.py` tests; real end-to-end manual verification still outstanding.
+- `[ ]` [Feature 19: Support Ticket Engine, AI Support Agent & Notification Email Dispatch](feature_19_support_tickets_and_notifications.md) — support ticketing backend, `SupportTicket` model + Alembic migration, knowledge RAG support agent with escalation triggers, and multi-channel email engine routing alerts to `Application@infinevocloud.com`. Target design specced in `feature_19_support_tickets_and_notifications.md`.
+
 
 > Note: Features 4, 5, 6, 7, 8, 9, 10 are marked `[x]` because the corresponding routers/agents are implemented and functioning — the per-task checkboxes inside those individual files were simply never ticked off after the work landed. That's cosmetic bookkeeping, not a real gap, and has been left as-is rather than backfilled.
 
@@ -517,7 +519,58 @@ Deliberately not persisting a real `Invoice` row for uploads as the fix — that
 
 - `[ ]` **Gap 239 (BE): RAG chat citations can reference an invoice id that has no corresponding `Invoice` row at all** — opened 2026-08-17, found during the same live conversation test. Asked *"Which vendors have freight or logistics related charges?"*, routed to RAG — reply cited 3 invoice ids for "Blue Ridge Logistics"; direct DB lookup found only **1 of the 3** actually exists (correctly, as `BRL-200981`, tenant-us) — **the other 2 return zero rows**. **Checked against Gap 192 before filing, and this is not what that gap covers**: Gap 192's soft-delete design deliberately retains Chroma/blob data for a deleted invoice so it can be restored — a soft-deleted invoice being cited would be expected, not a bug. These 2 ids are not soft-deleted rows (which would still return a row with `deleted_at` set) — they return **no row whatsoever**, meaning Chroma holds embedded chunks with no corresponding Postgres record at all. **Origin not yet established — flagged honestly, not overclaimed**: could be a real gap in whatever deletion/reset path produced this state, or a test-environment artifact from this session's many hours of repeated re-processing/DB resets against a Chroma volume that outlived them; not yet distinguishable from the evidence gathered so far. **Also found in the same turn, same root cause class**: the RAG route missed that Cascade Manufacturing Co also has a "freight" tag (confirmed present in its stored `tags`), a retrieval-recall gap on top of the bad-citation one. **Suggested fix, regardless of origin**: RAG citation building should validate that a cited `invoice_id` still resolves to a real, non-deleted row before presenting it to the user, rather than trusting whatever Chroma returns — defends against this class of desync however it occurs. **Not yet fixed — awaiting investigation into origin, then dispatch.**
 
+---
+
+## Feature 19 — Support Ticket Engine, AI Support Agent & Notification Email Dispatch (2026-08-17)
+
+Full BE design + verification record: `docs/feature_19_support_tickets_and_notifications.md`.
+
+- `[x]` **Gap 240 (BE): No `SupportTicket` data model or migration to persist contact inquiries & escalation tickets** — **closed 2026-08-17.**
+  - **`models.py`** — new `SupportTicket` SQLModel table (`__tablename__ = "supportticket"`) at end of file:
+    - `ticket_number` — unique, indexed human-visible ref (`INQ-YYYY-XXXX` for website contacts, `TICK-YYYY-XXXX` for app tickets).
+    - `tenant_id` — nullable UUID (anonymous for website contact form submissions, populated for authenticated app tickets).
+    - `user_email`, `user_name` — submitter identity.
+    - `source` — `WEBSITE_CONTACT | HELP_CHATBOT | DIRECT_TICKET`.
+    - `category` — `SALES | TECHNICAL_SUPPORT | BILLING | PARTNERSHIP | GENERAL`.
+    - `priority` — `LOW | NORMAL | URGENT`.
+    - `subject`, `description` — content.
+    - `chat_transcript` — JSONB array (full AI conversation for chatbot-escalated tickets).
+    - `status` — `OPEN | IN_PROGRESS | RESOLVED | CLOSED`.
+    - `admin_notes` — nullable text.
+    - `created_at`, `updated_at`.
+  - **Deployment**: run Alembic migration before deploying — `alembic revision --autogenerate -m "add support ticket table" && alembic upgrade head`.
+
+- `[x]` **Gap 241 (BE): No automated email dispatch service routing alerts to `Application@infinevocloud.com`** — **closed 2026-08-17.**
+  - **`services/support_email.py`** (new) — templated HTML email dispatch via existing SendGrid helper (`services/outbound_email.py`):
+    - **Staff alert** → rich HTML to `SUPPORT_NOTIFY_EMAIL` (default `Application@infinevocloud.com`): priority badge, submitter metadata table, description block, optional chat transcript table, `Reply-To: submitter_email`.
+    - **User receipt** → clean acknowledgement to submitter: reference number, SLA commitment (< 2h Urgent / < 24h Standard).
+    - Graceful degradation: when `SENDGRID_API_KEY` absent, returns `{"status": "skipped"}` instead of raising — ticket is already persisted, email failures never roll back the record.
+  - **`config.py`** — new `SUPPORT_NOTIFY_EMAIL: str = "Application@infinevocloud.com"` field. Override via Key Vault env var for alternate environments.
+
+- `[x]` **Gap 242 (BE): No support router or API endpoints to intake contact inquiries, app support tickets, and AI support troubleshooting chat** — **closed 2026-08-17.**
+  - **`agents/support_agent.py`** (new) — platform knowledge agent providing domain-guided troubleshooting (Trainer rules, Auditor console, Email ingestion, Webhooks, Billing), automated error condition detection (504 gateway timeouts, PayU errors, OCR stalls), and structured escalation metadata.
+  - **`routers/support.py`** (new) — four endpoints:
+
+    | Endpoint | Auth | Source field | Ticket prefix |
+    |---|---|---|---|
+    | `POST /api/v1/support/contact` | ❌ Public | `WEBSITE_CONTACT` | `INQ-` |
+    | `POST /api/v1/support/chat` | ✅ `get_tenant_context_allow_unpaid` | — | — |
+    | `POST /api/v1/support/ticket` | ✅ `get_tenant_context_allow_unpaid` | `HELP_CHATBOT` or `DIRECT_TICKET` | `TICK-` |
+    | `GET  /api/v1/support/tickets` | ✅ `get_tenant_context_allow_unpaid` | — | — |
+
+  - Ticket numbers are random (4-digit suffix), non-sequential — total volume is not publicly enumerable.
+  - Email dispatch is wrapped in `try/except` in all endpoints — an email outage never prevents the 201 response.
+  - **`main.py`** — `support.router` registered at `/api/v1`.
+  - **`tests/test_support.py`** (new) — **22/22 tests passing** (in-memory SQLite, mock email dispatch):
+    - Contact form: valid payload → 201, ticket number format, DB persistence, field validation (name/email/message required, email format, message length), unknown category/urgency coercion.
+    - AI Support Chat: documentation query returns guidance, error keywords trigger smart escalation card, human help triggers escalation, empty input validation.
+    - App ticket: 201 response, `TICK-` format, chat transcript persisted, `HELP_CHATBOT` source stored.
+    - Ticket list: empty list, tenant's own tickets returned.
+    - Email: dispatch mock called once, `RuntimeError` from dispatch → still 201 with `email_dispatched: false`.
+
+
 ## Nice-to-Have / Future Enhancements
+
 
 Not gaps against any spec'd design — the current pipeline behaves correctly end-to-end. These are UX/observability improvements worth doing later, kept separate from the Gap list above so they don't get mistaken for defects.
 
