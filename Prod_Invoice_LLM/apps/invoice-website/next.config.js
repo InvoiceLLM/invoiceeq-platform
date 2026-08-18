@@ -37,6 +37,19 @@ const nextConfig = {
     // invoice-fe. invoice-website has no app/api/webhooks/ of its own, so this
     // prefix cannot shadow a real local route. Re-diffed against
     // apps/invoice-fe/app/api/ on 2026-08-05: 14 folders, all 14 now listed.
+    //
+    // Re-diffed again 2026-08-18 (the 2026-08-05 count above is now stale):
+    // apps/invoice-fe/app/api/ has 17 top-level folders and this array lists
+    // 16. "support" was added 2026-08-17 by Website Feature 5 / BE Feature 19.
+    // The one FE folder deliberately NOT listed is "billing" -- invoice-website
+    // owns app/api/billing/create-checkout-session/route.ts, so adding "billing"
+    // here would shadow a real local route, which is exactly what the note above
+    // warns about. Side effect worth knowing, not fixed here: invoice-fe's
+    // app/api/billing/usage/ therefore has no rewrite either, so a relative
+    // GET /api/billing/usage from an FE-proxied page does not reach invoice-fe.
+    // Fixing that needs a per-path rule, not a prefix, so it is left alone.
+    // invoice-website's own app/api/contact/ is local for the same reason.
+    // Comment-only update -- the feApiPrefixes array itself is unchanged.
     const feApiPrefixes = ["admin", "audit", "auth", "chat", "connectors", "dashboard", "docs", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
 
     const pageRewrites = [

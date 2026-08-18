@@ -27,7 +27,7 @@ This document tracks the implementation progress of the marketing website, SSO p
 - `[x]` [Feature 4: Clerk Auth Gateway & Company Provisioning](feature_4_auth_gateway.md) — reconciled from the `auth-feature-4` branch onto current master (2026-07-28); further real code (forgot-password, admin console, Docker/infra) cherry-picked from the same branch 2026-07-30, closing Gaps 3/5/6/7/8. Real Clerk test keys are configured (closes Gap 2). Gap 10 (admin create-user route had no auth check) closed 2026-07-31. See Gap 4/9 below for what's still open (FE-side auth enforcement wiring, the real-key verification run).
   - **Correction, 2026-07-31**: the same `auth-feature-4` cherry-pick that brought over real code also mistakenly brought over that branch's own internal `feature_4_tracker.md` and `feature_4_impl_plan.md` — both self-contained duplicate status trackers (own "% complete" tables, own "Completed Items" lists), not target-design spec docs like `feature_4_auth_gateway.md`. This violates this repo's own documented convention (status lives in `website_features_tracker.md` only; spec files describe target design, not progress). Both were also already stale, referencing the pre-reconciliation Pages Router path `pages/admin/signup.jsx` instead of the real `app/signup/page.tsx`. **Deleted** — this tracker remains the single source of truth for Feature 4's status.
 - `[~]` [Feature 3.1: Service Flow Pricing Tier](feature_3.1_vendor_flow_pricing.md) — Built 2026-07-31: Combined Pro card (₹8,999/month) + upgrade checkout path (reuses the same `create_checkout_session` call, no separate upgrade API). **Return flow fixed 2026-08-02** alongside Feature 3: an upgrading tenant now lands on a real `/billing/success?plan=pro_combined` page naming the Combined Pro plan and price, instead of a 404 — nothing upgrade-specific was needed, since it's the same checkout call. **Not yet verified**: an actual upgrade run by a signed-in existing `pro` tenant; cycle-reset still depends on Gap 71's not-yet-built `paid_through` field, so "resets the billing cycle" remains untrue today.
-- `[ ]` [Feature 5: Contact Us Page & Inquiries Dispatch](feature_5_contact_us.md) — dedicated `/contact` route with dark glassmorphic design, topic selector, urgency flags, and automated email dispatch to `Application@infinevocloud.com`. Target design specced in `feature_5_contact_us.md`; prototype verified in `demo_screens/website_contact_us_demo.html`.
+- `[~]` [Feature 5: Contact Us Page & Inquiries Dispatch](feature_5_contact_us.md) — built 2026-08-17: dedicated `/contact` route with dark glassmorphic design, category selector, urgency pills, `app/api/contact/route.ts` proxy to BE `POST /api/v1/support/contact`, and Header/Footer links. Automated email dispatch to `Application@infinevocloud.com` is BE Feature 19's `services/support_email.py`. **`[~]` not `[x]`**: Task 5.4 (Playwright spec for `/contact`) was never written, and no end-to-end run against a real backend or a real SendGrid send has been done — see Gap 183 below.
 
 ## Open Items / Gaps
 
@@ -168,13 +168,13 @@ This document tracks the implementation progress of the marketing website, SSO p
 - `[ ]` **Gap 181: In-page reload button does not refresh page data or update active state** — opened 2026-08-14, user-reported. Needs investigation into which page/component owns this control.
 
 - `[ ]` **Gap 182: Account signup fails even with a new, unused email address** — opened 2026-08-14, user-reported (55-invoice benchmark session). Distinct from the already-fixed Gap 9 (missing Clerk CAPTCHA element) and Gap 176 (silently-swallowed provisioning failure, now surfaced with Retry) — this is a fresh failure report against current code and needs a live repro to root-cause; may be a regression of either fixed gap or a new failure mode.
-- `[x]` **Gap 183: Website has no Contact Us page or inquiries intake pipeline** — **closed 2026-08-17.** `/contact` page, `/api/contact` server-side proxy, `Header.tsx` + `Footer.tsx` navigation links, and full backend support engine (BE Feature 19) all implemented and verified. Details: Feature 5 below.
+- `[x]` **Gap 183: Website has no Contact Us page or inquiries intake pipeline** — **closed 2026-08-17.** `/contact` page, `/api/contact` server-side proxy, `Header.tsx` + `Footer.tsx` navigation links, and the backend support engine (BE Feature 19) all implemented. **Not verified end-to-end** — no automated test covers `/contact`, and no live submission through to a real `Application@infinevocloud.com` delivery has been run. Details: Feature 5 below.
 
 ---
 
 ## Feature 5 — Contact Us Page & Inquiries Intake (2026-08-17)
 
-Full design + verification record: `website_features/feature_5_contact_us.md`. Prototype: `demo_screens/website_contact_us_demo.html`.
+Full design + verification record: `website_features/feature_5_contact_us.md`.
 
 - `[x]` **Gap 183: Contact Us page** — **closed 2026-08-17.**
   - **`app/contact/page.tsx`** (new) — full-page dark glassmorphism contact form:
@@ -189,7 +189,8 @@ Full design + verification record: `website_features/feature_5_contact_us.md`. P
   - **`components/marketing/Header.tsx`** — "Contact Us" link added to desktop nav (between Pricing and Login) and mobile hamburger drawer.
   - **`components/marketing/Footer.tsx`** — "Contact Us" link added alongside Privacy Policy, Terms, SOC2 Security.
   - **Deployment note**: requires `BACKEND_API_URL` env var on the `invoice-website` Container App — already set by existing proxy routes. No new env var needed on the website side.
-  - **Verified**: all 18 backend tests pass (see BE Feature 19). Website page `tsc` clean. UI manually tested against the demo prototype.
+  - **Verification, as reported by the branch author on 2026-08-17**: backend suite passing (see BE Feature 19 / Gaps 246–248), website page `tsc` clean. *(The original wording said "all 18 backend tests pass" and "UI manually tested against the demo prototype" — corrected 2026-08-18: `tests/test_support.py` collects **22**, not 18, and the "demo prototype" it referred to, `demo_screens/website_contact_us_demo.html`, does not exist anywhere in this repo and never did, so that claim is withdrawn rather than restated.)*
+  - **Not done**: Task 5.4 of the feature doc — no Playwright spec covers `/contact`. `apps/invoice-website/e2e/` has 6 specs (billing ×4, email relay, smoke) and none of them touch this page, so nothing about the contact form is exercised by an automated test.
 
 ## Gap Items (Future)
 
