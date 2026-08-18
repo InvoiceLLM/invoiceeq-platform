@@ -1,0 +1,264 @@
+{
+  "run_label": "before",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "base_url": "http://127.0.0.1:8200/api/v1",
+  "questions": [
+    {
+      "label": "cloud_tag",
+      "question": "Which invoices are tagged cloud?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "3bd6501b-56f3-40f9-b8b0-e8abb2986ba5",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, invoice_number, vendor_name, customer_name, grand_total, currency, invoice_date, due_date, status, tags, items, flow_direction, created_at, file_path FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(tags::text) LIKE LOWER('%\"cloud\"%');"
+          },
+          "response_json": {
+            "id": "97b391a0-62f6-43d8-bb06-6c289b7c7a18",
+            "session_id": "3bd6501b-56f3-40f9-b8b0-e8abb2986ba5",
+            "role": "assistant",
+            "content": "Found 1 invoice tagged \"cloud\": ACM-2002 (Acme Manufacturing), total $3,400.00 USD, dated 2026-06-15, status COMPLETED.\n\n### Query Results\n\n\nid | invoice_number | vendor_name | customer_name | grand_total | currency | invoice_date | due_date | status | tags | items | flow_direction | created_at | file_path\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n27d74dfc-0a81-4682-8334-0d4995cb3298 | ACM-2002 | Acme Manufacturing |  | 3400.0 | USD | 2026-06-15 | 2026-07-15 | COMPLETED | ['cloud', 'infra'] | [{'amount': 3400.0, 'quantity': 1, 'unit_price': 3400.0, 'description': 'Server rack maintenance'}] | INBOUND | 2026-08-18 02:24:29.146222 | test/ACM-2002.pdf",
+            "generated_sql": "SELECT id,\n       invoice_number,\n       vendor_name,\n       customer_name,\n       grand_total,\n       currency,\n       invoice_date,\n       due_date,\n       status,\n       tags,\n       items,\n       flow_direction,\n       created_at,\n       file_path\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(tags::text) LIKE LOWER('%\"cloud\"%');",
+            "citations": [],
+            "created_at": "2026-08-18T02:24:50.856456",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "7ab864c9-e8af-4cb3-a25d-25542b936b36",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, batch_id, file_path, vendor_name, customer_name, invoice_number, invoice_date, due_date, status, grand_total, currency, tax_amount, po_number, sa_alerts, tags, created_at, flow_direction FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(tags::text) LIKE LOWER('%\"cloud\"%') ORDER BY invoice_date DESC, created_at DESC;"
+          },
+          "response_json": {
+            "id": "9f436869-beec-4372-ac72-ca05688b0c30",
+            "session_id": "7ab864c9-e8af-4cb3-a25d-25542b936b36",
+            "role": "assistant",
+            "content": "The invoice tagged \"cloud\" is ACM-2002 (vendor: Acme Manufacturing, ID 27d74dfc-0a81-4682-8334-0d4995cb3298), for USD 3,400.00.\n\n### Query Results\n\n\nid | batch_id | file_path | vendor_name | customer_name | invoice_number | invoice_date | due_date | status | grand_total | currency | tax_amount | po_number | sa_alerts | tags | created_at | flow_direction\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n27d74dfc-0a81-4682-8334-0d4995cb3298 |  | test/ACM-2002.pdf | Acme Manufacturing |  | ACM-2002 | 2026-06-15 | 2026-07-15 | COMPLETED | 3400.0 | USD | 0.0 | PO-ACM-2002 | [] | ['cloud', 'infra'] | 2026-08-18 02:24:29.146222 | INBOUND",
+            "generated_sql": "SELECT\n  id,\n  batch_id,\n  file_path,\n  vendor_name,\n  customer_name,\n  invoice_number,\n  invoice_date,\n  due_date,\n  status,\n  grand_total,\n  currency,\n  tax_amount,\n  po_number,\n  sa_alerts,\n  tags,\n  created_at,\n  flow_direction\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(tags::text) LIKE LOWER('%\"cloud\"%')\nORDER BY invoice_date DESC, created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:25:13.711464",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "office_supplies",
+      "question": "How much did we spend on office supplies?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "ab96bc82-907f-4877-9444-ea1d595efa72",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT currency, SUM(grand_total) AS total_spent_on_office_supplies FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND flow_direction = 'INBOUND' AND ( LOWER(tags::text) LIKE LOWER('%office supplies%') OR LOWER(items::text) LIKE LOWER('%office supplies%') OR LOWER(vendor_name) LIKE LOWER('%office supplies%') OR LOWER(customer_name) LIKE LOWER('%office supplies%') ) GROUP BY currency;"
+          },
+          "response_json": {
+            "id": "90a225d6-9c54-4796-af53-ac580ccbbdac",
+            "session_id": "ab96bc82-907f-4877-9444-ea1d595efa72",
+            "role": "assistant",
+            "content": "No records were found for office supplies in the queried data. Would you like me to widen the date range, include additional categories, or check a different account?\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  currency,\n  SUM(grand_total) AS total_spent_on_office_supplies\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%office supplies%')\n    OR LOWER(items::text) LIKE LOWER('%office supplies%')\n    OR LOWER(vendor_name) LIKE LOWER('%office supplies%')\n    OR LOWER(customer_name) LIKE LOWER('%office supplies%')\n  )\nGROUP BY currency;",
+            "citations": [],
+            "created_at": "2026-08-18T02:25:39.478755",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "a7f02726-01f4-44a3-bc6c-dea672a0c305",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT COALESCE(SUM(grand_total), 0) AS total_spent, currency FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND flow_direction = 'INBOUND' AND ( LOWER(COALESCE(tags::text, '')) LIKE LOWER('%office supplies%') OR LOWER(COALESCE(items::text, '')) LIKE LOWER('%office supplies%') OR LOWER(COALESCE(vendor_name, '')) LIKE LOWER('%office supplies%') OR LOWER(COALESCE(customer_name, '')) LIKE LOWER('%office supplies%') ) GROUP BY currency;"
+          },
+          "response_json": {
+            "id": "f00a9379-02ef-42e7-acb7-8d6405518377",
+            "session_id": "a7f02726-01f4-44a3-bc6c-dea672a0c305",
+            "role": "assistant",
+            "content": "No records were found for office supplies, so there are no recorded expenses for that category under the applied filters. If you want, I can broaden the date range or search related categories to double-check.\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  COALESCE(SUM(grand_total), 0) AS total_spent,\n  currency\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(COALESCE(tags::text, '')) LIKE LOWER('%office supplies%')\n    OR LOWER(COALESCE(items::text, '')) LIKE LOWER('%office supplies%')\n    OR LOWER(COALESCE(vendor_name, '')) LIKE LOWER('%office supplies%')\n    OR LOWER(COALESCE(customer_name, '')) LIKE LOWER('%office supplies%')\n  )\nGROUP BY currency;",
+            "citations": [],
+            "created_at": "2026-08-18T02:26:05.335869",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "furniture",
+      "question": "How much did we spend on furniture?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "bcd81794-b85a-4ec7-8941-c187cca797af",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT currency, SUM(grand_total) AS total_spent_on_furniture, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND flow_direction = 'INBOUND' AND ( LOWER(tags::text) LIKE LOWER('%furniture%') OR LOWER(items::text) LIKE LOWER('%furniture%') OR LOWER(vendor_name) LIKE LOWER('%furniture%') OR LOWER(customer_name) LIKE LOWER('%furniture%') ) GROUP BY currency ORDER BY currency;"
+          },
+          "response_json": {
+            "id": "ffeaf92e-ef4e-4c8b-9aec-17f94d4f66dc",
+            "session_id": "bcd81794-b85a-4ec7-8941-c187cca797af",
+            "role": "assistant",
+            "content": "No records were found matching the query criteria, so no furniture spending was returned.\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  currency,\n  SUM(grand_total) AS total_spent_on_furniture,\n  COUNT(*) AS invoice_count\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%furniture%')\n    OR LOWER(items::text) LIKE LOWER('%furniture%')\n    OR LOWER(vendor_name) LIKE LOWER('%furniture%')\n    OR LOWER(customer_name) LIKE LOWER('%furniture%')\n  )\nGROUP BY currency\nORDER BY currency;",
+            "citations": [],
+            "created_at": "2026-08-18T02:26:37.986532",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "550132c2-9506-42a0-a0ad-62abb38341ff",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT SUM(grand_total) AS total_spent, currency FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND flow_direction = 'INBOUND' AND ( LOWER(tags::text) LIKE LOWER('%furniture%') OR LOWER(items::text) LIKE LOWER('%furniture%') OR LOWER(vendor_name) LIKE LOWER('%furniture%') OR LOWER(customer_name) LIKE LOWER('%furniture%') ) GROUP BY currency;"
+          },
+          "response_json": {
+            "id": "a709820f-4b72-4396-b980-2a345cba9656",
+            "session_id": "550132c2-9506-42a0-a0ad-62abb38341ff",
+            "role": "assistant",
+            "content": "No records were found matching your query, so there is no recorded furniture spending in these results.\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  SUM(grand_total) AS total_spent,\n  currency\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%furniture%')\n    OR LOWER(items::text) LIKE LOWER('%furniture%')\n    OR LOWER(vendor_name) LIKE LOWER('%furniture%')\n    OR LOWER(customer_name) LIKE LOWER('%furniture%')\n  )\nGROUP BY currency;",
+            "citations": [],
+            "created_at": "2026-08-18T02:27:12.610564",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "items_keyword",
+      "question": "Show me invoices with toner cartridges in the line items",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "5a39bc2f-3a08-44a6-8bf0-67e2c99ba612",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [],
+            "sql": ""
+          },
+          "response_json": {
+            "id": "aa02df16-ae6c-4cc7-9743-2a1f372b671f",
+            "session_id": "5a39bc2f-3a08-44a6-8bf0-67e2c99ba612",
+            "role": "assistant",
+            "content": "I can\u2019t identify any invoices with toner cartridges from the provided data \u2014 please upload the invoice line-item details or run a live query so I can search them.",
+            "generated_sql": null,
+            "citations": [],
+            "created_at": "2026-08-18T02:27:23.672270",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "4ed4f28f-2caa-49c4-89fc-206553f7b096",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [],
+            "sql": ""
+          },
+          "response_json": {
+            "id": "0185da1e-48bb-45e1-85bf-d924f0aa806b",
+            "session_id": "4ed4f28f-2caa-49c4-89fc-206553f7b096",
+            "role": "assistant",
+            "content": "I can\u2019t find any invoices listing \"toner cartridges\" in the provided data; the extracted context only contains invoice summaries and totals, not line-item details.",
+            "generated_sql": null,
+            "citations": [],
+            "created_at": "2026-08-18T02:27:33.751485",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "alerts",
+      "question": "Which invoices have audit alerts mentioning a duplicate?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "3a6d9eee-dc6d-4d5e-9744-24f9d4d9753d",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "sa_alerts"
+            ],
+            "sql": "SELECT id, invoice_number, flow_direction, vendor_name, customer_name, grand_total, currency, status, sa_alerts, invoice_date, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') ORDER BY created_at DESC;"
+          },
+          "response_json": {
+            "id": "fcd5add8-f4fb-4324-82d8-30163f5143f0",
+            "session_id": "3a6d9eee-dc6d-4d5e-9744-24f9d4d9753d",
+            "role": "assistant",
+            "content": "No invoices were found with audit alerts mentioning a duplicate.\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  id,\n  invoice_number,\n  flow_direction,\n  vendor_name,\n  customer_name,\n  grand_total,\n  currency,\n  status,\n  sa_alerts,\n  invoice_date,\n  created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')\nORDER BY created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:27:57.646895",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "2ad2c340-cd52-445c-bc6f-a8b75ebd679f",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "sa_alerts"
+            ],
+            "sql": "SELECT id, batch_id, vendor_name, customer_name, flow_direction, status, grand_total, currency, invoice_number, invoice_date, sa_alerts, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND sa_alerts IS NOT NULL AND LOWER(sa_alerts::text) LIKE LOWER('%duplicate%');"
+          },
+          "response_json": {
+            "id": "78c6ed75-11ad-4c1e-9356-fce785c67091",
+            "session_id": "2ad2c340-cd52-445c-bc6f-a8b75ebd679f",
+            "role": "assistant",
+            "content": "No invoices were found with audit alerts mentioning a duplicate. Would you like me to broaden the search or check for related alert terms instead?\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT id,\n       batch_id,\n       vendor_name,\n       customer_name,\n       flow_direction,\n       status,\n       grand_total,\n       currency,\n       invoice_number,\n       invoice_date,\n       sa_alerts,\n       created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND sa_alerts IS NOT NULL\n  AND LOWER(sa_alerts::text) LIKE LOWER('%duplicate%');",
+            "citations": [],
+            "created_at": "2026-08-18T02:28:14.433152",
+            "feedback": null
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "attempts": 10,
+    "sql_error": 0,
+    "uncast_lower": 0,
+    "cast_used": 8,
+    "no_sql": 2
+  }
+}

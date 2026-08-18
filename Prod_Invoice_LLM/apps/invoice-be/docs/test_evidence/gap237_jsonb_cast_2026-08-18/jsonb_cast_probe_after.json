@@ -1,0 +1,262 @@
+{
+  "run_label": "after",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "base_url": "http://127.0.0.1:8100/api/v1",
+  "questions": [
+    {
+      "label": "cloud_tag",
+      "question": "Which invoices are tagged cloud?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "fb1fbb85-1f98-4353-bc41-2858343fab0a",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT id, invoice_number, flow_direction, vendor_name, customer_name, grand_total, currency, invoice_date, status, tags FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND ( LOWER(CAST(tags AS TEXT)) LIKE LOWER('%cloud%') OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%cloud%') OR LOWER(vendor_name) LIKE LOWER('%cloud%') OR LOWER(customer_name) LIKE LOWER('%cloud%') ) ORDER BY invoice_date DESC;"
+          },
+          "response_json": {
+            "id": "86b3ebf0-bd45-41ba-9c41-8792a00ab662",
+            "session_id": "fb1fbb85-1f98-4353-bc41-2858343fab0a",
+            "role": "assistant",
+            "content": "Only one invoice is tagged \"cloud\": ACM-2002 (Acme Manufacturing), USD 3,400.00, dated 2026-06-15, status COMPLETED.\n\n### Query Results\n\n\nid | invoice_number | flow_direction | vendor_name | customer_name | grand_total | currency | invoice_date | status | tags\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\nfa587b32-f39b-4c56-9512-7af92704d012 | CNH-1001 | INBOUND | CloudNine Hosting |  | 1200.0 | USD | 2026-06-15 | COMPLETED | ['hosting', 'subscription']\n594abba6-3de8-41e1-9528-ca3a4fc7f272 | ACM-2002 | INBOUND | Acme Manufacturing |  | 3400.0 | USD | 2026-06-15 | COMPLETED | ['cloud', 'infra']\n6a5c1190-13f6-4da3-8a7c-60265eb88a1f | ZEN-3003 | INBOUND | Zenith Consulting |  | 69012.43 | USD | 2026-06-15 | COMPLETED | ['consulting', 'assessment']\n57eb2cb2-bc59-4eba-a074-234c7120c72b | CNH-EU-1002 | INBOUND | CloudNine Hosting EU |  | 800.0 | EUR | 2026-06-15 | COMPLETED | ['hosting', 'subscription']",
+            "generated_sql": "SELECT\n  id,\n  invoice_number,\n  flow_direction,\n  vendor_name,\n  customer_name,\n  grand_total,\n  currency,\n  invoice_date,\n  status,\n  tags\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\nORDER BY invoice_date DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:20:08.045521",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "ab5e6984-6fc1-4756-b75d-e00381ca0120",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, invoice_number, invoice_date, vendor_name, customer_name, grand_total, currency, status, tags FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"cloud\"%') ORDER BY invoice_date DESC;"
+          },
+          "response_json": {
+            "id": "672cddb2-88af-43f1-9a30-758ca0588480",
+            "session_id": "ab5e6984-6fc1-4756-b75d-e00381ca0120",
+            "role": "assistant",
+            "content": "Only invoice ACM-2002 is tagged \"cloud.\"\n\n### Query Results\n\n\nid | invoice_number | invoice_date | vendor_name | customer_name | grand_total | currency | status | tags\n--- | --- | --- | --- | --- | --- | --- | --- | ---\n594abba6-3de8-41e1-9528-ca3a4fc7f272 | ACM-2002 | 2026-06-15 | Acme Manufacturing |  | 3400.0 | USD | COMPLETED | ['cloud', 'infra']",
+            "generated_sql": "SELECT id,\n       invoice_number,\n       invoice_date,\n       vendor_name,\n       customer_name,\n       grand_total,\n       currency,\n       status,\n       tags\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"cloud\"%')\nORDER BY invoice_date DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:20:27.922799",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "office_supplies",
+      "question": "How much did we spend on office supplies?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "62e4c438-0c71-467e-9696-73f1123ccd4b",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT currency, SUM(grand_total) AS total_spent_on_office_supplies, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND flow_direction = 'INBOUND' AND ( LOWER(CAST(tags AS TEXT)) LIKE LOWER('%office supplies%') OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%office supplies%') OR LOWER(vendor_name) LIKE LOWER('%office supplies%') OR LOWER(customer_name) LIKE LOWER('%office supplies%') ) GROUP BY currency ORDER BY currency;"
+          },
+          "response_json": {
+            "id": "96f2e3e0-f9f7-4942-9c25-8f8adfb8191f",
+            "session_id": "62e4c438-0c71-467e-9696-73f1123ccd4b",
+            "role": "assistant",
+            "content": "I found no records for office-supplies spending matching your query, so the total is zero for the criteria used. Would you like me to broaden the date range or remove filters to search again?\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  currency,\n  SUM(grand_total) AS total_spent_on_office_supplies,\n  COUNT(*) AS invoice_count\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%office supplies%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%office supplies%')\n    OR LOWER(vendor_name) LIKE LOWER('%office supplies%')\n    OR LOWER(customer_name) LIKE LOWER('%office supplies%')\n  )\nGROUP BY currency\nORDER BY currency;",
+            "citations": [],
+            "created_at": "2026-08-18T02:20:48.254931",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "436a1229-a81f-42bd-98ad-1aa1ff6396d0",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [],
+            "sql": ""
+          },
+          "response_json": {
+            "id": "e32c1f0f-f414-4ecb-b1c8-f1072f5b0771",
+            "session_id": "436a1229-a81f-42bd-98ad-1aa1ff6396d0",
+            "role": "assistant",
+            "content": "I can\u2019t determine office-supplies spend from the provided data \u2014 there\u2019s no category breakdown.  \nThe snapshot only shows total spend per currency:\n- USD 74,112.43\n- EUR 800.00\n\nIf you\u2019d like, I can run a query to filter invoices labeled \u201coffice supplies.\u201d",
+            "generated_sql": null,
+            "citations": [],
+            "created_at": "2026-08-18T02:21:00.369364",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "furniture",
+      "question": "How much did we spend on furniture?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "3199d128-ee4f-498a-8d75-4c9aefa07e83",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT SUM(grand_total) AS total_spend_on_furniture, currency, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND flow_direction = 'INBOUND' AND ( LOWER(CAST(tags AS TEXT)) LIKE LOWER('%furniture%') OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%furniture%') OR LOWER(vendor_name) LIKE LOWER('%furniture%') OR LOWER(customer_name) LIKE LOWER('%furniture%') ) GROUP BY currency;"
+          },
+          "response_json": {
+            "id": "11fe2772-64d6-4e16-8c8a-f4824d2ce127",
+            "session_id": "3199d128-ee4f-498a-8d75-4c9aefa07e83",
+            "role": "assistant",
+            "content": "No furniture expenses were found in the query results, so the total spend is 0.\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  SUM(grand_total) AS total_spend_on_furniture,\n  currency,\n  COUNT(*) AS invoice_count\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%furniture%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%furniture%')\n    OR LOWER(vendor_name) LIKE LOWER('%furniture%')\n    OR LOWER(customer_name) LIKE LOWER('%furniture%')\n  )\nGROUP BY currency;",
+            "citations": [],
+            "created_at": "2026-08-18T02:21:19.732199",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "6a2e1ff1-5014-45e9-9aca-6fe70ffaa0f6",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags",
+              "items"
+            ],
+            "sql": "SELECT SUM(grand_total) AS total_spent, currency, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND flow_direction = 'INBOUND' AND ( LOWER(CAST(tags AS TEXT)) LIKE LOWER('%furniture%') OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%furniture%') OR LOWER(vendor_name) LIKE LOWER('%furniture%') OR LOWER(customer_name) LIKE LOWER('%furniture%') ) GROUP BY currency ORDER BY currency;"
+          },
+          "response_json": {
+            "id": "1200dcca-c167-4f1b-ab04-b5fc30ff7dc3",
+            "session_id": "6a2e1ff1-5014-45e9-9aca-6fe70ffaa0f6",
+            "role": "assistant",
+            "content": "No furniture expenses were found in the query results.\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT\n  SUM(grand_total) AS total_spent,\n  currency,\n  COUNT(*) AS invoice_count\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%furniture%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%furniture%')\n    OR LOWER(vendor_name) LIKE LOWER('%furniture%')\n    OR LOWER(customer_name) LIKE LOWER('%furniture%')\n  )\nGROUP BY currency\nORDER BY currency;",
+            "citations": [],
+            "created_at": "2026-08-18T02:21:37.168551",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "items_keyword",
+      "question": "Show me invoices with toner cartridges in the line items",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "770e4d89-eb5a-4a58-8081-8734a0176b27",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [],
+            "sql": ""
+          },
+          "response_json": {
+            "id": "0bb4a651-07d6-4813-9978-ce201f768d34",
+            "session_id": "770e4d89-eb5a-4a58-8081-8734a0176b27",
+            "role": "assistant",
+            "content": "- I don\u2019t see any invoices with \"toner cartridges\" in the provided extracted context.",
+            "generated_sql": null,
+            "citations": [],
+            "created_at": "2026-08-18T02:21:46.050230",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "005bd8b8-748e-441d-94d7-6aa39d9a1d62",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [],
+            "sql": ""
+          },
+          "response_json": {
+            "id": "4c2bbee3-ad30-427d-894c-0dd52b34b626",
+            "session_id": "005bd8b8-748e-441d-94d7-6aa39d9a1d62",
+            "role": "assistant",
+            "content": "- I don\u2019t see any invoices with \"toner cartridges\" in the provided extracted data.",
+            "generated_sql": null,
+            "citations": [],
+            "created_at": "2026-08-18T02:21:54.231691",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "alerts",
+      "question": "Which invoices have audit alerts mentioning a duplicate?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "1a298425-dee9-4422-a87f-4ab97e8009d2",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "sa_alerts"
+            ],
+            "sql": "SELECT id, invoice_number, flow_direction, vendor_name, customer_name, status, grand_total, currency, created_at, sa_alerts FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') ORDER BY created_at DESC;"
+          },
+          "response_json": {
+            "id": "7fcb021c-d4d9-4376-bef9-9abc6a0ecf37",
+            "session_id": "1a298425-dee9-4422-a87f-4ab97e8009d2",
+            "role": "assistant",
+            "content": "No invoices were found with audit alerts mentioning a duplicate.\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT id,\n       invoice_number,\n       flow_direction,\n       vendor_name,\n       customer_name,\n       status,\n       grand_total,\n       currency,\n       created_at,\n       sa_alerts\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')\nORDER BY created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:22:11.744107",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "f0721988-4c18-45d3-9930-257e2d418ab6",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "sa_alerts"
+            ],
+            "sql": "SELECT id, invoice_number, vendor_name, customer_name, flow_direction, status, grand_total, currency, sa_alerts, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') ORDER BY created_at DESC;"
+          },
+          "response_json": {
+            "id": "db9c3b18-99fb-43f7-a4aa-568b5857e82b",
+            "session_id": "f0721988-4c18-45d3-9930-257e2d418ab6",
+            "role": "assistant",
+            "content": "No invoices were found with audit alerts mentioning a duplicate. Would you like me to broaden the search criteria or check for related alert keywords?\n\n### Query Results\nNo records found matching the query criteria.",
+            "generated_sql": "SELECT id,\n       invoice_number,\n       vendor_name,\n       customer_name,\n       flow_direction,\n       status,\n       grand_total,\n       currency,\n       sa_alerts,\n       created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')\nORDER BY created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:22:27.014971",
+            "feedback": null
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "attempts": 10,
+    "sql_error": 0,
+    "uncast_lower": 0,
+    "cast_used": 7,
+    "no_sql": 3
+  }
+}

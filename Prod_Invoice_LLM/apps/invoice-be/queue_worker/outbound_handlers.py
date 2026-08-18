@@ -120,13 +120,16 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 session.add(invoice)
                 session.commit()
 
-                # Feature 6.1 (Task 6.1.3): index on VERIFIED, mirroring inbound's
-                # COMPLETED trigger, so outbound documents are searchable through
-                # the same RAG path Chat already uses -- imported call, zero
-                # changes to chroma_client.py itself.
-                if status == "VERIFIED":
+                # Feature 6.1 (Task 6.1.3): index outbound documents so they're
+                # searchable through the same RAG path Chat already uses.
+                # Gap 243: this used to be gated on `status == "VERIFIED"`, the
+                # outbound twin of Gap 240's inbound `COMPLETED` gate -- a
+                # NEEDS_REVIEW outbound invoice was never indexed, permanently,
+                # since routers/outbound_audit.py's resolve path doesn't change
+                # `status` at all. Now shares inbound's `should_index_status()`.
+                from chroma_client import index_invoice_document, should_index_status
+                if should_index_status(status):
                     try:
-                        from chroma_client import index_invoice_document
                         index_invoice_document(
                             invoice_id=str(invoice.id),
                             tenant_id=str(invoice.tenant_id),

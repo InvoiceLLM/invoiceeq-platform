@@ -1,0 +1,58 @@
+{
+  "run_label": "fixed_2",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "2eea3b48-7721-44ae-96f1-b5d737fc4c74",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "9a057d44-9c5f-49b6-8312-7fa5c869307c",
+        "session_id": "2eea3b48-7721-44ae-96f1-b5d737fc4c74",
+        "role": "assistant",
+        "content": "There are 4 cloud-related invoices in total: 1 invoice for \u20ac800 and 3 invoices totaling $73,612.43; all amounts are inbound and none are outbound.\n\n### Query Results\n\n\ninvoice_count | total_amount | currency | total_inbound | total_outbound\n--- | --- | --- | --- | ---\n1 | 800.0 | EUR | 800.0 | 0.0\n3 | 73612.43 | USD | 73612.43 | 0.0",
+        "generated_sql": "SELECT\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_amount,\n  currency,\n  SUM(CASE WHEN flow_direction = 'INBOUND'  THEN grand_total ELSE 0 END) AS total_inbound,\n  SUM(CASE WHEN flow_direction = 'OUTBOUND' THEN grand_total ELSE 0 END) AS total_outbound\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\nGROUP BY currency;",
+        "citations": [],
+        "created_at": "2026-08-17T15:49:09.631245",
+        "feedback": null
+      },
+      "elapsed_seconds": 23.5
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "aefdd226-c442-4dc4-8b0d-b00409a46db1",
+        "session_id": "2eea3b48-7721-44ae-96f1-b5d737fc4c74",
+        "role": "assistant",
+        "content": "CloudNine Hosting CNH-1001 (2026-06-15, due 2026-07-15) \u2014 COMPLETED inbound invoice for USD 1,200.00 (PO-CNH-1001), tax USD 0.00, item: \"Monthly hosting fee\" (1 \u00d7 USD 1,200.00), tags: hosting, subscription.  \nAcme Manufacturing ACM-2002 (2026-06-15, due 2026-07-15) \u2014 COMPLETED inbound invoice for USD 3,400.00 (PO-ACM-2002), tax USD 0.00, item: \"Server rack maintenance\" (1 \u00d7 USD 3,400.00), tags: cloud, infra.  \nZenith Consulting ZEN-3003 (2026-06-15, due 2026-07-15) \u2014 COMPLETED inbound invoice for USD 69,012.43 (PO-ZEN-3003), tax USD 0.00, item: \"Cloud Migration Assessment\" (1 \u00d7 USD 69,012.43), tags: consulting, assessment.\n\n### Query Results\n\n\nid | batch_id | file_path | vendor_name | customer_name | invoice_number | invoice_date | due_date | grand_total | currency | tax_amount | po_number | status | sa_alerts | created_at | flow_direction | tags | items\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\ndde003e9-337b-44b7-b9c0-eb52dca0fa5c |  | test/CNH-1001.pdf | CloudNine Hosting |  | CNH-1001 | 2026-06-15 | 2026-07-15 | 1200.0 | USD | 0.0 | PO-CNH-1001 | COMPLETED | [] | 2026-08-17 15:48:45.653491 | INBOUND | ['hosting', 'subscription'] | [{'amount': 1200.0, 'quantity': 1, 'unit_price': 1200.0, 'description': 'Monthly hosting fee'}]\n8b88ff01-938e-4826-9807-dff86e0e1814 |  | test/ACM-2002.pdf | Acme Manufacturing |  | ACM-2002 | 2026-06-15 | 2026-07-15 | 3400.0 | USD | 0.0 | PO-ACM-2002 | COMPLETED | [] | 2026-08-17 15:48:45.654048 | INBOUND | ['cloud', 'infra'] | [{'amount': 3400.0, 'quantity': 1, 'unit_price': 3400.0, 'description': 'Server rack maintenance'}]\n05a5462a-6d70-4809-bdc3-277d9d4a79b7 |  | test/ZEN-3003.pdf | Zenith Consulting |  | ZEN-3003 | 2026-06-15 | 2026-07-15 | 69012.43 | USD | 0.0 | PO-ZEN-3003 | COMPLETED | [] | 2026-08-17 15:48:45.654379 | INBOUND | ['consulting', 'assessment'] | [{'amount': 69012.43, 'quantity': 1, 'unit_price': 69012.43, 'description': 'Cloud Migration Assessment'}]",
+        "generated_sql": "SELECT\n  id,\n  batch_id,\n  file_path,\n  vendor_name,\n  customer_name,\n  invoice_number,\n  invoice_date,\n  due_date,\n  grand_total,\n  currency,\n  tax_amount,\n  po_number,\n  status,\n  sa_alerts,\n  created_at,\n  flow_direction,\n  tags,\n  items\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\n  AND currency = 'USD'\nORDER BY invoice_date, created_at;",
+        "citations": [],
+        "created_at": "2026-08-17T15:49:34.735943",
+        "feedback": null
+      },
+      "elapsed_seconds": 25.1
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "There are 4 cloud-related invoices in total: 1 invoice for \u20ac800 and 3 invoices totaling $73,612.43; all amounts are inbo",
+      "result_invoice_ids": [
+        "dde003e9-337b-44b7-b9c0-eb52dca0fa5c",
+        "8b88ff01-938e-4826-9807-dff86e0e1814",
+        "05a5462a-6d70-4809-bdc3-277d9d4a79b7",
+        "a6c78280-46c1-4688-89bf-9146dd4a36ab"
+      ]
+    },
+    {
+      "content_snippet": "CloudNine Hosting CNH-1001 (2026-06-15, due 2026-07-15) \u2014 COMPLETED inbound invoice for USD 1,200.00 (PO-CNH-1001), tax ",
+      "result_invoice_ids": [
+        "dde003e9-337b-44b7-b9c0-eb52dca0fa5c",
+        "8b88ff01-938e-4826-9807-dff86e0e1814",
+        "05a5462a-6d70-4809-bdc3-277d9d4a79b7"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "run_label": "after_6",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "8bc4cf47-7f7c-4a4d-a7f6-ab86cb784f79",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "e9545d29-f79e-4fc8-936f-d86190973301",
+        "session_id": "8bc4cf47-7f7c-4a4d-a7f6-ab86cb784f79",
+        "role": "assistant",
+        "content": "There are 4 cloud-related invoices total: 1 in EUR totaling \u20ac800.00 and 3 in USD totaling $73,612.43.\n\n### Query Results\n\n\ninvoice_count | total_grand_total | currency\n--- | --- | ---\n1 | 800.0 | EUR\n3 | 73612.43 | USD",
+        "generated_sql": "SELECT\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_grand_total,\n  currency\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\nGROUP BY currency;",
+        "citations": [],
+        "created_at": "2026-08-18T02:16:07.890301",
+        "feedback": null
+      },
+      "elapsed_seconds": 13.6
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "ec92bf88-913f-487f-b160-41b3cc1f2d7f",
+        "session_id": "8bc4cf47-7f7c-4a4d-a7f6-ab86cb784f79",
+        "role": "assistant",
+        "content": "All three invoices are inbound, marked COMPLETED, dated 2026-06-15 with due date 2026-07-15, and total $73,612.43 combined.  \n- Zenith Consulting (ZEN-3003): Cloud Migration Assessment, $69,012.43, PO-ZEN-3003, tax $0.00.  \n- Acme Manufacturing (ACM-2002): Server rack maintenance, $3,400.00, PO-ACM-2002, tax $0.00.  \n- CloudNine Hosting (CNH-1001): Monthly hosting fee, $1,200.00, PO-CNH-1001, tax $0.00.\n\n### Query Results\n\n\nid | batch_id | file_path | vendor_name | customer_name | flow_direction | invoice_number | invoice_date | due_date | grand_total | currency | tax_amount | po_number | status | sa_alerts | tags | items | created_at\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n734940a6-e6c2-4719-b65e-cdf5fe79457b |  | test/ZEN-3003.pdf | Zenith Consulting |  | INBOUND | ZEN-3003 | 2026-06-15 | 2026-07-15 | 69012.43 | USD | 0.0 | PO-ZEN-3003 | COMPLETED | [] | ['consulting', 'assessment'] | [{'amount': 69012.43, 'quantity': 1, 'unit_price': 69012.43, 'description': 'Cloud Migration Assessment'}] | 2026-08-18 02:15:54.168901\n6c5af5f9-66cf-4bd2-be1c-77a7b8dae37d |  | test/ACM-2002.pdf | Acme Manufacturing |  | INBOUND | ACM-2002 | 2026-06-15 | 2026-07-15 | 3400.0 | USD | 0.0 | PO-ACM-2002 | COMPLETED | [] | ['cloud', 'infra'] | [{'amount': 3400.0, 'quantity': 1, 'unit_price': 3400.0, 'description': 'Server rack maintenance'}] | 2026-08-18 02:15:54.168670\n485e76b9-6f66-463f-bbb0-5ca3bfafa03c |  | test/CNH-1001.pdf | CloudNine Hosting |  | INBOUND | CNH-1001 | 2026-06-15 | 2026-07-15 | 1200.0 | USD | 0.0 | PO-CNH-1001 | COMPLETED | [] | ['hosting', 'subscription'] | [{'amount': 1200.0, 'quantity': 1, 'unit_price': 1200.0, 'description': 'Monthly hosting fee'}] | 2026-08-18 02:15:54.168276",
+        "generated_sql": "SELECT\n  id,\n  batch_id,\n  file_path,\n  vendor_name,\n  customer_name,\n  flow_direction,\n  invoice_number,\n  invoice_date,\n  due_date,\n  grand_total,\n  currency,\n  tax_amount,\n  po_number,\n  status,\n  sa_alerts,\n  tags,\n  items,\n  created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\n  AND currency = 'USD'\nORDER BY invoice_date DESC, created_at DESC;",
+        "citations": [],
+        "created_at": "2026-08-18T02:16:33.552757",
+        "feedback": null
+      },
+      "elapsed_seconds": 25.7
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "There are 4 cloud-related invoices total: 1 in EUR totaling \u20ac800.00 and 3 in USD totaling $73,612.43.\n\n### Query Results",
+      "result_invoice_ids": [
+        "485e76b9-6f66-463f-bbb0-5ca3bfafa03c",
+        "6c5af5f9-66cf-4bd2-be1c-77a7b8dae37d",
+        "734940a6-e6c2-4719-b65e-cdf5fe79457b",
+        "57ab368f-aa0e-455e-ba70-c8c3ec620ae7"
+      ]
+    },
+    {
+      "content_snippet": "All three invoices are inbound, marked COMPLETED, dated 2026-06-15 with due date 2026-07-15, and total $73,612.43 combin",
+      "result_invoice_ids": [
+        "734940a6-e6c2-4719-b65e-cdf5fe79457b",
+        "6c5af5f9-66cf-4bd2-be1c-77a7b8dae37d",
+        "485e76b9-6f66-463f-bbb0-5ca3bfafa03c"
+      ]
+    }
+  ]
+}

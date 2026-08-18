@@ -1,0 +1,61 @@
+{
+  "invoice_id": "e6ccfb34-d53f-45e7-8ec9-119ced8aa0db",
+  "before": {
+    "vendor_name": "Blue Ridge Logistics",
+    "invoice_number": "BRL-200981",
+    "grand_total": 2386.31,
+    "tax_amount": 161.31,
+    "subtotal": 200.0,
+    "items": [
+      {
+        "amount": 200.0,
+        "quantity": 2.0,
+        "unit_price": 100.0,
+        "description": "TEST LINE ITEM EDIT"
+      }
+    ],
+    "tags": [
+      "freight",
+      "logistics",
+      "sales_tax"
+    ]
+  },
+  "after": {
+    "vendor_name": "Blue Ridge Logistics",
+    "invoice_number": "BRL-200981",
+    "grand_total": 2386.31,
+    "tax_amount": 161.31,
+    "subtotal": 2225.0,
+    "items": [
+      {
+        "amount": 1800.0,
+        "quantity": 1,
+        "unit_price": 1800.0,
+        "description": "LTL Freight Transportation -- Charlotte, NC to Columbus, OH (Freight Class 70)"
+      },
+      {
+        "amount": 225.0,
+        "quantity": 1,
+        "unit_price": 225.0,
+        "description": "Fuel Surcharge (12.5%)"
+      },
+      {
+        "amount": 125.0,
+        "quantity": 1,
+        "unit_price": 125.0,
+        "description": "Liftgate Delivery Fee"
+      },
+      {
+        "amount": 75.0,
+        "quantity": 1,
+        "unit_price": 75.0,
+        "description": "Residential Delivery Surcharge"
+      }
+    ],
+    "tags": [
+      "freight",
+      "logistics",
+      "sales_tax"
+    ]
+  }
+}

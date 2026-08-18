@@ -132,7 +132,15 @@ def test_sql_route_prompt_includes_direction_aware_columns(db_session):
     assert "total_owed_to_us" in prompt_text
 
 
-# ── Task 6.1.3: RAG indexing fires on VERIFIED, not NEEDS_REVIEW ─────────────
+# ── Task 6.1.3 / Gap 243: RAG indexing fires on VERIFIED *and* NEEDS_REVIEW ──
+#
+# Originally this pair asserted "VERIFIED indexes, NEEDS_REVIEW does not",
+# locking in the `status == "VERIFIED"` gate. BE Gap 243 established that gate
+# was a bug: because routers/outbound_audit.py's resolve path never mutates
+# `invoice.status`, a NEEDS_REVIEW outbound invoice stayed unindexed for the
+# life of the row, so a customer-facing invoice a human had to review could
+# never be found through RAG chat -- not even after it was resolved. The second
+# test below is therefore inverted deliberately, not relaxed.
 
 def test_verified_outbound_invoice_triggers_rag_indexing(db_session):
     from queue_worker import outbound_handlers
@@ -158,7 +166,11 @@ def test_verified_outbound_invoice_triggers_rag_indexing(db_session):
     assert call_kwargs["invoice_id"] == str(invoice_id)
 
 
-def test_needs_review_outbound_invoice_skips_rag_indexing(db_session):
+def test_needs_review_outbound_invoice_also_triggers_rag_indexing(db_session):
+    """Gap 243: a NEEDS_REVIEW outbound invoice must be indexed at ingestion
+    just like a VERIFIED one. Its text is exactly as searchable, and the
+    verification outcome says nothing about whether the document's content
+    should be findable."""
     from queue_worker import outbound_handlers
 
     invoice_id = uuid4()
@@ -176,5 +188,29 @@ def test_needs_review_outbound_invoice_skips_rag_indexing(db_session):
             "extracted_data": {"invoice_number": "OUT-2", "grand_total": 500.0},
         }
         outbound_handlers.handle_process_outbound_invoice("batch-2", "mock/out.pdf", str(MOCK_TENANT_ID))
+
+    m_index.assert_called_once()
+    assert m_index.call_args.kwargs["invoice_id"] == str(invoice_id)
+
+
+def test_unextracted_outbound_invoice_is_not_rag_indexed(db_session):
+    """The other side of Gap 243's contract: widening the gate must not mean
+    indexing everything. A FAILED extraction has no usable content, so
+    should_index_status() still keeps it out."""
+    from queue_worker import outbound_handlers
+
+    invoice_id = uuid4()
+    db_session.add(Invoice(id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/out.pdf", flow_direction="OUTBOUND", status="UPLOADED"))
+    db_session.commit()
+
+    with patch("queue_worker.outbound_handlers.engine", engine), \
+         patch("queue_worker.outbound_handlers._run_ocr", return_value="ocr text"), \
+         patch("queue_worker.outbound_handlers._publish_sse_events"), \
+         patch("queue_worker.outbound_handlers.run_outbound_extraction_agent") as m_extract, \
+         patch("chroma_client.index_invoice_document") as m_index:
+        m_extract.return_value = {
+            "status": "FAILED", "alerts": [], "extracted_data": {},
+        }
+        outbound_handlers.handle_process_outbound_invoice("batch-3", "mock/out.pdf", str(MOCK_TENANT_ID))
 
     m_index.assert_not_called()

@@ -1,0 +1,208 @@
+{
+  "threshold": 0.49,
+  "tenant": "3511ae3e-27a4-49a5-897d-6a1a3fc3ac91",
+  "turns": [
+    {
+      "query": "How much did we spend on office supplies?",
+      "expected": [
+        "Summit Office Supplies"
+      ],
+      "matches": [
+        {
+          "vendor": "Summit Office Supplies",
+          "invoice_id": "4266b8a7-1594-4288-8d9f-436b85c4e385",
+          "distance": 0.4132,
+          "keyword_score": 2,
+          "matched_by": "vector+keyword",
+          "expected": true
+        },
+        {
+          "vendor": "Redwood Facilities Group",
+          "invoice_id": "f886ef22-7463-4126-ae28-fe4eaa6f4e20",
+          "distance": 0.4605,
+          "keyword_score": 1,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Apex Print Solutions",
+          "invoice_id": "7140ff29-5c6d-42a2-ad89-09e9b40e8c8a",
+          "distance": 0.4553,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "query": "And logistics or freight costs?",
+      "expected": [
+        "Blue Ridge Logistics"
+      ],
+      "matches": [
+        {
+          "vendor": "Blue Ridge Logistics",
+          "invoice_id": "e6ccfb34-d53f-45e7-8ec9-119ced8aa0db",
+          "distance": 0.4299,
+          "keyword_score": 2,
+          "matched_by": "vector+keyword",
+          "expected": true
+        }
+      ]
+    },
+    {
+      "query": "Show me manufacturing or tooling charges",
+      "expected": [
+        "Cascade Manufacturing Co"
+      ],
+      "matches": [
+        {
+          "vendor": "Cascade Manufacturing Co",
+          "invoice_id": "b540176f-e053-4ff4-8c72-49e3fc9450d5",
+          "distance": 0.3848,
+          "keyword_score": 2,
+          "matched_by": "vector+keyword",
+          "expected": true
+        },
+        {
+          "vendor": "Titan Steel Distributors",
+          "invoice_id": "28999cc1-05aa-4e5c-8df5-071f8829bd03",
+          "distance": 0.4422,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Blue Ridge Logistics",
+          "invoice_id": "e6ccfb34-d53f-45e7-8ec9-119ced8aa0db",
+          "distance": 0.4497,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Apex Print Solutions",
+          "invoice_id": "7140ff29-5c6d-42a2-ad89-09e9b40e8c8a",
+          "distance": 0.4658,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Fieldstone Analytics LLC",
+          "invoice_id": "3abe465e-93a9-49e5-b607-428fc10cf7d4",
+          "distance": 0.4708,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "query": "Any janitorial or cleaning services?",
+      "expected": [
+        "Redwood Facilities Group"
+      ],
+      "matches": [
+        {
+          "vendor": "Redwood Facilities Group",
+          "invoice_id": "f886ef22-7463-4126-ae28-fe4eaa6f4e20",
+          "distance": 0.4749,
+          "keyword_score": 2,
+          "matched_by": "vector+keyword",
+          "expected": true
+        }
+      ]
+    },
+    {
+      "query": "What about printing costs?",
+      "expected": [
+        "Apex Print Solutions"
+      ],
+      "matches": [
+        {
+          "vendor": "Apex Print Solutions",
+          "invoice_id": "7140ff29-5c6d-42a2-ad89-09e9b40e8c8a",
+          "distance": 0.3924,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": true
+        },
+        {
+          "vendor": "Summit Office Supplies",
+          "invoice_id": "4266b8a7-1594-4288-8d9f-436b85c4e385",
+          "distance": 0.4807,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Cascade Manufacturing Co",
+          "invoice_id": "b540176f-e053-4ff4-8c72-49e3fc9450d5",
+          "distance": 0.4854,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "query": "Do we have any steel or materials related invoices?",
+      "expected": [
+        "Titan Steel Distributors"
+      ],
+      "matches": [
+        {
+          "vendor": "Titan Steel Distributors",
+          "invoice_id": "28999cc1-05aa-4e5c-8df5-071f8829bd03",
+          "distance": 0.3823,
+          "keyword_score": 1,
+          "matched_by": "vector",
+          "expected": true
+        },
+        {
+          "vendor": "Cascade Manufacturing Co",
+          "invoice_id": "b540176f-e053-4ff4-8c72-49e3fc9450d5",
+          "distance": 0.4036,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Redwood Facilities Group",
+          "invoice_id": "f886ef22-7463-4126-ae28-fe4eaa6f4e20",
+          "distance": 0.4109,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Meridian Health Partners",
+          "invoice_id": "fae9584c-2dc0-4ed2-876f-889749e3e739",
+          "distance": 0.4175,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        },
+        {
+          "vendor": "Apex Print Solutions",
+          "invoice_id": "7140ff29-5c6d-42a2-ad89-09e9b40e8c8a",
+          "distance": 0.4238,
+          "keyword_score": 0,
+          "matched_by": "vector",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "query": "Do we have any legal or attorney fees?",
+      "expected": [],
+      "matches": []
+    },
+    {
+      "query": "Any airline or travel bookings?",
+      "expected": [],
+      "matches": []
+    }
+  ]
+}

@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 from datetime import datetime
 
 from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
@@ -242,5 +243,26 @@ async def resolve_outbound_alert(
     )
     db_session.add(audit_log)
     db_session.commit()
+
+    # Gap 243 backstop, the outbound twin of routers/audit.py's Gap 240 one:
+    # this endpoint never changes `invoice.status` (an outbound resolve is
+    # corrections + alert dismissal only), so there is no status transition to
+    # key on -- the trigger is the resolution itself. Only re-indexes when the
+    # invoice genuinely has no chunks, and never fails the resolve on error.
+    try:
+        from chroma_client import has_invoice_chunks, index_invoice_document, should_index_status
+        if should_index_status(invoice.status) and not await run_in_threadpool(
+            has_invoice_chunks, str(invoice.id), str(invoice.tenant_id)
+        ):
+            logger.info("Backfilling RAG index for resolved outbound invoice %s (no chunks found)", invoice.id)
+            await run_in_threadpool(
+                index_invoice_document,
+                str(invoice.id),
+                str(invoice.tenant_id),
+                invoice.customer_name,
+                invoice.file_path,
+            )
+    except Exception as ie:
+        logger.error("RAG index backfill failed for resolved outbound invoice %s: %s", invoice.id, ie)
 
     return {"success": True, "corrections_applied": correction_diff, "standing_rule_result": standing_rule_result}

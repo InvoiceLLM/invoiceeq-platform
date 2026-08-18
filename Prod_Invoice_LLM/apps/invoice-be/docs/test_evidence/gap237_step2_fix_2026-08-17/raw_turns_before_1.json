@@ -1,0 +1,54 @@
+{
+  "run_label": "before_1",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "5c8277a8-484c-4f28-87a6-40067a073386",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "bfbf0073-8ba4-4368-af77-674749b04afd",
+        "session_id": "5c8277a8-484c-4f28-87a6-40067a073386",
+        "role": "assistant",
+        "content": "There are 4 inbound invoices related to cloud: 1 invoice for \u20ac800.00 and 3 invoices totaling $73,612.43.\n\n### Query Results\n\n\nflow_direction | currency | invoice_count | total_amount\n--- | --- | --- | ---\nINBOUND | EUR | 1 | 800.0\nINBOUND | USD | 3 | 73612.43",
+        "generated_sql": "SELECT\n  flow_direction,\n  currency,\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_amount\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"cloud\"%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\nGROUP BY flow_direction, currency\nORDER BY currency, flow_direction;",
+        "citations": [],
+        "created_at": "2026-08-17T15:23:14.050453",
+        "feedback": null
+      },
+      "elapsed_seconds": 23.9
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "987d5b40-20fb-4e18-9b72-a3bae0c75672",
+        "session_id": "5c8277a8-484c-4f28-87a6-40067a073386",
+        "role": "assistant",
+        "content": "- The three inbound USD cloud invoices total $73,612.43, are marked COMPLETED, and are dated 2026-06-15.  \n- The provided extracts don't include individual invoice-level details (vendor, invoice numbers, or line items); would you like me to fetch and show those?",
+        "generated_sql": null,
+        "citations": [],
+        "created_at": "2026-08-17T15:23:31.371240",
+        "feedback": null
+      },
+      "elapsed_seconds": 17.3
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "There are 4 inbound invoices related to cloud: 1 invoice for \u20ac800.00 and 3 invoices totaling $73,612.43.\n\n### Query Resu",
+      "result_invoice_ids": [
+        "432c4e17-5678-485e-b97b-7d36c5450a29",
+        "a62be60c-2bbc-4dad-8764-eb2c1a320bd1",
+        "dfa0dbb8-58c0-4d42-9251-729efb276c32",
+        "70154aa3-581f-45cf-a039-2631b322c5da"
+      ]
+    },
+    {
+      "content_snippet": "- The three inbound USD cloud invoices total $73,612.43, are marked COMPLETED, and are dated 2026-06-15.  \n- The provide",
+      "result_invoice_ids": []
+    }
+  ]
+}

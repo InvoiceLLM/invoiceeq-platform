@@ -1,0 +1,164 @@
+{
+  "run_label": "tagliteral_after",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "base_url": "http://127.0.0.1:8100/api/v1",
+  "questions": [
+    {
+      "label": "tag_hosting",
+      "question": "Do we have any invoices with the tag 'hosting'?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "9258405d-e04e-453f-8ff0-023b43396f8f",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, tenant_id, flow_direction, vendor_name, customer_name, invoice_number, invoice_date, due_date, grand_total, currency, status, tags, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"hosting\"%');"
+          },
+          "response_json": {
+            "id": "852e6267-5af7-4809-a6a1-aed1288277e5",
+            "session_id": "9258405d-e04e-453f-8ff0-023b43396f8f",
+            "role": "assistant",
+            "content": "Yes \u2014 there are 2 invoices tagged \"hosting\", both INBOUND and COMPLETED: $1,200 (CloudNine Hosting) and \u20ac800 (CloudNine Hosting EU).\n\n### Query Results\n\n\nid | tenant_id | flow_direction | vendor_name | customer_name | invoice_number | invoice_date | due_date | grand_total | currency | status | tags | created_at\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n2df070c0-c105-4e0e-8ddb-4341073d0d76 | 02db74f3-2064-4b3b-aec9-218af9a408f4 | INBOUND | CloudNine Hosting |  | CNH-1001 | 2026-06-15 | 2026-07-15 | 1200.0 | USD | COMPLETED | ['hosting', 'subscription'] | 2026-08-18 02:32:19.126843\ne96559fe-6756-4985-9875-c52c12eb5dcb | 02db74f3-2064-4b3b-aec9-218af9a408f4 | INBOUND | CloudNine Hosting EU |  | CNH-EU-1002 | 2026-06-15 | 2026-07-15 | 800.0 | EUR | COMPLETED | ['hosting', 'subscription'] | 2026-08-18 02:32:19.127678",
+            "generated_sql": "SELECT\n  id,\n  tenant_id,\n  flow_direction,\n  vendor_name,\n  customer_name,\n  invoice_number,\n  invoice_date,\n  due_date,\n  grand_total,\n  currency,\n  status,\n  tags,\n  created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"hosting\"%');",
+            "citations": [],
+            "created_at": "2026-08-18T02:32:34.763912",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "ead1da2b-0cf0-4515-87e2-0d4f5c7044fd",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, batch_id, file_path, vendor_name, customer_name, flow_direction, status, grand_total, currency, tags, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"hosting\"%') ORDER BY created_at DESC;"
+          },
+          "response_json": {
+            "id": "578affd1-8c3c-44a6-8016-4d4d43d4c42b",
+            "session_id": "ead1da2b-0cf0-4515-87e2-0d4f5c7044fd",
+            "role": "assistant",
+            "content": "Yes \u2014 there are 2 invoices tagged \"hosting\": one INBOUND/COMPLETED for \u20ac800.00 (CloudNine Hosting EU) and one INBOUND/COMPLETED for $1,200.00 (CloudNine Hosting).\n\n### Query Results\n\n\nid | batch_id | file_path | vendor_name | customer_name | flow_direction | status | grand_total | currency | tags | created_at\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\ne96559fe-6756-4985-9875-c52c12eb5dcb |  | test/CNH-EU-1002.pdf | CloudNine Hosting EU |  | INBOUND | COMPLETED | 800.0 | EUR | ['hosting', 'subscription'] | 2026-08-18 02:32:19.127678\n2df070c0-c105-4e0e-8ddb-4341073d0d76 |  | test/CNH-1001.pdf | CloudNine Hosting |  | INBOUND | COMPLETED | 1200.0 | USD | ['hosting', 'subscription'] | 2026-08-18 02:32:19.126843",
+            "generated_sql": "SELECT id,\n       batch_id,\n       file_path,\n       vendor_name,\n       customer_name,\n       flow_direction,\n       status,\n       grand_total,\n       currency,\n       tags,\n       created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"hosting\"%')\nORDER BY created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:32:50.827550",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "tag_infra",
+      "question": "List the invoices carrying the tag \"infra\".",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "c6de2ad8-2465-4b5d-857c-9500f3d29a2e",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, invoice_number, vendor_name, customer_name, flow_direction, grand_total, currency, invoice_date, due_date, status, tags, items, created_at, file_path FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"infra\"%') ORDER BY invoice_date DESC NULLS LAST, created_at DESC;"
+          },
+          "response_json": {
+            "id": "f05d520c-0bf3-48f7-a744-0cc517b9152a",
+            "session_id": "c6de2ad8-2465-4b5d-857c-9500f3d29a2e",
+            "role": "assistant",
+            "content": "One invoice carries the \"infra\" tag: ACM-2002 (Acme Manufacturing) \u2014 $3,400.00, invoice date 2026-06-15, due 2026-07-15, status COMPLETED.\n\n### Query Results\n\n\nid | invoice_number | vendor_name | customer_name | flow_direction | grand_total | currency | invoice_date | due_date | status | tags | items | created_at | file_path\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n9edd83e7-5f20-4c3a-be64-bdee46ae6371 | ACM-2002 | Acme Manufacturing |  | INBOUND | 3400.0 | USD | 2026-06-15 | 2026-07-15 | COMPLETED | ['cloud', 'infra'] | [{'amount': 3400.0, 'quantity': 1, 'unit_price': 3400.0, 'description': 'Server rack maintenance'}] | 2026-08-18 02:32:19.127247 | test/ACM-2002.pdf",
+            "generated_sql": "SELECT id,\n       invoice_number,\n       vendor_name,\n       customer_name,\n       flow_direction,\n       grand_total,\n       currency,\n       invoice_date,\n       due_date,\n       status,\n       tags,\n       items,\n       created_at,\n       file_path\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"infra\"%')\nORDER BY invoice_date DESC NULLS LAST, created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:33:06.886737",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "22f86d1c-3287-4a64-b2f3-5c51100107b5",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, tenant_id, batch_id, file_path, vendor_name, customer_name, flow_direction, invoice_number, invoice_date, due_date, status, grand_total, currency, tax_amount, po_number, sa_alerts, tags, items, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"infra\"%') ORDER BY invoice_date DESC, created_at DESC;"
+          },
+          "response_json": {
+            "id": "fca02725-6d07-4a69-8377-da8faaec6a6f",
+            "session_id": "22f86d1c-3287-4a64-b2f3-5c51100107b5",
+            "role": "assistant",
+            "content": "Found 1 invoice with the tag \"infra\": ACM-2002 (Acme Manufacturing), dated 2026-06-15, grand total $3,400.00 USD, due 2026-07-15, status COMPLETED.\n\n### Query Results\n\n\nid | tenant_id | batch_id | file_path | vendor_name | customer_name | flow_direction | invoice_number | invoice_date | due_date | status | grand_total | currency | tax_amount | po_number | sa_alerts | tags | items | created_at\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n9edd83e7-5f20-4c3a-be64-bdee46ae6371 | 02db74f3-2064-4b3b-aec9-218af9a408f4 |  | test/ACM-2002.pdf | Acme Manufacturing |  | INBOUND | ACM-2002 | 2026-06-15 | 2026-07-15 | COMPLETED | 3400.0 | USD | 0.0 | PO-ACM-2002 | [] | ['cloud', 'infra'] | [{'amount': 3400.0, 'quantity': 1, 'unit_price': 3400.0, 'description': 'Server rack maintenance'}] | 2026-08-18 02:32:19.127247",
+            "generated_sql": "SELECT\n  id,\n  tenant_id,\n  batch_id,\n  file_path,\n  vendor_name,\n  customer_name,\n  flow_direction,\n  invoice_number,\n  invoice_date,\n  due_date,\n  status,\n  grand_total,\n  currency,\n  tax_amount,\n  po_number,\n  sa_alerts,\n  tags,\n  items,\n  created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"infra\"%')\nORDER BY invoice_date DESC, created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:33:22.792041",
+            "feedback": null
+          }
+        }
+      ]
+    },
+    {
+      "label": "tag_supplies",
+      "question": "Which invoices have the tag 'supplies' on them?",
+      "attempts": [
+        {
+          "attempt": 0,
+          "session_id": "2094dfd9-c70d-4088-b8cc-cb4a3dd6d939",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, invoice_number, vendor_name, customer_name, flow_direction, status, grand_total, currency, tags, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"supplies\"%');"
+          },
+          "response_json": {
+            "id": "2c3cf851-1b2a-452a-be6a-1ab924f94c77",
+            "session_id": "2094dfd9-c70d-4088-b8cc-cb4a3dd6d939",
+            "role": "assistant",
+            "content": "One invoice has the \"supplies\" tag: ODS-4004 (ID 49afb939-94a0-42d5-9699-af872274be6b) for $500.00 USD.\n\n### Query Results\n\n\nid | invoice_number | vendor_name | customer_name | flow_direction | status | grand_total | currency | tags | created_at\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n49afb939-94a0-42d5-9699-af872274be6b | ODS-4004 | Office Depot Supplies |  | INBOUND | COMPLETED | 500.0 | USD | ['office', 'supplies'] | 2026-08-18 02:32:19.127885",
+            "generated_sql": "SELECT id,\n       invoice_number,\n       vendor_name,\n       customer_name,\n       flow_direction,\n       status,\n       grand_total,\n       currency,\n       tags,\n       created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"supplies\"%');",
+            "citations": [],
+            "created_at": "2026-08-18T02:33:40.085268",
+            "feedback": null
+          }
+        },
+        {
+          "attempt": 1,
+          "session_id": "13b50773-c2f7-45c8-a37c-99b4fdcd5153",
+          "verdict": {
+            "sql_error": false,
+            "uncast_lower": [],
+            "cast_used": [
+              "tags"
+            ],
+            "sql": "SELECT id, tenant_id, invoice_number, vendor_name, customer_name, flow_direction, grand_total, currency, tags, created_at FROM invoice WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4' AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"supplies\"%') ORDER BY created_at DESC;"
+          },
+          "response_json": {
+            "id": "17ffacab-4a9a-43d5-bd67-dcf32c0537d7",
+            "session_id": "13b50773-c2f7-45c8-a37c-99b4fdcd5153",
+            "role": "assistant",
+            "content": "One invoice matches the tag 'supplies': invoice ODS-4004 (Office Depot Supplies), INBOUND, $500.00, created 2026-08-18 02:32:19.\n\n### Query Results\n\n\nid | tenant_id | invoice_number | vendor_name | customer_name | flow_direction | grand_total | currency | tags | created_at\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n49afb939-94a0-42d5-9699-af872274be6b | 02db74f3-2064-4b3b-aec9-218af9a408f4 | ODS-4004 | Office Depot Supplies |  | INBOUND | 500.0 | USD | ['office', 'supplies'] | 2026-08-18 02:32:19.127885",
+            "generated_sql": "SELECT id,\n       tenant_id,\n       invoice_number,\n       vendor_name,\n       customer_name,\n       flow_direction,\n       grand_total,\n       currency,\n       tags,\n       created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND LOWER(CAST(tags AS TEXT)) LIKE LOWER('%\"supplies\"%')\nORDER BY created_at DESC;",
+            "citations": [],
+            "created_at": "2026-08-18T02:33:58.741488",
+            "feedback": null
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "attempts": 6,
+    "sql_error": 0,
+    "uncast_lower": 0,
+    "cast_used": 6,
+    "no_sql": 0
+  }
+}

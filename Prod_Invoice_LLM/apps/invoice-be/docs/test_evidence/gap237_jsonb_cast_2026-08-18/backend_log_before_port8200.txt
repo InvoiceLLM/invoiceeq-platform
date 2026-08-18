@@ -1,0 +1,486 @@
+INFO:     Started server process [12420]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8200 (Press CTRL+C to quit)
+INFO:     127.0.0.1:56094 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...able, so route to SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='... per the schema rules.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 17:   AND LOWER(tags) LIKE LOWER('%"cloud"%');
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT id,
+       invoice_number,
+       vendor_name,
+       customer_name,
+       grand_total,
+       currency,
+       invoice_date,
+       due_date,
+       status,
+       tags,
+       items,
+       flow_direction,
+       created_at,
+       file_path
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"cloud"%%');]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/3bd6501b-56f3-40f9-b8b0-e8abb2986ba5/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...uld be handled by SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='... context is preserved.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 20:   AND LOWER(tags) LIKE LOWER('%"cloud"%')
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT id,
+       batch_id,
+       file_path,
+       vendor_name,
+       customer_name,
+       invoice_number,
+       invoice_date,
+       due_date,
+       status,
+       grand_total,
+       currency,
+       tax_amount,
+       po_number,
+       sa_alerts,
+       tags,
+       created_at,
+       flow_direction
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"cloud"%%')
+ORDER BY invoice_date DESC, created_at DESC;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...plying LOWER to jsonb.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/7ab864c9-e8af-4cb3-a25d-25542b936b36/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ice table — use SQL.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 8:     LOWER(tags) LIKE LOWER('%office supplies%')
+            ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT
+  currency,
+  SUM(grand_total) AS total_spent_on_office_supplies
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND flow_direction = 'INBOUND'
+  AND (
+    LOWER(tags) LIKE LOWER('%%office supplies%%')
+    OR LOWER(items) LIKE LOWER('%%office supplies%%')
+    OR LOWER(vendor_name) LIKE LOWER('%%office supplies%%')
+    OR LOWER(customer_name) LIKE LOWER('%%office supplies%%')
+  )
+GROUP BY currency;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...e in INBOUND invoices.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/ab96bc82-907f-4877-9444-ea1d595efa72/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ld be handled via SQL.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 8:     LOWER(tags) LIKE LOWER('%office supplies%')
+            ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT
+  COALESCE(SUM(grand_total), 0) AS total_spent,
+  currency
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND flow_direction = 'INBOUND'
+  AND (
+    LOWER(tags) LIKE LOWER('%%office supplies%%')
+    OR LOWER(items) LIKE LOWER('%%office supplies%%')
+    OR LOWER(vendor_name) LIKE LOWER('%%office supplies%%')
+    OR LOWER(customer_name) LIKE LOWER('%%office supplies%%')
+  )
+GROUP BY currency;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="... currency as required.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/a7f02726-01f4-44a3-bc6c-dea672a0c305/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ory), so route to SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...nant and inbound flow."), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 9:     LOWER(tags) LIKE LOWER('%furniture%')
+            ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT
+  currency,
+  SUM(grand_total) AS total_spent_on_furniture,
+  COUNT(*) AS invoice_count
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND flow_direction = 'INBOUND'
+  AND (
+    LOWER(tags) LIKE LOWER('%%furniture%%')
+    OR LOWER(items) LIKE LOWER('%%furniture%%')
+    OR LOWER(vendor_name) LIKE LOWER('%%furniture%%')
+    OR LOWER(customer_name) LIKE LOWER('%%furniture%%')
+  )
+GROUP BY currency
+ORDER BY currency;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...e jsonb/LOWER() error.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/bcd81794-b85a-4ec7-8941-c187cca797af/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...nst the invoice table."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="... included per policy)."), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 8:     LOWER(tags) LIKE LOWER('%furniture%')
+            ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT
+  SUM(grand_total) AS total_spent,
+  currency
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND flow_direction = 'INBOUND'
+  AND (
+    LOWER(tags) LIKE LOWER('%%furniture%%')
+    OR LOWER(items) LIKE LOWER('%%furniture%%')
+    OR LOWER(vendor_name) LIKE LOWER('%%furniture%%')
+    OR LOWER(customer_name) LIKE LOWER('%%furniture%%')
+  )
+GROUP BY currency;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...the JSONB->text error.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/550132c2-9506-42a0-a0ad-62abb38341ff/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...n, so it requires RAG."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/5a39bc2f-3a08-44a6-8bf0-67e2c99ba612/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...cument/text retrieval."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/4ed4f28f-2caa-49c4-89fc-206553f7b096/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...emantic document read.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...ontent for inspection.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 14:   AND LOWER(sa_alerts) LIKE LOWER('%duplicate%')
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT id,
+       invoice_number,
+       flow_direction,
+       vendor_name,
+       customer_name,
+       grand_total,
+       currency,
+       status,
+       sa_alerts,
+       invoice_date,
+       created_at
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(sa_alerts) LIKE LOWER('%%duplicate%%')
+ORDER BY created_at DESC;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/3a6d9eee-dc6d-4d5e-9744-24f9d4d9753d/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...d be handled with SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...messages are searched.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:56097 - "POST /api/v1/chat/sessions/2ad2c340-cd52-445c-bc6f-a8b75ebd679f/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ther than RAG or chat."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...d currency per rule 7.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 14:   AND LOWER(tags) LIKE LOWER('%"hosting"%')
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT id,
+       invoice_number,
+       flow_direction,
+       vendor_name,
+       customer_name,
+       grand_total,
+       currency,
+       invoice_date,
+       status,
+       tags,
+       created_at
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"hosting"%%')
+ORDER BY created_at DESC;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions/eb765b97-f5c5-482a-88e2-8b0358455682/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...uld be handled by SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...longside grand_total).'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 15:   AND LOWER(tags) LIKE LOWER('%"hosting"%');
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT id,
+       tenant_id,
+       vendor_name,
+       customer_name,
+       flow_direction,
+       grand_total,
+       currency,
+       invoice_number,
+       invoice_date,
+       status,
+       tags,
+       created_at
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"hosting"%%');]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...clude the tag hosting.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions/618a38ee-b8f3-474a-8751-7d3ea91594e7/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ntic document content."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...s with their currency.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 19:   AND LOWER(tags) LIKE LOWER('%"infra"%')
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT id,
+       batch_id,
+       file_path,
+       vendor_name,
+       customer_name,
+       flow_direction,
+       invoice_number,
+       invoice_date,
+       due_date,
+       status,
+       grand_total,
+       currency,
+       tax_amount,
+       po_number,
+       tags,
+       created_at
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"infra"%%')
+ORDER BY invoice_date DESC;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...se-insensitive match).'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions/3d34a858-b9d1-42ff-a5ac-d540751fb482/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...mantic document query."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 23:   AND LOWER(tags) LIKE LOWER('%"infra"%')
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT
+  id,
+  tenant_id,
+  batch_id,
+  file_path,
+  vendor_name,
+  customer_name,
+  flow_direction,
+  status,
+  grand_total,
+  currency,
+  invoice_number,
+  invoice_date,
+  due_date,
+  tax_amount,
+  po_number,
+  tags,
+  items,
+  sa_alerts,
+  created_at
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"infra"%%')
+ORDER BY created_at DESC;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions/7478cbc2-4ac7-432b-b8e5-9b60d3b60f0c/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...he database/SQL route."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...erve monetary context.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 14:   AND LOWER(tags) LIKE LOWER('%"supplies"%')
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT
+  id,
+  invoice_number,
+  flow_direction,
+  vendor_name,
+  customer_name,
+  grand_total,
+  currency,
+  invoice_date,
+  status,
+  tags
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"supplies"%%')
+ORDER BY invoice_date DESC, created_at DESC;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...ER() on a jsonb value.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions/75afe37b-237e-401d-8c78-7236da5e4519/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ld be handled via SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...nd other key metadata.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+SQL execution failed on attempt 1: (psycopg2.errors.UndefinedFunction) function lower(jsonb) does not exist
+LINE 13:   AND LOWER(tags) LIKE LOWER('%"supplies"%')
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+[SQL: SELECT id,
+       invoice_number,
+       vendor_name,
+       customer_name,
+       grand_total,
+       currency,
+       tags,
+       created_at,
+       flow_direction,
+       status
+FROM invoice
+WHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'
+  AND LOWER(tags) LIKE LOWER('%%"supplies"%%')
+ORDER BY created_at DESC;]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='... currency as required.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60758 - "POST /api/v1/chat/sessions/65de22dc-16eb-4416-9fde-9fc20a09cf83/message HTTP/1.1" 200 OK

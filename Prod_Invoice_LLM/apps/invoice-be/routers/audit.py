@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 from datetime import datetime, timedelta
 
 from config import get_settings
@@ -470,6 +471,32 @@ async def resolve_audit_invoice(
 
     # 5. Commit transaction
     db_session.commit()
+
+    # Gap 240 backstop: make sure a resolved invoice is in the RAG index, for
+    # any row that predates the ingestion-side fix (or whose ingestion-time
+    # indexing failed). Deliberately keyed on **the resolution happening at
+    # all**, not on the target status: `target_status` is validated above
+    # against exactly PAID/REJECTED/AUDIT_REQUIRED and can never be COMPLETED
+    # (repo-wide, COMPLETED is only ever set by the queue worker), so a backstop
+    # keyed on "reached COMPLETED" would never fire. `target_status` is also
+    # None for a plain alert-dismiss/correction, which is still a resolution
+    # action worth backstopping.
+    try:
+        from chroma_client import has_invoice_chunks, index_invoice_document, should_index_status
+        if should_index_status(invoice.status) and not await run_in_threadpool(
+            has_invoice_chunks, str(invoice.id), str(invoice.tenant_id)
+        ):
+            logger.info("Backfilling RAG index for resolved invoice %s (no chunks found)", invoice.id)
+            await run_in_threadpool(
+                index_invoice_document,
+                str(invoice.id),
+                str(invoice.tenant_id),
+                invoice.vendor_name,
+                invoice.file_path,
+            )
+    except Exception as ie:
+        # Never fail a human's resolve action because the search index is unhappy.
+        logger.error("RAG index backfill failed for resolved invoice %s: %s", invoice.id, ie)
 
     # Feature 15 (Task 15.4): only fires on an actual PAID/REJECTED
     # finalization -- a plain alert-dismiss/correction (target_status=None)
