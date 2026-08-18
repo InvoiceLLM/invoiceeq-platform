@@ -38,7 +38,9 @@ param chromaDbMemory string = '1.0Gi'
 var vnetName = 'vnet-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var lawName = 'law-${namingPrefix}-${environment}'
-var appInsightsName = 'appi-${namingPrefix}-${environment}'
+// Hyphens stripped from namingPrefix, matching the real live resource
+// (`appi-invoicellm-dev`, not `appi-invoice-llm-dev`) -- see 08-apps.bicep.
+var appInsightsName = 'appi-${replace(namingPrefix, '-', '')}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
 var acaSubnetId = networkIsolation ? resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, 'snet-aca') : ''
 

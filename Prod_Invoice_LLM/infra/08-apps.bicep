@@ -120,7 +120,11 @@ var keyVaultName = 'kv-${namingPrefix}-${environment}'
 var openaiName = 'openai-${namingPrefix}-${environment}'
 var docIntelName = 'docintel-${namingPrefix}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
-var appInsightsName = 'appi-${namingPrefix}-${environment}'
+// Hyphens stripped from namingPrefix, matching the real live resource
+// (`appi-invoicellm-dev`, not `appi-invoice-llm-dev`) -- App Insights names
+// can contain hyphens so this isn't an Azure naming requirement like
+// storageAccountName's strip below, just matching what already exists.
+var appInsightsName = 'appi-${replace(namingPrefix, '-', '')}-${environment}'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: identityName

@@ -37,7 +37,9 @@ param slackWebhookUrl string = ''
 param docIntelInstanceCount int = 1
 
 var lawName = 'law-${namingPrefix}-${environment}'
-var appInsightsName = 'appi-${namingPrefix}-${environment}'
+// Hyphens stripped from namingPrefix, matching the real live resource
+// (`appi-invoicellm-dev`, not `appi-invoice-llm-dev`) -- see 08-apps.bicep.
+var appInsightsName = 'appi-${replace(namingPrefix, '-', '')}-${environment}'
 var actionGroupName = 'ag-${namingPrefix}-${environment}'
 var backendAppName = 'ca-invoice-be-${environment}'
 var workerAppName = 'ca-queue-worker-${environment}'
