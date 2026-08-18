@@ -20,12 +20,15 @@ GET  /api/v1/support/tickets
 from __future__ import annotations
 
 import logging
-import random
+import secrets
+import time
+from collections import defaultdict
 from datetime import datetime
+from threading import Lock
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlmodel import Session, select
 
@@ -45,23 +48,82 @@ settings = get_settings()
 
 def _generate_ticket_number(prefix: str) -> str:
     """
-    Generates a human-visible reference like INQ-2026-4821 or TICK-2026-9173.
-    The 4-digit suffix is a random integer — not sequential from the DB — so
-    the total volume of tickets is not publicly enumerable.
+    Generates a human-visible reference like INQ-2026-A1B2C3D4 or TICK-2026-9173A5B8.
+    Uses 8 hex characters from secrets.token_hex(4), providing 4.29 billion
+    possible values per year per prefix.
     """
     year = datetime.utcnow().year
-    suffix = random.randint(1000, 9999)
+    suffix = secrets.token_hex(4).upper()
     return f"{prefix}-{year}-{suffix}"
 
 
 def _unique_ticket_number(db: Session, prefix: str, max_attempts: int = 10) -> str:
-    """Retries until a number is not already in the table (collision odds < 0.01%)."""
+    """Retries until a number is not already in the table."""
     for _ in range(max_attempts):
         number = _generate_ticket_number(prefix)
         existing = db.exec(select(SupportTicket).where(SupportTicket.ticket_number == number)).first()
         if not existing:
             return number
-    raise RuntimeError("Could not generate a unique ticket number — please retry")
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Ticket generation service temporarily busy — please retry.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting for public contact inquiries (BE Gap 249)
+# ---------------------------------------------------------------------------
+
+class _ContactRateLimiter:
+    """
+    Thread-safe in-memory sliding window rate limiter for public contact submissions.
+    Tracks timestamps per IP and per email.
+    """
+    def __init__(self):
+        self._ip_history: dict[str, list[float]] = defaultdict(list)
+        self._email_history: dict[str, list[float]] = defaultdict(list)
+        self._lock = Lock()
+
+    def check(self, ip: str, email: str, max_requests: int = 5, window_seconds: int = 300) -> bool:
+        now = time.time()
+        cutoff = now - window_seconds
+        with self._lock:
+            # Clean and check IP
+            ip_records = [t for t in self._ip_history[ip] if t > cutoff]
+            self._ip_history[ip] = ip_records
+            if len(ip_records) >= max_requests:
+                return False
+
+            # Clean and check email
+            email_norm = email.lower().strip()
+            email_records = [t for t in self._email_history[email_norm] if t > cutoff]
+            self._email_history[email_norm] = email_records
+            if len(email_records) >= max_requests:
+                return False
+
+            # Record this attempt
+            self._ip_history[ip].append(now)
+            self._email_history[email_norm].append(now)
+            return True
+
+    def reset(self):
+        """Reset rate limit state (useful in tests)."""
+        with self._lock:
+            self._ip_history.clear()
+            self._email_history.clear()
+
+_rate_limiter = _ContactRateLimiter()
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP respecting proxy headers."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +150,19 @@ class ContactInquiryRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("name is required")
+        if len(v) > 255:
+            raise ValueError("name must be 255 characters or fewer")
         return v
+
+    @field_validator("company")
+    @classmethod
+    def validate_company(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if len(v) > 255:
+            raise ValueError("company must be 255 characters or fewer")
+        return v or None
 
     @field_validator("message")
     @classmethod
@@ -133,7 +207,19 @@ class AppTicketRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("subject is required")
+        # Strip newlines from subject to prevent header injection
+        v = v.replace("\r", " ").replace("\n", " ").strip()
         return v[:255]
+
+    @field_validator("company")
+    @classmethod
+    def validate_company(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if len(v) > 255:
+            raise ValueError("company must be 255 characters or fewer")
+        return v or None
 
     @field_validator("category")
     @classmethod
@@ -217,8 +303,18 @@ def support_chat_assistant(
 )
 def submit_contact_inquiry(
     body: ContactInquiryRequest,
+    request: Request,
     db: Session = Depends(get_db_session),
 ):
+    client_ip = _get_client_ip(request)
+    if not _rate_limiter.check(client_ip, str(body.email)):
+        logger.warning("support/contact: rate limit exceeded for ip=%s email=%s", client_ip, body.email)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests — please try again in a few minutes.",
+            headers={"Retry-After": "300"},
+        )
+
     subject = f"[{body.category}] Contact inquiry from {body.name}"
     ticket_number = _unique_ticket_number(db, prefix="INQ")
 

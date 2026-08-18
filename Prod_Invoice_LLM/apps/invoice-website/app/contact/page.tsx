@@ -119,6 +119,7 @@ export default function ContactPage() {
   const [company, setCompany]     = useState("");
   const [urgency, setUrgency]     = useState<Urgency>("NORMAL");
   const [message, setMessage]     = useState("");
+  const [hpField, setHpField]     = useState("");
 
   // UI state
   const [loading, setLoading]     = useState(false);
@@ -159,10 +160,13 @@ export default function ContactPage() {
       const res = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, category, company, urgency, message }),
+        body: JSON.stringify({ name, email, category, company, urgency, message, hp_field: hpField }),
       });
 
       if (!res.ok) {
+        if (res.status === 429) {
+          throw new Error("You've sent too many messages. Please wait a few minutes and try again.");
+        }
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.detail || `Request failed (${res.status})`);
       }
@@ -181,7 +185,7 @@ export default function ContactPage() {
     setError(null);
     setErrors({});
     setName(""); setEmail(""); setCategory("SALES");
-    setCompany(""); setUrgency("NORMAL"); setMessage("");
+    setCompany(""); setUrgency("NORMAL"); setMessage(""); setHpField("");
   };
 
   // ---------------------------------------------------------------------------
@@ -362,6 +366,18 @@ export default function ContactPage() {
                   className="space-y-5"
                   noValidate
                 >
+                  {/* Honeypot field for bot detection (hidden from real users) */}
+                  <input
+                    type="text"
+                    name="hp_field"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    aria-hidden="true"
+                    style={{ position: "absolute", left: "-9999px", opacity: 0, height: 0, width: 0, pointerEvents: "none" }}
+                    value={hpField}
+                    onChange={(e) => setHpField(e.target.value)}
+                  />
+
                   {/* Name + Email */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>

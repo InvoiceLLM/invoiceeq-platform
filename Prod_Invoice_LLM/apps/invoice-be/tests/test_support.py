@@ -113,8 +113,17 @@ VALID_TICKET_PAYLOAD = {
     "chat_transcript": [],
 }
 
-INQ_PATTERN = re.compile(r"^INQ-\d{4}-\d{4}$")
-TICK_PATTERN = re.compile(r"^TICK-\d{4}-\d{4}$")
+INQ_PATTERN = re.compile(r"^INQ-\d{4}-[0-9A-F]{8}$")
+TICK_PATTERN = re.compile(r"^TICK-\d{4}-[0-9A-F]{8}$")
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Reset support router rate limiter before each test."""
+    from routers.support import _rate_limiter
+    _rate_limiter.reset()
+    yield
+    _rate_limiter.reset()
 
 
 # ---------------------------------------------------------------------------
@@ -342,3 +351,155 @@ class TestSupportChatEndpoint:
         """Test 23: Empty message returns 422 validation error."""
         res = client.post("/api/v1/support/chat", json={"message": "   "})
         assert res.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Security & Hardening Tests (BE Gaps 249, 250, 251)
+# ---------------------------------------------------------------------------
+
+class TestSecurityHardening:
+    """Tests 25–33: HTML escaping, length limits, rate limiting, and keyspace."""
+
+    def test_html_in_name_is_escaped_in_receipt_email(self, db_session: Session):
+        """Test 25 (BE 250): Malicious HTML in name is escaped in user receipt email."""
+        from services.support_email import _receipt_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name='</p><a href="https://evil.tld">Click here</a><p>',
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description="Test Message",
+        )
+        html = _receipt_html(ticket)
+        assert "<script>" not in html
+        assert '<a href="https://evil.tld">' not in html
+        assert "&lt;a href=&quot;https://evil.tld&quot;&gt;Click here&lt;/a&gt;" in html or "&lt;/p&gt;" in html
+
+    def test_html_in_name_is_escaped_in_staff_alert(self, db_session: Session):
+        """Test 26 (BE 250): Malicious HTML in name is escaped in staff alert email."""
+        from services.support_email import _ticket_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name='<script>alert("pwned")</script>',
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description="Test Message",
+        )
+        html = _ticket_html(ticket)
+        assert "<script>" not in html
+        assert "&lt;script&gt;alert(&quot;pwned&quot;)&lt;/script&gt;" in html
+
+    def test_html_in_description_is_escaped_in_staff_alert(self, db_session: Session):
+        """Test 27 (BE 250): Malicious HTML in description/message is escaped."""
+        from services.support_email import _ticket_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name="John Doe",
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description='<img src=x onerror="alert(1)">',
+        )
+        html = _ticket_html(ticket)
+        assert "<img src=x" not in html
+        assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in html
+
+    def test_html_in_company_is_escaped_in_staff_alert(self, db_session: Session):
+        """Test 28 (BE 250): Malicious HTML in company name is escaped."""
+        from services.support_email import _ticket_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name="John Doe",
+            company_name='<b>Evil Corp</b><iframe src="evil.com"></iframe>',
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description="Test Message",
+        )
+        html = _ticket_html(ticket)
+        assert "<iframe>" not in html
+        assert "&lt;iframe src=&quot;evil.com&quot;&gt;&lt;/iframe&gt;" in html
+
+    def test_name_over_255_chars_is_rejected(self, db_session: Session):
+        """Test 29 (BE 250): Name exceeding 255 chars returns 422 rather than 500 DB error."""
+        payload = {**VALID_CONTACT_PAYLOAD, "name": "A" * 256}
+        res = client.post("/api/v1/support/contact", json=payload)
+        assert res.status_code == 422
+        assert "255 characters" in res.text
+
+    def test_company_over_255_chars_is_rejected(self, db_session: Session):
+        """Test 30 (BE 250): Company exceeding 255 chars returns 422 rather than 500 DB error."""
+        payload = {**VALID_CONTACT_PAYLOAD, "company": "B" * 256}
+        res = client.post("/api/v1/support/contact", json=payload)
+        assert res.status_code == 422
+        assert "255 characters" in res.text
+
+    def test_rate_limit_returns_429_after_threshold(self, db_session: Session):
+        """Test 31 (BE 249): 6th submission within window returns 429 Too Many Requests."""
+        headers = {"X-Forwarded-For": "198.51.100.42"}
+        for i in range(5):
+            res = client.post(
+                "/api/v1/support/contact",
+                json={**VALID_CONTACT_PAYLOAD, "email": f"user{i}@test.com"},
+                headers=headers,
+            )
+            assert res.status_code == 201, f"Attempt {i+1} failed: {res.text}"
+
+        # 6th attempt from the same IP should be blocked
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "email": "user6@test.com"},
+            headers=headers,
+        )
+        assert res.status_code == 429
+        assert "Retry-After" in res.headers
+        assert res.headers["Retry-After"] == "300"
+        assert "Too many requests" in res.json()["detail"]
+
+    def test_ticket_number_uses_hex_format(self, db_session: Session):
+        """Test 32 (BE 251): Generated ticket number has 8-character uppercase hex suffix."""
+        res = client.post("/api/v1/support/contact", json=VALID_CONTACT_PAYLOAD)
+        assert res.status_code == 201
+        ticket_number = res.json()["ticket_number"]
+        parts = ticket_number.split("-")
+        assert len(parts) == 3
+        assert parts[0] == "INQ"
+        assert len(parts[1]) == 4  # year
+        assert len(parts[2]) == 8  # 8 hex chars
+        assert re.match(r"^[0-9A-F]{8}$", parts[2]) is not None
+
+    def test_ticket_generation_exhaustion_returns_503_not_500(self, db_session: Session):
+        """Test 33 (BE 251): When ticket collision occurs 10 times, returns 503 rather than unhandled 500."""
+        from routers.support import _unique_ticket_number
+        from fastapi import HTTPException
+
+        # Seed a dummy ticket
+        dummy = SupportTicket(
+            ticket_number="INQ-2026-DEADBEEF",
+            user_email="test@example.com",
+            user_name="Test",
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test",
+            description="Test",
+        )
+        db_session.add(dummy)
+        db_session.commit()
+
+        # Patch _generate_ticket_number to always return the existing number
+        with patch("routers.support._generate_ticket_number", return_value="INQ-2026-DEADBEEF"):
+            with pytest.raises(HTTPException) as exc_info:
+                _unique_ticket_number(db_session, prefix="INQ", max_attempts=3)
+            assert exc_info.value.status_code == 503
+            assert "temporarily busy" in exc_info.value.detail
