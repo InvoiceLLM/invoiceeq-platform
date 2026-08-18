@@ -33,6 +33,7 @@ Email dispatch (mocked in all tests)
 from __future__ import annotations
 
 import re
+import time
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -113,8 +114,17 @@ VALID_TICKET_PAYLOAD = {
     "chat_transcript": [],
 }
 
-INQ_PATTERN = re.compile(r"^INQ-\d{4}-\d{4}$")
-TICK_PATTERN = re.compile(r"^TICK-\d{4}-\d{4}$")
+INQ_PATTERN = re.compile(r"^INQ-\d{4}-[0-9A-F]{8}$")
+TICK_PATTERN = re.compile(r"^TICK-\d{4}-[0-9A-F]{8}$")
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Reset support router rate limiter before each test."""
+    from routers.support import _rate_limiter
+    _rate_limiter.reset()
+    yield
+    _rate_limiter.reset()
 
 
 # ---------------------------------------------------------------------------
@@ -342,3 +352,549 @@ class TestSupportChatEndpoint:
         """Test 23: Empty message returns 422 validation error."""
         res = client.post("/api/v1/support/chat", json={"message": "   "})
         assert res.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Security & Hardening Tests (BE Gaps 249, 250, 251)
+# ---------------------------------------------------------------------------
+
+class TestSecurityHardening:
+    """Tests 25–33: HTML escaping, length limits, rate limiting, and keyspace."""
+
+    def test_html_in_name_is_escaped_in_receipt_email(self, db_session: Session):
+        """Test 25 (BE 250): Malicious HTML in name is escaped in user receipt email."""
+        from services.support_email import _receipt_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name='</p><a href="https://evil.tld">Click here</a><p>',
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description="Test Message",
+        )
+        html = _receipt_html(ticket)
+        assert "<script>" not in html
+        assert '<a href="https://evil.tld">' not in html
+        assert "&lt;a href=&quot;https://evil.tld&quot;&gt;Click here&lt;/a&gt;" in html or "&lt;/p&gt;" in html
+
+    def test_html_in_name_is_escaped_in_staff_alert(self, db_session: Session):
+        """Test 26 (BE 250): Malicious HTML in name is escaped in staff alert email."""
+        from services.support_email import _ticket_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name='<script>alert("pwned")</script>',
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description="Test Message",
+        )
+        html = _ticket_html(ticket)
+        assert "<script>" not in html
+        assert "&lt;script&gt;alert(&quot;pwned&quot;)&lt;/script&gt;" in html
+
+    def test_html_in_description_is_escaped_in_staff_alert(self, db_session: Session):
+        """Test 27 (BE 250): Malicious HTML in description/message is escaped."""
+        from services.support_email import _ticket_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name="John Doe",
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description='<img src=x onerror="alert(1)">',
+        )
+        html = _ticket_html(ticket)
+        assert "<img src=x" not in html
+        assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in html
+
+    def test_html_in_company_is_escaped_in_staff_alert(self, db_session: Session):
+        """Test 28 (BE 250): Malicious HTML in company name is escaped."""
+        from services.support_email import _ticket_html
+        ticket = SupportTicket(
+            ticket_number="INQ-2026-A1B2C3D4",
+            user_email="victim@example.com",
+            user_name="John Doe",
+            company_name='<b>Evil Corp</b><iframe src="evil.com"></iframe>',
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test Subject",
+            description="Test Message",
+        )
+        html = _ticket_html(ticket)
+        assert "<iframe>" not in html
+        assert "&lt;iframe src=&quot;evil.com&quot;&gt;&lt;/iframe&gt;" in html
+
+    def test_name_over_255_chars_is_rejected(self, db_session: Session):
+        """Test 29 (BE 250): Name exceeding 255 chars returns 422 rather than 500 DB error."""
+        payload = {**VALID_CONTACT_PAYLOAD, "name": "A" * 256}
+        res = client.post("/api/v1/support/contact", json=payload)
+        assert res.status_code == 422
+        assert "255 characters" in res.text
+
+    def test_company_over_255_chars_is_rejected(self, db_session: Session):
+        """Test 30 (BE 250): Company exceeding 255 chars returns 422 rather than 500 DB error."""
+        payload = {**VALID_CONTACT_PAYLOAD, "company": "B" * 256}
+        res = client.post("/api/v1/support/contact", json=payload)
+        assert res.status_code == 422
+        assert "255 characters" in res.text
+
+    def test_rate_limit_returns_429_after_threshold(self, db_session: Session):
+        """Test 31 (BE 249): 6th submission within window returns 429 Too Many Requests."""
+        headers = {"X-Forwarded-For": "198.51.100.42"}
+        for i in range(5):
+            res = client.post(
+                "/api/v1/support/contact",
+                json={**VALID_CONTACT_PAYLOAD, "email": f"user{i}@test.com"},
+                headers=headers,
+            )
+            assert res.status_code == 201, f"Attempt {i+1} failed: {res.text}"
+
+        # 6th attempt from the same IP should be blocked
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "email": "user6@test.com"},
+            headers=headers,
+        )
+        assert res.status_code == 429
+        assert "Retry-After" in res.headers
+        assert res.headers["Retry-After"] == "300"
+        assert "Too many requests" in res.json()["detail"]
+
+    def test_ticket_number_uses_hex_format(self, db_session: Session):
+        """Test 32 (BE 251): Generated ticket number has 8-character uppercase hex suffix."""
+        res = client.post("/api/v1/support/contact", json=VALID_CONTACT_PAYLOAD)
+        assert res.status_code == 201
+        ticket_number = res.json()["ticket_number"]
+        parts = ticket_number.split("-")
+        assert len(parts) == 3
+        assert parts[0] == "INQ"
+        assert len(parts[1]) == 4  # year
+        assert len(parts[2]) == 8  # 8 hex chars
+        assert re.match(r"^[0-9A-F]{8}$", parts[2]) is not None
+
+    def test_ticket_generation_exhaustion_returns_503_not_500(self, db_session: Session):
+        """Test 33 (BE 251): When ticket collision occurs 10 times, returns 503 rather than unhandled 500."""
+        from routers.support import _unique_ticket_number
+        from fastapi import HTTPException
+
+        # Seed a dummy ticket
+        dummy = SupportTicket(
+            ticket_number="INQ-2026-DEADBEEF",
+            user_email="test@example.com",
+            user_name="Test",
+            priority="NORMAL",
+            source="WEBSITE_CONTACT",
+            category="GENERAL",
+            subject="Test",
+            description="Test",
+        )
+        db_session.add(dummy)
+        db_session.commit()
+
+        # Patch _generate_ticket_number to always return the existing number
+        with patch("routers.support._generate_ticket_number", return_value="INQ-2026-DEADBEEF"):
+            with pytest.raises(HTTPException) as exc_info:
+                _unique_ticket_number(db_session, prefix="INQ", max_attempts=3)
+            assert exc_info.value.status_code == 503
+            assert "temporarily busy" in exc_info.value.detail
+
+
+# ---------------------------------------------------------------------------
+# Gap 249 hardening pass (2026-08-18): holes left by the first Gap 249 fix
+# ---------------------------------------------------------------------------
+
+
+def _fake_request(headers: dict[str, str], client_host: str | None = "10.0.0.1"):
+    """Minimal Starlette Request carrying just the headers/peer under test."""
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/support/contact",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": (client_host, 12345) if client_host else None,
+    }
+    return Request(scope)
+
+
+class TestSubjectLengthOverflow:
+    """
+    Test 34: the subject built by submit_contact_inquiry must never exceed
+    SupportTicket.subject's max_length=255.
+
+    This is the bug class the branch claimed to have closed by capping `name` at
+    255: `name` alone passes that validator, but the "[CATEGORY] Contact inquiry
+    from " prefix adds another 31-41 characters on top, so the *constructed*
+    subject overflowed and Postgres raised StringDataRightTruncation -- an
+    uncaught 500.
+
+    The assertion is on the stored string's length rather than on the response
+    status deliberately: these tests run against in-memory SQLite, which does
+    not enforce max_length, so a status-only assertion would pass even with the
+    bug present. Asserting the length directly is what makes this a real
+    regression test -- it fails against the pre-fix code.
+    """
+
+    def test_long_name_does_not_produce_oversized_subject(self, db_session: Session):
+        from sqlmodel import select
+
+        category = "TECHNICAL_SUPPORT"  # the longest category, worst-case prefix
+        prefix = f"[{category}] Contact inquiry from "
+        name = "A" * 255
+
+        # Preconditions that define the bug: the name is individually legal,
+        # but prefix + name is not.
+        assert len(name) <= 255, "name must pass its own validator"
+        assert len(prefix) + len(name) > 255, "this input must overflow pre-fix"
+
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "name": name, "category": category},
+        )
+        assert res.status_code == 201, res.text
+
+        ticket = db_session.exec(
+            select(SupportTicket).where(
+                SupportTicket.ticket_number == res.json()["ticket_number"]
+            )
+        ).first()
+        assert ticket is not None
+        assert len(ticket.subject) <= 255, (
+            f"subject is {len(ticket.subject)} chars -- would be a "
+            f"StringDataRightTruncation 500 on real Postgres"
+        )
+        assert ticket.subject.startswith(prefix)
+
+    def test_shortest_prefix_boundary_also_capped(self, db_session: Session):
+        """The tight boundary: GENERAL's 31-char prefix + a 225-char name = 256."""
+        from sqlmodel import select
+
+        prefix = "[GENERAL] Contact inquiry from "
+        name = "B" * (256 - len(prefix))
+        assert len(prefix) + len(name) == 256
+
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "name": name, "category": "GENERAL"},
+        )
+        assert res.status_code == 201, res.text
+        ticket = db_session.exec(
+            select(SupportTicket).where(
+                SupportTicket.ticket_number == res.json()["ticket_number"]
+            )
+        ).first()
+        assert len(ticket.subject) == 255
+
+    def test_subject_within_limit_is_not_truncated(self, db_session: Session):
+        """Guard against over-truncating a normal-length subject."""
+        from sqlmodel import select
+
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "name": "Jane Doe", "category": "SALES"},
+        )
+        assert res.status_code == 201
+        ticket = db_session.exec(
+            select(SupportTicket).where(
+                SupportTicket.ticket_number == res.json()["ticket_number"]
+            )
+        ).first()
+        assert ticket.subject == "[SALES] Contact inquiry from Jane Doe"
+
+
+class TestClientIpResolution:
+    """
+    Test 35: the rate-limit key must not be attacker-controlled.
+
+    The original _get_client_ip took the leftmost X-Forwarded-For entry, which
+    is the value the *client* supplied -- rotating it reset the window on every
+    request, defeating the limiter entirely.
+    """
+
+    def test_parse_ip_accepts_real_addresses(self):
+        from routers.support import _parse_ip
+
+        assert _parse_ip("203.0.113.5") == "203.0.113.5"
+        assert _parse_ip("  203.0.113.5  ") == "203.0.113.5"
+        assert _parse_ip("203.0.113.5:443") == "203.0.113.5"
+        assert _parse_ip("2001:db8::1") == "2001:db8::1"
+        assert _parse_ip("[2001:db8::1]:443") == "2001:db8::1"
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "not-an-ip",
+            "",
+            "   ",
+            None,
+            "999.999.999.999",
+            "1.2.3.4.5",
+            "<script>alert(1)</script>",
+            "A" * 5000,
+        ],
+    )
+    def test_parse_ip_rejects_junk(self, value):
+        """Junk must not become a rate-limit key -- that is the memory-growth vector."""
+        from routers.support import _parse_ip
+
+        assert _parse_ip(value) is None
+
+    def test_rightmost_forwarded_for_entry_wins(self):
+        """The platform appends the peer it saw; the leftmost is the client's claim."""
+        from routers.support import _get_client_ip
+
+        req = _fake_request({"X-Forwarded-For": "1.1.1.1, 2.2.2.2, 203.0.113.9"})
+        assert _get_client_ip(req) == "203.0.113.9"
+
+    def test_junk_entries_are_skipped_right_to_left(self):
+        from routers.support import _get_client_ip
+
+        req = _fake_request({"X-Forwarded-For": "203.0.113.9, garbage, unknown"})
+        assert _get_client_ip(req) == "203.0.113.9"
+
+    def test_x_client_ip_outranks_forwarded_for(self):
+        """Our own proxy's attestation beats the pod IP the platform appends."""
+        from routers.support import _get_client_ip
+
+        req = _fake_request(
+            {"X-Client-IP": "203.0.113.77", "X-Forwarded-For": "1.1.1.1, 10.0.0.5"}
+        )
+        assert _get_client_ip(req) == "203.0.113.77"
+
+    def test_x_real_ip_is_ignored(self):
+        """X-Real-IP is forgeable and nothing in our path needs it -- honouring
+        it would reopen the bypass."""
+        from routers.support import _get_client_ip
+
+        req = _fake_request({"X-Real-IP": "1.2.3.4"}, client_host="10.0.0.9")
+        assert _get_client_ip(req) == "10.0.0.9"
+
+    def test_falls_back_to_socket_peer(self):
+        from routers.support import _get_client_ip
+
+        assert _get_client_ip(_fake_request({}, client_host="10.0.0.9")) == "10.0.0.9"
+        assert _get_client_ip(_fake_request({}, client_host=None)) == "unknown"
+
+    def test_azure_client_ip_ignored_when_front_door_id_unset(self, monkeypatch):
+        """Today's real state: Front Door is not deployed, so X-Azure-* headers
+        are forgeable and must be ignored outright."""
+        import routers.support as support_mod
+        from routers.support import _get_client_ip
+
+        monkeypatch.setattr(support_mod.settings, "FRONT_DOOR_ID", "")
+        req = _fake_request(
+            {
+                "X-Azure-FDID": "anything-at-all",
+                "X-Azure-ClientIP": "1.2.3.4",
+                "X-Forwarded-For": "203.0.113.9",
+            }
+        )
+        assert _get_client_ip(req) == "203.0.113.9"
+
+    def test_azure_client_ip_used_when_fdid_matches(self, monkeypatch):
+        import routers.support as support_mod
+        from routers.support import _get_client_ip
+
+        monkeypatch.setattr(support_mod.settings, "FRONT_DOOR_ID", "real-fd-guid")
+        req = _fake_request(
+            {
+                "X-Azure-FDID": "real-fd-guid",
+                "X-Azure-ClientIP": "198.51.100.20",
+                "X-Forwarded-For": "203.0.113.9",
+            }
+        )
+        assert _get_client_ip(req) == "198.51.100.20"
+
+    def test_azure_client_ip_rejected_when_fdid_mismatches(self, monkeypatch):
+        import routers.support as support_mod
+        from routers.support import _get_client_ip
+
+        monkeypatch.setattr(support_mod.settings, "FRONT_DOOR_ID", "real-fd-guid")
+        req = _fake_request(
+            {
+                "X-Azure-FDID": "attacker-guess",
+                "X-Azure-ClientIP": "1.2.3.4",
+                "X-Forwarded-For": "203.0.113.9",
+            }
+        )
+        assert _get_client_ip(req) == "203.0.113.9"
+
+
+class TestRateLimitBypassResistance:
+    """Test 36: end-to-end -- spoofed headers must not reset the window."""
+
+    def test_rotating_leftmost_forwarded_for_cannot_reset_window(self, db_session: Session):
+        """
+        The core Gap 249 bypass. Each request carries a fresh spoofed leftmost
+        XFF entry but the same platform-appended rightmost one. Pre-fix every
+        request keyed on the rotating value and none were ever limited.
+
+        Emails are distinct so the block can only come from the IP dimension.
+        """
+        for i in range(5):
+            res = client.post(
+                "/api/v1/support/contact",
+                json={**VALID_CONTACT_PAYLOAD, "email": f"spoof{i}@test.com"},
+                headers={"X-Forwarded-For": f"10.99.{i}.{i}, 198.51.100.77"},
+            )
+            assert res.status_code == 201, f"Attempt {i + 1}: {res.text}"
+
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "email": "spoof6@test.com"},
+            headers={"X-Forwarded-For": "10.99.6.6, 198.51.100.77"},
+        )
+        assert res.status_code == 429, (
+            "rotating the client-supplied XFF entry bypassed the limiter"
+        )
+
+    def test_rotating_azure_client_ip_cannot_reset_window(self, db_session: Session):
+        """Same bypass via forged Front Door headers, with FRONT_DOOR_ID unset."""
+        for i in range(5):
+            res = client.post(
+                "/api/v1/support/contact",
+                json={**VALID_CONTACT_PAYLOAD, "email": f"azspoof{i}@test.com"},
+                headers={
+                    "X-Azure-FDID": "forged",
+                    "X-Azure-ClientIP": f"10.98.{i}.{i}",
+                    "X-Forwarded-For": "198.51.100.88",
+                },
+            )
+            assert res.status_code == 201, f"Attempt {i + 1}: {res.text}"
+
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "email": "azspoof6@test.com"},
+            headers={
+                "X-Azure-FDID": "forged",
+                "X-Azure-ClientIP": "10.98.6.6",
+                "X-Forwarded-For": "198.51.100.88",
+            },
+        )
+        assert res.status_code == 429
+
+    def test_email_dimension_still_limits_across_distinct_ips(self, db_session: Session):
+        """A distributed caller rotating *real* IPs is still caught on email."""
+        for i in range(5):
+            res = client.post(
+                "/api/v1/support/contact",
+                json={**VALID_CONTACT_PAYLOAD, "email": "same@test.com"},
+                headers={"X-Forwarded-For": f"198.51.100.{100 + i}"},
+            )
+            assert res.status_code == 201, f"Attempt {i + 1}: {res.text}"
+
+        res = client.post(
+            "/api/v1/support/contact",
+            json={**VALID_CONTACT_PAYLOAD, "email": "same@test.com"},
+            headers={"X-Forwarded-For": "198.51.100.199"},
+        )
+        assert res.status_code == 429
+
+
+class TestRateLimiterStateBounds:
+    """
+    Test 37: limiter state must be bounded and must survive Redis being down.
+
+    The Redis path is the shared-across-replicas one; these exercise the
+    in-process fallback, which is what has to be bounded.
+    """
+
+    @staticmethod
+    def _memory_limiter():
+        from routers.support import _ContactRateLimiter
+
+        limiter = _ContactRateLimiter()
+        limiter._redis_client = False  # force the fallback path
+        return limiter
+
+    def test_memory_fallback_enforces_the_limit(self):
+        limiter = self._memory_limiter()
+        for _ in range(5):
+            assert limiter.check("203.0.113.1", "a@test.com") is True
+        assert limiter.check("203.0.113.1", "a@test.com") is False
+
+    def test_memory_fallback_prunes_expired_keys(self):
+        """Entries outside the window are dropped on every check, not left to
+        accumulate -- this is the memory-growth half of the finding."""
+        limiter = self._memory_limiter()
+        stale_at = time.time() - 10_000
+        limiter._memory["ip:198.51.100.1"] = [stale_at]
+        limiter._memory["email:stale@test.com"] = [stale_at]
+
+        assert limiter.check("203.0.113.2", "fresh@test.com") is True
+
+        assert "ip:198.51.100.1" not in limiter._memory
+        assert "email:stale@test.com" not in limiter._memory
+        assert "ip:203.0.113.2" in limiter._memory
+
+    def test_memory_fallback_caps_total_tracked_keys(self, monkeypatch):
+        """An attacker rotating keys cannot grow the store without bound."""
+        import routers.support as support_mod
+
+        monkeypatch.setattr(support_mod, "_MEMORY_MAX_TRACKED_KEYS", 50)
+        limiter = self._memory_limiter()
+        for i in range(400):
+            limiter.check(f"198.51.{i // 256}.{i % 256}", f"u{i}@test.com")
+
+        assert len(limiter._memory) <= 50, (
+            f"tracked keys grew to {len(limiter._memory)} despite the cap"
+        )
+
+    def test_rejected_lookup_does_not_create_a_permanent_key(self):
+        """The old defaultdict created an entry for every key merely looked at,
+        including ones whose request was then rejected."""
+        limiter = self._memory_limiter()
+        for _ in range(5):
+            limiter.check("203.0.113.3", "blocked@test.com")
+        keys_before = set(limiter._memory)
+
+        assert limiter.check("203.0.113.3", "brand-new@test.com") is False
+        # The IP was already over the limit, so the email key must not be
+        # created as a side effect of the rejected check.
+        assert "email:brand-new@test.com" not in limiter._memory
+        assert set(limiter._memory) == keys_before
+
+    def test_redis_failure_degrades_to_memory_instead_of_500(self, db_session: Session):
+        """A Redis outage must not fail the contact form, and must not fail open."""
+        from routers.support import _rate_limiter
+
+        class _BrokenRedis:
+            def pipeline(self):
+                raise RuntimeError("redis connection lost")
+
+        original = _rate_limiter._redis_client
+        _rate_limiter._redis_client = _BrokenRedis()
+        try:
+            res = client.post(
+                "/api/v1/support/contact",
+                json={**VALID_CONTACT_PAYLOAD, "email": "degraded@test.com"},
+                headers={"X-Client-IP": "203.0.113.40"},
+            )
+            assert res.status_code == 201, res.text
+
+            # Still limiting, now via the in-process window.
+            for i in range(4):
+                assert (
+                    client.post(
+                        "/api/v1/support/contact",
+                        json={**VALID_CONTACT_PAYLOAD, "email": f"degraded{i}@test.com"},
+                        headers={"X-Client-IP": "203.0.113.40"},
+                    ).status_code
+                    == 201
+                )
+            res = client.post(
+                "/api/v1/support/contact",
+                json={**VALID_CONTACT_PAYLOAD, "email": "degraded-last@test.com"},
+                headers={"X-Client-IP": "203.0.113.40"},
+            )
+            assert res.status_code == 429, "limiter failed open when Redis died"
+        finally:
+            _rate_limiter._redis_client = original

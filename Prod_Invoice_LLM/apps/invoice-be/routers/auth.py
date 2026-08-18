@@ -403,11 +403,47 @@ async def provision_tenant(
                     is_new=False,
                 )
 
-    new_tenant = _create_tenant_with_unique_domain(db_session, body, domain)
-
+    # -----------------------------------------------------------------------
+    # BE Gap 133: Pre-check user conflicts BEFORE creating a new Tenant
+    # -----------------------------------------------------------------------
     existing_user = db_session.exec(
         select(User).where(User.clerk_user_id == body.clerk_user_id)
     ).first()
+
+    if existing_user and existing_user.tenant_id:
+        print(
+            f"[provision-diag] user {body.clerk_user_id!r} already belongs to "
+            f"tenant {existing_user.tenant_id!r}, refusing second provision for "
+            f"org_id={body.clerk_org_id!r}",
+            flush=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This account is already provisioned to another workspace. "
+                "A user cannot belong to multiple workspaces simultaneously. "
+                "Contact support if you need to transfer your account."
+            ),
+        )
+
+    # Pre-check email conflict to avoid creating an orphan tenant on duplicate email
+    if not caller.is_mock:
+        email_conflict = db_session.exec(
+            select(User).where(
+                User.email == admin_email,
+                User.clerk_user_id != body.clerk_user_id,
+            )
+        ).first()
+        if email_conflict:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "The admin email address is already in use by another account. "
+                    f"Contact support with org id {body.clerk_org_id}."
+                ),
+            )
+
+    new_tenant = _create_tenant_with_unique_domain(db_session, body, domain)
 
     if not existing_user:
         admin_user = User(

@@ -624,8 +624,15 @@ class SupportTicket(SQLModel, table=True):
       - DIRECT_TICKET    : manually raised tickets from Help Center chat header
 
     ticket_number is the human-visible reference:
-      - INQ-YYYY-XXXX  for website contact inquiries (source=WEBSITE_CONTACT)
-      - TICK-YYYY-XXXX for app support tickets (source=HELP_CHATBOT / DIRECT_TICKET)
+      - INQ-YYYY-XXXXXXXX  for website contact inquiries (source=WEBSITE_CONTACT)
+      - TICK-YYYY-XXXXXXXX for app support tickets (source=HELP_CHATBOT / DIRECT_TICKET)
+
+    The suffix is 8 uppercase hex characters from `secrets.token_hex(4)` -- see
+    routers/support.py::_generate_ticket_number. Gap 251: this replaced a
+    4-digit `randint(1000, 9999)` suffix, whose 9,000 values per year per prefix
+    could be exhausted by a few thousand unauthenticated POSTs, after which
+    every new ticket failed. The current keyspace is 4.29 billion per year per
+    prefix, and exhaustion now surfaces as a 503 rather than an uncaught 500.
     """
     __tablename__ = "supportticket"
 

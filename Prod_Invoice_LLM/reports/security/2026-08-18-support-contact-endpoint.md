@@ -4,6 +4,27 @@
 **Scope:** Auth/rate-limiting, injection, tenant isolation, secrets handling — for the new public contact-form endpoint and its handler chain (`routers/support.py`, `agents/support_agent.py`, `services/support_email.py`). Read-only assessment; nothing modified or executed.
 **Note on sequencing:** this repo's normal priority order is coding → functional testing → dev/prod env split → load test → security test. This review is a user-approved scoped exception for this one endpoint ahead of that order, prompted by a merge-readiness review flagging it — not a general security pass.
 
+## Remediation status (added 2026-08-18, after the review)
+
+Findings below are as originally written and are **not** edited in place — this block records what has since been done, on branch `fix/support-contact-security-and-tenant-provisioning`.
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | No rate limiting | **Fixed** — BE Gap 249. Two layers; the backend's is Redis-backed and shared across replicas. Note this took two passes on the same day: the first implementation existed but keyed on the leftmost `X-Forwarded-For`, which is attacker-controlled, so rotating that header reset the window and bypassed both layers. The hardening pass changed the key to the last trustworthy hop, added `X-Client-IP` as the proxy→backend contract, validated every candidate as a real IP, moved the window into Redis, and bounded the in-process fallback. |
+| 2 | Open email relay, unescaped HTML in receipt | **Fixed** — BE Gap 250. `html.escape(..., quote=True)` on every user-controlled field in both templates. |
+| 3 | HTML injection into the internal staff alert | **Fixed** — BE Gap 250, same change. |
+| 4 | Ticket-number namespace exhaustion → DoS | **Fixed** — BE Gap 251. `secrets.token_hex(4)` (4.29B/yr/prefix), and exhaustion now returns a 503 instead of an uncaught 500. |
+| 5 | Sync handler + blocking SendGrid calls → threadpool exhaustion | **Deferred, deliberately.** Not filed as its own gap. It is `PLAUSIBLE`, not confirmed — the impact threshold was never load-tested, and the review itself rated it "lower-urgency hardening". Making the handler async means reworking the shared `services/outbound_email.py` client used by real invoice delivery, which is a wider blast radius than the finding justifies right now. This repo's priority order puts load testing ahead of this kind of change; it belongs to that pass, where the threshold can actually be measured rather than guessed. |
+| 6 | Defensive `tenant_id IS NOT NULL` on `GET /support/tickets` | **Deferred, deliberately.** Not filed as its own gap. The review itself found no issue here and confirmed the leak is unreachable today (`TenantContext.tenant_id` is a non-Optional `UUID` on every path, mock included). This is a defence-in-depth suggestion against a hypothetical future regression, not a live defect. |
+| 7 | SendGrid API key handling | No issue found — no action. |
+| 8 | Network exposure context | Context, not a defect. Its specific concern — "the proxy does not forward the original client IP, so any future IP-based limiter would throttle every user together" — is addressed by the `X-Client-IP` contract described under finding 1. |
+
+Also fixed from the **Minor / out of scope** section: the `name`/`company` length validators now exist (Gap 250), and the related subject-overflow 500 they did *not* cover — the category prefix pushing a legal 255-char name past `SupportTicket.subject`'s 255-char column — is fixed by truncating the subject at construction, with a regression test that fails against the pre-fix code.
+
+Verification: full `invoice-be` suite green (674 passed, 4 skipped) and `tsc --noEmit` clean on `invoice-website`. Nothing has been deployed to any Azure environment; Front Door remains undeployed, so the `X-Azure-*` trust branch is inert by design.
+
+---
+
 ## Findings
 
 ### 1. No rate limiting anywhere in the request path — CONFIRMED

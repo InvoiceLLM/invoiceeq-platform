@@ -93,6 +93,33 @@ interface ProvisionPayload {
  * Throws on any non-2xx so both call sites (initial sign-up and Retry) handle
  * failure identically -- and visibly.
  */
+
+/**
+ * Carries the HTTP status alongside the message so callers can tell a
+ * retryable failure from a terminal one. Without this the status was lost in
+ * `new Error(detail)` and every failure looked equally retryable.
+ */
+class ProvisionError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ProvisionError";
+    this.status = status;
+  }
+}
+
+/**
+ * Gap 133: a 409 from POST /auth/provision is terminal, not transient.
+ *
+ * All four 409 sites in routers/auth.py are "this already exists" conditions --
+ * the user already belongs to a workspace, the admin email is held by another
+ * account, or the tenant/clerk_org_id conflicts. None of them resolve by trying
+ * again, so offering Retry traps the user in a loop that 409s forever.
+ */
+function isTerminalProvisionFailure(err: unknown): boolean {
+  return err instanceof ProvisionError && err.status === 409;
+}
+
 async function provisionTenant(payload: ProvisionPayload): Promise<void> {
   let token: string | null = null;
   try {
@@ -113,12 +140,27 @@ async function provisionTenant(payload: ProvisionPayload): Promise<void> {
 
   if (!response.ok) {
     const data = await response.json().catch(() => ({} as { detail?: string }));
-    throw new Error(data?.detail || `provisioning failed with HTTP ${response.status}`);
+    throw new ProvisionError(
+      data?.detail || `provisioning failed with HTTP ${response.status}`,
+      response.status
+    );
   }
 }
 
 function provisionFailureMessage(err: unknown, orgId: string): string {
   const detail = err instanceof Error ? err.message : String(err);
+
+  // Terminal: say so plainly and point somewhere that can actually resolve it.
+  // Deliberately does not say "Retry" -- the Retry button is not rendered for
+  // this case, and inviting one would just reproduce the same 409.
+  if (isTerminalProvisionFailure(err)) {
+    return (
+      `This account or organisation is already set up, so we can't provision it again (${detail}). ` +
+      `Retrying won't change this. If you already have a workspace, sign in below instead — ` +
+      `otherwise contact support and quote org id ${orgId}.`
+    );
+  }
+
   return (
     `Your account was created, but we couldn't finish setting up your organisation (${detail}). ` +
     `Click Retry — if it keeps failing, contact support and quote org id ${orgId}.`
@@ -221,8 +263,16 @@ export default function SignupPage() {
     try {
       await provisionTenant(payload);
     } catch (provisionErr: any) {
+      // Gap 133: blocking. Redirecting to /login on a failed provision is
+      // what made this invisible -- the user reached a working-looking app
+      // whose data lived in an unrelated tenant (or nowhere).
       console.error("Tenant provisioning failed:", provisionErr);
-      setPendingProvision(payload);
+      // Only offer Retry when retrying could actually succeed. A 409 is
+      // terminal (see isTerminalProvisionFailure), so leave pendingProvision
+      // null and the Retry button unrendered.
+      if (!isTerminalProvisionFailure(provisionErr)) {
+        setPendingProvision(payload);
+      }
       setError(provisionFailureMessage(provisionErr, orgId));
       return;
     }
@@ -307,7 +357,14 @@ export default function SignupPage() {
       router.push("/login");
     } catch (retryErr: any) {
       console.error("Tenant provisioning retry failed:", retryErr);
-      setError(provisionFailureMessage(retryErr, pendingProvision.clerk_org_id));
+      const orgId = pendingProvision.clerk_org_id;
+      // A retry that comes back 409 has become terminal -- typically the first
+      // attempt actually landed. Drop pendingProvision so the Retry button
+      // disappears rather than inviting an endless 409 loop.
+      if (isTerminalProvisionFailure(retryErr)) {
+        setPendingProvision(null);
+      }
+      setError(provisionFailureMessage(retryErr, orgId));
     } finally {
       setRetrying(false);
     }

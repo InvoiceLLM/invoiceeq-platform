@@ -19,6 +19,7 @@ so a mail failure never rolls back the record.
 """
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime
 
@@ -65,7 +66,7 @@ def _priority_badge(priority: str) -> str:
 
 
 def _ticket_html(ticket) -> str:
-    """Build the rich HTML body for the staff alert email."""
+    """Build the rich HTML body for the staff alert email with escaped user inputs."""
     settings = get_settings()
     notify_to = settings.SUPPORT_NOTIFY_EMAIL
 
@@ -73,13 +74,20 @@ def _ticket_html(ticket) -> str:
     source_label   = _SOURCE_LABELS.get(ticket.source, ticket.source)
     created_fmt    = ticket.created_at.strftime("%Y-%m-%d %H:%M UTC") if ticket.created_at else "—"
 
+    # HTML-escape all user-controlled fields
+    user_name_esc   = html.escape(ticket.user_name or "—", quote=True)
+    user_email_esc  = html.escape(ticket.user_email or "", quote=True)
+    company_esc     = html.escape(ticket.company_name or "", quote=True)
+    subject_esc     = html.escape(ticket.subject or "", quote=True)
+    description_esc = html.escape(ticket.description or "", quote=True)
+
     # Transcript section (only for chatbot-escalated tickets)
     transcript_html = ""
     if ticket.chat_transcript:
         rows = ""
         for msg in ticket.chat_transcript:
-            role = msg.get("role", "unknown").capitalize()
-            content = msg.get("content", "").replace("<", "&lt;").replace(">", "&gt;")
+            role = html.escape(msg.get("role", "unknown").capitalize(), quote=True)
+            content = html.escape(msg.get("content", ""), quote=True)
             colour = "#1e40af" if role == "User" else "#065f46"
             rows += (
                 f'<tr><td style="padding:6px 10px;color:{colour};font-weight:600;'
@@ -93,7 +101,7 @@ def _ticket_html(ticket) -> str:
 
     company_row = (
         f'<tr><td style="padding:6px 0;color:#6B7280;width:140px">Company</td>'
-        f'<td style="padding:6px 0;color:#111827">{ticket.company_name}</td></tr>'
+        f'<td style="padding:6px 0;color:#111827">{company_esc}</td></tr>'
         if ticket.company_name else ""
     )
 
@@ -123,10 +131,10 @@ def _ticket_html(ticket) -> str:
         <tr><td style="padding:6px 0;color:#6B7280;width:140px">Submitted</td>
             <td style="padding:6px 0;color:#111827">{created_fmt}</td></tr>
         <tr><td style="padding:6px 0;color:#6B7280">Name</td>
-            <td style="padding:6px 0;color:#111827">{ticket.user_name or "—"}</td></tr>
+            <td style="padding:6px 0;color:#111827">{user_name_esc}</td></tr>
         <tr><td style="padding:6px 0;color:#6B7280">Email</td>
             <td style="padding:6px 0;color:#111827">
-              <a href="mailto:{ticket.user_email}" style="color:#2563EB">{ticket.user_email}</a>
+              <a href="mailto:{user_email_esc}" style="color:#2563EB">{user_email_esc}</a>
             </td></tr>
         {company_row}
         <tr><td style="padding:6px 0;color:#6B7280">Category</td>
@@ -137,12 +145,12 @@ def _ticket_html(ticket) -> str:
 
       <!-- Description -->
       <h3 style="margin:0 0 8px;color:#111827;font-size:14px">Subject</h3>
-      <p style="margin:0 0 20px;color:#374151;font-size:14px">{ticket.subject}</p>
+      <p style="margin:0 0 20px;color:#374151;font-size:14px">{subject_esc}</p>
 
       <h3 style="margin:0 0 8px;color:#111827;font-size:14px">Message / Description</h3>
       <div style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;
                   padding:14px 16px;color:#374151;font-size:14px;white-space:pre-wrap;
-                  line-height:1.6">{ticket.description}</div>
+                  line-height:1.6">{description_esc}</div>
 
       {transcript_html}
 
@@ -161,9 +169,10 @@ def _ticket_html(ticket) -> str:
 
 
 def _receipt_html(ticket) -> str:
-    """Build the user auto-acknowledgement HTML."""
+    """Build the user auto-acknowledgement HTML with escaped user inputs."""
     created_fmt = ticket.created_at.strftime("%Y-%m-%d %H:%M UTC") if ticket.created_at else "—"
     sla = "within 2 hours" if ticket.priority.upper() == "URGENT" else "within 24 hours"
+    user_name_esc = html.escape(ticket.user_name or "there", quote=True)
 
     return f"""<!DOCTYPE html>
 <html>
@@ -180,7 +189,7 @@ def _receipt_html(ticket) -> str:
 
     <div style="padding:28px 32px">
       <p style="margin:0 0 16px;color:#374151;font-size:15px">
-        Hi {ticket.user_name or "there"},
+        Hi {user_name_esc},
       </p>
       <p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6">
         Thank you for reaching out to the Invoice AI team. Your inquiry has been logged and
@@ -228,10 +237,10 @@ def dispatch_support_ticket_email(ticket) -> dict:
 
     priority = ticket.priority.upper()
     category_label = _CATEGORY_LABELS.get(ticket.category, ticket.category)
-    prefix = "INQ" if ticket.source == "WEBSITE_CONTACT" else "TICK"
+    safe_subject = (ticket.subject or "").replace("\r", " ").replace("\n", " ").strip()
     staff_subject = (
         f"[Invoice AI Support] [{ticket.ticket_number}] [{priority}] "
-        f"{category_label} — {ticket.subject}"
+        f"{category_label} — {safe_subject}"
     )
     receipt_subject = f"We received your inquiry [{ticket.ticket_number}] — Invoice AI"
 
