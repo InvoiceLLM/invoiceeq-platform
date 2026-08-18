@@ -144,6 +144,8 @@ The decisive result: *"What about printing costs?"* matched Apex Print Solutions
 
 Cost: one embedding pass per page of every indexable document. Run per tenant rather than all at once on anything large.
 
+**Gap 245 — the test suite's own orphan-generation stopped, closed 2026-08-18.** The migration script above cleans up existing orphans; it does nothing to stop new ones accumulating every time the pytest suite runs (the confirmed mechanism above: `SQLModel.metadata.drop_all(engine)` tears down Postgres at test teardown, leaving the matching Chroma collection behind). Fix lives in `tests/conftest.py`: a session-scoped, autouse fixture (`use_ephemeral_chroma`) patches the default Chroma client factory to `chromadb.EphemeralClient()` for the entire test session, so every test-created collection lives only in memory and is discarded automatically on process exit — nothing ever reaches the shared local Chroma instance the migration script above operates on. Verified: full backend suite (638 tests) run against the live Chroma instance's collection count before and after — 108 → 108, zero growth. Deliberately does not prune the orphans that had already accumulated before this fix (founder decision, code-fix-only scope) — those still need a manual `--prune-orphans` pass per the migration steps above if cleanup is wanted.
+
 ### Recent Fixes (Aug 17–18, 2026) — chat SQL route (Gaps 237 / 241 / 242)
 
 All in `agents/query_agent.py`'s SQL-generation `system_prompt` and `run_query_agent()`. Grouped here because they were built and verified as one pass; per-gap status lives in `be_features_tracker.md`.

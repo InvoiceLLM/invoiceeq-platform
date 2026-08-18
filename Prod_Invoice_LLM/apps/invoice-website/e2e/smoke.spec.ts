@@ -79,38 +79,14 @@ test.describe("Pricing table (on the landing page)", () => {
 });
 
 test.describe("Login page", () => {
-  test("renders the sign-in form with role selector and credential fields", async ({ page }) => {
+  test("renders the sign-in form with credential fields", async ({ page }) => {
     const response = await page.goto("/login");
     expect(response?.status()).toBe(200);
 
-    // Gap 164: the card header is now generic ("Get started") with a Sign In /
-    // + Create Organisation tab row underneath; Sign In is the default tab.
-    await expect(page.getByRole("heading", { name: "Get started" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Sign In" })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("tab", { name: "+ Create Organisation" })).toBeVisible();
-    // ".first()" -- the role-toggle button and the submit button
-    // ("-> Sign In as Admin") both contain the substring "Admin", which
-    // would otherwise be a strict-mode violation.
-    await expect(page.getByRole("button", { name: "Admin" }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "User" }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Welcome back", exact: true })).toBeVisible();
     await expect(page.getByPlaceholder("Work email")).toBeVisible();
     await expect(page.getByPlaceholder("Password")).toBeVisible();
-  });
-
-  test("role selector toggles which role is active", async ({ page }) => {
-    await page.goto("/login");
-
-    // Same ".first()" reasoning as above -- pins each locator to the
-    // role-toggle button specifically, not whichever button currently
-    // contains that substring.
-    const adminBtn = page.getByRole("button", { name: "Admin" }).first();
-    const userBtn = page.getByRole("button", { name: "User" }).first();
-
-    await expect(page.getByRole("button", { name: /Sign In as Admin/ })).toBeVisible();
-    await userBtn.click();
-    await expect(page.getByRole("button", { name: /Sign In as User/ })).toBeVisible();
-    await adminBtn.click();
-    await expect(page.getByRole("button", { name: /Sign In as Admin/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Sign In/ })).toBeVisible();
   });
 
   test("forgot-password and signup links are present", async ({ page }) => {
@@ -119,13 +95,10 @@ test.describe("Login page", () => {
       "href",
       "/forgot-password"
     );
-    // Gap 164: the signup CTA moved out of the card footer and into the
-    // "+ Create Organisation" tab pane, so the tab has to be selected first.
-    await page.getByRole("tab", { name: "+ Create Organisation" }).click();
-    await expect(page.getByRole("heading", { name: "Set up your workspace" })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Create Organisation/ })).toHaveAttribute(
+    await expect(page.getByRole("link", { name: "Create an organisation →" })).toHaveAttribute(
       "href",
       "/signup"
     );
   });
 });
+

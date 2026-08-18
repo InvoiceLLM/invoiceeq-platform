@@ -111,6 +111,9 @@ param websiteMinReplicas int = 1
 @description('Website Container App maximum replica count.')
 param websiteMaxReplicas int = 3
 
+@description('Custom domain for the public website (e.g. "invoiceeq.app"), once purchased. Empty by default -- leaving this unset deploys nothing new (no Front Door, no CORS/redirect-URI changes) and every existing CAE-domain URL keeps working exactly as before. See feature_6_custom_domain_integration.md for the full cutover sequence once a domain is bought.')
+param customDomainName string = ''
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
@@ -149,11 +152,25 @@ resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' exist
 var frontendFqdn = 'ca-invoice-fe-${environment}.${cae.properties.defaultDomain}'
 var websiteFqdn = 'ca-invoice-website-${environment}.${cae.properties.defaultDomain}'
 
+// Once a real domain is purchased and Front Door is live in front of the
+// website (see the frontDoor module below), that domain becomes the
+// canonical public origin -- OAuth callbacks, BACKEND_PUBLIC_URL,
+// PUBLIC_APP_URL and FRONTEND_URL all switch wholesale to it. Falls back to
+// the CAE FQDN otherwise, so leaving customDomainName unset changes nothing.
+var publicOrigin = empty(customDomainName) ? websiteFqdn : customDomainName
+
 // OAuth redirect URIs must be the public origin (website), not the backend or internal frontend --
 // backendApp and frontendApp are both internal-only (external:false), so Google/Salesforce
 // redirect the browser back to the website, which proxies it to the frontend container.
-var googleRedirectUri = 'https://${websiteFqdn}/api/connectors/callback/google_drive'
-var salesforceRedirectUri = 'https://${websiteFqdn}/api/connectors/callback/salesforce'
+var googleRedirectUri = 'https://${publicOrigin}/api/connectors/callback/google_drive'
+var salesforceRedirectUri = 'https://${publicOrigin}/api/connectors/callback/salesforce'
+
+// CORS stays additive, not a switch -- the CAE FQDN keeps working (useful
+// during DNS/cert cutover, and as a fallback if Front Door is ever bypassed)
+// while the custom domain is added alongside it once set.
+var corsAllowedOrigins = empty(customDomainName)
+  ? 'https://${frontendFqdn},https://${websiteFqdn}'
+  : 'https://${frontendFqdn},https://${websiteFqdn},https://${customDomainName}'
 
 module backendApp './modules/compute/invoice-be.bicep' = {
   name: 'backend-deploy'
@@ -172,19 +189,19 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     image: backendImage
     clerkJwtIssuer: clerkJwtIssuer
     clerkJwksUrl: clerkJwksUrl
-    allowedOrigins: 'https://${frontendFqdn},https://${websiteFqdn}'
+    allowedOrigins: corsAllowedOrigins
     googleClientId: googleClientId
     googleRedirectUri: googleRedirectUri
     salesforceClientId: salesforceClientId
     salesforceRedirectUri: salesforceRedirectUri
     sendgridSendingDomain: sendgridSendingDomain
     payuMode: payuMode
-    backendPublicUrl: 'https://${websiteFqdn}'
-    publicAppUrl: 'https://${websiteFqdn}'
+    backendPublicUrl: 'https://${publicOrigin}'
+    publicAppUrl: 'https://${publicOrigin}'
     // Post-Multi-Zone: browser never reaches FE (ingress external:false). Any
     // full-page RedirectResponse (e.g. connectors oauth_callback) must land on
     // the public website origin, which proxies /settings/* to FE.
-    frontendUrl: 'https://${websiteFqdn}'
+    frontendUrl: 'https://${publicOrigin}'
     cpu: backendCpu
     memory: backendMemory
     minReplicas: backendMinReplicas
@@ -315,7 +332,24 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
   }
 }
 
+// Front Door + WAF (Cloud_Architecture_Document.md section 12, Layer 1 --
+// documented at the original design stage but never built until now). Only
+// deploys when a real domain has been purchased and set via
+// customDomainName; a no-op otherwise. See feature_6_custom_domain_integration.md.
+module frontDoor './modules/network/front-door.bicep' = if (!empty(customDomainName)) {
+  name: 'front-door-deploy'
+  params: {
+    namingPrefix: namingPrefix
+    environment: environment
+    customDomainName: customDomainName
+    originHostName: websiteApp.outputs.fqdn
+  }
+}
+
 // ================= Outputs =================
 output frontendUrl string = frontendApp.outputs.fqdn
 output backendUrl string = backendApp.outputs.fqdn
 output websiteUrl string = websiteApp.outputs.fqdn
+output publicUrl string = 'https://${publicOrigin}'
+output frontDoorDomainValidationToken string = frontDoor.?outputs.?domainValidationToken ?? ''
+output frontDoorEndpointHostName string = frontDoor.?outputs.?frontDoorEndpointHostName ?? ''

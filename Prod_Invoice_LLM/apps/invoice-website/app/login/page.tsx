@@ -343,13 +343,18 @@ export default function LoginPage() {
                 {loading ? "⏳ Verifying…" : "✓ Verify & Sign In"}
               </button>
 
-              <button
+               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   // Flipping needsOtp alone left otpCode + a leftover banner and
                   // kept Clerk mid second-factor -- password form then looked /
                   // behaved odd. Soft-reset UI state; next Sign In calls
                   // signIn.create() again and starts a fresh attempt.
+                  try {
+                    await signOut();
+                  } catch (signOutErr) {
+                    console.error("Clerk sign-out failed on back-to-login:", signOutErr);
+                  }
                   setNeedsOtp(false);
                   setOtpCode("");
                   setError(null);

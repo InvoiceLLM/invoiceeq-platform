@@ -65,3 +65,18 @@ def clerk_jwt_unconfigured(monkeypatch):
     monkeypatch.setattr(dependencies.settings, "CLERK_JWT_ISSUER", "")
     monkeypatch.setattr(dependencies.settings, "CLERK_JWKS_URL", "")
     yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def use_ephemeral_chroma():
+    """
+    Gap 245: Force Chroma client to use EphemeralClient (in-memory) during tests
+    to prevent orphan collections from accumulating on the live database.
+    """
+    import chroma_client
+    import chromadb
+
+    client = chromadb.EphemeralClient()
+    chroma_client._chroma_client = client
+    yield client
+
