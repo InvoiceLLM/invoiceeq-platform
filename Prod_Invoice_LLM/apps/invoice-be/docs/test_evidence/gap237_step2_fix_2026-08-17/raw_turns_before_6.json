@@ -1,0 +1,54 @@
+{
+  "run_label": "before_6",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "d264ec93-e3bf-48a5-89a4-6148c1f39c4c",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "5353c913-76b1-4b3a-a1eb-d71742337e83",
+        "session_id": "d264ec93-e3bf-48a5-89a4-6148c1f39c4c",
+        "role": "assistant",
+        "content": "There are 4 cloud-related invoices: 3 in USD totaling $73,612.43 and 1 in EUR totaling \u20ac800.00.\n\n### Query Results\n\n\ncurrency | invoice_count | total_grand_total | total_tax_amount | total_inbound | total_outbound\n--- | --- | --- | --- | --- | ---\nEUR | 1 | 800.0 | 0.0 | 800.0 | 0.0\nUSD | 3 | 73612.43 | 0.0 | 73612.43 | 0.0",
+        "generated_sql": "SELECT\n  currency,\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_grand_total,\n  SUM(tax_amount) AS total_tax_amount,\n  SUM(CASE WHEN flow_direction='INBOUND'  THEN grand_total ELSE 0 END) AS total_inbound,\n  SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_outbound\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%\"cloud\"%')\n    OR LOWER(items::text) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(vendor_name, '')) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(customer_name, '')) LIKE LOWER('%cloud%')\n  )\nGROUP BY currency\nORDER BY currency;",
+        "citations": [],
+        "created_at": "2026-08-17T15:28:20.958237",
+        "feedback": null
+      },
+      "elapsed_seconds": 28.6
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "45561d1b-57d1-4eee-83fb-69abb169f89e",
+        "session_id": "d264ec93-e3bf-48a5-89a4-6148c1f39c4c",
+        "role": "assistant",
+        "content": "- 3 USD invoices totaling $73,612.43\n- Total tax: $0.00; total inbound: $73,612.43; total outbound: $0.00\n- Date range: 2026-06-15 (all invoices); status: COMPLETED\n\nIf you want line-item or vendor-level breakdowns for each invoice, I can fetch those next.",
+        "generated_sql": null,
+        "citations": [],
+        "created_at": "2026-08-17T15:28:38.290206",
+        "feedback": null
+      },
+      "elapsed_seconds": 17.3
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "There are 4 cloud-related invoices: 3 in USD totaling $73,612.43 and 1 in EUR totaling \u20ac800.00.\n\n### Query Results\n\n\ncur",
+      "result_invoice_ids": [
+        "1d106d0e-dbef-4d23-aca8-bf92bc44e2bc",
+        "08a382c6-abde-4c11-b094-4fcc46b9c0d3",
+        "b7cc2442-156b-445f-bb25-4faa0c34a6e6",
+        "0c174883-9a48-45d2-8678-df088a86e67f"
+      ]
+    },
+    {
+      "content_snippet": "- 3 USD invoices totaling $73,612.43\n- Total tax: $0.00; total inbound: $73,612.43; total outbound: $0.00\n- Date range: ",
+      "result_invoice_ids": []
+    }
+  ]
+}

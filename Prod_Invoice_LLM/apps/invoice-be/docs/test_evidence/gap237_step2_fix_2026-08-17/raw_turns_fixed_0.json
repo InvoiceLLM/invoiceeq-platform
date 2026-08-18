@@ -1,0 +1,58 @@
+{
+  "run_label": "fixed_0",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "7e9151fa-8944-4f9e-89e8-8e12fea64382",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "85fe91ab-5705-4909-8b7c-169a64fc48b8",
+        "session_id": "7e9151fa-8944-4f9e-89e8-8e12fea64382",
+        "role": "assistant",
+        "content": "All cloud-related invoices are INBOUND: 1 invoice in EUR totaling \u20ac800.00 (tax \u20ac0.00) and 3 invoices in USD totaling $73,612.43 (tax $0.00).\n\n### Query Results\n\n\nflow_direction | currency | invoice_count | total_grand_total | total_tax_amount\n--- | --- | --- | --- | ---\nINBOUND | EUR | 1 | 800.0 | 0.0\nINBOUND | USD | 3 | 73612.43 | 0.0",
+        "generated_sql": "SELECT\n  flow_direction,\n  currency,\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_grand_total,\n  SUM(tax_amount) AS total_tax_amount\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%cloud%')\n    OR LOWER(items::text) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\nGROUP BY flow_direction, currency\nORDER BY currency, flow_direction;",
+        "citations": [],
+        "created_at": "2026-08-17T15:47:22.120844",
+        "feedback": null
+      },
+      "elapsed_seconds": 23.9
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "c97d13de-6735-4a34-a69c-41a79ff4dafe",
+        "session_id": "7e9151fa-8944-4f9e-89e8-8e12fea64382",
+        "role": "assistant",
+        "content": "All three are INBOUND, COMPLETED USD invoices dated 2026-06-15 (due 2026-07-15) with zero tax, totaling USD 73,612.43. They are: Zenith Consulting (ZEN-3003, PO-ZEN-3003) USD 69,012.43 for a Cloud Migration Assessment; CloudNine Hosting (CNH-1001, PO-CNH-1001) USD 1,200.00 for a monthly hosting fee; and Acme Manufacturing (ACM-2002, PO-ACM-2002) USD 3,400.00 for server rack maintenance.\n\n### Query Results\n\n\nid | batch_id | file_path | vendor_name | customer_name | flow_direction | status | invoice_number | invoice_date | due_date | grand_total | currency | tax_amount | po_number | sa_alerts | tags | items | created_at\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n282b1919-0a09-4802-b813-45bdea1f1bd1 |  | test/ZEN-3003.pdf | Zenith Consulting |  | INBOUND | COMPLETED | ZEN-3003 | 2026-06-15 | 2026-07-15 | 69012.43 | USD | 0.0 | PO-ZEN-3003 | [] | ['consulting', 'assessment'] | [{'amount': 69012.43, 'quantity': 1, 'unit_price': 69012.43, 'description': 'Cloud Migration Assessment'}] | 2026-08-17 15:46:57.430584\n377f9c67-a8eb-424d-b790-c5a824c22512 |  | test/CNH-1001.pdf | CloudNine Hosting |  | INBOUND | COMPLETED | CNH-1001 | 2026-06-15 | 2026-07-15 | 1200.0 | USD | 0.0 | PO-CNH-1001 | [] | ['hosting', 'subscription'] | [{'amount': 1200.0, 'quantity': 1, 'unit_price': 1200.0, 'description': 'Monthly hosting fee'}] | 2026-08-17 15:46:57.428558\nde8e4244-bd1e-4581-8789-f62aec85e6b3 |  | test/ACM-2002.pdf | Acme Manufacturing |  | INBOUND | COMPLETED | ACM-2002 | 2026-06-15 | 2026-07-15 | 3400.0 | USD | 0.0 | PO-ACM-2002 | [] | ['cloud', 'infra'] | [{'amount': 3400.0, 'quantity': 1, 'unit_price': 3400.0, 'description': 'Server rack maintenance'}] | 2026-08-17 15:46:57.429969",
+        "generated_sql": "SELECT\n  id,\n  batch_id,\n  file_path,\n  vendor_name,\n  customer_name,\n  flow_direction,\n  status,\n  invoice_number,\n  invoice_date,\n  due_date,\n  grand_total,\n  currency,\n  tax_amount,\n  po_number,\n  sa_alerts,\n  tags,\n  items,\n  created_at\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%cloud%')\n    OR LOWER(items::text) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\n  AND currency = 'USD'\nORDER BY invoice_date, id;",
+        "citations": [],
+        "created_at": "2026-08-17T15:47:56.148262",
+        "feedback": null
+      },
+      "elapsed_seconds": 34.0
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "All cloud-related invoices are INBOUND: 1 invoice in EUR totaling \u20ac800.00 (tax \u20ac0.00) and 3 invoices in USD totaling $73",
+      "result_invoice_ids": [
+        "377f9c67-a8eb-424d-b790-c5a824c22512",
+        "de8e4244-bd1e-4581-8789-f62aec85e6b3",
+        "282b1919-0a09-4802-b813-45bdea1f1bd1",
+        "aed300ef-c4a5-4092-8dc7-844e829f6a86"
+      ]
+    },
+    {
+      "content_snippet": "All three are INBOUND, COMPLETED USD invoices dated 2026-06-15 (due 2026-07-15) with zero tax, totaling USD 73,612.43. T",
+      "result_invoice_ids": [
+        "282b1919-0a09-4802-b813-45bdea1f1bd1",
+        "377f9c67-a8eb-424d-b790-c5a824c22512",
+        "de8e4244-bd1e-4581-8789-f62aec85e6b3"
+      ]
+    }
+  ]
+}

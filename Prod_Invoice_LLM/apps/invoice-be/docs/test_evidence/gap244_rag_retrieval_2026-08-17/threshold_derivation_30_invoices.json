@@ -1,0 +1,1503 @@
+[
+ {
+  "query": "What about printing costs?",
+  "expect": [
+   "APS-410093"
+  ],
+  "results": [
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.3924,
+    "relevant": true
+   },
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.4807,
+    "relevant": false
+   },
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.4854,
+    "relevant": false
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.4855,
+    "relevant": false
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.4933,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.502,
+    "relevant": false
+   },
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.5023,
+    "relevant": false
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.5057,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5067,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.5067,
+    "relevant": false
+   },
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.5093,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5117,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5195,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.5205,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5209,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.5214,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.5219,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.5231,
+    "relevant": false
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.5271,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.5276,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.529,
+    "relevant": false
+   },
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.5293,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.5328,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.5344,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.5379,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.5395,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.5414,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.5422,
+    "relevant": false
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.5444,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.5448,
+    "relevant": false
+   }
+  ]
+ },
+ {
+  "query": "Do we have any steel or materials related invoices?",
+  "expect": [
+   "TSD-620458"
+  ],
+  "results": [
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.3823,
+    "relevant": true
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.3884,
+    "relevant": false
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.3994,
+    "relevant": false
+   },
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.4036,
+    "relevant": false
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.4094,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.4097,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.4101,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.4106,
+    "relevant": false
+   },
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.4109,
+    "relevant": false
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.4168,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.4175,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.419,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.421,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.4225,
+    "relevant": false
+   },
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.4238,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.4247,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.4259,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.4265,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.4279,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.4289,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.4305,
+    "relevant": false
+   },
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.4311,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.4315,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.4338,
+    "relevant": false
+   },
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.4404,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.4414,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.4515,
+    "relevant": false
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.4528,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.4543,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.455,
+    "relevant": false
+   }
+  ]
+ },
+ {
+  "query": "How much did we spend on office supplies?",
+  "expect": [
+   "SOS-100442"
+  ],
+  "results": [
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.4132,
+    "relevant": true
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.4525,
+    "relevant": false
+   },
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.4553,
+    "relevant": false
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.4558,
+    "relevant": false
+   },
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.4605,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.4754,
+    "relevant": false
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.4867,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.4973,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.4979,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.498,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.5017,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5049,
+    "relevant": false
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.5049,
+    "relevant": false
+   },
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.5061,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5081,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.5167,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.5183,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.5184,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.5193,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.521,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5247,
+    "relevant": false
+   },
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.5249,
+    "relevant": false
+   },
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.5272,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5282,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.5299,
+    "relevant": false
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.5355,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.5429,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.5492,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.5563,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.5714,
+    "relevant": false
+   }
+  ]
+ },
+ {
+  "query": "And logistics or freight costs?",
+  "expect": [
+   "BRL-200981",
+   "CMC-330217"
+  ],
+  "results": [
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.4299,
+    "relevant": true
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.4828,
+    "relevant": false
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.524,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.5264,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.5293,
+    "relevant": false
+   },
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.5331,
+    "relevant": true
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.5386,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.5403,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.5413,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.5487,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5519,
+    "relevant": false
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.5521,
+    "relevant": false
+   },
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.5532,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5536,
+    "relevant": false
+   },
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.5571,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.5588,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5591,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.5609,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.5613,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5628,
+    "relevant": false
+   },
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.5642,
+    "relevant": false
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.5658,
+    "relevant": false
+   },
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.5664,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.5734,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.5807,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.5818,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.5863,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.598,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.5991,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.5998,
+    "relevant": false
+   }
+  ]
+ },
+ {
+  "query": "Any janitorial or cleaning services?",
+  "expect": [
+   "RFG-500712"
+  ],
+  "results": [
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.4749,
+    "relevant": true
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.5786,
+    "relevant": false
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.5827,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.5971,
+    "relevant": false
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.6036,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.6054,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.6079,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.608,
+    "relevant": false
+   },
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.6115,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.6138,
+    "relevant": false
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.6143,
+    "relevant": false
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.6143,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.6181,
+    "relevant": false
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.6188,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.619,
+    "relevant": false
+   },
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.6192,
+    "relevant": false
+   },
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.6198,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.6211,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.6239,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.6249,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.6253,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.6286,
+    "relevant": false
+   },
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.6289,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.6342,
+    "relevant": false
+   },
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.6346,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.635,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.6379,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.639,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.6463,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.6494,
+    "relevant": false
+   }
+  ]
+ },
+ {
+  "query": "Show me manufacturing or tooling charges",
+  "expect": [
+   "CMC-330217"
+  ],
+  "results": [
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.3848,
+    "relevant": true
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.4165,
+    "relevant": false
+   },
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.4422,
+    "relevant": false
+   },
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.4497,
+    "relevant": false
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.45,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.456,
+    "relevant": false
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.4583,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.4591,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.4645,
+    "relevant": false
+   },
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.4658,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.4708,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.4735,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.4775,
+    "relevant": false
+   },
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.4791,
+    "relevant": false
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.4815,
+    "relevant": false
+   },
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.4845,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.4857,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.4877,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.4886,
+    "relevant": false
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.489,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.4899,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.4909,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.4913,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.4914,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.4962,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.4994,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.5032,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.505,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.5111,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.5239,
+    "relevant": false
+   }
+  ]
+ },
+ {
+  "query": "Do we have any legal or attorney fees?",
+  "expect": [],
+  "results": [
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5062,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.5063,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5125,
+    "relevant": false
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.5267,
+    "relevant": false
+   },
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.5269,
+    "relevant": false
+   },
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.529,
+    "relevant": false
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.5322,
+    "relevant": false
+   },
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.5352,
+    "relevant": false
+   },
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.5379,
+    "relevant": false
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.5402,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.5417,
+    "relevant": false
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.5432,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.5447,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.5486,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.5495,
+    "relevant": false
+   },
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.5503,
+    "relevant": false
+   },
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.5544,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.5559,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.5583,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5621,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.563,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.5757,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.5759,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.5767,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.5815,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.5851,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.5852,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.5875,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.589,
+    "relevant": false
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.5932,
+    "relevant": false
+   }
+  ]
+ },
+ {
+  "query": "Any airline or travel bookings?",
+  "expect": [],
+  "results": [
+   {
+    "inv": "IEQ-EU-8001",
+    "vendor": "Alpine Retail GmbH",
+    "dist": 0.5406,
+    "relevant": false
+   },
+   {
+    "inv": "BRL-200981",
+    "vendor": "Blue Ridge Logistics",
+    "dist": 0.5447,
+    "relevant": false
+   },
+   {
+    "inv": "BL-2026-1450",
+    "vendor": "Bharat Logistics Pvt Ltd",
+    "dist": 0.5569,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8003",
+    "vendor": "Deutsche Warenhandel GmbH",
+    "dist": 0.5667,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9001",
+    "vendor": "NorthPoint Retail Inc.",
+    "dist": 0.5673,
+    "relevant": false
+   },
+   {
+    "inv": "APS-410093",
+    "vendor": "Apex Print Solutions",
+    "dist": 0.5722,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-EU-8002",
+    "vendor": "Lisboa Comercio Lda",
+    "dist": 0.5725,
+    "relevant": false
+   },
+   {
+    "inv": null,
+    "vendor": null,
+    "dist": 0.5738,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9003",
+    "vendor": "Meridian Health Partners",
+    "dist": 0.5739,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.578,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7003",
+    "vendor": "Kavya Enterprises",
+    "dist": 0.5795,
+    "relevant": false
+   },
+   {
+    "inv": "KE-2026-0089",
+    "vendor": "Konkan Exports Pvt Ltd",
+    "dist": 0.5816,
+    "relevant": false
+   },
+   {
+    "inv": "PE-2026-0512",
+    "vendor": "Patel Enterprises",
+    "dist": 0.5821,
+    "relevant": false
+   },
+   {
+    "inv": "ISL-2026-0678",
+    "vendor": "Iberia Suministros SL",
+    "dist": 0.5839,
+    "relevant": false
+   },
+   {
+    "inv": "CFS-2026-0921",
+    "vendor": "Cafe Fournitures SARL",
+    "dist": 0.5846,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.586,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-US-9002",
+    "vendor": "Fieldstone Analytics LLC",
+    "dist": 0.5871,
+    "relevant": false
+   },
+   {
+    "inv": "RIT-2026-0456",
+    "vendor": "Rhein Industrietechnik GmbH",
+    "dist": 0.5918,
+    "relevant": false
+   },
+   {
+    "inv": "CMC-330217",
+    "vendor": "Cascade Manufacturing Co",
+    "dist": 0.5941,
+    "relevant": false
+   },
+   {
+    "inv": "RFG-500712",
+    "vendor": "Redwood Facilities Group",
+    "dist": 0.5944,
+    "relevant": false
+   },
+   {
+    "inv": "BMN-2026-0234",
+    "vendor": "Benelux Machines NV",
+    "dist": 0.5946,
+    "relevant": false
+   },
+   {
+    "inv": "MCS-2026-0890",
+    "vendor": "Milano Componenti SRL",
+    "dist": 0.5977,
+    "relevant": false
+   },
+   {
+    "inv": "NOA-2026-3310",
+    "vendor": "Nordic Office AB",
+    "dist": 0.6067,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7001",
+    "vendor": "Vikram Retail Chain",
+    "dist": 0.6079,
+    "relevant": false
+   },
+   {
+    "inv": "SOS-100442",
+    "vendor": "Summit Office Supplies",
+    "dist": 0.6085,
+    "relevant": false
+   },
+   {
+    "inv": "ST-2026-0771",
+    "vendor": "Sharma Traders",
+    "dist": 0.616,
+    "relevant": false
+   },
+   {
+    "inv": "GHS-2026-0334",
+    "vendor": "Ganesh Hardware Store",
+    "dist": 0.6183,
+    "relevant": false
+   },
+   {
+    "inv": "IEQ-IN-7002",
+    "vendor": "Anand Distributors",
+    "dist": 0.6301,
+    "relevant": false
+   },
+   {
+    "inv": "DC-2026-1120",
+    "vendor": "Deccan Chemicals Ltd",
+    "dist": 0.6349,
+    "relevant": false
+   },
+   {
+    "inv": "TSD-620458",
+    "vendor": "Titan Steel Distributors",
+    "dist": 0.6418,
+    "relevant": false
+   }
+  ]
+ }
+]

@@ -1,0 +1,57 @@
+{
+  "run_label": "run6",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "45b79806-ca38-439f-bb47-706643272493",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "5381f586-d399-4cda-a2c7-b7699a74fd48",
+        "session_id": "45b79806-ca38-439f-bb47-706643272493",
+        "role": "assistant",
+        "content": "There are 4 cloud-related invoices in total: 1 invoice for \u20ac800.00 and 3 invoices totaling $73,612.43, all inbound.\n\n### Query Results\n\n\ninvoice_count | total_amount | total_inbound | total_outbound | currency\n--- | --- | --- | --- | ---\n1 | 800.0 | 800.0 | 0.0 | EUR\n3 | 73612.43 | 73612.43 | 0.0 | USD",
+        "generated_sql": "SELECT\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_amount,\n  SUM(CASE WHEN flow_direction = 'INBOUND' THEN grand_total ELSE 0 END) AS total_inbound,\n  SUM(CASE WHEN flow_direction = 'OUTBOUND' THEN grand_total ELSE 0 END) AS total_outbound,\n  currency\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(COALESCE(vendor_name, '')) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(customer_name, '')) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(tags::text, '')) LIKE LOWER('%\"cloud\"%')\n    OR LOWER(COALESCE(items::text, '')) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(file_path, '')) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(invoice_number, '')) LIKE LOWER('%cloud%')\n  )\nGROUP BY currency;",
+        "citations": [],
+        "created_at": "2026-08-17T12:45:42.121738",
+        "feedback": null
+      },
+      "elapsed_seconds": 17.8
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "b27338fb-8f88-4083-95c2-880d2b081593",
+        "session_id": "45b79806-ca38-439f-bb47-706643272493",
+        "role": "assistant",
+        "content": "I only see two USD invoices (not three): Acme Manufacturing \u2014 USD 3,400.00 for \"Server rack maintenance\" (invoice ACM-2002), and Zenith Consulting \u2014 USD 69,012.43 for \"Cloud Migration Assessment\" (invoice ZEN-3003). Would you like a deeper breakdown of tax, line items, PO, or payment status?\n\n### Query Results\n\n\nid | batch_id | file_path | vendor_name | grand_total | currency | invoice_number | invoice_date | due_date | tax_amount | po_number | status | sa_alerts | created_at | flow_direction | tags | items\n--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---\n98ca1b79-1109-4749-a703-85ce31dbb2db |  | test/ACM-2002.pdf | Acme Manufacturing | 3400.0 | USD | ACM-2002 | 2026-06-15 | 2026-07-15 | 0.0 | PO-ACM-2002 | COMPLETED | [] | 2026-08-17 12:45:21.669980 | INBOUND | ['cloud', 'infra'] | [{'amount': 3400.0, 'quantity': 1, 'unit_price': 3400.0, 'description': 'Server rack maintenance'}]\n42b73765-d3fe-4c6c-9e87-b33c45326193 |  | test/ZEN-3003.pdf | Zenith Consulting | 69012.43 | USD | ZEN-3003 | 2026-06-15 | 2026-07-15 | 0.0 | PO-ZEN-3003 | COMPLETED | [] | 2026-08-17 12:45:21.670793 | INBOUND | ['consulting', 'assessment'] | [{'amount': 69012.43, 'quantity': 1, 'unit_price': 69012.43, 'description': 'Cloud Migration Assessment'}]",
+        "generated_sql": "SELECT\n  id,\n  batch_id,\n  file_path,\n  vendor_name,\n  grand_total,\n  currency,\n  invoice_number,\n  invoice_date,\n  due_date,\n  tax_amount,\n  po_number,\n  status,\n  sa_alerts,\n  created_at,\n  flow_direction,\n  tags,\n  items\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND currency = 'USD'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%\"cloud\"%')\n    OR LOWER(items::text) LIKE LOWER('%cloud%')\n  )\nORDER BY invoice_date ASC;",
+        "citations": [],
+        "created_at": "2026-08-17T12:46:21.248748",
+        "feedback": null
+      },
+      "elapsed_seconds": 39.3
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "There are 4 cloud-related invoices in total: 1 invoice for \u20ac800.00 and 3 invoices totaling $73,612.43, all inbound.\n\n###",
+      "result_invoice_ids": [
+        "70733321-bf42-4486-8817-4162ea94dc2d",
+        "98ca1b79-1109-4749-a703-85ce31dbb2db",
+        "42b73765-d3fe-4c6c-9e87-b33c45326193",
+        "b0c24e7e-3b0d-4e3d-be6b-0a484a49dc77"
+      ]
+    },
+    {
+      "content_snippet": "I only see two USD invoices (not three): Acme Manufacturing \u2014 USD 3,400.00 for \"Server rack maintenance\" (invoice ACM-20",
+      "result_invoice_ids": [
+        "98ca1b79-1109-4749-a703-85ce31dbb2db",
+        "42b73765-d3fe-4c6c-9e87-b33c45326193"
+      ]
+    }
+  ]
+}

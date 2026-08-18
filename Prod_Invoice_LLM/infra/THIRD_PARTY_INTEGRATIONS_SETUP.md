@@ -102,6 +102,43 @@ Registered From → `invoices@invoiceeq.app` → Parse → website relay → BE 
 
 ---
 
+## 6. Custom Domain (Azure Front Door + WAF) — Website Gap 185
+
+Binds a real purchased domain (e.g. `invoiceeq.app`) to `invoice-website` via Azure Front Door, per `feature_6_custom_domain_integration.md`. Additive to the DNS records in section 4 above (SendGrid MX/domain-auth) — same registrar, different record set, do not remove those.
+
+### Step 1: Deploy Front Door with the domain param set, before touching DNS
+`deploy-all.ps1` doesn't take custom-domain as a script flag — it reads bicep params from your environment's `infra/params.<env>.json` (see section 5 below). Add `customDomainName` there alongside the other optional string params (e.g. next to `sendgridSendingDomain`):
+```json
+"customDomainName": { "value": "invoiceeq.app" }
+```
+Then run the standard deploy:
+```powershell
+./infra/deploy-all.ps1 -Environment prod -ResourceGroup rg-invoice-prod -Location centralus -NamingPrefix company
+```
+This deploys the Front Door profile, endpoint, origin, route, and WAF policy successfully even before DNS exists — only the custom-domain binding itself sits in a pending-validation state until the records below are added. Read the deployment outputs `frontDoorDomainValidationToken` and `frontDoorEndpointHostName` — you need both for the next step (`az deployment group show --resource-group <rg> --name <stage8-deployment-name> --query properties.outputs`).
+
+### Step 2: GoDaddy — Azure domain verification + routing
+1. **TXT record** at `_dnsauth.<your-domain>` (or `_dnsauth.<subdomain>` if binding a subdomain) = the `frontDoorDomainValidationToken` value from Step 1.
+2. **CNAME record** for the domain/subdomain → the `frontDoorEndpointHostName` value from Step 1 (looks like `<endpoint>.z01.azurefd.net`). If binding the bare apex domain (`invoiceeq.app` with no subdomain), GoDaddy doesn't support a CNAME at the apex — use GoDaddy's ALIAS/forwarding record type instead, or bind a subdomain (`www.invoiceeq.app` or `app.invoiceeq.app`) and redirect the apex to it.
+3. Wait for propagation and Azure's automatic validation (minutes to a few hours) — check the custom domain's status in the Azure Portal (Front Door profile → Domains) until it reads **Approved**, at which point Front Door auto-issues the managed TLS certificate. No manual certificate upload needed.
+
+### Step 3: Clerk — cut over to a production instance on the real domain
+The current Clerk instance is a **test** instance (`pk_test`/`sk_test`). A real custom domain is also the natural point to cut over to production:
+1. In the Clerk Dashboard, add your domain under **Domains** and switch (or create) a **Production** instance bound to it.
+2. Clerk generates its own required DNS records (typically `accounts.<domain>`, `clerk.<domain>`, and DKIM CNAMEs for its email sending) — add all of them at GoDaddy. These are separate from and additive to the Azure verification records in Step 2.
+3. Once Clerk confirms the domain, copy the **production** Publishable Key and Secret Key, and update `nextPublicClerkPublishableKey`/`clerk-secret-secret` (Key Vault) for this environment, replacing the test keys. Re-deploy so the new build-arg-injected publishable key reaches the client bundle (see section 1's Container Apps deployment note above — this still applies).
+
+### Step 4: Google Drive / Salesforce — update redirect URIs
+Bicep already switches `GOOGLE_REDIRECT_URI`/`SALESFORCE_REDIRECT_URI` to the custom domain automatically once `customDomainName` is set (see `feature_6_custom_domain_integration.md`). The third-party dashboards still need a manual matching update, same as Gap 131's original setup:
+1. Google Cloud Console → your OAuth client → Authorized redirect URIs → add `https://<domain>/api/connectors/callback/google_drive`.
+2. Salesforce → Connected App → Callback URL → add `https://<domain>/api/connectors/callback/salesforce`.
+3. Leave the old CAE-FQDN redirect URIs registered too until you've confirmed the new domain works end-to-end, then remove them.
+
+### Live check
+`https://<domain>` returns the real site over a valid (non-self-signed) certificate; login completes through Clerk's production instance; `/contact` submits successfully; a burst of >20 requests to `/api/contact` inside 5 minutes gets WAF-blocked (confirms the Gap 249 edge-mitigation rule is active — the endpoint itself is still unauthenticated and unpatched for the email-injection issue, Gap 250, which this domain work does not address).
+
+---
+
 ## 5. Key Vault Seeding & Bicep Orchestration
 
 All secrets must be stored securely inside **Azure Key Vault** and injected into Container Apps at deploy time.

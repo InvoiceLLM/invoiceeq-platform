@@ -1,0 +1,54 @@
+{
+  "run_label": "after_1",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "3fd3e2d1-2cd1-49a6-90af-86efa4fae44d",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "0a6d627e-f756-4aad-adb4-44912fbcacc6",
+        "session_id": "3fd3e2d1-2cd1-49a6-90af-86efa4fae44d",
+        "role": "assistant",
+        "content": "There is 1 invoice totaling \u20ac800.00 and 3 invoices totaling $73,612.43 related to cloud.\n\n### Query Results\n\n\ninvoice_count | total_amount | currency\n--- | --- | ---\n1 | 800.0 | EUR\n3 | 73612.43 | USD",
+        "generated_sql": "SELECT\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_amount,\n  currency\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(tags::text) LIKE LOWER('%cloud%')\n    OR LOWER(items::text) LIKE LOWER('%cloud%')\n    OR LOWER(vendor_name) LIKE LOWER('%cloud%')\n    OR LOWER(customer_name) LIKE LOWER('%cloud%')\n  )\nGROUP BY currency;",
+        "citations": [],
+        "created_at": "2026-08-17T15:38:54.926497",
+        "feedback": null
+      },
+      "elapsed_seconds": 22.8
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "09e97e4d-b869-44c4-99c5-cb0c05dff4a5",
+        "session_id": "3fd3e2d1-2cd1-49a6-90af-86efa4fae44d",
+        "role": "assistant",
+        "content": "I only have aggregate data for the three USD cloud invoices:\n\n- 3 invoices \u2014 total $73,612.43; date(s): 2026-06-15; status: COMPLETED; no individual invoice IDs, vendor names, or line-item breakdowns are available in the provided context.",
+        "generated_sql": null,
+        "citations": [],
+        "created_at": "2026-08-17T15:39:34.366799",
+        "feedback": null
+      },
+      "elapsed_seconds": 39.4
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "There is 1 invoice totaling \u20ac800.00 and 3 invoices totaling $73,612.43 related to cloud.\n\n### Query Results\n\n\ninvoice_co",
+      "result_invoice_ids": [
+        "f5060bbb-20fb-4d1e-9f51-968304a858c5",
+        "5c566aa1-a67e-4485-9718-2f94b77051ef",
+        "e52b65d7-ecd0-4e18-8810-de9cb41a3294",
+        "7a206fea-20f6-41dd-942c-801af0c8e685"
+      ]
+    },
+    {
+      "content_snippet": "I only have aggregate data for the three USD cloud invoices:\n\n- 3 invoices \u2014 total $73,612.43; date(s): 2026-06-15; stat",
+      "result_invoice_ids": []
+    }
+  ]
+}

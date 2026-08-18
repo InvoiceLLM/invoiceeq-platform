@@ -22,7 +22,7 @@ export function Footer() {
             © {new Date().getFullYear()} Invoice AI Platform. All rights reserved. Enterprise multi-tenant AI processing on Azure.
           </p>
 
-          <div className="flex items-center gap-6 text-xs sm:text-sm">
+          <div className="flex items-center gap-6 text-xs sm:text-sm flex-wrap justify-center">
             <Link
               href="/privacy"
               className="hover:text-[#22D3EE] hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] transition-all duration-200"
@@ -34,6 +34,12 @@ export function Footer() {
               className="hover:text-[#22D3EE] hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] transition-all duration-200"
             >
               Terms of Service
+            </Link>
+            <Link
+              href="/contact"
+              className="hover:text-[#22D3EE] hover:drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] transition-all duration-200"
+            >
+              Contact Us
             </Link>
             <Link
               href="#security"

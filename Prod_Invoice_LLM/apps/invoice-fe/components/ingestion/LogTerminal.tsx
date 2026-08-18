@@ -37,7 +37,7 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
     es.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload?.message) {
+        if (payload?.type === "log_line" && payload?.message) {
           setLines((prev) => {
             const isDuplicate = prev.slice(-3).some(
               (line) => line.invoiceId === (payload.invoice_id ?? null) && line.message === (payload.message ?? "")

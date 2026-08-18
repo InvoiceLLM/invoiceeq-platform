@@ -751,14 +751,22 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
 
 
 
-            # If successfully completed, run page-level RAG indexing
-            if status == "COMPLETED":
+            # Run page-level RAG indexing. Gap 240: this used to be gated on
+            # `status == "COMPLETED"`, so an invoice that tripped any
+            # verification alert (AUDIT_REQUIRED) was never indexed -- and
+            # because routers/audit.py's resolve path can only move it to
+            # PAID/REJECTED/AUDIT_REQUIRED, never back to COMPLETED, it stayed
+            # unindexed for the life of the row. RAG content is independent of
+            # the arithmetic-verification outcome, so the gate is now
+            # `should_index_status()` (everything except the not-yet-extracted /
+            # failed / duplicate statuses).
+            from chroma_client import index_invoice_document, should_index_status
+            if should_index_status(status):
                 try:
                     _publish_sse_events(batch_id, {
                         "status": "INDEXING",
                         "message": "Generating page embeddings and indexing document chunks..."
                     })
-                    from chroma_client import index_invoice_document
                     index_invoice_document(
                         invoice_id=str(invoice.id),
                         tenant_id=str(invoice.tenant_id),

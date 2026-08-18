@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 # failed lookups are never cached, so a transient error doesn't get served for an hour.
 CACHE_TTL_SECONDS = 3600
 
+# Gap 237 (BE): the two halves of the deliberate behaviour for a follow-up that
+# comes back with no SQL at all -- push back once, then be explicit that the
+# answer isn't query-backed. Module-level so the tests assert against the same
+# strings the prompt/reply actually use.
+_NULL_SQL_FOLLOWUP_RETRY_DIRECTIVE = (
+    "\n\nYour previous response returned no SQL. This conversation already has a prior "
+    "SQL-answered turn (see PREVIOUS TURN'S SQL above), so the conversation history is NOT an "
+    "acceptable source for this answer -- restating earlier numbers is not backed by any query. "
+    "Write an actual read-only SELECT that answers the user's question: take the previous turn's "
+    "WHERE clause verbatim, add the new restriction with AND, and select whatever columns the "
+    "user is asking for. Only return a null sql if the question genuinely requires a column that "
+    "does not exist in the schema."
+)
+_NO_FRESH_QUERY_NOTE = (
+    "\n\n_Note: this reply is based on the previous answer in this conversation — no new database "
+    "query was run for it, so treat the details as unverified._"
+)
+
 
 def _get_redis_client():
     import redis
@@ -121,6 +139,24 @@ def classify_query(query: str) -> str:
     except Exception as e:
         logger.warning("Routing classification failed: %s. Defaulting to RAG.", e)
         return "RAG"
+
+# Gap 237 (BE): phrases that only make sense as a reference back to the rows the
+# previous turn already found -- an explicit count ("the 3 USD ones", "those 2
+# invoices") or a demonstrative pointing at the prior result set ("those
+# invoices", "these ones", "explain them"). Deliberately narrow: a bare "it" or
+# "that" is far too common in ordinary questions to treat as a back-reference.
+_FOLLOWUP_BACKREF_PATTERNS = (
+    re.compile(r"\b(?:the|those|these)\s+\d{1,3}\b"),
+    re.compile(r"\b(?:those|these)\s+(?:\w+\s+){0,3}(?:ones|invoices|bills|vendors|rows|records)\b"),
+    re.compile(r"\b(?:explain|detail|break\s+down|list|show)\s+(?:me\s+)?(?:them|those|these)\b"),
+)
+
+
+def _is_narrowing_followup(user_message: str) -> bool:
+    """Does this message only make sense against the previous turn's results?"""
+    q = user_message.lower()
+    return any(p.search(q) for p in _FOLLOWUP_BACKREF_PATTERNS)
+
 
 # Columns sourced from OCR/LLM extraction, where the LLM-generated SQL's exact-match
 # equality is prone to case/whitespace drift against the stored value (e.g. the model
@@ -777,6 +813,60 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
     return summary
 
 
+# Gap 237 step 2: how much of the prior turn's SQL is worth carrying into the
+# next prompt. Long enough for any real generated predicate (the observed ones
+# run ~400-900 chars), short enough that a pathological query can't crowd out
+# the rules above it.
+_PRIOR_SQL_MAX_CHARS = 2000
+
+
+def get_prior_turn_sql(session_id: str, db_session) -> str | None:
+    """Gap 237 step 2: the SQL behind the immediately-previous assistant reply.
+
+    The SQL route regenerates its whole predicate fresh from `chat_history` prose
+    every turn, and the prose never contains the WHERE clause -- so a narrowing
+    follow-up ("explain the 3 USD ones") is really the model *re-deriving* the
+    original filter from a summary of it, which is exactly where a branch gets
+    silently dropped. Live repro (2026-08-17, 7 runs, evidence in
+    docs/test_evidence/gap237_sql_repro_2026-08-17/) showed `vendor_name` being
+    the dropped branch both times it reproduced -- not `items` as the tracker's
+    original hypothesis guessed, and which branch survives looked
+    non-deterministic across calls. So this deliberately hands back the prior
+    predicate verbatim for reuse rather than trying to protect any one column.
+
+    Returns None when there is no prior SQL-answered turn in this session (a
+    first turn, or a session that has only been answered by RAG/CHAT).
+    Best effort: any failure returns None rather than breaking the turn.
+    """
+    from models import ChatMessage
+    from sqlmodel import select
+    from uuid import UUID
+
+    try:
+        sess_uuid = UUID(session_id)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+    try:
+        prior = db_session.exec(
+            select(ChatMessage)
+            .where(
+                ChatMessage.session_id == sess_uuid,
+                ChatMessage.role == "assistant",
+                ChatMessage.generated_sql.is_not(None),
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        ).first()
+    except Exception as e:
+        logger.warning("Failed to load prior turn SQL for session %s: %s", session_id, e)
+        return None
+
+    if prior is None or not prior.generated_sql:
+        return None
+    return prior.generated_sql.strip()[:_PRIOR_SQL_MAX_CHARS]
+
+
 def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str:
     """Retrieve short-term conversational context from the database, bounded by token length (Gap 23)."""
     import tiktoken
@@ -854,6 +944,35 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     route = classify_query(user_message)
     logger.info("Selected Route: %s", route)
 
+    # Gap 237 step 2: the previous turn's exact query, when there was one. Needed
+    # before the route is final, because it is also the evidence that this
+    # session HAS a queried result set for a follow-up to refer back to.
+    prior_turn_sql = get_prior_turn_sql(session_id, db_session)
+
+    # Gap 237 (BE), the "no SQL at all" failure mode -- and the real mechanism
+    # behind it, which is not the one the step-1 repro assumed. That repro
+    # recorded `generated_sql: null` on 4 of 7 follow-ups and read it as "the
+    # SQL-generation call returned sql: null". Measured directly here instead:
+    # `classify_query()` sees only the isolated sentence ("Can you explain the 3
+    # USD ones in detail?") with no session context, and routes it to RAG on
+    # roughly 40% of calls (2 of 5 sampled against the real deployed model) --
+    # so on those turns the SQL route never runs at all, and RAG (which has no
+    # notion of the previous turn's result set) answers from chat history alone.
+    # That is why `generated_sql` was null: not a declined query, a missed route.
+    #
+    # Deterministic override rather than a prompt tweak to the classifier: if the
+    # message only makes sense as a reference back to rows a previous turn
+    # already queried, and this session really does have a prior SQL-answered
+    # turn, then the follow-up is by definition about those rows and belongs on
+    # the route that can filter them. Narrow by construction -- both conditions
+    # must hold, and neither is LLM-judged.
+    if route != "SQL" and prior_turn_sql and _is_narrowing_followup(user_message):
+        logger.info(
+            "Routing override (Gap 237): %s -> SQL; message back-references a prior "
+            "SQL-answered turn in session %s", route, session_id,
+        )
+        route = "SQL"
+
     llm = get_llm()
     response_text = ""
     generated_sql = None
@@ -864,6 +983,15 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     result_invoice_ids: list[str] = []
 
     if route == "SQL":
+        # Gap 237 step 2: hand the previous turn's exact query to the prompt so a
+        # narrowing follow-up extends that predicate instead of re-deriving it
+        # from the conversation prose (see get_prior_turn_sql()).
+        prior_sql_block = (
+            f"\nPREVIOUS TURN'S SQL (the query that produced the assistant's most recent "
+            f"answer in this conversation -- see rule 9):\n{prior_turn_sql}\n"
+            if prior_turn_sql
+            else ""
+        )
         system_prompt = f"""You are a database SQL query expert.
 Given the 'invoice' table schema:
 - id: UUID (Primary Key)
@@ -899,16 +1027,28 @@ SELECT
   SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_owed_to_us
 FROM invoice WHERE tenant_id = '{tenant_id}'
 
-6. If the user query refers to a tag or line-item description/detail, you can query the tags and items JSONB columns using simple LIKE filters. ALWAYS wrap both sides in LOWER(...) -- tags and line-item descriptions are free text and are not reliably lowercase (e.g. "Ergonomic Office Chair"), and a case-sensitive match will silently miss real rows:
-   - To check if a tag (e.g. 'hardware') is in tags: LOWER(tags) LIKE LOWER('%"hardware"%') (works in both SQLite and Postgres)
-   - To search for a keyword (e.g. 'laptop') in line-item descriptions: LOWER(items) LIKE LOWER('%laptop%') (works in both SQLite and Postgres)
+6. If the user query refers to a tag or line-item description/detail, you can query the tags and items JSONB columns using simple LIKE filters. Two rules apply to EVERY such filter:
+   (a) A JSONB column (tags, items, sa_alerts) MUST be cast to text before LOWER/LIKE touches it: write LOWER(CAST(tags AS TEXT)), NEVER LOWER(tags). There is no lower(jsonb) function -- an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. CAST(... AS TEXT) is the portable form and works in both SQLite and Postgres. Plain VARCHAR columns (vendor_name, customer_name, status, invoice_number) are already text and must NOT be cast.
+   (b) ALWAYS wrap both sides in LOWER(...) -- tags and line-item descriptions are free text and are not reliably lowercase (e.g. "Ergonomic Office Chair"), and a case-sensitive match will silently miss real rows.
+   - To check if a specific named tag (e.g. 'hardware') is in tags: LOWER(CAST(tags AS TEXT)) LIKE LOWER('%"hardware"%')
+   - To search for a keyword (e.g. 'laptop') in line-item descriptions: LOWER(CAST(items AS TEXT)) LIKE LOWER('%laptop%')
+   - To search the audit alerts free text (e.g. 'duplicate'): LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')
 6a. IMPORTANT -- vendor_name/customer_name filters: NEVER use exact equality (=) to filter by vendor_name or customer_name. Users routinely refer to a vendor/customer by a shortened or informal name (e.g. "Cascade Manufacturing" when the stored value is "Cascade Manufacturing Co") -- an exact match will silently return zero rows for a real, existing vendor. ALWAYS use a case-insensitive partial match instead: LOWER(vendor_name) LIKE LOWER('%Cascade Manufacturing%'). This applies even when the user's question phrases it as if it were an exact name.
+6b. CATEGORY / SUBJECT-MATTER QUESTIONS -- one standard shape, use it every time. When the user asks about a category, spend area or subject rather than a named entity ("how much did we spend on office supplies", "logistics or freight costs", "anything cloud related", "printing costs"), the matching text may live in ANY of several columns and which one it happens to live in varies per invoice -- a vendor can be identifiable by its name alone ("Blue Ridge Logistics"), by its tags, or only by a line-item description. So ALWAYS check the SAME four columns, in ONE parenthesised OR group, never a subset of them:
+   (LOWER(CAST(tags AS TEXT)) LIKE LOWER('%<phrase>%')
+    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%<phrase>%')
+    OR LOWER(vendor_name) LIKE LOWER('%<phrase>%')
+    OR LOWER(customer_name) LIKE LOWER('%<phrase>%'))
+   Note the CAST on the two JSONB columns and its absence on the two VARCHAR ones -- this exact shape, per rule 6(a). Checking only item descriptions (or only tags) is a bug: it silently misses real matches that qualify through one of the other columns.
+6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
 7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
+8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
+9. FOLLOW-UP QUESTIONS THAT NARROW A PREVIOUS ANSWER ("explain the 3 USD ones", "which of those are overdue", "show me their line items"): if a PREVIOUS TURN'S SQL block appears below, that is the exact query that produced the answer the user is referring to. Start from ITS WHERE clause VERBATIM and only ADD the new restriction with AND. Do NOT re-derive the predicate from the conversation text, and do NOT drop, merge or simplify away any branch of an existing OR group -- each branch is there because some real row matches ONLY through it, so removing one silently deletes rows from the very answer the user asked you to expand on. The SELECT list is yours to change freely (e.g. from an aggregate to per-invoice detail columns); only the WHERE clause is fixed. If the follow-up is about a genuinely different subject rather than a narrowing of the previous answer, ignore the previous SQL and compose a fresh query as normal.
 
 {tenant_stats}
 {rules_block}{chat_rules_block}
-{_INJECTION_GUARD_INSTRUCTION}
+{_INJECTION_GUARD_INSTRUCTION}{prior_sql_block}
 Conversation History for Context:
 {chat_history}
 """
@@ -916,16 +1056,40 @@ Conversation History for Context:
         last_error = None
         db_result = None
         current_prompt = f"{system_prompt}\nUser Question: {wrapped_user_message}"
-        
+        # Gap 237: a null-sql answer on a follow-up is retried exactly once, then
+        # accepted-with-a-note. Not looped to exhaustion -- if the model declines
+        # twice, badgering it a third time costs a round-trip for the same answer.
+        null_sql_retried = False
+
         for attempt in range(max_attempts):
             try:
                 structured_sql = llm.with_structured_output(SQLGenerationSchema)
                 res = structured_sql.invoke(current_prompt)
                 if not res.sql:
+                    # Gap 237 (BE), failure mode found in the live repro: on a
+                    # narrowing follow-up the SQL call returned sql: null in 4 of
+                    # 7 runs and the reply was composed purely from the prior
+                    # turn's aggregate text -- a confident answer with no backing
+                    # query, more frequent than the branch-drop this gap was
+                    # opened over. Deliberate behaviour, in this order: (1) push
+                    # back once, explicitly, when a prior SQL turn exists to
+                    # narrow from; (2) if it still declines, answer but say
+                    # plainly that no query was run, rather than letting a
+                    # history-restated answer pass as a queried one.
+                    if prior_turn_sql and not null_sql_retried:
+                        null_sql_retried = True
+                        logger.info(
+                            "SQL route returned null sql on a follow-up with prior SQL present; "
+                            "requesting one regeneration (Gap 237)"
+                        )
+                        current_prompt += _NULL_SQL_FOLLOWUP_RETRY_DIRECTIVE
+                        continue
                     response_text = res.explanation_or_error or "I'm sorry, but I cannot answer that question with the available database fields."
+                    if prior_turn_sql:
+                        response_text += _NO_FRESH_QUERY_NOTE
                     route_succeeded = True
                     break
-                
+
                 generated_sql = res.sql
                 logger.info("Generated SQL (attempt %d): %s", attempt + 1, generated_sql)
                 
@@ -1122,27 +1286,37 @@ Conversation History:
             result_invoice_ids.append(str(invoice_id))
 
     # Gap 237 (BE) safety net: SQL/RAG regenerate their filter fresh from
-    # free-text chat_history every turn (no code path reuses/narrows the prior
-    # turn's exact WHERE clause), so a narrowing follow-up can silently drop a
-    # condition the LLM "simplifies away" -- confirmed live: "3 USD invoices
-    # totaling $2,655,637.56" one turn, then "I see 2 USD inbound invoices
-    # totaling USD 2,586,625.13" the next, exactly one real invoice missing,
-    # asserted with no hedge. This does not fix the root cause (that needs a
-    # live seeded-tenant repro to confirm before the WHERE-clause-reuse fix can
-    # be designed -- not done here) -- it catches the specific failure shape
-    # already seen: the user explicitly references a count from the prior
-    # answer (e.g. "the 3 ...", "those 2 ...") and the new turn's real result
-    # count doesn't match what they referenced, which is exactly when an
-    # unqualified answer would be actively misleading rather than just
-    # incomplete.
+    # free-text chat_history every turn, so a narrowing follow-up can still drop
+    # a condition the LLM "simplifies away" even with the prior turn's SQL now
+    # handed to the prompt (rule 9) -- confirmed live: "3 USD invoices totaling
+    # $2,655,637.56" one turn, then "I see 2 USD inbound invoices totaling USD
+    # 2,586,625.13" the next, exactly one real invoice missing, asserted with no
+    # hedge. Catches the specific failure shape: the user explicitly references
+    # a count from the prior answer ("the 3 ...", "those 2 ...") and the new
+    # turn surfaces fewer rows than that, which is exactly when an unqualified
+    # answer is actively misleading rather than just incomplete.
+    #
+    # Trigger-condition fix, 2026-08-17 (the live repro proved the original
+    # never fires): it used to require the prior turn's TOTAL row count to equal
+    # the number the user referenced. But the reported failure phrasing
+    # references a SUB-count -- "the 3 USD ones" out of a prior answer covering
+    # 4 rows (3 USD + 1 EUR) -- so 4 was compared against {3} and the check
+    # never engaged in either of the two real reproductions. It now compares
+    # against the number the user actually referenced, and only requires that
+    # the number really appears in the prior reply's text (so it's a genuine
+    # back-reference, not a fresh "the 3 largest ..."). Deliberately silent when
+    # the current turn found 0 rows: an aggregate whose id-harvest came back
+    # empty is indistinguishable from a real miss here, and "no records found"
+    # already reads as a non-answer -- hedging it would be noise on every
+    # unharvestable aggregate, which is the failure mode Gap 226 warned about.
     if route in ("SQL", "RAG") and route_succeeded and response_text:
         try:
             from models import ChatMessage
             from sqlmodel import select
             from uuid import UUID as _UUID
 
-            referenced_number_matches = re.findall(r"\b(?:the|those)\s+(\d{1,3})\b", user_message.lower())
-            referenced_counts = {int(n) for n in referenced_number_matches}
+            referenced_number_matches = re.findall(r"\b(?:the|those|these)\s+(\d{1,3})\b", user_message.lower())
+            referenced_counts = {int(n) for n in referenced_number_matches if int(n) > 0}
             if referenced_counts:
                 prior = db_session.exec(
                     select(ChatMessage)
@@ -1151,15 +1325,15 @@ Conversation History:
                     .limit(1)
                 ).first()
                 current_count = len(result_invoice_ids)
-                if (
-                    prior is not None
-                    and prior.result_invoice_ids
-                    and len(prior.result_invoice_ids) in referenced_counts
-                    and current_count != len(prior.result_invoice_ids)
-                    and current_count not in referenced_counts
-                ):
+                prior_text = (prior.content or "") if prior is not None else ""
+                grounded_counts = {
+                    n for n in referenced_counts
+                    if re.search(rf"\b{n}\b", prior_text) and current_count < n
+                }
+                if prior is not None and current_count > 0 and grounded_counts:
+                    referenced = max(grounded_counts)
                     response_text += (
-                        f"\n\n_Heads up: you referenced {len(prior.result_invoice_ids)} from the previous "
+                        f"\n\n_Heads up: you referenced {referenced} from the previous "
                         f"answer, but this follow-up only found {current_count}. The filter may have "
                         f"narrowed unexpectedly -- worth double-checking against the full list if this "
                         f"looks off._"

@@ -1,0 +1,276 @@
+INFO:     Started server process [6796]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8100 (Press CTRL+C to quit)
+INFO:     127.0.0.1:55074 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55077 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...uded per schema rule).'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:55077 - "POST /api/v1/chat/sessions/48e7f3aa-b67c-4588-adbc-cd32fe43013f/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...text, so route to RAG."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...SD invoices in detail.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:55077 - "POST /api/v1/chat/sessions/48e7f3aa-b67c-4588-adbc-cd32fe43013f/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58926 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...ded per schema rules)."), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58926 - "POST /api/v1/chat/sessions/9f4c108e-5be9-4ee8-a75f-ab4d62488c6a/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ld be handled via SQL.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...s to currency = 'USD'."), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58926 - "POST /api/v1/chat/sessions/9f4c108e-5be9-4ee8-a75f-ab4d62488c6a/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58939 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...their native currency.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58939 - "POST /api/v1/chat/sessions/76621bc8-1954-4e9e-8651-4652edf1fdae/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...text, so route to RAG.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="... for full explanation.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58939 - "POST /api/v1/chat/sessions/76621bc8-1954-4e9e-8651-4652edf1fdae/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58951 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...he required tenant_id.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58951 - "POST /api/v1/chat/sessions/ba3771a2-7806-441b-a92c-f22769484484/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...text, so route to RAG.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...loud-related invoices.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58951 - "POST /api/v1/chat/sessions/ba3771a2-7806-441b-a92c-f22769484484/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58963 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...rencies are not mixed.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58963 - "POST /api/v1/chat/sessions/511508c9-03b9-4861-9218-1cbbfabbca6c/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...D), that would be SQL.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...SD invoices in detail.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58963 - "POST /api/v1/chat/sessions/511508c9-03b9-4861-9218-1cbbfabbca6c/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58977 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...o the given tenant_id.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58977 - "POST /api/v1/chat/sessions/c61f6772-bf6e-4f5b-af49-f2c34b1351c8/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...cument read) response.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...as a narrow follow-up."), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58977 - "POST /api/v1/chat/sessions/c61f6772-bf6e-4f5b-af49-f2c34b1351c8/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58992 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...ry totals as required.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58992 - "POST /api/v1/chat/sessions/8bc4cf47-7f7c-4a4d-a7f6-ab86cb784f79/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...okup, so route to SQL.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="... currency as required.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:58992 - "POST /api/v1/chat/sessions/8bc4cf47-7f7c-4a4d-a7f6-ab86cb784f79/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57915 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="... currency as required.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:57915 - "POST /api/v1/chat/sessions/ff54a9cd-18f0-4691-b07b-bd59c5c56ee3/message HTTP/1.1" 200 OK
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...able, so route to SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="... and any audit alerts.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:57915 - "POST /api/v1/chat/sessions/ff54a9cd-18f0-4691-b07b-bd59c5c56ee3/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=... a database/SQL query."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...ate, status, and tags.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/fb1fbb85-1f98-4353-bc41-2858343fab0a/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...dled via a SQL lookup.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...e tags for inspection.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/ab5e6984-6fc1-4756-b75d-e00381ca0120/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ld be handled via SQL.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...LIKE per schema rules.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/62e4c438-0c71-467e-9696-73f1123ccd4b/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=... so it should use RAG."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/436a1229-a81f-42bd-98ad-1aa1ff6396d0/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...d be answered via SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...n any of those fields.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/3199d128-ee4f-498a-8d75-4c9aefa07e83/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ld be handled via SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...; grouped by currency."), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/6a2e1ff1-5014-45e9-9aca-6fe70ffaa0f6/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...level retrieval (RAG)."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/770e4d89-eb5a-4a58-8081-8734a0176b27/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...so RAG is appropriate.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/005bd8b8-748e-441d-94d7-6aa39d9a1d62/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...d be handled with SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...d_total and currency).'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/1a298425-dee9-4422-a87f-4ab97e8009d2/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...lumn, so route to SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql="...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:60444 - "POST /api/v1/chat/sessions/f0721988-4c18-45d3-9930-257e2d418ab6/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...d by a database query."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='..._total with currency).'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions/9258405d-e04e-453f-8ff0-023b43396f8f/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ld be handled via SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...within the JSON array.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions/ead1da2b-0cf0-4515-87e2-0d4f5c7044fd/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...able, so route to SQL.'), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...erve monetary context.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions/c6de2ad8-2465-4b5d-857c-9500f3d29a2e/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=... on the invoice table."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...erve monetary context.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions/22f86d1c-3287-4a64-b2f3-5c51100107b5/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...able, so route to SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...tary column per rules.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions/2094dfd9-c70d-4088-b8cc-cb4a3dd6d939/message HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions HTTP/1.1" 201 Created
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=QueryRoutingSchema(route=...ld be handled via SQL."), input_type=QueryRoutingSchema])
+  return self.__pydantic_serializer__.to_python(
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\pydantic\main.py:475: UserWarning: Pydantic serializer warnings:
+  PydanticSerializationUnexpectedValue(Expected `none` - serialized value may not be as expected [field_name='parsed', input_value=SQLGenerationSchema(sql='...per the currency rule.'), input_type=SQLGenerationSchema])
+  return self.__pydantic_serializer__.to_python(
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+INFO:     127.0.0.1:50308 - "POST /api/v1/chat/sessions/13b50773-c2f7-45c8-a37c-99b4fdcd5153/message HTTP/1.1" 200 OK

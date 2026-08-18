@@ -875,7 +875,18 @@ def test_rag_citations_drop_ids_with_no_matching_invoice_row(db_session):
     ]
 
     client = TestClient(app)
-    with patch("agents.query_agent.classify_query") as mock_class, \
+    # The chat answer cache (Task 6.11) is keyed on
+    # `chat_answer_cache:{tenant_id}:{normalized_query}` in the *real, shared*
+    # local Redis, with a 1hr TTL and no per-test namespace. This test asks a
+    # fixed question as the fixed MOCK_TENANT_ID, so a cached answer left by any
+    # earlier test module -- or by an earlier run of this same suite -- would be
+    # served instead of the mocked RAG path, and the assertions below would then
+    # be checking someone else's citations. (Observed: the full suite failed here
+    # with a citation id belonging to neither invoice this test creates, while
+    # test_rag.py alone passed.) Forcing a cache miss makes the test hermetic
+    # without touching shared state.
+    with patch("agents.query_agent.get_cached_answer", return_value=None), \
+         patch("agents.query_agent.classify_query") as mock_class, \
          patch("agents.query_agent.query_invoice_chunks") as mock_chunks, \
          patch("agents.query_agent.get_llm") as mock_get_llm:
         mock_class.return_value = "RAG"
@@ -896,3 +907,269 @@ def test_rag_citations_drop_ids_with_no_matching_invoice_row(db_session):
         assert dead_invoice_id not in cited_ids
         # The dead citation's link text must not leak into the reply either.
         assert dead_invoice_id not in res.json()["content"]
+
+
+# ---------------------------------------------------------------------------
+# Gap 244 / 240 / 243 — embedding normalization, cosine distance space, and
+# which invoice statuses reach the RAG index.
+#
+# NOTE on mode: this module forces MOCK_EMBEDDINGS=true at import (line 10), so
+# everything below asserts *structure* (norm, distance space, status gating,
+# reported match channel) rather than semantic quality. The semantic result —
+# real BAAI/bge-m3 vectors, real invoice PDFs, real distances — is measured
+# separately against the live stack and filed under
+# docs/test_evidence/gap244_rag_retrieval_2026-08-17/. Gap 244's original
+# investigation went wrong precisely by reading mock-mode numbers as real-model
+# evidence, so the split is deliberate: these tests can never be mistaken for
+# a retrieval-quality claim.
+# ---------------------------------------------------------------------------
+
+def test_get_embeddings_returns_unit_norm_vectors():
+    """Gap 244 (a): every embedding this module produces must be unit norm, so a
+    cosine threshold means the same thing for all of them.
+
+    Holds on both branches: the real model gets `normalize_embeddings=True`, and
+    the mock branch normalizes too. The mock branch mattering is not incidental
+    -- unnormalized mock vectors (L2 norm ~1.85, squared-L2 ~6.5 apart) are what
+    Gap 244's investigation mistook for a real-model measurement of 5.8-7.3."""
+    import math
+    from chroma_client import get_embeddings
+
+    vectors = get_embeddings(["freight and logistics charges", "office supplies"])
+    assert len(vectors) == 2
+    for vec in vectors:
+        assert len(vec) == 1024
+        norm = math.sqrt(sum(v * v for v in vec))
+        assert norm == pytest.approx(1.0, abs=1e-6), f"expected unit norm, got {norm}"
+
+
+def test_to_cosine_distance_rescales_l2_but_not_cosine():
+    """Gap 244: a collection created before the fix keeps Chroma's default `l2`
+    space forever, so `query_invoice_chunks()` converts distances into one
+    consistent space before applying the threshold. For unit vectors
+    ||a-b||^2 == 2 - 2cos == 2 * cosine_distance, so halving is exact."""
+    from chroma_client import _to_cosine_distance
+
+    assert _to_cosine_distance(0.9709, "l2") == pytest.approx(0.48545)
+    assert _to_cosine_distance(0.4854, "cosine") == pytest.approx(0.4854)
+    assert _to_cosine_distance(0.4854, "ip") == pytest.approx(0.4854)
+    # A garbage distance must not throw and must not be treated as relevant.
+    assert _to_cosine_distance(None, "l2") > 0.49
+
+
+def test_new_collections_are_created_in_cosine_space():
+    """Gap 244 (b): collections must be pinned to cosine at creation. Chroma
+    fixes the HNSW space when the collection is created and silently ignores
+    the metadata on an already-existing collection -- which is exactly why
+    scripts/reembed_chroma_collections.py has to exist."""
+    import fitz
+    from chroma_client import _collection_space, _tenant_collection_name, get_chroma_client
+
+    temp_pdf_path = "temp_cosine_space_test.pdf"
+    doc = fitz.open()
+    doc.new_page().insert_text((50, 50), "Freight and logistics charges for delivery")
+    doc.save(temp_pdf_path)
+    doc.close()
+
+    tenant_id = uuid4()
+    try:
+        index_invoice_document(
+            invoice_id="inv-cos-1", tenant_id=tenant_id,
+            vendor_name="Blue Ridge Logistics", file_path=temp_pdf_path,
+        )
+        client = get_chroma_client()
+        collection = client.get_collection(_tenant_collection_name(tenant_id))
+        assert _collection_space(collection) == "cosine"
+    finally:
+        if os.path.exists(temp_pdf_path):
+            os.remove(temp_pdf_path)
+
+
+def test_query_reports_which_channel_admitted_each_chunk():
+    """Gap 244: retrieval has two channels -- the vector threshold and the
+    literal-keyword fallback -- and before this fix the vector one contributed
+    nothing, with no way to see that from the return value. Each matched chunk
+    now says which channel let it through, so 'semantic search works' is an
+    assertable claim rather than an assumption."""
+    import fitz
+    from chroma_client import RELEVANCE_DISTANCE_THRESHOLD
+
+    temp_pdf_path = "temp_channel_test.pdf"
+    doc = fitz.open()
+    doc.new_page().insert_text((50, 50), "PALLET HANDLING AND FREIGHT SURCHARGE")
+    doc.save(temp_pdf_path)
+    doc.close()
+
+    tenant_id = uuid4()
+    try:
+        index_invoice_document(
+            invoice_id="inv-chan-1", tenant_id=tenant_id,
+            vendor_name="Blue Ridge Logistics", file_path=temp_pdf_path,
+        )
+        # Two literal keywords present in the document -> the keyword fallback
+        # admits this chunk even under mock embeddings, where the vector channel
+        # carries no signal at all (random near-orthogonal vectors).
+        chunks = query_invoice_chunks(tenant_id=tenant_id, query_text="FREIGHT SURCHARGE", limit=5)
+        assert len(chunks) >= 1
+        chunk = chunks[0]
+        assert chunk["keyword_score"] >= 2
+        assert chunk["matched_by"] in {"keyword", "vector", "vector+keyword"}
+        # Under mock embeddings this must be honest about being keyword-carried.
+        if chunk["distance"] > RELEVANCE_DISTANCE_THRESHOLD:
+            assert chunk["matched_by"] == "keyword"
+    finally:
+        if os.path.exists(temp_pdf_path):
+            os.remove(temp_pdf_path)
+
+
+def test_relevance_threshold_is_the_empirically_derived_cosine_value():
+    """Gap 244 (c): the old 0.4 was calibrated for a bounded cosine space but
+    enforced against unbounded raw L2, making it unreachable for every query.
+    0.49 is the midpoint of the measured separation band on real bge-m3 vectors
+    (hardest true match 0.4749 -- Redwood Facilities Group for 'janitorial or
+    cleaning services'; best false positive 0.5062 -- Fieldstone Analytics for
+    the deliberately-absent 'legal or attorney fees'). Pinned here so a future
+    edit has to consciously re-derive it rather than nudge it."""
+    from chroma_client import RELEVANCE_DISTANCE_THRESHOLD
+
+    assert RELEVANCE_DISTANCE_THRESHOLD == 0.49
+    assert 0.4749 < RELEVANCE_DISTANCE_THRESHOLD < 0.5062
+
+
+@pytest.mark.parametrize("status", [
+    "COMPLETED", "AUDIT_REQUIRED", "VERIFIED", "NEEDS_REVIEW", "PAID", "REJECTED", "SENT",
+])
+def test_should_index_status_admits_reviewable_and_terminal_statuses(status):
+    """Gaps 240/243: AUDIT_REQUIRED (inbound) and NEEDS_REVIEW (outbound) used to
+    be excluded by the `status == "COMPLETED"` / `== "VERIFIED"` gates, which made
+    a flagged invoice permanently unsearchable -- permanently, because neither
+    resolve path ever moves an invoice back to COMPLETED. RAG content is
+    independent of the arithmetic-verification outcome."""
+    from chroma_client import should_index_status
+
+    assert should_index_status(status) is True
+
+
+@pytest.mark.parametrize("status", [
+    "UPLOADED", "PROCESSING", "PROCESSING_OCR", "EXTRACTING_DATA",
+    "INDEXING", "FAILED", "DUPLICATE", "SKIPPED_DUPLICATE", None, "",
+])
+def test_should_index_status_excludes_unextracted_failed_and_duplicate(status):
+    """The other half of the same contract: not-yet-extracted rows have no
+    content to index, FAILED has nothing usable, and DUPLICATE is a pointer row
+    whose content is already indexed under the original invoice."""
+    from chroma_client import should_index_status
+
+    assert should_index_status(status) is False
+
+
+def test_audit_resolve_backfills_rag_index_for_an_unindexed_invoice(db_session):
+    """Gap 240 backstop: an invoice that predates the ingestion-side fix has no
+    chunks and no way to get them, since routers/audit.py's resolve path can only
+    set PAID/REJECTED/AUDIT_REQUIRED -- never COMPLETED -- so a backstop keyed on
+    'reached COMPLETED' could never fire. The trigger is therefore the resolution
+    itself. Asserts the backfill runs and that the resolve still succeeds."""
+    from datetime import date
+    from models import Invoice
+
+    invoice_id = uuid4()
+    db_session.add(Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="unindexed.pdf",
+        vendor_name="Titan Steel Distributors", invoice_number="TSD-620458",
+        grand_total=10557.60, status="AUDIT_REQUIRED", invoice_date=date(2026, 1, 1),
+    ))
+    db_session.commit()
+
+    client = TestClient(app)
+    with patch("chroma_client.has_invoice_chunks", return_value=False) as mock_probe, \
+         patch("chroma_client.index_invoice_document") as mock_index:
+        res = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": "PAID", "dismissed_alerts": ["Subtotal mismatch"]},
+        )
+        assert res.status_code == 200
+        mock_probe.assert_called_once()
+        mock_index.assert_called_once()
+        assert str(invoice_id) in mock_index.call_args.args
+
+
+def test_audit_resolve_skips_reindexing_an_already_indexed_invoice(db_session):
+    """The backstop must stay cheap in the normal case: when the invoice is
+    already in the index it costs one Chroma `get`, not a PDF download plus a
+    full re-embed."""
+    from datetime import date
+    from models import Invoice
+
+    invoice_id = uuid4()
+    db_session.add(Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="already_indexed.pdf",
+        vendor_name="Summit Office Supplies", invoice_number="SOS-100442",
+        grand_total=450.0, status="AUDIT_REQUIRED", invoice_date=date(2026, 1, 1),
+    ))
+    db_session.commit()
+
+    client = TestClient(app)
+    with patch("chroma_client.has_invoice_chunks", return_value=True), \
+         patch("chroma_client.index_invoice_document") as mock_index:
+        res = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"dismissed_alerts": ["Subtotal mismatch"]},
+        )
+        assert res.status_code == 200
+        mock_index.assert_not_called()
+
+
+def test_audit_resolve_survives_a_failing_rag_backfill(db_session):
+    """A human's resolve action must never fail because the search index is
+    unhappy -- the backstop is best-effort by design."""
+    from datetime import date
+    from models import Invoice
+
+    invoice_id = uuid4()
+    db_session.add(Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="broken.pdf",
+        vendor_name="Apex Print Solutions", invoice_number="APS-410093",
+        grand_total=453.60, status="AUDIT_REQUIRED", invoice_date=date(2026, 1, 1),
+    ))
+    db_session.commit()
+
+    client = TestClient(app)
+    with patch("chroma_client.has_invoice_chunks", return_value=False), \
+         patch("chroma_client.index_invoice_document", side_effect=RuntimeError("chroma down")):
+        res = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": "PAID"},
+        )
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+
+
+def test_outbound_resolve_backfills_rag_index_for_an_unindexed_invoice(db_session):
+    """Gap 243, the outbound twin. This endpoint never mutates `invoice.status`
+    at all -- an outbound resolve is corrections plus alert dismissal -- so
+    there is no status transition available to key on even in principle, and
+    'index on resolution' is the only workable trigger. Indexes with
+    `customer_name` rather than `vendor_name`, matching outbound ingestion."""
+    from models import Invoice
+
+    invoice_id = uuid4()
+    db_session.add(Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/out.pdf",
+        flow_direction="OUTBOUND", status="NEEDS_REVIEW",
+        customer_name="Vertex Industries", subtotal=80.0, grand_total=100.0,
+        sa_alerts=[{"type": "missing_required_field", "field": "customer_name", "message": "..."}],
+    ))
+    db_session.commit()
+
+    client = TestClient(app)
+    with patch("chroma_client.has_invoice_chunks", return_value=False) as mock_probe, \
+         patch("chroma_client.index_invoice_document") as mock_index:
+        res = client.put(
+            f"/api/v1/outbound-audit/resolve/{invoice_id}",
+            json={"dismissed_alerts": ["missing_required_field"]},
+        )
+        assert res.status_code == 200
+        mock_probe.assert_called_once()
+        mock_index.assert_called_once()
+        assert str(invoice_id) in mock_index.call_args.args
+        assert "Vertex Industries" in mock_index.call_args.args

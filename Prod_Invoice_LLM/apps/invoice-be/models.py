@@ -612,5 +612,55 @@ class RoleMapper:
 
         return bool(res_train), bool(res_audit), bool(res_load)
 
+# ---------------------------------------------------------------------------
+# Feature 19 / Feature Website 5: Support Ticket & Inquiry Engine
+# ---------------------------------------------------------------------------
 
+class SupportTicket(SQLModel, table=True):
+    """
+    Persists all inbound support interactions:
+      - WEBSITE_CONTACT  : public /contact form submissions from invoice-website
+      - HELP_CHATBOT     : AI-escalated tickets from invoice-fe Help Center
+      - DIRECT_TICKET    : manually raised tickets from Help Center chat header
 
+    ticket_number is the human-visible reference:
+      - INQ-YYYY-XXXXXXXX  for website contact inquiries (source=WEBSITE_CONTACT)
+      - TICK-YYYY-XXXXXXXX for app support tickets (source=HELP_CHATBOT / DIRECT_TICKET)
+
+    The suffix is 8 uppercase hex characters from `secrets.token_hex(4)` -- see
+    routers/support.py::_generate_ticket_number. Gap 251: this replaced a
+    4-digit `randint(1000, 9999)` suffix, whose 9,000 values per year per prefix
+    could be exhausted by a few thousand unauthenticated POSTs, after which
+    every new ticket failed. The current keyspace is 4.29 billion per year per
+    prefix, and exhaustion now surfaces as a 503 rather than an uncaught 500.
+    """
+    __tablename__ = "supportticket"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    ticket_number: str = Field(max_length=32, unique=True, index=True)
+
+    # Tenant + user — nullable because website contact submissions are anonymous
+    tenant_id: UUID | None = Field(default=None, nullable=True, index=True)
+    user_id: UUID | None = Field(default=None, nullable=True)
+    user_email: str = Field(max_length=255, index=True)
+    user_name: str | None = Field(default=None, max_length=255)
+
+    # Submission source & classification
+    source: str = Field(default="WEBSITE_CONTACT", max_length=32)  # WEBSITE_CONTACT | HELP_CHATBOT | DIRECT_TICKET
+    category: str = Field(default="GENERAL", max_length=64)         # SALES | TECHNICAL_SUPPORT | BILLING | PARTNERSHIP | GENERAL
+    priority: str = Field(default="NORMAL", max_length=32)          # LOW | NORMAL | URGENT
+
+    # Content
+    subject: str = Field(max_length=255)
+    description: str
+    company_name: str | None = Field(default=None, max_length=255)
+
+    # For chatbot-escalated tickets — the full conversation transcript is attached
+    chat_transcript: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+
+    # Lifecycle
+    status: str = Field(default="OPEN", max_length=32)  # OPEN | IN_PROGRESS | RESOLVED | CLOSED
+    admin_notes: str | None = Field(default=None)
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

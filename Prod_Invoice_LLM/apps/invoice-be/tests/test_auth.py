@@ -898,3 +898,127 @@ def test_get_db_session():
         next(session_gen)
     except StopIteration:
         pass
+
+
+# ---------------------------------------------------------------------------
+# BE Gap 133: Orphan Tenant Prevention Tests (2026-08-18)
+# ---------------------------------------------------------------------------
+
+def test_provision_rejects_user_already_in_another_workspace(db_session):
+    """
+    BE Gap 133: If a user already belongs to a workspace (existing_user.tenant_id
+    is not None), a second provision attempt for a new organisation must be
+    rejected with 409 BEFORE creating a new Tenant. No orphan tenant is created.
+    """
+    initial_tenant = Tenant(
+        id=uuid4(),
+        name="Existing Workspace",
+        domain="first.com",
+        clerk_org_id="org_first",
+    )
+    db_session.add(initial_tenant)
+    db_session.commit()
+
+    existing_user = User(
+        id=uuid4(),
+        tenant_id=initial_tenant.id,
+        email="user@first.com",
+        clerk_user_id="user_already_provisioned",
+        role="Admin",
+    )
+    db_session.add(existing_user)
+    db_session.commit()
+
+    # User attempts to provision a second organization
+    body = _provision_body(
+        clerk_user_id="user_already_provisioned",
+        clerk_org_id="org_second",
+        org_name="Second Org",
+        admin_email="user@second.com",
+    )
+    with _as_caller(**_token_for(body, email="user@second.com", clerk_user_id="user_already_provisioned", org_id="org_second")):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 409
+    assert "already provisioned to another workspace" in response.json()["detail"]
+
+    # Verify no orphan Tenant was created in DB
+    all_tenants = db_session.exec(select(Tenant)).all()
+    assert len(all_tenants) == 1
+    assert all_tenants[0].id == initial_tenant.id
+
+
+def test_provision_rejects_email_conflict_before_creating_tenant(db_session):
+    """
+    BE Gap 133: If the admin email is already in use by a different user,
+    provision must fail with 409 before committing a new Tenant row.
+    """
+    initial_tenant = Tenant(
+        id=uuid4(),
+        name="First Company",
+        domain="firstco.com",
+        clerk_org_id="org_firstco",
+    )
+    db_session.add(initial_tenant)
+    db_session.commit()
+
+    existing_user = User(
+        id=uuid4(),
+        tenant_id=initial_tenant.id,
+        email="ceo@sharedcorp.com",
+        clerk_user_id="user_first_ceo",
+        role="Admin",
+    )
+    db_session.add(existing_user)
+    db_session.commit()
+
+    # Different user attempts to provision with the same email
+    body = _provision_body(
+        clerk_user_id="user_second_attacker",
+        clerk_org_id="org_secondco",
+        org_name="Second Co",
+        admin_email="ceo@sharedcorp.com",
+    )
+    with _as_caller(**_token_for(body, email="ceo@sharedcorp.com", clerk_user_id="user_second_attacker", org_id="org_secondco")):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 409
+    assert "already in use" in response.json()["detail"]
+
+    # Verify no second Tenant was created
+    all_tenants = db_session.exec(select(Tenant)).all()
+    assert len(all_tenants) == 1
+    assert all_tenants[0].id == initial_tenant.id
+
+
+def test_provision_allows_user_with_null_tenant_id(db_session):
+    """
+    If an existing user row has tenant_id=None (e.g. pre-created invited user),
+    provisioning should succeed and attach the user to the newly created tenant.
+    """
+    unlinked_user = User(
+        id=uuid4(),
+        tenant_id=None,
+        email="unlinked@freshco.com",
+        clerk_user_id="user_unlinked",
+        role="Admin",
+    )
+    db_session.add(unlinked_user)
+    db_session.commit()
+
+    body = _provision_body(
+        clerk_user_id="user_unlinked",
+        clerk_org_id="org_freshco",
+        org_name="Fresh Co",
+        admin_email="unlinked@freshco.com",
+    )
+    with _as_caller(**_token_for(body, email="unlinked@freshco.com", clerk_user_id="user_unlinked", org_id="org_freshco")):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["is_new"] is True
+
+    db_session.refresh(unlinked_user)
+    assert unlinked_user.tenant_id is not None
+    assert str(unlinked_user.tenant_id) == response.json()["tenant_id"]
+

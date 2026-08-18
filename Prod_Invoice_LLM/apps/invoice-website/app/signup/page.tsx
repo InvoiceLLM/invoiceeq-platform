@@ -93,6 +93,33 @@ interface ProvisionPayload {
  * Throws on any non-2xx so both call sites (initial sign-up and Retry) handle
  * failure identically -- and visibly.
  */
+
+/**
+ * Carries the HTTP status alongside the message so callers can tell a
+ * retryable failure from a terminal one. Without this the status was lost in
+ * `new Error(detail)` and every failure looked equally retryable.
+ */
+class ProvisionError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ProvisionError";
+    this.status = status;
+  }
+}
+
+/**
+ * Gap 133: a 409 from POST /auth/provision is terminal, not transient.
+ *
+ * All four 409 sites in routers/auth.py are "this already exists" conditions --
+ * the user already belongs to a workspace, the admin email is held by another
+ * account, or the tenant/clerk_org_id conflicts. None of them resolve by trying
+ * again, so offering Retry traps the user in a loop that 409s forever.
+ */
+function isTerminalProvisionFailure(err: unknown): boolean {
+  return err instanceof ProvisionError && err.status === 409;
+}
+
 async function provisionTenant(payload: ProvisionPayload): Promise<void> {
   let token: string | null = null;
   try {
@@ -113,12 +140,27 @@ async function provisionTenant(payload: ProvisionPayload): Promise<void> {
 
   if (!response.ok) {
     const data = await response.json().catch(() => ({} as { detail?: string }));
-    throw new Error(data?.detail || `provisioning failed with HTTP ${response.status}`);
+    throw new ProvisionError(
+      data?.detail || `provisioning failed with HTTP ${response.status}`,
+      response.status
+    );
   }
 }
 
 function provisionFailureMessage(err: unknown, orgId: string): string {
   const detail = err instanceof Error ? err.message : String(err);
+
+  // Terminal: say so plainly and point somewhere that can actually resolve it.
+  // Deliberately does not say "Retry" -- the Retry button is not rendered for
+  // this case, and inviting one would just reproduce the same 409.
+  if (isTerminalProvisionFailure(err)) {
+    return (
+      `This account or organisation is already set up, so we can't provision it again (${detail}). ` +
+      `Retrying won't change this. If you already have a workspace, sign in below instead — ` +
+      `otherwise contact support and quote org id ${orgId}.`
+    );
+  }
+
   return (
     `Your account was created, but we couldn't finish setting up your organisation (${detail}). ` +
     `Click Retry — if it keeps failing, contact support and quote org id ${orgId}.`
@@ -145,9 +187,98 @@ export default function SignupPage() {
   // re-running sign-up (which would fail -- the email is taken by then).
   const [pendingProvision, setPendingProvision] = useState<ProvisionPayload | null>(null);
   const [retrying, setRetrying] = useState(false);
+  
+  const [verificationCode, setVerificationCode] = useState("");
+  const [needsVerification, setNeedsVerification] = useState(false);
 
   const inputStyle = (id: string) => ({ ...S.input, ...(focused === id ? S.inputFocus : {}) });
   const selectStyle = (id: string) => ({ ...S.select, ...(focused === id ? S.inputFocus : {}) });
+
+  const completeSignupAndProvision = async (
+    clerkUserId: string,
+    createdSessionId: string,
+    finalOrgName: string
+  ) => {
+    if (setActive) {
+      await setActive({ session: createdSessionId });
+    }
+
+    let orgId: string | null = null;
+    try {
+      await new Promise((r) => setTimeout(r, 200));
+      // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
+      const org = await window.Clerk.createOrganization({ name: finalOrgName });
+      orgId = org.id;
+      // @ts-expect-error -- see above
+      await window.Clerk.setActive({ organization: org.id });
+    } catch (orgErr: any) {
+      console.error("Clerk Org creation failed (is Organizations enabled in Clerk Dashboard?)", orgErr);
+      setError(
+        "Your account was created, but we couldn't create your organisation " +
+          `(${orgErr?.errors?.[0]?.longMessage || orgErr?.message || "unknown error"}). ` +
+          "Organisations may be disabled for this Clerk instance. Please contact support " +
+          `and quote the email ${email} — do not sign up again with this address.`
+      );
+      return;
+    }
+
+    if (!orgId) {
+      console.error("Clerk Org creation returned no organisation id");
+      setError(
+        "Your account was created, but your organisation could not be created " +
+          `(no organisation id was returned). Please contact support and quote the email ${email} — ` +
+          "do not sign up again with this address."
+      );
+      return;
+    }
+
+    try {
+      // @ts-expect-error -- see above
+      await window.Clerk.user.update({
+        unsafeMetadata: { orgId, orgName: finalOrgName, orgType, country, role: "admin" },
+      });
+    } catch (metaErr) {
+      console.warn("Metadata update failed:", metaErr);
+    }
+
+    // @ts-expect-error -- see above
+    const finalUserId = clerkUserId || window.Clerk?.user?.id || null;
+
+    if (!finalUserId) {
+      setError(
+        "Your account was created, but we couldn't read its user id to finish " +
+          "setting up your organisation. Please contact support and quote org id " +
+          `${orgId}.`
+      );
+      return;
+    }
+
+    const payload: ProvisionPayload = {
+      clerk_org_id: orgId,
+      org_name: finalOrgName,
+      admin_email: email,
+      clerk_user_id: finalUserId,
+    };
+
+    try {
+      await provisionTenant(payload);
+    } catch (provisionErr: any) {
+      // Gap 133: blocking. Redirecting to /login on a failed provision is
+      // what made this invisible -- the user reached a working-looking app
+      // whose data lived in an unrelated tenant (or nowhere).
+      console.error("Tenant provisioning failed:", provisionErr);
+      // Only offer Retry when retrying could actually succeed. A 409 is
+      // terminal (see isTerminalProvisionFailure), so leave pendingProvision
+      // null and the Retry button unrendered.
+      if (!isTerminalProvisionFailure(provisionErr)) {
+        setPendingProvision(payload);
+      }
+      setError(provisionFailureMessage(provisionErr, orgId));
+      return;
+    }
+
+    router.push("/login");
+  };
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,92 +298,10 @@ export default function SignupPage() {
       const finalOrgName = orgName.trim() || `${email.split("@")[0]}'s Org`;
 
       if (result.status === "complete") {
-        await setActive({ session: result.createdSessionId });
-
-        let orgId: string | null = null;
-        try {
-          await new Promise((r) => setTimeout(r, 200));
-          // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
-          const org = await window.Clerk.createOrganization({ name: finalOrgName });
-          orgId = org.id;
-          // @ts-expect-error -- see above
-          await window.Clerk.setActive({ organization: org.id });
-        } catch (orgErr: any) {
-          // Gap 133: this used to be a console.warn and the flow carried on to
-          // /login. With no org there is no clerk_org_id, so the backend can
-          // never resolve a tenant for this user and every request after login
-          // is refused -- landing the user in a broken account with no idea
-          // why. Fail here, visibly, instead.
-          console.error("Clerk Org creation failed (is Organizations enabled in Clerk Dashboard?)", orgErr);
-          setError(
-            "Your account was created, but we couldn't create your organisation " +
-              `(${orgErr?.errors?.[0]?.longMessage || orgErr?.message || "unknown error"}). ` +
-              "Organisations may be disabled for this Clerk instance. Please contact support " +
-              `and quote the email ${email} — do not sign up again with this address.`
-          );
-          return;
-        }
-
-        if (!orgId) {
-          // Defensive twin of the catch above: createOrganization resolving
-          // without an id is the same outcome for the user (no clerk_org_id ->
-          // no tenant is resolvable, ever), so it gets the same blocking stop
-          // rather than being carried into a provision call that cannot work.
-          console.error("Clerk Org creation returned no organisation id");
-          setError(
-            "Your account was created, but your organisation could not be created " +
-              `(no organisation id was returned). Please contact support and quote the email ${email} — ` +
-              "do not sign up again with this address."
-          );
-          return;
-        }
-
-        try {
-          // @ts-expect-error -- see above
-          await window.Clerk.user.update({
-            unsafeMetadata: { orgId, orgName: finalOrgName, orgType, country, role: "admin" },
-          });
-        } catch (metaErr) {
-          // Still non-blocking: this metadata is display-only, and Gap 133 moved
-          // the app's org-name display onto the backend's resolved tenant name.
-          console.warn("Metadata update failed:", metaErr);
-        }
-
-        // Gap 133: `result.createdUserId` was the only source here, and if it
-        // came back null the whole provision call was skipped silently. The
-        // live Clerk client knows the id either way once the session is active.
-        // @ts-expect-error -- see above
-        const clerkUserId: string | null = result.createdUserId || window.Clerk?.user?.id || null;
-
-        if (!clerkUserId) {
-          setError(
-            "Your account was created, but we couldn't read its user id to finish " +
-              "setting up your organisation. Please contact support and quote org id " +
-              `${orgId}.`
-          );
-          return;
-        }
-
-        const payload: ProvisionPayload = {
-          clerk_org_id: orgId,
-          org_name: finalOrgName,
-          admin_email: email,
-          clerk_user_id: clerkUserId,
-        };
-
-        try {
-          await provisionTenant(payload);
-        } catch (provisionErr: any) {
-          // Gap 133: blocking. Redirecting to /login on a failed provision is
-          // what made this invisible -- the user reached a working-looking app
-          // whose data lived in an unrelated tenant (or nowhere).
-          console.error("Tenant provisioning failed:", provisionErr);
-          setPendingProvision(payload);
-          setError(provisionFailureMessage(provisionErr, orgId));
-          return;
-        }
-
-        router.push("/login");
+        await completeSignupAndProvision(result.createdUserId || "", result.createdSessionId || "", finalOrgName);
+      } else if (result.status === "missing_requirements") {
+        await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+        setNeedsVerification(true);
       } else {
         setError("Account created! Please check your Clerk dashboard settings to disable email verification for demo mode.");
       }
@@ -263,9 +312,37 @@ export default function SignupPage() {
     }
   };
 
+  const handleVerifyEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isLoaded || !verificationCode) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await signUp.attemptEmailAddressVerification({ code: verificationCode });
+      const finalOrgName = orgName.trim() || `${email.split("@")[0]}'s Org`;
+
+      if (result.status === "complete") {
+        await completeSignupAndProvision(result.createdUserId || "", result.createdSessionId || "", finalOrgName);
+      } else {
+        setError(`Verification status: ${result.status}. Please check the code and try again.`);
+      }
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.longMessage || err?.message || "Verification failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBackToSignup = () => {
+    setNeedsVerification(false);
+    setVerificationCode("");
+    setError(null);
+  };
+
   /**
    * Gap 133: retry only the backend call. The Clerk user, the Clerk
-   * Organization and the active session all already exist at this point, so
+   * Organisation and the active session all already exist at this point, so
    * re-running sign-up would fail on a duplicate email; the only thing that
    * failed is POST /auth/provision, and that endpoint is idempotent on
    * clerk_org_id.
@@ -280,7 +357,14 @@ export default function SignupPage() {
       router.push("/login");
     } catch (retryErr: any) {
       console.error("Tenant provisioning retry failed:", retryErr);
-      setError(provisionFailureMessage(retryErr, pendingProvision.clerk_org_id));
+      const orgId = pendingProvision.clerk_org_id;
+      // A retry that comes back 409 has become terminal -- typically the first
+      // attempt actually landed. Drop pendingProvision so the Retry button
+      // disappears rather than inviting an endless 409 loop.
+      if (isTerminalProvisionFailure(retryErr)) {
+        setPendingProvision(null);
+      }
+      setError(provisionFailureMessage(retryErr, orgId));
     } finally {
       setRetrying(false);
     }
@@ -319,140 +403,188 @@ export default function SignupPage() {
 
       <div style={S.formPanel}>
         <div style={S.card}>
-          <div style={S.cardHeader}>
-            <div style={S.badge}>✦ Free 14-day trial</div>
-            <h2 style={S.cardTitle}>Create your organisation</h2>
-            <p style={S.cardSubtitle}>Fill in the details below to get started</p>
-          </div>
+          {!needsVerification ? (
+            <>
+              <div style={S.cardHeader}>
+                <div style={S.badge}>✦ Free 14-day trial</div>
+                <h2 style={S.cardTitle}>Create your organisation</h2>
+                <p style={S.cardSubtitle}>Fill in the details below to get started</p>
+              </div>
 
-          <form onSubmit={handleSignup}>
-            <div style={S.sectionLabel}>Organisation</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div style={S.inputWrap}>
-                <span style={S.inputIcon}>🏢</span>
-                <input
-                  type="text"
-                  placeholder="Organisation name (optional)"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  onFocus={() => setFocused("orgName")}
-                  onBlur={() => setFocused(null)}
-                  style={inputStyle("orgName")}
-                />
-              </div>
-              <div style={S.grid2}>
-                <div style={S.inputWrap}>
-                  <span style={S.inputIcon}>📁</span>
-                  <select
-                    value={orgType}
-                    onChange={(e) => setOrgType(e.target.value)}
-                    onFocus={() => setFocused("orgType")}
-                    onBlur={() => setFocused(null)}
-                    style={selectStyle("orgType")}
-                    required
-                  >
-                    <option value="">Org type</option>
-                    {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
+              <form onSubmit={handleSignup}>
+                <div style={S.sectionLabel}>Organisation</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <div style={S.inputWrap}>
+                    <span style={S.inputIcon}>🏢</span>
+                    <input
+                      type="text"
+                      placeholder="Organisation name (optional)"
+                      value={orgName}
+                      onChange={(e) => setOrgName(e.target.value)}
+                      onFocus={() => setFocused("orgName")}
+                      onBlur={() => setFocused(null)}
+                      style={inputStyle("orgName")}
+                    />
+                  </div>
+                  <div style={S.grid2}>
+                    <div style={S.inputWrap}>
+                      <span style={S.inputIcon}>📁</span>
+                      <select
+                        value={orgType}
+                        onChange={(e) => setOrgType(e.target.value)}
+                        onFocus={() => setFocused("orgType")}
+                        onBlur={() => setFocused(null)}
+                        style={selectStyle("orgType")}
+                        required
+                      >
+                        <option value="">Org type</option>
+                        {ORG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div style={S.inputWrap}>
+                      <span style={S.inputIcon}>🌍</span>
+                      <select
+                        value={country}
+                        onChange={(e) => setCountry(e.target.value)}
+                        onFocus={() => setFocused("country")}
+                        onBlur={() => setFocused(null)}
+                        style={selectStyle("country")}
+                        required
+                      >
+                        <option value="">Country</option>
+                        {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                  </div>
                 </div>
-                <div style={S.inputWrap}>
-                  <span style={S.inputIcon}>🌍</span>
-                  <select
-                    value={country}
-                    onChange={(e) => setCountry(e.target.value)}
-                    onFocus={() => setFocused("country")}
-                    onBlur={() => setFocused(null)}
-                    style={selectStyle("country")}
-                    required
-                  >
-                    <option value="">Country</option>
-                    {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-              </div>
-            </div>
 
-            <div style={S.sectionLabel}>Account</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              <div style={S.inputWrap}>
-                <span style={S.inputIcon}>✉️</span>
-                <input
-                  type="email"
-                  placeholder="Work email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onFocus={() => setFocused("email")}
-                  onBlur={() => setFocused(null)}
-                  style={inputStyle("email")}
-                  required
-                />
-              </div>
-              <div style={S.grid2}>
-                <div style={S.inputWrap}>
-                  <span style={S.inputIcon}>🔒</span>
-                  <input
-                    type="password"
-                    placeholder="Password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onFocus={() => setFocused("password")}
-                    onBlur={() => setFocused(null)}
-                    style={inputStyle("password")}
-                    required
-                  />
+                <div style={S.sectionLabel}>Account</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <div style={S.inputWrap}>
+                    <span style={S.inputIcon}>✉️</span>
+                    <input
+                      type="email"
+                      placeholder="Work email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      onFocus={() => setFocused("email")}
+                      onBlur={() => setFocused(null)}
+                      style={inputStyle("email")}
+                      required
+                    />
+                  </div>
+                  <div style={S.grid2}>
+                    <div style={S.inputWrap}>
+                      <span style={S.inputIcon}>🔒</span>
+                      <input
+                        type="password"
+                        placeholder="Password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        onFocus={() => setFocused("password")}
+                        onBlur={() => setFocused(null)}
+                        style={inputStyle("password")}
+                        required
+                      />
+                    </div>
+                    <div style={S.inputWrap}>
+                      <span style={S.inputIcon}>🔑</span>
+                      <input
+                        type="password"
+                        placeholder="Confirm"
+                        value={confirm}
+                        onChange={(e) => setConfirm(e.target.value)}
+                        onFocus={() => setFocused("confirm")}
+                        onBlur={() => setFocused(null)}
+                        style={inputStyle("confirm")}
+                        required
+                      />
+                    </div>
+                  </div>
                 </div>
+
+                {error && (
+                  <div style={S.errorBox}>
+                    <span>⚠️</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      <span>{error}</span>
+                      {/* Gap 133: only the backend provision call is retried -- the
+                          Clerk account and organisation already exist by now. */}
+                      {pendingProvision && (
+                        <button
+                          type="button"
+                          onClick={handleRetryProvision}
+                          disabled={retrying}
+                          style={{ ...S.retryBtn, opacity: retrying ? 0.7 : 1 }}
+                        >
+                          {retrying ? "⏳ Retrying…" : "↻ Retry setup"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Gap 9 (real-key verification): this Clerk instance has Smart
+                    CAPTCHA / bot sign-up protection enabled. Without this element,
+                    Clerk can't mount the managed CAPTCHA challenge and silently
+                    falls back to an invisible Cloudflare Turnstile challenge that
+                    also fails in this environment -- signUp.create() then hangs
+                    forever with no error ever surfacing to the catch block. Found
+                    by actually running signup against real Clerk keys, not
+                    visible with placeholder keys since Clerk never attempts a
+                    real challenge against those. */}
+                <div id="clerk-captcha" />
+
+                <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
+                  {loading ? "⏳ Creating organisation…" : "🚀 Create Organisation"}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <div style={S.cardHeader}>
+                <div style={S.badge}>✦ Verify email</div>
+                <h2 style={S.cardTitle}>Verify your email</h2>
+                <p style={S.cardSubtitle}>Enter the code sent to <strong>{email}</strong></p>
+              </div>
+
+              <form onSubmit={handleVerifyEmail}>
+                <div style={S.sectionLabel}>Verification Code</div>
                 <div style={S.inputWrap}>
                   <span style={S.inputIcon}>🔑</span>
                   <input
-                    type="password"
-                    placeholder="Confirm"
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    onFocus={() => setFocused("confirm")}
+                    type="text"
+                    placeholder="Enter 6-digit code"
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    onFocus={() => setFocused("verification")}
                     onBlur={() => setFocused(null)}
-                    style={inputStyle("confirm")}
+                    style={inputStyle("verification")}
                     required
+                    autoFocus
                   />
                 </div>
-              </div>
-            </div>
 
-            {error && (
-              <div style={S.errorBox}>
-                <span>⚠️</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                  <span>{error}</span>
-                  {/* Gap 133: only the backend provision call is retried -- the
-                      Clerk account and organisation already exist by now. */}
-                  {pendingProvision && (
-                    <button
-                      type="button"
-                      onClick={handleRetryProvision}
-                      disabled={retrying}
-                      style={{ ...S.retryBtn, opacity: retrying ? 0.7 : 1 }}
-                    >
-                      {retrying ? "⏳ Retrying…" : "↻ Retry setup"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
+                {error && (
+                  <div style={S.errorBox}>
+                    <span>⚠️</span><span>{error}</span>
+                  </div>
+                )}
 
-            {/* Gap 9 (real-key verification): this Clerk instance has Smart
-                CAPTCHA / bot sign-up protection enabled. Without this element,
-                Clerk can't mount the managed CAPTCHA challenge and silently
-                falls back to an invisible Cloudflare Turnstile challenge that
-                also fails in this environment -- signUp.create() then hangs
-                forever with no error ever surfacing to the catch block. Found
-                by actually running signup against real Clerk keys, not
-                visible with placeholder keys since Clerk never attempts a
-                real challenge against those. */}
-            <div id="clerk-captcha" />
+                <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
+                  {loading ? "⏳ Verifying…" : "✓ Verify & Create Organisation"}
+                </button>
 
-            <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
-              {loading ? "⏳ Creating organisation…" : "🚀 Create Organisation"}
-            </button>
-          </form>
+                <button
+                  type="button"
+                  onClick={handleBackToSignup}
+                  style={{ background: "none", border: "none", color: "gray", fontSize: "13px", marginTop: "12px", width: "100%", cursor: "pointer" }}
+                >
+                  ← Back to Sign Up
+                </button>
+              </form>
+            </>
+          )}
 
           <div style={S.loginRow}>
             Already have an account? <a href="/login" style={S.loginLink}>Log in →</a>

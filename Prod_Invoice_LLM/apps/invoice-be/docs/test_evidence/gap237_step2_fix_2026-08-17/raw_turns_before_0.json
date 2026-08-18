@@ -1,0 +1,54 @@
+{
+  "run_label": "before_0",
+  "tenant_id": "02db74f3-2064-4b3b-aec9-218af9a408f4",
+  "session_id": "f903788c-2e1f-411f-8371-341180dca556",
+  "turns": [
+    {
+      "label": "turn_1_broad",
+      "prompt": "What are the total invoices related to cloud?",
+      "status_code": 200,
+      "response_json": {
+        "id": "637f4f05-5cb3-4111-beb1-721ff57ea9a1",
+        "session_id": "f903788c-2e1f-411f-8371-341180dca556",
+        "role": "assistant",
+        "content": "All results are INBOUND: 4 cloud-related invoices total \u20ac800 and $73,612.43 (1 invoice for \u20ac800; 3 invoices totaling $73,612.43).\n\n### Query Results\n\n\nflow_direction | currency | invoice_count | total_grand_total\n--- | --- | --- | ---\nINBOUND | EUR | 1 | 800.0\nINBOUND | USD | 3 | 73612.43",
+        "generated_sql": "SELECT\n  flow_direction,\n  currency,\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_grand_total\nFROM invoice\nWHERE tenant_id = '02db74f3-2064-4b3b-aec9-218af9a408f4'\n  AND (\n    LOWER(COALESCE(vendor_name, ''))   LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(customer_name, '')) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(file_path, ''))     LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(invoice_number, '')) LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(po_number, ''))      LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(tags::text, ''))     LIKE LOWER('%cloud%')\n    OR LOWER(COALESCE(items::text, ''))    LIKE LOWER('%cloud%')\n  )\nGROUP BY flow_direction, currency\nORDER BY currency, flow_direction;",
+        "citations": [],
+        "created_at": "2026-08-17T15:22:28.495490",
+        "feedback": null
+      },
+      "elapsed_seconds": 33.4
+    },
+    {
+      "label": "turn_2_narrow",
+      "prompt": "Can you explain the 3 USD ones in detail?",
+      "status_code": 200,
+      "response_json": {
+        "id": "41e17b07-407e-484b-b232-c52c287d6095",
+        "session_id": "f903788c-2e1f-411f-8371-341180dca556",
+        "role": "assistant",
+        "content": "- 3 INBOUND USD cloud-related invoices totaling $73,612.43.  \n- All are COMPLETED and dated 2026-06-15; no individual invoice numbers, vendors, or line-item details are available in the provided context.",
+        "generated_sql": null,
+        "citations": [],
+        "created_at": "2026-08-17T15:22:47.971958",
+        "feedback": null
+      },
+      "elapsed_seconds": 19.5
+    }
+  ],
+  "chat_message_db_rows": [
+    {
+      "content_snippet": "All results are INBOUND: 4 cloud-related invoices total \u20ac800 and $73,612.43 (1 invoice for \u20ac800; 3 invoices totaling $73",
+      "result_invoice_ids": [
+        "986bf9d9-6645-466d-a5f7-2062dfef56b6",
+        "4f8d7aa7-ce1d-498e-80ed-18073ab75a44",
+        "acda2bdc-f552-45d5-9011-ee64f274dbf6",
+        "909d19a2-d420-4b59-b4b0-6413af2d0434"
+      ]
+    },
+    {
+      "content_snippet": "- 3 INBOUND USD cloud-related invoices totaling $73,612.43.  \n- All are COMPLETED and dated 2026-06-15; no individual in",
+      "result_invoice_ids": []
+    }
+  ]
+}
