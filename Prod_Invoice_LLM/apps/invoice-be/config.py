@@ -185,6 +185,23 @@ class Settings(BaseSettings):
     # environments. NEVER set to empty — that would silently swallow every ticket.
     SUPPORT_NOTIFY_EMAIL: str = "Application@infinevocloud.com"
 
+    # Gap 249: the Front Door profile's `frontDoorId` GUID, used only to decide
+    # whether the `X-Azure-ClientIP` header on an inbound request can be
+    # trusted for rate-limiting (see routers/support.py::_get_client_ip).
+    #
+    # Empty by default, and empty is the correct value today: Front Door is
+    # gated on `customDomainName` in infra/08-apps.bicep, that param is unset,
+    # and nothing has been deployed -- so no request currently arrives with a
+    # genuine X-Azure-* header. Leaving this empty means those headers are
+    # ignored outright, which is the safe state: if we trusted X-Azure-ClientIP
+    # unconditionally, any caller could forge it and reset their own limit
+    # window, which is the exact bypass this setting exists to prevent.
+    #
+    # Set it (to the real profile GUID, not a placeholder) only in the same
+    # change that actually puts Front Door in front of this app. An inbound
+    # X-Azure-FDID is only honoured when it matches this value exactly.
+    FRONT_DOOR_ID: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache()
