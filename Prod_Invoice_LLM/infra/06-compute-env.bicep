@@ -38,6 +38,7 @@ param chromaDbMemory string = '1.0Gi'
 var vnetName = 'vnet-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var lawName = 'law-${namingPrefix}-${environment}'
+var appInsightsName = 'appi-${namingPrefix}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
 var acaSubnetId = networkIsolation ? resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, 'snet-aca') : ''
 
@@ -51,6 +52,15 @@ module logAnalytics './modules/monitoring/log-analytics.bicep' = {
     location: location
     workspaceName: lawName
     retentionInDays: logRetentionInDays
+  }
+}
+
+module appInsights './modules/monitoring/app-insights.bicep' = {
+  name: 'app-insights-deploy'
+  params: {
+    location: location
+    appInsightsName: appInsightsName
+    workspaceId: logAnalytics.outputs.workspaceId
   }
 }
 
@@ -85,3 +95,6 @@ module chromadb './modules/data/chromadb.bicep' = {
 output caeId string = containerEnv.outputs.caeId
 output chromaDbFqdn string = chromadb.outputs.internalFqdn
 output logAnalyticsWorkspaceId string = logAnalytics.outputs.workspaceId
+output appInsightsConnectionString string = appInsights.outputs.connectionString
+output appInsightsId string = appInsights.outputs.appInsightsId
+

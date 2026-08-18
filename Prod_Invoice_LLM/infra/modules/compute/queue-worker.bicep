@@ -14,6 +14,9 @@ param acrName string
 param storageAccountName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('Application Insights Connection String for OpenTelemetry APM tracing')
+param appInsightsConnectionString string = ''
+
 @description('vCPU allocation, e.g. \'2.0\'.')
 param cpu string = '2.0'
 
@@ -257,6 +260,10 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'SALESFORCE_CLIENT_SECRET'
               secretRef: 'salesforce-client-secret-secret'
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: appInsightsConnectionString
             }
           ], docIntel2Env, docIntel3Env)
           // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence

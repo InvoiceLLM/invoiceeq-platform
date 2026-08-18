@@ -21,6 +21,9 @@ param nextPublicClerkPublishableKey string = ''
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('Application Insights Connection String for OpenTelemetry APM tracing')
+param appInsightsConnectionString string = ''
+
 @description('vCPU allocation, e.g. \'0.5\'.')
 param cpu string = '0.5'
 
@@ -101,6 +104,45 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_CLIENT_ID'
               value: userAssignedIdentityClientId
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: appInsightsConnectionString
+            }
+          ]
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              initialDelaySeconds: 15
+              periodSeconds: 20
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              initialDelaySeconds: 10
+              periodSeconds: 10
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
+            {
+              type: 'Startup'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              initialDelaySeconds: 5
+              periodSeconds: 5
+              failureThreshold: 12
+              timeoutSeconds: 5
             }
           ]
         }

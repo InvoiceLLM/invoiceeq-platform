@@ -34,6 +34,7 @@ dependencies = [
     "chromadb>=1.5.9",
     "azure-storage-queue>=12.17.0",
     "email-validator>=2.3.0",
+    "azure-monitor-opentelemetry>=1.6.0",
 ]
 
 [dependency-groups]

@@ -25,6 +25,12 @@ param namingPrefix string = 'invoice-llm'
 @description('Email address to receive all cost/health alert notifications')
 param alertEmail string
 
+@description('Optional Microsoft Teams Incoming Webhook URL for real-time alerting')
+param teamsWebhookUrl string = ''
+
+@description('Optional Slack Incoming Webhook URL for alerting')
+param slackWebhookUrl string = ''
+
 @description('Number of Document Intelligence resources deployed in Stage 4 (must match). Gates whether docintel-2/-3 diagnostic settings are created.')
 @minValue(1)
 @maxValue(3)
@@ -36,6 +42,7 @@ var actionGroupName = 'ag-${namingPrefix}-${environment}'
 var backendAppName = 'ca-invoice-be-${environment}'
 var workerAppName = 'ca-queue-worker-${environment}'
 var frontendAppName = 'ca-invoice-fe-${environment}'
+var websiteAppName = 'ca-invoice-website-${environment}'
 var chromaDbAppName = 'ca-chromadb-${environment}'
 var postgresServerName = 'psql-${namingPrefix}-${environment}'
 var redisName = 'redis-${namingPrefix}-${environment}'
@@ -52,13 +59,8 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' exis
   name: lawName
 }
 
-module appInsights './modules/monitoring/app-insights.bicep' = {
-  name: 'app-insights-deploy'
-  params: {
-    location: location
-    appInsightsName: appInsightsName
-    workspaceId: logAnalytics.id
-  }
+resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: appInsightsName
 }
 
 module actionGroup './modules/monitoring/action-group.bicep' = {
@@ -67,6 +69,8 @@ module actionGroup './modules/monitoring/action-group.bicep' = {
     actionGroupName: actionGroupName
     shortName: 'invllmalrt'
     emailAddress: alertEmail
+    teamsWebhookUrl: teamsWebhookUrl
+    slackWebhookUrl: slackWebhookUrl
   }
 }
 
@@ -78,6 +82,7 @@ resource caeExisting 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
 resource backendAppExisting 'Microsoft.App/containerApps@2024-03-01' existing = { name: backendAppName }
 resource workerAppExisting 'Microsoft.App/containerApps@2024-03-01' existing = { name: workerAppName }
 resource frontendAppExisting 'Microsoft.App/containerApps@2024-03-01' existing = { name: frontendAppName }
+resource websiteAppExisting 'Microsoft.App/containerApps@2024-03-01' existing = { name: websiteAppName }
 resource chromaDbAppExisting 'Microsoft.App/containerApps@2024-03-01' existing = { name: chromaDbAppName }
 resource postgresServerExisting 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' existing = { name: postgresServerName }
 resource redisExisting 'Microsoft.Cache/redisEnterprise@2025-04-01' existing = { name: redisName }
@@ -114,6 +119,11 @@ resource diagWorker 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' =
 resource diagFrontend 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: 'diag-${frontendAppName}'
   scope: frontendAppExisting
+  properties: union({ workspaceId: logAnalytics.id }, diagLogsAndMetrics)
+}
+resource diagWebsite 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-${websiteAppName}'
+  scope: websiteAppExisting
   properties: union({ workspaceId: logAnalytics.id }, diagLogsAndMetrics)
 }
 resource diagChromaDb 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
@@ -184,6 +194,7 @@ module alertRules './modules/monitoring/alert-rules.bicep' = {
     backendAppName: backendAppName
     workerAppName: workerAppName
     frontendAppName: frontendAppName
+    websiteAppName: websiteAppName
     chromaDbAppName: chromaDbAppName
     postgresServerName: postgresServerName
     redisName: redisName
@@ -195,7 +206,18 @@ module alertRules './modules/monitoring/alert-rules.bicep' = {
   }
 }
 
+// Feature 19 (Task 19.5): Deploy Azure Workbook Operations Dashboard
+module dashboard './modules/monitoring/dashboard.bicep' = {
+  name: 'dashboard-deploy'
+  params: {
+    location: location
+    logAnalyticsWorkspaceId: logAnalytics.id
+  }
+}
+
 // ================= Outputs =================
 output logAnalyticsWorkspaceId string = logAnalytics.id
 output actionGroupId string = actionGroup.outputs.actionGroupId
-output appInsightsConnectionString string = appInsights.outputs.connectionString
+output appInsightsConnectionString string = appInsights.properties.ConnectionString
+output workbookId string = dashboard.outputs.workbookId
+

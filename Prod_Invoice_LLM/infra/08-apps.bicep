@@ -120,6 +120,7 @@ var keyVaultName = 'kv-${namingPrefix}-${environment}'
 var openaiName = 'openai-${namingPrefix}-${environment}'
 var docIntelName = 'docintel-${namingPrefix}-${environment}'
 var storageAccountName = 'st${replace(namingPrefix, '-', '')}${environment}'
+var appInsightsName = 'appi-${namingPrefix}-${environment}'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: identityName
@@ -127,6 +128,10 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
 
 resource cae 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
   name: caeName
+}
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: appInsightsName
 }
 
 resource chromaDbApp 'Microsoft.App/containerApps@2024-03-01' existing = {
@@ -198,6 +203,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     payuMode: payuMode
     backendPublicUrl: 'https://${publicOrigin}'
     publicAppUrl: 'https://${publicOrigin}'
+    appInsightsConnectionString: appInsights.properties.ConnectionString
     // Post-Multi-Zone: browser never reaches FE (ingress external:false). Any
     // full-page RedirectResponse (e.g. connectors oauth_callback) must land on
     // the public website origin, which proxies /settings/* to FE.
@@ -241,6 +247,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     storageAccountName: storageAccountName
     image: queueWorkerImage
     docIntelInstanceCount: docIntelInstanceCount
+    appInsightsConnectionString: appInsights.properties.ConnectionString
     // Gap 180: same company OAuth apps as invoice-be — worker needs them to
     // download Drive/Salesforce files and refresh tokens during import.
     googleClientId: googleClientId
@@ -266,6 +273,7 @@ module frontendApp './modules/compute/invoice-fe.bicep' = {
     nextPublicClerkPublishableKey: nextPublicClerkPublishableKey
     acrName: sharedAcrName
     image: frontendImage
+    appInsightsConnectionString: appInsights.properties.ConnectionString
     cpu: frontendCpu
     memory: frontendMemory
     minReplicas: frontendMinReplicas
@@ -287,6 +295,7 @@ module websiteApp './modules/compute/invoice-website.bicep' = {
     nextPublicClerkPublishableKey: nextPublicClerkPublishableKey
     acrName: sharedAcrName
     image: websiteImage
+    appInsightsConnectionString: appInsights.properties.ConnectionString
     cpu: websiteCpu
     memory: websiteMemory
     minReplicas: websiteMinReplicas

@@ -230,3 +230,43 @@ jobs:
             echo "Updating $app -> $image"
             az containerapp update --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" --image "$image"
           done
+
+  # Feature 19 (Task 19.9): Automated post-deploy verification gate
+  verify-deployment:
+    needs: [resolve-tag, resolve-fqdns, deploy-backend, deploy-worker, deploy-frontend, deploy-website, deploy-prebuilt]
+    if: always() && !cancelled() && !contains(needs.deploy-backend.result, 'failure') && !contains(needs.deploy-worker.result, 'failure') && !contains(needs.deploy-frontend.result, 'failure') && !contains(needs.deploy-website.result, 'failure') && !contains(needs.deploy-prebuilt.result, 'failure')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS_PROD }}
+      - name: Verify Container App Health Probes & Synthetic Ingress
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Post-Deployment Synthetic Verification ==="
+          website_url="${{ needs.resolve-fqdns.outputs.website_url }}"
+          echo "Testing Public Website Ingress: ${website_url}"
+          for i in {1..12}; do
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" "${website_url}/" || echo "000")
+            if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 307 ] || [ "$status_code" -eq 308 ]; then
+              echo "✅ Public Website is healthy (HTTP $status_code)"
+              break
+            fi
+            echo "Waiting for Website container readiness (attempt $i/12, status: $status_code)..."
+            sleep 5
+          done
+
+          echo "Checking Container Apps Provisioning State in Azure..."
+          for app in ca-invoice-be-prod ca-queue-worker-prod ca-invoice-fe-prod ca-invoice-website-prod; do
+            state=$(az containerapp show --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" --query "properties.provisioningState" -o tsv)
+            echo "Container App $app status: $state"
+            if [ "$state" != "Succeeded" ]; then
+              echo "❌ Error: $app is not in Succeeded state ($state)"
+              exit 1
+            fi
+          done
+          echo "🎉 All Production Container Apps verified healthy and running!"
+

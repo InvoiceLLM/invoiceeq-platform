@@ -27,6 +27,9 @@ param nextPublicClerkPublishableKey string = ''
 param acrName string
 param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
+@description('Application Insights Connection String for OpenTelemetry APM tracing')
+param appInsightsConnectionString string = ''
+
 @description('vCPU allocation, e.g. \'0.5\'.')
 param cpu string = '0.5'
 
@@ -126,11 +129,50 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'FE_INTERNAL_URL'
               value: 'https://${frontendApiUrl}'
             }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: appInsightsConnectionString
+            }
             // Gap 6: NEXT_PUBLIC_FE_URL is deliberately NOT set here -- it has
             // no server-side reader, unlike NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
             // above (Gap 172). Next.js still inlines both into the client
             // bundle during `next build` via the Docker build-args passed in
             // .github/workflows/deploy-dev.yml.
+          ]
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              initialDelaySeconds: 15
+              periodSeconds: 20
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              initialDelaySeconds: 10
+              periodSeconds: 10
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
+            {
+              type: 'Startup'
+              httpGet: {
+                path: '/'
+                port: 3000
+              }
+              initialDelaySeconds: 5
+              periodSeconds: 5
+              failureThreshold: 12
+              timeoutSeconds: 5
+            }
           ]
         }
       ]
