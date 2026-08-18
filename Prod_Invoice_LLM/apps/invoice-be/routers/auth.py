@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, select, text
 
 from dependencies import (
     AuthenticatedClerkIdentity,
@@ -324,6 +324,21 @@ async def provision_tenant(
         admin_email = caller.email or f"{caller.clerk_user_id}@domain.com"
         email_is_placeholder = caller.email is None
 
+    domain = admin_email.split("@")[-1] if "@" in admin_email else "unknown.com"
+
+    # Concurrency lock to serialize tenant creation and adoption, preventing TOCTOU races.
+    # Uses Postgres transactional advisory locks; degrades gracefully on SQLite (testing).
+    if db_session.bind.dialect.name == "postgresql":
+        db_session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:org_key))"),
+            {"org_key": body.clerk_org_id}
+        )
+        if not email_is_placeholder:
+            db_session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:domain_key))"),
+                {"domain_key": domain}
+            )
+
     existing_tenant = db_session.exec(
         select(Tenant).where(Tenant.clerk_org_id == body.clerk_org_id)
     ).first()
@@ -337,8 +352,6 @@ async def provision_tenant(
             free_invoices_remaining=existing_tenant.free_invoices_remaining,
             is_new=False,
         )
-
-    domain = admin_email.split("@")[-1] if "@" in admin_email else "unknown.com"
 
     # A tenant may already exist for this domain from before Clerk Organizations
     # were wired in -- link it instead of creating a duplicate. Gap 133: only

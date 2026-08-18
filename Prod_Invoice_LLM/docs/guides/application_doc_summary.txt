@@ -5,6 +5,8 @@ Here's the reading order, grouped by what each phase builds toward:
 	README.md — repo structure, tech stack, team roles
 	docs/architecture/Technical_Architecture_Document.md — the core architecture doc, describing the target system end-to-end
 	docs/architecture/Cloud_Architecture_Document.md — Azure infra picture
+	docs/architecture/System_Journey_Developer_Guide.md — one narrative walkthrough of how an invoice actually moves through this codebase, module by module ([LIVE] vs [PLANNED] marked throughout)
+	docs/guides/System_Journey_User_Admin_Guide.md — the same journey in plain language from the Admin/Auditor/Viewer side, no code or file names (Today vs Planned marked throughout)
 
 2. Data & API contracts (source of truth for anything code-level)
 
@@ -19,15 +21,15 @@ Here's the reading order, grouped by what each phase builds toward:
 4. Feature-by-feature detail — backend first
 
 	7. apps/invoice-be/docs/be_features_tracker.md — status index and the single source of truth for open implementation items
-	8. Individual apps/invoice-be/docs/feature_1..11_*.md files, in numeric order — target design for each feature
+	8. Individual apps/invoice-be/docs/feature_*.md files, in numeric order — target design for each feature. The sequence is not clean: it runs 1..19 but there is no feature_5, and six decimal sub-feature docs sit alongside their parents (feature_1.1_rbac, 2.1_vendor_flow_ingestion, 3.1_fix_ftr2_3, 6.1_vendor_flow_chat, 7.1_vendor_flow_auditor, 8.1_vendor_flow_dashboard) — 24 files in total.
 
 5. Frontend
 	9. apps/invoice-fe/docs/fe_features_tracker.md
-	10. Individual apps/invoice-fe/docs/feature_1..7_*.md files, in order
+	10. Individual apps/invoice-fe/docs/feature_*.md files, in order — a contiguous 1..15, plus three decimal sub-feature docs (feature_2.1_vendor_flow_dashboard, 3.1_vendor_flow_ingestion, 4.1_vendor_flow_auditor) — 18 files in total.
 
 6. Website
 	11. apps/invoice-website/website_features/website_features_tracker.md
-	12. apps/invoice-website/website_features/feature_1..4_*.md, in order
+	12. apps/invoice-website/website_features/feature_*.md, in order — a contiguous 1..6, plus one decimal sub-feature doc (feature_3.1_vendor_flow_pricing) — 7 files in total.
 
 7. App-level implementation READMEs (once you're about to touch code)
 	13. apps/invoice-be/README.md, apps/invoice-be/agents/README.md

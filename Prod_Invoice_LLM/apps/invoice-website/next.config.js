@@ -61,6 +61,9 @@ const nextConfig = {
         source: `/api/${p}/:path*`,
         destination: `${feUrl}/api/${p}/:path*`,
       })),
+      // Specific rewrites for billing usage API to bypass website shadowing of /api/billing
+      { source: "/api/billing/usage", destination: `${feUrl}/api/billing/usage` },
+      { source: "/api/billing/usage/:path*", destination: `${feUrl}/api/billing/usage/:path*` },
       // Bug fix (2026-08-03): assetPrefix="/fe-static" in invoice-fe/next.config.js
       // PREPENDS to Next's normal internal asset path -- it does not replace
       // "_next" with "fe-static". So the real emitted asset URLs are

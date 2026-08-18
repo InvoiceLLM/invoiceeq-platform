@@ -29,8 +29,12 @@ invoice-fe/
 │   │   └── page.tsx                      # File upload & status tracking screen
 │   ├── audit/
 │   │   └── page.tsx                      # Auditor split-screen review screen
-│   └── chat/
-│       └── page.tsx                      # Semantic chat screen
+│   ├── chat/
+│   │   └── page.tsx                      # Semantic chat screen
+│   └── help/
+│       ├── page.tsx                      # Help Center — dual tab: Knowledge Base (default) + AI Support Assistant
+│       └── content/                      # Illustrated guide sections: trainer, auditor, webhooks,
+│                                         # inbound-email, outbound-email (Feature 15 / Gaps 127–129, 246)
 │
 ├── components/
 │   ├── ui/                               # Shadcn/UI base components (Button, Card, Toast, etc.)
@@ -54,11 +58,17 @@ invoice-fe/
 │   │   ├── AlertDismissal.tsx            # Per-alert dismiss button — removes alert from active list
 │   │   └── AuditActionBar.tsx            # Bottom bar — [Reject] [Approve/Pending] [Mark as Paid] buttons
 │   │
-│   └── chat/
-│       ├── ChatWindow.tsx                # Scrollable conversation message history container
-│       ├── ChatBubble.tsx                # Single message bubble (role: 'user' | 'assistant')
-│       ├── CitationLink.tsx              # Clickable source PDF citation link (opens Blob signed URL)
-│       └── ChatInput.tsx                 # Bottom input bar with Send icon button
+│   ├── chat/
+│   │   ├── ChatWindow.tsx                # Scrollable conversation message history container
+│   │   ├── ChatBubble.tsx                # Single message bubble (role: 'user' | 'assistant')
+│   │   ├── CitationLink.tsx              # Clickable source PDF citation link (opens Blob signed URL)
+│   │   └── ChatInput.tsx                 # Bottom input bar with Send icon button
+│   │
+│   └── help/
+│       ├── SupportChatWindow.tsx         # AI Support Assistant — prompt chips, Markdown answers,
+│       │                                 # smart-escalation card (Feature 15 / Gap 247)
+│       └── SupportTicketModal.tsx        # Ticket form — priority pills with SLA copy, chat transcript
+│                                         # attached, animated confirmation with the TICK-… reference
 │
 ├── hooks/                                # Custom React hooks — encapsulate all side-effect logic
 │   ├── usePolling.ts                     # TanStack Query polling hook for 1–5 PDF job status updates
@@ -84,6 +94,7 @@ invoice-fe/
 | **File Ingestion**  | Row-level checkboxes to add `#tags` before uploading → drag & drop uploader with non-blocking status alerts |
 | **Auditor Tab**     | Split-screen: PDF preview (left) + editable values form (right) with interactive alert dismissal, marking PAID or REJECTED |
 | **Semantic Chat**   | Message-style layout with citation links to source PDFs                                              |
+| **Help Center** (`/help`) | Dual-tab support hub (Feature 15, Gaps 246–248). **Knowledge Base** tab (default) — searchable illustrated guides for Trainer, Auditor, Webhooks, and inbound/outbound Email. **AI Support Assistant** tab — `SupportChatWindow.tsx`, a single non-streaming `POST /api/support/chat` answered by the backend's keyword-matched knowledge base (**not** RAG/LLM-backed — recorded deviation from the spec), which raises a smart-escalation card when it can't resolve the query. Escalation opens `SupportTicketModal.tsx` pre-filled from that conversation → `POST /api/support/ticket`, returning a `TICK-YYYY-XXXXXXXX` reference and emailing the support inbox via BE Feature 19. Tickets can also be raised directly, without going through the assistant. |
 
 ---
 

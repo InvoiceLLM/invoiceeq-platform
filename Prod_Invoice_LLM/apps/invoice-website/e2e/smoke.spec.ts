@@ -58,6 +58,8 @@ test.describe("Pricing table (on the landing page)", () => {
   });
 
   test("Free plan CTA navigates to /signup", async ({ page }) => {
+    // Pre-warm the signup page to avoid compilation timeouts on slow local runs
+    await page.goto("/signup");
     await page.goto("/");
     const pricing = page.locator("#pricing");
     const freeCta = pricing.getByRole("button", { name: "Get Started Free" });
@@ -99,6 +101,45 @@ test.describe("Login page", () => {
       "href",
       "/signup"
     );
+  });
+});
+
+test.describe("Marketing Header Visibility & Cross-Screen Navigation", () => {
+  const routes = ["/", "/contact", "/login", "/signup", "/forgot-password"];
+
+  for (const route of routes) {
+    test(`renders the top navigation menu on ${route}`, async ({ page }) => {
+      const response = await page.goto(route);
+      expect(response?.status()).toBe(200);
+
+      // Verify header brand logo/wordmark is visible
+      await expect(page.getByRole("link", { name: "Invoice AI" })).toBeVisible();
+
+      // Verify key navigation options in header
+      const nav = page.getByRole("navigation");
+      await expect(nav.getByRole("link", { name: "Contact Us" })).toBeVisible();
+      if (route === "/login") {
+        await expect(nav.getByRole("link", { name: "Register" })).toBeVisible();
+      } else {
+        await expect(nav.getByRole("link", { name: "Login" })).toBeVisible();
+      }
+    });
+  }
+
+  test("cross-screen anchor links target home page sections", async ({ page }) => {
+    // Go to contact page first
+    await page.goto("/contact");
+
+    const nav = page.getByRole("navigation");
+    
+    // Check Features and Pricing link attributes pointing to home route hash
+    await expect(nav.getByRole("link", { name: "Features" })).toHaveAttribute("href", "/#features");
+    await expect(nav.getByRole("link", { name: "Pricing" })).toHaveAttribute("href", "/#pricing");
+    await expect(nav.getByRole("link", { name: "Architecture Flow" })).toHaveAttribute("href", "/#architecture-flows");
+
+    // Click Features and verify redirection to landing page with hash
+    await nav.getByRole("link", { name: "Features" }).click();
+    await expect(page).toHaveURL(/.*\/#features/);
   });
 });
 

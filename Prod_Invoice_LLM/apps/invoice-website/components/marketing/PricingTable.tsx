@@ -194,7 +194,7 @@ export function PricingTable() {
   return (
     <section
       id="pricing"
-      className="py-20 relative border-t border-[rgba(255,255,255,0.08)] bg-[#050816]/60 backdrop-blur-md"
+      className="py-20 relative border-t border-[rgba(255,255,255,0.08)] bg-[#050816]/60 backdrop-blur-md scroll-mt-[65px]"
     >
       <div className="glowing-divider-line mb-14" />
 

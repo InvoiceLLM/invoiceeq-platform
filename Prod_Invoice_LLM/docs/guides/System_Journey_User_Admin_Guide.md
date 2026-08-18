@@ -27,6 +27,17 @@ At the end of the day, the **Dashboard** shows the numbers that matter: total in
 ### What Trainer is for
 The **Trainer** screen powers **EVOLVE** (Continuous Learning agent): three modes — one set of rules that apply to every vendor (**Global**), rules specific to a vendor you already have invoices from (**Existing Vendor**, seeded from their real data), and rules for a brand-new vendor you're about to start working with (**New Vendor**, blank slate). Corrections made in Auditor can feed straight into this screen; commits here immediately re-check any of that vendor's existing invoices against the new rule.
 
+### When something goes wrong — getting help
+Priya hits a wall: an invoice keeps coming back flagged and she can't work out why. She clicks **Help** in the sidebar. It opens on the **guides** — illustrated, step-by-step walkthroughs of Trainer, the Auditor, webhooks, and inbound/outbound email setup, with a search box at the top so she can type "vendor rule" and jump straight to the right one.
+
+If the guides don't answer it, she switches to the second tab, **AI Support Assistant**, and describes the problem in her own words. It answers on the spot for common issues. Be aware of what this is today: it's a fast lookup over a fixed set of known problems and their fixes, not the same AI that answers questions about your invoice data in Chat — it doesn't stream its reply, and it doesn't know anything about *your* invoices. When it can't help, it says so and offers to escalate rather than guessing.
+
+Escalating is one click. A ticket form opens with the problem already filled in from the conversation, she picks how urgent it is (**Low**, **Normal**, or **Urgent**, each with the response time we commit to), and submits. She gets a reference number back immediately — something like `TICK-2026-9173A5B8` — and the whole chat transcript goes to the support team along with it, so nobody asks her to explain it all over again. She can raise a ticket directly from the same screen without talking to the assistant first, if she already knows what she needs.
+
+A prospect who isn't a customer yet has their own way in: the **Contact Us** page on the public website, linked from the site header and footer. Same idea — pick a category (sales, technical, billing, partnership, general) and an urgency, write the message, get a reference number back (`INQ-2026-…` for these) and an acknowledgement email. Every one of these, from either door, lands as a ticket in one place and pages the support inbox.
+
+*(One thing to set expectations on: replies come back by **email**. There's no "my tickets" status board in the app to watch, and nothing moves a ticket from Open to Resolved on screen — the conversation continues in your inbox once the team picks it up. Keep the reference number.)*
+
 ---
 
 ## Part 2 — Planned: sending invoices to your own customers

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Header } from "@/components/marketing/Header";
 import { Hero } from "@/components/marketing/Hero";
 import { FlowsShowcaseSection } from "@/components/marketing/FlowsShowcaseSection";
@@ -23,6 +23,12 @@ export default function Home() {
   const handleCloseModal = () => {
     setModalState((prev) => ({ ...prev, isOpen: false }));
   };
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.hash === "#architecture-flows") {
+      handleOpenModal("inbound");
+    }
+  }, []);
 
   return (
     <div className="flex flex-col min-h-screen">

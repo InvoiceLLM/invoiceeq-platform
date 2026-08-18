@@ -106,7 +106,7 @@ export function WorkspaceShowcase() {
   };
 
   return (
-    <section id="features" className="py-24 relative border-t border-[rgba(255,255,255,0.08)]">
+    <section id="features" className="py-24 relative border-t border-[rgba(255,255,255,0.08)] scroll-mt-[65px]">
       {/* Section Divider Header Line */}
       <div className="glowing-divider-line mb-16" />
 

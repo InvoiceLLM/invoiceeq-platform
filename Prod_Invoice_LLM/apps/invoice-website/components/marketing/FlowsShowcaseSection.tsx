@@ -57,7 +57,7 @@ export function FlowsShowcaseSection({ onOpenModal }: FlowsShowcaseSectionProps)
   const flowsUrl = appHref("/flows");
 
   return (
-    <section id="architecture-flows" className="py-20 relative border-t border-[rgba(255,255,255,0.08)] bg-[#050816]/70 backdrop-blur-md overflow-hidden">
+    <section id="architecture-flows" className="py-20 relative border-t border-[rgba(255,255,255,0.08)] bg-[#050816]/70 backdrop-blur-md overflow-hidden scroll-mt-[65px]">
       
       {/* Background Ambient Glow */}
       <div className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] bg-[#3B82F6]/10 blur-[150px] rounded-full -z-10" />

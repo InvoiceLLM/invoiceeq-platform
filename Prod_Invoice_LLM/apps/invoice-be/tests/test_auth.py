@@ -1022,3 +1022,52 @@ def test_provision_allows_user_with_null_tenant_id(db_session):
     assert unlinked_user.tenant_id is not None
     assert str(unlinked_user.tenant_id) == response.json()["tenant_id"]
 
+
+def test_provision_concurrency_locking(db_session):
+    """
+    Verify that provision_tenant attempts to acquire PostgreSQL advisory locks
+    on the clerk_org_id and domain. We mock the db_session execute and bind dialect
+    to simulate a PostgreSQL database environment.
+    """
+    from unittest.mock import patch, MagicMock
+    from sqlalchemy.orm import Session as BaseSession
+    from sqlalchemy.dialects.sqlite.base import SQLiteDialect
+
+    # Mock db_session.execute to inspect advisory lock calls
+    original_execute = BaseSession.execute
+    execute_calls = []
+
+    def mock_execute(self, statement, *args, **kwargs):
+        stmt_str = str(statement)
+        execute_calls.append(stmt_str)
+        if "pg_advisory_xact_lock" in stmt_str:
+            return MagicMock()
+        return original_execute(self, statement, *args, **kwargs)
+
+    # Set up normal provision request
+    body = _provision_body(
+        clerk_user_id="user_lock_test",
+        clerk_org_id="org_lock_test",
+        org_name="Lock Co",
+        admin_email="admin@lockco.com",
+    )
+    
+    # Patch SQLiteDialect name to report as postgresql during endpoint execution
+    with patch.object(BaseSession, 'execute', new=mock_execute):
+        with patch.object(SQLiteDialect, 'name', 'postgresql'):
+            with _as_caller(**_token_for(body, email="admin@lockco.com", clerk_user_id="user_lock_test", org_id="org_lock_test")):
+                response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    
+    # Assert pg_advisory_xact_lock was called twice (once for org_key, once for domain_key)
+    lock_statements = [stmt for stmt in execute_calls if "pg_advisory_xact_lock" in stmt]
+    assert len(lock_statements) == 2, f"Executed statements: {execute_calls}"
+    assert any("org_key" in stmt for stmt in lock_statements)
+    assert any("domain_key" in stmt for stmt in lock_statements)
+
+
+
+
+
+

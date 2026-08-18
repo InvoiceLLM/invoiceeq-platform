@@ -352,7 +352,20 @@ For bulk uploads, SSE avoids excessive polling:
 ├── app/
 │   ├── layout.tsx                    # Root Layout (Fonts, Providers, Navbar, Footer)
 │   ├── page.tsx                      # Main Landing Page (Hero, Features, Pricing)
-│   └── login/page.tsx                # SSO / Clerk Auth Entry Point
+│   ├── login/page.tsx                # SSO / Clerk Auth Entry Point
+│   ├── signup/page.tsx               # Clerk sign-up + org creation + server-side provision call
+│   ├── forgot-password/page.tsx      # Two-step Clerk password reset
+│   ├── contact/page.tsx              # Contact Us form — category/urgency/message (Website Feature 5, Gap 183)
+│   ├── billing/{success,failed}/     # PayU return pages (public, deliberately not Clerk-gated)
+│   ├── privacy/page.tsx              # Privacy Policy
+│   ├── terms/page.tsx                # Terms of Service
+│   └── api/
+│       ├── auth/provision/route.ts   # Server-side proxy → backend /auth/provision
+│       ├── contact/route.ts          # Server-side proxy → backend POST /api/v1/support/contact
+│       │                             # (honeypot + edge rate limit, Gap 249)
+│       ├── billing/create-checkout-session/route.ts
+│       ├── v1/billing/payu/{success,failure}/route.ts   # PayU surl/furl pass-through
+│       └── v1/email/mailintegration/route.ts            # SendGrid Inbound Parse pass-through
 ├── globals.css                       # Tailwind & Shadcn setup
 ├── components/
 │   ├── ui/                           # Shadcn/UI components (Buttons, Cards, etc.)
@@ -376,6 +389,7 @@ For bulk uploads, SSE avoids excessive polling:
 | **Security & Trust**  | Overcome enterprise data-safety objections        | Azure AI Foundry, VNet, Private Endpoints, RBAC, "No Data Training" guarantee    |
 | **Pricing Plans**     | Drive paid upgrades                               | Free Trial (50 invoices), Pro ($99/mo), Enterprise (Contact Sales)               |
 | **Auth/SSO Gateway**  | Seamless transition to the app                    | Google & Microsoft SSO via Clerk/Auth0                                           |
+| **Contact Us (`/contact`)** | Capture pre-sale and support inquiries from anonymous visitors | Dedicated route (Website Feature 5, Gap 183), linked from Header + Footer. Category (Sales / Technical Support / Billing / Partnership / General), urgency pills (Low / Normal / Urgent with SLA copy), message. Posts to `/api/contact`, which proxies to the backend's public `POST /api/v1/support/contact` → `supportticket` row + SendGrid alert to `Application@infinevocloud.com`. Hardened with a hidden honeypot field and a sliding-window rate limit at both the proxy and the backend (Gaps 249–251). **Distinct from the Footer's "Contact Sales"** below, which is landing-page pricing copy, not this route. |
 | **Footer**            | Compliance                                        | Privacy Policy, Terms of Service, Contact Sales                                  |
 
 ### 6.4 Payment Flow (PayU)
@@ -478,7 +492,7 @@ The backend employs a **multi-agent architecture** where specialized AI agents h
 `query_agent.py` is a **Router-based Node topology** in LangGraph, routing each incoming question to a dedicated execution path rather than an open-ended ReAct tool loop:
 
 1. **Query Router Node** — classifies the question (semantic lookup vs. quantitative/aggregate database query vs. casual chat).
-2. **Vector Search RAG Node** — embeds the query with the local `BAAI/bge-m3` model and retrieves from ChromaDB, applying the `0.4` cosine-distance relevance cutoff and a hybrid keyword/BM25 pass plus reranking on top of dense retrieval (invoice data is entity/number-heavy, where exact match often beats pure semantic similarity).
+2. **Vector Search RAG Node** — embeds the query with the local `BAAI/bge-m3` model and retrieves from ChromaDB, applying the `0.49` cosine-distance relevance cutoff (empirically re-derived in Gap 244, replacing the old `0.4`) and a hybrid keyword/BM25 pass plus reranking on top of dense retrieval (invoice data is entity/number-heavy, where exact match often beats pure semantic similarity).
 3. **Postgres Metadata Node** — executes generated SQL against tenant-scoped tables, validated by parsing the query's predicate structure (not string containment) to guarantee `tenant_id` isolation. On a SQL error, a bounded self-healing repair loop feeds the error back to the LLM for correction (up to 3 attempts).
 4. **Synthesis Node** — integrates retrieved context, citations, and metadata results into the final response.
 
@@ -685,7 +699,7 @@ The RAG pipeline handles document loading and vectorization as follows:
 
 ### 9.2 Retrieve & Distance Calculations
 * **Vector Store**: Vector mappings are written to **ChromaDB**.
-* **Semantic Search & Thresholds**: Matches are retrieved based on Cosine Distance. Lower distance scores represent higher semantic similarity. Chunks exceeding a distance threshold of **`0.4`** are discarded to prevent irrelevant context injection.
+* **Semantic Search & Thresholds**: Matches are retrieved based on Cosine Distance. Lower distance scores represent higher semantic similarity. Chunks exceeding a distance threshold of **`0.49`** (`RELEVANCE_DISTANCE_THRESHOLD` in `chroma_client.py`, empirically re-derived 2026-08-17 in Gap 244 — was `0.4`) are discarded to prevent irrelevant context injection.
 * **Top K selection**: Limits retrievals to `k=5` matching chunks per tenant query.
 
 ### 9.3 Metadata Injection Rule
@@ -733,6 +747,10 @@ This allows the Query Agent to **filter by `tenant_id` and `vendor_name`** befor
 | `POST` | `/api/v1/billing/create-checkout-session` | Generates a PayU hash-signed payment form | `{ key, txnid, amount, productinfo, hash, surl, furl, action_url }` |
 | `POST` | `/api/v1/billing/payu/success`          | PayU `surl` callback — verifies response hash + `verify_payment` API, updates `tenants.billing_plan` | Redirects browser to a friendly result page |
 | `POST` | `/api/v1/billing/payu/failure`          | PayU `furl` callback — logs the failed attempt, no plan change | Redirects browser to a friendly result page |
+| `POST` | `/api/v1/support/contact`               | **Public / unauthenticated.** Website `/contact` form intake (via the site's `/api/contact` proxy). Creates a `supportticket` (`source=WEBSITE_CONTACT`, ref `INQ-YYYY-XXXXXXXX`) and dispatches a staff alert + submitter receipt. Rate-limited 5 req / 5 min per IP *and* per email, Redis-backed (Gap 249) | `{ success, ticket_number, message, email_dispatched }` |
+| `POST` | `/api/v1/support/ticket`                | Authenticated Help Center ticket — `source=HELP_CHATBOT` (AI escalation, chat transcript attached) or `DIRECT_TICKET` (manually raised); ref `TICK-YYYY-XXXXXXXX` | `{ success, ticket_number, message, email_dispatched }` |
+| `GET`  | `/api/v1/support/tickets`               | Authenticated — lists this tenant's own tickets (most recent 50) | `{ tickets[] }`                 |
+| `POST` | `/api/v1/support/chat`                  | Authenticated — Support Assistant troubleshooting turn; returns an escalation suggestion when it can't resolve the query. As built, `agents/support_agent.py` is a deterministic keyword matcher over a hardcoded knowledge base — **not** LLM/RAG-backed and not streamed (recorded deviation, BE Feature 19) | `{ answer, suggest_escalation, escalation_context }` |
 | `GET`  | `/auth/me`                             | Returns the current JWT-derived tenant/user context      | `TenantContext`                 |
 
 ---

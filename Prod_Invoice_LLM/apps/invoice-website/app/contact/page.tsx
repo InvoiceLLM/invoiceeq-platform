@@ -2,6 +2,7 @@
 
 import React, { useState, useRef } from "react";
 import Link from "next/link";
+import { Header } from "@/components/marketing/Header";
 import {
   Mail,
   Copy,
@@ -194,45 +195,48 @@ export default function ContactPage() {
 
   if (success) {
     return (
-      <main
-        id="contact-success"
-        className="min-h-screen bg-[#050816] flex items-center justify-center px-4 py-24"
-      >
-        <div className="max-w-lg w-full text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[#10B981]/20 border border-[#10B981]/40 mb-6">
-            <CheckCircle className="w-8 h-8 text-[#10B981]" />
-          </div>
-          <h1 className="text-2xl font-bold text-white mb-3">Inquiry Received!</h1>
-          <p className="text-[#94A3B8] text-sm mb-8">
-            Your message has been dispatched to our team. We&apos;ll respond as fast as possible.
-          </p>
-
-          <div className="bg-[#0F1629] border border-[#22D3EE]/30 rounded-2xl p-6 mb-8 text-left">
-            <p className="text-xs text-[#64748B] mb-1 uppercase tracking-wider">Reference Number</p>
-            <p className="text-2xl font-mono font-bold text-[#22D3EE] mb-3">{success.refId}</p>
-            <p className="text-sm text-[#94A3B8]">
-              Sent to:{" "}
-              <span className="text-[#22D3EE] font-mono text-xs">{SUPPORT_EMAIL}</span>
+      <div className="flex flex-col min-h-screen">
+        <Header />
+        <main
+          id="contact-success"
+          className="flex-1 bg-[#050816] flex items-center justify-center px-4 py-24"
+        >
+          <div className="max-w-lg w-full text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[#10B981]/20 border border-[#10B981]/40 mb-6">
+              <CheckCircle className="w-8 h-8 text-[#10B981]" />
+            </div>
+            <h1 className="text-2xl font-bold text-white mb-3">Inquiry Received!</h1>
+            <p className="text-[#94A3B8] text-sm mb-8">
+              Your message has been dispatched to our team. We&apos;ll respond as fast as possible.
             </p>
-          </div>
 
-          <div className="flex gap-3 justify-center">
-            <button
-              id="send-another-btn"
-              onClick={handleReset}
-              className="px-6 py-2.5 bg-[#22D3EE]/10 hover:bg-[#22D3EE]/20 border border-[#22D3EE]/30 text-[#22D3EE] rounded-xl text-sm font-medium transition-all duration-200"
-            >
-              Send Another Message
-            </button>
-            <Link
-              href="/"
-              className="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-[#94A3B8] rounded-xl text-sm font-medium transition-all duration-200"
-            >
-              Back to Home
-            </Link>
+            <div className="bg-[#0F1629] border border-[#22D3EE]/30 rounded-2xl p-6 mb-8 text-left">
+              <p className="text-xs text-[#64748B] mb-1 uppercase tracking-wider">Reference Number</p>
+              <p className="text-2xl font-mono font-bold text-[#22D3EE] mb-3">{success.refId}</p>
+              <p className="text-sm text-[#94A3B8]">
+                Sent to:{" "}
+                <span className="text-[#22D3EE] font-mono text-xs">{SUPPORT_EMAIL}</span>
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-center">
+              <button
+                id="send-another-btn"
+                onClick={handleReset}
+                className="px-6 py-2.5 bg-[#22D3EE]/10 hover:bg-[#22D3EE]/20 border border-[#22D3EE]/30 text-[#22D3EE] rounded-xl text-sm font-medium transition-all duration-200"
+              >
+                Send Another Message
+              </button>
+              <Link
+                href="/"
+                className="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-[#94A3B8] rounded-xl text-sm font-medium transition-all duration-200"
+              >
+                Back to Home
+              </Link>
+            </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     );
   }
 
@@ -248,10 +252,11 @@ export default function ContactPage() {
     }`;
 
   return (
-    <>
+    <div className="flex flex-col min-h-screen">
       <title>Contact Us — Invoice AI</title>
+      <Header />
 
-      <main id="contact-page" className="min-h-screen bg-[#050816] text-white">
+      <main id="contact-page" className="flex-1 bg-[#050816] text-white">
         {/* ------------------------------------------------------------------ */}
         {/* Hero header */}
         {/* ------------------------------------------------------------------ */}
@@ -551,6 +556,6 @@ export default function ContactPage() {
           </div>
         </section>
       </main>
-    </>
+    </div>
   );
 }

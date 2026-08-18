@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useSignIn, useClerk, useUser } from "@clerk/nextjs";
 import { appHref } from "../../lib/billingPlans";
+import { Header } from "@/components/marketing/Header";
 
 /* Design tokens (match invoice-fe/invoice-website globals) */
 const T = {
@@ -19,7 +20,7 @@ const T = {
 };
 
 const S: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: T.bg, display: "flex", fontFamily: T.font, color: T.textPrimary, overflow: "hidden", position: "relative" },
+  root: { minHeight: "calc(100vh - 65px)", background: T.bg, display: "flex", fontFamily: T.font, color: T.textPrimary, overflow: "hidden", position: "relative" },
   orbTL: { position: "absolute", top: "-120px", left: "-120px", width: "520px", height: "520px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
   orbBR: { position: "absolute", bottom: "-150px", right: "-100px", width: "620px", height: "620px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.09) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
   brandPanel: { flex: "1 1 45%", display: "flex", flexDirection: "column", justifyContent: "center", padding: "64px 56px", position: "relative", zIndex: 1 },
@@ -202,7 +203,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={S.root}>
+    <div className="flex flex-col min-h-screen">
+      <Header />
+      <div style={S.root}>
       <div style={S.orbTL} />
       <div style={S.orbBR} />
 
@@ -369,5 +372,6 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  </div>
   );
 }

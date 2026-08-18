@@ -6,15 +6,7 @@ This document serves as the high-level milestone roadmap for the **Invoice AI Sa
 
 ## Gap Analysis Integration
 
-**Current Project Status (per be_features_tracker.md / fe_features_tracker.md / website_features_tracker.md):**
-- **Website:** 0% complete (4 features missing)
-- **Frontend:** ~60% complete (14 gaps identified)
-- **Backend:** ~75% complete (13 critical gaps identified)
-
-**Critical Gaps to Address:**
-- Website: Clerk Auth Gateway, Landing Page, Pricing Integration
-- Backend: LangGraph nodes (4), Trainer workflow (4), Core modules (2), Chat enhancements (2)
-- Frontend: Directory Watcher, Live Terminal Feed, Production Selector
+**Current project status and the open Gap list are not duplicated here** — they live in `apps/invoice-be/docs/be_features_tracker.md`, `apps/invoice-fe/docs/fe_features_tracker.md`, and `apps/invoice-website/website_features/website_features_tracker.md`, which are the single source of truth for per-feature status (`[x]`/`[~]`/`[ ]`) and numbered Gap entries.
 
 ---
 

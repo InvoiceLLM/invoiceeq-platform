@@ -280,3 +280,31 @@ def test_gap_181_precise_warnings_and_variants():
     assert len(alert_conf) == 1
     assert alert_conf[0]["message"] == "45% (threshold 60%)"
 
+
+def test_fuzzy_verbatim_verification():
+    """Verify that our fuzzy verbatim matching normalization logic handles different formats successfully."""
+    from utils.verification_tools import verify_grand_total_in_source_text, verify_line_item_amounts_in_source_text
+
+    # Positive value cases
+    # Decimal comma (European style)
+    assert verify_grand_total_in_source_text(1234.56, "The total amount is 1.234,56") is None
+    # Space thousands separator
+    assert verify_grand_total_in_source_text(1234.56, "Total: 1 234.56") is None
+    # Currency symbol and spaces
+    assert verify_grand_total_in_source_text(1234.56, "Payment due: $ 1,234.56") is None
+    assert verify_grand_total_in_source_text(1234.56, "INR 1,234.56/- due") is None
+
+    # Negative value cases
+    items = [{"description": "Discount", "amount": -1234.56}]
+    # Parenthesized with European comma
+    assert verify_line_item_amounts_in_source_text(items, "Discount: (1 234,56)") is None
+    # Cr suffix with comma
+    assert verify_line_item_amounts_in_source_text(items, "Discount: 1,234.56 Cr") is None
+
+    # Negative-direction test cases (should NOT find the value, returning alert dict)
+    assert verify_grand_total_in_source_text(1234.56, "Item 1\n234.56\nTotal 234.56") is not None
+    assert verify_grand_total_in_source_text(1234.56, "Line 1 234.56 EA") is not None
+    assert verify_grand_total_in_source_text(110.0, "Tax rate 1 10.00") is not None
+    assert verify_grand_total_in_source_text(31500.0, "Invoice 3 1500.00") is not None
+
+

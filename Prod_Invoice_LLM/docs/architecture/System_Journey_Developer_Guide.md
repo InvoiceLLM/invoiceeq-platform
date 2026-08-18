@@ -40,7 +40,7 @@ If `status == "COMPLETED"`, `chroma_client.index_invoice_document()` chunks and 
 
 ### 9. Chat — **SAGE**
 A user asks a question. `agents/query_agent.py::run_query_agent()`:
-- `classify_query()` routes to **SQL** (any structured-field lookup — vendor, dates, totals, status), **RAG** (semantic content search over indexed chunks, with hybrid keyword-boosted reranking and a 0.4 distance relevance threshold), or **CHAT** (casual).
+- `classify_query()` routes to **SQL** (any structured-field lookup — vendor, dates, totals, status), **RAG** (semantic content search over indexed chunks, with hybrid keyword-boosted reranking and a 0.49 distance relevance threshold, re-derived in Gap 244 from the old 0.4), or **CHAT** (casual).
 - SQL generation runs through a bounded 3-attempt self-repair loop, a hardened tenant-isolation regex validation, and a schema prompt that explicitly forbids hallucinating non-existent columns like `audit_flags`.
 - Both SQL and RAG answer-synthesis prompts get the tenant's committed Trainer rules injected (Global always; vendor-specific ones when the question names a known vendor) — so "how is tax calculated on this invoice" answers consistently with how it was actually extracted.
 - Repeated questions are served from a Redis answer cache (1hr TTL), invalidated on any Trainer commit/rollback.

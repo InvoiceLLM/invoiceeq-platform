@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useSignIn } from "@clerk/nextjs";
 import Link from "next/link";
+import { Header } from "@/components/marketing/Header";
 
 /* Design tokens (match login/signup) */
 const T = {
@@ -19,7 +20,7 @@ const T = {
 };
 
 const S: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: T.bg, display: "flex", fontFamily: T.font, color: T.textPrimary, overflow: "hidden", position: "relative" },
+  root: { minHeight: "calc(100vh - 65px)", background: T.bg, display: "flex", fontFamily: T.font, color: T.textPrimary, overflow: "hidden", position: "relative" },
   orbTL: { position: "absolute", top: "-120px", left: "-120px", width: "520px", height: "520px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
   orbBR: { position: "absolute", bottom: "-150px", right: "-100px", width: "620px", height: "620px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.09) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
   brandPanel: { flex: "1 1 45%", display: "flex", flexDirection: "column", justifyContent: "center", padding: "64px 56px", position: "relative", zIndex: 1 },
@@ -127,173 +128,176 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div style={S.root}>
-      <div style={S.orbTL} />
-      <div style={S.orbBR} />
+    <div className="flex flex-col min-h-screen">
+      <Header />
+      <div style={S.root}>
+        <div style={S.orbTL} />
+        <div style={S.orbBR} />
 
-      <div style={S.brandPanel}>
-        <div style={S.logoRow}>
-          <div style={S.logoIcon}>I</div>
-          <span style={S.logoText}>InvoiceAI</span>
+        <div style={S.brandPanel}>
+          <div style={S.logoRow}>
+            <div style={S.logoIcon}>I</div>
+            <span style={S.logoText}>InvoiceAI</span>
+          </div>
+          <h1 style={S.headline}>
+            Reset your <span style={S.headlineAccent}>password.</span>
+          </h1>
+          <p style={S.subtext}>
+            Enter your email address and we&apos;ll send you a verification code to reset your password.
+          </p>
         </div>
-        <h1 style={S.headline}>
-          Reset your <span style={S.headlineAccent}>password.</span>
-        </h1>
-        <p style={S.subtext}>
-          Enter your email address and we&apos;ll send you a verification code to reset your password.
-        </p>
-      </div>
 
-      <div style={S.vDivider} />
+        <div style={S.vDivider} />
 
-      <div style={S.formPanel}>
-        <div style={S.card}>
-          <div style={S.cardHeader}>
-            <div style={S.avatarIcon}>🔑</div>
-            <h2 style={S.cardTitle}>Password Reset</h2>
-            <p style={S.cardSubtitle}>
-              {step === "request" ? "Enter your email to continue" : "Enter code and new password"}
-            </p>
-          </div>
+        <div style={S.formPanel}>
+          <div style={S.card}>
+            <div style={S.cardHeader}>
+              <div style={S.avatarIcon}>🔑</div>
+              <h2 style={S.cardTitle}>Password Reset</h2>
+              <p style={S.cardSubtitle}>
+                {step === "request" ? "Enter your email to continue" : "Enter code and new password"}
+              </p>
+            </div>
 
-          {step === "request" ? (
-            <form onSubmit={handleRequestReset}>
-              <div style={S.sectionLabel}>Email Address</div>
+            {step === "request" ? (
+              <form onSubmit={handleRequestReset}>
+                <div style={S.sectionLabel}>Email Address</div>
 
-              <div style={S.inputWrap}>
-                <span style={S.inputIcon}>✉️</span>
-                <input
-                  type="email"
-                  name="email"
-                  autoComplete="email"
-                  inputMode="email"
-                  placeholder="Work email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onFocus={() => setFocused("email")}
-                  onBlur={() => setFocused(null)}
-                  style={inputStyle("email")}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              {error && (
-                <div style={S.errorBox}>
-                  <span>⚠️</span>
-                  <span>{error}</span>
+                <div style={S.inputWrap}>
+                  <span style={S.inputIcon}>✉️</span>
+                  <input
+                    type="email"
+                    name="email"
+                    autoComplete="email"
+                    inputMode="email"
+                    placeholder="Work email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    onFocus={() => setFocused("email")}
+                    onBlur={() => setFocused(null)}
+                    style={inputStyle("email")}
+                    required
+                    autoFocus
+                  />
                 </div>
-              )}
 
-              {success && (
-                <div style={S.successBox}>
-                  <span>✉️</span>
-                  <span>{success}</span>
+                {error && (
+                  <div style={S.errorBox}>
+                    <span>⚠️</span>
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                {success && (
+                  <div style={S.successBox}>
+                    <span>✉️</span>
+                    <span>{success}</span>
+                  </div>
+                )}
+
+                <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
+                  {loading ? "⏳ Sending code…" : "→ Send Reset Code"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPassword}>
+                <div style={S.sectionLabel}>Verification Code</div>
+                <div style={{ fontSize: "13px", color: T.textMuted, marginBottom: "12px" }}>
+                  We sent a 6-digit code to <strong>{email}</strong>.
                 </div>
-              )}
 
-              <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
-                {loading ? "⏳ Sending code…" : "→ Send Reset Code"}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleResetPassword}>
-              <div style={S.sectionLabel}>Verification Code</div>
-              <div style={{ fontSize: "13px", color: T.textMuted, marginBottom: "12px" }}>
-                We sent a 6-digit code to <strong>{email}</strong>.
-              </div>
-
-              <div style={S.inputWrap}>
-                <span style={S.inputIcon}>🔑</span>
-                {/* Gap 161: without an explicit autoComplete the browser treated this
-                    (the form's first text input) as the identifier field and filled it
-                    with the saved email. "one-time-code" pins it to the real purpose. */}
-                <input
-                  type="text"
-                  name="reset-code"
-                  autoComplete="one-time-code"
-                  inputMode="numeric"
-                  placeholder="Enter 6-digit code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  onFocus={() => setFocused("code")}
-                  onBlur={() => setFocused(null)}
-                  style={inputStyle("code")}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <div style={S.sectionLabel}>New Password</div>
-
-              <div style={S.inputWrap}>
-                <span style={S.inputIcon}>🔒</span>
-                <input
-                  type="password"
-                  name="new-password"
-                  autoComplete="new-password"
-                  placeholder="New password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  onFocus={() => setFocused("password")}
-                  onBlur={() => setFocused(null)}
-                  style={inputStyle("password")}
-                  required
-                />
-              </div>
-
-              {error && (
-                <div style={S.errorBox}>
-                  <span>⚠️</span>
-                  <span>{error}</span>
+                <div style={S.inputWrap}>
+                  <span style={S.inputIcon}>🔑</span>
+                  {/* Gap 161: without an explicit autoComplete the browser treated this
+                      (the form's first text input) as the identifier field and filled it
+                      with the saved email. "one-time-code" pins it to the real purpose. */}
+                  <input
+                    type="text"
+                    name="reset-code"
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    placeholder="Enter 6-digit code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    onFocus={() => setFocused("code")}
+                    onBlur={() => setFocused(null)}
+                    style={inputStyle("code")}
+                    required
+                    autoFocus
+                  />
                 </div>
-              )}
 
-              {success && (
-                <div style={S.successBox}>
-                  <span>✓</span>
-                  <span>{success}</span>
+                <div style={S.sectionLabel}>New Password</div>
+
+                <div style={S.inputWrap}>
+                  <span style={S.inputIcon}>🔒</span>
+                  <input
+                    type="password"
+                    name="new-password"
+                    autoComplete="new-password"
+                    placeholder="New password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    onFocus={() => setFocused("password")}
+                    onBlur={() => setFocused(null)}
+                    style={inputStyle("password")}
+                    required
+                  />
                 </div>
-              )}
 
-              <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
-                {loading ? "⏳ Resetting password…" : "✓ Reset Password"}
-              </button>
+                {error && (
+                  <div style={S.errorBox}>
+                    <span>⚠️</span>
+                    <span>{error}</span>
+                  </div>
+                )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  setStep("request");
-                  setCode("");
-                  setNewPassword("");
-                  setError(null);
-                  setSuccess(null);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: T.textDim,
-                  fontSize: "13px",
-                  marginTop: "12px",
-                  width: "100%",
-                  cursor: "pointer",
-                }}
-              >
-                ← Didn&apos;t receive a code?
-              </button>
-            </form>
-          )}
+                {success && (
+                  <div style={S.successBox}>
+                    <span>✓</span>
+                    <span>{success}</span>
+                  </div>
+                )}
 
-          <div style={S.dividerRow}>
-            <div style={S.dividerLine} />
-            <span style={S.dividerText}>Remembered your password?</span>
-            <div style={S.dividerLine} />
-          </div>
+                <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
+                  {loading ? "⏳ Resetting password…" : "✓ Reset Password"}
+                </button>
 
-          <div style={S.linkRow}>
-            <Link href="/login" style={S.link}>
-              ← Back to Login
-            </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep("request");
+                    setCode("");
+                    setNewPassword("");
+                    setError(null);
+                    setSuccess(null);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: T.textDim,
+                    fontSize: "13px",
+                    marginTop: "12px",
+                    width: "100%",
+                    cursor: "pointer",
+                  }}
+                >
+                  ← Didn&apos;t receive a code?
+                </button>
+              </form>
+            )}
+
+            <div style={S.dividerRow}>
+              <div style={S.dividerLine} />
+              <span style={S.dividerText}>Remembered your password?</span>
+              <div style={S.dividerLine} />
+            </div>
+
+            <div style={S.linkRow}>
+              <Link href="/login" style={S.link}>
+                ← Back to Login
+              </Link>
+            </div>
           </div>
         </div>
       </div>

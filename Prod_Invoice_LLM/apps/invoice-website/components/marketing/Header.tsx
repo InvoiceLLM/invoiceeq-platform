@@ -19,6 +19,9 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
   const [hash, setHash] = useState("");
+  const loginTargetHref = pathname === "/login" ? "/signup" : "/login";
+  const loginLabel = pathname === "/login" ? "Register" : "Login";
+  const ctaTargetHref = pathname === "/login" ? "/signup" : "/login";
 
   useEffect(() => {
     const handleScroll = () => {
@@ -92,9 +95,9 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
         {/* Desktop Navigation Links */}
         <nav className="hidden md:flex items-center gap-8 text-[15px] font-semibold text-[#94A3B8]">
           <a
-            href="#architecture-flows"
+            href={pathname === "/" ? "#architecture-flows" : "/#architecture-flows"}
             onClick={(e) => {
-              if (onOpenFlowsModal) {
+              if (pathname === "/" && onOpenFlowsModal) {
                 e.preventDefault();
                 onOpenFlowsModal();
               }
@@ -106,15 +109,20 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
             <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#22D3EE]/15 border border-[#22D3EE]/30 text-[#22D3EE]">Live</span>
           </a>
           <Link
-            href="#features"
-            onClick={() => setHash("#features")}
+            href={pathname === "/" ? "#features" : "/#features"}
+            onClick={() => {
+              if (pathname === "/") setHash("#features");
+            }}
             aria-current={navCurrent("#features")}
             className={navLinkClass("#features")}
           >
             Features
           </Link>
-          <Link href="#pricing"
-            onClick={() => setHash("#pricing")}
+          <Link
+            href={pathname === "/" ? "#pricing" : "/#pricing"}
+            onClick={() => {
+              if (pathname === "/") setHash("#pricing");
+            }}
             aria-current={navCurrent("#pricing")}
             className={navLinkClass("#pricing")}
           >
@@ -127,14 +135,14 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
           >
             Contact Us
           </Link>
-          <Link href="/login" aria-current={navCurrent("/login")} className={navLinkClass("/login")}>
-            Login
+          <Link href={loginTargetHref} aria-current={navCurrent(loginTargetHref)} className={navLinkClass(loginTargetHref)}>
+            {loginLabel}
           </Link>
         </nav>
 
         {/* Action Button */}
         <div className="hidden md:flex items-center gap-4">
-          <Link href="/login" className="btn-primary-gradient flex items-center gap-2 text-sm">
+          <Link href={ctaTargetHref} className="btn-primary-gradient flex items-center gap-2 text-sm">
             <span>Get Started Free</span>
             <ArrowRight className="w-4 h-4" />
           </Link>
@@ -161,16 +169,22 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
         <div className="md:hidden border-b border-[rgba(255,255,255,0.08)] bg-[#050816]/95 backdrop-blur-[20px] px-4 pt-2 pb-6 space-y-4">
           <nav className="flex flex-col gap-3 font-medium text-[#94A3B8]">
             <Link
-              href="#features"
-              onClick={() => { setHash("#features"); setMobileMenuOpen(false); }}
+              href={pathname === "/" ? "#features" : "/#features"}
+              onClick={() => {
+                if (pathname === "/") setHash("#features");
+                setMobileMenuOpen(false);
+              }}
               aria-current={navCurrent("#features")}
               className={drawerLinkClass("#features")}
             >
               Features
             </Link>
             <Link
-              href="#pricing"
-              onClick={() => { setHash("#pricing"); setMobileMenuOpen(false); }}
+              href={pathname === "/" ? "#pricing" : "/#pricing"}
+              onClick={() => {
+                if (pathname === "/") setHash("#pricing");
+                setMobileMenuOpen(false);
+              }}
               aria-current={navCurrent("#pricing")}
               className={drawerLinkClass("#pricing")}
             >
@@ -185,17 +199,17 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
               Contact Us
             </Link>
             <Link
-              href="/login"
+              href={loginTargetHref}
               onClick={() => setMobileMenuOpen(false)}
-              aria-current={navCurrent("/login")}
-              className={drawerLinkClass("/login")}
+              aria-current={navCurrent(loginTargetHref)}
+              className={drawerLinkClass(loginTargetHref)}
             >
-              Login
+              {loginLabel}
             </Link>
           </nav>
           <div className="pt-2 border-t border-[rgba(255,255,255,0.08)]">
             <Link
-              href="/login"
+              href={ctaTargetHref}
               onClick={() => setMobileMenuOpen(false)}
               className="btn-primary-gradient w-full flex items-center justify-center gap-2 text-sm"
             >

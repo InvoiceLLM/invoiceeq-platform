@@ -69,7 +69,7 @@ The cloud architecture is governed by five non-negotiable principles derived fro
 │                          AZURE SUBSCRIPTION                                        │
 │                                                                                     │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐   │
-│  │                    AZURE FRONT DOOR / WAF (Layer 7)                          │   │
+│  │           AZURE FRONT DOOR / WAF (Layer 7) — DESIGNED, NOT YET LIVE          │   │
 │  │              ┌─────────────────────────────────────────┐                     │   │
 │  │              │  DDoS Protection  │  SSL Termination    │                     │   │
 │  │              │  Rate Limiting    │  Geo-Filtering      │                     │   │
@@ -129,6 +129,8 @@ The cloud architecture is governed by five non-negotiable principles derived fro
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Status note (2026-08-18): the Front Door / WAF tier drawn above is designed and Bicep-authored, but not deployed anywhere.** `infra/modules/network/front-door.bicep` implements this layer (Front Door Standard profile, endpoint, origin, route, and a WAF policy with a rate-limit rule) and is wired into `infra/08-apps.bicep` as `if (!empty(customDomainName))` — gated off by default (`customDomainName` defaults to `''`), so a normal deploy today does not create it. Every downstream reference to Front Door in this document (§3.2's NSG rule, §12.1/§12.2's security layers, §14.1/Appendix A's cost/naming) describes the *target* architecture, not current production state. See Website Gap 185 and `apps/invoice-website/website_features/feature_6_custom_domain_integration.md` for the real status and the manual cutover steps still required (domain purchase, DNS, Clerk production cutover) before this tier is actually live.
+
 ---
 
 ## 3. Network Architecture (VNet & Private Endpoints)
@@ -144,7 +146,7 @@ The cloud architecture is governed by five non-negotiable principles derived fro
 
 | Subnet Name     | CIDR Block       | Purpose                                            | NSG Rules                                   |
 |-----------------|------------------|----------------------------------------------------|---------------------------------------------|
-| `aca-subnet`    | `10.0.1.0/24`    | Azure Container Apps (FE, BE, Workers)              | Allow 443 inbound from Front Door only      |
+| `aca-subnet`    | `10.0.1.0/24`    | Azure Container Apps (FE, BE, Workers)              | Target: allow 443 inbound from Front Door only — **not yet enforced** (Front Door isn't deployed; see status note in §2) |
 | `data-subnet`   | `10.0.2.0/24`    | PostgreSQL, Redis, Blob Storage                     | Allow inbound from `aca-subnet` only        |
 | `ai-subnet`     | `10.0.3.0/24`    | Azure OpenAI, Document Intelligence, ChromaDB       | Allow inbound from `aca-subnet` only        |
 | `mgmt-subnet`   | `10.0.4.0/24`    | Bastion Host (emergency access), Log Analytics      | Allow inbound from admin IPs only           |

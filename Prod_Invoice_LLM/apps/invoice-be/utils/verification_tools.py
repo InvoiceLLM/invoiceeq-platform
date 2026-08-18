@@ -249,6 +249,126 @@ def _variant_found_in_text(variants: list[str], ocr_text: str) -> bool:
     return False
 
 
+def _parse_candidate_number(token: str) -> list[float]:
+    """Parses a string token containing digits into possible float values."""
+    token = token.strip()
+    if not token:
+        return []
+        
+    is_negative = False
+    
+    # Check parenthesized negative
+    if token.startswith("(") and token.endswith(")"):
+        is_negative = True
+        token = token[1:-1].strip()
+        
+    # Check trailing minus or Cr/CR
+    if token.endswith("-"):
+        is_negative = True
+        token = token[:-1].strip()
+    elif token.upper().endswith("CR") or token.upper().endswith("CR."):
+        is_negative = True
+        if token.upper().endswith("CR."):
+            token = token[:-3].strip()
+        else:
+            token = token[:-2].strip()
+            
+    # Clean common currency prefixes/suffixes
+    # Handles: $, €, £, ¥, ₹, Rs., etc.
+    token = re.sub(r'^[$\u20ac\u00a3\u00a5\u20b9]|^(?:Rs|RS|EUR|USD|GBP|INR|JPY)\.?\s*', '', token, flags=re.IGNORECASE)
+    token = token.strip()
+    
+    # Strip any trailing/leading punctuation that is non-digit (except if it's the decimal point/comma)
+    while token and token[-1] in ('.', ','):
+        token = token[:-1].strip()
+    while token and token[0] in ('.', ','):
+        token = token[1:].strip()
+        
+    if not token:
+        return []
+
+    # Replace spaces (like in '1 234.56')
+    cleaned = re.sub(r'\s+', '', token)
+
+    # Resolve decimal and thousands separators
+    if "," in cleaned and "." in cleaned:
+        last_comma = cleaned.rfind(",")
+        last_period = cleaned.rfind(".")
+        if last_comma < last_period:
+            # Comma is thousands, period is decimal
+            cleaned = cleaned.replace(",", "")
+        else:
+            # Period is thousands, comma is decimal
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+    elif "," in cleaned:
+        # Only comma. E.g., 1,234 or 1234,56
+        parts = cleaned.split(",")
+        if len(parts) == 2 and len(parts[1]) in (1, 2):
+            cleaned = cleaned.replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    
+    try:
+        val = float(cleaned)
+        if is_negative:
+            val = -val
+        return [val]
+    except ValueError:
+        return []
+
+
+def _number_found_in_text(value: float, ocr_text: str) -> bool:
+    """
+    Checks whether the float value is found in the OCR text, first trying standard
+    exact matches of printed variants, and falling back to fuzzy parsing to handle
+    alternative number formatting (e.g. European commas, spaces as thousands separators).
+    """
+    # 1. Standard exact variant matches
+    variants = _number_text_variants(value)
+    if _variant_found_in_text(variants, ocr_text):
+        return True
+            
+    # 2. Fuzzy normalization matches
+    # Extract all substrings in ocr_text that contain digits and might be numbers.
+    # Note: we use space ' ' instead of '\s' to prevent matching across newlines.
+    candidates = re.finditer(r'\(?[$\u20ac\u00a3\u00a5\u20b9]?[+-]?\d+[\d .,]*(?:[Cc][Rr]\.?)?\)?', ocr_text)
+    target_val = float(value)
+    for match in candidates:
+        cand = match.group(0)
+        cand_str = cand.strip()
+        
+        # If candidate has spaces, validate that they are genuine thousands separators
+        if " " in cand_str:
+            # Check prefix for line/item/quantity indicators
+            prefix = ocr_text[:match.start()].strip()
+            last_word_match = re.search(r'\b([a-zA-Z]+)\b\s*$', prefix)
+            if last_word_match:
+                last_word = last_word_match.group(1).lower()
+                if last_word in {"line", "item", "no", "invoice", "qty", "quantity", "pos", "position", "sr", "id", "sl"}:
+                    continue
+            
+            # Clean outer parentheses or currency symbols for space validation
+            inner_cand = cand_str.strip("() ")
+            inner_cand = re.sub(r'^[$\u20ac\u00a3\u00a5\u20b9]|^(?:Rs|RS|EUR|USD|GBP|INR|JPY)\.?\s*', '', inner_cand, flags=re.IGNORECASE).strip()
+            
+            # Check if each space is followed by exactly 3 digits
+            parts = inner_cand.split(" ")
+            valid_spaces = True
+            for part in parts[1:]:
+                digit_prefix_match = re.match(r'^\d+', part)
+                if not digit_prefix_match or len(digit_prefix_match.group(0)) != 3:
+                    valid_spaces = False
+                    break
+            if not valid_spaces:
+                continue
+
+        for parsed in _parse_candidate_number(cand):
+            if abs(parsed - target_val) < 0.01:
+                return True
+                
+    return False
+
+
 def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str | None) -> dict | None:
     """
     Gap 33: an LLM extracting from an internally-inconsistent invoice (printed
@@ -268,8 +388,7 @@ def verify_grand_total_in_source_text(grand_total: float | None, ocr_text: str |
         return None
 
     try:
-        variants = _number_text_variants(float(grand_total))
-        if _variant_found_in_text(variants, ocr_text):
+        if _number_found_in_text(float(grand_total), ocr_text):
             return None
 
         return {
@@ -309,8 +428,7 @@ def verify_line_item_amounts_in_source_text(items: list[dict] | None, ocr_text: 
             amount = item.get("amount")
             if amount is None:
                 continue
-            variants = _number_text_variants(float(amount))
-            if not _variant_found_in_text(variants, ocr_text):
+            if not _number_found_in_text(float(amount), ocr_text):
                 unverified.append((idx, item.get("description") or f"item {idx + 1}", float(amount)))
 
         if not unverified:
@@ -348,8 +466,7 @@ def verify_subtotal_in_source_text(subtotal: float | None, ocr_text: str | None)
         return None
 
     try:
-        variants = _number_text_variants(float(subtotal))
-        if _variant_found_in_text(variants, ocr_text):
+        if _number_found_in_text(float(subtotal), ocr_text):
             return None
 
         return {
@@ -383,8 +500,7 @@ def verify_unit_prices_in_source_text(items: list[dict] | None, ocr_text: str | 
             price = item.get("unit_price")
             if price is None:
                 continue
-            variants = _number_text_variants(float(price))
-            if not _variant_found_in_text(variants, ocr_text):
+            if not _number_found_in_text(float(price), ocr_text):
                 unverified.append((idx, item.get("description") or f"item {idx + 1}", float(price)))
 
         if not unverified:
@@ -437,8 +553,7 @@ def verify_tax_amount_in_source_text(
         if float(tax_amount) == 0.0:
             return None
 
-        variants = _number_text_variants(float(tax_amount))
-        if _variant_found_in_text(variants, ocr_text):
+        if _number_found_in_text(float(tax_amount), ocr_text):
             return None
 
         # Gap 69: combined figure not found — check if it's a faithful sum of
@@ -450,8 +565,7 @@ def verify_tax_amount_in_source_text(
                 if amount is None:
                     component_amounts = []
                     break
-                component_variants = _number_text_variants(float(amount))
-                if not _variant_found_in_text(component_variants, ocr_text):
+                if not _number_found_in_text(float(amount), ocr_text):
                     component_amounts = []
                     break
                 component_amounts.append(float(amount))
