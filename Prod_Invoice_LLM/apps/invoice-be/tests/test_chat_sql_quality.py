@@ -15,6 +15,7 @@ across repeated live runs of `tests/gap237_sql_repro.py` — recorded in
 import os
 import re
 from contextlib import ExitStack
+from decimal import Decimal
 from unittest.mock import patch, MagicMock
 from uuid import uuid4
 from datetime import datetime, timedelta
@@ -882,6 +883,112 @@ def test_tax_term_block_is_injected_into_the_sql_prompt_when_detected(db_session
     # term" alone -- rule 6d's static guardrail text always contains that phrase
     # regardless of this question, so that substring is present either way.
     assert "NOTE: this question contains the tax-related term" not in llm2.prompts[0]
+
+
+# ── Live regressions found in the NovaTech 25-question live test, 2026-08-19 ──
+
+
+def test_query_results_have_exactly_one_blank_line_before_and_after_heading(db_session):
+    """Live bug: 20 of 25 real live turns rendered TWO blank lines before the
+    results table -- execute_generated_sql() prefixed its own leading blank
+    line while the caller's heading string already ended in one, and the two
+    stacked on every single non-empty SQL-route answer. Runs the real
+    execute_generated_sql() (no surfaced_rows -- that param stubs it out)
+    against a real seeded row, so this checks actual end-to-end formatting,
+    not an isolated function in a vacuum."""
+    _seed_invoice(db_session, invoice_number="US-1", grand_total=100.0)
+    llm = _RecordingLLM(
+        [MagicMock(sql=f"SELECT invoice_number, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")],
+        summary="The total is USD 100.00.",
+    )
+    result = _run(db_session, llm, "what is the total", uuid4())
+    content = result["content"]
+    assert "### Query Results\n\n" in content  # exactly one blank line after the heading
+    assert "\n\n\n" not in content  # no triple-newline (= 2 blank lines) anywhere
+
+
+def test_execute_generated_sql_rounds_decimal_values():
+    """Live bug (Q22 of the NovaTech live test): AVG()/division results come
+    back from Postgres as high-precision NUMERIC (Decimal) -- e.g.
+    3583.8233333333333333, 19 digits -- and plain str() rendered it verbatim
+    in the results table while the prose answer directly above had already
+    correctly rounded the same figure to 3,583.82."""
+    mock_result = MagicMock()
+    mock_result.keys.return_value = ["vendor_name", "avg_line_amount"]
+    mock_result.fetchall.return_value = [("ByteForce Equipment", Decimal("3583.8233333333333333"))]
+    mock_session = MagicMock()
+    mock_session.execute.return_value = mock_result
+
+    sql = f"SELECT vendor_name, AVG(amount) AS avg_line_amount FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'"
+    table = query_agent.execute_generated_sql(sql, str(MOCK_TENANT_ID), mock_session)
+
+    assert "3583.8233333333333333" not in table
+    assert "3583.82" in table
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("have we paid this invoice", "paid"),
+    ("has the NetCore Devices invoice been paid", "been paid"),
+    ("what is the payment status on this", "payment status"),
+    ("is this invoice settled", "settled"),
+    ("unpaid invoices this month", "unpaid"),
+    ("what is the training amount", None),
+])
+def test_detect_payment_status_question_is_deterministic(message, expected):
+    """Same tool, same reasoning as detect_tax_component_term: 'paid' is a
+    closed, unambiguous vocabulary in this domain, not a judgment call --
+    deterministic detection catches it every time instead of asking the LLM
+    to remember not to infer payment status from `status`."""
+    assert query_agent.detect_payment_status_question(message) == expected
+
+
+def test_payment_status_block_is_injected_and_is_direction_aware(db_session):
+    """Live bug (Q24): 'Have we already paid the NetCore Devices invoice?'
+    got a confident 'Yes ... it has been paid' from `status = COMPLETED`,
+    which for an INBOUND invoice is purely OCR/extraction pipeline state,
+    unrelated to payment. The injected note must say plainly that INBOUND has
+    no payment concept -- but must NOT blanket-forbid reading `status` for
+    OUTBOUND, which has a real 'PAID' value (confirmed against the actual
+    schema block, models.py's status enum) and would be a legitimate signal
+    there. A blanket ban would just trade one wrong answer for another."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT status, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "have we already paid the NetCore Devices invoice", uuid4())
+    prompt = llm.prompts[0]
+    assert 'contains the payment-status term "already paid"' in prompt
+    assert "INBOUND" in prompt and "OUTBOUND" in prompt
+    assert "'PAID' value" in prompt or "real 'PAID'" in prompt  # OUTBOUND's real status not blanket-denied
+
+    llm2 = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm2, "what is the training amount", uuid4())
+    assert "NOTE: this question contains the payment-status term" not in llm2.prompts[0]
+
+
+def test_rule_10_forbids_limit_1_on_named_entity_comparisons(db_session):
+    """Live bug (Q13): 'between DataPipe Solutions and StratEdge Partners,
+    whose invoice had the bigger total' generated ORDER BY grand_total DESC
+    LIMIT 1 -- StratEdge's real, existing invoice was silently excluded from
+    the result set before the summary step ever saw it, and the reply then
+    described the loser as having 'no invoice in the returned results',
+    which reads as false to a user even though the row was only truncated.
+
+    Deliberately a prompt rule, not a deterministic tool like the two fixes
+    above: which/how many entities a question names is genuine language
+    judgment, not a closed vocabulary -- there's no fixed list to check
+    against the way there is for tax terms or 'paid'. This test only
+    confirms the rule text reaches the actual prompt; the rule is static
+    (always present), not conditionally injected."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT vendor_name, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "between DataPipe Solutions and StratEdge Partners, whose invoice was bigger", uuid4())
+    prompt = llm.prompts[0]
+    assert "COMPARISON QUESTIONS NAMING TWO OR MORE SPECIFIC ENTITIES" in prompt
+    assert "never `ORDER BY ... LIMIT 1`" in prompt
+    assert "top 5 invoices" in prompt  # the explicit "ranking questions are fine" carve-out
 
 
 def test_execute_generated_sql_hides_internal_columns(db_session):

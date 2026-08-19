@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -499,6 +500,39 @@ def detect_tax_component_term(message: str) -> str | None:
     return match.group(1) if match else None
 
 
+# Same tool, same reasoning, different closed vocabulary (Q24 of the NovaTech
+# live test, 2026-08-19): asked "Have we already paid the NetCore Devices
+# invoice?" and got a confident "Yes ... it has been paid", reasoned from
+# `status = COMPLETED` -- which means the OCR/extraction pipeline finished,
+# NOT that payment was made. This schema has no payment-status field
+# anywhere. "Paid/unpaid" is exactly as closed and unambiguous a vocabulary
+# as the tax terms above -- not a judgment call, a fact about what this
+# schema does and doesn't track -- so it gets the same deterministic
+# treatment rather than another paragraph of prose asking the model to
+# remember not to infer payment status from an unrelated column.
+_PAYMENT_STATUS_TERMS = (
+    "paid", "unpaid", "payment status", "settled", "outstanding balance",
+    "still owe", "already paid", "been paid",
+)
+_PAYMENT_STATUS_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(term) for term in _PAYMENT_STATUS_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def detect_payment_status_question(message: str) -> str | None:
+    """Returns the exact payment-status term found in `message`, or None.
+
+    Deterministic, same reasoning as detect_tax_component_term(): this
+    schema tracks `status` (COMPLETED/AUDIT_REQUIRED/etc. -- internal
+    processing state) but has no payment/settlement field at all, and an LLM
+    asked "has this been paid" has already been observed, live, inferring a
+    wrong yes/no from `status` instead of refusing. word-boundary matched.
+    """
+    match = _PAYMENT_STATUS_PATTERN.search(message)
+    return match.group(1) if match else None
+
+
 # Rule 6d, one variant per engine (see _sql_dialect_name). Both teach the same
 # four things, differing only in spelling:
 #   1. un-nest `items` into one row per line item,
@@ -648,11 +682,27 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
                 # actually readable (and machine-parseable, if the FE ever wants
                 # to render it structured instead of as a table cell).
                 cells.append(json.dumps(val, default=str))
+            elif isinstance(val, Decimal):
+                # Found live, 2026-08-19 (Q22 of the NovaTech live test): an
+                # AVG()/division result comes back from Postgres as a
+                # high-precision NUMERIC (Decimal) -- e.g. 3583.8233333333333333,
+                # 19 digits -- and plain str() rendered it verbatim next to a
+                # prose answer that had already correctly rounded the same
+                # figure to 3,583.82. Quantize to 2 decimal places, standard
+                # currency precision, matching what the summary prose does.
+                cells.append(str(val.quantize(Decimal("0.01"))))
             else:
                 cells.append(str(val))
         markdown_rows.append(" | ".join(cells))
 
-    return f"\n\n{header}\n{separator}\n" + "\n".join(markdown_rows)
+    # Deliberately no leading "\n\n" here (Found live, 2026-08-19): the SQL
+    # route's caller already puts one blank line before the "### Query
+    # Results" heading and one after it -- this function used to ALSO prefix
+    # its own blank line, and the two stacked into two blank lines before
+    # every non-empty table, on literally every SQL-route answer. This
+    # function owns only the table itself; spacing around it is the caller's
+    # job (see run_query_agent's response_text assembly).
+    return f"{header}\n{separator}\n" + "\n".join(markdown_rows)
 
 def _get_global_business_rules(tenant_id: str, db_session) -> list[str]:
     """Fetch the tenant's committed Global Trainer rules (feature_10_trainer.md) so
@@ -1230,6 +1280,28 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
             if detected_tax_term
             else ""
         )
+        # Q24 of the NovaTech live test, 2026-08-19: same deterministic-grounding
+        # pattern as the tax-term block above, for the same reason -- caught the
+        # model inferring a wrong "yes, paid" from `status` (an internal
+        # processing-state column) live, so it's grounded with the fact instead
+        # of asked to remember not to do that.
+        detected_payment_term = detect_payment_status_question(user_message)
+        payment_status_block = (
+            f"\nNOTE: this question contains the payment-status term \"{detected_payment_term}\" -- "
+            f"be careful, `status` means two different things depending on direction. For INBOUND "
+            f"invoices (a vendor's bill to us), `status` (COMPLETED/AUDIT_REQUIRED/PROCESSING) is "
+            f"ONLY the OCR/extraction pipeline's internal processing state -- it has NOTHING to do "
+            f"with whether WE paid the vendor. This schema has no payment/settlement field for "
+            f"INBOUND invoices at all; NEVER infer paid/unpaid from `status`, `due_date`, or any "
+            f"other field for an INBOUND question -- state plainly that payment status isn't "
+            f"tracked, do not answer yes or no. For OUTBOUND invoices (this tenant's own invoice to "
+            f"a customer), `status` DOES include a real 'PAID' value alongside "
+            f"VERIFIED/NEEDS_REVIEW/SENT -- that one is a legitimate signal to use, though it is "
+            f"still this tenant's own recorded status, not independently confirmed settlement, so "
+            f"say so if asked to be certain.\n"
+            if detected_payment_term
+            else ""
+        )
         system_prompt = f"""You are a database SQL query expert.
 Given the 'invoice' table schema:
 - id: UUID (Primary Key)
@@ -1281,10 +1353,12 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
 6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
 {line_item_rule}
 {tax_term_block}
+{payment_status_block}
 7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
 9. FOLLOW-UP QUESTIONS THAT NARROW A PREVIOUS ANSWER ("explain the 3 USD ones", "which of those are overdue", "show me their line items"): if a PREVIOUS TURN'S SQL block appears below, that is the exact query that produced the answer the user is referring to. Start from ITS WHERE clause VERBATIM and only ADD the new restriction with AND. Do NOT re-derive the predicate from the conversation text, and do NOT drop, merge or simplify away any branch of an existing OR group -- each branch is there because some real row matches ONLY through it, so removing one silently deletes rows from the very answer the user asked you to expand on. The SELECT list is yours to change freely (e.g. from an aggregate to per-invoice detail columns); only the WHERE clause is fixed. EXCEPTION -- the FROM clause: if the follow-up narrows from an invoice-level answer down to a specific LINE ITEM's own figure (e.g. after "what's the total on invoice X", the user asks "I want the amount only for training and onboarding from the total invoice"), you MUST add rule 6d's line-item join to the FROM clause and switch the SELECT to the line's own columns -- reusing the previous turn's invoice-level FROM would return the whole grand_total again, which is exactly the wrong answer. Adding that join is the ONLY FROM change allowed here: every tenant/invoice-identifying predicate from the previous WHERE clause still carries over verbatim, and you then AND on the new line-item description filter. If the follow-up is about a genuinely different subject rather than a narrowing of the previous answer, ignore the previous SQL and compose a fresh query as normal.
+10. COMPARISON QUESTIONS NAMING TWO OR MORE SPECIFIC ENTITIES ("between X and Y, whose total was bigger", "compare A vs B", "X, Y, or Z -- which cost more"): the query MUST return a row for EVERY named entity, never `ORDER BY ... LIMIT 1`. Found live, 2026-08-19: "between DataPipe Solutions and StratEdge Partners, whose invoice had the bigger total" generated `ORDER BY grand_total DESC LIMIT 1`, which returned only the winning row -- the losing vendor's real, existing invoice was silently excluded from the result set before the summary step ever saw it, and the reply then described the loser as having "no invoice in the returned results," which reads as false to the user even though the row was only ever truncated, not actually missing. Filter on the named entities explicitly (`WHERE vendor_name IN (...)` or an OR'd set of `LOWER(vendor_name) LIKE ...` per rule 6a, one per named entity) and let ALL their rows come back; a superlative in the question ("bigger", "which one", "the most") tells you which value to call out in the summary prose, it is never an instruction to LIMIT the query itself. This applies to any question naming a specific, countable set of entities to compare -- not to open-ended ranking questions ("show me the top 5 invoices"), where LIMIT is the correct, intended shape.
 
 {tenant_stats}
 {rules_block}{chat_rules_block}
@@ -1393,7 +1467,11 @@ User Query: {user_message}
 
                 try:
                     final_res = llm.invoke(summary_prompt)
-                    response_text = final_res.content + f"\n\n### Query Results\n{db_result}"
+                    # One blank line before the heading, one after -- db_result
+                    # itself now starts directly with the table (see
+                    # execute_generated_sql's own comment on why the leading
+                    # blank line moved here instead of stacking with it).
+                    response_text = final_res.content + f"\n\n### Query Results\n\n{db_result}"
                     route_succeeded = True
                 except Exception as e:
                     logger.error("SQL summary synthesis failed: %s", e)
