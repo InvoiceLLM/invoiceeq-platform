@@ -457,6 +457,7 @@ def _sql_dialect_name(db_session) -> str:
 #   3. select `currency` alongside the monetary columns (rule 7),
 #   4. filter on the un-nested item's own description, not the invoice's text blob.
 _LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is PostgreSQL -- use exactly the syntax below). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
+DO NOT apply this rule to tax-component terms (CGST, SGST, IGST, VAT, or "tax" generically) -- found live, 2026-08-19: a question like "what's the CGST on this invoice" superficially matches this rule's trigger (a phrase plus a money word) but CGST/SGST/IGST are never stored as line-item descriptions, and a search for them is guaranteed to return zero rows even when the invoice exists. This schema tracks only a single combined `tax_amount` per invoice -- there is no stored CGST/SGST/IGST split. For a tax-component question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema does not track a CGST/SGST/IGST split separately, only the combined total. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and jsonb_array_elements() raises on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true
@@ -474,6 +475,7 @@ SELECT SUM((item->>'amount')::numeric) AS total_line_amount, invoice.currency FR
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
 _LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
+DO NOT apply this rule to tax-component terms (CGST, SGST, IGST, VAT, or "tax" generically) -- found live, 2026-08-19: a question like "what's the CGST on this invoice" superficially matches this rule's trigger (a phrase plus a money word) but CGST/SGST/IGST are never stored as line-item descriptions, and a search for them is guaranteed to return zero rows even when the invoice exists. This schema tracks only a single combined `tax_amount` per invoice -- there is no stored CGST/SGST/IGST split. For a tax-component question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema does not track a CGST/SGST/IGST split separately, only the combined total. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and json_each() raises "malformed JSON" on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1
@@ -500,6 +502,12 @@ def _line_item_rule(tenant_id: str, db_session) -> str:
         else _LINE_ITEM_RULE_POSTGRES
     )
     return template.replace("{tenant_id}", str(tenant_id))
+
+
+# Columns that exist on `invoice` for internal/storage bookkeeping, not because
+# a business user ever wants to see them. Enforced here as a denylist rather
+# than a prompt rule -- see execute_generated_sql's comment for why.
+_INTERNAL_ONLY_COLUMNS = {"file_path", "batch_id"}
 
 
 def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list | None = None) -> str:
@@ -540,20 +548,56 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     if not rows:
         return "No records found matching the query criteria."
 
-    # Format rows as Markdown Table
     keys = list(result.keys())
-    header = " | ".join(keys)
-    separator = " | ".join(["---"] * len(keys))
-    markdown_rows = []
-    for row in rows:
-        markdown_rows.append(" | ".join(str(val) if val is not None else "" for val in row))
 
     # Feature 18 (Gap 231): capture the row identity behind this answer into the
-    # caller's sink. A caller-provided list rather than module or function state:
-    # FastAPI runs these handlers on a threadpool, so anything shared would let
-    # one tenant's snapshot leak into another's reply.
+    # caller's sink, from the FULL (unfiltered) column set -- the id-harvest logic
+    # needs `id`/`invoice_id` even though the display table below hides them. A
+    # caller-provided list rather than module or function state: FastAPI runs
+    # these handlers on a threadpool, so anything shared would let one tenant's
+    # snapshot leak into another's reply.
     if snapshot is not None:
         snapshot.extend(_harvest_invoice_ids_from_rows(keys, rows))
+
+    # Column-hygiene denylist (found live, 2026-08-19): the LLM is free to SELECT
+    # any column in the schema, including ones that are internal plumbing rather
+    # than user-facing data. A generic "list all the invoices" query previously
+    # rendered `file_path` (an internal Azure blob storage URI, tenant UUID and
+    # all) and `batch_id` (a meaningless UUID) straight into the chat window.
+    # This is deliberately a denylist enforced here in code, not a prompt rule --
+    # a prose instruction only fires when a phrasing resembles what it was
+    # written against (see rule 6d's tax-component miss, same day); a column
+    # name is a fact about the schema, not a judgment call, so it belongs in
+    # code that can't forget it once a new rule gets added elsewhere.
+    display_indices = [i for i, k in enumerate(keys) if k not in _INTERNAL_ONLY_COLUMNS]
+    if not display_indices:
+        # Every selected column was internal-only -- shouldn't happen since the
+        # LLM has no reason to select ONLY file_path/batch_id, but fail safe
+        # rather than render an empty table.
+        display_indices = list(range(len(keys)))
+    display_keys = [keys[i] for i in display_indices]
+
+    header = " | ".join(display_keys)
+    separator = " | ".join(["---"] * len(display_keys))
+    markdown_rows = []
+    for row in rows:
+        cells = []
+        for i in display_indices:
+            val = row[i]
+            if val is None:
+                cells.append("")
+            elif isinstance(val, (list, dict)):
+                # Found live, 2026-08-19: JSONB columns (items, tags, sa_alerts)
+                # come back from psycopg2 already deserialized into Python
+                # list/dict objects. The old `str(val)` path rendered Python's
+                # repr -- single-quoted, `None`-heavy, not valid JSON -- straight
+                # into the chat window. json.dumps gives the user something
+                # actually readable (and machine-parseable, if the FE ever wants
+                # to render it structured instead of as a table cell).
+                cells.append(json.dumps(val, default=str))
+            else:
+                cells.append(str(val))
+        markdown_rows.append(" | ".join(cells))
 
     return f"\n\n{header}\n{separator}\n" + "\n".join(markdown_rows)
 

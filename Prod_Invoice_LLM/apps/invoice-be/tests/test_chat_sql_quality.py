@@ -798,3 +798,76 @@ def test_rule_9_authorises_the_line_item_from_change_on_a_narrowing_followup(db_
     assert "EXCEPTION -- the FROM clause" in prompt
     assert "rule 6d's line-item join" in prompt
 
+
+# ── Live regressions found 2026-08-19 (CGST question, "list all invoices") ──
+
+
+def test_rule_6d_excludes_tax_component_terms(db_session):
+    """Live bug: "what's the CGST we paid on the Rajesh Steel invoices" matched
+    rule 6d's trigger (a phrase + a money word) and searched item descriptions
+    for '%cgst%' -- guaranteed zero rows, since CGST/SGST/IGST are never stored
+    as line-item descriptions (only a single combined tax_amount exists). The
+    reply then reported "no Rajesh Steel invoices matching your query", which is
+    false -- the invoice existed; only that one wrong-shaped filter matched
+    nothing. Both dialect variants must steer the model to tax_amount instead."""
+    rule_sqlite = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
+    assert "CGST" in rule_sqlite and "SGST" in rule_sqlite and "IGST" in rule_sqlite
+    assert "tax_amount" in rule_sqlite
+    assert "no invoice found" in rule_sqlite.lower() or "doesn't exist" in rule_sqlite.lower()
+
+    pg_session = MagicMock()
+    pg_session.get_bind.return_value.dialect.name = "postgresql"
+    rule_pg = query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
+    assert "CGST" in rule_pg and "SGST" in rule_pg and "IGST" in rule_pg
+    assert "tax_amount" in rule_pg
+
+
+def test_execute_generated_sql_hides_internal_columns(db_session):
+    """Live bug: "list all the invoices" selected batch_id and file_path along
+    with everything else, and execute_generated_sql rendered every selected
+    column verbatim -- an internal Azure blob storage URI (tenant UUID and all)
+    and a meaningless UUID landed straight in the chat window. Neither column is
+    ever useful to a business user, so they're stripped in code (a fact about
+    the schema, not a judgment call) regardless of what the LLM selected."""
+    _seed_invoice(
+        db_session, invoice_number="US-1", batch_id=uuid4(),
+        file_path="azure://invoices/tenants/secret-tenant-uuid/invoices/secret-file.pdf",
+    )
+    sql = (
+        f"SELECT invoice_number, batch_id, file_path, currency FROM invoice "
+        f"WHERE tenant_id = '{MOCK_TENANT_ID.hex}'"
+    )
+    table = query_agent.execute_generated_sql(sql, MOCK_TENANT_ID.hex, db_session)
+
+    assert "batch_id" not in table
+    assert "file_path" not in table
+    assert "azure://" not in table
+    assert "invoice_number" in table and "US-1" in table
+    assert "currency" in table and "USD" in table
+
+
+def test_execute_generated_sql_renders_json_columns_as_json_not_python_repr():
+    """Live bug: on Postgres, psycopg2 auto-deserializes JSONB columns into
+    native Python list/dict objects even for a raw text() query (a DBAPI-level
+    adaptation, independent of SQLAlchemy's ORM type system) -- so `items` came
+    back as an actual Python list-of-dicts, and plain str() on it produced
+    Python's repr (single-quoted, `None`-heavy, not valid JSON) straight into
+    the chat window. SQLite doesn't reproduce this (it returns the column as an
+    already-JSON-formatted string, so str() looks fine there by accident) --
+    mocking the result set is what actually exercises the fixed branch,
+    regardless of which engine other tests run against."""
+    mock_result = MagicMock()
+    mock_result.keys.return_value = ["invoice_number", "items"]
+    mock_result.fetchall.return_value = [
+        ("US-1", [{"description": "Ergonomic Chair", "quantity": 3, "unit_price": None, "amount": 100.0}])
+    ]
+    mock_session = MagicMock()
+    mock_session.execute.return_value = mock_result
+
+    sql = f"SELECT invoice_number, items FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'"
+    table = query_agent.execute_generated_sql(sql, str(MOCK_TENANT_ID), mock_session)
+
+    assert "'description'" not in table  # Python repr's single-quoted key style
+    assert '"description": "Ergonomic Chair"' in table
+    assert '"unit_price": null' in table  # JSON null, not Python's None
+
