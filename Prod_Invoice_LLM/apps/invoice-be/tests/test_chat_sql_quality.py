@@ -13,6 +13,7 @@ across repeated live runs of `tests/gap237_sql_repro.py` — recorded in
 `docs/test_evidence/gap237_step2_fix_2026-08-17/` and in the tracker, not here.
 """
 import os
+import re
 from contextlib import ExitStack
 from unittest.mock import patch, MagicMock
 from uuid import uuid4
@@ -809,17 +810,78 @@ def test_rule_6d_excludes_tax_component_terms(db_session):
     as line-item descriptions (only a single combined tax_amount exists). The
     reply then reported "no Rajesh Steel invoices matching your query", which is
     false -- the invoice existed; only that one wrong-shaped filter matched
-    nothing. Both dialect variants must steer the model to tax_amount instead."""
+    nothing. Both dialect variants must steer the model to tax_amount instead.
+
+    Second live bug, found immediately after the first fix shipped: the first
+    version of this guardrail enumerated CGST/SGST/IGST/VAT by name and missed
+    plain "GST" -- arguably the more commonly used standalone term of the four.
+    That's the exact case-by-case-list failure mode this whole session kept
+    finding elsewhere in this file, reproduced in its own bugfix. The guardrail
+    must teach the CONCEPT (any tax-component term, not a fixed enumeration),
+    so this test checks for the generalizing language itself, not just that a
+    slightly longer list of literals was pasted in -- a plain re-list would
+    pass a test that only checks "GST" is present without fixing the actual
+    defect class."""
     rule_sqlite = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
+    assert re.search(r"\bGST\b", rule_sqlite)  # plain "GST", not just as a substring of CGST/SGST/IGST
     assert "CGST" in rule_sqlite and "SGST" in rule_sqlite and "IGST" in rule_sqlite
     assert "tax_amount" in rule_sqlite
     assert "no invoice found" in rule_sqlite.lower() or "doesn't exist" in rule_sqlite.lower()
+    # The generalizing instruction itself, not just a longer list of named terms --
+    # this is what should catch the NEXT unlisted tax term too (TDS, cess, duty, ...).
+    assert "not just the specific ones" in rule_sqlite or "not a fixed list" in rule_sqlite
 
     pg_session = MagicMock()
     pg_session.get_bind.return_value.dialect.name = "postgresql"
     rule_pg = query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
+    assert re.search(r"\bGST\b", rule_pg)
     assert "CGST" in rule_pg and "SGST" in rule_pg and "IGST" in rule_pg
     assert "tax_amount" in rule_pg
+    assert "not just the specific ones" in rule_pg or "not a fixed list" in rule_pg
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("what is the GST on this invoice", "GST"),
+    ("whats the CGST we paid to Rajesh Steel", "CGST"),
+    ("any SGST charged", "SGST"),
+    ("what about IGST", "IGST"),
+    ("any VAT charged on this", "VAT"),
+    ("was there withholding tax applied", "withholding tax"),
+    ("what's the HST on this Canadian invoice", "HST"),
+    ("what is the training amount", None),
+    ("gstreet vendor invoice", None),  # word-boundary: must not match mid-word
+])
+def test_detect_tax_component_term_is_deterministic_not_llm_judged(message, expected):
+    """Gap 263's second follow-up (2026-08-19): the prose guardrail in rule 6d
+    was widened from a fixed list (CGST/SGST/IGST/VAT) to "any tax-related
+    term" after plain "GST" was found missing -- but that still asks the LLM
+    to correctly recognize an open-ended category from a sentence, every call,
+    for every jurisdiction. This is the actual fix requested: a real,
+    deterministic, testable tool (data-driven term list, not prompt prose).
+    Extending coverage to a new jurisdiction's tax name is "add a string to
+    _TAX_COMPONENT_TERMS", not "reword a paragraph and hope the model reads it
+    the way intended"."""
+    assert query_agent.detect_tax_component_term(message) == expected
+
+
+def test_tax_term_block_is_injected_into_the_sql_prompt_when_detected(db_session):
+    """The detector is only useful if its output actually reaches the prompt --
+    this confirms the SQL route grounds the model with the SPECIFIC term found
+    in the user's own question, not just the general rule 6d guardrail text."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT tax_amount, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "what is the GST on the Rajesh Steel invoice", uuid4())
+    assert 'contains the tax-related term "GST"' in llm.prompts[0]
+
+    llm2 = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm2, "what is the training amount", uuid4())
+    # Check for the dynamic injection's own distinctive phrasing, not "tax-related
+    # term" alone -- rule 6d's static guardrail text always contains that phrase
+    # regardless of this question, so that substring is present either way.
+    assert "NOTE: this question contains the tax-related term" not in llm2.prompts[0]
 
 
 def test_execute_generated_sql_hides_internal_columns(db_session):

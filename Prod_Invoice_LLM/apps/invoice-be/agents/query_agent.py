@@ -446,6 +446,59 @@ def _sql_dialect_name(db_session) -> str:
         return "postgresql"
 
 
+# Deterministic tax-term detector (Gap 263 follow-up, 2026-08-19): the first
+# version of rule 6d's tax-component guardrail named CGST/SGST/IGST/VAT in
+# prose and missed plain "GST" -- the founder's own next question. Widening
+# the prose to "any tax-related term, not just these examples" fixes that one
+# instance, but still asks the LLM to correctly recognize an open-ended
+# category from a sentence, every single time, for every tax term across
+# every jurisdiction this product might ever serve. That is not reliable, and
+# it is not testable -- there is no way to write a unit test that proves an
+# LLM will generalize correctly to a term nobody has tried yet.
+#
+# This is a real, maintainable, testable tool instead: a data-driven term
+# list (not prompt prose) covering the jurisdictions this product actually
+# serves today -- India (GST family), EU/UK (VAT), US (sales/use tax),
+# Canada (GST/HST/PST/QST, relevant since the NovaTech test tenant is
+# Canadian) -- checked deterministically before the LLM ever sees the
+# question. A match doesn't bypass the LLM (a real question can still mix a
+# tax term with other intent, e.g. "compare GST between two invoices" still
+# needs SQL judgment) -- it grounds the prompt with the SPECIFIC term this
+# question actually contains, instead of asking the model to recall and apply
+# a general principle from memory. Extending coverage to a new jurisdiction
+# is now "add a string to this list, write one test", not "reword a
+# paragraph and hope the model reads it the way you intended."
+_TAX_COMPONENT_TERMS = (
+    # India
+    "GST", "CGST", "SGST", "IGST", "UTGST", "cess",
+    # EU / UK
+    "VAT",
+    # US
+    "sales tax", "use tax",
+    # Canada
+    "HST", "PST", "QST",
+    # Cross-jurisdiction
+    "withholding tax", "TDS", "service tax", "excise duty", "customs duty", "stamp duty",
+)
+_TAX_COMPONENT_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(term) for term in _TAX_COMPONENT_TERMS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def detect_tax_component_term(message: str) -> str | None:
+    """Returns the exact tax-component term found in `message`, or None.
+
+    Deterministic, not LLM-judged -- same input always gives the same answer,
+    and coverage is extended by adding a string to _TAX_COMPONENT_TERMS plus a
+    test, not by editing prompt prose. Word-boundary matched so it doesn't
+    false-positive on an unrelated word merely containing "tds" as a
+    substring, etc.
+    """
+    match = _TAX_COMPONENT_PATTERN.search(message)
+    return match.group(1) if match else None
+
+
 # Rule 6d, one variant per engine (see _sql_dialect_name). Both teach the same
 # four things, differing only in spelling:
 #   1. un-nest `items` into one row per line item,
@@ -457,7 +510,7 @@ def _sql_dialect_name(db_session) -> str:
 #   3. select `currency` alongside the monetary columns (rule 7),
 #   4. filter on the un-nested item's own description, not the invoice's text blob.
 _LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is PostgreSQL -- use exactly the syntax below). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to tax-component terms (CGST, SGST, IGST, VAT, or "tax" generically) -- found live, 2026-08-19: a question like "what's the CGST on this invoice" superficially matches this rule's trigger (a phrase plus a money word) but CGST/SGST/IGST are never stored as line-item descriptions, and a search for them is guaranteed to return zero rows even when the invoice exists. This schema tracks only a single combined `tax_amount` per invoice -- there is no stored CGST/SGST/IGST split. For a tax-component question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema does not track a CGST/SGST/IGST split separately, only the combined total. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
+DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed, because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop. Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema tracks only one combined tax total, not a breakdown by tax type/name. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and jsonb_array_elements() raises on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true
@@ -475,7 +528,7 @@ SELECT SUM((item->>'amount')::numeric) AS total_line_amount, invoice.currency FR
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
 _LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to tax-component terms (CGST, SGST, IGST, VAT, or "tax" generically) -- found live, 2026-08-19: a question like "what's the CGST on this invoice" superficially matches this rule's trigger (a phrase plus a money word) but CGST/SGST/IGST are never stored as line-item descriptions, and a search for them is guaranteed to return zero rows even when the invoice exists. This schema tracks only a single combined `tax_amount` per invoice -- there is no stored CGST/SGST/IGST split. For a tax-component question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema does not track a CGST/SGST/IGST split separately, only the combined total. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
+DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed, because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop. Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema tracks only one combined tax total, not a breakdown by tax type/name. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and json_each() raises "malformed JSON" on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1
@@ -1165,6 +1218,18 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
         # _sql_dialect_name() for why this is resolved here and not repaired
         # after generation.
         line_item_rule = _line_item_rule(tenant_id, db_session)
+        # Gap 263 follow-up: deterministic detection (see detect_tax_component_term)
+        # grounds the prompt with the SPECIFIC term this question contains, rather
+        # than relying on the model to recall and correctly apply rule 6d's general
+        # "any tax-related term" guardrail from memory on every call.
+        detected_tax_term = detect_tax_component_term(user_message)
+        tax_term_block = (
+            f"\nNOTE: this question contains the tax-related term \"{detected_tax_term}\" -- "
+            f"per rule 6d, do NOT search item descriptions for it. This schema has no "
+            f"breakdown by tax type; select tax_amount directly.\n"
+            if detected_tax_term
+            else ""
+        )
         system_prompt = f"""You are a database SQL query expert.
 Given the 'invoice' table schema:
 - id: UUID (Primary Key)
@@ -1215,6 +1280,7 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
    Note the CAST on the two JSONB columns and its absence on the two VARCHAR ones -- this exact shape, per rule 6(a). Checking only item descriptions (or only tags) is a bug: it silently misses real matches that qualify through one of the other columns.
 6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
 {line_item_rule}
+{tax_term_block}
 7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
