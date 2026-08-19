@@ -263,24 +263,18 @@ jobs:
             sleep 5
           done
 
-          be_fqdn=$(az containerapp show --name ca-invoice-be-dev \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
-            --query properties.configuration.ingress.fqdn -o tsv)
-          be_url="https://${be_fqdn}"
-          echo "Testing backend readiness probe path: ${be_url}/health/readiness"
-          for i in {1..12}; do
-            status_code=$(curl -s -o /dev/null -w "%{http_code}" "${be_url}/health/readiness" || echo "000")
-            if [ "$status_code" -eq 200 ]; then
-              echo "✅ Backend /health/readiness is healthy (HTTP $status_code)"
-              break
-            fi
-            if [ "$i" -eq 12 ]; then
-              echo "❌ Backend /health/readiness did not return 200 (last status: $status_code)"
-              exit 1
-            fi
-            echo "Waiting for backend readiness (attempt $i/12, status: $status_code)..."
-            sleep 5
-          done
+          # Found live, 2026-08-19 (this gate's own first real run): ca-invoice-be-dev's
+          # ingress is internal-only (external: false) by design -- correct architecture,
+          # the backend isn't meant to be directly reachable from the public internet.
+          # A direct curl of its FQDN from this runner (which lives outside the Container
+          # Apps Environment's VNet) can never reach it, so a "did the HTTP probe return
+          # 200" check here is not a health check at all, just a guaranteed false
+          # positive -- confirmed live: the backend was genuinely Running/Healthy
+          # (az containerapp revision list agreed) while this exact curl 404'd twelve
+          # times in a row. Removed; backend health is already correctly verified below
+          # via the Azure control-plane API (provisioningState + revision healthState),
+          # which works regardless of ingress visibility because it never makes an HTTP
+          # request to the app itself.
 
           echo "Checking Container App provisioning + revision health..."
           for app in ca-invoice-be-dev ca-queue-worker-dev ca-invoice-fe-dev ca-invoice-website-dev; do
