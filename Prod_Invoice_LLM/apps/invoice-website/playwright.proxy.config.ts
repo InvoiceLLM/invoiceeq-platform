@@ -21,14 +21,13 @@ import base from "./playwright.config";
  *                                    fallback text for a real mailto: CTA.
  *
  * Run via `npm run test:e2e:proxy` (or `test:e2e:all` for both passes).
- * MUST NOT run concurrently with the main config: `next dev` writes to a
- * single .next directory per project, so two live dev servers on the same
- * directory race each other. Different port (3201) is necessary but not
- * sufficient -- the sequencing is the actual guard.
+ * MUST NOT run concurrently with the main Playwright config's `next dev`
+ * unless `NEXT_DIST_DIR` differs — this config uses `.next-proxy` so a
+ * developer `npm run dev` on :3000 can stay up.
  *
  * FE_INTERNAL_URL is required by next.config.js whenever ENABLE_FE_PROXY is
- * "true" (it throws otherwise). Nothing here navigates to a proxied FE route,
- * so it points at a dead port on purpose.
+ * "true" (it throws otherwise). Gap 184's rewrite tests need a live upstream
+ * on that URL — `e2e/fe-proxy-stub.mjs` (not the real invoice-fe).
  */
 
 const PORT = Number(process.env.PLAYWRIGHT_PROXY_PORT ?? 3201);
@@ -44,15 +43,24 @@ export default defineConfig({
     ...base.use,
     baseURL: BASE_URL,
   },
-  webServer: {
-    command: `npx next dev --port ${PORT}`,
-    url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-    env: {
-      ENABLE_FE_PROXY: "true",
-      FE_INTERNAL_URL: "http://127.0.0.1:3399",
-      NEXT_PUBLIC_SUPPORT_EMAIL: SUPPORT_EMAIL,
+  webServer: [
+    {
+      command: "node e2e/fe-proxy-stub.mjs",
+      url: "http://127.0.0.1:3399/health",
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
     },
-  },
+    {
+      command: `npx next dev --port ${PORT}`,
+      url: BASE_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+      env: {
+        ENABLE_FE_PROXY: "true",
+        FE_INTERNAL_URL: "http://127.0.0.1:3399",
+        NEXT_PUBLIC_SUPPORT_EMAIL: SUPPORT_EMAIL,
+        NEXT_DIST_DIR: ".next-proxy",
+      },
+    },
+  ],
 });

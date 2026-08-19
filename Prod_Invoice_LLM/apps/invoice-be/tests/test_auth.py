@@ -1,5 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime
+import asyncio
+import threading
 from uuid import UUID, uuid4
 
 import pytest
@@ -1025,9 +1027,10 @@ def test_provision_allows_user_with_null_tenant_id(db_session):
 
 def test_provision_concurrency_locking(db_session):
     """
-    Verify that provision_tenant attempts to acquire PostgreSQL advisory locks
-    on the clerk_org_id and domain. We mock the db_session execute and bind dialect
-    to simulate a PostgreSQL database environment.
+    Unit-level check: provision_tenant issues PostgreSQL advisory-lock statements
+    when the bind reports postgresql. The DB execute path is mocked here — see
+    test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres for the
+    real-engine concurrency proof (BE Gap 133 sub-item 1).
     """
     from unittest.mock import patch, MagicMock
     from sqlalchemy.orm import Session as BaseSession
@@ -1067,7 +1070,94 @@ def test_provision_concurrency_locking(db_session):
     assert any("domain_key" in stmt for stmt in lock_statements)
 
 
+def test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres():
+    """
+    BE Gap 133 sub-item (1): two genuinely concurrent provision_tenant() calls
+    for the same clerk_org_id against real Postgres must create exactly one
+    tenant row and return the same tenant_id from both calls.
+    """
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+    from routers.auth import provision_tenant, TenantProvisionRequest
 
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    unique_tag = uuid4().hex[:12]
+    org_id = f"org_concurrent_{unique_tag}"
+    user_id = f"user_concurrent_{unique_tag}"
+    email = f"admin-{unique_tag}@gap133-{unique_tag}.invalid"
+
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
+
+    # Clear any leftover rows from a prior interrupted run targeting the same ids.
+    with Session(pg_engine) as session:
+        for user in session.exec(select(User).where(User.clerk_user_id == user_id)).all():
+            session.delete(user)
+        for tenant in session.exec(select(Tenant).where(Tenant.clerk_org_id == org_id)).all():
+            session.delete(tenant)
+        session.commit()
+
+    body = TenantProvisionRequest(
+        clerk_org_id=org_id,
+        org_name="Concurrency Test Org",
+        admin_email=email,
+        clerk_user_id=user_id,
+    )
+    caller = AuthenticatedClerkIdentity(
+        is_mock=False,
+        clerk_user_id=user_id,
+        org_id=org_id,
+        email=email,
+    )
+
+    barrier = threading.Barrier(2)
+    results: list = []
+    errors: list[BaseException] = []
+
+    def _worker() -> None:
+        barrier.wait()
+        with Session(pg_engine) as session:
+            try:
+                results.append(asyncio.run(provision_tenant(body, caller, session)))
+            except BaseException as exc:  # pragma: no cover - surfaced via assert
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "provision_tenant worker timed out"
+
+    assert not errors, f"Unexpected errors: {errors}"
+    assert len(results) == 2
+
+    tenant_ids = {result.tenant_id for result in results}
+    assert len(tenant_ids) == 1, f"Expected one tenant id across both calls, got {tenant_ids}"
+    assert {result.is_new for result in results} == {True, False}
+
+    with Session(pg_engine) as session:
+        tenants = session.exec(select(Tenant).where(Tenant.clerk_org_id == org_id)).all()
+        users = session.exec(select(User).where(User.clerk_user_id == user_id)).all()
+        try:
+            assert len(tenants) == 1, f"Expected exactly one tenant row, found {len(tenants)}"
+            assert len(users) == 1, f"Expected exactly one user row, found {len(users)}"
+            assert str(tenants[0].id) == next(iter(tenant_ids))
+            assert users[0].tenant_id == tenants[0].id
+        finally:
+            for user in users:
+                session.delete(user)
+            session.flush()
+            for tenant in tenants:
+                session.delete(tenant)
+            session.commit()
 
 
 

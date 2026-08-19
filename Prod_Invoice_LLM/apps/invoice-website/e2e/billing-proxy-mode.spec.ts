@@ -69,3 +69,34 @@ test.describe("Billing failed — support email CTA when NEXT_PUBLIC_SUPPORT_EMA
     await expect(page.getByRole("link", { name: "Contact support" })).toBeVisible();
   });
 });
+
+/**
+ * Website Gap 184: Multi-Zone rewrites for FE-owned paths that sit next to a
+ * website-owned `/api/billing/*` prefix (usage) and the `/api/support/*`
+ * prefix. Hits the website origin; the stub on FE_INTERNAL_URL proves the
+ * rewrite landed, not a website 404 / Clerk handshake.
+ */
+test.describe("Gap 184 — Multi-Zone proxy rewrites to invoice-fe", () => {
+  test("GET /api/billing/usage reaches invoice-fe (not a website 404)", async ({
+    request,
+  }) => {
+    const res = await request.get("/api/billing/usage");
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-fe-stub"]).toBe("gap-184");
+    const body = await res.json();
+    expect(body.stub).toBe("billing-usage");
+  });
+
+  test("POST /api/support/chat reaches invoice-fe (not a website 404)", async ({
+    request,
+  }) => {
+    const res = await request.post("/api/support/chat", {
+      data: { message: "gap-184-proxy-probe" },
+    });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-fe-stub"]).toBe("gap-184");
+    const body = await res.json();
+    expect(body.stub).toBe("support");
+    expect(body.path).toBe("/api/support/chat");
+  });
+});

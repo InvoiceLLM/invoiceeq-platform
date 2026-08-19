@@ -339,9 +339,51 @@ def _score_topic(topic: dict[str, Any], lower_query: str) -> tuple[int, int]:
     return len(matched), sum(len(kw) for kw in matched)
 
 
+_FOLLOW_UP_PHRASES = (
+    "how do i do that",
+    "how to do that",
+    "how do i do this",
+    "how to do this",
+    "tell me more",
+    "explain that",
+    "explain this",
+    "what are the steps",
+    "can you elaborate",
+    "show me how",
+    "how does that work",
+    "what next",
+    "and then",
+)
+
+
+def _topic_by_id(topic_id: str | None) -> dict[str, Any] | None:
+    if not topic_id:
+        return None
+    for topic in KNOWLEDGE_TOPICS:
+        if topic["id"] == topic_id:
+            return topic
+    return None
+
+
+def _is_anaphoric_follow_up(query: str) -> bool:
+    q = query.lower().strip().rstrip("?.!")
+    return any(phrase in q for phrase in _FOLLOW_UP_PHRASES)
+
+
+def _topic_result(topic: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "answer": topic["guidance"],
+        "topic_id": topic["id"],
+        "suggest_escalation": False,
+        "low_confidence": False,
+        "escalation_context": None,
+    }
+
+
 def evaluate_support_query(
     message: str,
     history: list[dict[str, Any]] | None = None,
+    last_topic_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Evaluates a user query and returns:
@@ -353,17 +395,17 @@ def evaluate_support_query(
         deliberately NOT the same thing as a diagnosed incident.
       - escalation_context: dict with category, priority, subject, error_code (or None)
 
-    `history` is accepted and deliberately unread. Resolving a follow-up
-    ("how do I do that?") against the previously matched topic needs a topic id
-    echoed back in `SupportChatResponse` and stored by the FE; what arrives here
-    is only `{role, content}` pairs, and re-matching against the assistant's own
-    prior guidance text matches wrongly because the guidance blobs are keyword
-    dense. Descoped rather than approximated — see Gap 256 in the BE tracker.
+    `history` is accepted for interface stability but is not read for topic
+    resolution — only `last_topic_id` (echoed from the prior assistant turn and
+    stored by the FE) can resolve a short anaphoric follow-up such as
+    "how do I do that?". Re-matching against the assistant's own prior guidance
+    text was rejected because the guidance blobs are keyword-dense (Gap 256).
     """
     clean_query = (message or "").strip()
     if not clean_query:
         return {
             "answer": "Hello! I am SAGE, your AI Support Assistant. Ask me anything about using Invoice AI, resetting passwords, configuring rules, or resolving errors.",
+            "topic_id": None,
             "suggest_escalation": False,
             "low_confidence": False,
             "escalation_context": None,
@@ -380,15 +422,14 @@ def evaluate_support_query(
 
     if matched_topics:
         matched_topics.sort(key=lambda x: x[0], reverse=True)
-        best_topic = matched_topics[0][1]
-        return {
-            "answer": best_topic["guidance"],
-            "suggest_escalation": False,
-            "low_confidence": False,
-            "escalation_context": None,
-        }
+        return _topic_result(matched_topics[0][1])
 
-    # 2. Check for explicit severe error triggers
+    # 2. Anaphoric follow-up against the prior matched topic (BE Gap 256).
+    prior_topic = _topic_by_id(last_topic_id)
+    if prior_topic and _is_anaphoric_follow_up(clean_query):
+        return _topic_result(prior_topic)
+
+    # 3. Check for explicit severe error triggers
     for err in ERROR_TRIGGERS:
         if re.search(err["pattern"], lower_query):
             return {
@@ -397,6 +438,7 @@ def evaluate_support_query(
                     "If the above steps do not resolve the issue, you can escalate this directly "
                     "to our technical support team using the button below. Your diagnostics will be pre-filled."
                 ),
+                "topic_id": None,
                 "suggest_escalation": True,
                 "low_confidence": False,
                 "escalation_context": {
@@ -407,13 +449,14 @@ def evaluate_support_query(
                 },
             }
 
-    # 3. Check for explicit human support requests
+    # 4. Check for explicit human support requests
     if re.search(r"(human|agent|raise\s*ticket|support\s*ticket|contact\s*support|speak\s*to\s*someone|talk\s*to\s*human)", lower_query):
         return {
             "answer": (
                 "I would be glad to connect you with our engineering and support team!\n\n"
                 "Click the **Raise Support Ticket** button below to submit your inquiry directly to `Application@infinevocloud.com`."
             ),
+            "topic_id": None,
             "suggest_escalation": True,
             "low_confidence": False,
             "escalation_context": {
@@ -424,7 +467,7 @@ def evaluate_support_query(
             },
         }
 
-    # 4. General fallback: an honest miss. `suggest_escalation` stays False so the
+    # 5. General fallback: an honest miss. `suggest_escalation` stays False so the
     # UI does not frame an unanswered question as a diagnosed incident, and
     # `low_confidence` is set so it can still offer a plain "raise a ticket"
     # affordance instead of silently offering nothing (see SupportChatWindow.tsx).
@@ -435,6 +478,7 @@ def evaluate_support_query(
             "2. **Check App Settings**: Review your account and organisation settings in `/settings`.\n\n"
             "If you still need help, feel free to ask to speak to support or request a ticket, and I will connect you."
         ),
+        "topic_id": None,
         "suggest_escalation": False,
         "low_confidence": True,
         "escalation_context": {

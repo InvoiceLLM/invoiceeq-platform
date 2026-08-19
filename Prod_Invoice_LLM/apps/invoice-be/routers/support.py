@@ -473,6 +473,9 @@ class SupportChatRequest(BaseModel):
     """Schema for POST /api/v1/support/chat — authenticated support troubleshooting."""
     message: str
     history: list[dict[str, Any]] = []
+    # BE Gap 256: echoed from the prior assistant turn so a short anaphoric
+    # follow-up ("how do I do that?") can resolve against the matched topic.
+    last_topic_id: str | None = None
 
     @field_validator("message")
     @classmethod
@@ -486,6 +489,9 @@ class SupportChatRequest(BaseModel):
 class SupportChatResponse(BaseModel):
     answer: str
     suggest_escalation: bool
+    # BE Gap 256: which KNOWLEDGE_TOPICS entry matched this turn, if any. The FE
+    # stores this and sends it back as `last_topic_id` on the next turn.
+    topic_id: str | None = None
     # BE Gap 254: a plain "no article matched" is not a diagnosed incident, but it
     # still needs a way to raise a ticket. Kept as a separate flag rather than
     # overloading `suggest_escalation`, and defaulted so an older FE build that
@@ -507,10 +513,15 @@ def support_chat_assistant(
     body: SupportChatRequest,
     context: TenantContext = Depends(get_tenant_context_allow_unpaid),
 ):
-    result = evaluate_support_query(body.message, history=body.history)
+    result = evaluate_support_query(
+        body.message,
+        history=body.history,
+        last_topic_id=body.last_topic_id,
+    )
     return SupportChatResponse(
         answer=result["answer"],
         suggest_escalation=result["suggest_escalation"],
+        topic_id=result.get("topic_id"),
         low_confidence=result.get("low_confidence", False),
         escalation_context=result.get("escalation_context"),
     )

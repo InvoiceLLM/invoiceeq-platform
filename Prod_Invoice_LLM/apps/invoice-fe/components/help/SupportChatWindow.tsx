@@ -18,6 +18,8 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** BE Gap 256: echoed topic id for anaphoric follow-up resolution. */
+  topicId?: string | null;
   suggestEscalation?: boolean;
   /**
    * BE Gap 254: "no help article matched", which is not the same claim as
@@ -86,12 +88,17 @@ export function SupportChatWindow() {
         content: typeof m.content === "string" ? m.content : "",
       }));
 
+      const lastTopicId = [...newMessages]
+        .reverse()
+        .find((m) => m.role === "assistant" && m.topicId)?.topicId ?? null;
+
       const res = await fetch("/api/support/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
           history: historyPayload,
+          last_topic_id: lastTopicId,
         }),
       });
 
@@ -106,6 +113,7 @@ export function SupportChatWindow() {
           id: `bot-${Date.now()}`,
           role: "assistant",
           content: data.answer || "I received your request.",
+          topicId: data.topic_id ?? null,
           suggestEscalation: !!data.suggest_escalation,
           lowConfidence: !!data.low_confidence,
           escalationContext: data.escalation_context,

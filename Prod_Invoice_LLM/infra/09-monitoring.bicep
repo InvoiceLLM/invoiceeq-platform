@@ -205,6 +205,8 @@ module alertRules './modules/monitoring/alert-rules.bicep' = {
     docIntelName: docIntelName
     keyVaultName: keyVaultName
     caeName: caeName
+    logAnalyticsWorkspaceId: logAnalytics.id
+    queryAlertLocation: location
   }
 }
 
