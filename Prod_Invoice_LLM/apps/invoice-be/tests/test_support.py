@@ -438,12 +438,42 @@ class TestSupportChatEndpoint:
         assert escalated.json()["suggest_escalation"] is True
         assert escalated.json()["low_confidence"] is False
 
-    def test_history_is_accepted_but_deliberately_unread(self, db_session: Session):
-        """BE Gap 254, descoped (see Gap 256): resolving "how do I do that?"
-        against the previously matched topic needs a topic id echoed back in the
-        response and stored by the FE — no such contract exists, and `history` is
-        only `{role, content}` pairs. The request field is still accepted so the
-        FE needs no change, but it must not silently change the answer."""
+    def test_matched_topic_echoes_topic_id(self, db_session: Session):
+        """BE Gap 256: the response must carry the matched topic id for the FE."""
+        res = client.post("/api/v1/support/chat", json={"message": "How do I invite team members?"})
+        assert res.status_code == 200
+        assert res.json()["topic_id"] == "user_management"
+
+    def test_follow_up_resolves_via_last_topic_id(self, db_session: Session):
+        """BE Gap 256: a short anaphoric follow-up reuses the prior topic."""
+        res = client.post(
+            "/api/v1/support/chat",
+            json={"message": "how do I do that?", "last_topic_id": "user_management"},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert "Invite User" in body["answer"]
+        assert body["topic_id"] == "user_management"
+        assert body["low_confidence"] is False
+
+    def test_follow_up_without_last_topic_id_still_misses(self, db_session: Session):
+        """Without `last_topic_id`, an anaphoric follow-up must still be a plain miss."""
+        res = client.post("/api/v1/support/chat", json={"message": "how do I do that?"})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["low_confidence"] is True
+        assert body["topic_id"] is None
+
+    def test_invalid_last_topic_id_is_ignored(self, db_session: Session):
+        res = client.post(
+            "/api/v1/support/chat",
+            json={"message": "how do I do that?", "last_topic_id": "not_a_real_topic"},
+        )
+        assert res.status_code == 200
+        assert res.json()["low_confidence"] is True
+
+    def test_history_is_accepted_but_does_not_resolve_follow_ups(self, db_session: Session):
+        """BE Gap 256: `history` alone must not resolve a follow-up — only `last_topic_id`."""
         history = [
             {"role": "user", "content": "How do I invite team members?"},
             {"role": "assistant", "content": "### User Management & Permissions\n\nGo to settings."},
@@ -454,6 +484,7 @@ class TestSupportChatEndpoint:
         without_history = client.post("/api/v1/support/chat", json={"message": "how do I do that?"})
         assert with_history.status_code == 200
         assert with_history.json() == without_history.json()
+        assert with_history.json()["low_confidence"] is True
 
     def test_error_triggers_are_not_shadowed_by_kb_keywords(self, db_session: Session):
         """BE Gap 254 / Fix 7 — a standing screen, not a one-off assertion.

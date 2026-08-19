@@ -3,6 +3,9 @@ const nextConfig = {
   env: {
     ENABLE_FE_PROXY: process.env.ENABLE_FE_PROXY || "false",
   },
+  // Playwright proxy pass (`playwright.proxy.config.ts`) sets this so its
+  // `next dev` on :3201 does not race the developer's :3000 `.next` cache.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   async rewrites() {
     if (process.env.ENABLE_FE_PROXY !== "true") return [];
 

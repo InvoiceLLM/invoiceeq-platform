@@ -7,6 +7,10 @@
 
 param location string = 'global'
 param actionGroupId string
+@description('Log Analytics workspace resource id. Required for the Gap 257 log-based DLQ alert (scheduled query).')
+param logAnalyticsWorkspaceId string
+@description('Region for scheduledQueryRules (cannot be global). Defaults to the resource group location.')
+param queryAlertLocation string = resourceGroup().location
 
 param backendAppName string
 param workerAppName string
@@ -317,39 +321,45 @@ resource storageEgressAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 }
 
 // ---- Dead-Letter Queue (DLQ): Poison Message Alert (Sev 1) ----
-// Fires immediately if any corrupted message is quarantined into extraction-tasks-deadletter-queue
-resource dlqPoisonAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
-  name: 'alert-${storageAccountName}-dlq-poison-message'
-  location: location
+// BE Gap 257: the previous Microsoft.Insights/metricAlerts rule filtered
+// QueueMessageCount on a QueueName dimension. Azure Storage's QueueMessageCount
+// metric has no dimensions (confirmed live via az rest on metric definitions),
+// so that rule could never fire. Replaced with a log-based scheduled query over
+// the same KQL the Feature 20 workbook already uses (dashboard.bicep panel:
+// ContainerAppConsoleLogs_CL | where Log_s has "POISON MESSAGE ISOLATED").
+// The worker emits that line in queue_worker/main_worker.py::_route_to_dead_letter_queue.
+// New resource name (scheduledQueryRules, not metricAlerts) so an already-deployed
+// metric alert of the old type/name is not a type-change conflict; delete
+// alert-${storageAccountName}-dlq-poison-message manually if it exists.
+resource dlqPoisonAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: 'alert-${workerAppName}-dlq-poison-isolated'
+  location: queryAlertLocation
   properties: {
+    displayName: 'Queue worker isolated a poison message (DLQ)'
+    description: 'Fires when the queue worker logs POISON MESSAGE ISOLATED — a message failed dequeue retries and was moved to extraction-tasks-deadletter-queue. Gap 257: log-based because Storage QueueMessageCount has no QueueName dimension.'
     severity: 1
     enabled: true
-    scopes: [
-      resourceId('Microsoft.Storage/storageAccounts/queueServices', storageAccountName, 'default')
-    ]
+    scopes: [ logAnalyticsWorkspaceId ]
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
+    autoMitigate: true
     criteria: {
-      'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
       allOf: [
         {
-          name: 'DeadLetterMessages'
-          metricName: 'QueueMessageCount'
+          query: 'ContainerAppConsoleLogs_CL | where Log_s has "POISON MESSAGE ISOLATED"'
+          timeAggregation: 'Count'
           operator: 'GreaterThan'
           threshold: 0
-          timeAggregation: 'Average'
-          criterionType: 'StaticThresholdCriterion'
-          dimensions: [
-            {
-              name: 'QueueName'
-              operator: 'Include'
-              values: [ 'extraction-tasks-deadletter-queue' ]
-            }
-          ]
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
         }
       ]
     }
-    actions: [ { actionGroupId: actionGroupId } ]
+    actions: {
+      actionGroups: [ actionGroupId ]
+    }
   }
 }
 

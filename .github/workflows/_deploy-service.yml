@@ -124,3 +124,40 @@ jobs:
           az containerapp show --name "${{ inputs.container_app_name }}" \
             --resource-group "${{ inputs.resource_group }}" \
             --query "properties.template.containers[0].image" -o tsv
+
+      # BE Gap 258: fail the deploy job if the new revision never becomes
+      # healthy — catches readiness-probe failures (Gap 252 class) before
+      # they sit on 100% traffic undetected for hours.
+      - name: Wait for new revision to become healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="${{ inputs.container_app_name }}"
+          rg="${{ inputs.resource_group }}"
+          max_attempts=24
+          for i in $(seq 1 "$max_attempts"); do
+            row=$(az containerapp revision list \
+              --name "$app" \
+              --resource-group "$rg" \
+              --query "sort_by(@, &properties.createdTime)[-1].{name:name,health:properties.healthState,running:properties.runningState,traffic:properties.trafficWeight}" \
+              -o tsv)
+            name=$(echo "$row" | awk '{print $1}')
+            health=$(echo "$row" | awk '{print $2}')
+            running=$(echo "$row" | awk '{print $3}')
+            traffic=$(echo "$row" | awk '{print $4}')
+            echo "[$app] revision=$name health=$health running=$running traffic=${traffic}% (attempt $i/$max_attempts)"
+            if [ "$health" = "Healthy" ] && [ "$running" = "Running" ]; then
+              echo "✅ $app latest revision is healthy"
+              exit 0
+            fi
+            if [ "$running" = "Failed" ] || [ "$running" = "ActivationFailed" ]; then
+              echo "❌ $app revision entered terminal failure state ($running / $health)"
+              az containerapp revision list --name "$app" --resource-group "$rg" -o table
+              az containerapp logs show --name "$app" --resource-group "$rg" --tail 50 || true
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "❌ $app did not reach Healthy/Running within $((max_attempts * 10))s"
+          az containerapp revision list --name "$app" --resource-group "$rg" -o table
+          exit 1

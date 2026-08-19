@@ -212,3 +212,97 @@ jobs:
         FE_INTERNAL_URL=${{ needs.resolve-fqdns.outputs.fe_url }}
     secrets:
       azure_credentials: ${{ secrets.Azure_Dev_Credentials }}
+
+  # BE Gap 258: dev had no post-deploy verification gate (unlike prod's
+  # verify-deployment job). A broken revision (e.g. Gap 252's readiness-
+  # probe 404) could hold 100% traffic for hours with zero CI signal.
+  verify-deployment:
+    needs: [changes, resolve-fqdns, deploy-backend, deploy-worker, deploy-frontend, deploy-website]
+    if: >-
+      always() && !cancelled() &&
+      (needs.changes.outputs.be == 'true' || needs.changes.outputs.worker == 'true' ||
+       needs.changes.outputs.fe == 'true' || needs.changes.outputs.website == 'true') &&
+      !contains(needs.deploy-backend.result, 'failure') &&
+      !contains(needs.deploy-worker.result, 'failure') &&
+      !contains(needs.deploy-frontend.result, 'failure') &&
+      !contains(needs.deploy-website.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.Azure_Dev_Credentials }}
+
+      - name: Verify dev Container Apps after deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Dev post-deployment verification (Gap 258) ==="
+
+          website_fqdn=$(az containerapp show --name ca-invoice-website-dev \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+          if [ -z "$website_fqdn" ]; then
+            website_fqdn=$(az containerapp show --name ca-invoice-fe-dev \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query properties.configuration.ingress.fqdn -o tsv)
+          fi
+          website_url="https://${website_fqdn}"
+          echo "Testing public website ingress: ${website_url}"
+          for i in {1..12}; do
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" "${website_url}/" || echo "000")
+            if [ "$status_code" -eq 200 ] || [ "$status_code" -eq 307 ] || [ "$status_code" -eq 308 ]; then
+              echo "✅ Public website is healthy (HTTP $status_code)"
+              break
+            fi
+            if [ "$i" -eq 12 ]; then
+              echo "❌ Website did not become reachable (last status: $status_code)"
+              exit 1
+            fi
+            echo "Waiting for website readiness (attempt $i/12, status: $status_code)..."
+            sleep 5
+          done
+
+          be_fqdn=$(az containerapp show --name ca-invoice-be-dev \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          be_url="https://${be_fqdn}"
+          echo "Testing backend readiness probe path: ${be_url}/health/readiness"
+          for i in {1..12}; do
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" "${be_url}/health/readiness" || echo "000")
+            if [ "$status_code" -eq 200 ]; then
+              echo "✅ Backend /health/readiness is healthy (HTTP $status_code)"
+              break
+            fi
+            if [ "$i" -eq 12 ]; then
+              echo "❌ Backend /health/readiness did not return 200 (last status: $status_code)"
+              exit 1
+            fi
+            echo "Waiting for backend readiness (attempt $i/12, status: $status_code)..."
+            sleep 5
+          done
+
+          echo "Checking Container App provisioning + revision health..."
+          for app in ca-invoice-be-dev ca-queue-worker-dev ca-invoice-fe-dev ca-invoice-website-dev; do
+            state=$(az containerapp show --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query "properties.provisioningState" -o tsv)
+            echo "Container App $app provisioningState: $state"
+            if [ "$state" != "Succeeded" ]; then
+              echo "❌ $app is not in Succeeded provisioning state ($state)"
+              exit 1
+            fi
+
+            traffic_rev=$(az containerapp revision list --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query "[?properties.trafficWeight > \`0\`] | [0].{name:name,health:properties.healthState,running:properties.runningState,traffic:properties.trafficWeight}" \
+              -o tsv)
+            rev_name=$(echo "$traffic_rev" | awk '{print $1}')
+            health=$(echo "$traffic_rev" | awk '{print $2}')
+            running=$(echo "$traffic_rev" | awk '{print $3}')
+            traffic=$(echo "$traffic_rev" | awk '{print $4}')
+            echo "  traffic revision $rev_name: health=$health running=$running traffic=${traffic}%"
+            if [ "$health" != "Healthy" ] || [ "$running" != "Running" ]; then
+              echo "❌ $app traffic-bearing revision is not Healthy/Running"
+              exit 1
+            fi
+          done
+          echo "🎉 All dev Container Apps verified healthy"

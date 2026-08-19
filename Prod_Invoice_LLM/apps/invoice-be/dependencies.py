@@ -7,6 +7,7 @@ from typing import Generator
 from fastapi import Header, HTTPException, status, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
+import time
 from datetime import datetime
 
 from config import settings
@@ -143,7 +144,7 @@ def verify_clerk_jwt(token: str) -> dict:
             print(
                 f"[jwt-diag] kid={kid} token_iss={unverified.get('iss')!r} "
                 f"expected_iss={settings.CLERK_JWT_ISSUER!r} exp={unverified.get('exp')} "
-                f"now={int(datetime.utcnow().timestamp())} org_id={unverified.get('org_id')!r} "
+                f"now={int(time.time())} org_id={unverified.get('org_id')!r} "
                 f"org_role={unverified.get('org_role')!r} sub={unverified.get('sub')!r} "
                 f"email_present={bool(unverified.get('email') or unverified.get('email_address'))}",
                 flush=True,
@@ -163,11 +164,16 @@ def verify_clerk_jwt(token: str) -> dict:
         # previously `bool(settings.CLERK_JWT_ISSUER)`, which silently
         # disabled the check whenever the setting was empty.
         # require_clerk_jwt_config() above guarantees it is non-empty.
+        # Clerk session JWTs often have iat a second or two in the future vs
+        # the local clock; PyJWT default leeway is 0, which 401s Help/dashboard
+        # as "The token is not yet valid (iat)". 60s covers skew without
+        # stretching expiry in a meaningful way.
         return jwt.decode(
             token,
             public_key,
             algorithms=["RS256"],
             issuer=settings.CLERK_JWT_ISSUER,
+            leeway=60,
             options={"verify_iss": True}
         )
     except jwt.ExpiredSignatureError:
