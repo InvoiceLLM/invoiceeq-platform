@@ -630,19 +630,19 @@ def test_rule_6d_guards_against_null_or_non_array_items(db_session):
     assert "jsonb_typeof(items) = 'array'" in query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
 
 
+_RULE_6D_MARKER = "The one and only shape for rule 6d"
+
+
 def test_rule_6d_selects_currency_per_rule_7(db_session):
     """Rule 7 requires `currency` alongside any monetary column; rule 6d's own
-    examples have to obey it, or every line-item answer is an unlabelled number
+    example has to obey it, or every line-item answer is an unlabelled number
     (FE Gap 183 is on file for exactly that)."""
     llm = _RecordingLLM([
         MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
     _run(db_session, llm, "what is the training amount", uuid4())
-    detail = _taught_sql(llm.prompts[0], "To list matching lines:")
-    aggregate = _taught_sql(llm.prompts[0], "To total matching lines")
-    assert "invoice.currency" in detail
-    assert "invoice.currency" in aggregate
-    assert "GROUP BY invoice.currency" in aggregate
+    shape = _taught_sql(llm.prompts[0], _RULE_6D_MARKER)
+    assert "invoice.currency" in shape
 
 
 def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(db_session):
@@ -669,22 +669,22 @@ def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(
     db_session.commit()
 
     rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
-    rows = db_session.exec(text(_taught_sql(rule, "To list matching lines:"))).all()
+    rows = db_session.exec(text(_taught_sql(rule, _RULE_6D_MARKER))).all()
 
     assert len(rows) == 1
-    invoice_number, currency, description, qty, unit_price, amount = rows[0]
+    invoice_number, vendor_name, currency, description, qty, unit_price, amount = rows[0]
     assert (invoice_number, currency, description) == ("US-1", "USD", "Training & Onboarding")
     assert (qty, unit_price, amount) == (40, 732.5735, 29302.94)
     assert amount != 35480.59
 
-    total_rows = db_session.exec(text(_taught_sql(rule, "To total matching lines"))).all()
-    assert total_rows == [(29302.94, "USD")]
 
-
-def test_taught_line_item_sql_aggregates_across_invoices_and_currencies(db_session):
-    """The aggregate shape must group by currency, not sum across them (no
-    exchange rate exists -- same reason `_get_tenant_stats_summary` breaks spend
-    out per currency)."""
+def test_taught_line_item_sql_returns_raw_rows_across_invoices_and_currencies_ungrouped(db_session):
+    """Found live, 2026-08-19 (US tenant test, twice): letting SQL both find AND
+    aggregate line items was the repeated source of wrong answers (summing the
+    wrong column, grouping by the wrong thing). Rule 6d no longer aggregates at
+    all -- this confirms the taught query returns every matching line as its
+    own raw row, across invoices and currencies, with no SUM/GROUP BY collapsing
+    them. Adding them up correctly is the summary step's job now, not SQL's."""
     _seed_invoice(db_session, invoice_number="US-1", items=_LINE_ITEM_SEED)
     _seed_invoice(
         db_session, invoice_number="US-2",
@@ -696,15 +696,18 @@ def test_taught_line_item_sql_aggregates_across_invoices_and_currencies(db_sessi
     )
 
     rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
-    totals = dict(
-        (currency, total)
-        for total, currency in db_session.exec(text(_taught_sql(rule, "To total matching lines"))).all()
-    )
-    assert totals == {"USD": 29502.94, "INR": 50.0}
+    rows = db_session.exec(text(_taught_sql(rule, _RULE_6D_MARKER))).all()
+
+    amounts_by_currency = {}
+    for invoice_number, vendor_name, currency, description, qty, unit_price, amount in rows:
+        amounts_by_currency.setdefault(currency, []).append(amount)
+
+    assert len(rows) == 3  # one row per matching line, not one row per currency/total
+    assert sorted(amounts_by_currency["USD"]) == [200.0, 29302.94]
+    assert amounts_by_currency["INR"] == [50.0]
 
 
-@pytest.mark.parametrize("marker", ["To list matching lines:", "To total matching lines"])
-def test_taught_line_item_sql_runs_on_postgres(marker):
+def test_taught_line_item_sql_runs_on_postgres():
     """The engine that actually runs this in production. Same skip-when-absent
     shape as test_recommended_cast_form_runs_on_postgres -- SQLite cannot catch
     a `jsonb_array_elements`/`::numeric`/`LATERAL` defect, which is precisely how
@@ -722,7 +725,7 @@ def test_taught_line_item_sql_runs_on_postgres(marker):
 
     pg_session = MagicMock()
     pg_session.get_bind.return_value.dialect.name = "postgresql"
-    sql = _taught_sql(query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session), marker)
+    sql = _taught_sql(query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session), _RULE_6D_MARKER)
     try:
         cur = conn.cursor()
         try:
@@ -745,7 +748,7 @@ def test_line_item_query_still_yields_a_result_set_snapshot(db_session):
 
     rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
     harvested = query_agent._harvest_invoice_ids_via_companion_query(
-        _taught_sql(rule, "To total matching lines"), MOCK_TENANT_ID.hex, db_session
+        _taught_sql(rule, _RULE_6D_MARKER), MOCK_TENANT_ID.hex, db_session
     )
     assert harvested == [str(invoice.id)]
 
@@ -1101,24 +1104,40 @@ def test_rule_4a_handles_ambiguous_direction_for_named_entity(db_session):
     assert "do NOT commit to a single guessed direction" in prompt
 
 
-def test_rule_6d_has_per_vendor_grouped_total_example(db_session):
-    """Live bug (US tenant test, Q9): "which vendors billed us for freight,
-    delivery, or shipping charges, and how much per vendor" was answered
-    with rule 6b (whole invoice totals for any invoice merely CONTAINING a
-    matching line) instead of rule 6d (sum of just the matching lines,
-    grouped by vendor) -- every vendor's reported figure was 10-40x too
-    large, because it included every unrelated line and tax on that
-    invoice. Both dialect variants need the GROUP BY vendor_name shape as
-    an explicit example, not just the single-total one."""
+def test_rule_6d_never_aggregates_in_sql(db_session):
+    """Architecture change, 2026-08-19: rule 6d used to offer a SQL SUM/GROUP BY
+    shape (including a per-vendor grouped variant, tried as the first fix for
+    Q9 of the US tenant test). Live re-verification showed that fix alone
+    didn't even work, and the deeper problem is that letting SQL find AND
+    aggregate line items in one step was the repeated source of wrong answers
+    all day (wrong column summed, wrong grouping). Postgres now only ever
+    fetches -- both dialect variants must say so explicitly, and neither may
+    offer a SUM/GROUP BY line-item shape any more."""
     rule_sqlite = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
-    assert "PER VENDOR/CUSTOMER" in rule_sqlite
-    assert "GROUP BY invoice.vendor_name, invoice.currency" in rule_sqlite
+    assert "NEVER aggregate (SUM/GROUP BY) a line-item figure in this SQL" in rule_sqlite
+    assert "SUM(item.value" not in rule_sqlite
+    assert "GROUP BY invoice.vendor_name" not in rule_sqlite
 
     pg_session = MagicMock()
     pg_session.get_bind.return_value.dialect.name = "postgresql"
     rule_pg = query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
-    assert "PER VENDOR/CUSTOMER" in rule_pg
-    assert "GROUP BY invoice.vendor_name, invoice.currency" in rule_pg
+    assert "NEVER aggregate (SUM/GROUP BY) a line-item figure in this SQL" in rule_pg
+    assert "SUM((item->>'amount')" not in rule_pg
+    assert "GROUP BY invoice.vendor_name" not in rule_pg
+
+
+def test_summary_prompt_requires_llm_to_compute_totals_from_listed_lines(db_session):
+    """The other half of the same change: since SQL never aggregates line
+    items any more, the summary/synthesis step is now the ONLY place a
+    line-item total gets computed -- it must say so explicitly, including the
+    per-vendor grouping case that used to be a SQL GROUP BY (Q9)."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "what is the training amount", uuid4(), surfaced_rows=1)
+    summary_prompt = llm.summary_prompts[0]
+    assert "YOU compute this total, not the database" in summary_prompt
+    assert "group the listed lines by `vendor_name` yourself" in summary_prompt
 
 
 def test_rule_6b_explicitly_carves_out_per_vendor_charge_questions(db_session):
@@ -1156,4 +1175,23 @@ def test_payment_status_guardrail_reaches_the_summary_prompt_too(db_session):
     assert "STOP AND READ" in summary_prompt
     assert "payment-status term" in summary_prompt
     assert "equally false" in summary_prompt.lower()
+
+
+def test_rule_11_curates_columns_for_plain_details_questions(db_session):
+    """Second live finding, 2026-08-19: "pull up invoice X" / "give me the
+    details" selected every column including raw items/tags/sa_alerts JSON --
+    each individually correct (no leaked internal columns, valid JSON not
+    Python repr, per earlier fixes) but the combination reads as a database
+    export, not an answer a person asked for. Rule 11 tells the model to
+    default to the fields a person actually reads and answer in prose, only
+    pulling items/tags/sa_alerts in when the question is actually about
+    line items, categorization, or alerts."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT invoice_number, vendor_name, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "give me the details of this invoice", uuid4())
+    prompt = llm.prompts[0]
+    assert '11. "DETAILS" QUESTIONS ABOUT ONE SPECIFIC INVOICE' in prompt
+    assert "Do NOT select `items`, `tags`, or `sa_alerts` by default" in prompt
+    assert "short prose summary" in prompt
 
