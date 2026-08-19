@@ -731,6 +731,12 @@ Opened 2026-08-18 from a **read-only** security review of the new unauthenticate
 
 - `[x]` **Gap 259 (BE/FE): Help Center Knowledge Base static guides lack articles on Autopilot, Settings panels, and recent Trainer/Auditor features** — opened 2026-08-19. **Fixed 2026-08-19.** Written and integrated detailed static guide documents for Autopilot sync operations (`autopilot-guide.tsx`), Settings tabs including API keys/usage, webhooks HMAC signature, role permissions, and PayU billing (`settings-guide.tsx`), Trainer session modes and guardrail rules (`trainer-guide.tsx`), and Auditor/Reviewer Console outbound review updates (`auditor-guide.tsx`). Registered the new modules into the sidebar Guides catalog (`app/help/page.tsx`). Also updated SAGE Support Agent (`support_agent.py`) with a dedicated `"autopilot"` topic.
 
+- `[ ]` **Gap 260 (BE): Webhook named to be changed from inbound_paid to inbound_approved and outbound_paid to outbound_approved** — opened 2026-08-19. The webhook event types `invoice.paid` and `outbound_invoice.paid` need to be renamed to `invoice.approved` (or `inbound_approved`) and `outbound_invoice.approved` (or `outbound_approved`) respectively, in `routers/webhooks.py::ALLOWED_EVENT_TYPES` and throughout the dispatch logic when status changes to `VERIFIED`/`COMPLETED`.
+
+- `[ ]` **Gap 261 (BE): Salesforce connector is not asking for login authentication, always auto-login to application@infinevoclouds.com** — opened 2026-08-19. The Salesforce OAuth authorization URL lacks prompt configuration, allowing automatic login if a browser session is active. Need to add `prompt=login consent` parameter to `get_auth_url()` in `routers/connectors.py`.
+
+- `[ ]` **Gap 262 (BE): Salesforce directory/folder picker does not support folder browsing** — opened 2026-08-19. The Salesforce files listing implementation in `utils/connector_files.py::list_salesforce_files` returns a flat file list and does not fetch or parse Salesforce libraries/folders, preventing the folder picker from browsing Salesforce folder structures.
+
 ## Nice-to-Have / Future Enhancements
 
 
