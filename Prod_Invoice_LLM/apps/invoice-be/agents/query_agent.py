@@ -559,6 +559,8 @@ To list matching lines:
 SELECT invoice.invoice_number, invoice.currency, item->>'description' AS line_description, (item->>'quantity')::numeric AS line_qty, (item->>'unit_price')::numeric AS line_unit_price, (item->>'amount')::numeric AS line_amount FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '{tenant_id}' AND LOWER(item->>'description') LIKE LOWER('%training%')
 To total matching lines (only when the user asks for a total/sum across lines):
 SELECT SUM((item->>'amount')::numeric) AS total_line_amount, invoice.currency FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '{tenant_id}' AND LOWER(item->>'description') LIKE LOWER('%training%') GROUP BY invoice.currency
+To total matching lines PER VENDOR/CUSTOMER (the question asks "which vendors billed us for X, how much per vendor" -- found live, 2026-08-19: this was wrongly answered with rule 6b, i.e. whole invoice totals for any invoice that merely CONTAINS a matching line, which over-counts by every unrelated line + tax on that invoice. "Which vendor(s)" plus a specific charge/product/service phrase plus "how much" is still rule 6d -- it just groups the matching-line sum by vendor instead of collapsing it to one number):
+SELECT invoice.vendor_name, SUM((item->>'amount')::numeric) AS total_line_amount, invoice.currency FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '{tenant_id}' AND LOWER(item->>'description') LIKE LOWER('%training%') GROUP BY invoice.vendor_name, invoice.currency
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
 _LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
@@ -578,6 +580,8 @@ To list matching lines:
 SELECT invoice.invoice_number, invoice.currency, item.value ->> 'description' AS line_description, item.value ->> 'quantity' AS line_qty, item.value ->> 'unit_price' AS line_unit_price, item.value ->> 'amount' AS line_amount FROM invoice LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1 WHERE tenant_id = '{tenant_id}' AND LOWER(item.value ->> 'description') LIKE LOWER('%training%')
 To total matching lines (only when the user asks for a total/sum across lines):
 SELECT SUM(item.value ->> 'amount') AS total_line_amount, invoice.currency FROM invoice LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1 WHERE tenant_id = '{tenant_id}' AND LOWER(item.value ->> 'description') LIKE LOWER('%training%') GROUP BY invoice.currency
+To total matching lines PER VENDOR/CUSTOMER (the question asks "which vendors billed us for X, how much per vendor" -- found live, 2026-08-19: this was wrongly answered with rule 6b, i.e. whole invoice totals for any invoice that merely CONTAINS a matching line, which over-counts by every unrelated line + tax on that invoice. "Which vendor(s)" plus a specific charge/product/service phrase plus "how much" is still rule 6d -- it just groups the matching-line sum by vendor instead of collapsing it to one number):
+SELECT invoice.vendor_name, SUM(item.value ->> 'amount') AS total_line_amount, invoice.currency FROM invoice LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1 WHERE tenant_id = '{tenant_id}' AND LOWER(item.value ->> 'description') LIKE LOWER('%training%') GROUP BY invoice.vendor_name, invoice.currency
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
 
@@ -691,6 +695,20 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
                 # figure to 3,583.82. Quantize to 2 decimal places, standard
                 # currency precision, matching what the summary prose does.
                 cells.append(str(val.quantize(Decimal("0.01"))))
+            elif isinstance(val, float):
+                # Found live, 2026-08-19 (US tenant test, Q2 and Q11): the
+                # Decimal fix above only catches Postgres NUMERIC. A computed
+                # division (tax rate) or a SUM() over FLOAT columns comes back
+                # as a plain Python float and hits this branch instead --
+                # same garbage-digit symptom (7.249887640449439,
+                # 5436.3099999999995), different type, not caught by that fix.
+                # `grand_total`/`tax_amount`/etc. are FLOAT columns (see schema
+                # block above), so this covers the actual monetary columns too,
+                # not just computed aggregates -- and 2dp is already this
+                # codebase's established currency precision (same choice as
+                # the Decimal branch), so it's a safe default even for a
+                # normal stored value that happens to be a clean float.
+                cells.append(f"{val:.2f}")
             else:
                 cells.append(str(val))
         markdown_rows.append(" | ".join(cells))
@@ -1287,18 +1305,21 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
         # of asked to remember not to do that.
         detected_payment_term = detect_payment_status_question(user_message)
         payment_status_block = (
-            f"\nNOTE: this question contains the payment-status term \"{detected_payment_term}\" -- "
-            f"be careful, `status` means two different things depending on direction. For INBOUND "
-            f"invoices (a vendor's bill to us), `status` (COMPLETED/AUDIT_REQUIRED/PROCESSING) is "
-            f"ONLY the OCR/extraction pipeline's internal processing state -- it has NOTHING to do "
-            f"with whether WE paid the vendor. This schema has no payment/settlement field for "
-            f"INBOUND invoices at all; NEVER infer paid/unpaid from `status`, `due_date`, or any "
-            f"other field for an INBOUND question -- state plainly that payment status isn't "
-            f"tracked, do not answer yes or no. For OUTBOUND invoices (this tenant's own invoice to "
-            f"a customer), `status` DOES include a real 'PAID' value alongside "
-            f"VERIFIED/NEEDS_REVIEW/SENT -- that one is a legitimate signal to use, though it is "
-            f"still this tenant's own recorded status, not independently confirmed settlement, so "
-            f"say so if asked to be certain.\n"
+            f"\nSTOP AND READ before answering -- this question contains the payment-status term "
+            f"\"{detected_payment_term}\". This has been answered WRONG live, twice, in BOTH "
+            f"directions: 'status=COMPLETED' -> confidently \"Yes, it's paid\" (wrong), and "
+            f"'status=AUDIT_REQUIRED' -> confidently \"No, it's not paid\" (also wrong, same "
+            f"mistake, opposite word). Both are equally false, because for an INBOUND invoice "
+            f"`status` is 100% about OCR/extraction pipeline state and 0% about payment -- there is "
+            f"NO payment/settlement field for INBOUND invoices in this schema, period. If this "
+            f"question is about an INBOUND invoice: your answer MUST say plainly that payment "
+            f"status isn't tracked in this data. Do not say \"paid\", do not say \"not paid\", do "
+            f"not say \"unpaid\" -- not as a yes, not as a no. A confident wrong answer in either "
+            f"direction is the exact failure mode this note exists to stop. For OUTBOUND invoices "
+            f"(this tenant's own invoice to a customer) only, `status` DOES include a real 'PAID' "
+            f"value alongside VERIFIED/NEEDS_REVIEW/SENT -- that one is a legitimate signal to use, "
+            f"though still this tenant's own recorded status, not independently confirmed "
+            f"settlement, so say so if asked to be certain.\n"
             if detected_payment_term
             else ""
         )
@@ -1316,7 +1337,7 @@ Given the 'invoice' table schema:
 - due_date: DATE
 - tax_amount: FLOAT
 - po_number: VARCHAR
-- status: VARCHAR (e.g. 'COMPLETED', 'AUDIT_REQUIRED', 'PROCESSING' for INBOUND; 'VERIFIED', 'NEEDS_REVIEW', 'SENT', 'PAID' for OUTBOUND)
+- status: VARCHAR (e.g. 'COMPLETED', 'AUDIT_REQUIRED', 'PROCESSING' for INBOUND; 'VERIFIED', 'NEEDS_REVIEW', 'SENT', 'PAID' for OUTBOUND). CRITICAL, found live 2026-08-19: for an INBOUND row, this is ONLY the OCR/extraction pipeline's own processing state -- 'AUDIT_REQUIRED' means the pipeline flagged a math/data issue, NOT that the invoice is unpaid, and 'COMPLETED' means extraction finished cleanly, NOT that it was paid. Never say "paid" or "not paid" or "unpaid" for an INBOUND row based on this column, no matter which value it holds -- that is a real mistake this model has made live, twice, both directions ('COMPLETED' -> confidently "yes paid"; 'AUDIT_REQUIRED' -> confidently "no, not paid"). Only OUTBOUND's literal 'PAID' value is a real payment signal.
 - sa_alerts: JSONB
 - created_at: DATETIME
 - flow_direction: VARCHAR ('INBOUND' = a vendor's invoice sent to this tenant; 'OUTBOUND' = this tenant's own invoice sent to a customer)
@@ -1331,6 +1352,7 @@ CRITICAL RULES:
 2. You MUST only generate a read-only SELECT statement.
 3. IMPORTANT: Audit status lives exclusively in the `status` enum and `sa_alerts` column. There is no `audit_flags`, `audit_logs`, or `audit_reasons` table. Do not hallucinate columns like `is_flagged_for_audit`.
 4. IMPORTANT: a question about a vendor/bill received ("who do I owe", "what did I pay X") means flow_direction='INBOUND', filtered by vendor_name. A question about a customer/invoice sent ("who owes me", "what did I bill X") means flow_direction='OUTBOUND', filtered by customer_name. Never mix the two columns for the wrong direction.
+4a. AMBIGUOUS-DIRECTION PHRASING WITH A NAMED ENTITY ("has the Titan Steel Distributors invoice been paid", "when is the Redwood Facilities Group invoice due", "what's the status of the Acme invoice"): found live, 2026-08-19 (US tenant test) -- this phrasing carries no "owe"/"owed to me" cue at all, so guessing a direction (defaulting to whichever direction recent conversation happened to be about) can search the WRONG column entirely and report a real, existing invoice as "not found". Titan Steel Distributors is a real INBOUND vendor; a query that guessed OUTBOUND and filtered customer_name against that name correctly found zero rows -- not because the invoice doesn't exist, but because the guess was wrong. When a question names a specific counterparty and the phrasing itself does not clearly signal which direction (no explicit "I owe" / "owes me" framing), do NOT commit to a single guessed direction. Check both: `((flow_direction='INBOUND' AND LOWER(vendor_name) LIKE LOWER('%<name>%')) OR (flow_direction='OUTBOUND' AND LOWER(customer_name) LIKE LOWER('%<name>%')))`. Whichever side actually has a matching row tells you the real direction; a "not found" answer must mean the name matches neither column, not that one guessed direction came up empty.
 5. For a combined/net question comparing both directions in one answer (e.g. "how much do I owe vs. how much is owed to me"), use conditional aggregation in one query rather than two separate ones, for example:
 SELECT
   SUM(CASE WHEN flow_direction='INBOUND'  THEN grand_total ELSE 0 END) AS total_owed_by_us,
@@ -1350,6 +1372,7 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
     OR LOWER(vendor_name) LIKE LOWER('%<phrase>%')
     OR LOWER(customer_name) LIKE LOWER('%<phrase>%'))
    Note the CAST on the two JSONB columns and its absence on the two VARCHAR ones -- this exact shape, per rule 6(a). Checking only item descriptions (or only tags) is a bug: it silently misses real matches that qualify through one of the other columns.
+   NOT THIS RULE when the question asks for a dollar amount PER VENDOR/ENTITY for a specific charge type ("which vendors billed us for freight, delivery, or shipping charges, and how much per vendor"): found live, 2026-08-19 (US tenant test) -- this rule's own examples above ("logistics or freight costs") make "freight" look like a 6b trigger word, and the model answered with SUM(grand_total) (whole invoice totals for any invoice merely CONTAINING a matching line) grouped by vendor -- every vendor's figure came back 10-40x too large, because it included every unrelated line and tax on that invoice. "Which invoices relate to X" (this rule, 6b) and "how much did each vendor charge specifically for X" (rule 6d, grouped by vendor -- see its PER VENDOR/CUSTOMER example) are different questions with the same surface words. If the answer must be a dollar figure attributable ONLY to the named charge/product/service (not the whole invoice), that is rule 6d with a GROUP BY, never this rule, no matter how similar the trigger phrase looks to the examples above.
 6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
 {line_item_rule}
 {tax_term_block}
@@ -1448,9 +1471,10 @@ reasoning or how the query was constructed.
 FORMATTING FOR LINE-ITEM EXTRACTION: If the query results list individual un-nested line items (e.g., line_description, line_qty, line_unit_price, line_amount), you MUST format each matching line item exactly in the following format on its own line:
 <line_description>: <line_qty> units × <currency> <line_unit_price> = <currency> <line_amount>
 where <currency> is that ROW'S OWN `currency` value (e.g. "Training & Onboarding: 40 units × USD 732.57 = USD 29,302.94", or "Onboarding pack: 2 units × INR 50.00 = INR 100.00"). Never hardcode '$' or any other symbol here -- results can span multiple currencies in one table and each row must carry its own. If exactly one line item matches, emit only that one line with no total underneath. If more than one matches, list each one this way and add a total underneath per currency (never one total added across different currencies -- no exchange rate is available).
+EXCEPTION -- reconciliation/mismatch questions: the template above asserts an equation (qty × price = amount) that is only true when the row's stored `line_amount` actually equals qty × unit_price. Found live, 2026-08-19 (US tenant test): asked to check whether a line reconciles, the query results included both the stored amount and a separately computed one (e.g. `computed_line_amount`, `line_amount_matches`) precisely because they DIFFER -- and applying the "=" template anyway printed a false equation ("5000.00 units × USD 0.08 = USD 420.00", when 5000 × 0.08 is actually 400.00, not 420.00). If the query results contain a computed/expected amount that does NOT equal the stored `line_amount` for a row, do NOT use the "=" template for that row -- it would state a false equation. Instead say both figures plainly and name the mismatch: "<line_description>: printed amount <currency> <line_amount>, but <line_qty> × <currency> <line_unit_price> computes to <currency> <computed_amount> -- a <currency> <difference> mismatch." Only use the "=" template when the stored amount and the computed one genuinely agree (the normal case).
 
 CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) returned in the results. Never default to '$' if the results show a different currency or if the currency is specified.
-
+{payment_status_block}
 Results:
 {db_result}
 {rules_block}{chat_rules_block}

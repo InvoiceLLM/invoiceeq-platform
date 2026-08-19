@@ -1040,3 +1040,120 @@ def test_execute_generated_sql_renders_json_columns_as_json_not_python_repr():
     assert '"description": "Ergonomic Chair"' in table
     assert '"unit_price": null' in table  # JSON null, not Python's None
 
+
+# ── Live regressions found in the US tenant live test, 2026-08-19 ──────────
+
+
+def test_execute_generated_sql_rounds_plain_float_not_just_decimal():
+    """Live bug (US tenant test, Q2 and Q11): the Decimal-rounding fix only
+    checks isinstance(val, Decimal), which catches Postgres NUMERIC but not a
+    computed division (a tax-rate calculation) or a SUM() over FLOAT columns
+    -- both come back as plain Python float with the same garbage-digit
+    symptom (7.249887640449439, 5436.3099999999995), uncaught by that fix."""
+    mock_result = MagicMock()
+    mock_result.keys.return_value = ["vendor_name", "sales_tax_rate_percent", "combined_grand_total"]
+    mock_result.fetchall.return_value = [
+        ("Blue Ridge Logistics", 7.249887640449439, 5436.3099999999995),
+    ]
+    mock_session = MagicMock()
+    mock_session.execute.return_value = mock_result
+
+    sql = f"SELECT vendor_name, sales_tax_rate_percent, combined_grand_total FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'"
+    table = query_agent.execute_generated_sql(sql, str(MOCK_TENANT_ID), mock_session)
+
+    assert "7.249887640449439" not in table
+    assert "5436.3099999999995" not in table
+    assert "7.25" in table
+    assert "5436.31" in table
+
+
+def test_line_item_formatting_rule_forbids_false_equation_on_mismatch(db_session):
+    """Live bug (US tenant test, Q4 and Q10, twice): asked to reconcile a
+    line item where the printed amount ($420.00) doesn't match qty x price
+    ($400.00), the reply said "5000.00 units x USD 0.08 = USD 420.00" --
+    arithmetically false, since 5000 x 0.08 is 400, not 420. The formatting
+    template blindly plugged the stored (wrong) amount into an "=" equation
+    regardless of whether it actually equals qty x price."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "does this invoice reconcile", uuid4(), surfaced_rows=1)
+    prompt = llm.summary_prompts[0]  # the formatting rule lives in the summary/synthesis prompt, not SQL-generation
+    assert "EXCEPTION -- reconciliation/mismatch questions" in prompt
+    assert "does NOT equal the stored `line_amount`" in prompt
+    assert "false equation" in prompt
+
+
+def test_rule_4a_handles_ambiguous_direction_for_named_entity(db_session):
+    """Live bug (US tenant test, Q14 and Q15, twice, same session): asked
+    "has the Titan Steel Distributors invoice been paid" and "when is the
+    Redwood Facilities Group invoice due" -- both are real INBOUND vendors
+    (confirmed elsewhere in the same test run), but the generated SQL
+    guessed OUTBOUND/customer_name for both, so a real, existing invoice
+    was reported as not found. Neither question contains an "I owe"/"owed
+    to me" cue, so rule 4 alone gave the model nothing to disambiguate on."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT status, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "has the Titan Steel Distributors invoice been paid", uuid4())
+    prompt = llm.prompts[0]
+    assert "4a. AMBIGUOUS-DIRECTION PHRASING WITH A NAMED ENTITY" in prompt
+    assert "do NOT commit to a single guessed direction" in prompt
+
+
+def test_rule_6d_has_per_vendor_grouped_total_example(db_session):
+    """Live bug (US tenant test, Q9): "which vendors billed us for freight,
+    delivery, or shipping charges, and how much per vendor" was answered
+    with rule 6b (whole invoice totals for any invoice merely CONTAINING a
+    matching line) instead of rule 6d (sum of just the matching lines,
+    grouped by vendor) -- every vendor's reported figure was 10-40x too
+    large, because it included every unrelated line and tax on that
+    invoice. Both dialect variants need the GROUP BY vendor_name shape as
+    an explicit example, not just the single-total one."""
+    rule_sqlite = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
+    assert "PER VENDOR/CUSTOMER" in rule_sqlite
+    assert "GROUP BY invoice.vendor_name, invoice.currency" in rule_sqlite
+
+    pg_session = MagicMock()
+    pg_session.get_bind.return_value.dialect.name = "postgresql"
+    rule_pg = query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
+    assert "PER VENDOR/CUSTOMER" in rule_pg
+    assert "GROUP BY invoice.vendor_name, invoice.currency" in rule_pg
+
+
+def test_rule_6b_explicitly_carves_out_per_vendor_charge_questions(db_session):
+    """First fix for Q9 (adding a 6d example) did NOT work when live-reverified
+    -- the model still generated SUM(grand_total) whole-invoice totals. Root
+    cause found by reading the generated SQL: rule 6b's OWN example list
+    ("logistics or freight costs") anchors "freight" as a 6b trigger word, so
+    adding an unrelated 6d example elsewhere never had a chance to compete.
+    The real fix has to live inside rule 6b itself, at the point of conflict."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT vendor_name, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "which vendors billed us for freight, delivery, or shipping charges, and how much per vendor", uuid4())
+    prompt = llm.prompts[0]
+    assert "NOT THIS RULE when the question asks for a dollar amount PER VENDOR/ENTITY" in prompt
+    assert "10-40x too large" in prompt
+
+
+def test_payment_status_guardrail_reaches_the_summary_prompt_too(db_session):
+    """Live regression, second attempt (US tenant, Q14 re-verify): the first
+    payment_status_block was injected into system_prompt (SQL generation)
+    only. The SQL came back correct (selected `status` etc.) but the
+    SEPARATE summary_prompt call -- which turns raw rows into English and
+    has no visibility into system_prompt at all -- freely interpreted
+    status=AUDIT_REQUIRED as "not paid" with zero guardrail, live, twice,
+    even after the SQL-generation-side fix was in place. The guardrail has
+    to reach BOTH prompts, since the hallucination happens in the second
+    one, not the first."""
+    llm = _RecordingLLM(
+        [MagicMock(sql=f"SELECT status, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")],
+        summary="Payment status isn't tracked for this INBOUND invoice.",
+    )
+    _run(db_session, llm, "has this invoice been paid", uuid4(), surfaced_rows=1)
+    summary_prompt = llm.summary_prompts[0]
+    assert "STOP AND READ" in summary_prompt
+    assert "payment-status term" in summary_prompt
+    assert "equally false" in summary_prompt.lower()
+
