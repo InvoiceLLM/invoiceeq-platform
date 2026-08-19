@@ -486,6 +486,11 @@ class SupportChatRequest(BaseModel):
 class SupportChatResponse(BaseModel):
     answer: str
     suggest_escalation: bool
+    # BE Gap 254: a plain "no article matched" is not a diagnosed incident, but it
+    # still needs a way to raise a ticket. Kept as a separate flag rather than
+    # overloading `suggest_escalation`, and defaulted so an older FE build that
+    # ignores it behaves exactly as before.
+    low_confidence: bool = False
     escalation_context: dict[str, Any] | None = None
 
 
@@ -506,6 +511,7 @@ def support_chat_assistant(
     return SupportChatResponse(
         answer=result["answer"],
         suggest_escalation=result["suggest_escalation"],
+        low_confidence=result.get("low_confidence", False),
         escalation_context=result.get("escalation_context"),
     )
 

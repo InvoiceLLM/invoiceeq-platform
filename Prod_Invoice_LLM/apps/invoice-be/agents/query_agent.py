@@ -299,6 +299,20 @@ _FROM_INVOICE_TAIL = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Gap 253: the one join shape the companion query below is allowed to keep. Rule
+# 6d's queries ALWAYS carry a join (`LEFT JOIN LATERAL jsonb_array_elements(...)`
+# on Postgres, `LEFT JOIN json_each(...)` on SQLite), so the blanket "any join
+# means give up" bail below made `result_invoice_ids` come back empty for every
+# line-item answer -- silently disabling the FE's "which invoice was wrong?"
+# triage picker (Gap 231) and the Gap 237 step-3 hedge, which needs
+# current_count > 0 to fire at all. This matches the right-hand side of a join
+# and nothing else: any join to a real table, or anything with a subquery, still
+# falls through to the bail.
+_UNNEST_JOIN_RHS = re.compile(
+    r"^\s*(?:lateral\s+)?(?:jsonb_array_elements|jsonb_array_elements_text|json_array_elements|json_each)\s*\(",
+    re.IGNORECASE,
+)
+
 
 def _canonical_uuid(value) -> str | None:
     """Canonical dashed UUID string, or None if this isn't a UUID at all.
@@ -352,6 +366,15 @@ def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_sessio
     predicates as an id-only query. Strictly best-effort and read-only: any
     regex miss, dialect quirk or execution error returns an empty list, which the
     triage API treats as "ask the user which invoice" rather than as "no invoices".
+
+    Gap 253: also covers rule 6d's line-item queries, which are aggregate in the
+    same way (they select the line's own columns, never the invoice's `id`) but
+    additionally carry a `LEFT JOIN LATERAL jsonb_array_elements(...)` /
+    `LEFT JOIN json_each(...)`. The original blanket "any join means give up"
+    check therefore returned an empty snapshot for *every* line-item answer. The
+    un-nest join is now kept in the rebuilt query and de-duplicated with
+    DISTINCT -- it multiplies rows per invoice but never changes which invoices
+    match -- while a join to anything else still bails exactly as before.
     """
     match = _FROM_INVOICE_TAIL.search(sql)
     if not match:
@@ -362,10 +385,22 @@ def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_sessio
     # the safety checks already validated.
     if not re.search(rf"\btenant_id\s*=\s*['\"]?{tenant_id}['\"]?\b", tail, re.IGNORECASE):
         return []
-    if re.search(r"\bjoin\b|\bselect\b|;", tail, re.IGNORECASE):
-        return []  # subquery or join: not safely reconstructible, so don't try
+    if re.search(r"\bselect\b|;", tail, re.IGNORECASE):
+        return []  # subquery: not safely reconstructible, so don't try
 
-    companion = f"SELECT id FROM invoice {tail} LIMIT {MAX_SNAPSHOT_INVOICE_IDS}"
+    # Any join at all used to be an unconditional bail. It still is, with one
+    # exception: a rule 6d line-item un-nest join (see _UNNEST_JOIN_RHS). That
+    # join doesn't change which *invoices* the predicate selects -- it only
+    # explodes each invoice's `items` array into rows -- so keeping it intact and
+    # de-duplicating with DISTINCT reproduces exactly the invoice set behind a
+    # line-item answer. Every join fragment has to be one of those; a single
+    # unrecognised join and we bail as before.
+    join_fragments = re.split(r"\bjoin\b", tail, flags=re.IGNORECASE)[1:]
+    if join_fragments and not all(_UNNEST_JOIN_RHS.match(frag) for frag in join_fragments):
+        return []  # a join to something other than the line-item un-nest
+
+    projection = "DISTINCT invoice.id" if join_fragments else "id"
+    companion = f"SELECT {projection} FROM invoice {tail} LIMIT {MAX_SNAPSHOT_INVOICE_IDS}"
     try:
         result = db_session.execute(text(companion))
         harvested = (_canonical_uuid(row[0]) for row in result.fetchall())
@@ -377,6 +412,94 @@ def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_sessio
         except Exception:
             pass
         return []
+
+
+def _sql_dialect_name(db_session) -> str:
+    """Which SQL engine this request is actually bound to ('postgresql' / 'sqlite').
+
+    Needed at *prompt-build* time, not at execution time. Rules 6/6a/6b/6c could
+    all be written in one portable form (`CAST(... AS TEXT)` parses on both
+    engines), but line-item un-nesting genuinely has no portable spelling --
+    Postgres needs `jsonb_array_elements`/`->>`/`::numeric`, SQLite needs
+    `json_each` plus `item.value ->> 'field'` (the alias names the *table*
+    json_each returns, and the element lives in its `value` column). So rule 6d
+    teaches exactly one correct shape: whichever one this engine can run.
+
+    This is the same decision rule 6(a) already settled -- teach the one correct
+    form per engine at prompt-build time, never emit dialect-specific syntax and
+    try to repair it after generation. An earlier draft of this gap's fix did the
+    latter (a regex rewriter inside execute_generated_sql translating Postgres
+    JSONB syntax to SQLite at execution time); it was removed rather than
+    patched, because it is the wrong mechanism: it can only ever cover the exact
+    syntactic shapes it was written against, and the model is free to emit any
+    equivalent one.
+
+    Defaults to 'postgresql' if the bind can't be inspected -- that is the
+    production engine, so an unknown bind should get the production rule rather
+    than the test engine's.
+    """
+    try:
+        bind = db_session.get_bind()
+        return (bind.dialect.name or "").lower()
+    except Exception as e:
+        logger.warning("Could not determine SQL dialect, assuming postgresql: %s", e)
+        return "postgresql"
+
+
+# Rule 6d, one variant per engine (see _sql_dialect_name). Both teach the same
+# four things, differing only in spelling:
+#   1. un-nest `items` into one row per line item,
+#   2. guard against a NULL / non-array `items` value so one bad row can't abort
+#      the whole tenant's query (`items` is nullable and LLM-populated -- verified
+#      by hand: SQLite's json_each() raises "malformed JSON" on a non-JSON value
+#      and Postgres' jsonb_array_elements() raises "cannot extract elements from
+#      a scalar" -- and an abort here burns an attempt of the 3-try repair loop),
+#   3. select `currency` alongside the monetary columns (rule 7),
+#   4. filter on the un-nested item's own description, not the invoice's text blob.
+_LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is PostgreSQL -- use exactly the syntax below). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
+Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and jsonb_array_elements() raises on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
+FROM invoice
+LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true
+Extract each line item's fields with PostgreSQL JSONB operators:
+- Description: item->>'description'
+- Quantity: (item->>'quantity')::numeric
+- Unit Price: (item->>'unit_price')::numeric
+- Amount: (item->>'amount')::numeric
+Always filter on the UN-NESTED item's own description (never on CAST(items AS TEXT), which would match the whole invoice): LOWER(item->>'description') LIKE LOWER('%<phrase>%'). Build `<phrase>` by rule 6c's rules (whole phrase, generic spend words stripped).
+Per rule 7 you MUST also select `currency`. Do NOT select `invoice.id` -- raw UUIDs in the results table are noise for the user; the backend recovers row identity separately.
+To list matching lines:
+SELECT invoice.invoice_number, invoice.currency, item->>'description' AS line_description, (item->>'quantity')::numeric AS line_qty, (item->>'unit_price')::numeric AS line_unit_price, (item->>'amount')::numeric AS line_amount FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '{tenant_id}' AND LOWER(item->>'description') LIKE LOWER('%training%')
+To total matching lines (only when the user asks for a total/sum across lines):
+SELECT SUM((item->>'amount')::numeric) AS total_line_amount, invoice.currency FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '{tenant_id}' AND LOWER(item->>'description') LIKE LOWER('%training%') GROUP BY invoice.currency
+Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
+
+_LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
+Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and json_each() raises "malformed JSON" on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
+FROM invoice
+LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1
+`json_each(...) AS item` aliases the TABLE json_each returns, not the element -- the element itself is in its `value` column, so every field extraction goes through `item.value`:
+- Description: item.value ->> 'description'
+- Quantity: item.value ->> 'quantity'
+- Unit Price: item.value ->> 'unit_price'
+- Amount: item.value ->> 'amount'
+The `->>` operator is native SQLite (3.38+) and already returns a usable SQL number for JSON numbers -- do NOT add a cast.
+Always filter on the UN-NESTED item's own description (never on CAST(items AS TEXT), which would match the whole invoice): LOWER(item.value ->> 'description') LIKE LOWER('%<phrase>%'). Build `<phrase>` by rule 6c's rules (whole phrase, generic spend words stripped).
+Per rule 7 you MUST also select `currency`. Do NOT select `invoice.id` -- raw UUIDs in the results table are noise for the user; the backend recovers row identity separately.
+To list matching lines:
+SELECT invoice.invoice_number, invoice.currency, item.value ->> 'description' AS line_description, item.value ->> 'quantity' AS line_qty, item.value ->> 'unit_price' AS line_unit_price, item.value ->> 'amount' AS line_amount FROM invoice LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1 WHERE tenant_id = '{tenant_id}' AND LOWER(item.value ->> 'description') LIKE LOWER('%training%')
+To total matching lines (only when the user asks for a total/sum across lines):
+SELECT SUM(item.value ->> 'amount') AS total_line_amount, invoice.currency FROM invoice LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1 WHERE tenant_id = '{tenant_id}' AND LOWER(item.value ->> 'description') LIKE LOWER('%training%') GROUP BY invoice.currency
+Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
+
+
+def _line_item_rule(tenant_id: str, db_session) -> str:
+    """Rule 6d, rendered for the engine that is actually going to run the query."""
+    template = (
+        _LINE_ITEM_RULE_SQLITE
+        if _sql_dialect_name(db_session) == "sqlite"
+        else _LINE_ITEM_RULE_POSTGRES
+    )
+    return template.replace("{tenant_id}", str(tenant_id))
 
 
 def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list | None = None) -> str:
@@ -391,6 +514,7 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
         sql_clean = sql_clean[3:].strip()
 
     sql_clean = _normalize_string_equality(sql_clean)
+
     sql_lower = sql_clean.lower()
     
     # Safety Check 1: Mutating keywords (word-boundary match, not substring — a bare substring
@@ -992,6 +1116,11 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
             if prior_turn_sql
             else ""
         )
+        # Gap 253: rule 6d is the one rule with no portable spelling, so it is
+        # built for whichever engine this request is bound to -- see
+        # _sql_dialect_name() for why this is resolved here and not repaired
+        # after generation.
+        line_item_rule = _line_item_rule(tenant_id, db_session)
         system_prompt = f"""You are a database SQL query expert.
 Given the 'invoice' table schema:
 - id: UUID (Primary Key)
@@ -1041,10 +1170,11 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
     OR LOWER(customer_name) LIKE LOWER('%<phrase>%'))
    Note the CAST on the two JSONB columns and its absence on the two VARCHAR ones -- this exact shape, per rule 6(a). Checking only item descriptions (or only tags) is a bug: it silently misses real matches that qualify through one of the other columns.
 6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
+{line_item_rule}
 7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
-9. FOLLOW-UP QUESTIONS THAT NARROW A PREVIOUS ANSWER ("explain the 3 USD ones", "which of those are overdue", "show me their line items"): if a PREVIOUS TURN'S SQL block appears below, that is the exact query that produced the answer the user is referring to. Start from ITS WHERE clause VERBATIM and only ADD the new restriction with AND. Do NOT re-derive the predicate from the conversation text, and do NOT drop, merge or simplify away any branch of an existing OR group -- each branch is there because some real row matches ONLY through it, so removing one silently deletes rows from the very answer the user asked you to expand on. The SELECT list is yours to change freely (e.g. from an aggregate to per-invoice detail columns); only the WHERE clause is fixed. If the follow-up is about a genuinely different subject rather than a narrowing of the previous answer, ignore the previous SQL and compose a fresh query as normal.
+9. FOLLOW-UP QUESTIONS THAT NARROW A PREVIOUS ANSWER ("explain the 3 USD ones", "which of those are overdue", "show me their line items"): if a PREVIOUS TURN'S SQL block appears below, that is the exact query that produced the answer the user is referring to. Start from ITS WHERE clause VERBATIM and only ADD the new restriction with AND. Do NOT re-derive the predicate from the conversation text, and do NOT drop, merge or simplify away any branch of an existing OR group -- each branch is there because some real row matches ONLY through it, so removing one silently deletes rows from the very answer the user asked you to expand on. The SELECT list is yours to change freely (e.g. from an aggregate to per-invoice detail columns); only the WHERE clause is fixed. EXCEPTION -- the FROM clause: if the follow-up narrows from an invoice-level answer down to a specific LINE ITEM's own figure (e.g. after "what's the total on invoice X", the user asks "I want the amount only for training and onboarding from the total invoice"), you MUST add rule 6d's line-item join to the FROM clause and switch the SELECT to the line's own columns -- reusing the previous turn's invoice-level FROM would return the whole grand_total again, which is exactly the wrong answer. Adding that join is the ONLY FROM change allowed here: every tenant/invoice-identifying predicate from the previous WHERE clause still carries over verbatim, and you then AND on the new line-item description filter. If the follow-up is about a genuinely different subject rather than a narrowing of the previous answer, ignore the previous SQL and compose a fresh query as normal.
 
 {tenant_stats}
 {rules_block}{chat_rules_block}
@@ -1130,6 +1260,10 @@ Conversation History for Context:
 Do not restate every row -- the full results table is
 shown to the user separately right after your summary. Do not explain your
 reasoning or how the query was constructed.
+
+FORMATTING FOR LINE-ITEM EXTRACTION: If the query results list individual un-nested line items (e.g., line_description, line_qty, line_unit_price, line_amount), you MUST format each matching line item exactly in the following format on its own line:
+<line_description>: <line_qty> units × <currency> <line_unit_price> = <currency> <line_amount>
+where <currency> is that ROW'S OWN `currency` value (e.g. "Training & Onboarding: 40 units × USD 732.57 = USD 29,302.94", or "Onboarding pack: 2 units × INR 50.00 = INR 100.00"). Never hardcode '$' or any other symbol here -- results can span multiple currencies in one table and each row must carry its own. If exactly one line item matches, emit only that one line with no total underneath. If more than one matches, list each one this way and add a total underneath per currency (never one total added across different currencies -- no exchange rate is available).
 
 CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) returned in the results. Never default to '$' if the results show a different currency or if the currency is specified.
 

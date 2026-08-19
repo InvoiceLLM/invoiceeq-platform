@@ -9,6 +9,7 @@ import {
   Ticket,
   AlertTriangle,
   ArrowRight,
+  HelpCircle,
   Shield,
 } from "lucide-react";
 import { SupportTicketModal, type EscalationData } from "./SupportTicketModal";
@@ -18,6 +19,14 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   suggestEscalation?: boolean;
+  /**
+   * BE Gap 254: "no help article matched", which is not the same claim as
+   * `suggestEscalation` ("a real incident was detected"). Kept as its own flag
+   * so a plain miss renders a neutral affordance instead of the red incident
+   * card — while still leaving a way to raise a ticket, which setting
+   * `suggest_escalation=False` on the backend fallback would otherwise remove.
+   */
+  lowConfidence?: boolean;
   escalationContext?: {
     category?: string;
     priority?: "LOW" | "NORMAL" | "URGENT";
@@ -98,6 +107,7 @@ export function SupportChatWindow() {
           role: "assistant",
           content: data.answer || "I received your request.",
           suggestEscalation: !!data.suggest_escalation,
+          lowConfidence: !!data.low_confidence,
           escalationContext: data.escalation_context,
         },
       ]);
@@ -231,6 +241,33 @@ export function SupportChatWindow() {
                         <Ticket className="w-3.5 h-3.5" />
                         <span>Raise Support Ticket from this Issue</span>
                         <ArrowRight className="w-3 h-3 ml-1 opacity-70" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Neutral low-confidence card (BE Gap 254). Deliberately not
+                      the escalation card: no red framing, no "Issue Diagnosis"
+                      wording, nothing implying an incident was detected — just
+                      the ticket affordance an unanswered question still needs. */}
+                  {!isUser && !m.suggestEscalation && m.lowConfidence && (
+                    <div
+                      id="low-confidence-card"
+                      className="mt-3 p-3.5 rounded-xl bg-[#0F1629]/70 border border-[#222D3D] space-y-2.5"
+                    >
+                      <div className="flex items-center gap-2 text-slate-300 font-semibold text-xs">
+                        <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
+                        <span>Didn&apos;t find an answer?</span>
+                      </div>
+                      <p className="text-[11.5px] text-slate-400">
+                        Our support team can pick this up directly — your question will be included.
+                      </p>
+                      <button
+                        id="low-confidence-ticket-btn"
+                        onClick={() => handleOpenEscalation(m)}
+                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#1E293B] hover:bg-[#26364d] border border-[#2E3D52] text-slate-200 text-xs font-semibold rounded-lg transition-all active:scale-[0.99]"
+                      >
+                        <Ticket className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Raise a Ticket</span>
                       </button>
                     </div>
                   )}

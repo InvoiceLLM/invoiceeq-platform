@@ -85,6 +85,10 @@ class _RecordingLLM:
         self._sql_results = list(sql_results)
         self._summary = summary
         self.prompts = []
+        # Kept separate from `prompts` on purpose: several tests below assert on
+        # len(llm.prompts) to count SQL-generation round-trips, so the summary
+        # call must not land in the same list.
+        self.summary_prompts = []
 
     def with_structured_output(self, schema):
         outer = self
@@ -99,6 +103,7 @@ class _RecordingLLM:
         return _Structured()
 
     def invoke(self, prompt):
+        self.summary_prompts.append(prompt)
         return MagicMock(content=self._summary)
 
 
@@ -539,3 +544,257 @@ def test_hedge_is_silent_when_no_invoice_ids_could_be_harvested(db_session):
 
     assert result["result_invoice_ids"] == []
     assert "Heads up" not in result["content"]
+
+
+# ── Gap 253: line-item extraction (rule 6d), dialect-conditioned ─────────────
+#
+# The mechanism here is the same one rule 6(a) already settled: teach one correct
+# form per engine at prompt-build time. The first implementation of this gap
+# instead emitted Postgres JSONB syntax unconditionally and regex-translated it
+# to SQLite inside execute_generated_sql(); that rewriter is gone. These tests
+# therefore assert (a) that the prompt carries the live engine's form and NOT the
+# other engine's, and (b) -- the part that actually matters -- that the taught
+# SQL, extracted verbatim from the prompt constant, executes correctly against
+# a real engine. Same shape as test_recommended_cast_form_runs_on_{sqlite,postgres}.
+
+_LINE_ITEM_SEED = [
+    {"description": "Cloud Storage", "quantity": 1, "unit_price": 765.36, "amount": 765.36},
+    {"description": "Training & Onboarding", "quantity": 40, "unit_price": 732.5735, "amount": 29302.94},
+]
+
+
+def _taught_sql(rule_text: str, marker: str) -> str:
+    """The SQL example that immediately follows `marker` in a rule 6d constant.
+
+    Pulled out of the constant rather than re-typed, so these tests execute
+    literally the text the model is shown -- a divergence between what is taught
+    and what is tested is exactly the failure mode this gap already had once.
+    """
+    lines = rule_text.splitlines()
+    idx = next(i for i, line in enumerate(lines) if marker in line)
+    return lines[idx + 1]
+
+
+def test_line_item_rule_teaches_only_the_live_engines_dialect(db_session):
+    """The prompt must not offer the model syntax the bound engine cannot parse.
+
+    This fixture's session is SQLite, so rule 6d must be the json_each form --
+    and must NOT mention jsonb_array_elements / LATERAL / ::numeric, all of
+    which SQLite rejects outright ("near LATERAL: syntax error",
+    "unrecognized token: :").
+    """
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "show me the price for training line items", uuid4())
+    prompt = llm.prompts[0]
+
+    assert "6d. LINE-ITEM LEVEL EXTRACTION" in prompt
+    assert "json_each(" in prompt
+    assert "item.value ->> 'description'" in prompt
+    for postgres_only in ("jsonb_array_elements", "LATERAL", "::numeric", "::jsonb"):
+        assert postgres_only not in prompt, f"SQLite prompt still shows Postgres-only {postgres_only!r}"
+
+
+def test_postgres_variant_of_rule_6d_is_the_one_built_for_a_postgres_bind():
+    """The mirror of the above, without needing a live Postgres: the Postgres
+    branch is selected by dialect name and carries the Postgres spelling."""
+    pg_session = MagicMock()
+    pg_session.get_bind.return_value.dialect.name = "postgresql"
+    rule = query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
+
+    assert "jsonb_array_elements" in rule
+    assert "LEFT JOIN LATERAL" in rule
+    assert "json_each" not in rule
+    # An unreadable bind must fall back to the production engine, not the test one.
+    broken = MagicMock()
+    broken.get_bind.side_effect = RuntimeError("no bind")
+    assert "jsonb_array_elements" in query_agent._line_item_rule(str(MOCK_TENANT_ID), broken)
+
+
+def test_rule_6d_guards_against_null_or_non_array_items(db_session):
+    """`items` is nullable and machine-populated. Un-nesting it unguarded aborts
+    the whole tenant's query on a single bad row (confirmed by hand: SQLite
+    raises `malformed JSON`, Postgres raises on a non-array), and burns an
+    attempt of the 3-try repair loop each time."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "what is the training amount", uuid4())
+    assert "json_valid(items) AND json_type(items) = 'array'" in llm.prompts[0]
+
+    pg_session = MagicMock()
+    pg_session.get_bind.return_value.dialect.name = "postgresql"
+    assert "jsonb_typeof(items) = 'array'" in query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
+
+
+def test_rule_6d_selects_currency_per_rule_7(db_session):
+    """Rule 7 requires `currency` alongside any monetary column; rule 6d's own
+    examples have to obey it, or every line-item answer is an unlabelled number
+    (FE Gap 183 is on file for exactly that)."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "what is the training amount", uuid4())
+    detail = _taught_sql(llm.prompts[0], "To list matching lines:")
+    aggregate = _taught_sql(llm.prompts[0], "To total matching lines")
+    assert "invoice.currency" in detail
+    assert "invoice.currency" in aggregate
+    assert "GROUP BY invoice.currency" in aggregate
+
+
+def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(db_session):
+    """The gap's own reported case, executed rather than asserted: an invoice
+    whose Training & Onboarding line is 29,302.94 inside a 35,480.59 grand total.
+    The taught query must return 29,302.94 and must not surface the unrelated
+    Cloud Storage line -- returning the grand total was the reported defect.
+
+    The two junk rows are the Fix-2 guard under test: before the CASE guard,
+    either of them aborted the entire query with `malformed JSON`.
+
+    Tenant literal is `.hex` because SQLite stores UUID columns dashless; the
+    dashed form the generated SQL carries in production is Postgres' shape and
+    is covered by the isolation tests, not this one.
+    """
+    _seed_invoice(db_session, invoice_number="US-1", grand_total=35480.59, items=_LINE_ITEM_SEED)
+    _seed_invoice(db_session, invoice_number="US-2", grand_total=500.0, items=None)
+    _seed_invoice(db_session, invoice_number="US-3", grand_total=700.0, items=[])
+    # A value that isn't JSON at all -- the ORM can't produce one, but OCR/LLM
+    # extraction writing into a JSON-typed column on an untyped engine can.
+    db_session.exec(
+        text("UPDATE invoice SET items = 'not json at all' WHERE invoice_number = 'US-3'")
+    )
+    db_session.commit()
+
+    rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
+    rows = db_session.exec(text(_taught_sql(rule, "To list matching lines:"))).all()
+
+    assert len(rows) == 1
+    invoice_number, currency, description, qty, unit_price, amount = rows[0]
+    assert (invoice_number, currency, description) == ("US-1", "USD", "Training & Onboarding")
+    assert (qty, unit_price, amount) == (40, 732.5735, 29302.94)
+    assert amount != 35480.59
+
+    total_rows = db_session.exec(text(_taught_sql(rule, "To total matching lines"))).all()
+    assert total_rows == [(29302.94, "USD")]
+
+
+def test_taught_line_item_sql_aggregates_across_invoices_and_currencies(db_session):
+    """The aggregate shape must group by currency, not sum across them (no
+    exchange rate exists -- same reason `_get_tenant_stats_summary` breaks spend
+    out per currency)."""
+    _seed_invoice(db_session, invoice_number="US-1", items=_LINE_ITEM_SEED)
+    _seed_invoice(
+        db_session, invoice_number="US-2",
+        items=[{"description": "Training refresher", "quantity": 2, "unit_price": 100.0, "amount": 200.0}],
+    )
+    _seed_invoice(
+        db_session, invoice_number="IN-1", currency="INR",
+        items=[{"description": "Onboarding training pack", "quantity": 1, "unit_price": 50.0, "amount": 50.0}],
+    )
+
+    rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
+    totals = dict(
+        (currency, total)
+        for total, currency in db_session.exec(text(_taught_sql(rule, "To total matching lines"))).all()
+    )
+    assert totals == {"USD": 29502.94, "INR": 50.0}
+
+
+@pytest.mark.parametrize("marker", ["To list matching lines:", "To total matching lines"])
+def test_taught_line_item_sql_runs_on_postgres(marker):
+    """The engine that actually runs this in production. Same skip-when-absent
+    shape as test_recommended_cast_form_runs_on_postgres -- SQLite cannot catch
+    a `jsonb_array_elements`/`::numeric`/`LATERAL` defect, which is precisely how
+    rule 6's original `LOWER(tags)` bug shipped."""
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        conn = psycopg2.connect(url)
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    pg_session = MagicMock()
+    pg_session.get_bind.return_value.dialect.name = "postgresql"
+    sql = _taught_sql(query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session), marker)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(sql)
+            cur.fetchall()
+        finally:
+            conn.rollback()
+    finally:
+        conn.close()
+
+
+def test_line_item_query_still_yields_a_result_set_snapshot(db_session):
+    """Gap 231's invoice-id snapshot drives the FE's "which invoice was wrong?"
+    triage picker, and the Gap 237 step-3 hedge only fires when it is non-empty.
+    Rule 6d's queries always carry a join, and the companion-query harvester used
+    to bail on the word `join` outright -- so every line-item answer silently
+    came back with an empty snapshot."""
+    invoice = _seed_invoice(db_session, invoice_number="US-1", items=_LINE_ITEM_SEED)
+    _seed_invoice(db_session, invoice_number="US-2", items=[{"description": "Cloud Storage", "amount": 1.0}])
+
+    rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
+    harvested = query_agent._harvest_invoice_ids_via_companion_query(
+        _taught_sql(rule, "To total matching lines"), MOCK_TENANT_ID.hex, db_session
+    )
+    assert harvested == [str(invoice.id)]
+
+
+def test_harvester_still_refuses_a_join_to_a_real_table(db_session):
+    """The un-nest join is whitelisted by shape, not by "contains a join" -- a
+    join to anything else is still unreconstructible and must bail."""
+    sql = (
+        f"SELECT SUM(grand_total) FROM invoice JOIN chat_message ON chat_message.id = invoice.id "
+        f"WHERE tenant_id = '{MOCK_TENANT_ID.hex}'"
+    )
+    assert query_agent._harvest_invoice_ids_via_companion_query(sql, MOCK_TENANT_ID.hex, db_session) == []
+
+
+def test_summary_prompt_formats_line_items_with_the_rows_own_currency(db_session):
+    """FE Gap 183 is on file because a hardcoded `$` was once rendered over
+    mixed-currency data. The line-item format string must take the currency from
+    the row, and must not carry a literal `$` for the model to copy."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT invoice_number, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "what is the training amount", uuid4(), surfaced_rows=1)
+
+    summary_prompt = llm.summary_prompts[0]
+    assert "<line_qty> units × <currency> <line_unit_price> = <currency> <line_amount>" in summary_prompt
+    assert "Never hardcode '$'" in summary_prompt
+    format_section = summary_prompt.split("FORMATTING FOR LINE-ITEM EXTRACTION:")[1].split("CRITICAL CURRENCY RULE")[0]
+    assert "$<" not in format_section and "× $" not in format_section
+
+
+def test_rule_9_authorises_the_line_item_from_change_on_a_narrowing_followup(db_session):
+    """Gap 253's own reported phrasing ("the amount only for training and
+    onboarding from the total invoice") is a narrowing follow-up, so rules 6d and
+    9 fire together. Rule 9 said only the WHERE clause was fixed and said nothing
+    about FROM, which reads as "keep the previous invoice-level FROM" -- i.e.
+    return the grand total again, the exact reported defect."""
+    session_id = uuid4()
+    _seed_turn(
+        db_session, session_id,
+        content="Invoice US-1 totals USD 35,480.59.",
+        sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'",
+    )
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(
+        db_session, llm,
+        "I want the amount only for training and onboarding from the total invoice",
+        session_id,
+    )
+    prompt = llm.prompts[0]
+    assert "EXCEPTION -- the FROM clause" in prompt
+    assert "rule 6d's line-item join" in prompt
+

@@ -12,6 +12,13 @@ When the agent detects:
 It returns `suggest_escalation=True` along with structured `escalation_context`
 (category, priority, subject, error_code) so the UI can present an actionable
 1-click `[ 🎫 Raise Support Ticket from this Issue ]` card.
+
+A plain miss is a third, separate state (BE Gap 254): `suggest_escalation=False`
+with `low_confidence=True`. It used to set `suggest_escalation=True`, which
+rendered an unanswered question in the same red "Issue Diagnosis & Recommended
+Escalation" framing as a genuine detected incident. The two are not the same
+claim, so they no longer share a flag — but a miss still needs *some* way to
+raise a ticket, which is what `low_confidence` drives in the UI.
 """
 from __future__ import annotations
 
@@ -29,7 +36,7 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
     {
         "id": "account_auth",
         "keywords": [
-            "password", "forgot", "login", "reset", "id", "credentials", "mfa",
+            "password", "forgot", "login", "reset", "credentials", "mfa",
             "2fa", "otp", "account", "sign in", "signin", "sso", "clerk", "email change", "profile"
         ],
         "category": "GENERAL",
@@ -112,9 +119,17 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
     },
     {
         "id": "billing",
+        # "payu" and "checkout" are deliberately NOT keywords here (Gap 254).
+        # KB topics are matched before ERROR_TRIGGERS and return early, so either
+        # of them made `ERR_PAYU_BILLING_FAILURE` unreachable: "payu error on
+        # checkout", "my payment failed at checkout" and "checkout crash" all
+        # returned the pricing article instead of the payment-failure
+        # troubleshooting card. Pre-existing bug, not introduced by Gap 254's
+        # topic expansion; see test_error_triggers_are_not_shadowed_by_kb_keywords
+        # for the standing screen that keeps it from coming back.
         "keywords": [
-            "billing", "plan", "pricing", "payu", "pro", "upgrade", "subscription",
-            "checkout", "quota", "50 invoices", "invoice limit", "card"
+            "billing", "plan", "pricing", "pro", "upgrade", "subscription",
+            "quota", "50 invoices", "invoice limit", "card"
         ],
         "category": "BILLING",
         "title": "Subscriptions & Billing",
@@ -128,8 +143,14 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
     },
     {
         "id": "export_reports",
+        # "data" was a keyword here until Gap 254. Word-boundary matching does
+        # nothing for it -- it is a genuine whole word -- so "is my data
+        # encrypted at rest?" tied 1-1 against `security_retention` on hit count
+        # and Python's stable sort handed the win to whichever topic sits earlier
+        # in this list, returning the CSV-export guide for a security question.
+        # Too generic to keep; the seven below still cover the topic fully.
         "keywords": [
-            "export", "download", "csv", "excel", "json", "report", "analytics", "data"
+            "export", "download", "csv", "excel", "json", "report", "analytics"
         ],
         "category": "GENERAL",
         "title": "Exporting Data & Reports",
@@ -137,6 +158,90 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
             "### Exporting Invoices & Reports\n\n"
             "1. **From Dashboard / Invoices**: Navigate to `/invoices`, select the invoices you wish to export, and click **Export CSV** or **Export JSON** from the top actions bar.\n"
             "2. **Auditor Summary**: Filter by status (`PAID`, `REJECTED`, `AUDIT_REQUIRED`) to export audit logs with reconciliation notes."
+        ),
+    },
+    {
+        "id": "ingestion_upload",
+        "keywords": [
+            "upload", "ingest", "import", "bulk", "formats", "pdf", "limit", "size", "pages"
+        ],
+        "category": "TECHNICAL_SUPPORT",
+        "title": "Uploading & Ingestion Limits",
+        "guidance": (
+            "### Uploading & Ingestion Limits\n\n"
+            "1. **Supported Formats**: We support PDF documents (both vector and scanned OCR).\n"
+            "2. **Size Limits**: Individual files must be under 25 MB. For bulk uploads, limit batches to 100 pages total to prevent timeouts.\n"
+            "3. **How to Ingest**: Upload directly via the dashboard **'Upload'** button, or send/forward files to your tenant's custom ingestion email address found in `/settings/service-flow`."
+        ),
+    },
+    {
+        "id": "invoice_statuses",
+        "keywords": [
+            "status", "lifecycle", "processing", "audit_required", "audit required", "verified",
+            "needs_review", "needs review", "sent", "paid"
+        ],
+        "category": "TECHNICAL_SUPPORT",
+        "title": "Understanding Invoice Statuses",
+        "guidance": (
+            "### Understanding Invoice Statuses\n\n"
+            "Each invoice in the system flows through a structured lifecycle:\n\n"
+            "- **Inbound (Received Bills)**:\n"
+            "  - `PROCESSING`: The file is undergoing OCR parsing and AI extraction.\n"
+            "  - `AUDIT_REQUIRED`: Flagged by compliance rules (e.g. total mismatch or duplicate check) and requires manual verification.\n"
+            "  - `COMPLETED`: Successfully extracted and verified with no unresolved blocker alerts.\n\n"
+            "- **Outbound (Sent Invoices)**:\n"
+            "  - `NEEDS_REVIEW`: Awaiting final check before sending.\n"
+            "  - `VERIFIED` / `SENT`: Validated and dispatched to the customer.\n"
+            "  - `PAID`: Marked as settled."
+        ),
+    },
+    {
+        "id": "dashboard_analytics",
+        "keywords": [
+            "dashboard", "analytics", "graph", "chart", "reports", "spend", "trend", "metrics", "summary"
+        ],
+        "category": "GENERAL",
+        "title": "Dashboard & Analytics Overview",
+        "guidance": (
+            "### Dashboard & Analytics Overview\n\n"
+            "The main dashboard provides real-time financial visibility and operations metrics:\n\n"
+            "1. **Metrics Summary**: View total invoices processed, distinct vendor count, and aggregate spend broken down by currency.\n"
+            "2. **Trend Analytics**: Visual graphs show month-over-month spend patterns, AP/AR flow comparisons, and processing speed metrics.\n"
+            "3. **Auditor Queue Load**: Track outstanding `AUDIT_REQUIRED` queues and processing throughput metrics."
+        ),
+    },
+    {
+        "id": "user_management",
+        "keywords": [
+            "invite", "user", "member", "team", "permission", "role", "admin", "remove user", "delete user"
+        ],
+        "category": "GENERAL",
+        "title": "User Management & Permissions",
+        "guidance": (
+            "### User Management & Permissions\n\n"
+            "Manage your organisation's team members and access control:\n\n"
+            "1. **Access Settings**: Go to `/settings/organisation` (Admin privileges required).\n"
+            "2. **Inviting Members**: Click **Invite User**, enter their email address, and select a role (`Admin`, `Auditor`, or `Viewer`). An invite link will be sent via Clerk.\n"
+            "3. **Role Capabilities**:\n"
+            "   - **Admin**: Full access to billing, user invites, webhooks, and AI Trainer.\n"
+            "   - **Auditor**: Can edit, verify, approve, and reject invoices in the Auditor console.\n"
+            "   - **Viewer**: Read-only access to lists, details, and reports."
+        ),
+    },
+    {
+        "id": "security_retention",
+        "keywords": [
+            "security", "encryption", "retention", "gdpr", "compliance", "data security", "storage",
+            "encrypt", "at rest", "tls"
+        ],
+        "category": "GENERAL",
+        "title": "Data Security & Retention Compliance",
+        "guidance": (
+            "### Data Security & Retention Compliance\n\n"
+            "Your data security and compliance are built into our architecture:\n\n"
+            "1. **Encryption**: All invoice documents and extracted metadata are encrypted at rest using AES-256 (Azure Managed Keys) and in transit using TLS 1.3.\n"
+            "2. **Data Isolation**: Multi-tenant database schema isolation ensures that your invoices are strictly private to your Clerk Organization context.\n"
+            "3. **Retention Policy**: Inbound files and audit history are retained in storage for 7 years to meet standard tax audit requirements, unless a custom deletion/retention window is configured for your tenant."
         ),
     },
 ]
@@ -190,6 +295,33 @@ ERROR_TRIGGERS: list[dict[str, Any]] = [
 # Core Evaluation Function
 # ---------------------------------------------------------------------------
 
+MIN_KEYWORD_LENGTH = 3
+
+
+def _score_topic(topic: dict[str, Any], lower_query: str) -> tuple[int, int]:
+    """(number of keywords matched, total length of those keywords).
+
+    The second element is the tie-break, and it exists because hit count alone
+    is not a confidence measure (Gap 254): a topic can win on one very generic
+    single-word hit while a topic with a longer, more specific phrase match ties
+    it and loses only because it sits later in `KNOWLEDGE_TOPICS`. Total matched
+    length is a cheap proxy for specificity -- `"at rest"`/`"data security"` beat
+    a bare `"data"`/`"report"` -- and it removes the de-facto "first topic in the
+    list wins every tie" behaviour that made `account_auth` the wrong-answer
+    default.
+
+    Word boundaries, not substring: `kw in lower_query` matched `"id"` inside
+    "confidence"/"provide" and `"pro"` inside "processing". `MIN_KEYWORD_LENGTH`
+    keeps a 1-2 character keyword from being added back later and silently
+    reintroducing that class.
+    """
+    matched = [
+        kw for kw in topic["keywords"]
+        if len(kw) >= MIN_KEYWORD_LENGTH and re.search(rf"\b{re.escape(kw)}\b", lower_query)
+    ]
+    return len(matched), sum(len(kw) for kw in matched)
+
+
 def evaluate_support_query(
     message: str,
     history: list[dict[str, Any]] | None = None,
@@ -197,24 +329,36 @@ def evaluate_support_query(
     """
     Evaluates a user query and returns:
       - answer: Markdown guidance for the user with solutions first
-      - suggest_escalation: bool
+      - suggest_escalation: bool — a real incident was detected, or the user
+        explicitly asked for a human. Drives the red "Issue Diagnosis" card.
+      - low_confidence: bool — no article matched at all. Drives a neutral
+        "didn't find an answer, raise a ticket?" affordance in the UI, which is
+        deliberately NOT the same thing as a diagnosed incident.
       - escalation_context: dict with category, priority, subject, error_code (or None)
+
+    `history` is accepted and deliberately unread. Resolving a follow-up
+    ("how do I do that?") against the previously matched topic needs a topic id
+    echoed back in `SupportChatResponse` and stored by the FE; what arrives here
+    is only `{role, content}` pairs, and re-matching against the assistant's own
+    prior guidance text matches wrongly because the guidance blobs are keyword
+    dense. Descoped rather than approximated — see Gap 256 in the BE tracker.
     """
     clean_query = (message or "").strip()
     if not clean_query:
         return {
             "answer": "Hello! I am SAGE, your AI Support Assistant. Ask me anything about using Invoice AI, resetting passwords, configuring rules, or resolving errors.",
             "suggest_escalation": False,
+            "low_confidence": False,
             "escalation_context": None,
         }
 
     lower_query = clean_query.lower()
 
-    # 1. Match against Knowledge Base Topics FIRST (so questions like password reset give direct solutions)
-    matched_topics: list[tuple[int, dict[str, Any]]] = []
+    # 1. Match against Knowledge Base Topics FIRST with word boundaries & length constraints
+    matched_topics: list[tuple[tuple[int, int], dict[str, Any]]] = []
     for topic in KNOWLEDGE_TOPICS:
-        score = sum(1 for kw in topic["keywords"] if kw in lower_query)
-        if score > 0:
+        score = _score_topic(topic, lower_query)
+        if score[0] > 0:
             matched_topics.append((score, topic))
 
     if matched_topics:
@@ -223,6 +367,7 @@ def evaluate_support_query(
         return {
             "answer": best_topic["guidance"],
             "suggest_escalation": False,
+            "low_confidence": False,
             "escalation_context": None,
         }
 
@@ -236,6 +381,7 @@ def evaluate_support_query(
                     "to our technical support team using the button below. Your diagnostics will be pre-filled."
                 ),
                 "suggest_escalation": True,
+                "low_confidence": False,
                 "escalation_context": {
                     "category": err["category"],
                     "priority": err["priority"],
@@ -252,6 +398,7 @@ def evaluate_support_query(
                 "Click the **Raise Support Ticket** button below to submit your inquiry directly to `Application@infinevocloud.com`."
             ),
             "suggest_escalation": True,
+            "low_confidence": False,
             "escalation_context": {
                 "category": "TECHNICAL_SUPPORT",
                 "priority": "NORMAL",
@@ -260,17 +407,21 @@ def evaluate_support_query(
             },
         }
 
-    # 4. General fallback: helpful guidance with optional escalation bridge
+    # 4. General fallback: an honest miss. `suggest_escalation` stays False so the
+    # UI does not frame an unanswered question as a diagnosed incident, and
+    # `low_confidence` is set so it can still offer a plain "raise a ticket"
+    # affordance instead of silently offering nothing (see SupportChatWindow.tsx).
     return {
         "answer": (
-            "Here is how you can resolve this or find more details:\n\n"
+            "I couldn't find a specific help article matching your question. Here is where you can look:\n\n"
             "1. **Explore the Knowledge Base Guides tab** above for step-by-step illustrated walkthroughs on **AI Trainer Rules**, **Auditor Console**, and **Connectors**.\n"
             "2. **Check App Settings**: Review your account and organisation settings in `/settings`.\n\n"
-            "If you need personalized assistance from our engineering team, click below to raise a support ticket."
+            "If you still need help, feel free to ask to speak to support or request a ticket, and I will connect you."
         ),
-        "suggest_escalation": True,
+        "suggest_escalation": False,
+        "low_confidence": True,
         "escalation_context": {
-            "category": "GENERAL",
+            "category": "TECHNICAL_SUPPORT",
             "priority": "NORMAL",
             "subject": clean_query[:80],
             "error_code": None,

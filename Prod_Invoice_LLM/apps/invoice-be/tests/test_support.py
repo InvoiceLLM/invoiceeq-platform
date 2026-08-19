@@ -353,6 +353,140 @@ class TestSupportChatEndpoint:
         res = client.post("/api/v1/support/chat", json={"message": "   "})
         assert res.status_code == 422
 
+    def test_word_boundary_matching_prevents_substring_collisions(self, db_session: Session):
+        """BE Gap 254: Verification that word-boundary matching prevents false positive topic matches."""
+        # 1. "confidence" contains "id" but should NOT match account_auth. It should match auditor (due to confidence keyword).
+        res = client.post("/api/v1/support/chat", json={"message": "What does the confidence score mean?"})
+        assert res.status_code == 200
+        body = res.json()
+        assert "Auditor" in body["answer"] or "auditor" in body["answer"].lower()
+        assert "Password" not in body["answer"]
+
+        # 2. "processing" contains "pro" but should NOT match billing plan info.
+        res = client.post("/api/v1/support/chat", json={"message": "my invoice is stuck in processing"})
+        assert res.status_code == 200
+        body = res.json()
+        assert "Statuses" in body["answer"] or "statuses" in body["answer"].lower()
+        assert "PayU" not in body["answer"]
+
+    def test_new_knowledge_topics(self, db_session: Session):
+        """BE Gap 254: Verification that newly added topics return correct guidance."""
+        # Ingestion / Upload Limits
+        res = client.post("/api/v1/support/chat", json={"message": "What is the maximum upload file size limit?"})
+        assert res.status_code == 200
+        assert "25 MB" in res.json()["answer"]
+
+        # Invoice Statuses
+        res = client.post("/api/v1/support/chat", json={"message": "Tell me about the audit_required status"})
+        assert res.status_code == 200
+        assert "lifecycle" in res.json()["answer"].lower()
+
+        # Dashboard / Analytics
+        res = client.post("/api/v1/support/chat", json={"message": "Show me the dashboard spending trends"})
+        assert res.status_code == 200
+        assert "real-time financial visibility" in res.json()["answer"].lower()
+
+        # User Management
+        res = client.post("/api/v1/support/chat", json={"message": "How do I invite team members?"})
+        assert res.status_code == 200
+        assert "Invite User" in res.json()["answer"]
+
+        # Security & Retention
+        res = client.post("/api/v1/support/chat", json={"message": "data encryption at rest"})
+        assert res.status_code == 200
+        assert "AES-256" in res.json()["answer"]
+
+    def test_generic_keyword_does_not_beat_a_more_specific_topic(self, db_session: Session):
+        """BE Gap 254: "Is my data encrypted at rest?" used to return the CSV
+        export guide. `"data"` is a genuine whole word, so word-boundary matching
+        did nothing for it — export_reports and security_retention tied 1-1 on
+        hit count and the stable sort handed it to whichever came first in the
+        topic list. Fixed by dropping the over-generic keyword and tie-breaking
+        on total matched-keyword length (specificity) rather than list order."""
+        res = client.post("/api/v1/support/chat", json={"message": "Is my data encrypted at rest?"})
+        assert res.status_code == 200
+        body = res.json()
+        assert "AES-256" in body["answer"]
+        assert "Export CSV" not in body["answer"]
+
+    def test_low_confidence_fallback_is_not_framed_as_a_diagnosed_incident(self, db_session: Session):
+        """BE Gap 254: a plain miss must not raise the red "Issue Diagnosis"
+        card — but it must still leave a way to raise a ticket, hence the
+        separate `low_confidence` flag plus a prefillable context (Fix 9)."""
+        res = client.post("/api/v1/support/chat", json={"message": "how do I wash my car?"})
+        assert res.status_code == 200
+        body = res.json()
+        assert "I couldn't find a specific help article" in body["answer"]
+        assert body["suggest_escalation"] is False
+        assert body["low_confidence"] is True
+        assert body["escalation_context"]["priority"] == "NORMAL"
+
+    def test_answered_and_escalated_paths_are_not_low_confidence(self, db_session: Session):
+        """The new flag must mean "no article matched", not "anything at all"."""
+        answered = client.post("/api/v1/support/chat", json={"message": "How do I reset my password?"})
+        assert answered.json()["low_confidence"] is False
+
+        escalated = client.post(
+            "/api/v1/support/chat",
+            json={"message": "We experienced a 504 gateway timeout during batch sync"},
+        )
+        assert escalated.json()["suggest_escalation"] is True
+        assert escalated.json()["low_confidence"] is False
+
+    def test_history_is_accepted_but_deliberately_unread(self, db_session: Session):
+        """BE Gap 254, descoped (see Gap 256): resolving "how do I do that?"
+        against the previously matched topic needs a topic id echoed back in the
+        response and stored by the FE — no such contract exists, and `history` is
+        only `{role, content}` pairs. The request field is still accepted so the
+        FE needs no change, but it must not silently change the answer."""
+        history = [
+            {"role": "user", "content": "How do I invite team members?"},
+            {"role": "assistant", "content": "### User Management & Permissions\n\nGo to settings."},
+        ]
+        with_history = client.post(
+            "/api/v1/support/chat", json={"message": "how do I do that?", "history": history}
+        )
+        without_history = client.post("/api/v1/support/chat", json={"message": "how do I do that?"})
+        assert with_history.status_code == 200
+        assert with_history.json() == without_history.json()
+
+    def test_error_triggers_are_not_shadowed_by_kb_keywords(self, db_session: Session):
+        """BE Gap 254 / Fix 7 — a standing screen, not a one-off assertion.
+
+        KB topics are matched before ERROR_TRIGGERS and return early, so any KB
+        keyword overlapping an error phrasing makes that error path unreachable.
+        That is how `billing`'s `"payu"`/`"checkout"` keywords silently disabled
+        `ERR_PAYU_BILLING_FAILURE`. Any future topic/keyword addition that
+        re-creates the collision fails here rather than in production.
+        """
+        phrasings = {
+            "ERR_GATEWAY_TIMEOUT_504": [
+                "We experienced a 504 gateway timeout during batch sync",
+                "getting a gateway timeout",
+                "batch sync timeout",
+            ],
+            "ERR_INTERNAL_SERVER_500": [
+                "internal server error",
+                "database connection error",
+                "the app keeps throwing a 500",
+            ],
+            "ERR_PAYU_BILLING_FAILURE": [
+                "payu error",
+                "my payment failed",
+                "double charge",
+                "checkout crash",
+            ],
+        }
+        for expected_code, messages in phrasings.items():
+            for message in messages:
+                body = client.post("/api/v1/support/chat", json={"message": message}).json()
+                assert body["suggest_escalation"] is True, f"{message!r} never reached the error path"
+                assert body["escalation_context"]["error_code"] == expected_code, (
+                    f"{message!r} resolved to {body['escalation_context']['error_code']}, "
+                    f"expected {expected_code} — a KB keyword is shadowing this trigger"
+                )
+
+
 
 # ---------------------------------------------------------------------------
 # Security & Hardening Tests (BE Gaps 249, 250, 251)

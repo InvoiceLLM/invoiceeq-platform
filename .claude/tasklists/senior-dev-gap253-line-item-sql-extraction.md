@@ -1,5 +1,33 @@
 # senior-dev — Gap 253: Chat SQL route line-item-level extraction
 
+> **SUPERSEDED, 2026-08-19.** This plan is kept for its scope/boundary analysis,
+> which still holds. Its *approach* does not: step 2(c) below teaches both the
+> Postgres and the SQLite un-nest variant inside one prompt, with no signal for
+> the model to pick between them, which is a coin flip on every line-item
+> question. What actually shipped is **dialect-conditioned prompt text** —
+> `_sql_dialect_name(db_session)` resolves the live engine at prompt-build time
+> and `_line_item_rule()` renders exactly one variant (`_LINE_ITEM_RULE_POSTGRES`
+> or `_LINE_ITEM_RULE_SQLITE`), so the model is never shown syntax the bound
+> engine cannot run. That is the same mechanism rule 6(a) already used for the
+> `CAST(... AS TEXT)` decision, rather than a third pattern.
+>
+> Other deltas from this plan, all recorded in the tracker's Gap 253 entry:
+> * A short-lived intermediate implementation (regex-translating Postgres JSONB
+>   syntax into SQLite inside `execute_generated_sql`) was removed, not patched.
+> * Both variants now carry a **NULL / non-array `items` guard**; without it a
+>   single bad row aborts the query for the whole tenant.
+> * `WITH ORDINALITY` / `line_index` (step 2) was **not** built, so FE steps 7–8
+>   (`Citation.line_index`, `CitationPill` rendering) are **not** done and stay
+>   out of scope. Rule 6d deliberately does not select `invoice.id` either.
+> * Step 4's id-harvester fix landed differently: rather than stripping the
+>   projection, `_harvest_invoice_ids_via_companion_query()` now whitelists the
+>   un-nest join by shape and rebuilds with `SELECT DISTINCT invoice.id`.
+> * Rule 9 gained an explicit FROM-clause exception (a narrowing line-item
+>   follow-up must add the join), which this plan did not anticipate.
+>
+> Live functional-tester follow-up (the "Owner handoff" section at the bottom) is
+> still outstanding and still worth running as written.
+
 Scope: Fix SAGE chat SQL so queries targeting one specific line item return that
 line item's own `amount` (qty × unit_price) rather than silently returning the
 whole invoice's `grand_total` including unrelated lines and tax.
