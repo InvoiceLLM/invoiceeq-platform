@@ -1195,3 +1195,41 @@ def test_rule_11_curates_columns_for_plain_details_questions(db_session):
     assert "Do NOT select `items`, `tags`, or `sa_alerts` by default" in prompt
     assert "short prose summary" in prompt
 
+
+def test_chat_route_declines_off_topic_requests(db_session):
+    """Live finding, 2026-08-19: asked to write code, the CHAT route
+    complied -- its entire system prompt was "you are a helpful assistant
+    for an AI Invoice Processing platform," with no boundary at all. An
+    invoice assistant that writes arbitrary code for whoever's chatting
+    with it is a real product/security problem, not just an off-topic
+    answer."""
+    llm = _RecordingLLM([], summary="I can only help with invoices.")
+    _run(db_session, llm, "write me a python script to reverse a string", uuid4(), classified_route="CHAT")
+    # CHAT route calls llm.invoke() directly (no SQL-generation step), so the
+    # prompt lands in summary_prompts, not prompts -- see _RecordingLLM.invoke().
+    prompt = llm.summary_prompts[0]
+    assert "SCOPE:" in prompt
+    assert "politely decline" in prompt
+    assert "outside what this assistant does" in prompt
+
+
+def test_rule_9_treats_a_new_named_invoice_as_a_fresh_question(db_session):
+    """Live finding, 2026-08-19: "give me the details of invoice TSD-620458"
+    right after an unrelated freight/delivery spend question wrongly carried
+    over that question's WHERE clause fragment onto the new invoice's lookup
+    -- harmless that time only because the named invoice happened to also
+    match, not because the reuse was correct."""
+    session_id = uuid4()
+    _seed_turn(
+        db_session, session_id,
+        content="Three vendors billed freight charges.",
+        sql=f"SELECT vendor_name, item->>'description' FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' AND LOWER(item->>'description') LIKE LOWER('%freight%')",
+    )
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT invoice_number, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "give me the details of invoice TSD-620458", session_id)
+    prompt = llm.prompts[0]
+    assert "A STRONG signal that it is a different subject" in prompt
+    assert "Naming a specific, different invoice/vendor/customer" in prompt
+
