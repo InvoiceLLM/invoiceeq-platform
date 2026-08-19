@@ -21,7 +21,7 @@
       "value": 1
     },
     "openAiCapacity": {
-      "value": 100
+      "value": 300
     },
     "logRetentionInDays": {
       "value": 30
@@ -85,6 +85,12 @@
     },
     "payuMode": {
       "value": "test"
+    },
+    "backendCpu": {
+      "value": "2.0"
+    },
+    "backendMemory": {
+      "value": "4.0Gi"
     }
   }
 }
