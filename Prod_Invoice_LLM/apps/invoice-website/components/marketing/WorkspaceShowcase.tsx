@@ -119,7 +119,7 @@ export function WorkspaceShowcase() {
             <span>Strict Multi-Tenant Row Security</span>
           </div>
 
-          <h2 className="text-2xl sm:text-3xl font-semibold text-white tracking-tight section-title">
+          <h2 className="text-xl sm:text-2xl font-semibold text-white tracking-tight section-title">
             Every Company Gets Their Own{" "}
             <span className="animated-hero-heading block sm:inline">Private Workspace</span>
           </h2>

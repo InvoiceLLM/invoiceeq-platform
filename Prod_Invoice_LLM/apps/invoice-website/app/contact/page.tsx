@@ -272,7 +272,7 @@ export default function ContactPage() {
               <Zap className="w-3 h-3" />
               DIRECT CUSTOMER &amp; ENTERPRISE INQUIRIES
             </div>
-            <h1 className="text-4xl sm:text-5xl font-bold mb-4 bg-gradient-to-r from-white via-[#93C5FD] to-[#22D3EE] bg-clip-text text-transparent leading-tight">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-4 bg-gradient-to-r from-white via-[#93C5FD] to-[#22D3EE] bg-clip-text text-transparent leading-tight">
               Contact Our Engineering
               <br className="hidden sm:block" /> &amp; Sales Team
             </h1>
