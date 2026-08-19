@@ -8,14 +8,18 @@ import { AUDITOR_HELP_SECTIONS } from "./content/auditor-guide";
 import { WEBHOOKS_HELP_SECTIONS } from "./content/webhooks-guide";
 import { INBOUND_EMAIL_HELP_SECTIONS } from "./content/inbound-email-guide";
 import { OUTBOUND_EMAIL_HELP_SECTIONS } from "./content/outbound-email-guide";
+import { AUTOPILOT_HELP_SECTIONS } from "./content/autopilot-guide";
+import { SETTINGS_HELP_SECTIONS } from "./content/settings-guide";
 import { SupportChatWindow } from "@/components/help/SupportChatWindow";
 
 const HELP_SECTIONS: HelpSection[] = [
   ...TRAINER_HELP_SECTIONS,
   ...AUDITOR_HELP_SECTIONS,
-  ...WEBHOOKS_HELP_SECTIONS,
+  ...AUTOPILOT_HELP_SECTIONS,
   ...INBOUND_EMAIL_HELP_SECTIONS,
   ...OUTBOUND_EMAIL_HELP_SECTIONS,
+  ...SETTINGS_HELP_SECTIONS,
+  ...WEBHOOKS_HELP_SECTIONS,
 ];
 
 export default function HelpPage() {

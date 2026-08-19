@@ -244,6 +244,23 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
             "3. **Retention Policy**: Inbound files and audit history are retained in storage for 7 years to meet standard tax audit requirements, unless a custom deletion/retention window is configured for your tenant."
         ),
     },
+    {
+        "id": "autopilot",
+        "keywords": [
+            "autopilot", "automation", "deduplication", "sync now", "folder sync", "scheduled sync"
+        ],
+        "category": "TECHNICAL_SUPPORT",
+        "title": "Tenant Autopilot & Scheduled Ingestion",
+        "guidance": (
+            "### Tenant Autopilot & Scheduled Ingestion\n\n"
+            "Autopilot automates the bulk ingestion of invoices from cloud folders:\n\n"
+            "1. **Folder Connection**: Connect your Google Drive or Salesforce folder in `/settings/connectors`.\n"
+            "2. **Scheduled Syncs**: The background sweep runs automatically on a scheduled cron interval (Azure Container Apps Jobs) to fetch newly added files.\n"
+            "3. **Deduplication Ledger**: To prevent duplicate processing and charges, Autopilot performs two-layer validation matching both **file IDs** and **SHA-256 content hashes** in `tenant_autopilot_logs`.\n"
+            "4. **Manual Sync**: Click **Sync Now** inside the dashboard to trigger an immediate folder sweep.\n"
+            "5. **Notifications**: Enable `notify_emails` or `send_approval_links` in config to receive detailed SendGrid email reports with review links when a sync completes."
+        ),
+    },
 ]
 
 # Known severe error patterns that warrant direct ticket escalation

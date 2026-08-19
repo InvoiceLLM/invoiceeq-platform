@@ -396,6 +396,11 @@ class TestSupportChatEndpoint:
         assert res.status_code == 200
         assert "AES-256" in res.json()["answer"]
 
+        # Autopilot
+        res = client.post("/api/v1/support/chat", json={"message": "how does autopilot deduplication work?"})
+        assert res.status_code == 200
+        assert "tenant_autopilot_logs" in res.json()["answer"]
+
     def test_generic_keyword_does_not_beat_a_more_specific_topic(self, db_session: Session):
         """BE Gap 254: "Is my data encrypted at rest?" used to return the CSV
         export guide. `"data"` is a genuine whole word, so word-boundary matching

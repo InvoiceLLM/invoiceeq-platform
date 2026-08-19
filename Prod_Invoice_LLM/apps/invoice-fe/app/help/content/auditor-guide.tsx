@@ -47,13 +47,13 @@ function Callout({ tone, children }: { tone: "info" | "warn"; children: React.Re
 export const AUDITOR_HELP_SECTIONS: HelpSection[] = [
   {
     id: "auditor-overview",
-    title: "What is the Auditor Console?",
-    keywords: ["auditor", "review", "console", "flagged"],
-    searchText: "auditor console review flagged invoice confidence warnings exceptions",
+    title: "What is the Auditor Console (Reviewer)?",
+    keywords: ["auditor", "reviewer", "review", "console", "flagged", "reviewer console"],
+    searchText: "auditor console reviewer review flagged invoice confidence warnings exceptions reviewer console",
     body: (
       <>
         <P>
-          The <strong>Auditor Console</strong> is the primary workspace for reviewing invoices that have been flagged during the extraction process. When the AI encounters low-confidence fields, missing data, or arithmetic mismatches, the invoice is marked as <code className="text-blue-300">AUDIT_REQUIRED</code>.
+          The <strong>Auditor Console</strong> (also referred to as the <strong>Reviewer Console</strong>) is the primary workspace for reviewing invoices that have been flagged during the extraction process. When the AI encounters low-confidence fields, missing data, or arithmetic mismatches, the invoice is marked as <code className="text-blue-300">AUDIT_REQUIRED</code>.
         </P>
         <P>
           The console provides a split-screen view: the original document on the left (with visual bounding boxes overlaying the extracted data) and an interactive metadata inspector and alert console on the right.
@@ -69,8 +69,8 @@ export const AUDITOR_HELP_SECTIONS: HelpSection[] = [
   {
     id: "auditor-corrections",
     title: "Making Field Corrections",
-    keywords: ["edit", "correct", "fix", "field", "metadata"],
-    searchText: "edit field correct metadata tracking dirty save fix",
+    keywords: ["edit", "correct", "fix", "field", "metadata", "reviewer"],
+    searchText: "edit field correct metadata tracking dirty save fix reviewer console",
     body: (
       <>
         <P>
@@ -108,6 +108,26 @@ export const AUDITOR_HELP_SECTIONS: HelpSection[] = [
           alt="Trainer session pre-seeded from auditor correction"
           caption="Clicking the rule suggestion banner brings you straight to the Trainer with the context already loaded."
         />
+      </>
+    ),
+  },
+  {
+    id: "auditor-outbound",
+    title: "Outbound AR Invoice Review",
+    keywords: ["outbound", "AR", "accounts receivable", "outbound review", "reviewer"],
+    searchText: "outbound AR accounts receivable outbound review reviewer console confirm send mark paid",
+    body: (
+      <>
+        <P>
+          Under the <strong>Outbound Review</strong> tab, team members can audit accounts receivable (AR) invoices that your staff has issued.
+        </P>
+        <P>
+          Unlike inbound bills, outbound invoices do not email external customers directly. Instead, when an outbound invoice is processed, it enters the outbound audit queue. The reviewer can double-check the extracted values and choose to:
+        </P>
+        <ul className="space-y-1.5 text-xs text-slate-300 list-disc pl-5">
+          <li><strong>Confirm Send:</strong> Marks the invoice as officially sent in the ledger and triggers email notifications to the list of staff AR email addresses.</li>
+          <li><strong>Mark Paid:</strong> Marks the outbound invoice as paid and updates your accounts receivable summaries.</li>
+        </ul>
       </>
     ),
   },

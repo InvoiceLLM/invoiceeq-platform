@@ -10,7 +10,7 @@
 ## 1. Overview & Objective
 
 Upgrade the Help Center (`/help`) into a dual-mode support and troubleshooting hub:
-1. **Knowledge Base Guides (Default View)**: Opens on first load with 11 complete, illustrated platform guides containing actual application screenshots (AI Trainer sandbox, Auditor review, Inbound email ingestion, Outbound AR audit, and Webhooks).
+1. **Knowledge Base Guides (Default View)**: Opens on first load with 17 complete, illustrated platform guides containing actual application screenshots (AI Trainer sandbox, Auditor review, Inbound email ingestion, Outbound AR audit, Autopilot sync, Settings panels, and Webhooks).
 2. **AI Support Assistant ("SAGE Bot")**: Conversational assistant powered by platform documentation. When the bot cannot answer or detects a backend error, it automatically presents a 1-click **`[ 🎫 Raise Support Ticket ]`** card.
 3. **Direct Ticket Escalation**: A single dedicated **`[ 🎫 Raise Ticket Directly ]`** action button inside the chat header allowing users to submit tickets at any time.
 
@@ -18,10 +18,10 @@ Upgrade the Help Center (`/help`) into a dual-mode support and troubleshooting h
 
 ## 2. File Coordinates
 
-* **Main Page Route (rewritten by this feature):** `apps/invoice-fe/app/help/page.tsx` — `HelpPage` client component. Holds `activeTab` (`"guides" | "assistant"`, initialised to `"guides"` so the Knowledge Base is the landing view), `query` for the `#help-guide-search` filter, and `activeId` for the selected guide. Composes the five guide registries into one `HELP_SECTIONS` array and filters it on each section's `searchText`.
+* **Main Page Route (rewritten by this feature):** `apps/invoice-fe/app/help/page.tsx` — `HelpPage` client component. Holds `activeTab` (`"guides" | "assistant"`, initialised to `"guides"` so the Knowledge Base is the landing view), `query` for the `#help-guide-search` filter, and `activeId` for the selected guide. Composes the five guide registries into one `HELP_SECTIONS` array and filters it on each search text query.
 * **AI Support Chatbot Component (new):** `apps/invoice-fe/components/help/SupportChatWindow.tsx` — `SupportChatWindow`. Renders the SAGE conversation, prompt chips, the inline escalation card, the neutral low-confidence card (FE Gap 243 / BE Gap 254 — `#low-confidence-card`), and the `[ 🎫 Raise Ticket Directly ]` header button; posts to `/api/support/chat` and opens `SupportTicketModal` with pre-filled context.
 * **Support Ticket Modal (new):** `apps/invoice-fe/components/help/SupportTicketModal.tsx` — `SupportTicketModal`. Validated ticket form, priority pills, pre-fill from an escalation context or the conversation transcript, animated success state showing the returned `TICK-YYYY-XXXX`.
-* **Guide Content Registry (pre-existing, not touched by this feature):** `apps/invoice-fe/app/help/content/{trainer,auditor,webhooks,inbound-email,outbound-email}-guide.tsx`, exporting `HELP_SECTIONS`, `AUDITOR_HELP_SECTIONS`, `WEBHOOKS_HELP_SECTIONS`, `INBOUND_EMAIL_HELP_SECTIONS`, `OUTBOUND_EMAIL_HELP_SECTIONS` — 15 sections total. Screenshots live in `apps/invoice-fe/public/help/{trainer,auditor}/`, also pre-existing.
+* **Guide Content Registry (expanded 2026-08-19):** `apps/invoice-fe/app/help/content/{trainer,auditor,webhooks,inbound-email,outbound-email,autopilot,settings}-guide.tsx`, exporting `HELP_SECTIONS`, `AUDITOR_HELP_SECTIONS`, `WEBHOOKS_HELP_SECTIONS`, `INBOUND_EMAIL_HELP_SECTIONS`, `OUTBOUND_EMAIL_HELP_SECTIONS`, `AUTOPILOT_HELP_SECTIONS`, `SETTINGS_HELP_SECTIONS` — 17 sections total. Screenshots live in `apps/invoice-fe/public/help/{trainer,auditor}/`, also pre-existing.
 * **API Proxy Routes (new):** `apps/invoice-fe/app/api/support/ticket/route.ts`, `apps/invoice-fe/app/api/support/chat/route.ts` — each a single `POST` handler delegating to `proxyJson()` in the pre-existing `apps/invoice-fe/lib/backendProxy.ts`, which is what attaches the Clerk session token.
 
 ---

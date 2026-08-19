@@ -286,6 +286,60 @@ export const HELP_SECTIONS: HelpSection[] = [
     ),
   },
   {
+    id: "session-modes",
+    title: "Trainer Session Modes",
+    keywords: ["session", "mode", "qa test", "rule creation", "switcher"],
+    searchText: "trainer session mode switcher qa test rule creation chat sandbox",
+    body: (
+      <>
+        <P>
+          The AI Trainer Sandbox provides a dual-mode workflow toggle to separate rule configuration from live verification:
+        </P>
+        <ul className="space-y-1.5 text-xs text-slate-300 list-disc pl-5">
+          <li><strong>Rule Creation Mode:</strong> The default mode. Use the chat window to enter corrections, refine templates, view field differences, and commit rules.</li>
+          <li><strong>QA Test Mode:</strong> Swaps the rule trainer for direct interactive chat with the invoice RAG/database. Ask general questions using the SAGE agent to verify that the committed rules return accurate answers.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "chat-style-settings",
+    title: "Chat & Response Style Settings",
+    keywords: ["chat settings", "style", "conciseness", "tone", "instructions"],
+    searchText: "chat settings style conciseness tone instructions global sandbox",
+    body: (
+      <>
+        <P>
+          Customize how the AI chatbot interacts with your team. Navigate to the global sandbox settings panel to manage:
+        </P>
+        <ul className="space-y-1 text-xs text-slate-300 list-disc pl-5">
+          <li><strong>Conciseness Level:</strong> Set answers to be brief (1–2 sentences) or highly detailed.</li>
+          <li><strong>Tone:</strong> Choose between professional, casual, or technical response styles.</li>
+          <li><strong>Custom Instructions:</strong> Provide global rules (e.g. "Always display currency figures in INR", "Include ticket references").</li>
+        </ul>
+        <P>
+          These configurations are persisted in `tenant_chat_settings` and automatically format all future support and query agent replies.
+        </P>
+      </>
+    ),
+  },
+  {
+    id: "rejection-guardrails",
+    title: "Rejection Guardrails",
+    keywords: ["guardrail", "rejection", "validation", "invalid rule", "instruction-like"],
+    searchText: "rejection guardrails validation invalid rule instruction-like 400 bad request edit commit preview",
+    body: (
+      <>
+        <P>
+          To maintain rule quality and prevent instruction injection issues, all input rules are automatically validated by backend guardrails during the <strong>Preview</strong> and <strong>Commit</strong> phases.
+        </P>
+        <P>
+          If you attempt to input an invalid rule (such as conversational filler, system instructions, or an unsupported command), the backend rejects the request and returns a structured explanation outlining exactly which rule text triggered the rejection and why.
+        </P>
+      </>
+    ),
+  },
+  {
     id: "troubleshooting",
     title: "Troubleshooting common issues",
     keywords: ["troubleshoot", "problem", "not working", "chat not using rule", "issue"],
