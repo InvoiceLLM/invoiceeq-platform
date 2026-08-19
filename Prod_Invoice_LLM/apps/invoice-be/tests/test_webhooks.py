@@ -331,7 +331,7 @@ def test_deliver_drops_message_for_disabled_or_unsubscribed_subscription(db_sess
     tenant disabled (or unsubscribed from that event) after it was enqueued."""
     _seed_tenant(db_session)
     disabled = _seed_subscription(db_session, enabled=False)
-    unsubscribed = _seed_subscription(db_session, subscribed_events=["invoice.paid"])
+    unsubscribed = _seed_subscription(db_session, subscribed_events=["invoice.approved"])
 
     with patch("services.webhooks.httpx.Client") as mock_client_cls:
         assert deliver_webhook_now(db_session, disabled.id, "invoice.completed", {}) is None
@@ -438,21 +438,21 @@ def test_reenabling_clears_the_per_event_failure_map(db_session):
 
 def test_list_deliveries_returns_newest_first(db_session):
     _seed_tenant(db_session)
-    sub = _seed_subscription(db_session, subscribed_events=["invoice.completed", "invoice.paid"])
+    sub = _seed_subscription(db_session, subscribed_events=["invoice.completed", "invoice.approved"])
 
     with patch("services.webhooks.httpx.Client") as mock_client_cls, patch("services.webhooks.time.sleep"):
         mock_client = mock_client_cls.return_value.__enter__.return_value
         mock_client.post.return_value = MagicMock(status_code=200)
         deliver_webhook_now(db_session, sub.id, "invoice.completed", {})
         mock_client.post.return_value = MagicMock(status_code=500)
-        deliver_webhook_now(db_session, sub.id, "invoice.paid", {})
+        deliver_webhook_now(db_session, sub.id, "invoice.approved", {})
 
     response = client.get(f"/api/v1/webhooks/{sub.id}/deliveries")
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 2
-    assert {row["event_type"] for row in body} == {"invoice.completed", "invoice.paid"}
-    failed = next(row for row in body if row["event_type"] == "invoice.paid")
+    assert {row["event_type"] for row in body} == {"invoice.completed", "invoice.approved"}
+    failed = next(row for row in body if row["event_type"] == "invoice.approved")
     assert failed["success"] is False
     assert failed["status_code"] == 500
 

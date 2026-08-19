@@ -49,13 +49,74 @@ def download_google_drive_file(access_token: str, file_id: str) -> bytes:
     return response.content
 
 
-def list_salesforce_files(access_token: str, instance_url: str) -> list[dict]:
-    """Lists PDF files (Salesforce Files / ContentVersion) visible to the
-    connected user. Salesforce has no folder hierarchy equivalent to Drive's
-    (Files live in Libraries or attached to records instead), so this is a
-    flat list -- folder_id from the router is intentionally not accepted
-    here; a future pass can scope this to a chosen Library if needed.
+def list_salesforce_libraries(access_token: str, instance_url: str) -> list[dict]:
+    """Gap 262: Returns Salesforce Libraries (ContentWorkspace) as folder nodes.
+
+    Salesforce has no hierarchical folder system like Google Drive. Instead
+    files live in "Libraries" (ContentWorkspace records). Returning these as
+    selectable folder nodes gives FolderTreeExplorer something to navigate
+    in folder-selection mode (Autopilot config tab). The user picks a Library
+    as their source folder; subsequent browsing lists PDFs inside it.
     """
+    query = (
+        "SELECT Id, Name FROM ContentWorkspace "
+        "WHERE CreatedById != null "
+        "ORDER BY Name ASC LIMIT 50"
+    )
+    url = f"{instance_url}/services/data/{SALESFORCE_API_VERSION}/query"
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    response = httpx.get(url, params={"q": query}, headers=headers, timeout=10.0)
+    response.raise_for_status()
+
+    return [
+        {
+            "id": r["Id"],
+            "name": r["Name"],
+            "type": "folder",
+            "size_bytes": 0,
+        }
+        for r in response.json().get("records", [])
+    ]
+
+
+def list_salesforce_files(access_token: str, instance_url: str, library_id: Optional[str] = None) -> list[dict]:
+    """Lists PDF files visible to the connected user.
+
+    Gap 262: if library_id is given, scopes the query to that Library
+    via ContentDocumentLink (LinkedEntityId = library_id). Without it,
+    falls back to a flat query across all accessible ContentVersion rows
+    (original behaviour, used when browsing without a selected library).
+    """
+    if library_id:
+        # Files linked to a specific Library
+        query = (
+            f"SELECT ContentDocument.Id, ContentDocument.Title, "
+            f"ContentDocument.FileExtension, ContentDocument.ContentSize "
+            f"FROM ContentDocumentLink "
+            f"WHERE LinkedEntityId = '{library_id}' "
+            f"AND ContentDocument.FileType = 'PDF' "
+            f"ORDER BY ContentDocument.CreatedDate DESC LIMIT 100"
+        )
+        url = f"{instance_url}/services/data/{SALESFORCE_API_VERSION}/query"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        response = httpx.get(url, params={"q": query}, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        return [
+            {
+                "id": r["ContentDocument"]["Id"],
+                "name": (
+                    f"{r['ContentDocument']['Title']}.{r['ContentDocument']['FileExtension']}"
+                    if r["ContentDocument"].get("FileExtension")
+                    else r["ContentDocument"]["Title"]
+                ),
+                "type": "file",
+                "size_bytes": int(r["ContentDocument"].get("ContentSize") or 0),
+            }
+            for r in response.json().get("records", [])
+        ]
+
+    # No library selected — flat list across all accessible PDFs (original behaviour)
     query = (
         "SELECT Id, Title, FileExtension, ContentSize FROM ContentVersion "
         "WHERE FileType = 'PDF' AND IsLatest = true "

@@ -317,11 +317,11 @@ def test_openapi_document_exposes_webhook_event_schemas():
     for event in (
         "invoice.completed",
         "invoice.audit_required",
-        "invoice.paid",
+        "invoice.approved",
         "invoice.rejected",
         "outbound_invoice.sent",
         "outbound_invoice.overdue",
-        "outbound_invoice.paid",
+        "outbound_invoice.approved",
     ):
         assert event in schema["webhooks"], f"{event} missing from OpenAPI webhooks section"
 

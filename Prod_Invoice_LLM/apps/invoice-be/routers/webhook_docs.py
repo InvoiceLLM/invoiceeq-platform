@@ -84,9 +84,9 @@ def invoice_audit_required(body: InboundInvoiceEvent):
     ...
 
 
-@router.post("invoice.paid", description=_description(
-    "An auditor marked the inbound invoice as paid."))
-def invoice_paid(body: InboundInvoiceEvent):
+@router.post("invoice.approved", description=_description(
+    "An auditor marked the inbound invoice as approved/paid."))
+def invoice_approved(body: InboundInvoiceEvent):
     ...
 
 
@@ -108,7 +108,7 @@ def outbound_invoice_overdue(body: OutboundInvoiceEvent):
     ...
 
 
-@router.post("outbound_invoice.paid", description=_description(
-    "An outbound invoice was marked paid."))
-def outbound_invoice_paid(body: OutboundInvoiceEvent):
+@router.post("outbound_invoice.approved", description=_description(
+    "An outbound invoice was marked approved/paid."))
+def outbound_invoice_approved(body: OutboundInvoiceEvent):
     ...

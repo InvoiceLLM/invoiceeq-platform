@@ -506,7 +506,7 @@ async def resolve_audit_invoice(
     if target_status in ("PAID", "REJECTED"):
         try:
             from services.webhooks import dispatch_webhook_event
-            event_type = "invoice.paid" if target_status == "PAID" else "invoice.rejected"
+            event_type = "invoice.approved" if target_status == "PAID" else "invoice.rejected"
             dispatch_webhook_event(db_session, invoice.tenant_id, event_type, {
                 "invoice_id": str(invoice.id),
                 "status": target_status,

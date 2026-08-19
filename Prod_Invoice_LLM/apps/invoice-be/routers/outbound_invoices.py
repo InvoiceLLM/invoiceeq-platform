@@ -246,7 +246,7 @@ async def mark_outbound_invoice_paid(
     db_session.commit()
     db_session.refresh(invoice)
 
-    _dispatch_outbound_webhook(db_session, invoice, "outbound_invoice.paid")
+    _dispatch_outbound_webhook(db_session, invoice, "outbound_invoice.approved")
     email_notify = notify_auditor_action(
         db_session, invoice, action_label="Mark Paid", notify_emails=notify_emails,
     )

@@ -16,16 +16,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 # Feature 15: the full set of events a subscription can register for.
+# Gap 260: renamed invoice.paid → invoice.approved and
+# outbound_invoice.paid → outbound_invoice.approved to reflect that
+# the trigger is approval/verification, not payment settlement.
 ALLOWED_EVENT_TYPES = {
     "invoice.processing",
     "invoice.completed",
     "invoice.audit_required",
     "invoice.duplicate",
-    "invoice.paid",
+    "invoice.approved",
     "invoice.rejected",
     "outbound_invoice.sent",
     "outbound_invoice.overdue",
-    "outbound_invoice.paid",
+    "outbound_invoice.approved",
 }
 
 

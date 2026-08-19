@@ -112,6 +112,11 @@ async def get_auth_url(
                 "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
                 "state": state,
+                # Gap 261: force the Salesforce login screen every time so the
+                # user can choose which org/account to connect. Without this,
+                # an active browser session silently auto-logs in as whatever
+                # account was last used (e.g. application@infinevoclouds.com).
+                "prompt": "login consent",
             }
             return {"auth_url": f"https://login.salesforce.com/services/oauth2/authorize?{urlencode(params)}"}
 
@@ -333,7 +338,15 @@ async def list_connector_files(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Salesforce connection is missing instance_url; reconnect this integration."
                     )
-                files = list_salesforce_files(access_token, connection.instance_url)
+                # Gap 262: if no folder_id given, return Salesforce Libraries
+                # as folder nodes so FolderTreeExplorer has something to
+                # navigate in folder-selection mode (Autopilot config).
+                # If folder_id is given, list files inside that library.
+                from utils.connector_files import list_salesforce_libraries
+                if folder_id:
+                    files = list_salesforce_files(access_token, connection.instance_url, folder_id)
+                else:
+                    files = list_salesforce_libraries(access_token, connection.instance_url)
         except httpx.HTTPError as e:
             logger.error("Real %s file listing failed: %s", prov, e)
             raise HTTPException(

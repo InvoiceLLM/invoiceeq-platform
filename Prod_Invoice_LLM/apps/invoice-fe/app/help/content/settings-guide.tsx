@@ -88,7 +88,7 @@ export const SETTINGS_HELP_SECTIONS: HelpSection[] = [
           <div className="space-y-2">
             <h4 className="text-xs font-semibold text-white uppercase tracking-wider">3. Webhooks & Custom Connectors</h4>
             <P>
-              In the <strong>Settings → Connectors</strong> tab, register webhooks to receive real-time HTTP POST notifications of invoice events (e.g. `invoice.completed`, `invoice.paid`).
+              In the <strong>Settings → Connectors</strong> tab, register webhooks to receive real-time HTTP POST notifications of invoice events (e.g. `invoice.completed`, `invoice.approved`).
             </P>
             <P>
               <strong>Verifying Webhook Signatures:</strong> Every webhook POST contains a header named <code className="text-blue-300">X-InvoiceAI-Signature</code>. You must compute the HMAC SHA-256 signature of the raw request payload using your configured Secret Token to verify request authenticity:

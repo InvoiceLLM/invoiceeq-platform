@@ -51,11 +51,11 @@ const ALLOWED_EVENTS = [
   { value: "invoice.completed", label: "Inbound Completed", desc: "Fires when an inbound invoice finishes extraction successfully." },
   { value: "invoice.audit_required", label: "Inbound Audit Required", desc: "Fires when an inbound invoice requires human audit." },
   { value: "invoice.duplicate", label: "Inbound Duplicate", desc: "Fires when an uploaded invoice matches a previously ingested file." },
-  { value: "invoice.paid", label: "Inbound Paid", desc: "Fires when an inbound invoice is marked as paid." },
+  { value: "invoice.approved", label: "Inbound Approved", desc: "Fires when an inbound invoice is approved by auditor." },
   { value: "invoice.rejected", label: "Inbound Rejected", desc: "Fires when an inbound invoice is rejected by auditor." },
   { value: "outbound_invoice.sent", label: "Outbound Sent", desc: "Fires when an outbound invoice is dispatched to the recipient." },
   { value: "outbound_invoice.overdue", label: "Outbound Overdue", desc: "Fires when an outbound invoice crosses its payment due date." },
-  { value: "outbound_invoice.paid", label: "Outbound Paid", desc: "Fires when an outbound invoice is marked as paid." }
+  { value: "outbound_invoice.approved", label: "Outbound Approved", desc: "Fires when an outbound invoice is marked as approved/paid." }
 ];
 
 const GENERIC_ERRORS = {
