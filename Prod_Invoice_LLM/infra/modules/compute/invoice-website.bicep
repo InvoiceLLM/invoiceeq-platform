@@ -181,6 +181,21 @@ resource websiteApp 'Microsoft.App/containerApps@2024-03-01' = {
         // traffic) -- dev default only; prod overrides minReplicas to >=1.
         minReplicas: minReplicas
         maxReplicas: maxReplicas
+        rules: [
+          {
+            // HTTP concurrent-request trigger: marketing/login site serves
+            // mostly static Next.js pages — lightest of all containers.
+            // Threshold of 50 gives generous headroom per replica while still
+            // protecting against sudden marketing-campaign traffic spikes
+            // (e.g. 500 visitors at once from a social media post).
+            name: 'http-scaling'
+            http: {
+              metadata: {
+                concurrentRequests: '50'
+              }
+            }
+          }
+        ]
       }
     }
   }

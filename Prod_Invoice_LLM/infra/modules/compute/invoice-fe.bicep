@@ -150,6 +150,21 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
       scale: {
         minReplicas: minReplicas
         maxReplicas: maxReplicas
+        rules: [
+          {
+            // HTTP concurrent-request trigger: frontend is Next.js SSR — lighter
+            // than the backend (no AI/DB heavy work), so it can handle 30
+            // concurrent connections before needing a second replica. Without a
+            // rule Azure had no trigger to scale the frontend even if 100+ users
+            // loaded the dashboard simultaneously.
+            name: 'http-scaling'
+            http: {
+              metadata: {
+                concurrentRequests: '30'
+              }
+            }
+          }
+        ]
       }
     }
   }

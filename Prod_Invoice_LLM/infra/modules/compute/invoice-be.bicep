@@ -112,6 +112,13 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         external: false // Accessible only internally (VNet/Frontend)
         targetPort: 8000
         transport: 'http'
+        // Feature 19 (Timeout Fix): Explicit 2-minute ceiling so the ACA
+        // ingress layer gives the backend enough time for a full chat
+        // pipeline (classify → SQL/RAG LLM call → DB → answer synthesis).
+        // Without this the effective ceiling is an undocumented Azure default
+        // that varies by region/ACA version and can cut connections before
+        // OpenAI has had a chance to respond.
+        timeoutInSeconds: 120
       }
       secrets: [
         {
@@ -366,8 +373,37 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: minReplicas
-        maxReplicas: maxReplicas
+        minReplicas: minReplicas  // 1 — always one warm replica for instant response
+        maxReplicas: maxReplicas  // 5 — burst headroom for high-traffic periods
+        rules: [
+          {
+            // HTTP concurrent-request trigger: fires when more than 20 requests
+            // are in-flight simultaneously (e.g. 50 users all chatting at once).
+            // Each chat request holds a connection open for 5-15s waiting on
+            // OpenAI, so concurrent count is a better load signal than RPS here.
+            name: 'http-scaling'
+            http: {
+              metadata: {
+                concurrentRequests: '20'
+              }
+            }
+          }
+          {
+            // CPU trigger: fires before the 80% memory alert threshold.
+            // Catches heavy-workload scenarios with few concurrent requests —
+            // e.g. 3 users uploading large PDFs simultaneously. Doc Intelligence
+            // + OpenAI extraction drives CPU up even though only 3 HTTP
+            // connections are open, so the HTTP rule alone would miss this.
+            name: 'cpu-scaling'
+            custom: {
+              type: 'cpu'
+              metadata: {
+                type: 'Utilization'
+                value: '70'
+              }
+            }
+          }
+        ]
       }
     }
   }
