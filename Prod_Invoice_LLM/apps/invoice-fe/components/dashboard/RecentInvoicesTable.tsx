@@ -53,6 +53,7 @@ interface RecentInvoicesTableProps {
   invoices: InvoiceRecord[];
   isLoading: boolean;
   onDelete?: (id: string) => void;
+  onStatusChange?: (id: string, newStatus: string) => void;
   activeTab: StatusTab;
   onTabChange: (tab: StatusTab) => void;
   currentPage: number;
@@ -74,6 +75,7 @@ export default function RecentInvoicesTable({
   invoices = [],
   isLoading,
   onDelete,
+  onStatusChange,
   activeTab,
   onTabChange,
   currentPage,
@@ -84,12 +86,35 @@ export default function RecentInvoicesTable({
 }: RecentInvoicesTableProps) {
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [markingPaidId, setMarkingPaidId] = useState<string | null>(null);
   const router = useRouter();
 
   // FE Gap 29: `invoices` is now a single real server-paginated page (already
   // filtered by activeTab and limited/offset by currentPage on the backend),
   // not a client-fetched batch that gets re-sliced/re-filtered here.
   const pageInvoices = invoices;
+
+  const handleMarkPaid = async (inv: InvoiceRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setActiveMenuId(null);
+    const label = inv.invoice_number || inv.id;
+    if (!window.confirm(`Mark invoice ${label} as paid? This records payment and updates the status to PAID.`)) {
+      return;
+    }
+    setMarkingPaidId(inv.id);
+    try {
+      await apiClient.put(`/audit/resolve/${inv.id}`, {
+        status: "PAID",
+        dismissed_alerts: [],
+      });
+      onStatusChange?.(inv.id, "PAID");
+    } catch (err) {
+      console.error("Failed to mark invoice as paid", err);
+      window.alert("Failed to mark invoice as paid. Please try again.");
+    } finally {
+      setMarkingPaidId(null);
+    }
+  };
 
   const handleDelete = async (inv: InvoiceRecord, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -359,6 +384,18 @@ export default function RecentInvoicesTable({
                           <FileDown className="w-3.5 h-3.5 text-slate-400" />
                           Download Original PDF
                         </a>
+
+                        {inv.status?.toUpperCase() !== "PAID" && inv.status?.toUpperCase() !== "REJECTED" && (
+                          <button
+                            type="button"
+                            disabled={markingPaidId === inv.id}
+                            onClick={(e) => handleMarkPaid(inv, e)}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            {markingPaidId === inv.id ? "Marking Paid..." : "Mark as Paid"}
+                          </button>
+                        )}
 
                         <div className="h-px bg-[#222D3D] my-1" />
 

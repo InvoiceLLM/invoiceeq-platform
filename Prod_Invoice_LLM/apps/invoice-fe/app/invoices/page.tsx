@@ -231,6 +231,10 @@ export default function InvoicesPage() {
     fetchInvoicesPage();
   };
 
+  const handleInvoiceStatusChanged = (_id: string, _newStatus: string) => {
+    fetchInvoicesPage();
+  };
+
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const outboundTotalPages = Math.max(1, Math.ceil(outboundTotalCount / PAGE_SIZE));
 
@@ -292,6 +296,7 @@ export default function InvoicesPage() {
             invoices={invoices}
             isLoading={isInvoicesLoading}
             onDelete={handleInvoiceDeleted}
+            onStatusChange={handleInvoiceStatusChanged}
             activeTab={activeTab}
             onTabChange={handleTabChange}
             currentPage={currentPage}
