@@ -77,10 +77,37 @@ def extend_paid_through(tenant: Tenant, now: datetime | None = None) -> datetime
 
 
 def lapse_deadline(tenant: Tenant) -> datetime | None:
-    """The instant after which this tenant counts as lapsed, grace included."""
+    """The instant after which this tenant counts as lapsed.
+
+    Gap 264: grace is included *unless* the tenant explicitly requested
+    cancellation, in which case the deadline is exactly `paid_through` with
+    no grace added. Grace exists to be lenient toward a renewal that was
+    simply forgotten -- an explicit cancellation isn't accidental, so there
+    is nothing to be lenient about, and extending access past the date the
+    tenant asked to stop would contradict the request they made.
+    """
     if tenant.paid_through is None:
         return None
+    if tenant.cancel_requested_at is not None:
+        return tenant.paid_through
     return tenant.paid_through + timedelta(days=settings.BILLING_GRACE_PERIOD_DAYS)
+
+
+def request_cancellation(tenant: Tenant, now: datetime | None = None) -> None:
+    """Gap 264: record that the tenant asked to stop renewing. Does not
+    commit, and does not touch `billing_plan`/`paid_through` -- access
+    continues exactly as already designed until `paid_through` (narrowed by
+    `lapse_deadline()` above to skip grace). Caller owns the transaction,
+    same convention as `extend_paid_through()`.
+    """
+    tenant.cancel_requested_at = now or datetime.utcnow()
+
+
+def undo_cancellation(tenant: Tenant) -> None:
+    """Gap 264: the tenant changed their mind before `paid_through` passed.
+    Does not commit -- caller owns the transaction.
+    """
+    tenant.cancel_requested_at = None
 
 
 def is_lapsed(tenant: Tenant, now: datetime | None = None) -> bool:

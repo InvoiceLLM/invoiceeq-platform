@@ -417,6 +417,27 @@ async def trigger_file_import(
             detail=f"Integration '{provider}' is not connected."
         )
 
+    # Gap 266: same "never claim success unless it's actually true" reasoning
+    # as Gap 179 below, one layer earlier. get_valid_access_token() already
+    # raises a clear, specific RuntimeError for exactly the two conditions
+    # that were producing "works for some accounts, not others" reports --
+    # no refresh token stored, or the provider rejected the refresh call
+    # (revoked/expired) -- but until now that error only ever surfaced in
+    # queue-worker logs, invisible to the user, because this endpoint queued
+    # the download unconditionally regardless of whether the stored token
+    # could actually be used. Checking synchronously here turns a silent
+    # background failure into an immediate, actionable "please reconnect"
+    # for the one account that actually needs it, while every other file/
+    # account in the same batch is unaffected (Gap 267 fixed the FE loop to
+    # attempt each file independently either way).
+    try:
+        get_valid_access_token(connection, get_settings(), db_session)
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"{provider} connection needs to be reconnected: {e}",
+        )
+
     # Gap 179: never tell the FE "queued" unless the queue message actually landed.
     # Previously returned success=True even when AZURE_STORAGE_CONNECTION_STRING was
     # missing or send_message failed — green "Import request queued!" with nothing

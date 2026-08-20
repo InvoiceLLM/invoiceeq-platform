@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -11,9 +12,14 @@ import {
   CreditCard,
   HelpCircle,
   FileText,
-  ListChecks
+  ListChecks,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+
+// FE Gap 273: persisted so the collapsed/expanded choice survives a reload.
+const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -21,6 +27,24 @@ export default function Sidebar() {
   // Until this landed, useAuth() was a localStorage mock that made everyone an
   // Admin, and this list rendered unconditionally -- every user saw every item.
   const { tenantId, role, canTrain, canAudit, canLoad, loading } = useAuth();
+
+  // FE Gap 273: collapses to an icon-only rail so the main content area gets
+  // more room. Starts false on both server and first client render (avoids a
+  // hydration mismatch) and only reads localStorage after mount, matching
+  // this app's other durable-preference toggles.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    if (window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true") {
+      setCollapsed(true);
+    }
+  }, []);
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+      return next;
+    });
+  };
 
   // Navigation items definition for the primary sidebar.
   // `visible` implements feature_1.1_rbac.md's access model:
@@ -81,12 +105,17 @@ export default function Sidebar() {
     // attribute to tell them apart instead of racing the fetch.
     <aside
       data-auth-loading={loading ? "true" : "false"}
-      className="w-64 border-r border-[#222D3D] bg-[#0F172A]/40 backdrop-blur-md flex flex-col h-full text-slate-300"
+      data-collapsed={collapsed ? "true" : "false"}
+      className={`${
+        collapsed ? "w-[76px]" : "w-64"
+      } border-r border-[#222D3D] bg-[#0F172A]/40 backdrop-blur-md flex flex-col h-full text-slate-300 transition-all duration-200`}
     >
       {/* Brand Header */}
       <div className="h-16 flex items-center px-6 border-b border-[#222D3D] gap-3">
-        <FileText className="w-6 h-6 text-accent-blue" />
-        <span className="font-semibold text-lg text-white tracking-wide">Invoice AI</span>
+        <FileText className="w-6 h-6 text-accent-blue shrink-0" />
+        {!collapsed && (
+          <span className="font-semibold text-lg text-white tracking-wide truncate">Invoice AI</span>
+        )}
       </div>
 
       {/* Navigation Links */}
@@ -99,21 +128,41 @@ export default function Sidebar() {
             <Link
               key={item.name}
               href={item.href}
+              title={collapsed ? item.name : undefined}
               className={`flex items-center gap-3.5 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 hover:text-white hover:bg-[#1E293B]/50 ${
-                isActive 
-                  ? "bg-[#1E293B] text-white border-l-2 border-[#3B82F6] rounded-l-none" 
+                collapsed ? "justify-center px-0" : ""
+              } ${
+                isActive
+                  ? "bg-[#1E293B] text-white border-l-2 border-[#3B82F6] rounded-l-none"
                   : "text-slate-400"
               }`}
             >
-              <Icon className={`w-5 h-5 ${isActive ? "text-[#3B82F6]" : "text-slate-400"}`} />
-              {item.name}
+              <Icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#3B82F6]" : "text-slate-400"}`} />
+              {!collapsed && item.name}
             </Link>
           );
         })}
       </nav>
 
+      {/* FE Gap 273: collapse toggle. */}
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="flex items-center justify-center gap-2 mx-3 mb-2 py-2 rounded-lg text-slate-500 transition-colors hover:bg-[#1E293B]/50 hover:text-white"
+      >
+        {collapsed ? (
+          <ChevronsRight className="w-4 h-4" />
+        ) : (
+          <>
+            <ChevronsLeft className="w-4 h-4" />
+            <span className="text-xs">Collapse</span>
+          </>
+        )}
+      </button>
+
       {/* Tenant Context Footer — Admin only (Gap 144) */}
-      {role === "Admin" && (
+      {role === "Admin" && !collapsed && (
         <div className="p-4 border-t border-[#222D3D] flex flex-col gap-1.5 text-xs text-slate-500 bg-[#070A13]/20">
           <span>Tenant Isolation ID:</span>
           <span className="font-mono text-[10px] text-slate-400 break-all select-all bg-[#0F172A]/50 p-1.5 rounded border border-[#222D3D]">

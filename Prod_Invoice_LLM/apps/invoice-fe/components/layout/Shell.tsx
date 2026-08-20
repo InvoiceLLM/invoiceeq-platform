@@ -42,8 +42,15 @@ export default function Shell({ children }: ShellProps) {
           {/* Top Header -- the app's only page header, for every route */}
           <Header />
 
-          {/* Scrollable Children Canvas */}
-          <main className="flex-1 overflow-y-auto p-8 bg-gradient-to-b from-[#0B0F19] to-[#080B12]">
+          {/* Scrollable Children Canvas.
+              FE Gap 270: was overflow-y-auto only. At non-100% browser zoom,
+              a data-dense page (the Audit Queue table was the first report)
+              can end up wider than the computed viewport, and with no
+              horizontal scroll here the outer shell's overflow-hidden (above)
+              had nowhere to let that overflow go -- it clipped/forced content
+              to overlap instead of scrolling. overflow-auto lets it scroll
+              horizontally too, same as it already does vertically. */}
+          <main className="flex-1 overflow-auto p-8 bg-gradient-to-b from-[#0B0F19] to-[#080B12]">
             {children}
           </main>
         </div>

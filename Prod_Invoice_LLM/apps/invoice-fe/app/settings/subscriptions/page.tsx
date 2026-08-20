@@ -76,6 +76,10 @@ interface BillingUsage {
   remaining: number | null;
   /** ISO timestamp of the next allowance refill, or null when not metered. */
   resets_at: string | null;
+  /** Gap 264: set once the workspace has asked not to renew. */
+  cancel_requested_at: string | null;
+  /** Gap 264: paid access continues until this date either way. */
+  paid_through: string | null;
 }
 
 export default function SubscriptionsPage() {
@@ -107,6 +111,11 @@ export default function SubscriptionsPage() {
   // made-up ceiling; the component must not substitute one.
   const [usage, setUsage] = useState<BillingUsage | null>(null);
   const [usageState, setUsageState] = useState<"loading" | "ready" | "error">("loading");
+
+  // Gap 264: self-serve cancel/reactivate.
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   useEffect(() => {
     function onPayuMessage(event: MessageEvent) {
@@ -277,6 +286,47 @@ export default function SubscriptionsPage() {
     }
   };
 
+  /**
+   * Gap 264: PayU has no auto-charge to stop (see routers/billing.py's module
+   * docstring), so this doesn't call PayU at all — it records the choice
+   * server-side and refetches usage so the "Cancels on <date>" state renders
+   * immediately, no page reload needed.
+   */
+  const handleCancelSubscription = async () => {
+    setCancelLoading(true);
+    setCancelError(null);
+    try {
+      const res = await fetch("/api/billing/cancel", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Failed to cancel subscription.");
+      }
+      setUsage((prev) => (prev ? { ...prev, ...data } : data));
+      setShowCancelConfirm(false);
+    } catch (err: any) {
+      setCancelError(err?.message || "Failed to cancel subscription. Please try again.");
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
+  const handleReactivateSubscription = async () => {
+    setCancelLoading(true);
+    setCancelError(null);
+    try {
+      const res = await fetch("/api/billing/reactivate", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail || "Failed to reactivate subscription.");
+      }
+      setUsage((prev) => (prev ? { ...prev, ...data } : data));
+    } catch (err: any) {
+      setCancelError(err?.message || "Failed to reactivate subscription. Please try again.");
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
   // Gap 143: every number below comes from the backend. A plan the backend
   // reports as unmetered gets no invented ceiling to draw a bar against — that
   // substitution is exactly what produced the "25 invoices" the free tier never
@@ -295,6 +345,14 @@ export default function SubscriptionsPage() {
     resetsAt && !Number.isNaN(resetsAt.getTime())
       ? resetsAt.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
       : null;
+
+  // Gap 264: when access actually ends if a cancellation is pending.
+  const paidThroughAt = usage?.paid_through ? new Date(usage.paid_through) : null;
+  const paidThroughLabel =
+    paidThroughAt && !Number.isNaN(paidThroughAt.getTime())
+      ? paidThroughAt.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+      : null;
+  const isCancellationPending = !!usage?.cancel_requested_at;
 
   return (
     <div className="h-full flex flex-col bg-[#0B0F19] text-slate-100 overflow-auto font-sans">
@@ -371,7 +429,76 @@ export default function SubscriptionsPage() {
                     : ""}
             </p>
           </div>
+
+          {/* Gap 264: cancel / pending-cancellation state. Only meaningful on
+              a paid plan — nothing to cancel on Free. Admin-only, matching
+              every other billing-plan-affecting control on this page. */}
+          {isAdmin && !isFree && (
+            <div className="mt-4 pt-4 border-t border-[#222D3D]">
+              {isCancellationPending ? (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+                  <p className="text-[11px] text-amber-300">
+                    Subscription set to cancel
+                    {paidThroughLabel ? ` — access continues until ${paidThroughLabel}.` : "."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleReactivateSubscription}
+                    disabled={cancelLoading}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold disabled:opacity-50 transition-all"
+                  >
+                    {cancelLoading ? "Working…" : "Keep My Subscription"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowCancelConfirm(true)}
+                  className="text-[11px] text-slate-500 hover:text-rose-400 underline decoration-dotted transition-colors"
+                >
+                  Cancel subscription
+                </button>
+              )}
+              {cancelError && (
+                <p className="mt-2 text-[10px] text-rose-400">{cancelError}</p>
+              )}
+            </div>
+          )}
         </section>
+
+        {/* Gap 264: confirmation modal — cancellation ends real paid access,
+            worth an explicit confirm rather than a one-click destructive
+            action. */}
+        {showCancelConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-sm bg-[#151B26] border border-[#222D3D] rounded-2xl p-5 space-y-4 shadow-xl">
+              <h3 className="text-sm font-semibold text-white">Cancel subscription?</h3>
+              <p className="text-xs text-slate-400">
+                {paidThroughLabel
+                  ? `Your workspace keeps full access until ${paidThroughLabel}, then switches to the Free plan. You can change your mind any time before then.`
+                  : "Your workspace will switch to the Free plan at the end of the current billing period. You can change your mind any time before then."}
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCancelConfirm(false)}
+                  disabled={cancelLoading}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors"
+                >
+                  Keep subscription
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelSubscription}
+                  disabled={cancelLoading}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 disabled:opacity-50 transition-all"
+                >
+                  {cancelLoading ? "Cancelling…" : "Yes, cancel"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Plan Capabilities details */}
         <section aria-labelledby="capabilities-heading" className="space-y-3">

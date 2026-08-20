@@ -12,6 +12,8 @@ import {
   ShieldCheck,
   X,
   Undo2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import { formatCurrency } from "@/lib/utils";
@@ -275,6 +277,40 @@ export default function AuditorReviewPage() {
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
   const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
 
+  // FE Gap 272: Previous/Next between AUDIT_REQUIRED invoices, without
+  // becoming the tab/queue strip that FE Gap 112 item 3 deliberately
+  // rejected -- this fetches the same ordered id list the Audit Queue page
+  // itself already queries (GET /invoices?status=AUDIT_REQUIRED), keeps it
+  // client-side, and renders two arrow buttons rather than a row of tabs.
+  // Deliberately re-fetched once per navigation (not shared/cached across
+  // invoices) so approving/rejecting the current one and moving on reflects
+  // an up-to-date queue rather than a stale snapshot from when the console
+  // was first opened.
+  const [auditQueueIds, setAuditQueueIds] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .get("/invoices", { params: { status: "AUDIT_REQUIRED", limit: 100 } })
+      .then((res) => {
+        if (cancelled) return;
+        const ids = Array.isArray(res.data) ? res.data.map((inv: { id: string }) => inv.id) : [];
+        setAuditQueueIds(ids);
+      })
+      .catch(() => {
+        // Best effort -- Previous/Next just stay disabled if this fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  const auditQueueIndex = auditQueueIds.indexOf(id);
+  const previousAuditInvoiceId =
+    auditQueueIndex > 0 ? auditQueueIds[auditQueueIndex - 1] : null;
+  const nextAuditInvoiceId =
+    auditQueueIndex >= 0 && auditQueueIndex < auditQueueIds.length - 1
+      ? auditQueueIds[auditQueueIndex + 1]
+      : null;
+
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [editedItems, setEditedItems] = useState<LineItem[]>([]);
 
@@ -515,6 +551,38 @@ export default function AuditorReviewPage() {
             the header they are always reachable and sized like what they are:
             the two terminal actions, not the main content. */}
         <PageHeaderActions>
+          {/* FE Gap 272: Previous/Next through the AUDIT_REQUIRED queue,
+              without leaving the review console. Disabled at either end of
+              the list, or entirely if this invoice isn't part of it (e.g.
+              opened via a chat citation or the notification bell rather than
+              from the Audit Queue itself). */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => previousAuditInvoiceId && router.push(`/invoices/review/${previousAuditInvoiceId}`)}
+              disabled={!previousAuditInvoiceId}
+              title="Previous audit-required invoice"
+              aria-label="Previous audit-required invoice"
+              className="flex items-center justify-center rounded-lg border border-[#222D3D] p-1 sm:p-1.5 text-slate-400 transition hover:bg-[#1E293B] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            {auditQueueIndex >= 0 && (
+              <span className="hidden text-[10px] text-slate-500 sm:inline whitespace-nowrap">
+                {auditQueueIndex + 1} of {auditQueueIds.length}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => nextAuditInvoiceId && router.push(`/invoices/review/${nextAuditInvoiceId}`)}
+              disabled={!nextAuditInvoiceId}
+              title="Next audit-required invoice"
+              aria-label="Next audit-required invoice"
+              className="flex items-center justify-center rounded-lg border border-[#222D3D] p-1 sm:p-1.5 text-slate-400 transition hover:bg-[#1E293B] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
           <span
             className={`rounded-full border px-2 sm:px-3 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium whitespace-nowrap ${
               invoice.status === "PAID"

@@ -1,7 +1,27 @@
 "use client";
 
-import { ZoomIn, ZoomOut, RotateCw, Maximize2, X } from "lucide-react";
-import { useState } from "react";
+import { ZoomIn, ZoomOut, RotateCw, Maximize2, X, AlertTriangle } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Document, Page, pdfjs } from "react-pdf";
+
+// FE Gap 271: pdf.js needs a worker script. Tried the documented
+// `new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url)`
+// bundler-resolution pattern first -- broke `next build` in production:
+// Next's Terser minification pass runs over the asset chunk webpack copies
+// for that URL, and pdfjs-dist 5.x's worker (`import.meta` at module scope,
+// no non-ESM build exists anymore in this version) isn't valid input to
+// Terser's default parser, producing "'import.meta' cannot be used outside
+// of module code." Confirmed by actually running a production build, not
+// assumed.
+//
+// Fixed by serving it as a plain static file instead: the exact same
+// `pdf.worker.min.mjs` copied verbatim into `public/`, referenced by a
+// plain string path. `public/` assets are served as-is and never touched by
+// webpack/Terser, so this sidesteps the problem rather than working around
+// it. Still same-origin, no CDN dependency. If pdfjs-dist is ever upgraded,
+// re-copy `node_modules/pdfjs-dist/build/pdf.worker.min.mjs` ->
+// `public/pdf.worker.min.mjs` to match the new version.
+pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
 interface Coordinate {
   x: number;       // percentage-based left offset (0-100)
@@ -18,6 +38,34 @@ interface PdfViewerCanvasProps {
   coordinates?: Coordinate[];
 }
 
+/**
+ * FE Gap 271: this used to render the PDF in a plain `<iframe>` (the
+ * browser's own native PDF viewer) and position the bounding-box overlays as
+ * percentages of the *iframe's outer box*. That was the actual bug -- a
+ * native viewer can add its own toolbar/padding/letterboxing that the parent
+ * page can't see or measure, so "100% of the iframe" never reliably equaled
+ * "100% of the PDF page's real content area", and every highlight landed
+ * somewhere close to right but not exactly right.
+ *
+ * Fixed by rendering via pdf.js (react-pdf) onto a real `<canvas>` instead.
+ * The rendered page's exact pixel dimensions come back from
+ * `onRenderSuccess`, so the overlay wrapper can be sized to *exactly* the
+ * real page box -- there is no plugin chrome to be uncertain about anymore.
+ *
+ * Deliberately unchanged: the existing zoom (CSS width%) and rotate (CSS
+ * transform) mechanism on the outer wrapping div. Neither was the reported
+ * bug (rotation's own layout issue was Gap 72, already fixed separately),
+ * and scaling/rotating a precisely-sized inner box keeps the overlay
+ * percentages correctly aligned to it either way -- no reason to also
+ * migrate those to pdf.js's native `scale`/`rotate` props in the same pass.
+ *
+ * Also deliberately unchanged in scope: overlays are positioned against
+ * page 1 only. `coordinates` has never carried a page number (checked
+ * models.py -- `Invoice.coordinates` is a plain untyped JSON list), so this
+ * was already implicitly page-1-only before; every page still renders
+ * (multi-page invoices still scroll exactly like the old iframe did), this
+ * fix doesn't newly narrow that.
+ */
 export default function PdfViewerCanvas({
   invoiceId,
   title,
@@ -33,7 +81,13 @@ export default function PdfViewerCanvas({
   const [modalZoom, setModalZoom] = useState(100);
   const [modalRotation, setModalRotation] = useState(0);
 
-  const isRotated = rotation % 180 !== 0;
+  const [numPages, setNumPages] = useState<number | null>(null);
+  // FE Gap 271: page 1's real, rendered pixel size -- what the overlay
+  // wrapper is sized to, so coord.x/y/width/height percentages land exactly
+  // where Document Intelligence measured them against the source page.
+  const [page1Size, setPage1Size] = useState<{ width: number; height: number } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const pdfUrl = `/api/invoices/${invoiceId}/pdf`;
 
   const statusBadge: Record<string, string> = {
@@ -67,6 +121,19 @@ export default function PdfViewerCanvas({
     setModalZoom(100);
     setModalRotation(0);
   };
+
+  const handleDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
+    setNumPages(n);
+    setLoadError(null);
+  }, []);
+
+  // Typed as `{ width, height }` only, deliberately not react-pdf's full
+  // PageCallback (PDFPageProxy) type -- avoids depending on that package's
+  // internal type-export path, which isn't re-exported from its top-level
+  // module and isn't part of its public API contract.
+  const handlePage1RenderSuccess = useCallback((page: { width: number; height: number }) => {
+    setPage1Size({ width: page.width, height: page.height });
+  }, []);
 
   return (
     <div className="flex h-full min-h-[500px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]">
@@ -117,6 +184,9 @@ export default function PdfViewerCanvas({
           <RotateCw size={13} /> Rotate
         </button>
         <span className="text-xs text-slate-500 font-mono ml-1">{zoom}%</span>
+        {numPages && numPages > 1 && (
+          <span className="text-xs text-slate-500 ml-2">{numPages} pages</span>
+        )}
 
         {/* Gap 155: Fullscreen Lightbox Modal Button */}
         <button
@@ -139,27 +209,57 @@ export default function PdfViewerCanvas({
             transformOrigin: "center top",
           }}
         >
-          {/* PDF iframe */}
-          <iframe
-            src={pdfUrl}
-            className="h-[800px] w-full rounded-md border border-[#222D3D] bg-white shadow-xl"
-            title="Invoice PDF"
-          />
-
-          {/* Bounding Box Overlays */}
-          {coordinates.map((coord, idx) => (
-            <div
-              key={idx}
-              className="pointer-events-none absolute rounded-sm border-2 border-emerald-400 bg-emerald-400/20 shadow-[0_0_12px_rgba(16,185,129,0.5)]"
-              style={{
-                left: `${coord.x}%`,
-                top: `${coord.y}%`,
-                width: `${coord.width}%`,
-                height: `${coord.height}%`,
-              }}
-              title={coord.label}
-            />
-          ))}
+          {loadError ? (
+            <div className="flex h-[400px] w-full items-center justify-center gap-2 rounded-md border border-[#222D3D] bg-white text-sm text-rose-600">
+              <AlertTriangle size={16} /> {loadError}
+            </div>
+          ) : (
+            <Document
+              file={pdfUrl}
+              onLoadSuccess={handleDocumentLoadSuccess}
+              onLoadError={(err) => setLoadError(err?.message || "Failed to load PDF.")}
+              loading={
+                <div className="flex h-[400px] w-full items-center justify-center rounded-md border border-[#222D3D] bg-white text-sm text-slate-500">
+                  Loading PDF…
+                </div>
+              }
+              className="w-full rounded-md border border-[#222D3D] bg-white shadow-xl overflow-hidden"
+            >
+              {Array.from({ length: numPages ?? 0 }, (_, i) => i + 1).map((pageNumber) => (
+                <div key={pageNumber} className={pageNumber > 1 ? "relative border-t border-[#222D3D]" : "relative"}>
+                  <Page
+                    pageNumber={pageNumber}
+                    width={undefined}
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
+                    onRenderSuccess={pageNumber === 1 ? handlePage1RenderSuccess : undefined}
+                    className="w-full [&>canvas]:!w-full [&>canvas]:!h-auto"
+                  />
+                  {/* Bounding Box Overlays — page 1 only, see file-level comment. */}
+                  {pageNumber === 1 && page1Size && (
+                    <div
+                      className="pointer-events-none absolute left-0 top-0"
+                      style={{ width: page1Size.width, height: page1Size.height }}
+                    >
+                      {coordinates.map((coord, idx) => (
+                        <div
+                          key={idx}
+                          className="absolute rounded-sm border-2 border-emerald-400 bg-emerald-400/20 shadow-[0_0_12px_rgba(16,185,129,0.5)]"
+                          style={{
+                            left: `${coord.x}%`,
+                            top: `${coord.y}%`,
+                            width: `${coord.width}%`,
+                            height: `${coord.height}%`,
+                          }}
+                          title={coord.label}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </Document>
+          )}
         </div>
       </div>
 
@@ -211,8 +311,10 @@ export default function PdfViewerCanvas({
             </div>
           </div>
           <div className="flex-1 overflow-auto flex items-center justify-center p-4">
-            {/* Gap 154: apply transform to the wrapper div, not the iframe itself,
-                so the full PDF (including scrollable content) scales and rotates correctly. */}
+            {/* Gap 154: apply transform to the wrapper div, not the page itself,
+                so the full PDF (including scrollable content) scales and rotates correctly.
+                FE Gap 271: same iframe -> canvas swap as the inline viewer above; this
+                preview never rendered coordinate overlays before and still doesn't. */}
             <div
               style={{
                 width: `${modalZoom}%`,
@@ -222,13 +324,30 @@ export default function PdfViewerCanvas({
                 transformOrigin: "center center",
                 transition: "transform 0.2s ease, width 0.2s ease",
               }}
-              className="h-full"
+              className="h-full overflow-auto"
             >
-              <iframe
-                src={pdfUrl}
-                className="h-full w-full min-h-[70vh] rounded-xl border border-slate-800 bg-white shadow-2xl"
-                title="Expanded Invoice PDF"
-              />
+              {!loadError && (
+                <Document
+                  file={pdfUrl}
+                  loading={
+                    <div className="flex h-full min-h-[70vh] w-full items-center justify-center rounded-xl border border-slate-800 bg-white text-sm text-slate-500">
+                      Loading PDF…
+                    </div>
+                  }
+                  className="w-full rounded-xl border border-slate-800 bg-white shadow-2xl overflow-hidden"
+                >
+                  {Array.from({ length: numPages ?? 0 }, (_, i) => i + 1).map((pageNumber) => (
+                    <div key={pageNumber} className={pageNumber > 1 ? "border-t border-slate-800" : undefined}>
+                      <Page
+                        pageNumber={pageNumber}
+                        renderTextLayer={false}
+                        renderAnnotationLayer={false}
+                        className="w-full [&>canvas]:!w-full [&>canvas]:!h-auto"
+                      />
+                    </div>
+                  ))}
+                </Document>
+              )}
             </div>
           </div>
         </div>

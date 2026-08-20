@@ -33,6 +33,14 @@ class Tenant(SQLModel, table=True):
     # payment; NULL means "never paid" (free tier) or a legacy pre-Gap-71 row,
     # neither of which may be lapsed -- see is_lapsed().
     paid_through: datetime | None = Field(default=None)
+    # BE Gap 264: the user explicitly asked to stop renewing, recorded
+    # separately from paid_through/billing_plan so the two questions ("when
+    # does access end" and "did the tenant choose that or just go idle")
+    # don't collapse into one signal. Does not itself change billing_plan or
+    # paid_through -- access continues exactly as already designed until
+    # paid_through, and services/billing_lifecycle.py's existing sweep still
+    # owns the actual downgrade. NULL means no cancellation is pending.
+    cancel_requested_at: datetime | None = Field(default=None)
     # Feature 16: Service Flow toggles
     receive_invoices_enabled: bool = Field(default=True)   # Inbound (AP) — on by default, preserves existing behaviour
     send_invoices_enabled: bool = Field(default=False)     # Outbound (AR) — opt-in, requires pro_combined plan

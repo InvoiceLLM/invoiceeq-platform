@@ -43,7 +43,13 @@ from sqlmodel import Session
 from config import settings
 from dependencies import get_tenant_context_allow_unpaid, get_db_session, TenantContext
 from models import Tenant, User
-from services.billing_lifecycle import FREE_PLAN, extend_paid_through
+from services.billing_lifecycle import (
+    FREE_PLAN,
+    PAID_PLANS,
+    extend_paid_through,
+    request_cancellation,
+    undo_cancellation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +105,13 @@ class BillingUsageResponse(BaseModel):
     limit: int | None = None
     remaining: int | None = None
     resets_at: datetime | None = None
+    # Gap 264: when set, the workspace's paid access ends at this date instead
+    # of auto-continuing. None on every plan unless a cancellation is pending.
+    # `paid_through` is included alongside it so the FE can show "Cancels on
+    # <date>" without a second round trip -- both come off the same tenant row
+    # already loaded for this response.
+    cancel_requested_at: datetime | None = None
+    paid_through: datetime | None = None
 
 
 class CheckoutSessionResponse(BaseModel):
@@ -193,7 +206,12 @@ def get_billing_usage(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
 
     if tenant.billing_plan != FREE_PLAN:
-        return BillingUsageResponse(plan=tenant.billing_plan, metered=False)
+        return BillingUsageResponse(
+            plan=tenant.billing_plan,
+            metered=False,
+            cancel_requested_at=tenant.cancel_requested_at,
+            paid_through=tenant.paid_through,
+        )
 
     limit = settings.DEFAULT_FREE_INVOICES_LIMIT
     # Clamped both ways: the spend-side decrement can currently drive the
@@ -208,6 +226,89 @@ def get_billing_usage(
         limit=limit,
         remaining=remaining,
         resets_at=tenant.free_quota_reset_at,
+        cancel_requested_at=tenant.cancel_requested_at,
+        paid_through=tenant.paid_through,
+    )
+
+
+@router.post("/cancel", response_model=BillingUsageResponse)
+def cancel_subscription(
+    context: TenantContext = Depends(get_tenant_context_allow_unpaid),
+    db_session: Session = Depends(get_db_session),
+):
+    """Gap 264: self-serve cancellation.
+
+    PayU's classic API has no subscription object and no auto-debit (see the
+    module docstring) -- a tenant only stays on a paid plan by manually
+    re-checking out before `paid_through`, so there is no recurring charge to
+    "stop". What this endpoint actually does: record that the tenant chose
+    not to renew, so (a) the eventual downgrade at `paid_through` is an
+    explicit, on-the-record outcome rather than an ambiguous "just went
+    idle", (b) the FE can tell the user exactly when access ends instead of
+    saying nothing, and (c) `billing_lifecycle.lapse_deadline()` skips the
+    grace period for this tenant -- grace exists to be lenient toward a
+    forgotten renewal, which this isn't.
+
+    Admin-only, same gate as create_checkout_session below (billing-plan-
+    affecting action). `get_tenant_context_allow_unpaid`, not
+    get_tenant_context, for the same Gap 71 reason as usage/checkout: a
+    lapsed tenant must still be able to reach their own billing state.
+    """
+    if context.role != "Admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin users can manage billing.")
+
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    if tenant.billing_plan not in PAID_PLANS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only an active paid plan can be cancelled.",
+        )
+
+    request_cancellation(tenant)
+    tenant.updated_at = datetime.utcnow()
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+
+    logger.info("Billing cancellation requested: tenant=%s paid_through=%s", tenant.id, tenant.paid_through)
+
+    return BillingUsageResponse(
+        plan=tenant.billing_plan,
+        metered=False,
+        cancel_requested_at=tenant.cancel_requested_at,
+        paid_through=tenant.paid_through,
+    )
+
+
+@router.post("/reactivate", response_model=BillingUsageResponse)
+def reactivate_subscription(
+    context: TenantContext = Depends(get_tenant_context_allow_unpaid),
+    db_session: Session = Depends(get_db_session),
+):
+    """Gap 264: undo a pending cancellation before `paid_through` passes.
+    Same Admin gate as cancel_subscription above."""
+    if context.role != "Admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin users can manage billing.")
+
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+
+    undo_cancellation(tenant)
+    tenant.updated_at = datetime.utcnow()
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+
+    logger.info("Billing cancellation reversed: tenant=%s", tenant.id)
+
+    return BillingUsageResponse(
+        plan=tenant.billing_plan,
+        metered=False,
+        cancel_requested_at=tenant.cancel_requested_at,
+        paid_through=tenant.paid_through,
     )
 
 
@@ -335,6 +436,12 @@ async def _handle_payu_callback(form: dict, db_session: Session, is_surl: bool) 
     # Without this there is no date for the lapse check to compare against and
     # the 402 gate in dependencies.get_tenant_context() can never fire.
     paid_through = extend_paid_through(tenant)
+    # Gap 264: a real payment is an implicit "I don't want to cancel after
+    # all" -- without this, a tenant who cancelled and then re-checked out
+    # before paid_through passed would keep the flag set, silently skipping
+    # the grace period on their *next* cycle for a cancellation they already
+    # reversed by paying.
+    undo_cancellation(tenant)
     db_session.add(tenant)
     db_session.commit()
 

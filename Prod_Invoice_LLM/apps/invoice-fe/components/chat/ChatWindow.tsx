@@ -29,6 +29,8 @@ import {
   Pencil,
   Check,
   X,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { MessageStream } from "./MessageBubble";
 import type { ChatSession, ChatMessage } from "@/types/chat";
@@ -61,6 +63,8 @@ interface ThreadSidebarProps {
   onCreate: () => void;
   onRename: (id: string, newTitle: string) => void;
   onDelete: (id: string) => void;
+  /** FE Gap 274: hides the whole panel. Undefined = no hide affordance rendered. */
+  onHide?: () => void;
 }
 
 function ThreadSidebar({
@@ -71,6 +75,7 @@ function ThreadSidebar({
   onCreate,
   onRename,
   onDelete,
+  onHide,
 }: ThreadSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -97,22 +102,36 @@ function ThreadSidebar({
   return (
     <div className="w-64 shrink-0 border-r border-[#222D3D] flex flex-col h-full bg-[#080B12]/60">
       {/* Header with "+ New Chat" button */}
-      <div className="px-4 py-4 border-b border-[#222D3D] flex items-center justify-between">
+      <div className="px-4 py-4 border-b border-[#222D3D] flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-slate-200">Conversations</span>
-        <button
-          id="chat-new-session-btn"
-          onClick={onCreate}
-          title="New Chat"
-          className="
-            flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300
-            bg-blue-900/20 hover:bg-blue-900/40 border border-blue-800/30
-            px-2.5 py-1.5 rounded-lg transition-all duration-150
-            focus:outline-none focus:ring-1 focus:ring-blue-600
-          "
-        >
-          <MessageSquarePlus className="w-3.5 h-3.5" />
-          New Chat
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            id="chat-new-session-btn"
+            onClick={onCreate}
+            title="New Chat"
+            className="
+              flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300
+              bg-blue-900/20 hover:bg-blue-900/40 border border-blue-800/30
+              px-2.5 py-1.5 rounded-lg transition-all duration-150
+              focus:outline-none focus:ring-1 focus:ring-blue-600
+            "
+          >
+            <MessageSquarePlus className="w-3.5 h-3.5" />
+            New Chat
+          </button>
+          {/* FE Gap 274: hide this panel to reclaim width for the message area. */}
+          {onHide && (
+            <button
+              type="button"
+              onClick={onHide}
+              title="Hide conversation list"
+              aria-label="Hide conversation list"
+              className="text-slate-500 hover:text-slate-200 p-1.5 rounded-lg hover:bg-[#1E293B]/50 transition-colors"
+            >
+              <PanelLeftClose className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search Input Bar (Gap 149) */}
@@ -454,21 +473,38 @@ export default function ChatWindow({
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
 
+  // FE Gap 274: the thread list can be hidden entirely (unlike the main
+  // app Sidebar's icon-only collapse, per Gap 273 -- the chat window is
+  // fully usable without it visible at all). Persisted the same way.
+  const [sidebarHidden, setSidebarHidden] = useState(false);
+  useEffect(() => {
+    if (window.localStorage.getItem("chat-thread-sidebar-hidden") === "true") {
+      setSidebarHidden(true);
+    }
+  }, []);
+  const setSidebarHiddenPersisted = (hidden: boolean) => {
+    setSidebarHidden(hidden);
+    window.localStorage.setItem("chat-thread-sidebar-hidden", String(hidden));
+  };
+
   return (
     // h-full: fills the container set by page.tsx (100vh minus header height)
     // overflow-hidden: the scroll is managed inside MessageStream and ThreadSidebar,
     //   not on this container — prevents double scrollbars.
     <div className="flex h-full overflow-hidden">
-      {/* Left: Thread Sidebar */}
-      <ThreadSidebar
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        isLoading={isLoadingSessions}
-        onSelect={onSelectSession}
-        onCreate={onCreateSession}
-        onRename={onRenameSession}
-        onDelete={onDeleteSession}
-      />
+      {/* Left: Thread Sidebar (FE Gap 274: omitted entirely when hidden) */}
+      {!sidebarHidden && (
+        <ThreadSidebar
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          isLoading={isLoadingSessions}
+          onSelect={onSelectSession}
+          onCreate={onCreateSession}
+          onRename={onRenameSession}
+          onDelete={onDeleteSession}
+          onHide={() => setSidebarHiddenPersisted(true)}
+        />
+      )}
 
       {/* Right: Chat Area — flex column so input bar is always pinned to bottom */}
       <div className="flex flex-col flex-1 overflow-hidden">
@@ -478,6 +514,18 @@ export default function ChatWindow({
             directly into message-area space. */}
         <div className="px-4 py-1.5 border-b border-[#222D3D] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-1.5">
+            {/* FE Gap 274: brings the thread list back once hidden. */}
+            {sidebarHidden && (
+              <button
+                type="button"
+                onClick={() => setSidebarHiddenPersisted(false)}
+                title="Show conversation list"
+                aria-label="Show conversation list"
+                className="text-slate-500 hover:text-slate-200 p-1 -ml-1 mr-0.5 rounded hover:bg-[#1E293B]/50 transition-colors"
+              >
+                <PanelLeftOpen className="w-3.5 h-3.5" />
+              </button>
+            )}
             <span className="text-xs leading-none not-italic">🧙</span>
             <span className="text-[10px] font-mono font-semibold text-[#6366F1] tracking-wide">SAGE</span>
             <span className="text-[10px] text-slate-500">— Conversational Insights</span>

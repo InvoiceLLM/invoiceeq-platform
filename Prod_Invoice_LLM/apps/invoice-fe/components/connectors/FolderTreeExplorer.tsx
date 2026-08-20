@@ -77,8 +77,13 @@ export default function FolderTreeExplorer({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  const [importCompleted, setImportCompleted] = useState(false);
+  // FE Gap 267: was a plain boolean ("did the whole batch succeed"), which
+  // only made sense together with the old abort-on-first-failure loop below.
+  // Now holds a real per-batch summary since success/failure is per file.
+  const [importCompleted, setImportCompleted] = useState<string | null>(null);
   // FE Gap 166: a failed import has to be visible, not just console-logged.
+  // FE Gap 267: now a summary of every failure in the batch, not just the
+  // first one that used to abort the whole loop.
   const [importError, setImportError] = useState<string | null>(null);
 
   // --- Load directory contents ---
@@ -112,6 +117,18 @@ export default function FolderTreeExplorer({
     );
   };
 
+  // FE Gap 265: files in the current folder only -- matches how `files`
+  // itself is already scoped (subfolder contents aren't held in state until
+  // navigated into, so a recursive "select everything" isn't possible here).
+  const selectableFileIds = files.filter((f) => f.type === "file").map((f) => f.id);
+  const allSelected =
+    selectableFileIds.length > 0 &&
+    selectableFileIds.every((id) => selectedFileIds.includes(id));
+
+  const handleToggleSelectAll = () => {
+    setSelectedFileIds(allSelected ? [] : selectableFileIds);
+  };
+
   // --- Navigation actions ---
   const handleFolderClick = (folder: ConnectorFile) => {
     if (folder.type !== "folder") return;
@@ -134,45 +151,76 @@ export default function FolderTreeExplorer({
   };
 
   // --- Trigger Ingestion Imports ---
+  // FE Gap 267: this used to loop sequentially and abort the ENTIRE batch on
+  // the first failed file (Gap 166's reasoning was "the rest are probably
+  // failing for the same reason" -- confirmed wrong under real multi-file,
+  // multi-cause testing: one file's unrelated permission/transient error
+  // silently prevented every file queued after it from ever being attempted,
+  // and the user only ever saw one generic error covering the whole
+  // selection). Every file is now attempted independently and the result is
+  // a real per-file count, not an all-or-nothing outcome.
   const handleImportSelected = async () => {
     if (selectedFileIds.length === 0) return;
     setIsImporting(true);
-    setImportCompleted(false);
+    setImportCompleted(null);
     setImportError(null);
 
-    try {
-      // Import sequentially in background queue.
-      // FE Gap 166: the response status used to be ignored entirely -- only a
-      // network-level throw was caught -- so a rejected import (unknown file
-      // id, quota exceeded, backend 500) still ended on the green "Import
-      // request queued!" banner. Same `if (!res.ok) throw` shape as
-      // components/settings/EmailSendersList.tsx. Deliberately aborts the loop
-      // on the first failure rather than pressing on: the remaining files are
-      // almost always failing for the same reason, and a partial run reported
-      // as success is exactly the problem being fixed here.
-      for (const fileId of selectedFileIds) {
+    const results = await Promise.allSettled(
+      selectedFileIds.map(async (fileId) => {
         const res = await fetch(`/api/connectors/import/${provider}?direction=${direction}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file_id: fileId }),
         });
         if (!res.ok) {
+          // FE Gap 166: the response status used to be ignored entirely --
+          // only a network-level throw was caught -- so a rejected import
+          // (unknown file id, quota exceeded, backend 500) still counted as
+          // queued. Same `if (!res.ok) throw` shape as
+          // components/settings/EmailSendersList.tsx.
           const detail = await res
             .json()
             .then((d) => d.detail || d.error)
             .catch(() => null);
           throw new Error(detail || "The connector rejected this import request.");
         }
-      }
-      setImportCompleted(true);
-      setSelectedFileIds([]);
-      setTimeout(() => setImportCompleted(false), 4000);
-    } catch (err: any) {
-      console.error("Bulk connector import failed", err);
-      setImportError(err?.message || "Failed to queue the selected files for import.");
-    } finally {
-      setIsImporting(false);
+        return fileId;
+      })
+    );
+
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.length - succeeded;
+
+    if (succeeded > 0) {
+      setImportCompleted(
+        failed > 0
+          ? `${succeeded} of ${results.length} file(s) queued for import.`
+          : `${succeeded} file(s) queued for import.`
+      );
+      setTimeout(() => setImportCompleted(null), 4000);
     }
+
+    if (failed > 0) {
+      const reasons = Array.from(
+        new Set(
+          results
+            .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+            .map((r) => (r.reason instanceof Error ? r.reason.message : "Unknown error"))
+        )
+      );
+      console.error("Some connector imports failed", reasons);
+      setImportError(
+        `${failed} of ${results.length} file(s) failed: ${reasons.join("; ")}`
+      );
+    }
+
+    // Only clear the files that actually succeeded -- a failed selection
+    // should stay checked so the user can see and retry exactly what didn't go through.
+    const succeededIds = new Set(
+      selectedFileIds.filter((_, idx) => results[idx].status === "fulfilled")
+    );
+    setSelectedFileIds((prev) => prev.filter((id) => !succeededIds.has(id)));
+    setIsImporting(false);
   };
 
   const handleSelectFolder = () => {
@@ -327,16 +375,36 @@ export default function FolderTreeExplorer({
 
       {/* Explorer Footer Action Bar */}
       <footer className="px-5 py-4 border-t border-[#1E293B]/70 bg-[#151B26] flex items-center justify-between">
-        <span className="text-[10px] text-slate-400">
-          {isFolderMode
-            ? `Current folder: ${currentFolder?.name ?? "Root"}`
-            : `${selectedFileIds.length} file(s) selected`}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-slate-400">
+            {isFolderMode
+              ? `Current folder: ${currentFolder?.name ?? "Root"}`
+              : `${selectedFileIds.length} file(s) selected`}
+          </span>
+          {/* FE Gap 265: bulk-select every file in the current folder. */}
+          {!isFolderMode && selectableFileIds.length > 0 && (
+            <button
+              type="button"
+              onClick={handleToggleSelectAll}
+              className="flex items-center gap-1 text-[10px] font-medium text-blue-400 transition-colors hover:text-blue-300"
+            >
+              {allSelected ? (
+                <>
+                  <CheckSquare className="w-3.5 h-3.5" /> Deselect All
+                </>
+              ) : (
+                <>
+                  <Square className="w-3.5 h-3.5" /> Select All
+                </>
+              )}
+            </button>
+          )}
+        </div>
 
         <div className="flex items-center gap-3">
           {!isFolderMode && importCompleted && (
             <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
-              <CheckCircle className="w-3.5 h-3.5" /> Import request queued!
+              <CheckCircle className="w-3.5 h-3.5" /> {importCompleted}
             </span>
           )}
 

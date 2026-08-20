@@ -24,8 +24,22 @@ interface LogTerminalProps {
  */
 export default function LogTerminal({ batchId }: LogTerminalProps) {
   const [lines, setLines] = useState<LogLine[]>([]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  // FE Gap 268: whether the user was already at (or near) the bottom before
+  // this render's new line arrived. Starts true so the first lines still
+  // auto-scroll into view. Ref, not state -- must be read synchronously
+  // inside the scroll handler and the lines effect below without triggering
+  // its own re-render.
+  const isNearBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 40;
+  };
 
   useEffect(() => {
     setLines([]);
@@ -71,8 +85,15 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
     };
   }, [batchId]);
 
+  // FE Gap 268: this used to run unconditionally on every new line, so a
+  // user who scrolled up mid-ingestion to read an earlier line got yanked
+  // back to the bottom the instant the next line arrived. Now only follows
+  // the tail when the user was already there -- matches how any log/chat
+  // UI's "stick to bottom unless the reader scrolls away" behavior works.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isNearBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [lines]);
 
   if (!batchId) return null;
@@ -87,7 +108,11 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
         <span className="text-xs font-semibold text-slate-300">Live Processing Log</span>
         <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-[#22D3EE]/10 text-[#22D3EE] border border-[#22D3EE]/30 font-mono font-semibold">NOVA</span>
       </div>
-      <div className="bg-[#0B0F19] p-3 h-40 overflow-y-auto font-mono text-[11px] leading-relaxed">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="bg-[#0B0F19] p-3 h-40 overflow-y-auto font-mono text-[11px] leading-relaxed"
+      >
         {lines.length === 0 ? (
           <span className="text-slate-600">Waiting for processing to start...</span>
         ) : (

@@ -60,7 +60,16 @@ export default function StatusTable({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  // Initialize status ledger items from input
+  // Initialize status ledger items from input, then reconcile against real
+  // current status (FE Gap 269): jobIds/batchId are restored from Gap 204's
+  // module-level cache when the user navigates back to this screen, but the
+  // per-item STATUS was never part of that cache -- every item re-rendered
+  // hardcoded at "PROCESSING" and only a fresh SSE event could correct it.
+  // If every file already reached a terminal state before the user returned,
+  // SSE has nothing left to emit (it doesn't replay past events), so the
+  // stale "PROCESSING" never got fixed. Fetching real status once on mount
+  // closes that gap; the SSE subscription below still drives live updates
+  // for anything genuinely still in flight.
   useEffect(() => {
     if (jobIds.length === 0) {
       setItems([]);
@@ -81,6 +90,33 @@ export default function StatusTable({
 
     setItems(initialItems);
     setExpandedRowId(null);
+
+    let cancelled = false;
+    jobIds.forEach((id) => {
+      fetch(`/api/invoices/status/${id}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (cancelled || !data) return;
+          updateItemStatus(
+            id,
+            data.status,
+            TERMINAL_STATUSES.includes(data.status) ? 100 : 60,
+            data.alerts || [],
+            data.vendor_name,
+            data.grand_total,
+            data.currency
+          );
+        })
+        .catch(() => {
+          // Best effort -- if the reconciliation fetch fails, the item just
+          // stays at the initial PROCESSING guess until (or unless) an SSE
+          // event corrects it, same as today's pre-fix behavior.
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [batchId, jobIds]);
 
   // Gap 207: SSE for every batch size. This used to gate on `jobIds.length
