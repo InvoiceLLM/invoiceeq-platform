@@ -25,7 +25,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, User, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Bot, User, ThumbsUp, ThumbsDown, Loader2, Sparkles, AlertCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import CitationPill from "./CitationPill";
@@ -270,8 +270,10 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             ${isUser
               // User: solid dark blue — spec: bg-[#1E293B] text-slate-100 rounded-2xl rounded-tr-none
               ? "bg-[#1E293B] text-slate-100 rounded-2xl rounded-tr-none"
-              // Assistant: gradient with border — spec: bg-gradient-to-r from-blue-950/20 to-purple-950/20
-              //   border border-blue-800/40 rounded-2xl rounded-tl-none
+              : message.status === "failed"
+              ? "bg-red-950/30 border border-red-800/50 rounded-2xl rounded-tl-none text-red-200"
+              : message.status === "queued" || message.status === "processing"
+              ? "bg-gradient-to-r from-blue-950/30 via-indigo-950/30 to-purple-950/30 border border-purple-600/40 rounded-2xl rounded-tl-none text-slate-200 shadow-[0_0_15px_rgba(139,92,246,0.15)]"
               : "bg-gradient-to-r from-blue-950/20 to-purple-950/20 border border-blue-800/40 rounded-2xl rounded-tl-none text-slate-200"
             }
           `}
@@ -279,6 +281,30 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           {isUser ? (
             // User messages are plain text — no markdown needed
             <span>{message.content}</span>
+          ) : message.status === "failed" ? (
+            <div className="flex items-start gap-2 text-red-300">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+              <div className="space-y-1">
+                <p className="font-medium text-xs text-red-200">Query Failed</p>
+                <p className="text-xs text-red-300/80">
+                  {message.error_message || message.content || "Something went wrong while processing your request."}
+                </p>
+              </div>
+            </div>
+          ) : message.status === "queued" || message.status === "processing" ? (
+            <div className="flex flex-col gap-2 py-0.5">
+              <div className="flex items-center gap-2 text-purple-300">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                <span className="text-xs font-medium tracking-wide">
+                  {message.error_message || (message.status === "queued" ? "Queued in line (Slot reserved)..." : "Analyzing query and documents...")}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 pl-5">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse [animation-delay:0ms]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse [animation-delay:200ms]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse [animation-delay:400ms]" />
+              </div>
+            </div>
           ) : (
             // Assistant messages run through renderMarkdown (Gap 229: full GFM
             // markdown now — bold/italic/code plus lists/tables/headings/links)
@@ -291,7 +317,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         {/* ── Citation Pills — RAG path only ───────────────────────────── */}
         {/* WHY check citations?.length > 0: the field is undefined for SQL/CHAT
             path messages, so we guard both the undefined and empty-array cases. */}
-        {!isUser && message.citations && message.citations.length > 0 && (
+        {!isUser && message.status === "completed" && message.citations && message.citations.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 mt-1">
             {message.citations.map((citation: any, idx: number) => (
               // idx suffix prevents key collision when the same invoice appears
@@ -304,7 +330,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         {/* ── SQL Audit Drawer — SQL path only ─────────────────────────── */}
         {/* WHY not show for user messages: generated_sql is always null on
             user-role messages; the guard keeps the JSX explicit. */}
-        {!isUser && message.generated_sql && (
+        {!isUser && message.status === "completed" && message.generated_sql && (
           <div className="w-full px-1">
             <SqlAuditDrawer sql={message.generated_sql} />
           </div>
@@ -313,7 +339,9 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         {/* Timestamp + feedback vote row */}
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-slate-500 px-1">{formattedTime}</span>
-          {!isUser && <FeedbackVote messageId={message.id} initialVote={message.feedback} />}
+          {!isUser && message.status === "completed" && (
+            <FeedbackVote messageId={message.id} initialVote={message.feedback} />
+          )}
         </div>
       </div>
     </div>
@@ -342,6 +370,10 @@ export function MessageStream({ messages, isSending }: MessageStreamProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isSending]);
 
+  const showTypingIndicator =
+    isSending &&
+    (!messages.length || messages[messages.length - 1].role === "user");
+
   return (
     <div className="flex flex-col gap-5 py-6 px-4">
       {messages.map((msg) => (
@@ -349,11 +381,7 @@ export function MessageStream({ messages, isSending }: MessageStreamProps) {
       ))}
 
       {/* ── Typing Indicator ────────────────────────────────────────────── */}
-      {/* WHY three staggered bouncing dots: this is the universally recognised
-          UX pattern for "the other party is typing".  It manages user
-          expectations — they know a response is coming and won't re-send.
-          animation-delay staggering is set via Tailwind's JIT arbitrary values. */}
-      {isSending && (
+      {showTypingIndicator && (
         <div className="flex items-start gap-3">
           <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-purple-900/40 border border-purple-700/40">
             <Bot className="w-4 h-4 text-purple-400" />

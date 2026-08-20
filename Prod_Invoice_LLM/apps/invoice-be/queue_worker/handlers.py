@@ -934,3 +934,127 @@ def handle_deliver_webhook(
             tenant_id, subscription_id, event_type, e,
         )
         return {"delivered": False, "skipped": False, "error": str(e)}
+
+
+def handle_process_chat_job(
+    job_id: str,
+    session_id: str,
+    user_msg_id: str,
+    content: str,
+    tenant_id: str,
+    db_session: Optional[Session] = None,
+) -> dict:
+    """Gap 280: Asynchronous background worker handler for a chat query turn.
+
+    Executes LangGraph/Query Agent in background worker thread, emits live
+    progress events to Redis Pub/Sub, persists assistant ChatMessage, updates
+    the user ChatMessage to 'completed', and releases tenant concurrency slot.
+    """
+    from services.chat_queue import ChatQueueService
+    from agents.query_agent import run_query_agent
+    from models import ChatMessage
+
+    def _execute(session: Session) -> dict:
+        try:
+            # 1. Publish initial progress
+            ChatQueueService.publish_progress(
+                job_id=job_id,
+                step="routing",
+                details={"message": "Analyzing query intent and database schema..."},
+            )
+
+            # 2. Run query agent
+            agent_output = run_query_agent(
+                session_id=str(session_id),
+                user_message=content,
+                tenant_id=str(tenant_id),
+                db_session=session,
+            )
+
+            # 3. Publish synthesis step
+            ChatQueueService.publish_progress(
+                job_id=job_id,
+                step="synthesizing",
+                details={"message": "Finalizing response with citations..."},
+            )
+
+            # 4. Save Assistant ChatMessage & update User message
+            assistant_msg = ChatMessage(
+                id=uuid4(),
+                session_id=UUID(session_id),
+                role="assistant",
+                content=agent_output.get("content", ""),
+                generated_sql=agent_output.get("generated_sql"),
+                citations=agent_output.get("citations", []),
+                result_invoice_ids=agent_output.get("result_invoice_ids", []),
+                status="completed",
+                job_id=job_id,
+            )
+            session.add(assistant_msg)
+
+            # Update user message status if it exists
+            if user_msg_id:
+                try:
+                    user_msg = session.exec(
+                        select(ChatMessage).where(ChatMessage.id == UUID(user_msg_id))
+                    ).first()
+                    if user_msg:
+                        user_msg.status = "completed"
+                        session.add(user_msg)
+                except Exception as e:
+                    logger.warning("Could not update user message %s status: %s", user_msg_id, e)
+
+            session.commit()
+            session.refresh(assistant_msg)
+
+            result_dict = {
+                "id": str(assistant_msg.id),
+                "session_id": str(assistant_msg.session_id),
+                "role": assistant_msg.role,
+                "content": assistant_msg.content,
+                "generated_sql": assistant_msg.generated_sql,
+                "citations": assistant_msg.citations,
+                "status": "completed",
+                "job_id": job_id,
+                "created_at": assistant_msg.created_at.isoformat() if assistant_msg.created_at else None,
+            }
+
+            # 5. Mark completed in Redis and release tenant slot
+            ChatQueueService.complete_job(
+                job_id=job_id,
+                tenant_id=str(tenant_id),
+                result_payload=result_dict,
+            )
+            return result_dict
+
+        except Exception as e:
+            logger.error("Chat background job %s failed: %s", job_id, e, exc_info=True)
+            session.rollback()
+
+            # Record failed status on user message if possible
+            if user_msg_id:
+                try:
+                    user_msg = session.exec(
+                        select(ChatMessage).where(ChatMessage.id == UUID(user_msg_id))
+                    ).first()
+                    if user_msg:
+                        user_msg.status = "failed"
+                        user_msg.error_message = str(e)
+                        session.add(user_msg)
+                        session.commit()
+                except Exception:
+                    pass
+
+            error_msg = "Sorry, something went wrong processing your request in the background."
+            ChatQueueService.fail_job(
+                job_id=job_id,
+                tenant_id=str(tenant_id),
+                error_message=error_msg,
+            )
+            return {"job_id": job_id, "status": "failed", "error": str(e)}
+
+    if db_session is not None:
+        return _execute(db_session)
+    with Session(engine) as session:
+        return _execute(session)
+
