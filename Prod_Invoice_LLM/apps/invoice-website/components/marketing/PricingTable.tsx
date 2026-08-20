@@ -205,7 +205,7 @@ export function PricingTable() {
             <span>Simple, Transparent Pricing</span>
           </div>
 
-          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight">
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-tight">
             Plans that scale with <span className="animated-hero-heading inline-block">your invoice volume</span>
           </h2>
 

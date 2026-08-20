@@ -228,7 +228,7 @@ export function Hero() {
               smaller viewports may still wrap; the step up to text-6xl is held
               back to xl because at 60px this string is ~1040px wide and would
               overflow the container at exactly the lg breakpoint (1024px). */}
-          <h1 className="mt-4 text-2xl sm:text-4xl xl:text-5xl font-bold tracking-tight leading-[1.2] lg:whitespace-nowrap">
+          <h1 className="mt-4 text-3xl sm:text-5xl xl:text-6xl font-bold tracking-tight leading-[1.2] lg:whitespace-nowrap">
             <span className="animated-hero-heading inline-block">Invoices, understood automatically</span>
           </h1>
 
