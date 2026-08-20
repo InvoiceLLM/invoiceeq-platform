@@ -286,16 +286,52 @@ jobs:
               exit 1
             fi
 
-            traffic_rev=$(az containerapp revision list --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" \
-              --query "[?properties.trafficWeight > \`0\`] | [0].{name:name,health:properties.healthState,running:properties.runningState,traffic:properties.trafficWeight}" \
-              -o tsv)
-            rev_name=$(echo "$traffic_rev" | awk '{print $1}')
-            health=$(echo "$traffic_rev" | awk '{print $2}')
-            running=$(echo "$traffic_rev" | awk '{print $3}')
-            traffic=$(echo "$traffic_rev" | awk '{print $4}')
-            echo "  traffic revision $rev_name: health=$health running=$running traffic=${traffic}%"
+            # Found live, 2026-08-20: ca-queue-worker-dev has no ingress at all
+            # (it's a background queue consumer, correctly so -- no HTTP
+            # endpoint needed), and Container Apps only assigns a traffic
+            # weight to a revision when ingress routing applies. Filtering on
+            # `trafficWeight > 0` is therefore a guaranteed false positive for
+            # any no-ingress app -- confirmed live: the revision was genuinely
+            # Healthy/Running/Active, just with trafficWeight 0, so the filter
+            # matched nothing and this check failed on an app that was never
+            # actually broken. Same *class* of bug as the internal-ingress
+            # false positive removed above (an ingress-shaped assumption
+            # applied uniformly to an app that doesn't fit it), a different
+            # app hitting it this time. Detect ingress first; when it's null,
+            # check the latest ready revision's health directly instead of
+            # filtering by traffic weight, since traffic weight doesn't mean
+            # anything without ingress to route.
+            has_ingress=$(az containerapp show --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query "properties.configuration.ingress != null" -o tsv)
+
+            if [ "$has_ingress" = "true" ]; then
+              rev_line=$(az containerapp revision list --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" \
+                --query "[?properties.trafficWeight > \`0\`] | [0].{name:name,health:properties.healthState,running:properties.runningState,traffic:properties.trafficWeight}" \
+                -o tsv)
+              rev_name=$(echo "$rev_line" | awk '{print $1}')
+              health=$(echo "$rev_line" | awk '{print $2}')
+              running=$(echo "$rev_line" | awk '{print $3}')
+              traffic=$(echo "$rev_line" | awk '{print $4}')
+              echo "  traffic revision $rev_name: health=$health running=$running traffic=${traffic}%"
+            else
+              rev_name=$(az containerapp show --name "$app" --resource-group "${{ env.RESOURCE_GROUP }}" \
+                --query "properties.latestReadyRevisionName" -o tsv)
+              rev_line=$(az containerapp revision show --name "$app" --revision "$rev_name" \
+                --resource-group "${{ env.RESOURCE_GROUP }}" \
+                --query "{health:properties.healthState,running:properties.runningState,active:properties.active}" \
+                -o tsv)
+              health=$(echo "$rev_line" | awk '{print $1}')
+              running=$(echo "$rev_line" | awk '{print $2}')
+              active=$(echo "$rev_line" | awk '{print $3}')
+              echo "  no-ingress app, latest ready revision $rev_name: health=$health running=$running active=$active"
+              if [ "$active" != "True" ]; then
+                echo "❌ $app's latest ready revision is not active"
+                exit 1
+              fi
+            fi
+
             if [ "$health" != "Healthy" ] || [ "$running" != "Running" ]; then
-              echo "❌ $app traffic-bearing revision is not Healthy/Running"
+              echo "❌ $app's revision is not Healthy/Running"
               exit 1
             fi
           done
