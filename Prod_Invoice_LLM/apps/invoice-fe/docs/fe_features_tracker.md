@@ -27,11 +27,11 @@ This document tracks the implementation progress of all frontend features for th
 - `[x]` [Feature 20: Enterprise Observability & Client-Side RUM](../../invoice-be/docs/feature_20_observability_monitoring_alerts.md) — implemented 2026-08-17: `@microsoft/applicationinsights-web` integrated via `AppInsightsProvider.tsx` wrapping `RootLayout` in `app/layout.tsx`. Automatic route tracking, exception capture, and distributed correlation headers (`X-Request-ID`, `X-Trace-ID`). The connection string is `NEXT_PUBLIC_APPINSIGHTS_CONNECTION_STRING`, inlined at image build time via a `Dockerfile.fe` build-arg (a runtime container env var would be invisible to the browser bundle — same constraint as Gaps 6/172).
 
 
-- `[~]` **Admin console & org-membership debug tooling — found already built and undocumented, 2026-08-01 doc audit, no feature doc yet.** Landed via commit `99c395b` ("Cherry-pick auth-feature-4: forgot-password, admin console, website deploy infra") with no feature doc or tracker entry ever created for it:
-  - `app/admin/page.tsx` (349 lines) — real admin console: org user list, `CreateUserModal`, stat cards, Clerk `useUser()` wiring. This is the same "Admin UI" file coordinate `invoice-be/docs/feature_1.1_rbac.md` Task 1.1.6 already points at for the future 3-permission-checkbox work — that BE doc assumed the page exists but never linked back here.
-  - `app/api/admin/create-user/route.js` (121 lines) — backend-adjacent user-creation route with its own `role !== 'Admin'` auth gate (Gap 10, already tracked above).
-  - `app/debug-org/page.tsx` (80 lines) — Clerk org/membership debug/inspection page, deliberately excluded from `invoice-website`'s Multi-Zone proxy route list (Gap 12) as debug-only.
-  - **Marked `[~]` not `[x]`**: the code is real and working, but per this repo's own doc convention it needs a proper `feature_N_admin_console.md` (File Coordinates, Functionality, Tasks, Verification Plan) — not written here to keep this pass to documentation-accuracy fixes rather than open new scope. Flagging as a follow-up, not silently leaving it undocumented.
+- `[x]` [Feature 16: Admin Console & Organization Debug Tooling](feature_16_admin_console.md) — spec doc written and task closed on 2026-08-20. Landed via commit `99c395b` ("Cherry-pick auth-feature-4: forgot-password, admin console, website deploy infra") with full user administration, optimistic permission toggling, inbound email drops auditing, and Clerk debug tool integration. File coordinates:
+  - `app/admin/page.tsx` (846 lines) — Admin console page, role-honesty checks, and permission controls.
+  - `app/api/admin/create-user/route.js` (174 lines) — Next.js POST endpoint to provision users into the active Clerk organisation.
+  - `app/api/admin/users/[userRef]/route.ts` (111 lines) — Next.js DELETE endpoint executing the two-step backend detach + Clerk delete revocation flow.
+  - `app/debug-org/page.tsx` (81 lines) — debug page for inspecting Clerk memberships (debug-only).
 
 ---
 
