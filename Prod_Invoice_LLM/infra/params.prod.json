@@ -100,6 +100,27 @@
     },
     "payuMode": {
       "value": "live"
+    },
+    "restartLoopThreshold": {
+      "value": 3
+    },
+    "cpuAlertThreshold": {
+      "value": 90
+    },
+    "memoryAlertThreshold": {
+      "value": 85
+    },
+    "http5xxThreshold": {
+      "value": 5
+    },
+    "postgresConnectionsThreshold": {
+      "value": 800
+    },
+    "storageEgressThresholdBytes": {
+      "value": 5000000000
+    },
+    "aiClientErrorThreshold": {
+      "value": 10
     }
   }
 }

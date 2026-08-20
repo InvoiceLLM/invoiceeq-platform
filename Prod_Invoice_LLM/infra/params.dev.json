@@ -91,6 +91,27 @@
     },
     "backendMemory": {
       "value": "4.0Gi"
+    },
+    "restartLoopThreshold": {
+      "value": 5
+    },
+    "cpuAlertThreshold": {
+      "value": 90
+    },
+    "memoryAlertThreshold": {
+      "value": 85
+    },
+    "http5xxThreshold": {
+      "value": 10
+    },
+    "postgresConnectionsThreshold": {
+      "value": 340
+    },
+    "storageEgressThresholdBytes": {
+      "value": 200000000
+    },
+    "aiClientErrorThreshold": {
+      "value": 15
     }
   }
 }

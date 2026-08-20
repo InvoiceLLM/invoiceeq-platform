@@ -36,6 +36,15 @@ param slackWebhookUrl string = ''
 @maxValue(3)
 param docIntelInstanceCount int = 1
 
+@description('Optional alert threshold overrides')
+param restartLoopThreshold int = 5
+param cpuAlertThreshold int = 90
+param memoryAlertThreshold int = 85
+param http5xxThreshold int = 10
+param postgresConnectionsThreshold int = 340
+param storageEgressThresholdBytes int = 200000000
+param aiClientErrorThreshold int = 15
+
 var lawName = 'law-${namingPrefix}-${environment}'
 // Hyphens stripped from namingPrefix, matching the real live resource
 // (`appi-invoicellm-dev`, not `appi-invoice-llm-dev`) -- see 08-apps.bicep.
@@ -192,7 +201,8 @@ resource diagDocIntel3 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
 module alertRules './modules/monitoring/alert-rules.bicep' = {
   name: 'alert-rules-deploy'
   params: {
-    actionGroupId: actionGroup.outputs.actionGroupId
+    criticalActionGroupId: actionGroup.outputs.criticalActionGroupId
+    infoActionGroupId: actionGroup.outputs.infoActionGroupId
     backendAppName: backendAppName
     workerAppName: workerAppName
     frontendAppName: frontendAppName
@@ -207,6 +217,13 @@ module alertRules './modules/monitoring/alert-rules.bicep' = {
     caeName: caeName
     logAnalyticsWorkspaceId: logAnalytics.id
     queryAlertLocation: location
+    restartLoopThreshold: restartLoopThreshold
+    cpuAlertThreshold: cpuAlertThreshold
+    memoryAlertThreshold: memoryAlertThreshold
+    http5xxThreshold: http5xxThreshold
+    postgresConnectionsThreshold: postgresConnectionsThreshold
+    storageEgressThresholdBytes: storageEgressThresholdBytes
+    aiClientErrorThreshold: aiClientErrorThreshold
   }
 }
 
@@ -222,6 +239,9 @@ module dashboard './modules/monitoring/dashboard.bicep' = {
 // ================= Outputs =================
 output logAnalyticsWorkspaceId string = logAnalytics.id
 output actionGroupId string = actionGroup.outputs.actionGroupId
+output criticalActionGroupId string = actionGroup.outputs.criticalActionGroupId
+output infoActionGroupId string = actionGroup.outputs.infoActionGroupId
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
 output workbookId string = dashboard.outputs.workbookId
+
 
