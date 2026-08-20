@@ -285,6 +285,59 @@ def lookup_invoice_by_number_fallback(candidate: str, tenant_id: str, db_session
     return f"\n\n{header}\n{separator}\n" + "\n".join(markdown_rows)
 
 
+_BROADEN_SEARCH_PATTERNS = (
+    re.compile(r"\b(?:from|vendor|customer|for)\s+([A-Za-z][A-Za-z0-9&.' -]{2,70}?)(?=\s+(?:invoice|invoices|bill|bills|spent|spend|costs?|charges?|due|paid|status)\b|[?!,.]|$)", re.IGNORECASE),
+    re.compile(r"\b(?:spend|spent|costs?|charges?|invoices?)\s+(?:on|for|about)\s+([A-Za-z][A-Za-z0-9&.' -]{2,70}?)(?=[?!,.]|$)", re.IGNORECASE),
+)
+
+
+def _find_broadened_search_phrase(user_message: str) -> str | None:
+    """Return one explicit entity/category phrase suitable for a *suggestion*
+    lookup, never an implicit answer.  The narrow grammar prevents generic
+    questions ("show invoices") from exposing arbitrary tenant rows."""
+    for pattern in _BROADEN_SEARCH_PATTERNS:
+        match = pattern.search(user_message)
+        if match:
+            phrase = re.sub(r"\s+", " ", match.group(1)).strip(" .,'\"")
+            if len(phrase) >= 3:
+                return phrase[:70]
+    return None
+
+
+def lookup_near_match_candidates(phrase: str, tenant_id: str, db_session, limit: int = 3) -> str | None:
+    """Return at most ``limit`` candidate invoices from this tenant only.
+
+    Both counterparty columns are searched (rather than guessing INBOUND vs
+    OUTBOUND), plus the two existing category stores.  The caller must never
+    replace a zero result with this table; it is prompt context for a hedged
+    clarification only.
+    """
+    capped_limit = max(1, min(limit, 5))
+    result = db_session.execute(
+        text(
+            "SELECT invoice_number, vendor_name, customer_name, flow_direction, currency, invoice_date "
+            "FROM invoice WHERE tenant_id = :tenant_id AND deleted_at IS NULL AND ("
+            "LOWER(COALESCE(vendor_name, '')) LIKE LOWER(:pattern) OR "
+            "LOWER(COALESCE(customer_name, '')) LIKE LOWER(:pattern) OR "
+            "LOWER(CAST(tags AS TEXT)) LIKE LOWER(:pattern) OR "
+            "LOWER(CAST(items AS TEXT)) LIKE LOWER(:pattern)) "
+            "ORDER BY invoice_date DESC LIMIT :limit"
+        ),
+        {"tenant_id": str(tenant_id), "pattern": f"%{phrase}%", "limit": capped_limit},
+    )
+    rows = result.fetchall()
+    if not rows:
+        return None
+    keys = list(result.keys())
+    header = " | ".join(keys)
+    separator = " | ".join(["---"] * len(keys))
+    markdown_rows = [
+        " | ".join(str(v) if v is not None else "" for v in row) for row in rows
+    ]
+    return f"{header}\n{separator}\n" + "\n".join(markdown_rows)
+
+
+
 # Feature 18 (Gap 231): how many invoice ids one reply's snapshot may carry.
 # A "total spend" question can legitimately span thousands of rows; the snapshot
 # exists to drive a "which invoice was wrong?" picker, and a picker over 5,000
@@ -999,6 +1052,115 @@ def _wrap_user_input(user_message: str, tenant_id: str) -> str:
     return f"{_USER_TEXT_MARKER_START}\n{user_message}\n{_USER_TEXT_MARKER_END}"
 
 
+# ---------------------------------------------------------------------------
+# Feature 21 Phase 1: Faithfulness mandates, chunk reordering, and advisory
+# citation validation.
+#
+# Module-level so the tests assert against the same strings/functions the
+# prompts and the route actually use, same reason as Gap 237's constants above.
+# ---------------------------------------------------------------------------
+
+_RAG_FAITHFULNESS_MANDATE = (
+    "CRITICAL GROUNDING RULE: answer ONLY from the extracted document context chunks below. "
+    "Every figure, date, vendor, invoice number and status you state must appear in one of "
+    "those chunks -- never speculate beyond the context, never fill a gap from general "
+    "knowledge, and never infer a value the chunks do not actually show. If the chunks do not "
+    "contain the answer, say plainly that the retrieved documents don't cover it and stop; a "
+    "short 'not found in the documents I can see' is a correct answer here, a plausible-sounding "
+    "invented one is not. The tenant statistics and business rules below are orientation and "
+    "interpretation, not document content -- they can't be cited as the source of a figure."
+)
+
+_SQL_SUMMARY_FAITHFULNESS_MANDATE = (
+    "CRITICAL GROUNDING RULE: summarize ONLY the query results shown below. Every figure, name "
+    "and date in your summary must come from those rows -- never speculate beyond them, never "
+    "add context, trends or totals the results don't support, and never carry a number over from "
+    "earlier in the conversation as if this query had returned it. If the results are empty, say "
+    "the query found no matching records rather than answering from anything else. The only "
+    "arithmetic you may do is the per-currency line-item totalling explicitly asked for below, "
+    "computed from the rows as listed."
+)
+
+
+def _reorder_chunks_for_context(chunks: list[dict]) -> list[dict]:
+    """Feature 21 Phase 1b: put the most relevant chunk first and the
+    second-most-relevant last, leaving the rest in rank order in between
+    (ranks 1..5 -> 1, 3, 4, 5, 2).
+
+    Rationale: an LLM attends most reliably to the start and end of a long
+    context and degrades in the middle ("lost in the middle"), so burying the
+    two best-matching chunks mid-prompt wastes the retrieval that found them.
+    This is free -- no new model, no extra call, no re-scoring.
+
+    Rank is the order `chroma_client.query_invoice_chunks()` already returns:
+    it sorts its candidate pool by `combined_score` (cosine distance minus the
+    keyword boost, ascending) before applying the relevance threshold, so index
+    0 is the best match. Deliberately NOT re-sorted here on the returned
+    `distance` field -- that would discard the keyword half of the hybrid rank
+    (Task 6.8) and silently demote chunks admitted by the keyword channel,
+    which is a retrieval-behaviour change, not a reordering.
+
+    Fewer than 3 chunks is returned unchanged: with 0 or 1 there is nothing to
+    move, and with 2 the best is already first and the second-best already
+    last.
+    """
+    if len(chunks) < 3:
+        return list(chunks)
+    return [chunks[0], *chunks[2:], chunks[1]]
+
+
+def _validate_citations(citations: list[dict]) -> list[str]:
+    """Feature 21 Phase 1c: format/consistency check on the citation list the
+    RAG route is about to render, returning a list of human-readable problems
+    (empty when everything is well-formed).
+
+    Narrow on purpose. Gap 239's existence check already guarantees every
+    surviving citation's `invoice_id` resolves to a real, tenant-scoped Invoice
+    row; what it does not check is that the rest of the payload is renderable --
+    a missing `page` or `vendor_name` still produces a link reading
+    "[Source: None (Page None)]", which looks to a user like a fabricated
+    citation. This closes that shape gap only.
+
+    Explicitly NOT a semantic check: it says nothing about whether the prose
+    actually rests on the cited page (that needs the Phase 3 RAGAS work). And
+    it is advisory -- the caller logs and continues, because dropping a
+    citation whose invoice genuinely exists would lose the user a working link
+    over a cosmetic metadata defect.
+    """
+    from uuid import UUID as _UUID
+
+    problems: list[str] = []
+    for idx, citation in enumerate(citations):
+        if not isinstance(citation, dict):
+            problems.append(f"citation[{idx}]: expected a mapping, got {type(citation).__name__}")
+            continue
+
+        invoice_id = citation.get("invoice_id")
+        if invoice_id is None or str(invoice_id).strip() == "":
+            problems.append(f"citation[{idx}]: missing invoice_id")
+        else:
+            try:
+                _UUID(str(invoice_id))
+            except (ValueError, AttributeError, TypeError):
+                problems.append(f"citation[{idx}]: invoice_id {invoice_id!r} is not a UUID")
+
+        page = citation.get("page")
+        if page is None or str(page).strip() == "":
+            problems.append(f"citation[{idx}]: missing page")
+        else:
+            try:
+                if int(page) < 1:
+                    problems.append(f"citation[{idx}]: page {page!r} is not a positive page number")
+            except (ValueError, TypeError):
+                problems.append(f"citation[{idx}]: page {page!r} is not a number")
+
+        vendor_name = citation.get("vendor_name")
+        if vendor_name is None or str(vendor_name).strip() == "":
+            problems.append(f"citation[{idx}]: missing vendor_name")
+
+    return problems
+
+
 _TENANT_STATS_CACHE_TTL_SECONDS = 300  # orientation only -- exact figures always come from a live SQL query, not this snapshot
 
 
@@ -1264,6 +1426,7 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     # Feature 18 (Gap 231): which invoices fed this reply. Request-local by
     # construction; empty means "couldn't determine", never "no invoices".
     result_invoice_ids: list[str] = []
+    contexts_list: list[str] = []
 
     if route == "SQL":
         # Gap 237 step 2: hand the previous turn's exact query to the prompt so a
@@ -1443,6 +1606,7 @@ Conversation History for Context:
                 logger.error("SQL path execution failed after %d attempts: %s", max_attempts, last_error)
                 response_text = f"Failed to execute database check: {str(last_error)}"
             else:
+                near_match_block = ""
                 # Deterministic fallback: if the LLM-generated SQL found nothing but the
                 # question plainly names a specific invoice, try a direct trimmed/
                 # case-insensitive lookup before giving up. Catches whatever formatting
@@ -1456,12 +1620,32 @@ Conversation History for Context:
                             logger.info("SQL route found 0 rows; direct invoice_number fallback matched '%s'", candidate)
                             db_result = fallback_result
 
+                    # Feature 21 Phase 2's general fallback is intentionally
+                    # second to the exact invoice-number lookup and never
+                    # replaces db_result: it supplies only hedged candidates.
+                    if db_result == "No records found matching the query criteria.":
+                        phrase = _find_broadened_search_phrase(user_message)
+                        if phrase:
+                            candidates = lookup_near_match_candidates(phrase, tenant_id, db_session)
+                            if candidates:
+                                logger.info("SQL route found 0 rows; near-match candidates found for '%s'", phrase)
+                                near_match_block = (
+                                    "\nPOSSIBLE NEAR MATCHES (not exact results):\n"
+                                    f"The original query found no exact records. These are only possible matches for "
+                                    f"the phrase {phrase!r}; do NOT answer as though they satisfy the request. Ask a "
+                                    "brief 'Did you mean …?' clarification, naming only candidates shown below.\n"
+                                    f"{candidates}\n"
+                                )
+
                 # Formulate final output matching the raw numbers
                 summary_prompt = f"""Format a friendly summary explaining these database query results.
 {style_block}
 Do not restate every row -- the full results table is
 shown to the user separately right after your summary. Do not explain your
 reasoning or how the query was constructed.
+
+{_SQL_SUMMARY_FAITHFULNESS_MANDATE}
+
 
 FORMATTING FOR LINE-ITEM EXTRACTION: If the query results list individual un-nested line items (e.g., line_description, line_qty, line_unit_price, line_amount), you MUST format each matching line item exactly in the following format on its own line:
 <line_description>: <line_qty> units × <currency> <line_unit_price> = <currency> <line_amount>
@@ -1473,6 +1657,7 @@ CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the cor
 {payment_status_block}
 Results:
 {db_result}
+{near_match_block}
 {rules_block}{chat_rules_block}
 User Query: {user_message}
 """
@@ -1493,6 +1678,7 @@ User Query: {user_message}
                     # blank line moved here instead of stacking with it).
                     response_text = final_res.content + f"\n\n### Query Results\n\n{db_result}"
                     route_succeeded = True
+                    contexts_list = [db_result] if db_result else []
                 except Exception as e:
                     logger.error("SQL summary synthesis failed: %s", e)
                     response_text = f"Failed to format database check: {str(e)}"
@@ -1501,9 +1687,43 @@ User Query: {user_message}
         # Vector search (Long-term semantic facts)
         chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
 
+        # Feature 21 Phase 2: one broader retrieval attempt only after the
+        # normal query returns no eligible chunks. query_invoice_chunks keeps
+        # the same tenant collection and relevance threshold, so this does not
+        # turn a weak match into an answer.
+        near_match_notice = ""
+        if not chunks:
+            phrase = _find_broadened_search_phrase(user_message)
+            if phrase and phrase.lower() != user_message.strip().lower():
+                broader_chunks = query_invoice_chunks(tenant_id, phrase, limit=5)
+                if broader_chunks:
+                    logger.info("RAG route found no chunks; broader retrieval found candidates for '%s'", phrase)
+                    chunks = broader_chunks
+                    near_match_notice = (
+                        "The retrieved context below came from one broader possible-match search after the original "
+                        "question returned no document chunks. It is NOT an exact match: say that plainly and ask "
+                        "whether the user meant the identified invoice/vendor before treating it as their answer."
+                    )
+
+        # Feature 21 Phase 1b: the chunks arrive in rank order (best first) and
+        # used to be concatenated that way, which buries the second-best match
+        # in the middle of the context -- the position an LLM attends to least
+        # ("lost in the middle"). Reordered to best-first / second-best-last so
+        # both of the strongest chunks sit at an attention-favoured end. See
+        # _reorder_chunks_for_context() for why rank is taken as list position
+        # rather than re-sorted on `distance` here.
+        ordered_chunks = _reorder_chunks_for_context(chunks)
+        contexts_list = [chunk["document"] for chunk in ordered_chunks]
+
         context_str = ""
-        for chunk in chunks:
+        for chunk in ordered_chunks:
             context_str += f"--- CHUNK ---\n{chunk['document']}\n"
+
+        # Citations are built from the original rank order, not the reordered
+        # one: the reordering exists to place text where the model reads it
+        # best, and has nothing to say about which source a user should be
+        # shown first.
+        for chunk in chunks:
             citations.append({
                 "invoice_id": chunk["metadata"].get("invoice_id"),
                 "vendor_name": chunk["metadata"].get("vendor_name"),
@@ -1560,6 +1780,10 @@ Use the following extracted context chunks and short-term conversation history t
 
 Answer in 1-3 sentences. Be direct. Do not explain your reasoning unless asked.
 
+{_RAG_FAITHFULNESS_MANDATE}
+
+{near_match_notice}
+
 FORMATTING: Format your answer in Markdown. Use a bullet list when listing multiple items (e.g. multiple invoices or vendors) rather than a run-on sentence.
 
 CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) being discussed in the context. Never default to '$' if the context shows a different currency.
@@ -1578,6 +1802,25 @@ Conversation History (Short-term context):
             res = llm.invoke(f"{system_prompt}\nUser Query: {wrapped_user_message}")
             response_text = res.content
             
+            # Feature 21 Phase 1c: format/consistency check on what is about to
+            # be rendered, extending -- not duplicating -- Gap 239's existence
+            # check above. That one guarantees each invoice_id resolves to a
+            # real tenant-scoped row; this one catches the rest of the payload
+            # being unrenderable (absent page/vendor_name, non-UUID id), which
+            # reaches the user as "[Source: None (Page None)]" and reads like a
+            # fabricated citation. Warn-only by design: the invoice exists, so
+            # dropping the link would cost the user a working source over a
+            # metadata defect. Never allowed to break a successful answer.
+            try:
+                citation_problems = _validate_citations(citations)
+                if citation_problems:
+                    logger.warning(
+                        "Malformed RAG citation(s) for tenant %s (%d issue(s)): %s",
+                        tenant_id, len(citation_problems), "; ".join(citation_problems),
+                    )
+            except Exception as e:
+                logger.warning("Citation validation check failed: %s", e)
+
             # Append clean formatted citations list to answer text
             if citations:
                 unique_citations = []
@@ -1691,6 +1934,7 @@ Conversation History:
         "generated_sql": generated_sql,
         "citations": citations,
         "result_invoice_ids": result_invoice_ids[:MAX_SNAPSHOT_INVOICE_IDS],
+        "contexts": contexts_list,
     }
 
     if route in ("SQL", "RAG") and route_succeeded:

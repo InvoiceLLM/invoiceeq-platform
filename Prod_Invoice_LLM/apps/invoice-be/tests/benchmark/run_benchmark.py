@@ -24,12 +24,14 @@ from datetime import datetime, date
 from pathlib import Path
 
 import httpx
+import re
 
 from tests.benchmark.catalog import REGIONS
 from tests.benchmark.generator import generate_daily_batch, GeneratedInvoice
 from tests.benchmark.chat_questions import build_daily_chat_questions, grade_answer
 from tests.e2e.pdf_builder import build_invoice_pdf
 from tests.sync_processing import process_invoice_sync
+from utils.llm import get_llm
 
 POLL_INTERVAL_S = 3
 POLL_TIMEOUT_S = 180
@@ -118,6 +120,99 @@ def _alert_type_matches(expected: str, actual_types: list[str]) -> bool:
     return bool(family) and any(t in family for t in actual_types)
 
 
+def grade_faithfulness(question: str, contexts: list[str], answer: str) -> float | None:
+    """Evaluate RAGAS-style faithfulness metric for an answer against its contexts.
+
+    1. Extract individual factual claims from the answer.
+    2. Check if each claim is supported by the contexts.
+    3. Return the ratio of supported claims (0.0 to 1.0).
+    """
+    if not contexts:
+        return None
+
+    # Clean up the answer and contexts
+    answer = answer.strip()
+    if not answer or answer.startswith("<error:"):
+        return 0.0
+
+    context_text = "\n".join(f"Context Chunk {i+1}:\n{c}" for i, c in enumerate(contexts))
+
+    llm = get_llm()
+
+    # Step 1: Extract claims
+    extract_prompt = f"""You are a fact-checking assistant.
+Analyze the following Answer to the Question and extract a JSON list of all individual, unique factual claims made in the Answer.
+A claim is a simple statement of fact (e.g. "Invoice INV-123 is completed", "The total spend is $500", "The vendor name is Blue Ridge").
+Do not include compound claims; split them into individual claims.
+Do not extract general conversational phrases, greetings, or meta-commentary (e.g. "Sure, here is the details", "Let me check that").
+
+Question: {question}
+Answer: {answer}
+
+Respond ONLY with a valid JSON array of strings, for example:
+[
+  "claim 1",
+  "claim 2"
+]
+No markdown formatting, no code block backticks (like ```json), no other prose.
+"""
+    try:
+        res = llm.invoke(extract_prompt)
+        text = res.content.strip()
+        # strip markdown code blocks if any
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        claims = json.loads(text)
+        if not isinstance(claims, list):
+            claims = [str(claims)]
+    except Exception as e:
+        print(f"Error extracting claims for faithfulness grading: {e}. Raw response: {res.content if 'res' in locals() else 'None'}")
+        # Fallback: treat the entire answer as a single claim
+        claims = [answer]
+
+    if not claims:
+        return 1.0
+
+    # Step 2: Verify each claim against context
+    supported_count = 0
+    valid_claims_count = 0
+    for claim in claims:
+        claim = str(claim).strip()
+        if not claim:
+            continue
+        valid_claims_count += 1
+        verify_prompt = f"""You are a fact-checking assistant.
+Compare the Claim against the provided Context and decide if the Claim can be directly inferred from the Context.
+Be strict: the Claim must be fully supported by the facts in the Context. If there is any contradiction, or if the Context does not contain enough information to support the Claim, respond NO. Otherwise, respond YES.
+
+Context:
+{context_text}
+
+Claim: {claim}
+
+Respond with exactly one word, either YES or NO. Do not include any explanation or punctuation.
+"""
+        try:
+            res = llm.invoke(verify_prompt)
+            verdict = res.content.strip().upper()
+            # Clean up the verdict
+            verdict = re.sub(r"[^A-Z]", "", verdict)
+            if "YES" in verdict:
+                supported_count += 1
+        except Exception as e:
+            print(f"Error verifying claim support: {e}")
+
+    if valid_claims_count == 0:
+        return 1.0
+    return supported_count / valid_claims_count
+
+
+
 def _compare(gen: GeneratedInvoice, actual: dict) -> dict:
     """Returns {"pass": bool, "root_cause": str|None, "detail": str}."""
     gt = gen.ground_truth
@@ -171,6 +266,7 @@ def _run_chat_pass(client: httpx.Client, base_url: str, batches_by_region: dict)
 
     results = []
     for q in questions:
+        contexts = []
         try:
             resp = client.post(
                 f"{base_url}/chat/sessions/{session_id}/message",
@@ -178,11 +274,14 @@ def _run_chat_pass(client: httpx.Client, base_url: str, batches_by_region: dict)
                 timeout=90,
             )
             resp.raise_for_status()
-            answer = resp.json().get("content", "")
+            body = resp.json()
+            answer = body.get("content", "")
+            contexts = body.get("contexts", [])
         except Exception as e:
             answer = f"<error: {e}>"
 
         verdict = grade_answer(q, answer)
+        faithfulness = grade_faithfulness(q.question, contexts, answer)
         results.append({
             "region": q.region,
             "invoice_number": q.invoice_number,
@@ -191,6 +290,8 @@ def _run_chat_pass(client: httpx.Client, base_url: str, batches_by_region: dict)
             "expected": q.expected,
             "answer": answer,
             "verdict": verdict,
+            "contexts": contexts,
+            "faithfulness": faithfulness,
         })
 
     # Task 6.11 regression: re-ask the first question verbatim (new session, so it
@@ -381,9 +482,21 @@ def _summarize(report: dict) -> str:
     chat = report["chat_results"]
     if chat:
         chat_pass = sum(1 for c in chat if c["verdict"] == "pass")
-        lines += ["", f"## RAG chat sample: {chat_pass}/{len(chat)} passed", ""]
+        faithfulness_scores = [c["faithfulness"] for c in chat if c.get("faithfulness") is not None]
+        if faithfulness_scores:
+            avg_faithfulness = sum(faithfulness_scores) / len(faithfulness_scores)
+            faithfulness_str = f" | Average Faithfulness: {avg_faithfulness*100:.1f}%"
+        else:
+            faithfulness_str = ""
+
+        lines += ["", f"## RAG chat sample: {chat_pass}/{len(chat)} passed{faithfulness_str}", ""]
         for c in chat:
-            lines.append(f"- [{c['region']}/{c['kind']}] **{c['verdict'].upper()}** — Q: \"{c['question']}\" | expected={c['expected']} | A: \"{c['answer'][:200]}\"")
+            faithfulness_val = c.get("faithfulness")
+            faithfulness_suffix = f" (Faithfulness: {faithfulness_val*100:.1f}%)" if faithfulness_val is not None else ""
+            lines.append(
+                f"- [{c['region']}/{c['kind']}] **{c['verdict'].upper()}**{faithfulness_suffix} — "
+                f"Q: \"{c['question']}\" | expected={c['expected']} | A: \"{c['answer'][:200]}\""
+            )
 
     return "\n".join(lines)
 

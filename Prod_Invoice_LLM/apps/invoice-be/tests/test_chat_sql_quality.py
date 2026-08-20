@@ -1233,3 +1233,45 @@ def test_rule_9_treats_a_new_named_invoice_as_a_fresh_question(db_session):
     assert "A STRONG signal that it is a different subject" in prompt
     assert "Naming a specific, different invoice/vendor/customer" in prompt
 
+
+def test_sql_zero_row_near_match_is_only_a_hedged_clarification(db_session):
+    """Feature 21 Phase 2: candidates must be tenant-scoped by the helper and
+    reach the summary as suggestions, never silently replace the zero-row result."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    candidate_table = "invoice_number | vendor_name\n--- | ---\nBRL-1 | Blue Ridge Logistics"
+    with patch("agents.query_agent.lookup_near_match_candidates", return_value=candidate_table) as lookup:
+        _run(db_session, llm, "What did we buy from Blue Ridge Logistics?", uuid4())
+    assert lookup.call_count == 1
+    phrase, tenant_id, session = lookup.call_args.args
+    assert phrase == "Blue Ridge Logistics"
+    assert tenant_id == str(MOCK_TENANT_ID)
+    assert session is db_session
+    prompt = llm.summary_prompts[0]
+    assert "POSSIBLE NEAR MATCHES (not exact results)" in prompt
+    assert "do NOT answer as though they satisfy the request" in prompt
+    assert "BRL-1 | Blue Ridge Logistics" in prompt
+
+
+def test_sql_response_includes_contexts(db_session):
+    """Verify that SQL route returns the db_result text inside contexts."""
+    from agents.query_agent import run_query_agent
+
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT invoice_number, vendor_name FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+
+    fake_db_result = "invoice_number | vendor_name\n--- | ---\nINV-88 | Acme Corp"
+
+    with patch("agents.query_agent.classify_query", return_value="SQL"), \
+         patch("agents.query_agent.get_llm", return_value=llm), \
+         patch("agents.query_agent.execute_generated_sql", return_value=fake_db_result):
+        result = run_query_agent(str(uuid4()), "Show invoices", str(MOCK_TENANT_ID), db_session)
+        assert "contexts" in result
+        assert len(result["contexts"]) == 1
+        assert "INV-88" in result["contexts"][0]
+        assert "Acme Corp" in result["contexts"][0]
+
+
+

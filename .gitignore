@@ -6,3 +6,12 @@ data_extraction_pdf.ipynb
 
 # Cursor IDE local rules/config (keep on disk, don't track)
 .cursor/
+
+# Scratch/session artifacts -- kept on disk for reference, not tracked
+scratch_transcripts.html
+.claude/agents/Buisness-analyst.md
+.claude/tasklists/functional-tester-novatech-seed.md
+.claude/tasklists/functional-tester-phase0-india-us-eu-groundtruth.md
+.claude/tasklists/functional-tester-realworld-chat-live-run.md
+.claude/tasklists/functional-tester-realworld-tenant4-groundtruth.md
+.claude/tasklists/senior-dev-preflight-chat-testing-gate.md

@@ -105,6 +105,7 @@ class MessageResponse(BaseModel):
     content: str
     generated_sql: str | None = None
     citations: list[CitationResponse] = []
+    contexts: list[str] = []
     created_at: datetime
     feedback: str | None = None  # Gap 54: "up" / "down" / None, so votes survive a reload
 
@@ -380,6 +381,7 @@ def post_chat_message(
     db_session.add(assistant_msg)
     db_session.commit()
     db_session.refresh(assistant_msg)
+    object.__setattr__(assistant_msg, "contexts", agent_output.get("contexts") or [])
 
     return assistant_msg
 

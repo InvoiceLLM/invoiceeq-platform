@@ -103,3 +103,17 @@ HANDOFF_PROMPT.md
 # Clerk data exports/import maps contain real user PII -- never commit these
 apps/invoice-be/scripts/clerk_export_*.json
 apps/invoice-be/scripts/clerk_import_map_*.json
+
+# Scratch test file + live-test evidence, kept on disk for reference, not tracked
+apps/invoice-be/tests/_scratch_test.md
+apps/invoice-be/tests/realworld_tenant/
+apps/invoice-be/tests/seed_novatech_realworld_ingest.py
+
+# Diagnostic screenshots from an earlier ad-hoc investigation, not project deliverables
+docs/contact_page_live.png
+docs/crop_arrives_local.png
+docs/crop_arrives_mock.png
+docs/crop_local_header.png
+docs/crop_mock_header.png
+docs/landing_page_live.png
+docs/visual_diff.png
