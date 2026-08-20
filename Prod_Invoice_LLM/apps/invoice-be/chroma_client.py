@@ -1,5 +1,7 @@
 import os
+import time
 import logging
+import contextlib
 import fitz
 import chromadb
 import threading
@@ -13,6 +15,18 @@ logger = logging.getLogger(__name__)
 _chroma_client = None
 _embedding_model = None
 _embedding_lock = threading.Lock()
+_chroma_lock = threading.Lock()
+
+# Gap 278: bounds on the Chroma HTTP session. `connect` is the one that matters
+# for the reported bug -- an unreachable Chroma container used to burn the OS's
+# whole TCP connect-retry budget (~140s, ending in `[Errno 110] Connection timed
+# out`) before `get_chroma_client()`'s PersistentClient fallback could run, and
+# that entire wait happened inline inside a live chat request. `read` is kept
+# generous because a legitimate query/upsert against a warm server is a real
+# workload, not a handshake -- shortening it would trade one failure mode for
+# another.
+CHROMA_CONNECT_TIMEOUT_SECONDS = 3.0
+CHROMA_READ_TIMEOUT_SECONDS = 30.0
 
 # Gap 244: relevance cutoff for `query_invoice_chunks()`, expressed in **cosine
 # distance** (0 = identical, 1 = orthogonal, 2 = opposite). Replaces the old 0.4,
@@ -141,24 +155,163 @@ def _to_cosine_distance(distance: float, space: str) -> float:
         return d / 2.0
     return d
 
-def get_chroma_client():
-    """Returns the Chroma client instance, falling back to a persistent local db."""
-    global _chroma_client
-    if _chroma_client is None:
-        settings = get_settings()
-        try:
-            logger.info("Initializing Chroma HttpClient at %s:%s (ssl=%s)", settings.CHROMA_HOST, settings.CHROMA_PORT, settings.CHROMA_USE_SSL)
-            _chroma_client = chromadb.HttpClient(
+class _TimeoutBoundHttpx:
+    """
+    Gap 278: stand-in for the `httpx` module *as seen by
+    `chromadb.api.fastapi`*, whose only job is to force a timeout onto the
+    session chromadb builds for itself.
+
+    chromadb 1.5.9 constructs that session as `httpx.Client(timeout=None, ...)`
+    (`chromadb/api/fastapi.py`, both branches) and exposes no way to change it:
+    `chromadb.HttpClient()` takes `(host, port, ssl, headers, settings, tenant,
+    database)` and nothing else, and the only `*_timeout_seconds` fields in
+    `chromadb.config.Settings` (`chroma_logservice_/sysdb_/query_request_...`)
+    belong to the server's own internal components, not to this HTTP session.
+    Because chromadb passes `timeout=None` explicitly, a `functools.partial`
+    default would collide -- the keyword has to be overwritten, hence this
+    wrapper rather than a bound default.
+
+    Everything other than `Client` is delegated to the real module, so
+    `httpx.ConnectError`/`httpx.HTTPStatusError` and friends stay identical
+    objects and `except` clauses inside chromadb keep matching.
+    """
+
+    def __init__(self, module, timeout):
+        self._module = module
+        self._timeout = timeout
+
+    def Client(self, *args, **kwargs):
+        kwargs["timeout"] = self._timeout
+        return self._module.Client(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._module, name)
+
+
+def _chroma_http_timeout():
+    """The `httpx.Timeout` applied to chromadb's HTTP session (Gap 278)."""
+    import httpx
+
+    return httpx.Timeout(
+        connect=CHROMA_CONNECT_TIMEOUT_SECONDS,
+        read=CHROMA_READ_TIMEOUT_SECONDS,
+        write=CHROMA_READ_TIMEOUT_SECONDS,
+        pool=CHROMA_CONNECT_TIMEOUT_SECONDS,
+    )
+
+
+@contextlib.contextmanager
+def _bounded_chroma_http_timeout():
+    """
+    Gap 278: makes the timeout above apply to the `chromadb.HttpClient(...)`
+    call itself, not just to later requests.
+
+    The swap has to be in place *during construction*: `chromadb.api.client.
+    Client.__init__` already issues live HTTP (`get_user_identity()`, then
+    `_validate_tenant_database()`) before the caller ever gets the object back,
+    so setting a timeout on the finished client would be too late -- the ~140s
+    hang this gap is about happened inside the constructor. The session object
+    built in that window keeps the timeout afterwards, so every subsequent
+    request through the cached singleton is bounded too.
+
+    Scoped to `chromadb.api.fastapi`'s module global rather than to
+    `httpx.Client` itself, so nothing else in the process (Clerk JWKS fetches,
+    outbound webhooks, connector calls) can pick up Chroma's timeout during the
+    window.
+    """
+    try:
+        from chromadb.api import fastapi as chroma_fastapi
+    except Exception:  # pragma: no cover - chromadb layout changed; don't block the client
+        yield
+        return
+
+    original = chroma_fastapi.httpx
+    chroma_fastapi.httpx = _TimeoutBoundHttpx(original, _chroma_http_timeout())
+    try:
+        yield
+    finally:
+        chroma_fastapi.httpx = original
+
+
+def _build_chroma_client():
+    """Constructs the Chroma client, falling back to a persistent local db."""
+    settings = get_settings()
+    try:
+        logger.info("Initializing Chroma HttpClient at %s:%s (ssl=%s)", settings.CHROMA_HOST, settings.CHROMA_PORT, settings.CHROMA_USE_SSL)
+        with _bounded_chroma_http_timeout():
+            client = chromadb.HttpClient(
                 host=settings.CHROMA_HOST,
                 port=settings.CHROMA_PORT,
                 ssl=settings.CHROMA_USE_SSL
             )
             # Verify connection
-            _chroma_client.heartbeat()
-        except Exception as e:
-            logger.warning("Chroma HttpClient failed: %s. Falling back to PersistentClient.", e)
-            _chroma_client = chromadb.PersistentClient(path=os.path.join(os.path.dirname(__file__), "temp_chroma_db"))
+            client.heartbeat()
+        return client
+    except Exception as e:
+        logger.warning("Chroma HttpClient failed: %s. Falling back to PersistentClient.", e)
+        return chromadb.PersistentClient(path=os.path.join(os.path.dirname(__file__), "temp_chroma_db"))
+
+
+def get_chroma_client():
+    """
+    Returns the process-wide Chroma client singleton, falling back to a
+    persistent local db when the server is unreachable.
+
+    Gap 278: the construction is now under `_chroma_lock` as well as bounded by
+    `_bounded_chroma_http_timeout()`. Without the lock, every request that
+    arrived while the first one was still connecting would start its own
+    connect attempt and pay the same wait -- which is what turned a single cold
+    start into a window of apparently-hung chat rather than one slow turn.
+    """
+    global _chroma_client
+    if _chroma_client is None:
+        with _chroma_lock:
+            if _chroma_client is None:
+                _chroma_client = _build_chroma_client()
     return _chroma_client
+
+
+def warm_rag_dependencies() -> dict:
+    """
+    Gap 278: primes both lazy singletons in this module -- the Chroma client and
+    the `BAAI/bge-m3` SentenceTransformer -- so no live chat request pays their
+    cold-start cost inline.
+
+    Called from `main.py`'s lifespan hook at process startup (in a background
+    thread; see the comment there for why it must not block startup). Both
+    halves are best-effort and swallow their own failures: an unreachable
+    Chroma is already handled by `get_chroma_client()`'s PersistentClient
+    fallback, and a failed model load must degrade to the pre-existing lazy
+    behaviour on the next call rather than take the process down.
+
+    Returns a per-dependency status dict, which is what the startup log line
+    below reports; nothing branches on it.
+    """
+    results: dict[str, str] = {}
+
+    started = time.monotonic()
+    try:
+        client = get_chroma_client()
+        client.heartbeat()
+        results["chroma"] = "ok"
+    except Exception as e:
+        results["chroma"] = f"degraded: {e}"
+        logger.warning("RAG warm-up: Chroma unavailable (%s)", e)
+    chroma_seconds = time.monotonic() - started
+
+    started = time.monotonic()
+    try:
+        results["embedding_model"] = "mocked" if get_embedding_model() is None else "ok"
+    except Exception as e:
+        results["embedding_model"] = f"failed: {e}"
+        logger.warning("RAG warm-up: embedding model failed to load (%s)", e)
+    model_seconds = time.monotonic() - started
+
+    logger.info(
+        "RAG warm-up complete: chroma=%s (%.1fs), embedding_model=%s (%.1fs)",
+        results["chroma"], chroma_seconds, results["embedding_model"], model_seconds,
+    )
+    return results
 
 def get_embedding_model():
     """Returns the SentenceTransformer model (mocked if MOCK_EMBEDDINGS=true)."""

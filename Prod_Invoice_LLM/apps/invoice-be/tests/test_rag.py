@@ -1144,6 +1144,169 @@ def test_audit_resolve_survives_a_failing_rag_backfill(db_session):
         assert res.json()["success"] is True
 
 
+# ---------------------------------------------------------------------------
+# Gap 278 — Chroma connect timeout + RAG warm-up at process startup.
+#
+# NOTE on what is and isn't asserted here: the reported symptom was a ~177s
+# chat request, ~140s of which was an unbounded TCP connect to an unreachable
+# Chroma container. Reproducing that literally would require a black-holing
+# network and a 3-minute test, so these assert the two *mechanisms* that make
+# it impossible instead -- that the timeout is genuinely attached to the
+# session chromadb builds (including at construction time, which is where the
+# hang lived), and that both cold-load singletons are primed off the request
+# path. The live-latency confirmation belongs in log evidence, not here.
+# ---------------------------------------------------------------------------
+
+def test_chroma_http_session_is_built_with_a_bounded_timeout():
+    """Gap 278: chromadb 1.5.9 hardcodes `httpx.Client(timeout=None, ...)` and
+    offers no parameter to change it, so the fix swaps the `httpx` module object
+    that `chromadb.api.fastapi` reaches for. Two things must hold: the swap
+    actually produces a bounded session, and it is reverted afterwards.
+
+    The `inspect.getsource` assertions are the important part -- they pin the
+    call site the shim depends on, so a chromadb upgrade that stops building its
+    session this way fails here loudly instead of silently turning the whole fix
+    into a no-op and restoring the 140s hang."""
+    import inspect
+    import httpx
+    from chromadb.api import fastapi as chroma_fastapi
+    from chroma_client import (
+        _bounded_chroma_http_timeout,
+        CHROMA_CONNECT_TIMEOUT_SECONDS,
+        CHROMA_READ_TIMEOUT_SECONDS,
+    )
+
+    source = inspect.getsource(chroma_fastapi.FastAPI.__init__)
+    assert "httpx.Client(" in source, "chromadb no longer builds its session via httpx.Client"
+    assert "timeout=None" in source, "chromadb's hardcoded unbounded timeout is gone; revisit the shim"
+
+    with _bounded_chroma_http_timeout():
+        assert chroma_fastapi.httpx is not httpx
+        # Non-Client attributes must still be the real module's, or chromadb's
+        # own `except httpx.ConnectError` clauses would stop matching.
+        assert chroma_fastapi.httpx.ConnectError is httpx.ConnectError
+        # Called exactly the way chromadb calls it, `timeout=None` and all.
+        session = chroma_fastapi.httpx.Client(timeout=None, limits=httpx.Limits())
+
+    try:
+        assert session.timeout.connect == CHROMA_CONNECT_TIMEOUT_SECONDS
+        assert session.timeout.read == CHROMA_READ_TIMEOUT_SECONDS
+        # The session outlives the context manager (it belongs to the cached
+        # client), so every later request through the singleton stays bounded.
+        assert session.timeout.connect is not None
+    finally:
+        session.close()
+
+    assert chroma_fastapi.httpx is httpx
+
+
+def test_chroma_client_construction_runs_under_the_bounded_timeout(monkeypatch):
+    """Gap 278: the timeout has to be in force *during* `chromadb.HttpClient(...)`,
+    not merely set on the finished object -- `chromadb.api.client.Client.__init__`
+    issues live HTTP (`get_user_identity()`) before returning, which is where the
+    observed ~140s `[Errno 110] Connection timed out` was spent.
+
+    The fake stands in for that constructor: it builds a session the same way
+    chromadb's `FastAPI.__init__` does, records the timeout it got, then raises
+    the same OSError the live failure raised. The client must come back as the
+    PersistentClient fallback rather than propagating."""
+    import chroma_client as cc
+    from chromadb.api import fastapi as chroma_fastapi
+
+    observed = {}
+    fallback = object()
+
+    def fake_http_client(**kwargs):
+        session = chroma_fastapi.httpx.Client(timeout=None)
+        observed["timeout"] = session.timeout
+        session.close()
+        raise OSError("[Errno 110] Connection timed out")
+
+    monkeypatch.setattr(cc.chromadb, "HttpClient", fake_http_client)
+    monkeypatch.setattr(cc.chromadb, "PersistentClient", lambda **kwargs: fallback)
+    # The session-scoped `use_ephemeral_chroma` fixture pre-populates this;
+    # clear it so the construction path actually runs (monkeypatch restores it).
+    monkeypatch.setattr(cc, "_chroma_client", None)
+
+    client = cc.get_chroma_client()
+
+    assert observed["timeout"].connect == cc.CHROMA_CONNECT_TIMEOUT_SECONDS
+    assert observed["timeout"].read == cc.CHROMA_READ_TIMEOUT_SECONDS
+    # Failed fast into the fallback instead of raising, and cached it.
+    assert client is fallback
+    assert cc._chroma_client is fallback
+
+
+def test_warm_rag_dependencies_primes_both_lazy_singletons(monkeypatch):
+    """Gap 278: both `_chroma_client` and `_embedding_model` are module-level
+    singletons, so whichever request touches RAG first in a fresh process pays
+    their whole cold-start cost inline. `warm_rag_dependencies()` moves that to
+    startup.
+
+    `get_embedding_model` is stubbed rather than left to MOCK_EMBEDDINGS:
+    `config.get_settings()` is a cached singleton built the first time *any*
+    test module imports it, so this module's `os.environ["MOCK_EMBEDDINGS"]`
+    (line 10) only wins when it runs first -- in a full-suite run it does not,
+    and an unstubbed call here would pull the real 2GB `BAAI/bge-m3` down."""
+    import chroma_client as cc
+
+    heartbeats = []
+    model_loads = []
+    stub_client = MagicMock()
+    stub_client.heartbeat.side_effect = lambda: heartbeats.append(1)
+
+    monkeypatch.setattr(cc, "_chroma_client", None)
+    monkeypatch.setattr(cc, "_build_chroma_client", lambda: stub_client)
+    monkeypatch.setattr(cc, "get_embedding_model", lambda: model_loads.append(1) or object())
+
+    results = cc.warm_rag_dependencies()
+
+    assert results == {"chroma": "ok", "embedding_model": "ok"}
+    assert cc._chroma_client is stub_client
+    assert heartbeats, "warm-up must actually round-trip, not just construct"
+    assert model_loads, "warm-up must actually load the embedding model"
+
+    # Mock-embedding mode has no model to load, and must say so rather than
+    # claiming a load it didn't do.
+    monkeypatch.setattr(cc, "get_embedding_model", lambda: None)
+    assert cc.warm_rag_dependencies()["embedding_model"] == "mocked"
+
+
+def test_warm_rag_dependencies_survives_an_unreachable_chroma(monkeypatch):
+    """A cold start with Chroma genuinely down must not take the process with
+    it -- the warm-up is best-effort and the request path keeps its existing
+    fallback behaviour."""
+    import chroma_client as cc
+
+    monkeypatch.setattr(cc, "_chroma_client", None)
+    monkeypatch.setattr(cc, "_build_chroma_client", MagicMock(side_effect=OSError("connection refused")))
+    monkeypatch.setattr(cc, "get_embedding_model", lambda: None)
+
+    results = cc.warm_rag_dependencies()
+
+    assert results["chroma"].startswith("degraded:")
+    assert results["embedding_model"] == "mocked"
+
+
+def test_startup_lifespan_kicks_off_the_rag_warmup(monkeypatch):
+    """Gap 278: the warm-up is only worth anything if it is actually wired to
+    process startup. Runs on a background thread on purpose (the ACA startup
+    probe budget is 65s and a cold `BAAI/bge-m3` load makes live huggingface.co
+    round-trips), so this waits on an event rather than asserting synchronously."""
+    import threading as _threading
+    import main
+
+    warmed = _threading.Event()
+
+    with patch("chroma_client.warm_rag_dependencies", side_effect=lambda: warmed.set()):
+        with TestClient(app):
+            assert warmed.wait(timeout=15), "lifespan did not start the RAG warm-up"
+
+    # And the escape hatch for processes that should never touch Chroma.
+    monkeypatch.setenv("DISABLE_RAG_WARMUP", "true")
+    assert main._start_rag_warmup() is None
+
+
 def test_outbound_resolve_backfills_rag_index_for_an_unindexed_invoice(db_session):
     """Gap 243, the outbound twin. This endpoint never mutates `invoice.status`
     at all -- an outbound resolve is corrections plus alert dismissal -- so

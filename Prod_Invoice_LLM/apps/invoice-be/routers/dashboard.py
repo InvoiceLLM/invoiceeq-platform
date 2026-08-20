@@ -394,7 +394,7 @@ async def get_trainer_impact(
 
 
 @router.get("/insights")
-async def get_dashboard_insights(
+def get_dashboard_insights(
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session)
 ):
@@ -412,6 +412,27 @@ async def get_dashboard_insights(
     currency, and the prompt explicitly forbids adding or comparing amounts
     across currencies -- no FX rate exists anywhere in this system to make such
     a comparison valid.
+
+    BE Gap 279 -- this handler is deliberately `def`, NOT `async def`.
+
+    Its body is entirely blocking, synchronous I/O: redis-py get/set,
+    SQLModel `db_session.exec()`, and `structured_llm.invoke()`, which is a
+    synchronous Azure OpenAI round trip measured live at 13-19.5s on a cache
+    miss. There is no `await` anywhere in it. While it was declared `async
+    def`, Starlette ran it directly on the uvicorn event loop, so that 13-19s
+    call froze the entire worker and every other in-flight request stalled
+    behind it -- confirmed in Log Analytics, e.g. 2026-08-19T07:20:30Z where
+    /dashboard/insights (16781ms), three /invoices (16750/16945/16956ms) and
+    /outbound-dashboard/invoices (16937ms) all started ~07:20:13 and completed
+    within 200ms of each other, then /invoices went straight back to 282ms one
+    second later. That is what made the whole first dashboard load after login
+    feel slow, not the panel alone: the Insights fetch took metrics and the
+    invoice list down with it.
+
+    Declared `def`, FastAPI runs it in the anyio worker threadpool instead, so
+    the blocking LLM call costs this one request its latency and nothing else.
+    Do not "modernise" this back to `async def` without first making every call
+    inside it genuinely awaitable.
     """
     cache_key = _insights_cache_key(context.tenant_id)
     try:

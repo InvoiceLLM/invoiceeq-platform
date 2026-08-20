@@ -1,6 +1,8 @@
 # pyrefly: ignore [missing-import]
 import os
 import logging
+import threading
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,9 +31,58 @@ if appinsights_conn_str:
     except Exception as e:
         logger.warning(f"Could not configure Azure Monitor OpenTelemetry: {e}")
 
+def _start_rag_warmup() -> threading.Thread | None:
+    """
+    Gap 278: kick off `chroma_client.warm_rag_dependencies()` at process start.
+
+    Deliberately a **daemon thread, not an awaited startup step.** The work it
+    does (connect to Chroma, load `BAAI/bge-m3`, which makes live round-trips to
+    huggingface.co on a cold layer cache) has no useful upper bound, while the
+    Container App startup probe budget is 65s total (`initialDelaySeconds: 5` +
+    `periodSeconds: 5` x `failureThreshold: 12`, see
+    infra/modules/compute/invoice-be.bicep). Blocking the ASGI startup on it
+    would risk turning a slow warm-up into a probe failure and a restart loop --
+    i.e. trading an intermittently slow first chat turn for an outage.
+
+    Running it concurrently is still the whole fix: in the normal case the
+    warm-up finishes long before the first user request, and in the worst case
+    a request that arrives mid-warm-up simply waits on the same singleton it
+    would have had to build itself anyway (`_chroma_lock` / `_embedding_lock`),
+    so it is never slower than the pre-fix behaviour.
+
+    Set `DISABLE_RAG_WARMUP=true` to skip it (local runs that never touch chat,
+    or a process deliberately kept off Chroma).
+    """
+    if os.getenv("DISABLE_RAG_WARMUP", "").strip().lower() in {"1", "true", "yes"}:
+        logger.info("RAG warm-up skipped (DISABLE_RAG_WARMUP set).")
+        return None
+
+    def _warm():
+        try:
+            # Imported here, not at module scope, so a warm-up-only dependency
+            # can never fail the app's import.
+            from chroma_client import warm_rag_dependencies
+            warm_rag_dependencies()
+        except Exception as e:
+            logger.warning(f"RAG warm-up thread failed: {e}")
+
+    thread = threading.Thread(target=_warm, name="rag-warmup", daemon=True)
+    thread.start()
+    return thread
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Process-lifetime hooks. Startup work must not block readiness -- see
+    `_start_rag_warmup()`."""
+    _start_rag_warmup()
+    yield
+
+
 app = FastAPI(
     title="Invoice AI",
     version="1.0",
+    lifespan=lifespan,
     # Gap 184: the Security → API Docs tab in invoice-fe renders this same
     # schema, so the description is the one place both the standalone Swagger UI
     # and the in-app Docs Hub read their "how do I authenticate" answer from.
