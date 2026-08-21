@@ -112,6 +112,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Live outage, 2026-08-21: a broken revision (Alembic migration-graph
+      # crash) sat at 100% traffic for 3+ hours because this app runs in
+      # Container Apps single-revision mode -- there is no traffic-weight
+      # rollback available (`az containerapp ingress traffic set` errors
+      # outright: "Containerapp is configured for single revision"). The
+      # ONLY way to restore service in single-revision mode is to deploy a
+      # new revision from the last known-good image. Captured here, before
+      # the update, so the health-check step below can roll back to it
+      # automatically instead of leaving a dead revision holding all traffic
+      # until a human notices.
+      - name: Capture current image (rollback target)
+        id: previous
+        shell: bash
+        run: |
+          set -euo pipefail
+          prev=$(az containerapp show --name "${{ inputs.container_app_name }}" \
+            --resource-group "${{ inputs.resource_group }}" \
+            --query "properties.template.containers[0].image" -o tsv 2>/dev/null || echo "")
+          echo "Previous image (rollback target if this deploy fails): ${prev:-<none, first deploy>}"
+          echo "image=$prev" >> "$GITHUB_OUTPUT"
+
       - name: Update Container App image
         shell: bash
         run: |
@@ -127,14 +148,49 @@ jobs:
 
       # BE Gap 258: fail the deploy job if the new revision never becomes
       # healthy — catches readiness-probe failures (Gap 252 class) before
-      # they sit on 100% traffic undetected for hours.
+      # they sit on 100% traffic undetected for hours. Extended 2026-08-21:
+      # on failure, also roll back to the previous image automatically
+      # (single-revision mode has no traffic-weight rollback -- see above),
+      # so a bad deploy self-heals within this job's run instead of leaving
+      # production down until someone notices and intervenes by hand.
       - name: Wait for new revision to become healthy
         shell: bash
         run: |
           set -euo pipefail
           app="${{ inputs.container_app_name }}"
           rg="${{ inputs.resource_group }}"
+          prev_image="${{ steps.previous.outputs.image }}"
           max_attempts=24
+
+          rollback() {
+            if [ -z "$prev_image" ]; then
+              echo "⚠️ No previous image captured (first deploy?) -- cannot auto-rollback."
+              return 1
+            fi
+            echo "⏪ Rolling back $app to last known-good image: $prev_image"
+            if az containerapp update --name "$app" --resource-group "$rg" --image "$prev_image"; then
+              echo "✅ Rollback deploy submitted. Verifying it becomes healthy..."
+              for j in $(seq 1 12); do
+                r=$(az containerapp revision list --name "$app" --resource-group "$rg" \
+                  --query "sort_by(@, &properties.createdTime)[-1].{health:properties.healthState,running:properties.runningState}" \
+                  -o tsv)
+                h=$(echo "$r" | awk '{print $1}')
+                run=$(echo "$r" | awk '{print $2}')
+                echo "  rollback check ($j/12): health=$h running=$run"
+                if [ "$h" = "Healthy" ] && [ "$run" = "Running" ]; then
+                  echo "✅ Rollback restored $app to a healthy revision on $prev_image."
+                  return 0
+                fi
+                sleep 10
+              done
+              echo "❌ Rollback deploy did not become healthy either -- needs manual attention."
+              return 1
+            else
+              echo "❌ Rollback deploy command itself failed -- needs manual attention."
+              return 1
+            fi
+          }
+
           for i in $(seq 1 "$max_attempts"); do
             row=$(az containerapp revision list \
               --name "$app" \
@@ -154,10 +210,12 @@ jobs:
               echo "❌ $app revision entered terminal failure state ($running / $health)"
               az containerapp revision list --name "$app" --resource-group "$rg" -o table
               az containerapp logs show --name "$app" --resource-group "$rg" --tail 50 || true
+              rollback || true
               exit 1
             fi
             sleep 10
           done
           echo "❌ $app did not reach Healthy/Running within $((max_attempts * 10))s"
           az containerapp revision list --name "$app" --resource-group "$rg" -o table
+          rollback || true
           exit 1
