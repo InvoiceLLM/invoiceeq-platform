@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useParams } from "next/navigation";
-import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle, Trash2 } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import { formatCurrency } from "@/lib/utils";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
@@ -153,6 +153,7 @@ function EditableField({
 
 export default function OutboundAuditorReviewPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [invoice, setInvoice] = useState<OutboundInvoiceDetail | null>(null);
   const [initialInvoice, setInitialInvoice] = useState<OutboundInvoiceDetail | null>(null);
@@ -160,7 +161,7 @@ export default function OutboundAuditorReviewPage() {
   const [corrections, setCorrections] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<"send" | "paid" | null>(null);
+  const [actionLoading, setActionLoading] = useState<"send" | "paid" | "delete" | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
@@ -269,6 +270,36 @@ export default function OutboundAuditorReviewPage() {
     }
   };
 
+  /**
+   * Gap 282: the outbound review screen had no delete action. Same soft-delete
+   * call the Outbound Invoices table and the inbound table both make —
+   * `DELETE /invoices/{id}` is direction-agnostic (outbound invoices are rows
+   * in the same `Invoice` table, flagged `flow_direction == "OUTBOUND"`), so no
+   * outbound-specific endpoint was needed. Navigates back to the Audit Queue
+   * afterwards because this route can no longer resolve the invoice it exists
+   * to show.
+   */
+  const handleDelete = async () => {
+    if (!invoice) return;
+    const label = invoice.invoice_number ?? invoice.id;
+    if (
+      !window.confirm(
+        `Delete outbound invoice ${label}? It will be removed from your outbound ledger, dashboards and reports. The record and its audit history are retained.`
+      )
+    ) {
+      return;
+    }
+    setActionLoading("delete");
+    try {
+      await apiClient.delete(`/invoices/${invoice.id}`);
+      router.push("/invoices");
+    } catch (err) {
+      console.error("Delete failed:", err);
+      window.alert("Failed to delete invoice. Please try again.");
+      setActionLoading(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center text-slate-400">
@@ -349,6 +380,19 @@ export default function OutboundAuditorReviewPage() {
             Mark Paid
           </button>
         )}
+
+        {/* Gap 282: delete, offered at every lifecycle stage the same way the
+            Outbound Invoices table offers it on every row — a misfiled upload
+            is just as likely to be noticed after it is SENT/PAID as before. */}
+        <button
+          onClick={handleDelete}
+          disabled={!!actionLoading}
+          title="Delete invoice"
+          className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-rose-500/50 bg-rose-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-rose-300 transition hover:bg-rose-600/30 disabled:opacity-50"
+        >
+          {actionLoading === "delete" ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+          Delete
+        </button>
       </PageHeaderActions>
 
       {(isVerifiedOrNeedsReview || isSent) && (

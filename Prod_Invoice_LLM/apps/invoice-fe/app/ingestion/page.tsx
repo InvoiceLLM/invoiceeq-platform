@@ -433,9 +433,18 @@ export default function IngestionPage() {
           <div className="lg:col-span-2 space-y-4">
             {outboundInvoices.length > 0 ? (
               outboundInvoices.map((inv) => (
+                /* Gap 284: exactly one LogTerminal per outbound file. This
+                   block used to render one here *and* SendInvoiceStatusTable
+                   rendered a second one internally (Gap 134), keyed on the
+                   invoice id rather than the batch id — see that component's
+                   header comment. The internal one is gone; this one keeps the
+                   real `batch_id` from POST /outbound-invoices/upload, which is
+                   the id the SSE channel is actually named after.
+                   `includeStatusEvents` because the outbound worker publishes
+                   stage events, never `log_line` events. */
                 <div key={inv.id} className="space-y-4">
                   <SendInvoiceStatusTable invoiceId={inv.id} fileName={inv.name} />
-                  <LogTerminal batchId={inv.batchId} />
+                  <LogTerminal batchId={inv.batchId} includeStatusEvents />
                 </div>
               ))
             ) : (

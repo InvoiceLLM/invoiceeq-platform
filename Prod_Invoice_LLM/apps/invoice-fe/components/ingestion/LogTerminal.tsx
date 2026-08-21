@@ -12,6 +12,24 @@ interface LogLine {
 
 interface LogTerminalProps {
   batchId: string | null;
+  /**
+   * Gap 284: also render the coarse stage events (`{status, message}`) that
+   * `_publish_sse_events` puts on the same channel, not just `type:
+   * "log_line"` events.
+   *
+   * Off by default, which is the inbound behaviour and must stay that way:
+   * `queue_worker/handlers.py::handle_process_invoice` publishes both kinds,
+   * so turning this on for inbound would interleave four coarse duplicates
+   * into an already-detailed per-stage feed.
+   *
+   * On for outbound, where it is the only thing that makes this component
+   * show anything at all: `queue_worker/outbound_handlers.py` has no `on_log`
+   * callback and never publishes a single `log_line` event — its four
+   * `_publish_sse_events` calls (PROCESSING_OCR / EXTRACTING_DATA / the
+   * terminal status / FAILED) carry human-readable `message` strings and are
+   * the whole of outbound's log stream today.
+   */
+  includeStatusEvents?: boolean;
 }
 
 /**
@@ -22,7 +40,7 @@ interface LogTerminalProps {
  * `status`/`invoice_id`). Opens its own EventSource regardless of batch size,
  * since log visibility is independent of StatusTable's polling/SSE choice.
  */
-export default function LogTerminal({ batchId }: LogTerminalProps) {
+export default function LogTerminal({ batchId, includeStatusEvents = false }: LogTerminalProps) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -51,7 +69,12 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
     es.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload?.type === "log_line" && payload?.message) {
+        const isLogLine = payload?.type === "log_line";
+        // Gap 284: a stage event is anything else on this channel that still
+        // carries a human-readable message -- i.e. `_publish_sse_events`'
+        // `{status, message}` shape. Only consumed when the caller opts in.
+        const isStageEvent = includeStatusEvents && !payload?.type && !!payload?.status;
+        if ((isLogLine || isStageEvent) && payload?.message) {
           setLines((prev) => {
             const isDuplicate = prev.slice(-3).some(
               (line) => line.invoiceId === (payload.invoice_id ?? null) && line.message === (payload.message ?? "")
@@ -65,7 +88,13 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
                 id: `${Date.now()}-${prev.length}-${Math.random()}`,
                 invoiceId: payload.invoice_id ?? null,
                 message: payload.message ?? "",
-                level: payload.level ?? (payload.status === "FAILED" ? "error" : "info"),
+                level:
+                  payload.level ??
+                  (payload.status === "FAILED"
+                    ? "error"
+                    : payload.status === "NEEDS_REVIEW"
+                    ? "warn"
+                    : "info"),
               },
             ];
           });
@@ -83,7 +112,7 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
       es.close();
       eventSourceRef.current = null;
     };
-  }, [batchId]);
+  }, [batchId, includeStatusEvents]);
 
   // FE Gap 268: this used to run unconditionally on every new line, so a
   // user who scrolled up mid-ingestion to read an earlier line got yanked
@@ -102,7 +131,7 @@ export default function LogTerminal({ batchId }: LogTerminalProps) {
     level === "error" ? "text-rose-400" : level === "warn" ? "text-amber-400" : "text-emerald-400";
 
   return (
-    <div className="glass-panel rounded-xl border border-[#222D3D] overflow-hidden">
+    <div data-testid="log-terminal" className="glass-panel rounded-xl border border-[#222D3D] overflow-hidden">
       <div className="px-4 py-3 border-b border-[#222D3D] flex items-center gap-2">
         <Terminal className="w-4 h-4 text-slate-500" />
         <span className="text-xs font-semibold text-slate-300">Live Processing Log</span>

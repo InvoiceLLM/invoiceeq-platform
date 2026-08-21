@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
-import { CheckCircle, AlertCircle, Loader2, Send, Eye } from "lucide-react";
+import React, { useState } from "react";
+import { CheckCircle, AlertCircle, Loader2, Send, Eye, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency, formatDate } from "../../lib/utils";
+import { apiClient } from "../../lib/apiClient";
 
 export interface OutboundInvoiceRecord {
   id: string;
@@ -37,6 +38,11 @@ const STATUS_TABS: { key: OutboundStatusTab; label: string }[] = [
 interface OutboundInvoicesTableProps {
   invoices: OutboundInvoiceRecord[];
   isLoading: boolean;
+  /**
+   * Gap 282: called after a successful soft-delete so the owning page can
+   * refetch the current page. Same contract as RecentInvoicesTable's `onDelete`.
+   */
+  onDelete?: (id: string) => void;
   activeTab: OutboundStatusTab;
   onTabChange: (tab: OutboundStatusTab) => void;
   currentPage: number;
@@ -48,6 +54,7 @@ interface OutboundInvoicesTableProps {
 export default function OutboundInvoicesTable({
   invoices = [],
   isLoading,
+  onDelete,
   activeTab,
   onTabChange,
   currentPage,
@@ -55,6 +62,41 @@ export default function OutboundInvoicesTable({
   totalCount,
   onPageChange,
 }: OutboundInvoicesTableProps) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  /**
+   * Gap 282: the outbound table had no delete affordance at all.
+   *
+   * No new backend endpoint was needed and none was added: outbound invoices
+   * are rows in the *same* `Invoice` table as inbound ones, distinguished only
+   * by `flow_direction == "OUTBOUND"`, and `routers/invoices.py::delete_invoice`
+   * (Gap 192's soft delete — stamps `deleted_at`, keeps the row, the blob and
+   * the AuditLog history, appends a DELETE_INVOICE entry) filters on id +
+   * tenant only. `app/api/invoices/[id]/route.ts` already proxies DELETE.
+   * So this reuses inbound's exact call, deliberately rather than inventing an
+   * `/outbound-invoices/{id}` delete that would duplicate it.
+   */
+  const handleDelete = async (inv: OutboundInvoiceRecord) => {
+    const label = inv.invoice_number || inv.id;
+    if (
+      !window.confirm(
+        `Delete outbound invoice ${label}? It will be removed from your outbound ledger, dashboards and reports. The record and its audit history are retained.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(inv.id);
+    try {
+      await apiClient.delete(`/invoices/${inv.id}`);
+      onDelete?.(inv.id);
+    } catch (err) {
+      console.error("Failed to delete outbound invoice", err);
+      window.alert("Failed to delete invoice. Please try again.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const getStatusBadge = (inv: OutboundInvoiceRecord) => {
     if (inv.is_overdue) {
       return (
@@ -170,12 +212,31 @@ export default function OutboundInvoicesTable({
                   <td className="px-6 py-4 font-bold text-slate-200 font-mono">{formatCurrency(inv.grand_total, inv.currency)}</td>
                   <td className="px-6 py-4">{getStatusBadge(inv)}</td>
                   <td className="px-6 py-4 text-right">
-                    <Link
-                      href={`/invoices/outbound-review/${inv.id}`}
-                      className="inline-flex items-center gap-1 text-xs text-[#3B82F6] hover:text-[#3B82F6]/80 font-semibold"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                    </Link>
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <Link
+                        href={`/invoices/outbound-review/${inv.id}`}
+                        title="Open Outbound Auditor Console"
+                        aria-label={`Review outbound invoice ${inv.invoice_number || inv.id}`}
+                        className="inline-flex items-center gap-1 rounded-lg p-1.5 text-xs font-semibold text-[#3B82F6] transition-colors hover:bg-slate-800 hover:text-[#3B82F6]/80"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </Link>
+                      {/* Gap 282: delete action, previously absent from this table. */}
+                      <button
+                        type="button"
+                        disabled={deletingId === inv.id}
+                        onClick={() => handleDelete(inv)}
+                        title="Delete invoice"
+                        aria-label={`Delete outbound invoice ${inv.invoice_number || inv.id}`}
+                        className="inline-flex items-center rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/10 hover:text-rose-300 disabled:cursor-wait disabled:opacity-50"
+                      >
+                        {deletingId === inv.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

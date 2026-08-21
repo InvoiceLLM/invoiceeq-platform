@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef } from "react";
 import { CheckCircle2, AlertTriangle, Loader2, FileText, Send, XCircle } from "lucide-react";
 import Link from "next/link";
 import { apiClient } from "../../lib/apiClient";
-import LogTerminal from "./LogTerminal";
 import { formatCurrency } from "../../lib/utils";
 
 // Feature 2.1's outbound status lifecycle -- distinct from inbound's
@@ -37,6 +36,21 @@ interface SendInvoiceStatusTableProps {
  * a simpler single-row view, not a full ledger table -- polls the existing
  * GET /api/invoices/{id} proxy (flow-direction-agnostic, already returns
  * customer_name/status/alerts for any invoice) rather than a new endpoint.
+ *
+ * Gap 284 (2026-08-21): this component used to embed its own
+ * `<LogTerminal batchId={invoiceId} />` (added by Gap 134). It has been
+ * removed. Two separate defects were folded into that one line:
+ *   1. Duplication -- commit a99aad6 later added a *second* LogTerminal in
+ *      `app/ingestion/page.tsx` next to this card without removing this one,
+ *      so every outbound file opened two "Live Processing Log" boxes.
+ *   2. It could never work. LogTerminal subscribes to
+ *      `/api/invoices/stream/{batchId}`, and the backend's
+ *      `stream_invoice_status` resolves that path segment as `Invoice.batch_id`.
+ *      Passing an *invoice* id matched no row, so Gap 186's ownership check
+ *      404'd, EventSource fired `onerror`, and the box sat on
+ *      "Waiting for processing to start..." forever.
+ * The surviving terminal is the page-level one, which is given the real
+ * `batch_id` returned by POST /outbound-invoices/upload.
  */
 export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvoiceStatusTableProps) {
   const [status, setStatus] = useState<OutboundStatus>("UPLOADED");
@@ -197,9 +211,6 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
           </button>
         )}
       </div>
-
-      {/* Gap 134: Live per-stage scrolling log terminal for outbound processing */}
-      <LogTerminal batchId={invoiceId} />
     </div>
   );
 }

@@ -935,85 +935,134 @@ export default function AuditorReviewPage() {
                   )
                 )}
               </div>
+
+              {/* Gap 205: Extended extracted metadata panel — currency, discounts, tax IDs, payment instructions.
+                  Gap 286: this used to sit *outside* the scroll container that
+                  closes below, as a direct flex child of the panel <section>
+                  alongside the header, the scroll area and the corrections
+                  footer. A flex item's default `min-height: auto` meant it
+                  could not shrink below its own content height, so on an
+                  invoice carrying a real amount of metadata (tax breakdown +
+                  tax IDs + payment instructions + compliance/e-invoice rows)
+                  it claimed the column's height for itself, squeezed the
+                  `flex-1` fields/line-items area down towards zero, and then
+                  overflowed the section anyway -- clipped silently by the
+                  grid's `xl:overflow-hidden`. Moving it inside the scroll
+                  container makes it scroll with the fields it belongs to, so
+                  the panel accommodates any amount of metadata rather than
+                  being sized to one particular schema. `mx-4 mb-4` dropped
+                  with the move: the scroll container already supplies p-4/gap-4. */}
+              {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
+                <div
+                  data-testid="extracted-metadata-panel"
+                  className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
+
+                  {/* Currency */}
+                  {invoice.currency && (
+                    <div className="flex justify-between gap-3 text-xs">
+                      <span className="min-w-0 break-words text-slate-500">Currency</span>
+                      <span className="min-w-0 break-all text-right font-mono text-slate-300">{invoice.currency}</span>
+                    </div>
+                  )}
+
+                  {/* Discount Amount / Percent */}
+                  {(invoice.discount_amount != null || invoice.discount_percent != null) && (
+                    <div className="flex justify-between gap-3 text-xs">
+                      <span className="min-w-0 break-words text-slate-500">Invoice Discount</span>
+                      <span className="min-w-0 break-all text-right font-mono text-slate-300">
+                        {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
+                        {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Tax IDs */}
+                  {invoice.tax_ids && invoice.tax_ids.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
+                      {invoice.tax_ids.map((t, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{t.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Taxes breakdown */}
+                  {invoice.taxes && invoice.taxes.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
+                      {invoice.taxes.map((t, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Payment Instructions */}
+                  {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
+                      {invoice.payment_instructions.map((p, i) => (
+                        <div key={i} className="flex min-w-0 flex-col text-xs">
+                          <span className="break-words text-slate-500">{p.method_type}</span>
+                          <span className="font-mono text-slate-400 break-all">{p.details}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* References. Gap 286: `references` was already counted in
+                      this panel's render gate above and declared on
+                      InvoiceDetail, but Gap 205 never gave it a block -- an
+                      invoice carrying only references rendered an empty
+                      "Additional Extracted Metadata" box. */}
+                  {invoice.references && invoice.references.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">References</span>
+                      {invoice.references.map((r, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{r.ref_type}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{r.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Discounts breakdown. Gap 286: same as `references` --
+                      counted in the gate, declared on the type, never rendered. */}
+                  {invoice.discounts && invoice.discounts.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Discount Breakdown</span>
+                      {invoice.discounts.map((d, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{d.discount_type}{d.percent != null ? ` ${d.percent}%` : ""}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(d.amount, invoice.currency)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Compliance Metadata */}
+                  {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
+                      {invoice.compliance_metadata.map((c, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{c.key}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{c.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-
-            {/* Gap 205: Extended extracted metadata panel — currency, discounts, tax IDs, payment instructions */}
-            {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
-              <div className="mx-4 mb-4 flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
-
-                {/* Currency */}
-                {invoice.currency && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">Currency</span>
-                    <span className="font-mono text-slate-300">{invoice.currency}</span>
-                  </div>
-                )}
-
-                {/* Discount Amount / Percent */}
-                {(invoice.discount_amount != null || invoice.discount_percent != null) && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-500">Invoice Discount</span>
-                    <span className="font-mono text-slate-300">
-                      {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
-                      {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
-                    </span>
-                  </div>
-                )}
-
-                {/* Tax IDs */}
-                {invoice.tax_ids && invoice.tax_ids.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
-                    {invoice.tax_ids.map((t, i) => (
-                      <div key={i} className="flex justify-between text-xs">
-                        <span className="text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
-                        <span className="font-mono text-slate-300">{t.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Taxes breakdown */}
-                {invoice.taxes && invoice.taxes.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
-                    {invoice.taxes.map((t, i) => (
-                      <div key={i} className="flex justify-between text-xs">
-                        <span className="text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
-                        <span className="font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Payment Instructions */}
-                {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
-                    {invoice.payment_instructions.map((p, i) => (
-                      <div key={i} className="flex flex-col text-xs">
-                        <span className="text-slate-500">{p.method_type}</span>
-                        <span className="font-mono text-slate-400 break-all">{p.details}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Compliance Metadata */}
-                {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
-                    {invoice.compliance_metadata.map((c, i) => (
-                      <div key={i} className="flex justify-between text-xs">
-                        <span className="text-slate-500">{c.key}</span>
-                        <span className="font-mono text-slate-300 break-all">{c.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Pending-corrections footer, pinned to the bottom of this panel
                 rather than scrolling away with the fields it summarises. */}

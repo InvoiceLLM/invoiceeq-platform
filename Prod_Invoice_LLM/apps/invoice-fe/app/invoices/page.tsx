@@ -231,6 +231,14 @@ export default function InvoicesPage() {
     fetchInvoicesPage();
   };
 
+  // Gap 282: outbound mirror of handleInvoiceDeleted. Drops the row from the
+  // customer-dropdown source list and refetches the current outbound page so
+  // the count/pagination stay honest, rather than only splicing it locally.
+  const handleOutboundInvoiceDeleted = (id: string) => {
+    setOutboundInvoices((prev) => prev.filter((inv: any) => inv.id !== id));
+    fetchOutboundInvoicesPage();
+  };
+
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const outboundTotalPages = Math.max(1, Math.ceil(outboundTotalCount / PAGE_SIZE));
 
@@ -313,6 +321,7 @@ export default function InvoicesPage() {
           <OutboundInvoicesTable
             invoices={outboundInvoices}
             isLoading={isOutboundLoading}
+            onDelete={handleOutboundInvoiceDeleted}
             activeTab={outboundActiveTab}
             onTabChange={handleOutboundTabChange}
             currentPage={outboundCurrentPage}
