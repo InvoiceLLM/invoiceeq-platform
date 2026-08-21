@@ -1,16 +1,4 @@
-// =============================================================================
-// FILE: hooks/useChatSession.ts
-// FEATURE: Feature 5 — Semantic Chat Assistant & SQL Audit Drawer
-// REASON ADDED: All chat state (sessions list, active thread, messages, loading
-//   flags, errors) needs to be managed in one place so that ChatWindow, the
-//   thread sidebar, and the message stream always stay in sync.  A custom hook
-//   was chosen over a global store (Zustand/Context) because the chat state is
-//   only needed on the /chat page — no cross-page sharing is required.
-//   Uses the existing apiClient (Axios instance with baseURL: "/api") so all
-//   calls are same-origin and the auth header is forwarded server-side.
-// =============================================================================
-
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiClient } from "@/lib/apiClient";
 import type {
   ChatSession,
@@ -18,6 +6,8 @@ import type {
   ListSessionsResponse,
   GetSessionResponse,
   SendMessageResponse,
+  ChatJobResponse,
+  ChatStreamEvent,
 } from "@/types/chat";
 
 // Return type is explicitly exported so ChatWindow and page.tsx can type
@@ -47,13 +37,28 @@ export function useChatSession(): UseChatSessionReturn {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Keep track of active EventSource instances to prevent memory leaks or orphaned connections
+  const activeStreamRef = useRef<EventSource | null>(null);
+  const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const cleanupStream = useCallback(() => {
+    if (activeStreamRef.current) {
+      activeStreamRef.current.close();
+      activeStreamRef.current = null;
+    }
+    if (pollingTimerRef.current) {
+      clearInterval(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => cleanupStream();
+  }, [cleanupStream]);
+
   // ---------------------------------------------------------------------------
   // fetchSessions
-  // WHY: Populate the left sidebar thread list as soon as the /chat page mounts.
-  //   Wrapped in useCallback so it has a stable reference for the useEffect dep
-  //   array — prevents an infinite re-render loop.
-  //   Silently swallows the error (sets an empty array) because a missing
-  //   sessions list is non-fatal; the user can still create a new session.
   // ---------------------------------------------------------------------------
   const fetchSessions = useCallback(async () => {
     setIsLoadingSessions(true);
@@ -61,109 +66,266 @@ export function useChatSession(): UseChatSessionReturn {
       const res = await apiClient.get<ListSessionsResponse>("/chat/sessions");
       setSessions(res.data ?? []);
     } catch {
-      // Gracefully handle backend being offline during local development.
-      // The empty array keeps the UI functional — user can still start a chat.
       setSessions([]);
     } finally {
       setIsLoadingSessions(false);
     }
   }, []);
 
-  // Run once on mount — analogous to componentDidMount
   useEffect(() => {
     fetchSessions();
   }, [fetchSessions]);
 
   // ---------------------------------------------------------------------------
-  // selectSession
-  // WHY: When the user clicks a thread in the sidebar, we need to load its
-  //   full message history from the backend.  We clear messages first so the
-  //   previous thread's content doesn't flash while the new one loads.
-  //   isLoadingMessages triggers the Loader2 spinner in the message area.
+  // attachJobListener (Gap 280: SSE Streaming + Polling Fallback)
   // ---------------------------------------------------------------------------
-  const selectSession = useCallback(async (id: string) => {
-    setActiveSessionId(id);
-    setMessages([]);          // Clear previous thread's messages immediately
-    setIsLoadingMessages(true);
-    setError(null);
-    try {
-      const res = await apiClient.get<GetSessionResponse>(`/chat/sessions/${id}`);
-      setMessages(res.data ?? []);
-    } catch {
-      setError("Failed to load messages for this session.");
-    } finally {
-      setIsLoadingMessages(false);
-    }
-  }, []);
+  const attachJobListener = useCallback(
+    (jobId: string, placeholderId: string) => {
+      cleanupStream();
+
+      let eventSource: EventSource | null = null;
+      try {
+        eventSource = new EventSource(`/api/chat/jobs/${jobId}/stream`);
+        activeStreamRef.current = eventSource;
+
+        eventSource.onmessage = (e) => {
+          try {
+            const data: ChatStreamEvent = JSON.parse(e.data);
+
+            if (data.status === "processing") {
+              const stepDetail =
+                typeof data.details === "string"
+                  ? data.details
+                  : data.details?.message || data.step || "Analyzing...";
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === placeholderId
+                    ? {
+                        ...m,
+                        status: "processing",
+                        error_message: stepDetail,
+                      }
+                    : m
+                )
+              );
+            } else if (data.status === "completed" && data.result) {
+              const completedMsg: ChatMessage = {
+                ...data.result,
+                status: "completed",
+              };
+              setMessages((prev) =>
+                prev.map((m) => (m.id === placeholderId ? completedMsg : m))
+              );
+              cleanupStream();
+              setIsSending(false);
+            } else if (data.status === "failed") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === placeholderId
+                    ? {
+                        ...m,
+                        status: "failed",
+                        content:
+                          data.error ||
+                          "Sorry, something went wrong processing your request.",
+                        error_message: data.error,
+                      }
+                    : m
+                )
+              );
+              cleanupStream();
+              setIsSending(false);
+            }
+          } catch {
+            // Ignore JSON parse errors for non-standard frames
+          }
+        };
+
+        eventSource.onerror = () => {
+          // Fallback to polling if SSE fails
+          cleanupStream();
+          startPollingFallback(jobId, placeholderId);
+        };
+      } catch {
+        startPollingFallback(jobId, placeholderId);
+      }
+
+      function startPollingFallback(jId: string, pId: string) {
+        let attempts = 0;
+        const maxAttempts = 60; // 60 * 2s = 120s max
+
+        pollingTimerRef.current = setInterval(async () => {
+          attempts++;
+          try {
+            const res = await apiClient.get<ChatStreamEvent>(`/chat/jobs/${jId}/status`);
+            const statusData = res.data;
+
+            if (statusData.status === "processing") {
+              const stepDetail =
+                typeof statusData.details === "string"
+                  ? statusData.details
+                  : statusData.details?.message || statusData.step || "Analyzing...";
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === pId
+                    ? { ...m, status: "processing", error_message: stepDetail }
+                    : m
+                )
+              );
+            } else if (statusData.status === "completed" && statusData.result) {
+              const completedMsg: ChatMessage = {
+                ...statusData.result,
+                status: "completed",
+              };
+              setMessages((prev) =>
+                prev.map((m) => (m.id === pId ? completedMsg : m))
+              );
+              cleanupStream();
+              setIsSending(false);
+            } else if (statusData.status === "failed" || attempts >= maxAttempts) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === pId
+                    ? {
+                        ...m,
+                        status: "failed",
+                        content:
+                          statusData.error ||
+                          "Query took too long or failed. Please retry.",
+                      }
+                    : m
+                )
+              );
+              cleanupStream();
+              setIsSending(false);
+            }
+          } catch {
+            if (attempts >= maxAttempts) {
+              cleanupStream();
+              setIsSending(false);
+            }
+          }
+        }, 2000);
+      }
+    },
+    [cleanupStream]
+  );
+
+  // ---------------------------------------------------------------------------
+  // selectSession
+  // ---------------------------------------------------------------------------
+  const selectSession = useCallback(
+    async (id: string) => {
+      cleanupStream();
+      setActiveSessionId(id);
+      setMessages([]);
+      setIsLoadingMessages(true);
+      setError(null);
+      try {
+        const res = await apiClient.get<GetSessionResponse>(`/chat/sessions/${id}`);
+        const loadedMessages = res.data ?? [];
+        setMessages(loadedMessages);
+
+        // Gap 280: If the last message is still queued/processing, resume streaming listener
+        const lastMsg = loadedMessages[loadedMessages.length - 1];
+        if (
+          lastMsg &&
+          lastMsg.role === "assistant" &&
+          (lastMsg.status === "queued" || lastMsg.status === "processing") &&
+          lastMsg.job_id
+        ) {
+          setIsSending(true);
+          attachJobListener(lastMsg.job_id, lastMsg.id);
+        }
+      } catch {
+        setError("Failed to load messages for this session.");
+      } finally {
+        setIsLoadingMessages(false);
+      }
+    },
+    [cleanupStream, attachJobListener]
+  );
 
   // ---------------------------------------------------------------------------
   // createSession
-  // WHY: Creates a new empty thread on the backend, prepends it to the local
-  //   sessions list (so it appears at the top of the sidebar immediately), and
-  //   sets it as active.  No optimistic ID is used here — we wait for the
-  //   backend UUID because the real ID is needed for subsequent message POSTs.
   // ---------------------------------------------------------------------------
   const createSession = useCallback(async () => {
+    cleanupStream();
     setError(null);
     try {
       const res = await apiClient.post<ChatSession>("/chat/sessions", {
         title: "New Chat",
       });
       const newSession = res.data;
-      // Prepend so the newest session always appears at the top of the list
       setSessions((prev) => [newSession, ...prev]);
       setActiveSessionId(newSession.id);
-      setMessages([]); // Start with an empty message area for the new thread
+      setMessages([]);
     } catch {
       setError("Could not create a new chat session.");
     }
-  }, []);
+  }, [cleanupStream]);
 
   // ---------------------------------------------------------------------------
   // sendMessage
-  // WHY: The UX requirement is zero perceived latency — the user's bubble must
-  //   appear instantly.  We achieve this with an optimistic update:
-  //     1. Append a fake user message immediately (using a temp ID).
-  //     2. POST the message to the backend (may take 2-10s for LLM response).
-  //     3. Append the real assistant message from the response.
-  //   If the POST fails, we roll back step 1 by filtering out the temp message,
-  //   and show an error banner.
-  //   isSending guard prevents double-sends if the user clicks quickly.
-  //   Session title is updated optimistically from "New Chat" to the first
-  //   message text (truncated to 48 chars) so the sidebar label is meaningful.
   // ---------------------------------------------------------------------------
   const sendMessage = useCallback(
     async (text: string) => {
-      // Guard: must have an active session and non-empty text, not already sending
       if (!activeSessionId || !text.trim() || isSending) return;
       setError(null);
 
-      // Step 1: Optimistic user bubble — shows immediately without waiting for network
+      // Step 1: Optimistic user bubble
       const optimisticUserMsg: ChatMessage = {
-        id: `optimistic-${Date.now()}`, // Temporary ID — never sent to the backend
+        id: `optimistic-${Date.now()}`,
         session_id: activeSessionId,
         role: "user",
         content: text.trim(),
+        status: "queued",
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticUserMsg]);
-      setIsSending(true); // Show typing indicator + disable input
+      setIsSending(true);
 
       try {
-        // Step 2: POST to proxy → backend run_query_agent()
+        // Step 2: POST to proxy → backend
         const res = await apiClient.post<SendMessageResponse>(
           `/chat/sessions/${activeSessionId}/message`,
           { content: text.trim() }
         );
 
-        // Step 3: Append the real assistant message (may include generated_sql + citations)
-        const assistantMsg = res.data;
-        setMessages((prev) => [...prev, assistantMsg]);
+        const responseData = res.data;
 
-        // Optimistically rename "New Chat" or placeholder to the first message text for sidebar legibility
+        // Gap 280: Check if response is asynchronous ChatJobResponse (202)
+        if ("job_id" in responseData && responseData.job_id) {
+          const placeholderId = `job-${responseData.job_id}`;
+          const placeholderAssistantMsg: ChatMessage = {
+            id: placeholderId,
+            session_id: activeSessionId,
+            role: "assistant",
+            content: "",
+            status: "queued",
+            job_id: responseData.job_id,
+            error_message: "Queued in line (Slot reserved)...",
+            created_at: new Date().toISOString(),
+          };
+
+          setMessages((prev) => [...prev, placeholderAssistantMsg]);
+          attachJobListener(responseData.job_id, placeholderId);
+        } else {
+          // Synchronous fallback response
+          const assistantMsg = responseData as ChatMessage;
+          setMessages((prev) => [...prev, assistantMsg]);
+          setIsSending(false);
+        }
+
+        // Optimistically update session title in sidebar
         setSessions((prev) =>
           prev.map((s) => {
-            if (s.id === activeSessionId && (s.title === "New Chat" || s.title.startsWith("Chat Session -"))) {
+            if (
+              s.id === activeSessionId &&
+              (s.title === "New Chat" || s.title.startsWith("Chat Session -"))
+            ) {
               const words = text.trim().split(/\s+/);
               let newTitle = words.slice(0, 6).join(" ");
               if (words.length > 6) {
@@ -176,29 +338,17 @@ export function useChatSession(): UseChatSessionReturn {
         );
       } catch {
         setError("Failed to send message. Please try again.");
-        // Roll back: remove the optimistic user bubble to avoid a dangling unanswered message
         setMessages((prev) =>
           prev.filter((m) => m.id !== optimisticUserMsg.id)
         );
-      } finally {
-        setIsSending(false); // Re-enable input + hide typing indicator
+        setIsSending(false);
       }
     },
-    [activeSessionId, isSending]
+    [activeSessionId, isSending, attachJobListener]
   );
 
   // ---------------------------------------------------------------------------
   // renameSession
-  // WHY: Renames a thread server-side, then reflects the saved title locally.
-  //   Gap 216: this used to update local state in BOTH the success and the
-  //   failure branch — and the failure branch was the one that always ran,
-  //   because app/api/chat/sessions/[sessionId]/route.ts exported no PUT and
-  //   Next.js answered 405. The rename therefore looked applied, with no error,
-  //   and silently reverted on the next reload. Now the PUT proxy exists
-  //   (backed by routers/chat.py::rename_session) and the catch surfaces the
-  //   failure instead of faking success — local state is only touched when the
-  //   backend confirms the write, and the title applied is the one the backend
-  //   echoes back, so any server-side normalisation is what ends up on screen.
   // ---------------------------------------------------------------------------
   const renameSession = useCallback(async (id: string, newTitle: string) => {
     const title = newTitle.trim();
@@ -218,21 +368,24 @@ export function useChatSession(): UseChatSessionReturn {
     }
   }, []);
 
-  const deleteSession = useCallback(async (id: string) => {
-    setError(null);
-    try {
-      await apiClient.delete(`/chat/sessions/${id}`);
-      setSessions((prev) => prev.filter((s) => s.id !== id));
-      if (activeSessionId === id) {
-        setActiveSessionId(null);
-        setMessages([]);
+  const deleteSession = useCallback(
+    async (id: string) => {
+      cleanupStream();
+      setError(null);
+      try {
+        await apiClient.delete(`/chat/sessions/${id}`);
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        if (activeSessionId === id) {
+          setActiveSessionId(null);
+          setMessages([]);
+        }
+      } catch {
+        setError("Failed to delete the chat session.");
       }
-    } catch {
-      setError("Failed to delete the chat session.");
-    }
-  }, [activeSessionId]);
+    },
+    [activeSessionId, cleanupStream]
+  );
 
-  // Allows the error banner's dismiss button (or future logic) to clear state
   const clearError = useCallback(() => setError(null), []);
 
   return {

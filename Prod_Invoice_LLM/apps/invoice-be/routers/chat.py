@@ -1,5 +1,7 @@
+import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 from sqlmodel import Session, select
 from uuid import UUID, uuid4
@@ -14,7 +16,10 @@ from services.chat_rules import (
     validate_chat_rule,
 )
 
+import concurrent.futures
+
 logger = logging.getLogger(__name__)
+_chat_background_pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-worker")
 
 
 def _invalidate_chat_answer_cache(tenant_id: str) -> None:
@@ -60,6 +65,13 @@ class SessionResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+
+class ChatJobResponse(BaseModel):
+    """Gap 280: Async job enqueue response."""
+    job_id: str
+    message_id: str
+    status: str = "queued"
+    created_at: str | None = None
 
 class FeedbackCreate(BaseModel):
     vote: str = Field(description="Must be exactly 'up' or 'down'")
@@ -107,6 +119,9 @@ class MessageResponse(BaseModel):
     citations: list[CitationResponse] = []
     created_at: datetime
     feedback: str | None = None  # Gap 54: "up" / "down" / None, so votes survive a reload
+    status: str = "completed"  # Gap 280: 'queued' | 'processing' | 'completed' | 'failed'
+    job_id: str | None = None  # Gap 280
+    error_message: str | None = None  # Gap 280
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -269,14 +284,21 @@ def get_session_messages(
         for m in messages
     ]
 
-@router.post("/sessions/{session_id}/message", response_model=MessageResponse)
+@router.post("/sessions/{session_id}/message")
 def post_chat_message(
     session_id: UUID,
     payload: MessageCreate,
+    background_tasks: BackgroundTasks,
+    sync: bool = False,
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_context)
 ):
-    """Post a new message in a chat session and run the multi-agent RAG routing agent."""
+    """Post a new message in a chat session.
+
+    By default (Gap 280), enqueues the chat turn, executes asynchronously in the background,
+    and returns HTTP 202 Accepted with job_id immediately.
+    If sync=True, executes synchronously for backward compatibility with legacy test suites.
+    """
     # 1. Assert session exists and belongs to requesting tenant
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
     chat_session = db_session.exec(session_statement).first()
@@ -292,24 +314,6 @@ def post_chat_message(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
         )
-        
-    # 2. Stage the user message.
-    # Gap 209: deliberately NOT committed here. It used to be, which meant a
-    # true process-level crash (worker kill, OOM, mid-request redeploy) between
-    # this commit and the assistant-reply commit below left the turn orphaned --
-    # a user bubble in the thread with no answer and nothing to retry from.
-    # Staging it instead keeps both rows in one transaction that either lands
-    # whole at step 4 or never lands at all: an uncommitted transaction is
-    # rolled back by the connection teardown, so a crash leaves no orphan.
-    # The row is still autoflushed (not committed) by the agent's own queries
-    # below, so get_chat_history() sees this turn exactly as it did before.
-    user_msg = ChatMessage(
-        id=uuid4(),
-        session_id=session_id,
-        role="user",
-        content=payload.content
-    )
-    db_session.add(user_msg)
 
     # Auto-generate session title if it uses the default placeholder or timestamp format
     new_title = None
@@ -322,13 +326,62 @@ def post_chat_message(
             chat_session.title = new_title
             db_session.add(chat_session)
 
-    # 3. Invoke multi-agent Query Agent routing pipeline.
-    # Gap 37: the SQL/RAG/CHAT routes inside run_query_agent() each already
-    # have their own try/except, but the call itself was unguarded here -
-    # any exception outside those three branches (routing classification,
-    # chat-history lookup, cache access) surfaced as a raw, unhandled 500
-    # instead of a graceful chat response. Found via the benchmark's Day 1
-    # RAG chat sample (a 500 on an audit_status question).
+    if not sync:
+        # Gap 280: Asynchronous Queue-based Dispatch
+        from services.chat_queue import ChatQueueService
+        from queue_worker.handlers import handle_process_chat_job
+
+        job_id = str(uuid4())
+        user_msg = ChatMessage(
+            id=uuid4(),
+            session_id=session_id,
+            role="user",
+            content=payload.content,
+            status="queued",
+            job_id=job_id,
+        )
+        db_session.add(user_msg)
+        db_session.commit()
+        db_session.refresh(user_msg)
+
+        ChatQueueService.enqueue_chat_job(
+            session_id=str(session_id),
+            user_msg_id=str(user_msg.id),
+            content=payload.content,
+            tenant_id=str(tenant_context.tenant_id),
+            job_id=job_id,
+        )
+
+        # Immediate asynchronous background executor (sub-millisecond handoff)
+        _chat_background_pool.submit(
+            handle_process_chat_job,
+            job_id=job_id,
+            session_id=str(session_id),
+            user_msg_id=str(user_msg.id),
+            content=payload.content,
+            tenant_id=str(tenant_context.tenant_id),
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={
+                "job_id": job_id,
+                "message_id": str(user_msg.id),
+                "status": "queued",
+                "created_at": user_msg.created_at.isoformat() if user_msg.created_at else None,
+            },
+        )
+
+    # Synchronous Execution Path (for legacy/sync callers)
+    user_msg = ChatMessage(
+        id=uuid4(),
+        session_id=session_id,
+        role="user",
+        content=payload.content,
+        status="completed",
+    )
+    db_session.add(user_msg)
+
     try:
         agent_output = run_query_agent(
             session_id=str(session_id),
@@ -338,11 +391,6 @@ def post_chat_message(
         )
     except Exception as e:
         logger.error("run_query_agent failed unexpectedly for session %s: %s", session_id, e)
-        # Gap 209: the session may be left mid-failed-transaction (Gap 39's
-        # Postgres "current transaction is aborted" case), which would make the
-        # single commit at step 4 raise instead of saving the fallback answer.
-        # Rolling back guarantees a usable session; the staged rows it discards
-        # are re-staged just below.
         db_session.rollback()
         agent_output = {
             "content": "Sorry, something went wrong answering that — please try again.",
@@ -351,14 +399,6 @@ def post_chat_message(
             "result_invoice_ids": [],
         }
 
-    # 4. Re-stage anything a rollback inside the agent discarded, then save the
-    # user turn and the assistant reply together in one transaction.
-    # Gap 209: run_query_agent()'s SQL repair loop calls db_session.rollback()
-    # on a failed attempt (Task 6.9 / Gap 39). SQLAlchemy's rollback always
-    # unwinds the topmost transaction, expunging pending rows -- so without
-    # this the previously-committed user message would now be silently dropped
-    # on any query that needed a repair retry. Both re-stages are no-ops when
-    # no rollback happened.
     if user_msg not in db_session:
         db_session.add(user_msg)
     if new_title is not None and chat_session.title != new_title:
@@ -372,16 +412,111 @@ def post_chat_message(
         content=agent_output["content"],
         generated_sql=agent_output["generated_sql"],
         citations=agent_output["citations"],
-        # Feature 18 (Gap 231): the result-set snapshot, captured at answer time.
-        # `.get()` because a cached answer written before this deploy (1hr TTL)
-        # legitimately has no such key.
         result_invoice_ids=agent_output.get("result_invoice_ids") or [],
+        status="completed",
     )
     db_session.add(assistant_msg)
     db_session.commit()
     db_session.refresh(assistant_msg)
 
-    return assistant_msg
+    return MessageResponse.model_validate(assistant_msg)
+
+
+@router.get("/jobs/{job_id}/status")
+def get_chat_job_status(
+    job_id: str,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Gap 280: Polling endpoint for checking the status and result of a chat turn."""
+    from services.chat_queue import ChatQueueService
+    return ChatQueueService.get_job_status(job_id, db_session=db_session)
+
+
+@router.get("/jobs/{job_id}/stream")
+async def stream_chat_job(
+    job_id: str,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Gap 280: Server-Sent Events (SSE) stream for real-time chat progress and result.
+    Yields events: data: {"job_id": "...", "status": "processing", "step": "...", "details": ...}\n\n
+    """
+    import asyncio
+    from services.chat_queue import (
+        get_redis_client,
+        CHAT_JOB_CHANNEL_PREFIX,
+        ChatQueueService,
+    )
+
+    async def event_generator():
+        r = get_redis_client()
+        # 1. First check if job is already finished
+        cur_status = ChatQueueService.get_job_status(job_id, db_session=db_session)
+        if cur_status.get("status") in ("completed", "failed"):
+            yield f"data: {json.dumps(cur_status)}\n\n"
+            return
+
+        yield f"data: {json.dumps({'job_id': job_id, 'status': 'queued', 'step': 'queued'})}\n\n"
+
+        if not r:
+            # Polling fallback if Redis client is unavailable
+            for _ in range(40):
+                await asyncio.sleep(1.5)
+                st = ChatQueueService.get_job_status(job_id, db_session=db_session)
+                yield f"data: {json.dumps(st)}\n\n"
+                if st.get("status") in ("completed", "failed"):
+                    return
+            return
+
+        # 2. Redis Pub/Sub listener
+        pubsub = r.pubsub()
+        channel_name = f"{CHAT_JOB_CHANNEL_PREFIX}{job_id}"
+        pubsub.subscribe(channel_name)
+
+        try:
+            timeout_seconds = 120
+            start_time = asyncio.get_event_loop().time()
+
+            while True:
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=0.4)
+                if message and message.get("data"):
+                    raw_data = message["data"]
+                    yield f"data: {raw_data}\n\n"
+                    try:
+                        parsed = json.loads(raw_data)
+                        if parsed.get("status") in ("completed", "failed"):
+                            break
+                    except Exception:
+                        pass
+
+                # Check Redis status cache periodically in case event was missed
+                cur = ChatQueueService.get_job_status(job_id)
+                if cur.get("status") in ("completed", "failed"):
+                    yield f"data: {json.dumps(cur)}\n\n"
+                    break
+
+                if asyncio.get_event_loop().time() - start_time > timeout_seconds:
+                    yield f"data: {json.dumps({'job_id': job_id, 'status': 'failed', 'error': 'Stream timeout'})}\n\n"
+                    break
+
+                await asyncio.sleep(0.2)
+        finally:
+            try:
+                pubsub.unsubscribe(channel_name)
+                pubsub.close()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _get_owned_message(message_id: UUID, db_session: Session, tenant_context: TenantContext) -> ChatMessage:

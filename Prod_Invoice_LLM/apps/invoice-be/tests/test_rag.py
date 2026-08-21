@@ -99,9 +99,9 @@ def test_chat_message_routing_and_history_saving(db_session):
         mock_llm.invoke.return_value = mock_response
         mock_get_llm.return_value = mock_llm
         
-        # Post user message
+        # Post user message (Gap 280: ?sync=true tests the synchronous execution path)
         msg_res = client.post(
-            f"/api/v1/chat/sessions/{session_id}/message",
+            f"/api/v1/chat/sessions/{session_id}/message?sync=true",
             json={"content": "Hi there"}
         )
         assert msg_res.status_code == 200
@@ -178,7 +178,7 @@ def test_user_message_and_assistant_reply_land_in_one_commit(db_session):
         with patch("routers.chat.run_query_agent", side_effect=fake_agent):
             client = TestClient(app)
             res = client.post(
-                f"/api/v1/chat/sessions/{session_id}/message", json={"content": "Hi there"}
+                f"/api/v1/chat/sessions/{session_id}/message?sync=true", json={"content": "Hi there"}
             )
     finally:
         db_session.commit = real_commit      # type: ignore[method-assign]

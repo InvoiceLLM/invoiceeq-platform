@@ -12,6 +12,7 @@ from queue_worker.handlers import (
     handle_import_connector_file,
     handle_reaudit_templates,
     handle_deliver_webhook,
+    handle_process_chat_job,
 )
 from queue_worker.outbound_handlers import handle_process_outbound_invoice
 
@@ -225,6 +226,15 @@ def _process_message(queue_client: QueueClient, msg) -> None:
                 event_type=kwargs.get("event_type"),
                 payload=kwargs.get("payload") or {},
             )
+        elif task_name == "process_chat_job":
+            # Gap 280: Asynchronous chat processing via queue-worker
+            handle_process_chat_job(
+                job_id=kwargs.get("job_id"),
+                session_id=kwargs.get("session_id"),
+                user_msg_id=kwargs.get("user_msg_id"),
+                content=kwargs.get("content"),
+                tenant_id=tenant_id,
+            )
         else:
             logger.warning(f"Unknown task {task_name}")
 
@@ -247,13 +257,39 @@ def _process_message(queue_client: QueueClient, msg) -> None:
             _release_tenant_slot(tenant_id)
 
 
+def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
+    """Gap 280: Drains in-flight chat jobs from Redis chat_tasks_queue."""
+    r = _get_redis_sync()
+    if not r:
+        return
+    try:
+        # Check for queued chat tasks in Redis
+        raw = r.rpop("chat_tasks_queue")
+        if raw:
+            data = json.loads(raw)
+            executor.submit(
+                handle_process_chat_job,
+                job_id=data.get("job_id"),
+                session_id=data.get("session_id"),
+                user_msg_id=data.get("user_msg_id"),
+                content=data.get("content"),
+                tenant_id=data.get("tenant_id"),
+            )
+    except Exception as e:
+        logger.warning("Error consuming Redis chat task: %s", e)
+
+
 def poll_queue():
     settings = get_settings()
     conn_str = settings.AZURE_STORAGE_CONNECTION_STRING
     queue_name = "extraction-tasks-queue"
 
     if not conn_str:
-        logger.error("AZURE_STORAGE_CONNECTION_STRING is missing. Queue polling disabled.")
+        logger.error("AZURE_STORAGE_CONNECTION_STRING is missing. Checking Redis queue only.")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            while True:
+                _process_redis_chat_tasks(executor)
+                time.sleep(1)
         return
 
     queue_client = QueueClient.from_connection_string(conn_str, queue_name)
@@ -270,6 +306,9 @@ def poll_queue():
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         while True:
             try:
+                # Gap 280: Poll Redis chat queue
+                _process_redis_chat_tasks(executor)
+
                 # Poll for up to MAX_WORKERS messages at once and process them
                 # concurrently. QueueClient is documented safe for concurrent
                 # use across threads (delete_message() per-message uses each

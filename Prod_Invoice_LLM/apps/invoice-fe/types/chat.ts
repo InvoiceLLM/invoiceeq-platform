@@ -22,6 +22,25 @@ export interface Citation {
   invoice_number?: string; // Optional — used as a human-friendly fallback label
 }
 
+export type ChatJobStatus = "queued" | "processing" | "completed" | "failed";
+
+export interface ChatJobResponse {
+  job_id: string;
+  message_id: string;
+  status: ChatJobStatus;
+  created_at?: string;
+}
+
+export interface ChatStreamEvent {
+  job_id: string;
+  status: ChatJobStatus;
+  step?: string;
+  details?: string | { message?: string; [key: string]: any };
+  result?: ChatMessage;
+  error?: string;
+  timestamp?: string;
+}
+
 // -----------------------------------------------------------------------------
 // ChatMessage
 // REASON: Represents a single turn in the conversation.  The `role` field
@@ -49,6 +68,11 @@ export interface ChatMessage {
   // Gap 54: this turn's recorded vote, if any. "up" | "down" | null — null
   // (not just absent) is a real, meaningful state: no vote cast yet.
   feedback?: "up" | "down" | null;
+
+  // Gap 280: Asynchronous job queue status & error tracking
+  status?: ChatJobStatus;
+  job_id?: string;
+  error_message?: string;
 }
 
 // -----------------------------------------------------------------------------
@@ -93,6 +117,5 @@ export interface SendMessageRequest {
   content: string; // Raw user text; the backend handles classification
 }
 
-/** POST /chat/sessions/{id}/message — response: the backend returns the
- *  assistant ChatMessage directly (MessageResponse), not wrapped in an envelope. */
-export type SendMessageResponse = ChatMessage;
+/** POST /chat/sessions/{id}/message — response: returns either ChatJobResponse (202 async) or ChatMessage (sync) */
+export type SendMessageResponse = ChatMessage | ChatJobResponse;

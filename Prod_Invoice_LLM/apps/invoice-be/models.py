@@ -203,6 +203,11 @@ class ChatMessage(SQLModel, table=True):
     # were involved". The triage API treats empty as "ask the user which invoice"
     # rather than asserting a claim it can't back.
     result_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # Gap 280: Queue-based Async Chat Architecture
+    # Lifecycle status: 'queued' | 'processing' | 'completed' | 'failed'
+    status: str = Field(default="completed", max_length=32)
+    job_id: str | None = Field(default=None, index=True, max_length=64)
+    error_message: str | None = Field(default=None, max_length=1000)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ChatFeedback(SQLModel, table=True):
