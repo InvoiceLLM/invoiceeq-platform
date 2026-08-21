@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     # request with no Authorization header resolves to a mock Admin context on
     # the all-zero tenant, which is a full auth bypass.
     ALLOW_MOCK_AUTH: bool = False
+    # Gap 280: gates the Redis-backed async chat queue in routers/chat.py.
+    # Defaults False so POST /message keeps its long-standing synchronous
+    # behaviour for every tenant until this is verified live -- as merged,
+    # the branch made async the unconditional default with the old behaviour
+    # reachable only via an undiscoverable ?sync=true escape hatch, which is
+    # a real production-behaviour change to chat with no rollout gate. Flip
+    # per-environment once the queue/worker/SSE path has real live evidence
+    # behind it, not by default on merge.
+    ENABLE_ASYNC_CHAT_QUEUE: bool = False
     # Gap 117: which deployment this process is. Read only by ops scripts that
     # must never touch production data (scripts/grant_test_plan.py), never by
     # request-handling code -- nothing about the product's behaviour should

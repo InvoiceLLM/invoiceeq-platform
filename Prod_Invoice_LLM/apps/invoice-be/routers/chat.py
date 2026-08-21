@@ -295,9 +295,12 @@ def post_chat_message(
 ):
     """Post a new message in a chat session.
 
-    By default (Gap 280), enqueues the chat turn, executes asynchronously in the background,
-    and returns HTTP 202 Accepted with job_id immediately.
-    If sync=True, executes synchronously for backward compatibility with legacy test suites.
+    Gap 280 added an async queue path (enqueue, return HTTP 202 + job_id
+    immediately, worker processes in the background). Gated behind
+    settings.ENABLE_ASYNC_CHAT_QUEUE (default False) rather than being the
+    unconditional default -- see that setting's docstring in config.py for
+    why. sync=True forces the synchronous path even when the flag is on,
+    kept for the legacy test suites that already relied on it.
     """
     # 1. Assert session exists and belongs to requesting tenant
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
@@ -326,7 +329,9 @@ def post_chat_message(
             chat_session.title = new_title
             db_session.add(chat_session)
 
-    if not sync:
+    from config import get_settings
+    use_async_queue = get_settings().ENABLE_ASYNC_CHAT_QUEUE and not sync
+    if use_async_queue:
         # Gap 280: Asynchronous Queue-based Dispatch
         from services.chat_queue import ChatQueueService
         from queue_worker.handlers import handle_process_chat_job

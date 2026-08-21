@@ -36,6 +36,18 @@ def override_db_session(db_session):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def enable_async_chat_queue(monkeypatch):
+    """Gap 280's async path is gated behind settings.ENABLE_ASYNC_CHAT_QUEUE
+    (default False -- see config.py's docstring on that setting for why).
+    Every test in this file is specifically about that async path, so it's
+    switched on for the duration of this module rather than per-test; the
+    sync-mode-backward-compatibility test still exercises the real sync path
+    via its own explicit ?sync=true, which overrides this regardless."""
+    import config
+    monkeypatch.setattr(config.settings, "ENABLE_ASYNC_CHAT_QUEUE", True)
+
+
 def test_enqueue_chat_job_returns_202_and_persists_user_message(db_session):
     """Gap 280: Verify POST /chat/sessions/{id}/message returns 202 Accepted and stages user message."""
     session_id = uuid4()
