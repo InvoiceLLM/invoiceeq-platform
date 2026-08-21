@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   CheckCircle,
   XCircle,
@@ -277,32 +277,67 @@ export default function AuditorReviewPage() {
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
   const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
 
-  // FE Gap 272: Previous/Next between AUDIT_REQUIRED invoices, without
-  // becoming the tab/queue strip that FE Gap 112 item 3 deliberately
-  // rejected -- this fetches the same ordered id list the Audit Queue page
-  // itself already queries (GET /invoices?status=AUDIT_REQUIRED), keeps it
-  // client-side, and renders two arrow buttons rather than a row of tabs.
-  // Deliberately re-fetched once per navigation (not shared/cached across
-  // invoices) so approving/rejecting the current one and moving on reflects
-  // an up-to-date queue rather than a stale snapshot from when the console
-  // was first opened.
-  const [auditQueueIds, setAuditQueueIds] = useState<string[]>([]);
+  // FE Gap 272: Previous/Next between flagged invoices, without becoming the
+  // tab/queue strip that FE Gap 112 item 3 deliberately rejected -- this
+  // fetches the same ordered id list the queue page itself already queries
+  // (GET /invoices?status=...), keeps it client-side, and renders two arrow
+  // buttons rather than a row of tabs.
+  //
+  // FE Gap 279: the queue is no longer hardcoded to AUDIT_REQUIRED. It was,
+  // and the consequence was that opening a COMPLETED or REJECTED invoice --
+  // or reaching any invoice from a chat citation or the notification bell --
+  // left both controls disabled and the position counter hidden, i.e. visually
+  // identical to having no navigation at all. That is how this screen got
+  // re-reported as "you still have to go back and pick the next one".
+  //
+  // The queue now follows the invoice you are actually looking at: its own
+  // status defines the list it belongs to. An explicit `?queue=<STATUS>`
+  // overrides that, so a caller that knows which list the user came from can
+  // say so, but nothing has to -- the default is correct without any list page
+  // being changed. AUDIT_REQUIRED invoices behave exactly as they did before.
+  const searchParams = useSearchParams();
+  // Latched, not live. Reading `invoice.status` directly would re-point the
+  // queue the instant the user resolves something: approving an AUDIT_REQUIRED
+  // invoice flips its status to PAID, which would swap the queue out from under
+  // the user and lose their place in the audit run they were working. The
+  // queue is therefore fixed to the status the invoice had when the console
+  // opened, and only re-latches when the user actually navigates to a
+  // different invoice.
+  const [latchedQueueStatus, setLatchedQueueStatus] = useState<string | null>(null);
   useEffect(() => {
+    setLatchedQueueStatus(null);
+  }, [id]);
+  useEffect(() => {
+    setLatchedQueueStatus((prev) => prev ?? invoice?.status ?? null);
+  }, [invoice?.status]);
+  const queueStatus = searchParams.get("queue") || latchedQueueStatus;
+
+  const [auditQueueIds, setAuditQueueIds] = useState<string[]>([]);
+  const [queueLoaded, setQueueLoaded] = useState(false);
+  // Re-fetched per navigation and per queue change (not cached across
+  // invoices) so acting on the current one and moving on reflects an
+  // up-to-date queue rather than a stale snapshot from when the console was
+  // first opened.
+  useEffect(() => {
+    if (!queueStatus) return;
     let cancelled = false;
+    setQueueLoaded(false);
     apiClient
-      .get("/invoices", { params: { status: "AUDIT_REQUIRED", limit: 100 } })
+      .get("/invoices", { params: { status: queueStatus, limit: 100 } })
       .then((res) => {
         if (cancelled) return;
         const ids = Array.isArray(res.data) ? res.data.map((inv: { id: string }) => inv.id) : [];
         setAuditQueueIds(ids);
+        setQueueLoaded(true);
       })
       .catch(() => {
         // Best effort -- Previous/Next just stay disabled if this fails.
+        if (!cancelled) setQueueLoaded(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, queueStatus]);
   const auditQueueIndex = auditQueueIds.indexOf(id);
   const previousAuditInvoiceId =
     auditQueueIndex > 0 ? auditQueueIds[auditQueueIndex - 1] : null;
@@ -310,6 +345,63 @@ export default function AuditorReviewPage() {
     auditQueueIndex >= 0 && auditQueueIndex < auditQueueIds.length - 1
       ? auditQueueIds[auditQueueIndex + 1]
       : null;
+  // FE Gap 279: `limit: 100` means a queue longer than 100 is silently
+  // truncated, and an invoice past that point looks identical to one that
+  // isn't in a queue at all. Distinguish the two so the UI can say which it
+  // is instead of just disabling a button with no explanation.
+  const queueTruncated = auditQueueIds.length >= 100;
+  const notInQueue = queueLoaded && auditQueueIndex < 0;
+
+  // FE Gap 279: one navigation path for all three callers (the arrow buttons,
+  // the keyboard shortcuts, and auto-advance after a decision), so an explicit
+  // `?queue=` set by whoever opened the console survives every hop instead of
+  // being dropped the first time the user moves.
+  const explicitQueue = searchParams.get("queue");
+  const goToInvoice = useCallback(
+    (targetId: string) => {
+      const qs = explicitQueue ? `?queue=${encodeURIComponent(explicitQueue)}` : "";
+      router.push(`/invoices/review/${targetId}${qs}`);
+    },
+    [router, explicitQueue]
+  );
+
+  // FE Gap 279: j/k step through the queue. This screen is worked in long
+  // repetitive runs, so the most common action shouldn't require aiming at a
+  // 28px button each time.
+  //
+  // Guarded against firing while the user is typing: this page is full of
+  // editable correction fields, and a bare `j` handler would otherwise
+  // navigate away mid-edit and discard uncommitted corrections. Modifier
+  // combinations are excluded too, so browser/OS shortcuts are untouched.
+  //
+  // Known limitation, confirmed live rather than assumed: the PDF is embedded
+  // in an <iframe>, and while that iframe holds focus its keystrokes go to the
+  // embedded document and never reach this listener, so the shortcuts appear
+  // dead until the user clicks back into the page. This surfaced as a genuine
+  // e2e failure before being understood (see
+  // e2e/audit-console-queue-nav.spec.ts). Not worked around here: the fixes
+  // available are polling document.activeElement or forcing focus away from
+  // the viewer, and both take focus from a user who may be deliberately
+  // scrolling the PDF. The arrow buttons remain the guaranteed path.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el) {
+        const tag = el.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable) return;
+      }
+      if (e.key === "j" && nextAuditInvoiceId) {
+        e.preventDefault();
+        goToInvoice(nextAuditInvoiceId);
+      } else if (e.key === "k" && previousAuditInvoiceId) {
+        e.preventDefault();
+        goToInvoice(previousAuditInvoiceId);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [goToInvoice, nextAuditInvoiceId, previousAuditInvoiceId]);
 
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [editedItems, setEditedItems] = useState<LineItem[]>([]);
@@ -497,6 +589,37 @@ export default function AuditorReviewPage() {
       if (res.data?.standing_rule_result) {
         setStandingRuleResult(res.data.standing_rule_result);
       }
+
+      // FE Gap 279: auto-advance to the next invoice in the queue after a
+      // terminal decision. Previously the user was left parked on the invoice
+      // they had just resolved, having to click Next every single time -- the
+      // largest remaining friction on a screen that is worked as a queue.
+      //
+      // Three deliberate conditions, each of which suppresses the advance:
+      //
+      // 1. `targetStatus` must be set. handleResolve is also called with no
+      //    status to persist a field correction on an invoice that isn't being
+      //    resolved at all (Gap 53/FE 26) -- navigating away from a plain
+      //    "Save Correction" would be actively wrong.
+      // 2. Nothing was returned for the user to act on. A `suggested_rule`
+      //    renders a "Save as Rule" prompt and `standing_rule_result` reports
+      //    whether a standing rule was applied or safety-rejected; advancing
+      //    would destroy both before they could be read. Staying put is the
+      //    correct behaviour whenever the backend has something to say.
+      // 3. There is actually a next invoice. At the end of the queue the user
+      //    stays on the last one rather than being bounced somewhere arbitrary.
+      //
+      // `nextAuditInvoiceId` is read from the pre-resolve queue on purpose: the
+      // invoice just resolved is about to leave this status list, so a list
+      // re-fetched after the fact would have already re-indexed around it.
+      if (
+        targetStatus &&
+        !res.data?.suggested_rule &&
+        !res.data?.standing_rule_result &&
+        nextAuditInvoiceId
+      ) {
+        goToInvoice(nextAuditInvoiceId);
+      }
     } catch (err) {
       console.error("Resolve failed:", err);
     } finally {
@@ -551,33 +674,50 @@ export default function AuditorReviewPage() {
             the header they are always reachable and sized like what they are:
             the two terminal actions, not the main content. */}
         <PageHeaderActions>
-          {/* FE Gap 272: Previous/Next through the AUDIT_REQUIRED queue,
-              without leaving the review console. Disabled at either end of
-              the list, or entirely if this invoice isn't part of it (e.g.
-              opened via a chat citation or the notification bell rather than
-              from the Audit Queue itself). */}
+          {/* FE Gap 272 / FE Gap 279: Previous/Next through the queue this
+              invoice belongs to, without leaving the review console. The queue
+              follows the invoice's own status (see queueStatus above), so this
+              works on COMPLETED and REJECTED invoices too, not only
+              AUDIT_REQUIRED ones as it did originally.
+
+              FE Gap 279: when the invoice genuinely isn't part of a queue --
+              reached from a chat citation or the notification bell, or sitting
+              past the 100-row fetch window -- say so instead of rendering two
+              dead buttons with no explanation, which read as broken. */}
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => previousAuditInvoiceId && router.push(`/invoices/review/${previousAuditInvoiceId}`)}
+              onClick={() => previousAuditInvoiceId && goToInvoice(previousAuditInvoiceId)}
               disabled={!previousAuditInvoiceId}
-              title="Previous audit-required invoice"
-              aria-label="Previous audit-required invoice"
+              title="Previous invoice in this queue (k)"
+              aria-label="Previous invoice in this queue"
               className="flex items-center justify-center rounded-lg border border-[#222D3D] p-1 sm:p-1.5 text-slate-400 transition hover:bg-[#1E293B] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
               <ChevronLeft size={14} />
             </button>
-            {auditQueueIndex >= 0 && (
-              <span className="hidden text-[10px] text-slate-500 sm:inline whitespace-nowrap">
+            {auditQueueIndex >= 0 ? (
+              <span
+                className="hidden text-[10px] text-slate-500 sm:inline whitespace-nowrap"
+                title={
+                  queueTruncated
+                    ? "Showing the first 100 invoices with this status"
+                    : undefined
+                }
+              >
                 {auditQueueIndex + 1} of {auditQueueIds.length}
+                {queueTruncated ? "+" : ""}
               </span>
-            )}
+            ) : notInQueue ? (
+              <span className="hidden text-[10px] text-slate-600 sm:inline whitespace-nowrap">
+                not in queue
+              </span>
+            ) : null}
             <button
               type="button"
-              onClick={() => nextAuditInvoiceId && router.push(`/invoices/review/${nextAuditInvoiceId}`)}
+              onClick={() => nextAuditInvoiceId && goToInvoice(nextAuditInvoiceId)}
               disabled={!nextAuditInvoiceId}
-              title="Next audit-required invoice"
-              aria-label="Next audit-required invoice"
+              title="Next invoice in this queue (j)"
+              aria-label="Next invoice in this queue"
               className="flex items-center justify-center rounded-lg border border-[#222D3D] p-1 sm:p-1.5 text-slate-400 transition hover:bg-[#1E293B] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
             >
               <ChevronRight size={14} />
