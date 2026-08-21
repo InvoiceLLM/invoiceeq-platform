@@ -239,6 +239,13 @@ export default function InvoicesPage() {
     fetchOutboundInvoicesPage();
   };
 
+  // Gap 277: refetches the inbound queue after a status change (e.g. the new
+  // Mark-as-Paid action), so the row reflects reality immediately rather than
+  // waiting for the next unrelated reload.
+  const handleInvoiceStatusChanged = (_id: string, _newStatus: string) => {
+    fetchInvoicesPage();
+  };
+
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const outboundTotalPages = Math.max(1, Math.ceil(outboundTotalCount / PAGE_SIZE));
 
@@ -300,6 +307,7 @@ export default function InvoicesPage() {
             invoices={invoices}
             isLoading={isInvoicesLoading}
             onDelete={handleInvoiceDeleted}
+            onStatusChange={handleInvoiceStatusChanged}
             activeTab={activeTab}
             onTabChange={handleTabChange}
             currentPage={currentPage}
