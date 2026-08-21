@@ -126,8 +126,24 @@ def _make_config(db_session: Session, tenant_id: UUID = MOCK_TENANT_ID, **overri
     return config
 
 
-def _make_connection(db_session: Session, tenant_id: UUID = MOCK_TENANT_ID, provider: str = "gdrive") -> TenantConnection:
-    """Insert an active TenantConnection row and return it."""
+def _make_connection(
+    db_session: Session,
+    tenant_id: UUID = MOCK_TENANT_ID,
+    provider: str = "google_drive",
+) -> TenantConnection:
+    """Insert an active TenantConnection row and return it.
+
+    BE Gap 288: this default used to be 'gdrive' -- Autopilot's *source_type*
+    vocabulary, not the *provider* vocabulary routers/connectors.py actually
+    writes ('google_drive'). Because run_sync() filtered connections by
+    `provider == config.source_type`, the fixture and the bug agreed with each
+    other and every test passed while real Google Drive syncs failed with "No
+    active gdrive connection for tenant ...".
+
+    The default is now what a real OAuth callback persists, so these tests
+    exercise the same rows production has. See SOURCE_TYPE_TO_PROVIDER in
+    services/autopilot_sync.py.
+    """
     conn = TenantConnection(
         id=uuid4(),
         tenant_id=tenant_id,
@@ -379,9 +395,60 @@ def test_T11_run_sync_no_config(db_session):
 # ===========================================================================
 
 def test_T12_run_sync_no_connection(db_session):
-    """T12 (unit): run_sync raises ValueError when no active OAuth connection exists."""
+    """T12 (unit): run_sync raises ValueError when no active OAuth connection exists.
+
+    BE Gap 288: the expected message names the provider as Connectors spells it
+    ('google_drive'), not as Autopilot's source_type does ('gdrive'). The old
+    assertion matched the buggy string and so helped keep the mismatch alive.
+    """
     _make_config(db_session)
-    with pytest.raises(ValueError, match="No active gdrive connection"):
+    with pytest.raises(ValueError, match="No active google_drive connection"):
+        run_sync(MOCK_TENANT_ID, db_session)
+
+
+# ===========================================================================
+# T12b - BE Gap 288 regression: a connection stored the way the real OAuth
+# callback stores it must be found by run_sync.
+# ===========================================================================
+
+def test_T12b_run_sync_finds_connection_stored_as_google_drive(db_session):
+    """BE Gap 288 (regression): source_type 'gdrive' must resolve the
+    'google_drive' TenantConnection that routers/connectors.py actually writes.
+
+    This is the exact production failure: the Connectors screen showed Google
+    Drive as connected while every sync raised "No active gdrive connection",
+    because run_sync compared config.source_type ('gdrive') against
+    TenantConnection.provider ('google_drive') directly.
+
+    The provider string is written explicitly here rather than via the fixture
+    default so the test still fails if that default ever drifts back.
+    """
+    _make_config(db_session)  # source_type='gdrive'
+    _make_connection(db_session, provider="google_drive")
+
+    remote_files = [{"id": "gdrive-file-777", "name": "invoice.pdf", "type": "file"}]
+
+    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok") as mock_token, \
+         patch("services.autopilot_sync.list_google_drive_files", return_value=remote_files), \
+         patch("services.autopilot_sync.download_google_drive_file", return_value=b"%PDF-1.4 gap283"), \
+         patch("services.autopilot_sync.upload_pdf_to_blob_storage", return_value="blobs/t/gap283.pdf"), \
+         patch("services.autopilot_sync._dispatch_queue"):
+        summary = run_sync(MOCK_TENANT_ID, db_session)
+
+    # Reaching the token step at all proves the connection lookup matched --
+    # before the fix this raised ValueError before ever getting here.
+    assert mock_token.called
+    assert summary["processed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_T12c_run_sync_rejects_unknown_source_type(db_session):
+    """BE Gap 288: an unrecognised source_type is a config error, not a
+    silently-unmatched connection lookup reported as 'not connected'."""
+    _make_config(db_session, source_type="dropbox")
+    _make_connection(db_session, provider="google_drive")
+
+    with pytest.raises(ValueError, match="Unsupported Autopilot source_type"):
         run_sync(MOCK_TENANT_ID, db_session)
 
 

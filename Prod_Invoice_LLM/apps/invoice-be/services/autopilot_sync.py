@@ -46,6 +46,37 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# BE Gap 288: Autopilot and Connectors name the same provider differently, and
+# the two vocabularies must be translated -- never compared directly.
+#
+#   TenantAutopilotConfig.source_type  -> 'gdrive'      | 'salesforce'
+#   TenantConnection.provider          -> 'google_drive'| 'salesforce'
+#
+# routers/connectors.py validates every OAuth callback against
+# ["google_drive", "salesforce"] and stores that value, so a real Drive
+# connection is always persisted as 'google_drive'. run_sync() below used to
+# filter `TenantConnection.provider == config.source_type` directly, which for
+# Drive compared 'gdrive' against 'google_drive' and therefore matched nothing:
+# every Google Drive sync failed with "No active gdrive connection for tenant
+# ..." while the Connectors screen simultaneously showed the account as
+# connected (it queries by the 'google_drive' name).
+#
+# Salesforce is spelled identically in both vocabularies, which is precisely
+# why this presented as a Google-Drive-only failure and why the existing tests
+# did not catch it -- tests/test_autopilot.py's _make_connection() fixture
+# built its connection with provider='gdrive', matching the buggy query rather
+# than what routers/connectors.py actually writes.
+#
+# The frontend already performs this exact mapping when it checks connector
+# status (app/ingestion/page.tsx: source_type === "gdrive" ? "google_drive" :
+# "salesforce"); this is the same translation, on the side that acts on it.
+SOURCE_TYPE_TO_PROVIDER = {
+    "gdrive": "google_drive",
+    "salesforce": "salesforce",
+}
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -73,18 +104,32 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
         tenant_id, config.source_type, config.source_ref,
     )
 
-    # 2. Load the OAuth TenantConnection for this provider
+    # 2. Load the OAuth TenantConnection for this provider.
+    # BE Gap 288: translate source_type -> provider; the two vocabularies are
+    # independent (see SOURCE_TYPE_TO_PROVIDER above). An unknown source_type
+    # is rejected here rather than silently matching no connection, so a bad
+    # config value reads as a config error instead of "not connected".
+    provider = SOURCE_TYPE_TO_PROVIDER.get(config.source_type)
+    if provider is None:
+        raise ValueError(
+            f"Unsupported Autopilot source_type {config.source_type!r} for tenant "
+            f"{tenant_id}. Expected one of: {sorted(SOURCE_TYPE_TO_PROVIDER)}."
+        )
+
     connection = db_session.exec(
         select(TenantConnection).where(
             TenantConnection.tenant_id == tenant_id,
-            TenantConnection.provider == config.source_type,
+            TenantConnection.provider == provider,
             TenantConnection.status == "active",
         )
     ).first()
 
     if not connection:
+        # Names the provider as Connectors spells it, so the message points at
+        # the row the user actually has to create rather than at Autopilot's
+        # internal source_type.
         raise ValueError(
-            f"No active {config.source_type} connection for tenant {tenant_id}. "
+            f"No active {provider} connection for tenant {tenant_id}. "
             "Please connect the account in Settings → Connectors."
         )
 

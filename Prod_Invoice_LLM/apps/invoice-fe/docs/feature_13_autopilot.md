@@ -62,7 +62,27 @@ CREATE INDEX idx_autopilot_log_hash ON tenant_autopilot_logs(content_hash);
 
 ### 4. Trigger Mechanism
 - **Azure Container Apps Job:** Synchronizer is scheduled and triggered via Azure Container Apps Jobs (cron-based), **NOT** Celery beat.
-- **Unified Logic:** The scheduled job and manual "Sync Now" button call the exact same backend sync processor function (`POST /api/v1/invoices/sync`).
+- **Unified Logic:** The scheduled job and manual "Sync Now" button call the exact same backend sync processor function (`POST /api/v1/autopilot/sync`). *(Corrected 2026-08-21 — this line previously read `/api/v1/invoices/sync`, an endpoint that does not exist; the real path is and always was `/api/v1/autopilot/sync` per `routers/autopilot.py`.)*
+
+---
+
+### 5. Frontend ↔ Backend Wiring (added 2026-08-21 — FE Gap 278)
+
+**This section did not exist until the omission it describes had already shipped and broken the feature in production.** It is written as a requirement, not a note, because its absence is the entire reason Autopilot never worked from a browser.
+
+The backend endpoints in section 3 are **not reachable from the browser on their own.** `lib/apiClient.ts` is same-origin (`baseURL: "/api"`) and `invoice-fe/next.config.js` defines **no `rewrites()`** — only `assetPrefix`. There is no catch-all forwarding `/api/*` to FastAPI. In Azure the backend Container App additionally runs with `ingress.external: false`, so the browser could not reach it directly even if the origin were known.
+
+Therefore **every** backend endpoint this feature exposes requires a matching Next.js Route Handler under `app/api/**`, each a thin `proxyJson()` pass-through:
+
+| Browser calls | Route Handler | Proxies to |
+|---|---|---|
+| `GET/PUT /api/autopilot/config` | `app/api/autopilot/config/route.ts` | `/autopilot/config` |
+| `POST /api/autopilot/sync` | `app/api/autopilot/sync/route.ts` | `/autopilot/sync` |
+| `GET /api/autopilot/history` | `app/api/autopilot/history/route.ts` | `/autopilot/history` |
+
+Without these, calls 404 at Next.js and never reach FastAPI — and the failure is **near-silent**, because a Next 404 returns HTML, so `err.response.data.detail` is `undefined` and callers fall back to generic messages that blame the user's configuration. The Autopilot tab rendered normally with default values the whole time.
+
+**Rule for any future connector or backend-backed feature in this app: a backend endpoint without a corresponding `app/api/**` Route Handler is not shipped, and no test that drives FastAPI through `TestClient` can detect its absence** — the backend suite passes identically whether the proxy routes exist or not.
 
 ---
 
@@ -77,7 +97,13 @@ CREATE INDEX idx_autopilot_log_hash ON tenant_autopilot_logs(content_hash);
 - [ ] **Task 13.4: Azure Container Apps Job Bicep IaC** — Script `scripts/autopilot_job.py` built; Bicep IaC module deferred for production deployment.
 - [x] **Task 13.5: Folder Picker Integration** — Connected folder browsing with ConnectorBrowseBar pattern. *(FE Gap 219, Aug 12, 2026: Autopilot config tab `source_ref` field now uses read-only folder name + Browse → `FolderTreeExplorer` with `selectionMode="folder"`; locked when connector inactive. `e2e/autopilot-folder-browser.spec.ts`.)*
 - [x] **Task 13.6: Autopilot UI & Sync History Table** — Built `AutopilotHistoryTable.tsx` component and Autopilot tab + config form on `/ingestion` screen.
-- [x] **Task 13.7: Automated Pytest Suite** — Created `tests/test_autopilot.py` with 18 unit/integration tests (100% pass rate). *(BE Gap 220, Aug 12, 2026: `test_T19_autopilot_sends_notify_email_after_import` — notify summary email with review deep links after sync; live SendGrid still Gap 125.)*
+- [x] **Task 13.7: Automated Pytest Suite** — Created `tests/test_autopilot.py`, now **21** unit/integration tests (100% pass rate). *(BE Gap 220, Aug 12, 2026: `test_T19_autopilot_sends_notify_email_after_import` — notify summary email with review deep links after sync; live SendGrid still Gap 125.)* *(BE Gap 288, Aug 21, 2026: +`test_T12b`/`test_T12c`; `_make_connection()` fixture default corrected. **Caveat worth carrying forward** — this suite was 100% green for nine days while Google Drive sync was completely broken in production, because the fixture reproduced the bug and because `TestClient` bypasses Next.js entirely. Pass rate here is evidence about the sync engine, not about the feature working.)*
+- [x] **Task 13.8: Frontend API Proxy Routes** — `app/api/autopilot/{config,sync,history}/route.ts`. **Retro-added 2026-08-21 (FE Gap 278): this task was never written down, and so was never built** — see section 5. The feature was marked complete on 2026-08-12 without it, and no Autopilot call from the browser had ever reached the backend until this shipped.
+
+### Recent Fixes (Aug 21, 2026)
+* **FE Gap 278 — Autopilot proxy routes were never built**: added the three `app/api/autopilot/**` Route Handlers and, more importantly, wrote section 5 above so the requirement is specified rather than assumed. Verified live by differential comparison against known-good and known-missing routes with auth bypassed — see `docs/test_coverage_map.md`, including why an unauthenticated 404 proves nothing on this app (Clerk's `auth().protect()` answers unauthenticated API requests with 404, not 401).
+* **BE Gap 288 — Google Drive sync never matched its OAuth connection**: `services/autopilot_sync.py::run_sync()` compared `TenantConnection.provider` against `TenantAutopilotConfig.source_type` directly, but Autopilot spells it `gdrive` while Connectors persists `google_drive`. Fixed with an explicit `SOURCE_TYPE_TO_PROVIDER` mapping; unknown `source_type` now raises a distinct config error rather than reporting "not connected". Affected the scheduled ACA job as well as the manual button. **Mutation-checked**: re-introducing the bug fails 7 tests. Salesforce was never affected — it is spelled identically in both vocabularies.
+* **Still open after both fixes**: no Autopilot sync has yet been run end-to-end against a real Google Drive account with a live OAuth token. Everything above proves the plumbing connects and the lookup resolves; none of it proves an invoice actually moves from Drive into the system.
 
 ### Recent Fixes (Aug 12, 2026)
 * **FE Gap 219 — Autopilot folder browser**: Autopilot config `source_ref` is no longer a raw ID text field. Read-only folder name + **Browse →** opens `FolderTreeExplorer` in `selectionMode="folder"`; inactive connectors show **Connect in Settings**.
