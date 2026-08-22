@@ -1,0 +1,178 @@
+[
+  {
+    "id": "gap270_titan_steel_ambiguous_direction",
+    "why_on_file": "Gap 270 / rule 4a: names a real INBOUND vendor with no direction cue AND asks about payment status, which this schema does not track for INBOUND at all. The old pipeline guessed OUTBOUND, matched zero rows and reported a real invoice as not found. Does the loop ask instead of guessing?",
+    "run": 1,
+    "question": "has the Titan Steel Distributors invoice been paid",
+    "tools_called": [
+      "query_invoices",
+      "query_invoices"
+    ],
+    "tool_calls_made": 2,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT invoice_number, invoice_date, status, grand_total, currency\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Titan Steel Distributors%')\nORDER BY invoice_date DESC;",
+    "content": "I can’t tell if it’s been paid because for INBOUND invoices this dataset does not track payment/settlement. The matching invoice is TSD-620458 dated 2026-07-02, status COMPLETED, total $18,450.00 (USD); I can search sa_alerts for payment notes or you’ll need to check your payments/AR system.\n\n### Query Results\n\ninvoice_number | invoice_date | status | grand_total | currency\n--- | --- | --- | --- | ---\nTSD-620458 | 2026-07-02 | COMPLETED | 18450.00 | USD"
+  },
+  {
+    "id": "gap270_titan_steel_ambiguous_direction",
+    "why_on_file": "Gap 270 / rule 4a: names a real INBOUND vendor with no direction cue AND asks about payment status, which this schema does not track for INBOUND at all. The old pipeline guessed OUTBOUND, matched zero rows and reported a real invoice as not found. Does the loop ask instead of guessing?",
+    "run": 2,
+    "question": "has the Titan Steel Distributors invoice been paid",
+    "tools_called": [
+      "query_invoices",
+      "query_invoices",
+      "search_documents"
+    ],
+    "tool_calls_made": 3,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT\n  invoice.invoice_number,\n  invoice.invoice_date,\n  invoice.grand_total,\n  invoice.currency,\n  invoice.status\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Titan Steel Distributors%');",
+    "content": "Payment status isn't available in this invoice data — for inbound invoices like TSD-620458 the status field reflects extraction/pipeline state (here \"COMPLETED\") and does not indicate payment. Check your payments system or a payments table that records payment_status/payment_date/payment_method to determine if it was paid.\n\n### Query Results\n\ninvoice_number | invoice_date | grand_total | currency | status\n--- | --- | --- | --- | ---\nTSD-620458 | 2026-07-02 | 18450.00 | USD | COMPLETED"
+  },
+  {
+    "id": "gap270_titan_steel_ambiguous_direction",
+    "why_on_file": "Gap 270 / rule 4a: names a real INBOUND vendor with no direction cue AND asks about payment status, which this schema does not track for INBOUND at all. The old pipeline guessed OUTBOUND, matched zero rows and reported a real invoice as not found. Does the loop ask instead of guessing?",
+    "run": 3,
+    "question": "has the Titan Steel Distributors invoice been paid",
+    "tools_called": [
+      "query_invoices",
+      "query_invoices",
+      "search_documents"
+    ],
+    "tool_calls_made": 3,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT id AS invoice_id,\n       invoice_number,\n       grand_total AS total,\n       currency,\n       status,\n       invoice_date\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Titan Steel Distributors%')\nORDER BY invoice_date DESC;",
+    "content": "I can’t determine whether it’s been paid from these records — payment fields aren’t present for this INBOUND invoice data. Available row: invoice_id f01d43ce8de943788840ae6effb6bf82, invoice_number TSD-620458, total $18,450.00, status COMPLETED, invoice_date 2026-07-02.\n\n### Query Results\n\ninvoice_id | invoice_number | total | currency | status | invoice_date\n--- | --- | --- | --- | --- | ---\nf01d43ce8de943788840ae6effb6bf82 | TSD-620458 | 18450.00 | USD | COMPLETED | 2026-07-02"
+  },
+  {
+    "id": "gap270_redwood_ambiguous_direction",
+    "why_on_file": "Gap 270, the other half: same ambiguous shape, no payment term, so only rule 4a is in play.",
+    "run": 1,
+    "question": "when is the Redwood Facilities Group invoice due",
+    "tools_called": [
+      "query_invoices"
+    ],
+    "tool_calls_made": 1,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT invoice_number, invoice_date, due_date, status, grand_total AS amount, currency\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Redwood Facilities Group%');",
+    "content": "Invoice RFG-2026-114 for Redwood Facilities Group is due 2026-07-18.\n\n### Query Results\n\ninvoice_number | invoice_date | due_date | status | amount | currency\n--- | --- | --- | --- | --- | ---\nRFG-2026-114 | 2026-06-18 | 2026-07-18 | COMPLETED | 7325.50 | USD"
+  },
+  {
+    "id": "gap270_redwood_ambiguous_direction",
+    "why_on_file": "Gap 270, the other half: same ambiguous shape, no payment term, so only rule 4a is in play.",
+    "run": 2,
+    "question": "when is the Redwood Facilities Group invoice due",
+    "tools_called": [
+      "query_invoices"
+    ],
+    "tool_calls_made": 1,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT invoice_number, invoice_date, due_date, status, grand_total AS amount, currency\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Redwood Facilities Group%')",
+    "content": "Invoice RFG-2026-114 is due 2026-07-18.\n\n### Query Results\n\ninvoice_number | invoice_date | due_date | status | amount | currency\n--- | --- | --- | --- | --- | ---\nRFG-2026-114 | 2026-06-18 | 2026-07-18 | COMPLETED | 7325.50 | USD"
+  },
+  {
+    "id": "gap270_redwood_ambiguous_direction",
+    "why_on_file": "Gap 270, the other half: same ambiguous shape, no payment term, so only rule 4a is in play.",
+    "run": 3,
+    "question": "when is the Redwood Facilities Group invoice due",
+    "tools_called": [
+      "query_invoices"
+    ],
+    "tool_calls_made": 1,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT id AS invoice_id, invoice_number, invoice_date, due_date, status, grand_total AS amount, currency, po_number\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Redwood Facilities Group%');",
+    "content": "Invoice RFG-2026-114 is due 2026-07-18.\n\n### Query Results\n\ninvoice_id | invoice_number | invoice_date | due_date | status | amount | currency | po_number\n--- | --- | --- | --- | --- | --- | --- | ---\n38c0a955820d44a395e9a146fc99f180 | RFG-2026-114 | 2026-06-18 | 2026-07-18 | COMPLETED | 7325.50 | USD | "
+  },
+  {
+    "id": "gap263_cgst_rajesh_steel",
+    "why_on_file": "Gaps 263/264: this schema stores one combined tax_amount and no per-component breakdown, so a CGST line-item search is guaranteed zero rows.",
+    "run": 1,
+    "question": "whats the CGST we paid to Rajesh Steel",
+    "tools_called": [
+      "query_invoices",
+      "query_invoices",
+      "search_documents",
+      "query_invoices"
+    ],
+    "tool_calls_made": 4,
+    "stop_reason": "tool_call_budget_exhausted",
+    "clarification_reason": null,
+    "generated_sql": "SELECT\n  id AS invoice_id,\n  invoice_number,\n  invoice_date,\n  status,\n  currency,\n  grand_total AS invoice_total,\n  tax_amount AS total_tax,\n  NULL AS tax_lines\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Rajesh Steel%');",
+    "content": "No CGST-specific tax lines were found for vendor “Rajesh Steel” (the CGST-specific query returned no rows). There is one Rajesh Steel invoice (INDIA-20260722-003, 2026-07-22) showing total_tax ₹18,000 but tax lines aren’t stored in this schema, and for inbound invoices this dataset does not track payment/settlement status — I cannot confirm a “paid” CGST amount.\n\n### Query Results\n\ninvoice_id | invoice_number | invoice_date | status | currency | invoice_total | total_tax | tax_lines\n--- | --- | --- | --- | --- | --- | --- | ---\ndbdbba3299a84408bb0880d28b19bd50 | INDIA-20260722-003 | 2026-07-22 | COMPLETED | INR | 118000.00 | 18000.00 | "
+  },
+  {
+    "id": "gap268_datapipe_vs_stratedge",
+    "why_on_file": "Gap 268 / rule 10: the comparison that generated ORDER BY ... LIMIT 1 and silently truncated the losing vendor's real row.",
+    "run": 1,
+    "question": "Between DataPipe Solutions and StratEdge Partners, whose invoice to us had the bigger total?",
+    "tools_called": [
+      "ask_clarifying_question"
+    ],
+    "tool_calls_made": 1,
+    "stop_reason": "clarification_requested",
+    "clarification_reason": "AMBIGUOUS_METRIC",
+    "generated_sql": null,
+    "content": "Do you mean comparing each vendor's single largest invoice amount, or comparing the cumulative total of all invoices from each vendor?"
+  },
+  {
+    "id": "gap271_freight_per_vendor",
+    "why_on_file": "Gap 271 / rule 6b-vs-6d: the per-vendor freight figure that came back as whole invoice totals, 10-40x too large.",
+    "run": 1,
+    "question": "which vendors billed us for freight, delivery, or shipping charges, and how much per vendor",
+    "tools_called": [
+      "query_invoices",
+      "compute"
+    ],
+    "tool_calls_made": 2,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT\n  invoice.invoice_number,\n  invoice.vendor_name,\n  invoice.invoice_date,\n  invoice.currency,\n  item.value ->> 'description' AS line_description,\n  item.value ->> 'quantity' AS line_qty,\n  item.value ->> 'unit_price' AS line_unit_price,\n  item.value ->> 'amount' AS line_amount\nFROM invoice\nLEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(item.value ->> 'description') LIKE LOWER('%freight%')\n    OR LOWER(item.value ->> 'description') LIKE LOWER('%shipping%')\n    OR LOWER(item.value ->> 'description') LIKE LOWER('%delivery%')\n  );",
+    "content": "Blue Ridge Logistics — Invoice BRL-7702 dated 2026-07-05 (USD): Freight and handling line amount USD 1,120.00.\n\n- line items: stored amount vs. quantity x unit price:\n    Freight and handling: 4 x USD 280.00 = USD 1,120.00\n- `compute` (sum_by_currency) requested by the planner:\n    USD 1,120.00\n\n### Query Results\n\ninvoice_number | vendor_name | invoice_date | currency | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | --- | ---\nBRL-7702 | Blue Ridge Logistics | 2026-07-05 | USD | Freight and handling | 4 | 280.00 | 1120.00"
+  },
+  {
+    "id": "gap269_reconciliation_false_equation",
+    "why_on_file": "Gap 269: the live false equation, '5000.00 units x USD 0.08 = USD 420.00'.",
+    "run": 1,
+    "question": "does the bolts line on invoice US-20260722-001 actually add up?",
+    "tools_called": [
+      "query_invoices",
+      "compute"
+    ],
+    "tool_calls_made": 2,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": "SELECT invoice.invoice_number,\n       invoice.vendor_name,\n       invoice.currency,\n       item.value ->> 'description' AS line_description,\n       item.value ->> 'quantity'    AS line_qty,\n       item.value ->> 'unit_price'  AS line_unit_price,\n       item.value ->> 'amount'      AS line_amount\nFROM invoice\nLEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND TRIM(LOWER(invoice.invoice_number)) = TRIM(LOWER('US-20260722-001'));",
+    "content": "- line items: stored amount vs. quantity x unit price:\n    Bolts: USD 420.00 stated, 5000 x USD 0.08 computes to USD 400.00 -- USD 20.00 mismatch\n    (1 of these do NOT reconcile -- state both figures and the difference, never an '=' equation, for those rows.)\n\n### Query Results\n\ninvoice_number | vendor_name | currency | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | ---\nUS-20260722-001 | Harbor Tech | USD | Bolts | 5000 | 0.08 | 420.00"
+  },
+  {
+    "id": "zero_result_then_broaden",
+    "why_on_file": "The multi-call shape the spec asks about by name: does the loop make a second call after a zero-result first one, or stop?",
+    "run": 1,
+    "question": "what did we spend with Nonexistent Holdings last quarter",
+    "tools_called": [
+      "ask_clarifying_question"
+    ],
+    "tool_calls_made": 1,
+    "stop_reason": "clarification_requested",
+    "clarification_reason": "AMBIGUOUS_TIME_RANGE",
+    "generated_sql": null,
+    "content": "Do you mean the last calendar quarter (Apr 1–Jun 30, 2026) or your fiscal last quarter?"
+  },
+  {
+    "id": "greeting_needs_no_tool",
+    "why_on_file": "A turn that should cost zero tool calls.",
+    "run": 1,
+    "question": "hello there",
+    "tools_called": [],
+    "tool_calls_made": 0,
+    "stop_reason": null,
+    "clarification_reason": null,
+    "generated_sql": null,
+    "content": "Hello — I’m SAGE, your accounts-payable assistant. I can help locate invoices, check payment or approval status, match POs, prepare audit reports, or run supplier/payment queries — what would you like me to do?"
+  }
+]

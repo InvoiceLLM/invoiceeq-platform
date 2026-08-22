@@ -574,6 +574,93 @@ class TenantAutopilotLog(SQLModel, table=True):
     error_detail: str | None = Field(default=None)
 
 
+# ---------------------------------------------------------------------------
+# Feature 23 (AI Control Tower) — Phase 3: golden-set evaluation results
+# ---------------------------------------------------------------------------
+
+class AgentEvalRun(SQLModel, table=True):
+    """One graded golden-set question, for one agent/path, at one point in time.
+
+    Phase 1 answers "what did this call cost"; this table answers "was the answer
+    any good", and — because every row is timestamped — "is it getting worse".
+    `ChatFeedback` (Gap 54) only records what a user happened to vote on; this is
+    the same fixed question set re-asked on a schedule, which is what makes a
+    quality *trend* readable rather than a shifting sample.
+
+    `agent_name` uses the same vocabulary as Phase 1's `llm_agent_call` events
+    (`chat.*`, `sage.*`, `extraction.*`), so cost telemetry and quality rows join
+    on one name. Phase 3's own runs add two path-level names that identify a whole
+    turn rather than a single call site: `chat.default_path` (`run_query_agent()`)
+    and `sage.agentic_path` (`run_agentic_sage()`).
+
+    The `pass` column is spelled that way in SQL deliberately (it is not a reserved
+    word in Postgres or SQLite) but `pass` is a Python keyword, so the attribute is
+    `passed` and the column name is pinned via `sa_column`.
+    """
+    __tablename__ = "agent_eval_run"
+    __table_args__ = (
+        # The two questions this table exists to answer, both of them a scan by
+        # time: "how did agent X trend" and "what happened on day D".
+        sa.Index("idx_agent_eval_run_agent_time", "agent_name", "run_at"),
+        sa.Index("idx_agent_eval_run_tenant_time", "tenant_id", "run_at"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    agent_name: str = Field(max_length=100, index=True)
+    run_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+    question: str
+    # NULL where the golden case has no single reference answer to compare
+    # against (a clarification-shaped case, a greeting). Accuracy is then not
+    # scored at all rather than scored against a guess.
+    expected_answer: str | None = Field(default=None)
+    actual_answer: str
+
+    passed: bool = Field(
+        default=False,
+        sa_column=sa.Column("pass", sa.Boolean(), nullable=False, server_default=sa.false()),
+    )
+
+    # All three are nullable on purpose: a judge that could not be reached, or a
+    # case with no reference answer, must leave the score absent rather than
+    # record a 0.0 that reads as "scored, and terrible".
+    faithfulness_score: float | None = Field(default=None)
+    relevance_score: float | None = Field(default=None)
+    accuracy_score: float | None = Field(default=None)
+
+    # Component-level scores (added 2026-08-21, migration `c4a91e77b208`).
+    # Feature 23's "component-level scoring, not one blended number": the three
+    # above say *that* an answer was bad, these three say *which stage* to fix.
+    # Same nullable-means-not-scored contract, and deliberately NOT averaged into
+    # anything -- the workbook plots three separate trend lines, because an
+    # average of a retrieval score and a tax-reasoning score is not a quantity.
+    #
+    #   context_score       deterministic: fetched invoice ids vs. the golden
+    #                       case's known-correct set (F1). No LLM judge.
+    #   orchestration_score mechanical: figures in the answer that trace to a
+    #                       fetched field or an arithmetic combination of them,
+    #                       over total figures. No LLM judge.
+    #   persona_score       LLM-judged domain reasoning (tax components, RCM,
+    #                       status semantics, category judgement). NULL on every
+    #                       turn that required no domain judgement, which is most
+    #                       of them -- read the denominator before the level.
+    context_score: float | None = Field(default=None)
+    orchestration_score: float | None = Field(default=None)
+    persona_score: float | None = Field(default=None)
+
+    # Wall-clock for the whole turn, and how many real model round-trips it took.
+    # `llm_call_count` is counted from Phase 1's own `llm_agent_call` events, not
+    # estimated — it is the number Feature 21's cost/latency question turns on.
+    latency_ms: float = Field(default=0.0)
+    llm_call_count: int = Field(default=0)
+
+    tenant_id: UUID = Field(index=True)
+    # Free text: the case id, the route/tools taken, and any reason a score is
+    # absent. Deliberately not a structured column set — this is for a human
+    # reading one row, the structured signal is the scores above.
+    notes: str | None = Field(default=None)
+
+
 class RoleMapper:
     """
     Enterprise Role & Permission Engine (Gap 108).

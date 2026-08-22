@@ -1,0 +1,194 @@
+// Feature 23 (AI Control Tower) — per-tool cost/token breakdown for the SAGE path.
+//
+// `llm_cost_rollup_nightly.kql` answers "what did we spend, by agent, per day".
+// This file answers the narrower question that keeps coming up in Feature 21's
+// design work and that a daily total cannot answer:
+//
+//     How much does the full-chunk dump in `get_full_record` actually cost,
+//     relative to the rest of the turn?
+//
+// ---------------------------------------------------------------------------
+// READ THIS FIRST — `get_full_record` HAS NO EVENT OF ITS OWN, AND THAT IS THE
+// WHOLE POINT
+// ---------------------------------------------------------------------------
+// The instrumented call sites are exactly these (verified by reading the code,
+// 2026-08-21, not assumed from the doc):
+//
+//   sage.planner    agents/sage_orchestrator.py::_plan_node       (extras: planner_step, tool_calls_made)
+//   sage.synthesis  agents/sage_orchestrator.py::_synthesize_node (extras: tool_calls_made)
+//   sage.identify   agents/query_tools.py::identify_invoices  -> run_sql_generation_loop(telemetry_agent_name=...)
+//   sage.aggregate  agents/query_tools.py::aggregate          -> run_sql_generation_loop(telemetry_agent_name=...)
+//   sage.search     agents/query_tools.py (search_invoices)
+//
+// There is no `sage.get_full_record`, and adding one would be wrong: that tool
+// makes **no LLM call at all**. It reads the ORM row and calls
+// `chroma_client.get_all_invoice_chunks()`, then hands every returned chunk to
+// the planner, which puts them in the next `sage.synthesis` prompt. So the chunk
+// dump's cost is **not missing** from telemetry — it is *inside* `sage.synthesis`'s
+// `tokens_in`, and nowhere else.
+//
+// That makes the question answerable, but by inference rather than by a direct
+// measurement, and the inference is: a turn whose synthesis prompt is large
+// relative to everything else in the same turn is a turn that dumped a document.
+// Query B and Query C below are that inference, made explicit. Query D is the
+// direct measurement, which only the offline harness can produce.
+//
+// ---------------------------------------------------------------------------
+// WHAT IS LIVE TODAY
+// ---------------------------------------------------------------------------
+// Nothing, for two independent reasons, both configuration rather than code:
+//   1. `APPLICATIONINSIGHTS_CONNECTION_STRING` is not set as a Container App
+//      secret on `invoice-be`/`queue-worker`, so `customEvents` is empty
+//      (confirmed by direct query: 0 rows over 90 days).
+//   2. `ENABLE_AGENTIC_SAGE` is off, so even once (1) is fixed no `sage.*` event
+//      will appear until the flag moves. Only `chat.*`, `extraction.*`,
+//      `trainer.*` and `dashboard.*` will.
+// Both of these are founder actions. Until then the real numbers for this
+// question come from Query D's offline source, not from here.
+//
+// Rates: same hardcoded card and same caveat as `llm_cost_rollup_nightly.kql`.
+// Re-check against the Azure OpenAI pricing page for this deployment's region
+// before treating any figure as money.
+// ---------------------------------------------------------------------------
+let lookback = 14d;
+let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)
+[
+    "gpt-5-mini",   0.25,  2.00,
+    "gpt-5",        1.25, 10.00,
+    "gpt-4o-mini",  0.15,  0.60,
+    "gpt-4o",       2.50, 10.00,
+    "mock",         0.0,   0.0
+];
+let calls =
+    customEvents
+    | where timestamp > ago(lookback)
+    | where name == "llm_agent_call"
+    | extend
+        agent_name = tostring(customDimensions["agent_name"]),
+        model      = tostring(customDimensions["model"]),
+        tenant_id  = tostring(customDimensions["tenant_id"]),
+        request_id = tostring(customDimensions["request_id"]),
+        status     = tostring(customDimensions["status"]),
+        tokens_in  = toint(customDimensions["tokens_in"]),
+        tokens_out = toint(customDimensions["tokens_out"]),
+        latency_ms = todouble(customDimensions["latency_ms"]),
+        // Present on sage.planner and sage.synthesis only; null elsewhere.
+        tool_calls_made = toint(customDimensions["tool_calls_made"]),
+        planner_step    = toint(customDimensions["planner_step"])
+    | lookup kind=leftouter rates on model
+    | extend cost_usd = iff(isnull(usd_per_1m_in), real(null),
+             (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0);
+//
+// ===========================================================================
+// QUERY A — the breakdown itself: cost and tokens per tool-level agent, per day
+// ===========================================================================
+// `share_of_sage_tokens_pct` is the column to read first. On a turn that dumps a
+// document, `sage.synthesis` takes the overwhelming majority of the path's input
+// tokens, and that share moving is the signal that `get_full_record`'s output
+// grew.
+calls
+| where agent_name startswith "sage."
+| summarize
+    calls          = count(),
+    errors         = countif(status == "error"),
+    tokens_in      = sum(tokens_in),
+    tokens_out     = sum(tokens_out),
+    cost_usd       = sum(cost_usd),
+    p50_latency_ms = percentile(latency_ms, 50),
+    p95_latency_ms = percentile(latency_ms, 95)
+  by day = startofday(timestamp), agent_name, model
+| extend is_synthesis = agent_name == "sage.synthesis"
+| join kind=leftouter (
+    calls
+    | where agent_name startswith "sage."
+    | summarize sage_tokens_in_total = sum(tokens_in), sage_cost_total = sum(cost_usd)
+      by day = startofday(timestamp)
+  ) on day
+| extend
+    share_of_sage_tokens_pct = round(100.0 * tokens_in / sage_tokens_in_total, 1),
+    share_of_sage_cost_pct   = round(100.0 * cost_usd  / sage_cost_total, 1),
+    // Input tokens per call is the size of the prompt that call carried. For
+    // sage.synthesis that prompt CONTAINS the full-record chunk dump, so this
+    // column is the closest thing to a direct reading of the dump's size.
+    avg_tokens_in_per_call = round(1.0 * tokens_in / calls, 0)
+| project
+    day, agent_name, model, calls, errors,
+    tokens_in, tokens_out, avg_tokens_in_per_call,
+    share_of_sage_tokens_pct, cost_usd, share_of_sage_cost_pct,
+    p50_latency_ms, p95_latency_ms
+| order by day desc, cost_usd desc
+//
+// ===========================================================================
+// QUERY B — one turn's composition, and the synthesis share within it
+// ===========================================================================
+// This is the direct answer to "relative to the rest of the turn". `request_id`
+// is the correlation key: Feature 19's middleware sets it per request and
+// Feature 23 Phase 1 puts it on every event, so all of a turn's calls share one.
+// Replace everything above with:
+//
+//     calls
+//     | where agent_name startswith "sage."
+//     | where isnotempty(request_id)
+//     | summarize
+//         turn_tokens_in    = sum(tokens_in),
+//         turn_tokens_out   = sum(tokens_out),
+//         turn_cost_usd     = sum(cost_usd),
+//         turn_calls        = count(),
+//         synthesis_tokens_in  = sumif(tokens_in, agent_name == "sage.synthesis"),
+//         synthesis_cost_usd   = sumif(cost_usd,  agent_name == "sage.synthesis"),
+//         planner_tokens_in    = sumif(tokens_in, agent_name == "sage.planner"),
+//         tool_tokens_in       = sumif(tokens_in, agent_name in ("sage.identify","sage.aggregate","sage.search")),
+//         tool_calls_made      = max(tool_calls_made),
+//         tools_used           = make_set_if(agent_name, agent_name in ("sage.identify","sage.aggregate","sage.search"))
+//       by request_id, day = startofday(timestamp), tenant_id
+//     | extend
+//         synthesis_share_pct = round(100.0 * synthesis_tokens_in / turn_tokens_in, 1),
+//         planner_share_pct   = round(100.0 * planner_tokens_in   / turn_tokens_in, 1),
+//         tool_share_pct      = round(100.0 * tool_tokens_in      / turn_tokens_in, 1)
+//     | order by synthesis_tokens_in desc
+//
+// Read it as: `synthesis_share_pct` is what the chunk dump costs as a fraction
+// of the turn, because the dump is the only large variable-size block in that
+// prompt. A turn with no `get_full_record` call has a small, stable synthesis
+// prompt; a turn with one does not.
+//
+// ===========================================================================
+// QUERY C — the distribution, which is what actually shows the dump
+// ===========================================================================
+// A mean hides this completely: most turns never call `get_full_record`, so the
+// average synthesis prompt looks fine while the p95 is the document dump. Two
+// invoices with the same question shape and different document lengths land in
+// different buckets, and the gap between them IS the cost of the dump.
+//
+//     calls
+//     | where agent_name == "sage.synthesis"
+//     | summarize
+//         turns = count(),
+//         p50_tokens_in = percentile(tokens_in, 50),
+//         p90_tokens_in = percentile(tokens_in, 90),
+//         p99_tokens_in = percentile(tokens_in, 99),
+//         max_tokens_in = max(tokens_in)
+//       by day = startofday(timestamp)
+//     | extend tail_over_median = round(1.0 * p99_tokens_in / p50_tokens_in, 1)
+//
+// `tail_over_median` rising is `get_full_record` being called on longer
+// documents. It needs no new instrumentation and no change to any agent.
+//
+// ===========================================================================
+// QUERY D — the number that exists TODAY, and where it comes from
+// ===========================================================================
+// None of the above returns a row yet (see "WHAT IS LIVE TODAY"). The measured
+// figures that do exist come from the offline harness, which records what
+// telemetry structurally cannot: `scripts/run_agent_eval.py`'s
+// `_measure_tool_result()` sizes each tool result directly (`chunk_count`,
+// `chunk_chars`, `chunk_tokens`, `record_tokens`) with the real gpt-5-family
+// tokenizer, and `_LlmCallCounter.by_agent()` splits the turn by call site. Its
+// output is `tests/agent_eval_output.json` (`tool_calls[]` and
+// `tokens_by_agent`), and the golden sample carries a matched pair —
+// `large_invoice_full_detail` (11 indexed pages) against
+// `small_invoice_full_detail` (1 page), same question shape, same tool path — so
+// the difference between the two turns is the dump and nothing else.
+//
+// Treat that pair as the ground truth for this question and these queries as the
+// production continuation of it once the connection string and the feature flag
+// are both set.

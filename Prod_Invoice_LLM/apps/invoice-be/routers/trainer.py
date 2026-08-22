@@ -31,6 +31,7 @@ from services.storage import LOCAL_STORAGE_DIR, download_pdf_from_storage
 from services import trainer_sessions
 from services.billing_lifecycle import PAID_PLANS
 from services.rule_impact import compute_rule_impact, describe_rule, new_rules
+from telemetry import tracked_llm_call
 from utils.llm import get_llm
 from utils.alert_registry import (
     ALERT_TYPES,
@@ -221,7 +222,7 @@ class CommitPayload(BaseModel):
 # a data-interpretation fact (e.g. "tax is listed as GST for this vendor").
 # This runs once per commit, not per-invoice, so the cost is negligible
 # relative to what it protects against.
-def _validate_rule_text(constraints: list[str]) -> None:
+def _validate_rule_text(constraints: list[str], tenant_id: str = "") -> None:
     if not constraints:
         return
     # Gap 235: 512 was sized for the visible completion only. Against a reasoning
@@ -247,7 +248,16 @@ def _validate_rule_text(constraints: list[str]) -> None:
         "fact? Set is_instruction accordingly, give a one-sentence reason, and "
         "set flagged_rule to the exact rule text that failed (empty string if none)."
     )
-    result = structured_llm.invoke(prompt)
+    # Feature 23 Phase 1: this guardrail is a real, billable model call on every
+    # rule preview/commit, so it is its own agent in the registry rather than
+    # invisible cost attached to the trainer's correction call.
+    with tracked_llm_call(
+        "trainer.rule_guardrail",
+        llm=llm,
+        tenant_id=tenant_id,
+        rule_count=len(constraints),
+    ):
+        result = structured_llm.invoke(prompt)
     if result.is_instruction:
         flagged = (result.flagged_rule or "").strip() or (constraints[0] if constraints else "")
         raise HTTPException(
@@ -1239,7 +1249,15 @@ def flag_missed_alert(
         # reproduction against the real deployment.
         llm = get_llm(max_tokens=4096)
         structured_llm = llm.with_structured_output(MissedAlertRuleDraft)
-        draft = structured_llm.invoke(prompt)
+        # Feature 23 Phase 1: the alert-anchored correction loop's model call --
+        # the "Trainer / EVOLVE correction loop" row of the Feature 23 registry.
+        with tracked_llm_call(
+            "trainer.missed_alert_rule",
+            llm=llm,
+            tenant_id=str(tenant_context.tenant_id),
+            alert_type=payload.alert_type,
+        ):
+            draft = structured_llm.invoke(prompt)
         rule_text = (getattr(draft, "rule_text", "") or "").strip()
     except Exception as e:
         # Same fail-closed contract as Gap 212: if the correction can't be
@@ -1328,7 +1346,7 @@ def preview_session_rules(
     text_rules = normalize_constraints(
         [r for r in delta if rule_kind(r) == KIND_EXTRACTION], for_prompt=True
     )
-    _validate_rule_text(text_rules)
+    _validate_rule_text(text_rules, tenant_id=str(tenant_context.tenant_id))
 
     impact = compute_rule_impact(
         db_session,
@@ -1400,7 +1418,7 @@ def _ensure_qa_chat_session(session_id: str, session: dict, db_session: Session,
     return chat_session.id
 
 
-def _answer_qa_from_session_data(session: dict, content: str) -> dict:
+def _answer_qa_from_session_data(session: dict, content: str, tenant_id: str = "") -> dict:
     """Gap 236: upload-path (Scope #3, New Vendor) QA answers -- there is no
     real `Invoice` row for this document to query (deliberately, per Gap 228,
     so a sample upload doesn't burn free-invoice quota or appear on the
@@ -1422,6 +1440,9 @@ def _answer_qa_from_session_data(session: dict, content: str) -> dict:
     only answers from extracted fields, same as the tracker's own note that a
     one-line UI caveat (not built here) is the right scope for that, not a
     broad disclaimer on every answer.
+
+    ``tenant_id`` is Feature 23 Phase 1 telemetry attribution only -- it never
+    reaches the prompt and cannot change the answer.
     """
     extracted_data = session.get("extracted_data") or {}
     if not extracted_data:
@@ -1454,7 +1475,17 @@ Extracted Fields:
 User Question: {content}
 """
     try:
-        res = llm.invoke(summary_prompt)
+        # Feature 23 Phase 1: the QA panel's upload-path summary is a real model
+        # call on every QA turn for a not-yet-ingested sample. It mirrors
+        # `chat.sql_summary` (see this function's docstring) but is a separate
+        # agent, because its volume driver is Trainer QA turns, not chat turns.
+        with tracked_llm_call(
+            "trainer.qa_summary",
+            llm=llm,
+            tenant_id=tenant_id,
+            field_count=len(rows),
+        ):
+            res = llm.invoke(summary_prompt)
         reply = res.content + f"\n\n### Extracted Data\n{db_result}"
     except Exception as e:
         logger.error("Trainer QA upload-path summary failed: %s", e)
@@ -1503,7 +1534,9 @@ def _handle_qa_test_turn(
                 db_session,
             )
         else:
-            result = _answer_qa_from_session_data(session, content)
+            result = _answer_qa_from_session_data(
+                session, content, tenant_id=str(tenant_context.tenant_id)
+            )
         reply = result.get("content") or "No response."
     except Exception as e:
         logger.error("Trainer QA test query failed: %s", e)
@@ -1706,7 +1739,10 @@ def trainer_commit(
     # structured rule is normalized down to its sentence first -- and the
     # non-prompt kinds (tolerances, thresholds) are excluded, since a number
     # cannot be a behavioural instruction.
-    _validate_rule_text(normalize_constraints(constraints, for_prompt=True))
+    _validate_rule_text(
+        normalize_constraints(constraints, for_prompt=True),
+        tenant_id=str(tenant_context.tenant_id),
+    )
     rules = {"constraints": constraints}
 
     # Resolve which template row this commits to.

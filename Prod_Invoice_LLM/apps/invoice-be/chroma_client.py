@@ -480,6 +480,58 @@ def has_invoice_chunks(invoice_id: str, tenant_id: str) -> bool:
         logger.warning("Chroma chunk-presence probe failed for invoice %s: %s", invoice_id, e)
         return False
 
+def get_all_invoice_chunks(invoice_id: str, tenant_id: str) -> list[dict]:
+    """Every indexed page of ONE invoice, by direct metadata filter.
+
+    Feature 21's `get_full_record` companion, and deliberately not a search:
+    `query_invoice_chunks()` below ranks a candidate pool against a query
+    embedding and drops whatever falls under the relevance threshold, which is
+    the right behaviour for discovery ("which invoices relate to X") and the
+    wrong behaviour once the invoice is already identified -- there, "the page
+    carrying the tax table didn't score high enough" is a silent data loss, not
+    a relevance decision. So this ranks nothing, thresholds nothing and returns
+    every chunk, ordered by page.
+
+    Same structural isolation as every other function here (Gap 55: one
+    collection per tenant); the `invoice_id` metadata filter is what narrows it
+    to a single invoice. Returns `[]` on any Chroma error -- an unreachable
+    index must degrade the answer to "structured record only", never take the
+    turn down.
+    """
+    try:
+        client = get_chroma_client()
+        collection = client.get_or_create_collection(
+            name=_tenant_collection_name(tenant_id),
+            metadata=_collection_metadata(),
+        )
+        found = collection.get(where={"invoice_id": str(invoice_id)})
+    except Exception as e:
+        logger.warning("Chroma chunk fetch failed for invoice %s: %s", invoice_id, e)
+        return []
+
+    if not found or not found.get("ids"):
+        return []
+
+    documents = found.get("documents") or []
+    metadatas = found.get("metadatas") or []
+    chunks = []
+    for idx, chunk_id in enumerate(found["ids"]):
+        metadata = metadatas[idx] if idx < len(metadatas) else {}
+        chunks.append(
+            {
+                "id": chunk_id,
+                "document": documents[idx] if idx < len(documents) else "",
+                "metadata": metadata or {},
+                # Named for the caller's benefit: a chunk that arrived here was
+                # fetched by id, not ranked, and nothing downstream should treat
+                # its presence as evidence of relevance.
+                "matched_by": "invoice_id",
+            }
+        )
+    chunks.sort(key=lambda c: (c.get("metadata") or {}).get("page") or 0)
+    return chunks
+
+
 def query_invoice_chunks(tenant_id: str, query_text: str, limit: int = 5) -> list[dict]:
     """
     Query indexed invoice chunks. Isolation is structural (Gap 55) — each tenant has

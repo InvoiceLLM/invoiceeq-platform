@@ -1,10 +1,12 @@
 import json
 import logging
 import re
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from telemetry import tracked_llm_call
 from utils.llm import get_llm
 from utils.rule_schema import normalize_constraints
 from chroma_client import query_invoice_chunks
@@ -86,8 +88,11 @@ _SQL_KEYWORDS = ("total", "spent", "sum", "average", "how many", "count", "mean"
 _CHAT_KEYWORDS = ("hello", "hi ", "hey", "who are you", "what is your name")
 
 
-def classify_query(query: str) -> str:
+def classify_query(query: str, tenant_id: str = "") -> str:
     """Classifies user queries into RAG, SQL, or CHAT.
+
+    `tenant_id` is Feature 23 Phase 1 telemetry attribution only -- it is never
+    read by, and can never change, the classification itself.
 
     Gap 182: keyword match tried first, free and instant -- only falls
     through to the LLM when neither keyword set confidently matches. Every
@@ -123,19 +128,24 @@ def classify_query(query: str) -> str:
     llm = get_llm()
     try:
         structured_llm = llm.with_structured_output(QueryRoutingSchema)
-        result = structured_llm.invoke(
-            f"Determine the routing logic for this user message: '{query}'. "
-            "SQL: For ANY lookup of a structured invoice field on the 'invoice' table - "
-            "this includes not just quantitative checks (total spent, count of invoices, "
-            "averages, sums) but also plain field lookups like vendor name, invoice/due "
-            "date, PO number, or status, even when phrased as 'who'/'what' questions "
-            "(e.g. 'who is the vendor on invoice X' is SQL, not RAG - vendor_name is a "
-            "column, not free-text document content). "
-            "RAG: For semantic queries about content that is NOT a structured column - "
-            "line-item descriptions, what a document says about something, or anything "
-            "requiring reading the actual invoice text rather than a database field. "
-            "CHAT: For casual greeting, feedback, or general chats."
-        )
+        # Feature 23 Phase 1. Only the LLM fallback is instrumented: the keyword
+        # fast path above returns without ever calling a model, and emitting an
+        # `llm_agent_call` event for it would inflate the call count Phase 2's
+        # cost rollup reads.
+        with tracked_llm_call("chat.classify", llm=llm, tenant_id=tenant_id):
+            result = structured_llm.invoke(
+                f"Determine the routing logic for this user message: '{query}'. "
+                "SQL: For ANY lookup of a structured invoice field on the 'invoice' table - "
+                "this includes not just quantitative checks (total spent, count of invoices, "
+                "averages, sums) but also plain field lookups like vendor name, invoice/due "
+                "date, PO number, or status, even when phrased as 'who'/'what' questions "
+                "(e.g. 'who is the vendor on invoice X' is SQL, not RAG - vendor_name is a "
+                "column, not free-text document content). "
+                "RAG: For semantic queries about content that is NOT a structured column - "
+                "line-item descriptions, what a document says about something, or anything "
+                "requiring reading the actual invoice text rather than a database field. "
+                "CHAT: For casual greeting, feedback, or general chats."
+            )
         return result.route.upper()
     except Exception as e:
         logger.warning("Routing classification failed: %s. Defaulting to RAG.", e)
@@ -594,6 +604,13 @@ def _line_item_rule(tenant_id: str, db_session) -> str:
 # than a prompt rule -- see execute_generated_sql's comment for why.
 _INTERNAL_ONLY_COLUMNS = {"file_path", "batch_id"}
 
+# The exact string execute_generated_sql() returns for an empty result set.
+# Named (Feature 21 Phase 1) because three call sites now compare against it --
+# the invoice-number fallback, and query_tools.query_invoices()'s "no_results"
+# signal -- and a silent typo in any copy of the literal would turn a real
+# zero-row answer into a "we found something" one.
+NO_RECORDS_FOUND = "No records found matching the query criteria."
+
 
 def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list | None = None) -> str:
     """Safely execute generated SQL statement on the database session.
@@ -631,7 +648,7 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     rows = result.fetchall()
 
     if not rows:
-        return "No records found matching the query criteria."
+        return NO_RECORDS_FOUND
 
     keys = list(result.keys())
 
@@ -1191,133 +1208,106 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
         logger.warning("Failed to load chat history for session %s: %s", session_id, e)
         return ""
 
-def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_session) -> dict:
+
+# ---------------------------------------------------------------------------
+# Feature 21 Phase 1: the SQL route, reachable as one callable unit.
+#
+# Everything from here to run_sql_generation_loop() used to live inline inside
+# run_query_agent()'s `if route == "SQL":` branch. It was moved out verbatim --
+# same prompt text, same rules 1-11, same 3-attempt repair loop, same
+# deterministic invoice-number fallback -- so agents/query_tools.py's
+# query_invoices() tool can call exactly the code the live route runs instead of
+# reimplementing SQL generation next to it. run_query_agent() now calls these two
+# functions and behaves identically; nothing about the prompt or the loop changed
+# in the move.
+# ---------------------------------------------------------------------------
+
+
+def _prior_sql_block_for(prior_turn_sql: str | None) -> str:
+    # Gap 237 step 2: hand the previous turn's exact query to the prompt so a
+    # narrowing follow-up extends that predicate instead of re-deriving it
+    # from the conversation prose (see get_prior_turn_sql()).
+    prior_sql_block = (
+        f"\nPREVIOUS TURN'S SQL (the query that produced the assistant's most recent "
+        f"answer in this conversation -- see rule 9):\n{prior_turn_sql}\n"
+        if prior_turn_sql
+        else ""
+    )
+    return prior_sql_block
+
+
+def _tax_term_block_for(user_message: str) -> str:
+    # Gap 263 follow-up: deterministic detection (see detect_tax_component_term)
+    # grounds the prompt with the SPECIFIC term this question contains, rather
+    # than relying on the model to recall and correctly apply rule 6d's general
+    # "any tax-related term" guardrail from memory on every call.
+    detected_tax_term = detect_tax_component_term(user_message)
+    tax_term_block = (
+        f"\nNOTE: this question contains the tax-related term \"{detected_tax_term}\" -- "
+        f"per rule 6d, do NOT search item descriptions for it. This schema has no "
+        f"breakdown by tax type; select tax_amount directly.\n"
+        if detected_tax_term
+        else ""
+    )
+    return tax_term_block
+
+
+def _payment_status_block_for(user_message: str) -> str:
+    # Q24 of the NovaTech live test, 2026-08-19: same deterministic-grounding
+    # pattern as the tax-term block above, for the same reason -- caught the
+    # model inferring a wrong "yes, paid" from `status` (an internal
+    # processing-state column) live, so it's grounded with the fact instead
+    # of asked to remember not to do that.
+    detected_payment_term = detect_payment_status_question(user_message)
+    payment_status_block = (
+        f"\nSTOP AND READ before answering -- this question contains the payment-status term "
+        f"\"{detected_payment_term}\". This has been answered WRONG live, twice, in BOTH "
+        f"directions: 'status=COMPLETED' -> confidently \"Yes, it's paid\" (wrong), and "
+        f"'status=AUDIT_REQUIRED' -> confidently \"No, it's not paid\" (also wrong, same "
+        f"mistake, opposite word). Both are equally false, because for an INBOUND invoice "
+        f"`status` is 100% about OCR/extraction pipeline state and 0% about payment -- there is "
+        f"NO payment/settlement field for INBOUND invoices in this schema, period. If this "
+        f"question is about an INBOUND invoice: your answer MUST say plainly that payment "
+        f"status isn't tracked in this data. Do not say \"paid\", do not say \"not paid\", do "
+        f"not say \"unpaid\" -- not as a yes, not as a no. A confident wrong answer in either "
+        f"direction is the exact failure mode this note exists to stop. For OUTBOUND invoices "
+        f"(this tenant's own invoice to a customer) only, `status` DOES include a real 'PAID' "
+        f"value alongside VERIFIED/NEEDS_REVIEW/SENT -- that one is a legitimate signal to use, "
+        f"though still this tenant's own recorded status, not independently confirmed "
+        f"settlement, so say so if asked to be certain.\n"
+        if detected_payment_term
+        else ""
+    )
+    return payment_status_block
+
+
+def build_sql_system_prompt(
+    user_message: str,
+    tenant_id: str,
+    db_session,
+    *,
+    chat_history: str = "",
+    prior_turn_sql: str | None = None,
+    rules_block: str = "",
+    chat_rules_block: str = "",
+    tenant_stats: str = "",
+) -> str:
+    """The SQL route's system prompt (schema block + rules 1-11), verbatim.
+
+    Every caller-supplied block (trainer rules, chat rules, tenant stats, chat
+    history, the previous turn's SQL) defaults to empty, so a standalone tool call
+    with no conversation behind it renders the same prompt minus those sections --
+    the rules themselves are never conditional on any of them.
     """
-    RAG Query Agent routing natural language inputs to semantic context indexers,
-    safe database queries, or conversational chat saves with multi-turn short-term memory.
-    """
-    logger.info("Executing Query Agent for session %s, tenant %s", session_id, tenant_id)
-
-    cached = get_cached_answer(tenant_id, user_message)
-    if cached is not None:
-        logger.info("Serving cached answer for tenant %s (Task 6.11 semantic cache hit)", tenant_id)
-        return cached
-
-    # Retrieve short-term context history
-    chat_history = get_chat_history(session_id, db_session)
-
-    # Trainer-taught business rules (Global scope + heuristically matched Vendor scope)
-    global_rules = _get_global_business_rules(tenant_id, db_session)
-    vendor_rules = _get_vendor_business_rules(tenant_id, user_message, db_session)
-    
-    business_rules = list(global_rules)
-    for rule in vendor_rules:
-        if rule not in business_rules:
-            business_rules.append(rule)
-            
-    rules_block = _business_rules_block(business_rules)
-    # Feature 18: a sibling block, never merged into rules_block -- see
-    # `_chat_rules_block()` for why the two can't share a section.
-    chat_rules_block = _chat_rules_block(tenant_id, db_session)
-    style_block = _get_chat_style_block(tenant_id, db_session)
-    tenant_stats = _get_tenant_stats_summary(tenant_id, db_session)
-    wrapped_user_message = _wrap_user_input(user_message, tenant_id)
-
-    # 1. Routing classification
-    route = classify_query(user_message)
-    logger.info("Selected Route: %s", route)
-
-    # Gap 237 step 2: the previous turn's exact query, when there was one. Needed
-    # before the route is final, because it is also the evidence that this
-    # session HAS a queried result set for a follow-up to refer back to.
-    prior_turn_sql = get_prior_turn_sql(session_id, db_session)
-
-    # Gap 237 (BE), the "no SQL at all" failure mode -- and the real mechanism
-    # behind it, which is not the one the step-1 repro assumed. That repro
-    # recorded `generated_sql: null` on 4 of 7 follow-ups and read it as "the
-    # SQL-generation call returned sql: null". Measured directly here instead:
-    # `classify_query()` sees only the isolated sentence ("Can you explain the 3
-    # USD ones in detail?") with no session context, and routes it to RAG on
-    # roughly 40% of calls (2 of 5 sampled against the real deployed model) --
-    # so on those turns the SQL route never runs at all, and RAG (which has no
-    # notion of the previous turn's result set) answers from chat history alone.
-    # That is why `generated_sql` was null: not a declined query, a missed route.
-    #
-    # Deterministic override rather than a prompt tweak to the classifier: if the
-    # message only makes sense as a reference back to rows a previous turn
-    # already queried, and this session really does have a prior SQL-answered
-    # turn, then the follow-up is by definition about those rows and belongs on
-    # the route that can filter them. Narrow by construction -- both conditions
-    # must hold, and neither is LLM-judged.
-    if route != "SQL" and prior_turn_sql and _is_narrowing_followup(user_message):
-        logger.info(
-            "Routing override (Gap 237): %s -> SQL; message back-references a prior "
-            "SQL-answered turn in session %s", route, session_id,
-        )
-        route = "SQL"
-
-    llm = get_llm()
-    response_text = ""
-    generated_sql = None
-    citations = []
-    route_succeeded = False
-    # Feature 18 (Gap 231): which invoices fed this reply. Request-local by
-    # construction; empty means "couldn't determine", never "no invoices".
-    result_invoice_ids: list[str] = []
-
-    if route == "SQL":
-        # Gap 237 step 2: hand the previous turn's exact query to the prompt so a
-        # narrowing follow-up extends that predicate instead of re-deriving it
-        # from the conversation prose (see get_prior_turn_sql()).
-        prior_sql_block = (
-            f"\nPREVIOUS TURN'S SQL (the query that produced the assistant's most recent "
-            f"answer in this conversation -- see rule 9):\n{prior_turn_sql}\n"
-            if prior_turn_sql
-            else ""
-        )
-        # Gap 253: rule 6d is the one rule with no portable spelling, so it is
-        # built for whichever engine this request is bound to -- see
-        # _sql_dialect_name() for why this is resolved here and not repaired
-        # after generation.
-        line_item_rule = _line_item_rule(tenant_id, db_session)
-        # Gap 263 follow-up: deterministic detection (see detect_tax_component_term)
-        # grounds the prompt with the SPECIFIC term this question contains, rather
-        # than relying on the model to recall and correctly apply rule 6d's general
-        # "any tax-related term" guardrail from memory on every call.
-        detected_tax_term = detect_tax_component_term(user_message)
-        tax_term_block = (
-            f"\nNOTE: this question contains the tax-related term \"{detected_tax_term}\" -- "
-            f"per rule 6d, do NOT search item descriptions for it. This schema has no "
-            f"breakdown by tax type; select tax_amount directly.\n"
-            if detected_tax_term
-            else ""
-        )
-        # Q24 of the NovaTech live test, 2026-08-19: same deterministic-grounding
-        # pattern as the tax-term block above, for the same reason -- caught the
-        # model inferring a wrong "yes, paid" from `status` (an internal
-        # processing-state column) live, so it's grounded with the fact instead
-        # of asked to remember not to do that.
-        detected_payment_term = detect_payment_status_question(user_message)
-        payment_status_block = (
-            f"\nSTOP AND READ before answering -- this question contains the payment-status term "
-            f"\"{detected_payment_term}\". This has been answered WRONG live, twice, in BOTH "
-            f"directions: 'status=COMPLETED' -> confidently \"Yes, it's paid\" (wrong), and "
-            f"'status=AUDIT_REQUIRED' -> confidently \"No, it's not paid\" (also wrong, same "
-            f"mistake, opposite word). Both are equally false, because for an INBOUND invoice "
-            f"`status` is 100% about OCR/extraction pipeline state and 0% about payment -- there is "
-            f"NO payment/settlement field for INBOUND invoices in this schema, period. If this "
-            f"question is about an INBOUND invoice: your answer MUST say plainly that payment "
-            f"status isn't tracked in this data. Do not say \"paid\", do not say \"not paid\", do "
-            f"not say \"unpaid\" -- not as a yes, not as a no. A confident wrong answer in either "
-            f"direction is the exact failure mode this note exists to stop. For OUTBOUND invoices "
-            f"(this tenant's own invoice to a customer) only, `status` DOES include a real 'PAID' "
-            f"value alongside VERIFIED/NEEDS_REVIEW/SENT -- that one is a legitimate signal to use, "
-            f"though still this tenant's own recorded status, not independently confirmed "
-            f"settlement, so say so if asked to be certain.\n"
-            if detected_payment_term
-            else ""
-        )
-        system_prompt = f"""You are a database SQL query expert.
+    prior_sql_block = _prior_sql_block_for(prior_turn_sql)
+    # Gap 253: rule 6d is the one rule with no portable spelling, so it is
+    # built for whichever engine this request is bound to -- see
+    # _sql_dialect_name() for why this is resolved here and not repaired
+    # after generation.
+    line_item_rule = _line_item_rule(tenant_id, db_session)
+    tax_term_block = _tax_term_block_for(user_message)
+    payment_status_block = _payment_status_block_for(user_message)
+    system_prompt = f"""You are a database SQL query expert.
 Given the 'invoice' table schema:
 - id: UUID (Primary Key)
 - tenant_id: UUID
@@ -1384,78 +1374,272 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
 Conversation History for Context:
 {chat_history}
 """
-        max_attempts = 3
-        last_error = None
-        db_result = None
-        current_prompt = f"{system_prompt}\nUser Question: {wrapped_user_message}"
-        # Gap 237: a null-sql answer on a follow-up is retried exactly once, then
-        # accepted-with-a-note. Not looped to exhaustion -- if the model declines
-        # twice, badgering it a third time costs a round-trip for the same answer.
-        null_sql_retried = False
+    return system_prompt
 
-        for attempt in range(max_attempts):
-            try:
-                structured_sql = llm.with_structured_output(SQLGenerationSchema)
+
+@dataclass
+class SqlGenerationOutcome:
+    """What one pass of the SQL route produced, before anything is said about it.
+
+    Exactly one of these is meaningful at a time:
+      * `db_result` set        -- the query ran (a markdown table, or the
+                                  "No records found..." sentinel).
+      * `declined_text` set    -- the model returned `sql: null`; this is the
+                                  final answer text, already carrying Gap 237's
+                                  "no fresh query was run" note when applicable.
+      * `last_error` set with `db_result` None -- every attempt failed.
+    """
+
+    generated_sql: Optional[str] = None
+    db_result: Optional[str] = None
+    declined_text: Optional[str] = None
+    last_error: Optional[Exception] = None
+
+
+def run_sql_generation_loop(
+    *,
+    llm,
+    system_prompt: str,
+    wrapped_user_message: str,
+    user_message: str,
+    tenant_id: str,
+    db_session,
+    prior_turn_sql: str | None = None,
+    snapshot: list | None = None,
+    max_attempts: int = 3,
+    telemetry_agent_name: str = "chat.sql_generation",
+) -> "SqlGenerationOutcome":
+    """Generate SQL, execute it, repair on failure -- up to `max_attempts` times.
+
+    Moved verbatim out of run_query_agent(): same null-sql retry-once behaviour
+    (Gap 237), same error-feedback repair prompt, same deterministic
+    invoice-number fallback when the generated SQL finds nothing for a question
+    that names a specific invoice.
+
+    `telemetry_agent_name` (Feature 21) exists so SAGE's tools can name their own
+    Feature 23 Phase 1 event (`sage.identify`, `sage.aggregate`) instead of
+    wrapping a second `tracked_llm_call` around this one. Nesting would emit two
+    events for one round-trip -- and the inner context manager rebinds the usage
+    handler, so the outer event would report zero tokens while still counting as
+    a call in the eval harness. One call, one event, correctly attributed. The
+    default keeps the existing chat path's event name byte-identical.
+    """
+    generated_sql = None
+    last_error = None
+    db_result = None
+    current_prompt = f"{system_prompt}\nUser Question: {wrapped_user_message}"
+    # Gap 237: a null-sql answer on a follow-up is retried exactly once, then
+    # accepted-with-a-note. Not looped to exhaustion -- if the model declines
+    # twice, badgering it a third time costs a round-trip for the same answer.
+    null_sql_retried = False
+
+    for attempt in range(max_attempts):
+        try:
+            structured_sql = llm.with_structured_output(SQLGenerationSchema)
+            # Feature 23 Phase 1: one event per generation attempt, not per loop --
+            # a repair retry is a second billable round-trip and `attempt` is on
+            # the event so the retry rate is queryable. This loop is shared with
+            # agents/query_tools.py's identify_invoices()/aggregate() tools (the
+            # SAGE path), so instrumenting it here covers SQL generation on both
+            # routes -- those pass their own `telemetry_agent_name`.
+            with tracked_llm_call(
+                telemetry_agent_name,
+                llm=llm,
+                tenant_id=tenant_id,
+                attempt=attempt + 1,
+            ):
                 res = structured_sql.invoke(current_prompt)
-                if not res.sql:
-                    # Gap 237 (BE), failure mode found in the live repro: on a
-                    # narrowing follow-up the SQL call returned sql: null in 4 of
-                    # 7 runs and the reply was composed purely from the prior
-                    # turn's aggregate text -- a confident answer with no backing
-                    # query, more frequent than the branch-drop this gap was
-                    # opened over. Deliberate behaviour, in this order: (1) push
-                    # back once, explicitly, when a prior SQL turn exists to
-                    # narrow from; (2) if it still declines, answer but say
-                    # plainly that no query was run, rather than letting a
-                    # history-restated answer pass as a queried one.
-                    if prior_turn_sql and not null_sql_retried:
-                        null_sql_retried = True
-                        logger.info(
-                            "SQL route returned null sql on a follow-up with prior SQL present; "
-                            "requesting one regeneration (Gap 237)"
-                        )
-                        current_prompt += _NULL_SQL_FOLLOWUP_RETRY_DIRECTIVE
-                        continue
-                    response_text = res.explanation_or_error or "I'm sorry, but I cannot answer that question with the available database fields."
-                    if prior_turn_sql:
-                        response_text += _NO_FRESH_QUERY_NOTE
-                    route_succeeded = True
-                    break
+            if not res.sql:
+                # Gap 237 (BE), failure mode found in the live repro: on a
+                # narrowing follow-up the SQL call returned sql: null in 4 of
+                # 7 runs and the reply was composed purely from the prior
+                # turn's aggregate text -- a confident answer with no backing
+                # query, more frequent than the branch-drop this gap was
+                # opened over. Deliberate behaviour, in this order: (1) push
+                # back once, explicitly, when a prior SQL turn exists to
+                # narrow from; (2) if it still declines, answer but say
+                # plainly that no query was run, rather than letting a
+                # history-restated answer pass as a queried one.
+                if prior_turn_sql and not null_sql_retried:
+                    null_sql_retried = True
+                    logger.info(
+                        "SQL route returned null sql on a follow-up with prior SQL present; "
+                        "requesting one regeneration (Gap 237)"
+                    )
+                    current_prompt += _NULL_SQL_FOLLOWUP_RETRY_DIRECTIVE
+                    continue
+                declined_text = res.explanation_or_error or "I'm sorry, but I cannot answer that question with the available database fields."
+                if prior_turn_sql:
+                    declined_text += _NO_FRESH_QUERY_NOTE
+                return SqlGenerationOutcome(declined_text=declined_text)
 
-                generated_sql = res.sql
-                logger.info("Generated SQL (attempt %d): %s", attempt + 1, generated_sql)
-                
-                # Execute SQL
-                result_invoice_ids.clear()  # a repair retry must not double-count
-                db_result = execute_generated_sql(
-                    generated_sql, tenant_id, db_session, snapshot=result_invoice_ids
-                )
-                break
-            except Exception as e:
-                db_session.rollback()
-                last_error = e
-                logger.warning("SQL execution failed on attempt %d: %s", attempt + 1, e)
-                # Feed the error back to the LLM
-                current_prompt += f"\n\nPrevious attempt failed with error:\n{e}\nPlease correct the SQL query and try again."
-        
+            generated_sql = res.sql
+            logger.info("Generated SQL (attempt %d): %s", attempt + 1, generated_sql)
+            
+            # Execute SQL
+            if snapshot is not None:
+                snapshot.clear()  # a repair retry must not double-count
+            db_result = execute_generated_sql(
+                generated_sql, tenant_id, db_session, snapshot=snapshot
+            )
+            break
+        except Exception as e:
+            db_session.rollback()
+            last_error = e
+            logger.warning("SQL execution failed on attempt %d: %s", attempt + 1, e)
+            # Feed the error back to the LLM
+            current_prompt += f"\n\nPrevious attempt failed with error:\n{e}\nPlease correct the SQL query and try again."
+
+    # Deterministic fallback: if the LLM-generated SQL found nothing but the
+    # question plainly names a specific invoice, try a direct trimmed/
+    # case-insensitive lookup before giving up. Catches whatever formatting
+    # quirk (extra clause, wrong join, subtly malformed literal) caused the
+    # generated SQL to miss an invoice that does exist.
+    if db_result == NO_RECORDS_FOUND:
+        candidate = _find_invoice_number_candidate(user_message)
+        if candidate:
+            fallback_result = lookup_invoice_by_number_fallback(candidate, tenant_id, db_session)
+            if fallback_result:
+                logger.info("SQL route found 0 rows; direct invoice_number fallback matched '%s'", candidate)
+                db_result = fallback_result
+
+    return SqlGenerationOutcome(
+        generated_sql=generated_sql, db_result=db_result, last_error=last_error
+    )
+
+
+def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_session) -> dict:
+    """
+    RAG Query Agent routing natural language inputs to semantic context indexers,
+    safe database queries, or conversational chat saves with multi-turn short-term memory.
+    """
+    # Feature 21 Phase 2: the only wiring the orchestrator gets. Default off, and
+    # off is the only state any tenant is in today -- everything below this
+    # branch is untouched, and tests/test_agentic_sage.py proves the flag-off
+    # path is byte-identical to the pre-Phase-2 pipeline against a golden
+    # recorded from it. The import is deliberately inside the branch: with the
+    # flag off, nothing in this module so much as imports the agentic path, which
+    # is the same boundary Phase 1's AST test enforced when the orchestrator did
+    # not exist at all.
+    from config import get_settings
+
+    if get_settings().ENABLE_AGENTIC_SAGE:
+        from agents.sage_orchestrator import run_agentic_sage
+
+        return run_agentic_sage(session_id, user_message, tenant_id, db_session)
+
+    logger.info("Executing Query Agent for session %s, tenant %s", session_id, tenant_id)
+
+    cached = get_cached_answer(tenant_id, user_message)
+    if cached is not None:
+        logger.info("Serving cached answer for tenant %s (Task 6.11 semantic cache hit)", tenant_id)
+        return cached
+
+    # Retrieve short-term context history
+    chat_history = get_chat_history(session_id, db_session)
+
+    # Trainer-taught business rules (Global scope + heuristically matched Vendor scope)
+    global_rules = _get_global_business_rules(tenant_id, db_session)
+    vendor_rules = _get_vendor_business_rules(tenant_id, user_message, db_session)
+    
+    business_rules = list(global_rules)
+    for rule in vendor_rules:
+        if rule not in business_rules:
+            business_rules.append(rule)
+            
+    rules_block = _business_rules_block(business_rules)
+    # Feature 18: a sibling block, never merged into rules_block -- see
+    # `_chat_rules_block()` for why the two can't share a section.
+    chat_rules_block = _chat_rules_block(tenant_id, db_session)
+    style_block = _get_chat_style_block(tenant_id, db_session)
+    tenant_stats = _get_tenant_stats_summary(tenant_id, db_session)
+    wrapped_user_message = _wrap_user_input(user_message, tenant_id)
+
+    # 1. Routing classification
+    route = classify_query(user_message, tenant_id=str(tenant_id))
+    logger.info("Selected Route: %s", route)
+
+    # Gap 237 step 2: the previous turn's exact query, when there was one. Needed
+    # before the route is final, because it is also the evidence that this
+    # session HAS a queried result set for a follow-up to refer back to.
+    prior_turn_sql = get_prior_turn_sql(session_id, db_session)
+
+    # Gap 237 (BE), the "no SQL at all" failure mode -- and the real mechanism
+    # behind it, which is not the one the step-1 repro assumed. That repro
+    # recorded `generated_sql: null` on 4 of 7 follow-ups and read it as "the
+    # SQL-generation call returned sql: null". Measured directly here instead:
+    # `classify_query()` sees only the isolated sentence ("Can you explain the 3
+    # USD ones in detail?") with no session context, and routes it to RAG on
+    # roughly 40% of calls (2 of 5 sampled against the real deployed model) --
+    # so on those turns the SQL route never runs at all, and RAG (which has no
+    # notion of the previous turn's result set) answers from chat history alone.
+    # That is why `generated_sql` was null: not a declined query, a missed route.
+    #
+    # Deterministic override rather than a prompt tweak to the classifier: if the
+    # message only makes sense as a reference back to rows a previous turn
+    # already queried, and this session really does have a prior SQL-answered
+    # turn, then the follow-up is by definition about those rows and belongs on
+    # the route that can filter them. Narrow by construction -- both conditions
+    # must hold, and neither is LLM-judged.
+    if route != "SQL" and prior_turn_sql and _is_narrowing_followup(user_message):
+        logger.info(
+            "Routing override (Gap 237): %s -> SQL; message back-references a prior "
+            "SQL-answered turn in session %s", route, session_id,
+        )
+        route = "SQL"
+
+    llm = get_llm()
+    response_text = ""
+    generated_sql = None
+    citations = []
+    route_succeeded = False
+    # Feature 18 (Gap 231): which invoices fed this reply. Request-local by
+    # construction; empty means "couldn't determine", never "no invoices".
+    result_invoice_ids: list[str] = []
+
+    if route == "SQL":
+        # Feature 21 Phase 1: the prompt build and the generate/execute/repair loop
+        # now live in build_sql_system_prompt() / run_sql_generation_loop() above,
+        # unchanged, so agents/query_tools.py's query_invoices() tool runs the exact
+        # same code path this route does. This branch's behaviour is unchanged.
+        system_prompt = build_sql_system_prompt(
+            user_message,
+            tenant_id,
+            db_session,
+            chat_history=chat_history,
+            prior_turn_sql=prior_turn_sql,
+            rules_block=rules_block,
+            chat_rules_block=chat_rules_block,
+            tenant_stats=tenant_stats,
+        )
+        # Also needed by the summary prompt below (Gap 267: the guardrail has to
+        # reach BOTH prompts -- injecting it only into SQL generation is what made
+        # the first fix attempt fail live).
+        payment_status_block = _payment_status_block_for(user_message)
+        max_attempts = 3
+        outcome = run_sql_generation_loop(
+            llm=llm,
+            system_prompt=system_prompt,
+            wrapped_user_message=wrapped_user_message,
+            user_message=user_message,
+            tenant_id=tenant_id,
+            db_session=db_session,
+            prior_turn_sql=prior_turn_sql,
+            snapshot=result_invoice_ids,
+            max_attempts=max_attempts,
+        )
+        generated_sql = outcome.generated_sql
+        db_result = outcome.db_result
+        last_error = outcome.last_error
+        if outcome.declined_text is not None:
+            response_text = outcome.declined_text
+            route_succeeded = True
+
         if not route_succeeded:
             if db_result is None:
                 logger.error("SQL path execution failed after %d attempts: %s", max_attempts, last_error)
                 response_text = f"Failed to execute database check: {str(last_error)}"
             else:
-                # Deterministic fallback: if the LLM-generated SQL found nothing but the
-                # question plainly names a specific invoice, try a direct trimmed/
-                # case-insensitive lookup before giving up. Catches whatever formatting
-                # quirk (extra clause, wrong join, subtly malformed literal) caused the
-                # generated SQL to miss an invoice that does exist.
-                if db_result == "No records found matching the query criteria.":
-                    candidate = _find_invoice_number_candidate(user_message)
-                    if candidate:
-                        fallback_result = lookup_invoice_by_number_fallback(candidate, tenant_id, db_session)
-                        if fallback_result:
-                            logger.info("SQL route found 0 rows; direct invoice_number fallback matched '%s'", candidate)
-                            db_result = fallback_result
-
                 # Formulate final output matching the raw numbers
                 summary_prompt = f"""Format a friendly summary explaining these database query results.
 {style_block}
@@ -1486,7 +1670,9 @@ User Query: {user_message}
                     )
 
                 try:
-                    final_res = llm.invoke(summary_prompt)
+                    # Feature 23 Phase 1
+                    with tracked_llm_call("chat.sql_summary", llm=llm, tenant_id=tenant_id):
+                        final_res = llm.invoke(summary_prompt)
                     # One blank line before the heading, one after -- db_result
                     # itself now starts directly with the table (see
                     # execute_generated_sql's own comment on why the leading
@@ -1575,9 +1761,13 @@ Conversation History (Short-term context):
 {chat_history}
 """
         try:
-            res = llm.invoke(f"{system_prompt}\nUser Query: {wrapped_user_message}")
+            # Feature 23 Phase 1
+            with tracked_llm_call(
+                "chat.rag_answer", llm=llm, tenant_id=tenant_id, chunk_count=len(chunks)
+            ):
+                res = llm.invoke(f"{system_prompt}\nUser Query: {wrapped_user_message}")
             response_text = res.content
-            
+
             # Append clean formatted citations list to answer text
             if citations:
                 unique_citations = []
@@ -1615,7 +1805,9 @@ Conversation History:
 {chat_history}
 """
         try:
-            res = llm.invoke(f"{system_prompt}\nUser Message: {wrapped_user_message}")
+            # Feature 23 Phase 1
+            with tracked_llm_call("chat.conversational", llm=llm, tenant_id=tenant_id):
+                res = llm.invoke(f"{system_prompt}\nUser Message: {wrapped_user_message}")
             response_text = res.content
         except Exception as e:
             logger.error("Chat path execution failed: %s", e)

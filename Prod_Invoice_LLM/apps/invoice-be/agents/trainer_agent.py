@@ -2,6 +2,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
+from telemetry import tracked_llm_call
 from utils.llm import get_llm
 from langchain_core.messages import SystemMessage, HumanMessage
 from agents.extraction_agent import run_extraction_agent
@@ -72,6 +73,7 @@ def refine_constraints(
     current_constraints: List[str],
     scope: str = "new_vendor",
     global_constraints: Optional[List[str]] = None,
+    tenant_id: str = "",
 ) -> List[str]:
     """
     Uses LLM to refine the list of rules/constraints based on user conversational corrections.
@@ -79,6 +81,9 @@ def refine_constraints(
     ``scope`` and ``global_constraints`` make the refinement scope-aware (Task 10.5): a
     Global session keeps rules vendor-agnostic, while a vendor session receives the tenant's
     Global rules as read-only context so it avoids duplicating them.
+
+    ``tenant_id`` is Feature 23 Phase 1 telemetry attribution only -- it never reaches
+    the prompt and cannot change the refined constraints.
 
     Raises ``ConstraintRefinementError`` (Gap 212) if the LLM call fails or returns a
     response without a usable ``constraints`` field. Both are fail-closed: nothing is
@@ -95,7 +100,11 @@ def refine_constraints(
             SystemMessage(content=system_prompt),
             HumanMessage(content=prompt)
         ]
-        result = structured_llm.invoke(messages)
+        # Feature 23 Phase 1: the EVOLVE correction loop's own model call.
+        with tracked_llm_call(
+            "trainer.refine_constraints", llm=llm, tenant_id=tenant_id, scope=scope
+        ):
+            result = structured_llm.invoke(messages)
     except Exception as e:
         # Network blip, provider outage, schema-validation failure inside the
         # structured-output wrapper -- anything that means we never got a refined list.
@@ -136,7 +145,11 @@ def run_trainer_agent(
     existing constraints -- the router turns this into a user-facing "please retry".
     """
     updated_constraints = refine_constraints(
-        user_message, current_constraints, scope=scope, global_constraints=global_constraints
+        user_message,
+        current_constraints,
+        scope=scope,
+        global_constraints=global_constraints,
+        tenant_id=str(tenant_id or ""),
     )
     rules = {"constraints": updated_constraints}
 

@@ -1,0 +1,106 @@
+// Feature 23 (AI Control Tower) — Phase 2: nightly LLM cost rollup, by agent / day / tenant.
+//
+// Source: the `llm_agent_call` customEvents rows Phase 1 emits (one per real model
+// round-trip, from `telemetry.py::track_agent_call`). No new storage — this is a
+// query over telemetry that already lands in `appi-invoicellm-dev`.
+//
+// WHERE TO RUN IT
+//   Application Insights (`appi-invoicellm-dev`, resource group `rg-invoice-llm-dev`,
+//   subscription 2ae37d8b-3189-474c-9508-4b3d7ceec4dd) → Logs. The same text is used
+//   by the cost tabs of `ai_control_tower.workbook.json` in this folder.
+//   To schedule it nightly, attach it to a Log Analytics saved search / scheduled
+//   query rule; nothing here creates that rule — see the note at the bottom.
+//
+// ---------------------------------------------------------------------------
+// RATES — READ THIS BEFORE TRUSTING A NUMBER OUT OF THIS QUERY
+// ---------------------------------------------------------------------------
+// Azure OpenAI prices are published per 1,000,000 tokens and DO change. The
+// datatable below is the rate card as understood when this query was written
+// (2026-08-21) for the deployment this application actually uses
+// (`gpt-5-mini`, the value of AZURE_OPENAI_DEPLOYMENT_NAME). It is a hardcoded
+// assumption, deliberately in one editable block at the top rather than
+// scattered through the query, and it must be re-checked against
+// https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/
+// for the deployment's own region before any figure from this rollup is used as
+// a real cost. A row whose model is not in this table is reported with a NULL
+// cost and a non-zero token count rather than silently priced at zero — an
+// unpriced model must show up as "unpriced", never as "free".
+//
+// Cached input tokens are not modelled: the telemetry carries `tokens_in` as a
+// single number, and the Azure discount for cache-read input tokens would need
+// that split reported separately. Cost from this query is therefore an upper
+// bound on input spend, not an exact invoice reconciliation.
+// ---------------------------------------------------------------------------
+let lookback = 1d;                       // nightly window; widen for a trend query
+let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)
+[
+    "gpt-5-mini",   0.25,  2.00,
+    "gpt-5",        1.25, 10.00,
+    "gpt-4o-mini",  0.15,  0.60,
+    "gpt-4o",       2.50, 10.00,
+    // Local dev / test doubles. Priced at zero because they genuinely are, and
+    // named here so they are distinguishable from "model we have no rate for".
+    "mock",         0.0,   0.0
+];
+customEvents
+| where timestamp > ago(lookback)
+| where name == "llm_agent_call"
+| extend
+    agent_name = tostring(customDimensions["agent_name"]),
+    model      = tostring(customDimensions["model"]),
+    tenant_id  = tostring(customDimensions["tenant_id"]),
+    status     = tostring(customDimensions["status"]),
+    tokens_in  = toint(customDimensions["tokens_in"]),
+    tokens_out = toint(customDimensions["tokens_out"]),
+    latency_ms = todouble(customDimensions["latency_ms"])
+// Failed calls are kept, not filtered: a call that errored after the provider
+// had already read the prompt still cost input tokens, and a spike in errored
+// spend is exactly the kind of thing this rollup exists to make visible.
+| summarize
+    calls          = count(),
+    errors         = countif(status == "error"),
+    tokens_in      = sum(tokens_in),
+    tokens_out     = sum(tokens_out),
+    p50_latency_ms = percentile(latency_ms, 50),
+    p95_latency_ms = percentile(latency_ms, 95)
+  by day = startofday(timestamp), agent_name, model, tenant_id
+| lookup kind=leftouter rates on model
+| extend
+    cost_in_usd  = iff(isnull(usd_per_1m_in),  real(null), tokens_in  * usd_per_1m_in  / 1000000.0),
+    cost_out_usd = iff(isnull(usd_per_1m_out), real(null), tokens_out * usd_per_1m_out / 1000000.0)
+| extend cost_usd = cost_in_usd + cost_out_usd
+| extend unpriced_model = isnull(usd_per_1m_in)
+| project
+    day, agent_name, model, tenant_id,
+    calls, errors,
+    tokens_in, tokens_out,
+    cost_in_usd, cost_out_usd, cost_usd,
+    unpriced_model,
+    p50_latency_ms, p95_latency_ms
+| order by day desc, cost_usd desc, calls desc
+//
+// ---------------------------------------------------------------------------
+// VARIANTS
+// ---------------------------------------------------------------------------
+// Day-over-day total (what the workbook's cost trend chart renders) — replace the
+// `summarize ... by day, agent_name, model, tenant_id` above with:
+//     | summarize cost_usd = sum(cost_usd) by day = startofday(timestamp), agent_name
+//     | render timechart
+//
+// Eval spend on its own: the Phase 3 quality job's judge calls are emitted under
+// `eval.*` agent names by `services/agent_eval.py`, through the same wrapper, so
+// they are inside the totals above by design. To separate them:
+//     | extend spend_kind = iff(agent_name startswith "eval.", "evaluation", "product")
+//
+// ---------------------------------------------------------------------------
+// NOT DONE HERE — founder action required
+// ---------------------------------------------------------------------------
+// 1. `APPLICATIONINSIGHTS_CONNECTION_STRING` must exist as a Container App secret
+//    of that exact name on `invoice-be` and `queue-worker`. Until it does, Phase 1
+//    emits to stdout only and `customEvents` is empty — this query will return
+//    zero rows against a live workspace, which is a configuration state, not a
+//    zero-cost month. (`infra/modules/compute/*.bicep` already declare the env var
+//    and secretRef; nothing in this repo sets the value.)
+// 2. Nothing here creates a scheduled query rule / saved search. Running this
+//    "nightly" today means a human (or the workbook) running it. Wiring it to a
+//    Log Analytics scheduled rule with an action group is a separate infra change.

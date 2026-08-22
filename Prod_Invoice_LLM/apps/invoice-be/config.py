@@ -211,6 +211,23 @@ class Settings(BaseSettings):
     # X-Azure-FDID is only honoured when it matches this value exactly.
     FRONT_DOOR_ID: str = ""
 
+    # Feature 21 Phase 2: routes chat through the tool-calling orchestrator
+    # (`agents/sage_orchestrator.py`) instead of `run_query_agent()`'s
+    # classify-once-and-fork pipeline.
+    #
+    # Default False, and False is the only value any tenant runs today. This is
+    # the same fail-closed reasoning as ALLOW_MOCK_AUTH above, for a sharper
+    # reason: the original Feature 21 was reverted in full (commit 5a7bf77)
+    # after a live-confirmed regression, so the replacement architecture does
+    # not get to reach a tenant on the strength of a passing unit suite. Phase 3
+    # -- a regression case per named historical incident, plus live tenant
+    # verification -- is the gate on flipping this, not this flag's existence.
+    #
+    # With it off, `run_query_agent()` is byte-for-byte the pipeline it was
+    # before the orchestrator existed; `tests/test_agentic_sage.py` proves that
+    # against a golden recorded from the pre-Phase-2 code.
+    ENABLE_AGENTIC_SAGE: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache()

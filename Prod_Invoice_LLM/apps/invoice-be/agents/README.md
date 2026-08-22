@@ -113,11 +113,49 @@ export LANGCHAIN_API_KEY="ls__your_key_here"
 export LANGCHAIN_PROJECT="invoice-llm-be"
 ```
 
-### 3.2 Evaluation Metrics (Ragas)
-The RAG pipeline is evaluated against three core metrics using the **Ragas** framework:
-1. **Context Precision**: Measures whether the retrieved chunks are relevant to the query.
-2. **Faithfulness**: Verifies that the Query Agent's response contains only information present in the retrieved chunks.
-3. **Answer Relevance**: Checks if the response directly addresses the user's question without side-tracking.
+### 3.2 Evaluation Metrics
+Corrected 2026-08-21: this section previously said the pipeline "is evaluated ... using the **Ragas**
+framework". It was not — `ragas` has never been a dependency of this backend and nothing implemented
+these metrics. Feature 23 Phase 3 implements them, following Ragas' *definitions* but not its
+package (see `services/agent_eval.py`'s module docstring for why: Apache-2.0 licensing is fine, the
+`datasets`/`pyarrow`/`pandas` transitive weight in a `uv sync --frozen` production image is not).
+
+1. **Faithfulness** — verifies the response contains only information present in the retrieved
+   chunks/tool results. Implemented exactly as Ragas defines it: decompose the answer into atomic
+   claims, judge each against the context, score = supported / total.
+   (`services/agent_eval.py::score_faithfulness`)
+2. **Answer Relevance** — checks the response addresses the question without side-tracking. Ragas'
+   definition, judged directly rather than via Ragas' generate-questions-and-embed estimator; a
+   number from here is not comparable to a published Ragas benchmark figure.
+   (`services/agent_eval.py::score_relevance`)
+3. **Accuracy** — agreement with the golden set's reference answer.
+   (`services/agent_eval.py::score_accuracy`)
+4. **Context Precision** — Ragas' third metric, grading the *retriever's* ranking rather than the
+   answer. Still **not implemented**; worth adding when retrieval tuning is the subject.
+
+Added 2026-08-21, and **not** Ragas metrics — Feature 23's own "which stage of the pipeline is
+broken" decomposition, three different mechanisms rather than one check run three times. All three
+are recorded and trended; none of them feeds the pass/fail decision:
+
+5. **Context** — did retrieval fetch the right rows at all. Deterministic F1 of fetched invoice ids
+   against the golden case's known-correct set; no LLM judge is involved and none is needed. An
+   expected set of `()` means "the correct retrieval is nothing" and is scored, not skipped.
+   (`services/agent_eval.py::score_context`)
+6. **Orchestration** — mechanical groundedness. Every figure in the answer must appear in a tool
+   result or be one arithmetic operation over figures that do; score = traceable / total. Also no
+   judge, so it costs nothing and cannot vary between runs. Biased toward false passes, not false
+   failures — see the function's docstring.
+   (`services/agent_eval.py::score_orchestration`)
+7. **Persona** — domain reasoning (tax components, RCM, status semantics, category judgement). The
+   one component that genuinely needs judgement. Returns "not applicable" for any turn that required
+   no domain judgement, so it is NULL on most turns; **there is no dedicated domain-knowledge golden
+   set in this repo**, so it is scored against the general sample with a persona rubric and its
+   denominator must be read alongside its level.
+   (`services/agent_eval.py::score_persona`)
+
+Scores are persisted per run to the `agent_eval_run` table and mirrored as an `agent_eval_run`
+Application Insights custom event, so quality is a trend over time rather than "the last run passed".
+Runner: `scripts/run_agent_eval.py`; sample: `tests/agent_eval_golden_sample.py`.
 
 ### 3.3 System Guardrails
 * **Prompt Injection Shield**: Validates user prompts before feeding them into the agent loop to prevent system instruction overrides.

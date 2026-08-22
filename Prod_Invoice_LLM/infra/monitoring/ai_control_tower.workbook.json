@@ -1,0 +1,414 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## AI Control Tower (Feature 23)\n\nCost, quality and health for every AI call this application makes, **on one shared time axis** —\na cost spike, a quality drop and an alert firing on the same day line up vertically, they are not\nthree things you have to notice separately. Every chart below is day-over-day, not a point-in-time\nsnapshot.\n\n**Data sources, and what is live today (checked 2026-08-21):**\n\n| Section | Source | Live now? |\n|---|---|---|\n| 1. Cost | `customEvents` / `llm_agent_call` (Feature 23 Phase 1) | **No — empty.** `customEvents` has 0 rows over the last 90 days because `APPLICATIONINSIGHTS_CONNECTION_STRING` is not yet set as a Container App secret on `invoice-be` / `queue-worker`. Phase 1 emits to stdout only until it is. |\n| 2. Quality | `customEvents` / `agent_eval_run` (Feature 23 Phase 3) | **No — empty**, same reason, plus the nightly eval job is not scheduled yet. The durable copy of these rows is the Postgres `agent_eval_run` table, which a workbook cannot query (workbook data sources are Logs / ARG / ARM / ADX — not Postgres); `scripts/run_agent_eval.py` therefore writes the row *and* emits this event. |\n| 2. Cost by tool | `customEvents` / `llm_agent_call`, `sage.*` agent names only | **No — empty**, and doubly so: `ENABLE_AGENTIC_SAGE` is off, so no `sage.*` event will appear even after the connection string is set. |\n| 3. Latency | `customEvents` / `llm_agent_call` | **No — empty**, same connection-string reason. |\n| 5. Component quality | `customEvents` / `agent_eval_run`, `context_score` / `orchestration_score` / `persona_score` | **No — empty.** The columns and the scorers exist (`services/agent_eval.py`, migration `c4a91e77b208`); nothing has run against a live tenant. |\n| 6. Online signals | `customEvents` / `online_eval_signal` | **No — nothing emits them yet.** `services/online_eval_signals.py` computes all five over Postgres and `emit_online_signals()` mirrors them as events, but no scheduled job calls it. Empty here means \"nothing has run\", **not** \"no problems found\". |\n| 7. Golden-bank coverage | Static figure from `tests/golden_bank/golden_bank.json` | **Yes, but not live.** A workbook cannot read a repo file; the numbers in that section are from a real run and are dated. |\n| 8. Health | Azure Resource Graph `alertsmanagementresources` | **Yes.** Verified live against this subscription. |\n\n**Cost rates are an assumption.** `$/1M tokens` per model is hardcoded in the two cost queries below\n(gpt-5-mini $0.25 in / $2.00 out as of 2026-08-21) and must be re-checked against the Azure OpenAI\npricing page for this deployment's region before any figure here is treated as real money. A model\nwith no rate shows a blank cost, never a zero.\n"
+      },
+      "name": "header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "time-range",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 1209600000
+                },
+                {
+                  "durationMs": 2592000000
+                },
+                {
+                  "durationMs": 7776000000
+                }
+              ],
+              "allowCustom": true
+            },
+            "value": {
+              "durationMs": 1209600000
+            }
+          },
+          {
+            "id": "subscription",
+            "version": "KqlParameterItem/1.0",
+            "name": "Subscription",
+            "label": "Subscription",
+            "type": 6,
+            "isRequired": true,
+            "value": "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "includeAll": false
+            }
+          },
+          {
+            "id": "tenant",
+            "version": "KqlParameterItem/1.0",
+            "name": "Tenant",
+            "label": "Tenant",
+            "type": 2,
+            "isRequired": true,
+            "value": "all",
+            "query": "customEvents\n| where name in ('llm_agent_call', 'agent_eval_run')\n| extend tenant_id = tostring(customDimensions['tenant_id'])\n| where isnotempty(tenant_id)\n| distinct tenant_id\n| order by tenant_id asc",
+            "queryType": 0,
+            "resourceType": "microsoft.insights/components",
+            "crossComponentResources": [
+              "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+            ],
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "showDefault": false
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      },
+      "name": "shared-parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 1. Cost — day over day\n\nUSD per day per agent, from real token counts. `eval.*` agents are this feature's own judge calls; they are inside the totals by design and split out in the table below."
+      },
+      "name": "cost-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)[\"gpt-5-mini\",0.25,2.00,\"gpt-5\",1.25,10.00,\"gpt-4o-mini\",0.15,0.60,\"gpt-4o\",2.50,10.00,\"mock\",0.0,0.0];\ncustomEvents\n| where name == 'llm_agent_call'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         model = tostring(customDimensions['model']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         tokens_in = toint(customDimensions['tokens_in']),\n         tokens_out = toint(customDimensions['tokens_out'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}'\n| lookup kind=leftouter rates on model\n| extend cost_usd = (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0\n| summarize cost_usd = sum(cost_usd) by bin(timestamp, 1d), agent_name\n| render timechart",
+        "size": 0,
+        "title": "Model spend per day, by agent (USD)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "visualization": "timechart",
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "cost-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)[\"gpt-5-mini\",0.25,2.00,\"gpt-5\",1.25,10.00,\"gpt-4o-mini\",0.15,0.60,\"gpt-4o\",2.50,10.00,\"mock\",0.0,0.0];\ncustomEvents\n| where name == 'llm_agent_call'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         model = tostring(customDimensions['model']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         status = tostring(customDimensions['status']),\n         tokens_in = toint(customDimensions['tokens_in']),\n         tokens_out = toint(customDimensions['tokens_out']),\n         latency_ms = todouble(customDimensions['latency_ms'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}'\n| summarize calls = count(), errors = countif(status == 'error'),\n            tokens_in = sum(tokens_in), tokens_out = sum(tokens_out),\n            p95_latency_ms = percentile(latency_ms, 95)\n  by day = startofday(timestamp), agent_name, model\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null),\n         (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| extend spend_kind = iff(agent_name startswith 'eval.', 'evaluation', 'product')\n| project day, spend_kind, agent_name, model, calls, errors, tokens_in, tokens_out, cost_usd, p95_latency_ms\n| order by day desc, cost_usd desc",
+        "size": 0,
+        "title": "Spend, calls, errors and p95 latency by day / agent / model",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "cost-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 2. Cost by tool — where a SAGE turn's tokens actually go\n\nThe full breakdown and its caveats live in `infra/monitoring/llm_cost_by_tool.kql`. The one thing to know before reading these two panels:\n\n**`get_full_record` has no event of its own, and that is not an instrumentation gap.** It makes no LLM call — it reads the ORM row and `get_all_invoice_chunks()`, and the planner puts every chunk it returns into the *next* `sage.synthesis` prompt. So the full-chunk dump's cost is not missing from telemetry, it is inside `sage.synthesis`'s `tokens_in` and nowhere else. `synthesis_share_pct` in the second panel is therefore the answer to \"what does the chunk dump cost relative to the rest of the turn\" — by inference from prompt size rather than by direct measurement. The direct measurement exists only offline, in `scripts/run_agent_eval.py`'s `tool_calls[].chunk_tokens`, where the `large_invoice_full_detail` / `small_invoice_full_detail` pair isolates it exactly (same question, same tool path, 11 indexed pages against 1).\n\nThe five instrumented SAGE call sites, read off the code rather than assumed: `sage.planner` and `sage.synthesis` (`agents/sage_orchestrator.py`), `sage.identify`, `sage.aggregate` and `sage.search` (`agents/query_tools.py`).\n"
+      },
+      "name": "cost-by-tool-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)[\"gpt-5-mini\",0.25,2.00,\"gpt-5\",1.25,10.00,\"gpt-4o-mini\",0.15,0.60,\"gpt-4o\",2.50,10.00,\"mock\",0.0,0.0];\nlet calls = customEvents\n| where name == 'llm_agent_call'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         model = tostring(customDimensions['model']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         request_id = tostring(customDimensions['request_id']),\n         status = tostring(customDimensions['status']),\n         tokens_in = toint(customDimensions['tokens_in']),\n         tokens_out = toint(customDimensions['tokens_out']),\n         latency_ms = todouble(customDimensions['latency_ms'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}'\n| lookup kind=leftouter rates on model\n| extend cost_usd = (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0;\nlet by_agent = calls\n| where agent_name startswith 'sage.'\n| summarize calls = count(), errors = countif(status == 'error'),\n            tokens_in = sum(tokens_in), tokens_out = sum(tokens_out),\n            cost_usd = sum(cost_usd), p95_latency_ms = percentile(latency_ms, 95)\n  by day = startofday(timestamp), agent_name;\nlet day_totals = by_agent\n| summarize sage_tokens_in = sum(tokens_in), sage_cost_usd = sum(cost_usd) by day;\nby_agent\n| join kind=leftouter day_totals on day\n| extend share_of_sage_tokens_pct = round(100.0 * tokens_in / sage_tokens_in, 1),\n         share_of_sage_cost_pct = round(100.0 * cost_usd / sage_cost_usd, 1),\n         avg_tokens_in_per_call = round(1.0 * tokens_in / calls, 0)\n| project day, agent_name, calls, errors, tokens_in, avg_tokens_in_per_call,\n          share_of_sage_tokens_pct, tokens_out, cost_usd, share_of_sage_cost_pct, p95_latency_ms\n| order by day desc, cost_usd desc",
+        "size": 0,
+        "title": "Cost and tokens per SAGE tool-level agent, per day",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "cost-by-tool-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)[\"gpt-5-mini\",0.25,2.00,\"gpt-5\",1.25,10.00,\"gpt-4o-mini\",0.15,0.60,\"gpt-4o\",2.50,10.00,\"mock\",0.0,0.0];\nlet calls = customEvents\n| where name == 'llm_agent_call'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         model = tostring(customDimensions['model']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         request_id = tostring(customDimensions['request_id']),\n         status = tostring(customDimensions['status']),\n         tokens_in = toint(customDimensions['tokens_in']),\n         tokens_out = toint(customDimensions['tokens_out']),\n         latency_ms = todouble(customDimensions['latency_ms'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}'\n| lookup kind=leftouter rates on model\n| extend cost_usd = (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0;\ncalls\n| where agent_name startswith 'sage.'\n| where isnotempty(request_id)\n| summarize turn_calls = count(), turn_tokens_in = sum(tokens_in),\n            turn_tokens_out = sum(tokens_out), turn_cost_usd = sum(cost_usd),\n            synthesis_tokens_in = sumif(tokens_in, agent_name == 'sage.synthesis'),\n            planner_tokens_in = sumif(tokens_in, agent_name == 'sage.planner'),\n            tool_tokens_in = sumif(tokens_in, agent_name in ('sage.identify','sage.aggregate','sage.search')),\n            tools_used = make_set_if(agent_name, agent_name in ('sage.identify','sage.aggregate','sage.search'))\n  by request_id, day = startofday(timestamp)\n| extend synthesis_share_pct = round(100.0 * synthesis_tokens_in / turn_tokens_in, 1),\n         planner_share_pct = round(100.0 * planner_tokens_in / turn_tokens_in, 1),\n         tool_share_pct = round(100.0 * tool_tokens_in / turn_tokens_in, 1)\n| project day, request_id, turn_calls, tools_used, turn_tokens_in, synthesis_tokens_in,\n          synthesis_share_pct, planner_share_pct, tool_share_pct, turn_cost_usd\n| order by synthesis_tokens_in desc",
+        "size": 0,
+        "title": "One turn's composition — synthesis share is the chunk dump's share",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "cost-by-tool-turn-composition"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 3. Latency — day over day, its own panel\n\nMedian **and** p95 per agent per day, as separate series. Deliberately not folded into the cost table: a p95 column beside a cost column reads as a footnote, and latency regression is its own failure mode with its own history here — Gap 278 was two ~177s chat turns with **zero** 4xx/5xx, which no error-rate chart and no cost chart would ever have shown. Both percentiles are plotted because the gap between them is the signal: a median that holds while the p95 climbs is a tail problem, and a tail problem is what a user reports as \"chat is broken sometimes\".\n\nScope note: this measures **one LLM round-trip**, not one chat turn. A turn is several calls plus queue wait, and no per-turn latency is recorded anywhere in the product (see section 6's `slow_turn_rate` caveat). The only real per-turn figure today is the offline harness's, in the Postgres `agent_eval_run.latency_ms` column and on the quality event.\n"
+      },
+      "name": "latency-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let latencies = customEvents\n| where name == 'llm_agent_call'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         status = tostring(customDimensions['status']),\n         latency_ms = todouble(customDimensions['latency_ms'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nlet binned = latencies\n| summarize p50 = percentile(latency_ms, 50), p95 = percentile(latency_ms, 95)\n  by bin(timestamp, 1d), agent_name;\nunion\n  (binned | project timestamp, series = strcat(agent_name, ' p50'), latency_ms = p50),\n  (binned | project timestamp, series = strcat(agent_name, ' p95'), latency_ms = p95)\n| render timechart",
+        "size": 0,
+        "title": "Median and p95 latency per day, by agent (ms)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ],
+        "visualization": "timechart"
+      },
+      "name": "latency-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let latencies = customEvents\n| where name == 'llm_agent_call'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         status = tostring(customDimensions['status']),\n         latency_ms = todouble(customDimensions['latency_ms'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nlatencies\n| summarize calls = count(), errors = countif(status == 'error'),\n            p50_ms = percentile(latency_ms, 50), p95_ms = percentile(latency_ms, 95),\n            p99_ms = percentile(latency_ms, 99), max_ms = max(latency_ms)\n  by day = startofday(timestamp), agent_name\n| extend tail_over_median = round(p95_ms / p50_ms, 1)\n| project day, agent_name, calls, errors, p50_ms, p95_ms, p99_ms, max_ms, tail_over_median\n| order by day desc, p95_ms desc",
+        "size": 0,
+        "title": "Latency percentiles per day / agent, worst tail first",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "latency-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 4. Quality — day over day\n\nThe golden sample re-asked on a schedule and graded on faithfulness / relevance / accuracy (`services/agent_eval.py`). A drop here on the same day as a cost spike above is the pattern this workbook exists to make visible."
+      },
+      "name": "quality-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where name == 'agent_eval_run'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         passed = toint(customDimensions['pass']),\n         faithfulness = todouble(customDimensions['faithfulness_score']),\n         relevance = todouble(customDimensions['relevance_score']),\n         accuracy = todouble(customDimensions['accuracy_score'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}'\n| summarize pass_rate = avg(passed), faithfulness = avg(faithfulness),\n            relevance = avg(relevance), accuracy = avg(accuracy)\n  by bin(timestamp, 1d), agent_name\n| render timechart",
+        "size": 0,
+        "title": "Pass rate and mean scores per day, by agent",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "visualization": "timechart",
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "quality-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where name == 'agent_eval_run'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         case_id = tostring(customDimensions['case_id']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         passed = toint(customDimensions['pass']),\n         faithfulness = todouble(customDimensions['faithfulness_score']),\n         relevance = todouble(customDimensions['relevance_score']),\n         accuracy = todouble(customDimensions['accuracy_score']),\n         llm_call_count = toint(customDimensions['llm_call_count']),\n         latency_ms = todouble(customDimensions['latency_ms'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}'\n| summarize arg_max(timestamp, passed, faithfulness, relevance, accuracy, llm_call_count, latency_ms)\n  by day = startofday(timestamp), agent_name, case_id\n| project day, agent_name, case_id, passed, faithfulness, relevance, accuracy, llm_call_count, latency_ms\n| order by day desc, passed asc, faithfulness asc",
+        "size": 0,
+        "title": "Latest result per case per day (worst first)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "quality-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 5. Component-level quality — which stage of the pipeline is wrong\n\nThree separate trend lines, never one average — the mean of a retrieval score and a tax-reasoning score is not a quantity. Section 4 above says *that* an answer was bad; this section says *which part to fix*:\n\n| Component | What it isolates | How it is scored |\n|---|---|---|\n| **context** | Did retrieval fetch the right underlying rows, independent of how the model reasoned over them | **Deterministic.** F1 of fetched invoice ids against the golden case's known-correct set. No LLM judge, no judge variance, no marginal cost. A case whose correct retrieval is *nothing* scores 1.0 for fetching nothing — Gap 224's shape, and the most diagnostic case in the set. |\n| **orchestration** | Given whatever was fetched, did the answer stay inside it | **Mechanical.** Every figure in the answer must appear in a tool result, or be one arithmetic operation over two of them (a `compute()` output). Score = traceable / total. Also no judge. Small bare integers (<100, no decimal) are skipped rather than graded, and the skipped count is reported. |\n| **persona** | Given correct data and correct instruction-following, was the *domain* reasoning right — tax components, RCM, status semantics, category judgement | **LLM-judged.** The one component that genuinely needs judgement rather than checking. |\n\n**Read `persona_scored_turns` before reading `persona`.** There is no dedicated domain-knowledge golden set in this repo — checked, not assumed: the 9-case sample and the 87-case seeded bank are both general tenant-regression questions with no domain-reasoning axis. Rather than block the component on authoring a new bank, the judge scores the general sample against a persona-focused rubric and returns *not applicable* for every turn that required no domain judgement — which is most of them. So the persona line is a signal about a small, self-selected subset, not a coverage measure of domain competence. Writing that bank is still outstanding.\n\nNone of the three feeds the pass/fail decision. Folding them in would redefine what a pass means halfway through the series, which is the one thing a trend must not do.\n"
+      },
+      "name": "component-quality-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let evals = customEvents\n| where name == 'agent_eval_run'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         case_id = tostring(customDimensions['case_id']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         context_score = todouble(customDimensions['context_score']),\n         orchestration_score = todouble(customDimensions['orchestration_score']),\n         persona_score = todouble(customDimensions['persona_score'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nlet binned = evals\n| summarize context = avg(context_score), orchestration = avg(orchestration_score),\n            persona = avg(persona_score)\n  by bin(timestamp, 1d), agent_name;\nunion\n  (binned | project timestamp, component = strcat(agent_name, ' context'), score = context),\n  (binned | project timestamp, component = strcat(agent_name, ' orchestration'), score = orchestration),\n  (binned | project timestamp, component = strcat(agent_name, ' persona'), score = persona)\n| where isnotnull(score)\n| render timechart",
+        "size": 0,
+        "title": "Context / orchestration / persona per day, as three separate lines",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ],
+        "visualization": "timechart"
+      },
+      "name": "component-quality-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let evals = customEvents\n| where name == 'agent_eval_run'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         case_id = tostring(customDimensions['case_id']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         context_score = todouble(customDimensions['context_score']),\n         orchestration_score = todouble(customDimensions['orchestration_score']),\n         persona_score = todouble(customDimensions['persona_score'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nevals\n| summarize turns = count(),\n            context = avg(context_score), context_scored_turns = countif(isnotnull(context_score)),\n            orchestration = avg(orchestration_score), orchestration_scored_turns = countif(isnotnull(orchestration_score)),\n            persona = avg(persona_score), persona_scored_turns = countif(isnotnull(persona_score))\n  by day = startofday(timestamp), agent_name\n| project day, agent_name, turns, context, context_scored_turns, orchestration,\n          orchestration_scored_turns, persona, persona_scored_turns\n| order by day desc, context asc",
+        "size": 0,
+        "title": "Component means with their denominators (a NULL score is not a zero)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "component-quality-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let evals = customEvents\n| where name == 'agent_eval_run'\n| extend agent_name = tostring(customDimensions['agent_name']),\n         case_id = tostring(customDimensions['case_id']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         context_score = todouble(customDimensions['context_score']),\n         orchestration_score = todouble(customDimensions['orchestration_score']),\n         persona_score = todouble(customDimensions['persona_score'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nevals\n| summarize arg_max(timestamp, context_score, orchestration_score, persona_score)\n  by day = startofday(timestamp), agent_name, case_id\n| extend worst = min_of(coalesce(context_score, 1.0), coalesce(orchestration_score, 1.0), coalesce(persona_score, 1.0))\n| extend diagnosis = case(\n    context_score < 0.8, 'context builder fetched the wrong rows',\n    orchestration_score < 0.8, 'right data, an untraceable figure in the answer',\n    persona_score < 0.8, 'right data, correctly cited, wrong domain reasoning',\n    'no component below floor')\n| project day, agent_name, case_id, context_score, orchestration_score, persona_score, worst, diagnosis\n| order by day desc, worst asc",
+        "size": 0,
+        "title": "Worst component per case per day — the diagnosis, not just the score",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "component-quality-worst-cases"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 6. Online signals — live traffic, no ground truth\n\nThe five shapes `services/online_eval_signals.py` computes over `chat_message` / `chat_feedback` / `agent_eval_run`, mirrored here as `online_eval_signal` custom events by `emit_online_signals()` because a workbook cannot query Postgres. Every one of the five is a shape this repo actually hit, not a hypothetical.\n\n**These signals are not equally solid, and the panel says so on every row** — `confidence` travels on the event itself, it is not a footnote in a doc somewhere:\n\n| Signal | Confidence | What it really measures | Default alert |\n|---|---|---|---|\n| `zero_result_rate` | **measured** | `chat_message.content` containing the product's own `NO_RECORDS_FOUND` constant. Gap 224's *false-confident-zero* sub-shape (a confident `USD 0.00` with no \"no records found\" anywhere) is counted separately — rolling the two together would make a fleet of correct refusals look like a fleet of fabrications. | 20% |\n| `thumbs_down_clustering` | **measured** | `chat_feedback` votes, clustered by day/session/reason/tenant. The clusters are the signal; the rate is only context for them, because `ChatFeedback` records what someone chose to vote on, not overall quality. | 20% rate **or** any cluster ≥ 3 |\n| `slow_turn_rate` | **proxy** | **`ChatMessage` has no duration column and there is no per-turn timer anywhere in the product.** This is the assistant row's `created_at` minus its own user row's — a row-timestamp delta, not a measurement. Under Gap 280's queue path that delta is genuinely end-to-end (user row written at enqueue, assistant row after the agent returns, so it includes queue wait, which is what the user experiences), but it carries clock-skew and retry caveats, and negative deltas are discarded rather than clamped. An authoritative number needs a latency column on `ChatMessage` or the Phase 1 telemetry event. | 5% over 45s |\n| `budget_exhaustion_rate` | **offline-only** | **No live turn persists a `stop_reason`.** `agents/sage_orchestrator.py` computes `tool_call_budget_exhausted` / `clarification_requested` / `planner_step_budget_exhausted` and `run_agentic_sage()` returns them in metadata, but `ChatMessage` has no column for them and nothing writes them anywhere durable. The only persisted copy in the repo is the free-text `agent_eval_run.notes` written by `scripts/run_agent_eval.py` — so this measures the **eval harness**, not production, and it is parsed out of prose rather than read from a column. Closing it needs a `stop_reason` column on `ChatMessage`, or the Trace-level capture. | 10% |\n| `clarification_rate` | **heuristic** | `ask_clarifying_question()` returns the question verbatim as the turn's answer with no marker of any kind (`sage_orchestrator._clarify_node`), so there is nothing in the row to match on but the wording. Additionally the SAGE path that produces most clarifications is behind `ENABLE_AGENTIC_SAGE`, which is off — a near-zero live rate today is a configuration fact, not a quality result. | 25% |\n\nTwo reading rules built into the module and preserved here: **no signal alerts below 20 observations** (1-of-1 is 100%, the commonest way a quality dashboard cries wolf), and a **blank `value` always means \"nothing to measure\", never 0.0** — an empty window must not read as a healthy one.\n\n**Nothing emits these events yet.** No scheduled job, ACA cron or request path calls `emit_online_signals()`. An empty panel here means \"nothing has run\", not \"no problems found\".\n"
+      },
+      "name": "online-signals-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let signals = customEvents\n| where name == 'online_eval_signal'\n| extend signal_name = tostring(customDimensions['signal_name']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         confidence = tostring(customDimensions['confidence']),\n         value = todouble(customDimensions['value']),\n         threshold = todouble(customDimensions['threshold']),\n         numerator = toint(customDimensions['numerator']),\n         denominator = toint(customDimensions['denominator']),\n         breached = toint(customDimensions['breached']),\n         false_confident_zero_turns = toint(customDimensions['false_confident_zero_turns']),\n         cluster_count = toint(customDimensions['cluster_count']),\n         p50_seconds = todouble(customDimensions['p50_seconds']),\n         p95_seconds = todouble(customDimensions['p95_seconds'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nsignals\n| where isnotnull(value)\n| summarize rate = avg(value) by bin(timestamp, 1d), signal_name\n| render timechart",
+        "size": 0,
+        "title": "Signal rates per day (a gap in a line is 'not measured', not zero)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ],
+        "visualization": "timechart"
+      },
+      "name": "online-signals-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let signals = customEvents\n| where name == 'online_eval_signal'\n| extend signal_name = tostring(customDimensions['signal_name']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         confidence = tostring(customDimensions['confidence']),\n         value = todouble(customDimensions['value']),\n         threshold = todouble(customDimensions['threshold']),\n         numerator = toint(customDimensions['numerator']),\n         denominator = toint(customDimensions['denominator']),\n         breached = toint(customDimensions['breached']),\n         false_confident_zero_turns = toint(customDimensions['false_confident_zero_turns']),\n         cluster_count = toint(customDimensions['cluster_count']),\n         p50_seconds = todouble(customDimensions['p50_seconds']),\n         p95_seconds = todouble(customDimensions['p95_seconds'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nsignals\n| summarize arg_max(timestamp, value, confidence, threshold, numerator, denominator,\n                    breached, false_confident_zero_turns, cluster_count, p50_seconds, p95_seconds)\n  by signal_name\n| extend trustworthy_sample = denominator >= 20\n| project timestamp, signal_name, confidence, value, threshold, breached,\n          numerator, denominator, trustworthy_sample,\n          false_confident_zero_turns, cluster_count, p50_seconds, p95_seconds\n| order by breached desc, signal_name asc",
+        "size": 0,
+        "title": "Latest reading per signal, with its confidence and its denominator",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "online-signals-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let signals = customEvents\n| where name == 'online_eval_signal'\n| extend signal_name = tostring(customDimensions['signal_name']),\n         tenant_id = tostring(customDimensions['tenant_id']),\n         confidence = tostring(customDimensions['confidence']),\n         value = todouble(customDimensions['value']),\n         threshold = todouble(customDimensions['threshold']),\n         numerator = toint(customDimensions['numerator']),\n         denominator = toint(customDimensions['denominator']),\n         breached = toint(customDimensions['breached']),\n         false_confident_zero_turns = toint(customDimensions['false_confident_zero_turns']),\n         cluster_count = toint(customDimensions['cluster_count']),\n         p50_seconds = todouble(customDimensions['p50_seconds']),\n         p95_seconds = todouble(customDimensions['p95_seconds'])\n| where '{Tenant}' == 'all' or tenant_id == '{Tenant}';\nsignals\n| where signal_name == 'slow_turn_rate'\n| where isnotnull(p50_seconds) or isnotnull(p95_seconds)\n| summarize p50_seconds = avg(p50_seconds), p95_seconds = avg(p95_seconds),\n            slow_turns = sum(numerator), turns = sum(denominator)\n  by day = startofday(timestamp)\n| extend slow_turn_rate = round(1.0 * slow_turns / turns, 3)\n| order by day desc",
+        "size": 0,
+        "title": "Turn-latency percentiles from the slow-turn signal (PROXY — row timestamps, not a timer)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "crossComponentResources": [
+          "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev"
+        ]
+      },
+      "name": "online-signals-turn-latency"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 7. Golden-bank coverage — how much of the gap history is actually re-runnable\n\n**A static figure, not a live query.** A workbook has no data source that can read a repo file; these numbers come from `tests/golden_bank/golden_bank.json`'s own `gap_coverage` block, generated by a real run of `scripts/seed_golden_bank.py` and **re-verified against that file on 2026-08-21** (fixture `generated_at` 2026-08-21T14:16:40Z). Regenerate with `uv run python scripts/seed_golden_bank.py` and update this block; if it ever disagrees with the fixture, the fixture is right.\n\n| Gap coverage | Count |\n|---|---|\n| Gap entries in `be_features_tracker.md` | 182 |\n| Closed (`[x]`) | 177 |\n| Closed **answer-quality** gaps (strict: the gap's own title is about chat / answers / SQL / RAG / retrieval) | 53 |\n| **With a recovered, re-runnable case** | **8** |\n| **Still needing a case written by hand** | **45** |\n| Recovered coverage | **15%** |\n\n| The bank itself | Count |\n|---|---|\n| Total cases | 87 |\n| Directly scorable (question + reference answer) | 79 |\n| Deterministic retrieval cases (expected rows, no judge needed) | 6 |\n| Provisional, flagged `needs_review` | 2 |\n| Multi-turn follow-up links recovered | 10 |\n| Distinct gaps referenced by any case | 13 |\n\n**Why 8 and not 53, stated plainly:** the evidence directories are rich in questions and nearly empty of *gap attribution*. Only two places in the entire repo link a question to a gap number — the `Notes` column of the two `live_test_results.md` files (which cites a gap only on failing turns) and `tests/agent_eval_golden_sample.py`'s `why_on_file` field. That is a property of how the evidence was written, not of the parser. The 87 cases are real and useful — 79 gradeable questions where there were 9 — but they are organised **per tenant, not per gap**.\n\nTwo caveats that travel with these numbers: the 53 is a keyword classifier over hand-written tracker prose and slightly over-counts (it sweeps in a few non-chat gaps whose titles mention chat), and the four source question banks live in gitignored directories, so the fixture is derived from content not currently in version control.\n\nGap 287 — a faithfulness change that regressed Gap 263's already-fixed behaviour and was caught by a user rather than by a test — is one of the 45 with no case. It is the concrete cost of the distance between those two numbers.\n"
+      },
+      "name": "golden-bank-coverage"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### 8. Health — day over day\n\nAlerts fired per day, from Feature 20's existing 25+ alert rules. No new alert rule is created by this feature."
+      },
+      "name": "health-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "alertsmanagementresources\n| where type =~ 'microsoft.alertsmanagement/alerts'\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity),\n         state = tostring(properties.essentials.alertState),\n         rule = tostring(properties.essentials.alertRule),\n         target = tostring(properties.essentials.targetResourceName)\n| where fired > ago({TimeRange:seconds}s)\n| summarize alerts = count() by day = startofday(fired), sev\n| order by day asc",
+        "size": 0,
+        "title": "Alerts fired per day, by severity",
+        "queryType": 1,
+        "visualization": "barchart",
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "{Subscription}"
+        ]
+      },
+      "name": "alert-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "alertsmanagementresources\n| where type =~ 'microsoft.alertsmanagement/alerts'\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity),\n         state = tostring(properties.essentials.alertState),\n         monitorCondition = tostring(properties.essentials.monitorCondition),\n         rule = tostring(properties.essentials.alertRule),\n         target = tostring(properties.essentials.targetResourceName),\n         targetType = tostring(properties.essentials.targetResourceType)\n| where fired > ago({TimeRange:seconds}s)\n| project fired, sev, state, monitorCondition, rule, target, targetType\n| order by fired desc",
+        "size": 0,
+        "title": "Every alert in the window",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "{Subscription}"
+        ]
+      },
+      "name": "alert-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### How to import this\n\nPortal → Monitor → Workbooks → **New** → the `</>` (Advanced Editor) button → paste this file's\ncontents over the default template → **Apply** → **Save** (pick resource group `rg-invoice-llm-dev`).\nNothing in this repo deploys it; it is a definition, not a deployment.\n\n**If a section renders empty**, read the honesty table at the top of this workbook before assuming a healthy zero. Sections 1-6 all depend on `APPLICATIONINSIGHTS_CONNECTION_STRING` being set as a Container App secret; sections 2 and 6 additionally depend on things that are not running yet (`ENABLE_AGENTIC_SAGE` for the `sage.*` events, and any job at all that calls `emit_online_signals()`).\n\n**If the Health section shows \"unsupported query type\"** on import: that step is an Azure Resource\nGraph query (`queryType: 1`). Re-pick *Azure Resource Graph* as the data source in edit mode and\npaste the same query back — the query text itself is verified working against this subscription.\n\nARG was used rather than the built-in **Alerts** step type on purpose: the built-in step lists\nalerts as they are *right now*, and this workbook's whole point is day-over-day trend on one shared\naxis. `alertsmanagementresources` carries `startDateTime`, so alerts can be binned by day next to\nthe cost and quality series. Feature 20's 25+ alert rules and their action groups are unchanged —\nnothing here creates or edits an alert rule.\n"
+      },
+      "name": "footer"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.insights/components/appi-invoicellm-dev",
+    "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.operationalinsights/workspaces/law-invoicellm-dev"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

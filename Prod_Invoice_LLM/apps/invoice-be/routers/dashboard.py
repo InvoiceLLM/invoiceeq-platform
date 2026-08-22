@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice, ExtractionTemplate, AuditLog
 from services.invoice_visibility import invoice_not_deleted
+from telemetry import tracked_llm_call
 from utils.llm import get_llm
 
 logger = logging.getLogger(__name__)
@@ -533,8 +534,20 @@ def get_dashboard_insights(
     )
 
     try:
-        structured_llm = get_llm().with_structured_output(DashboardInsightsSchema)
-        response: DashboardInsightsSchema = structured_llm.invoke(prompt)
+        llm = get_llm()
+        structured_llm = llm.with_structured_output(DashboardInsightsSchema)
+        # Feature 23 Phase 1: the Actionable Insights panel is a real billable
+        # call -- 13-19.5s of Azure OpenAI per cache miss (see the `def` note
+        # above), so it belongs in the cost rollup as its own agent rather than
+        # being invisible to it. Only cache misses reach here, so the event count
+        # is the true call count, not the panel's view count.
+        with tracked_llm_call(
+            "dashboard.insights",
+            llm=llm,
+            tenant_id=str(context.tenant_id),
+            invoice_count=len(invoices),
+        ):
+            response: DashboardInsightsSchema = structured_llm.invoke(prompt)
         result = response.model_dump()
     except Exception as e:
         logger.error("Dashboard insights generation failed: %s", e)
