@@ -34,9 +34,12 @@ def _get_outbound_global_rules(session: Session, tenant_id: str) -> list:
 def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: str) -> dict:
     """Queue-worker job for an outbound invoice (Feature 2.1, Task 2.1.3):
     tenant's own invoice being sent to a customer, not a vendor's invoice
-    being received. Single extract->verify pass (no classify/dynamic_qa
-    split, no two-stage vendor rule resolution -- see
-    feature_2.1_vendor_flow_ingestion.md's v1 scope cut)."""
+    being received. Gap 283 (2026-08-21): this now runs the SAME graph inbound
+    does (classify -> dynamic_qa -> extract -> verify, with the bounded retry
+    edge), via `run_outbound_extraction_agent`'s `flow_direction="OUTBOUND"` --
+    the Feature 2.1 "v1 scope cut" that skipped classify/dynamic_qa is gone.
+    Rule resolution is still single-stage Global-only (no two-stage vendor
+    resolution), which is a rules concern, not a graph-shape one."""
     settings = get_settings()
 
     _publish_sse_events(batch_id, {"status": "PROCESSING_OCR", "message": "Extracting text from outbound invoice PDF..."})
@@ -116,6 +119,13 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 invoice.status = status
                 invoice.sa_alerts = alerts
                 invoice.items = extracted_data.get("items", [])
+                # Post-Gap-283 correction: `OutboundInvoiceExtractionSchema` now
+                # carries `taxes[]` (needed so Gap 69's component-aware
+                # tax-faithfulness fallback can engage on a CGST+SGST split).
+                # `Invoice.taxes` is the same shared JSON column inbound already
+                # writes, so persist the components rather than verifying against
+                # them and then dropping them on the floor.
+                invoice.taxes = extracted_data.get("taxes") or []
 
                 session.add(invoice)
                 session.commit()

@@ -4,9 +4,18 @@ Mirrors test_extraction.py's style: mock check_token_guardrails + get_llm at
 the module boundary, run the graph directly (no queue worker involved yet --
 Task 2.1.3 builds that), and confirm each field lands where expected plus the
 faithfulness checks actually catch a mismatch.
+
+Gap 283 (2026-08-21): the patch targets moved from
+`agents.outbound_extraction_agent.*` to `agents.extraction_agent.*`. Outbound no
+longer has its own graph -- `run_outbound_extraction_agent` is a thin wrapper
+over the one shared graph, so `check_token_guardrails`/`get_llm` now resolve in
+`agents.extraction_agent`'s module globals. The imports below deliberately still
+go through the outbound module, so these tests also cover the wrapper's
+re-exports staying intact.
 """
 from unittest.mock import patch
 
+from agents.extraction_agent import TaxItem
 from agents.outbound_extraction_agent import (
     OutboundInvoiceExtractionSchema,
     OutboundInvoiceLineItem,
@@ -44,8 +53,8 @@ def test_clean_outbound_invoice_reaches_verified():
         items=[OutboundInvoiceLineItem(description="Line 1", quantity=1.0, unit_price=100.00, amount=100.00)],
     )
 
-    with patch("agents.outbound_extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
-         patch("agents.outbound_extraction_agent.get_llm", return_value=_mock_llm(schema)):
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
         result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
 
     assert result["status"] == "VERIFIED"
@@ -63,12 +72,155 @@ def test_missing_required_field_flags_needs_review():
         items=[],
     )
 
-    with patch("agents.outbound_extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
-         patch("agents.outbound_extraction_agent.get_llm", return_value=_mock_llm(schema)):
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
         result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
 
     assert result["status"] == "NEEDS_REVIEW"
     assert any(a.get("type") == "missing_required_field" and a.get("field") == "customer_name" for a in result["alerts"])
+
+
+def test_zero_grand_total_is_not_treated_as_missing_required_field():
+    """Post-Gap-283 correction (falsy-zero bug): the required-field check used a
+    bare `if not data.get(field)`, so a genuine, faithfully-transcribed
+    grand_total of 0.00 (fully-credited note / 100%-discounted order) was
+    reported as `missing_required_field` and routed to NEEDS_REVIEW. Zero is a
+    value, not an absence."""
+    ocr_text = (
+        "CREDIT NOTE\nBill To: Vertex Industries\nInvoice #: OUT-2001\n"
+        "Fully credited -- no balance due\n"
+        "Subtotal: 0.00\nTax: 0.00\nTotal: 0.00"
+    )
+    schema = OutboundInvoiceExtractionSchema(
+        customer_name="Vertex Industries",
+        invoice_number="OUT-2001",
+        subtotal=0.00,
+        grand_total=0.00,
+        tax_amount=0.00,
+        currency="INR",
+        items=[],
+    )
+
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
+        result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
+
+    assert not any(
+        a.get("type") == "missing_required_field" and a.get("field") == "grand_total"
+        for a in result["alerts"]
+        if isinstance(a, dict)
+    ), f"0.0 grand_total wrongly flagged as missing: {result['alerts']}"
+    # Nothing else is wrong with this document, so it should pass cleanly.
+    assert result["alerts"] == []
+    assert result["status"] == "VERIFIED"
+    assert result["extracted_data"]["grand_total"] == 0.00
+
+
+def test_absent_grand_total_still_flags_missing_required_field():
+    """Guard on the other side of the zero fix -- None must still be caught."""
+    ocr_text = "INVOICE\nBill To: Vertex Industries\nInvoice #: OUT-2002\n"
+    schema = OutboundInvoiceExtractionSchema(
+        customer_name="Vertex Industries",
+        invoice_number="OUT-2002",
+        grand_total=None,
+        items=[],
+    )
+
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
+        result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
+
+    assert result["status"] == "NEEDS_REVIEW"
+    assert any(
+        a.get("type") == "missing_required_field" and a.get("field") == "grand_total"
+        for a in result["alerts"]
+        if isinstance(a, dict)
+    )
+
+
+def test_outbound_cgst_sgst_split_does_not_flag_tax_faithfulness():
+    """Post-Gap-283 correction (Bug 2): Gap 283 told the model to sum CGST+SGST
+    into `tax_amount` but gave it no `taxes[]` to record the components in, so
+    `verify_tax_amount_in_source_text` always got `tax_components=None` for
+    OUTBOUND and Gap 69's component-aware fallback could never engage. On a real
+    India GST invoice the summed figure is never printed as one number, so every
+    such outbound invoice raised `tax_amount_not_verified_in_source` for a
+    correctly-extracted value. With `taxes[]` on the outbound schema the same
+    fallback inbound uses now applies."""
+    ocr_text = (
+        "TAX INVOICE\nBill To: Vertex Industries\nInvoice #: OUT-3001\n"
+        "Line 1   1   67,760.00   67,760.00\n"
+        "Taxable Value: 67,760.00\n"
+        "CGST 9%: 6,098.40\n"
+        "SGST 9%: 6,098.40\n"
+        "Total: 79,956.80"
+    )
+    schema = OutboundInvoiceExtractionSchema(
+        customer_name="Vertex Industries",
+        invoice_number="OUT-3001",
+        subtotal=67760.00,
+        # Never printed as a single figure -- only the two components are.
+        tax_amount=12196.80,
+        grand_total=79956.80,
+        currency="INR",
+        items=[OutboundInvoiceLineItem(description="Line 1", quantity=1.0, unit_price=67760.00, amount=67760.00)],
+        taxes=[
+            TaxItem(tax_type="CGST", rate_percent=9.0, amount=6098.40),
+            TaxItem(tax_type="SGST", rate_percent=9.0, amount=6098.40),
+        ],
+    )
+
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
+        result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
+
+    assert not any(
+        a.get("type") == "tax_amount_not_verified_in_source"
+        for a in result["alerts"]
+        if isinstance(a, dict)
+    ), f"CGST+SGST split wrongly flagged as unfaithful tax: {result['alerts']}"
+    assert result["alerts"] == []
+    assert result["status"] == "VERIFIED"
+    assert [t["tax_type"] for t in result["extracted_data"]["taxes"]] == ["CGST", "SGST"]
+
+
+def test_outbound_fabricated_tax_amount_still_flagged_with_components():
+    """The split-tax fallback must not become a blanket exemption: components
+    that don't sum to the extracted tax_amount still fail the check."""
+    ocr_text = (
+        "TAX INVOICE\nBill To: Vertex Industries\nInvoice #: OUT-3002\n"
+        "Line 1   1   1000.00   1000.00\n"
+        "Taxable Value: 1000.00\n"
+        "CGST 9%: 90.00\n"
+        "SGST 9%: 90.00\n"
+        "Total: 1250.00"
+    )
+    schema = OutboundInvoiceExtractionSchema(
+        customer_name="Vertex Industries",
+        invoice_number="OUT-3002",
+        subtotal=1000.00,
+        # 250.00 is printed nowhere, and the two grounded components sum to
+        # 180.00 -- so neither the direct check nor the Gap 69 fallback passes.
+        tax_amount=250.00,
+        grand_total=1250.00,
+        currency="INR",
+        items=[OutboundInvoiceLineItem(description="Line 1", quantity=1.0, unit_price=1000.00, amount=1000.00)],
+        taxes=[
+            TaxItem(tax_type="CGST", rate_percent=9.0, amount=90.00),
+            TaxItem(tax_type="SGST", rate_percent=9.0, amount=90.00),
+        ],
+    )
+
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
+        result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
+
+    assert result["status"] == "NEEDS_REVIEW"
+    assert any(
+        a.get("type") == "tax_amount_not_verified_in_source"
+        for a in result["alerts"]
+        if isinstance(a, dict)
+    )
 
 
 def test_grand_total_not_in_source_text_flags_needs_review():
@@ -82,8 +234,8 @@ def test_grand_total_not_in_source_text_flags_needs_review():
         items=[],
     )
 
-    with patch("agents.outbound_extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
-         patch("agents.outbound_extraction_agent.get_llm", return_value=_mock_llm(schema)):
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
         result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
 
     assert result["status"] == "NEEDS_REVIEW"
@@ -91,7 +243,7 @@ def test_grand_total_not_in_source_text_flags_needs_review():
 
 
 def test_token_limit_exceeded_short_circuits():
-    with patch("agents.outbound_extraction_agent.check_token_guardrails", return_value=(False, 999999, 128000)):
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(False, 999999, 128000)):
         result = run_outbound_extraction_agent("mock/outbound.pdf", "some ocr text", "tenant-1")
 
     assert result["status"] == "NEEDS_REVIEW"
@@ -118,8 +270,8 @@ def test_outbound_invoice_math_mismatch_flags_needs_review():
         items=[OutboundInvoiceLineItem(description="Line 1", quantity=1.0, unit_price=100.00, amount=100.00)],
     )
 
-    with patch("agents.outbound_extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
-         patch("agents.outbound_extraction_agent.get_llm", return_value=_mock_llm(schema)):
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
         result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
 
     assert result["status"] == "NEEDS_REVIEW"

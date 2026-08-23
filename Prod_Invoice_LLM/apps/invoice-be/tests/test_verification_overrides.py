@@ -140,8 +140,11 @@ def test_outbound_verify_node_gets_the_same_parameterization():
         "subtotal": 25.0,
         "tax_amount": 0.0,
     }
+    # Gap 283: one shared verify_node now, selected by flow_direction -- without
+    # the flag this would silently exercise the INBOUND profile instead.
     state = {"file_path": "mock/o.pdf", "ocr_text": "", "extracted_data": data,
-             "alerts": [], "rules": None, "ocr_result": None}
+             "alerts": [], "rules": None, "ocr_result": None,
+             "flow_direction": "OUTBOUND"}
 
     before = outbound_verify_node(dict(state))
     assert any(a.get("type") == "line_item_calculation_mismatch" for a in before["alerts"])

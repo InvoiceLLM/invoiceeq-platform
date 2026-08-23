@@ -169,14 +169,14 @@ ALERT_TYPES: dict[str, AlertTypeSpec] = {
         default_field=None,
         threshold_overridable=True,
     ),
-    # ── agents/extraction_agent.py + agents/outbound_extraction_agent.py ───
+    # ── agents/extraction_agent.py (one shared graph, both directions) ─────
+    # Gap 283: outbound no longer has its own extract/verify nodes -- it runs
+    # the same graph with flow_direction="OUTBOUND", so these producers are
+    # single-sited now.
     "extraction_failed": AlertTypeSpec(
         type="extraction_failed",
         label="Structured extraction failed",
-        producer=(
-            "agents/extraction_agent.py::extract_node (:308,:319); "
-            "agents/outbound_extraction_agent.py::extract_node"
-        ),
+        producer="agents/extraction_agent.py::extract_node",
         default_field=None,
         not_correctable_reason=_FACTUAL_NOT_CORRECTABLE,
         flaggable_as_missed=False,
@@ -184,10 +184,7 @@ ALERT_TYPES: dict[str, AlertTypeSpec] = {
     "token_limit_exceeded": AlertTypeSpec(
         type="token_limit_exceeded",
         label="Document too large for the model context window",
-        producer=(
-            "agents/extraction_agent.py::run_extraction_agent (:566); "
-            "agents/outbound_extraction_agent.py::run_outbound_extraction_agent"
-        ),
+        producer="agents/extraction_agent.py::run_extraction_agent",
         default_field="file_path",
         not_correctable_reason=_FACTUAL_NOT_CORRECTABLE,
         flaggable_as_missed=False,
@@ -195,7 +192,7 @@ ALERT_TYPES: dict[str, AlertTypeSpec] = {
     "missing_required_field": AlertTypeSpec(
         type="missing_required_field",
         label="Required outbound field could not be extracted",
-        producer="agents/outbound_extraction_agent.py::verify_node (:148)",
+        producer="agents/extraction_agent.py::verify_node (OUTBOUND profile only)",
         default_field=None,
     ),
     # ── queue_worker/ + routers/invoices.py ────────────────────────────────
