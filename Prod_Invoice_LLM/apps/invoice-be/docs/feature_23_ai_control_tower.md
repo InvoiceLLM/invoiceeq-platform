@@ -4,6 +4,97 @@ One place that answers, for every AI call this application makes: what ran, who 
 often, how well it performed, what it cost, and whether a cheaper/faster model could have done the
 same job. Scoped to this application only — not an org-wide platform.
 
+## 2026-08-23 — Full rethink: scope, parameters, audit process, model comparison
+
+The founder and architect fully rescoped this feature on this date, after finding the original build
+(3-part LLM-judge scoring, 4-tab workbook split, static "golden-bank coverage" number, a nightly job
+that likely couldn't even run — `.dockerignore` excludes `tests/`) didn't match what was actually
+wanted. **This section is the current source of truth.** Everything below it in this document is
+prior-round design/build history — useful as reference for what was tried, not as the live plan.
+
+**What was deleted the same day** (superseded, not salvageable into the new design): the 9 live
+`ai_control_tower_*` Azure Workbooks and their bicep, the 87-case `tests/golden_bank/golden_bank.json`
++ its seed script (confirmed unused by the actual eval script even before deletion — it imported
+`tests.agent_eval_golden_sample`'s 11 cases instead), and the `caj-agent-eval-dev` scheduled job
+(both the live resource and the `agentEvalJob` module in `08-apps.bicep`). Kept: the 25 real alert
+rules, the cost budget, `scheduled-job.bicep` (generic, reusable for whatever scheduler comes next).
+
+### Scope: two pipelines, not one
+
+| Pipeline | Unit | Nature |
+|---|---|---|
+| Extraction (Doc Intelligence + extraction LLM, inbound + outbound) | Per document, one-shot | Mostly deterministic — verification already checks extracted values against OCR text |
+| SAGE chat | Per turn, linked to its thread | Threaded — earlier turns affect later ones, needs real trace context |
+
+### Finalized parameters
+
+**Extraction** — hard only; this pipeline is verification-based by design, not judgment-based:
+
+| Parameter | Source |
+|---|---|
+| Doc Intelligence + extraction LLM cost, latency | Existing telemetry |
+| Verification pass rate | Existing deterministic check |
+| **Field-level correction rate** (overall, by field, by vendor) | Auditor Review Console corrections — real human-caught errors, the best accuracy signal available |
+| **Alert precision** (% of alerts leading to an actual correction vs. dismissed with no change) | Review Console's dismiss-vs-correct action |
+| Alert volume by check type | Flags a noisy/miscalibrated rule |
+
+**SAGE chat** — hard (trace/cost) + soft (judged), per turn:
+
+| Type | Parameters |
+|---|---|
+| Hard | Cost, latency, tokens in/out, tool-call trace, error/retry rate |
+| Soft — **one combined judge call**, not five separate ones | Faithfulness, relevance, helpfulness, persona/tone fit, completeness |
+
+**Known, accepted gap**: alert *recall* (missed issues) can't be measured from real usage alone —
+nobody flags what wasn't flagged. This is exactly what the benchmark's seeded-document track below
+exists to answer.
+
+### Audit / benchmark process — 2 tracks
+
+**Track 1 — Extraction & alerts (new, doesn't exist yet):**
+| Set | Contains | Measures |
+|---|---|---|
+| Clean documents | Known-correct field values, no real issues | Extraction accuracy (diff vs. known-correct), alert false-positive rate |
+| Seeded/mutated documents | Deliberately planted issues (tax figure not matching OCR text, fabricated total, missing field, out-of-tolerance line item) | Alert **recall** — does the right check actually fire for a known-planted problem? |
+
+Together: a real confusion matrix (true/false positive/negative), not just a precision number.
+
+**Track 2 — SAGE chat**: rebuilt case set (successor to `agent_eval_golden_sample.py`'s 11 cases —
+that file itself wasn't deleted, still usable as a starting point), judge prompt extended to score all
+5 soft metrics in one call.
+
+**Cadence**: nightly (catches drift) **and** a pre-deploy gate (catches a regression before it ships,
+not after). Scheduler mechanism: reuse `scheduled-job.bicep` once the new harness exists — same
+pattern as the deleted job, new content.
+
+### Optimization suggestions
+
+- Trim tool-result context fed into synthesis (biggest cost lever — same principle as the extraction
+  chunk-dump cap already built)
+- Model tiering — cheap/fast model for planner + SQL-generation tool calls, strongest model reserved
+  for synthesis only
+- Prompt caching for repeated persona/schema system-prompt blocks
+- De-dupe repeat tool calls within a single turn (a real bug found and fixed earlier this session —
+  worth making a standing pattern)
+- Batch the 5 soft-metric judge scores into one call, not five
+
+### Model comparison — a deliberate periodic exercise, not a live metric
+
+Freeze one fixed test set (both tracks above) → run current baseline (gpt-5-mini) once → run each
+candidate through the identical set, swapping only the model → **keep the judge model fixed** across
+all candidates (comparability breaks if the judge also changes) → one table of quality/cost/latency
+deltas → decide. A benchmark win still deserves a staged/shadow-traffic period before full cutover.
+
+**Candidates** (Claude and Gemini deprioritized for now, cross-provider integration effort not
+justified yet):
+
+| Candidate | Setup needed | Verified findings |
+|---|---|---|
+| **GPT-4o** (new Azure OpenAI deployment) | New model deployment under the *existing* `openai-invoicellm-dev` resource — no new Azure resource type, no code change (`get_llm()`'s `azure` branch already reads the deployment name from config). Just TPM quota for the model in this region. | Structured-output strict-mode compliance is only *guaranteed* from GPT-4o/GPT-4o-mini onward, API version `2024-08-01-preview`+ — confirmed via Microsoft Learn. Only primitive JSON types allowed in strict mode (no DateTime/Uri) — worth checking the extraction schema's date fields before assuming a swap "just works." `response_format` and `tools` are mutually exclusive in one call — relevant to SAGE's tool-calling planner. |
+| **Ollama / self-hosted open model** | `langchain-ollama>=1.1.0` is **already installed and declared** in `pyproject.toml` (corrected an earlier wrong "not installed" finding — was checking system Python instead of the project's `.venv`). Needs: (1) Ollama itself downloaded and run locally, (2) pull **`llama3.1:8b`**, not the config's current default `llama3:8b` (pre-3.1, no reliable tool-calling support — confirmed via LangChain's own docs), (3) for anything beyond local dev, an actual hosting environment (no Ollama server runs in Azure today). | No hardcoded Azure-specific kwargs in any real `with_structured_output()` call site (`extraction_agent.py`, `query_agent.py`, `query_tools.py`, `trainer_agent.py`, `services/agent_eval.py`, etc.) — nothing will hard-crash from an incompatible parameter. Even on the well-supported Llama 3.1 8B, malformed-JSON rate is well under 1% but non-zero — a real (small) reliability gap vs. Azure OpenAI's strict-mode 100% guarantee, worth knowing going in. |
+
+---
+
 ## The real call sites (the registry)
 
 Confirmed by reading the code, not assumed:
@@ -590,6 +681,16 @@ dashboard/trainer-QA call sites were added:
 local scratch dirs holding two same-named `*_test.py` scripts that collide at collection —
 a pre-existing condition, unrelated to this feature).
 
+**Done since — the founder action above has happened (recorded 2026-08-22).** The secret is set, and
+Phase 1 telemetry is live: the first `llm_agent_call` event landed in `appi-invoicellm-dev` at
+**2026-08-22T03:48:30Z**, and a direct query over the last 90 days now returns real rows
+(`chat.sql_generation`, `chat.sql_summary`, `chat.classify`, `dashboard.insights`, all on
+`gpt-5-mini`, one tenant). So `verified in Application Insights` **is** now claimable for Phase 1 —
+by observation of the events, not by the test suite. The history is only hours long, which is why
+the workbook's Cost and Latency tabs say so on the tab itself rather than letting a mostly-empty
+14-day window read as a quiet product. `agent_eval_run` and `online_eval_signal` are still absent,
+for their own separate reasons (no scheduled eval job, nothing calls `emit_online_signals()`).
+
 No dependency change was needed: `azure-monitor-opentelemetry>=1.6.0` was already in
 `apps/invoice-be/pyproject.toml` and pinned at 1.8.9 in `uv.lock` (this backend has no
 `requirements.txt` — the Dockerfiles install with `uv sync --frozen`).
@@ -610,7 +711,7 @@ No dependency change was needed: `azure-monitor-opentelemetry>=1.6.0` was alread
 | `scripts/run_agent_eval.py` (new) | `run_turn()`, `_LlmCallCounter`, `_ToolOutputRecorder`, `_agentic_sage_enabled()` | The runner. Counts real LLM calls off Phase 1's own events, records everything the tools returned as the faithfulness context, and can run either chat path. |
 | `tests/agent_eval_golden_sample.py` (new) | `CASES` (9), `tenant_stats_summary()` | The graded sample: real question phrasings from the existing banks, each citing its file:line, with reference answers computed from the seeded fixture. |
 | `infra/monitoring/llm_cost_rollup_nightly.kql` (new) | — | Phase 2's cost rollup by agent/day/tenant. |
-| `infra/monitoring/ai_control_tower.workbook.json` (new) | — | The workbook definition, for Portal import. |
+| `infra/monitoring/ai_control_tower.workbook.json` (new, since **retired/deleted 2026-08-23** — see "Workbook — split into 9 standalone workbooks" below) | — | Was the single combined tabbed workbook definition, for Portal import. |
 | `tests/test_agent_eval.py` (new) | 19 tests | Metric mechanics, the pass floors, the `pass` column round-trip, the migration's own DDL up and down, the telemetry mirror, and the per-turn call counter. |
 
 ### The scorer: an LLM judge, not the `ragas` package
@@ -977,6 +1078,1107 @@ inference for a direct measurement.
 **Not deployed.** The workbook is still a definition, imported by hand; nothing here creates an
 alert rule, a scheduled query rule, or an Azure resource, and no Azure configuration was changed.
 
+## Workbook — the usability restructure (2026-08-22)
+
+Founder feedback on the 8-section workbook, verbatim: *"the current workbook is not understandable,
+you can't scroll 10 pages to see [everything]."* That is a fair reading of what the second pass
+produced — eight sections stacked vertically, each with a long honesty preamble, so the single most
+useful number (today's spend) was several screens below the fold. This pass is **layout only**: no
+query logic was rewritten, no caveat was removed, no backend code was touched, and no Azure resource
+was created or changed.
+
+### What changed
+
+| Before | After |
+|---|---|
+| 27 items in one vertical stack, ~10 screens | 3 top-level items: the parameter pills, an overview tile row, and one tabbed group |
+| Headline numbers buried in tables inside sections | **6 single-stat tiles above the fold**, zero scrolling |
+| Sections 1-8 read by scrolling past each other | The same 8 sections as **8 tabs**, one child group per tab (the tab *mechanism* first shipped here was wrong and was corrected the same day — see "The tabs did not render" below) |
+| Tenant parameter had to be picked by hand before anything rendered | Tenant resolves to `all` on load |
+
+**The six tiles, and which existing query each one reduces** — every tile is the section query below
+it narrowed to the latest/today value, not a new metric:
+
+| Tile | Reduced from | Source |
+|---|---|---|
+| Cost today (USD) | section 1's `cost-trend` rates + token maths | `llm_agent_call` |
+| Latest quality pass rate | section 4's `pass_rate = avg(passed)`, latest day only | `agent_eval_run` |
+| Alerts fired today, by severity | section 8's `alert-trend`, `startofday(now())` instead of the window | ARG `alertsmanagementresources` |
+| Latest clarification rate | section 6's `online-signals-table` `arg_max`, one signal | `online_eval_signal` |
+| Latest zero-result rate | same, one signal | `online_eval_signal` |
+| Golden-bank coverage | section 7's static 8-of-53 figure, as a `print` literal | static |
+
+**Every caveat is preserved verbatim, and that is asserted mechanically, not by eye.** The rebuild
+script parses the previous file and carries each of the 26 pre-existing items across *by object
+reference*, then re-reads the written file from disk and asserts every one is byte-identical. The
+honesty table, the Tenant-parameter dependency, the `synthesis_share_pct` inference caveat, the
+`persona_score` "not applicable" note, the online-signals confidence column and its 20-observation
+floor, the golden-bank numbers, and the ARG-vs-built-in-Alerts-step rationale are all unaltered —
+they moved tab, they did not change. The original section numbers (1-8) are also kept exactly as
+written, because the preserved text cross-references them ("section 6's `slow_turn_rate` caveat",
+"sections 1-6 all depend on..."); a new `restructure-note` markdown block at the top of the
+**Read me first** tab maps section number → tab so the numbering stays legible.
+
+### The honesty rule had to be re-established per tile, and one draft failed it
+
+A tile that reads `0.00` when nothing is instrumented would undo the entire point of this
+workbook's header table. The first draft did exactly that: **KQL `sum()` over an empty set returns
+`0`, not null**, so `summarize value = sum(cost_usd) | where isnotnull(value)` still emitted a row
+and the tile rendered a confident `$0.00` on a day with zero telemetry. Caught by running it, not by
+reading it.
+
+The shipped tiles guard differently, per source:
+
+* **Cost** — guards on `calls > 0` (no event today → no row → no tile), and separately returns a
+  **null** value, never a zero, when events exist but *no* model in them has a hardcoded rate. Both
+  behaviours were proved on synthetic rows: a priced + unpriced pair returns `1.25` with detail
+  `2 calls - 1 unpriced`; an all-unpriced set returns a null value with the same explanation.
+* **Quality / clarification / zero-result** — `summarize ... by day` and `arg_max` over an empty
+  input naturally yield no row; `where isnotnull(value)` additionally drops the case where
+  `emit_online_signals()` emitted a signal with **no `value` field at all** (its "the denominator was
+  empty" case). Verified: such an event produces no tile rather than a 0.0.
+* Each tile carries a `noDataMessage` stating *why* it is empty in that specific case — the cost
+  tile names the unset `APPLICATIONINSIGHTS_CONNECTION_STRING`, the signal tiles say "nothing has
+  run, not no problems found", and the alerts tile says the opposite on purpose: **that** source is
+  live ARG, so an empty result there really is zero.
+
+### The Tenant parameter — kept, and now self-defaulting
+
+Kept as-is per the founder's earlier work, with one fix to the reason it needed manual selection:
+`isRequired: true` plus a dropdown query over an **empty** `customEvents` table produced a parameter
+with no selectable options, so `"value": "all"` matched nothing and every downstream query stayed
+blocked until a value was picked by hand. The query now always returns `all` as its first row
+(`union (print tenant_id = 'all'), tenants`), so the existing default resolves on load. Downstream
+query semantics are untouched — every panel still reads `where '{Tenant}' == 'all' or tenant_id ==
+'{Tenant}'`. `additionalResourceOptions: ["value::all"]` was dropped from that parameter, because
+`all` is now a genuine row and keeping both would have offered two ways to say the same thing. The
+parameter query also now includes `online_eval_signal`, so a tenant that appears only in signal
+events is selectable.
+
+### Verified how — and what is *not* verified
+
+* **All 23 queries in the rebuilt file executed live** — 20 Log Analytics against
+  `appi-invoicellm-dev` (app id `d2add3c5-9c23-46e2-b896-e7ab299abfbd`) and 3 Azure Resource Graph
+  against subscription `2ae37d8b-...`, extracted programmatically from the written JSON rather than
+  retyped. **0 failures**, every one returning its expected column schema. The `customEvents` panels
+  return 0 rows, unchanged and for the unchanged reason. The ARG panels returned real data
+  (`alert-table` 25 alerts in 14 days; the new alerts-today tile returned `Sev2: 1`, a real alert
+  fired today) — so the tile is not merely parsing, it is rendering a live number.
+* Harness note, because it nearly produced a false pass: invoking `az` from Python on Windows sends
+  the query through a `.cmd` wrapper that **truncates the argument at the first newline**, so the
+  first run "succeeded" while only executing the query's first line. Caught by checking the returned
+  column names against what each query projects. Queries are flattened to one line for execution
+  (KQL is newline-insensitive and none of these contain `//` comments — checked).
+* JSON re-parsed from disk after writing: 45 items including groups, 8 tabs, 6 tiles, and the
+  byte-identity assertion above over all 26 carried-forward items.
+* **Not verified: how the tabs and tiles actually render in the portal.** The workbook is still a
+  definition imported by hand, and importing it would have created an Azure resource, which this
+  pass's constraints excluded. Two specific things a first import should be looked at for: (1) tab
+  **labels** are taken from each child group's `name`, with `content.title` set to the same string as
+  a fallback, so if a label ever renders blank the content is still self-labelled by its own markdown
+  header; (2) the tiles use `customWidth` 15% x5 + 20% for the alerts tile to make one row of six —
+  on a narrow window they will wrap to two rows, which costs a little vertical space but nothing
+  else. Neither is a correctness risk, and neither can be confirmed without importing.
+
+### The tabs did not render — root cause and fix (2026-08-22)
+
+The caveat directly above ("not verified: how the tabs actually render") was the right caveat and it
+caught a real defect. The founder opened the workbook and saw **one continuous scrolling page with
+section headers and no clickable tab row** — i.e. exactly the layout the restructure was meant to
+replace. The overview tiles were fine (they rendered, including a live `Sev2: 1`); only the tabs
+were not tabs.
+
+**Root cause: `"style": "tabs"` on a `type: 12` group is not a thing.** Azure Workbooks has no
+group-level tab style. The property was invented, Azure silently ignored the unrecognised key, and
+the group fell back to its default rendering — every child group stacked vertically. Confirmed
+against the official schema, not inferred: in
+[`schema/workbook.json`](https://raw.githubusercontent.com/microsoft/Application-Insights-Workbooks/master/schema/workbook.json),
+`definitions.group.content` declares `version`, `groupType`, `loadType`, `loadButtonText`,
+`loadFromTemplateId`, `items`, `title`, `exportParameters` — and **no `style`**. `style` with
+example value `"tabs"` exists only on `definitions.link`, the `type: 11` step.
+
+**The real mechanism** ([workbooks-create-workbook § Tabs](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook#tabs),
+worked JSON in [workbooks-sample-links](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-sample-links)):
+tabs are two cooperating pieces, not one property.
+
+1. A **links step** — `type: 11`, `content.version: "LinkItem/1.0"`, `content.style: "tabs"`, and one
+   entry per tab in `content.links`. Each entry sets a shared parameter when clicked:
+   `linkTarget: "parameter"`, `cellValue: "<parameter name>"`, `subTarget: "<this tab's value>"`,
+   `linkLabel: "<tab caption>"`, `style: "link"`. (`cellValue` is the parameter *name* and
+   `subTarget` the *value* — a naming that is not guessable from the field names, which is how the
+   first attempt went wrong.)
+2. **`conditionalVisibility`** on each content group, at the group's *top* level (sibling of `type`
+   / `content` / `name`, not inside `content`):
+   `{"parameterName": ..., "comparison": "isEqualTo", "value": "<that tab's value>"}`.
+
+**What was changed in `infra/monitoring/ai_control_tower.workbook.json`:**
+
+* Deleted `"style": "tabs"` from the `sections` group's `content`.
+* Inserted a `type: 11` step named `tab-bar` as the **first child of the `sections` group** — a
+  sibling of the 8 content groups, so the parameter it sets and the groups that read it share one
+  scope, matching the docs' worked example.
+* Added `conditionalVisibility` on all 8 groups, keyed to a parameter named **`SelectedTab`** with
+  values `readme` / `cost` / `latency` / `quality` / `component` / `online` / `golden` / `health`.
+  `SelectedTab` is deliberately **not** declared in the `shared-parameters` step: per the docs
+  ("the first tab is selected by default, invoking whatever action that tab specified") and per every
+  shipped Microsoft template checked, the first link fires on load and sets it. Declaring it as well
+  would have put a redundant pill in the parameter row. **Read me first** is first, so it is what
+  renders on load.
+* Nothing else. The overview tiles are untouched (they already worked), and so is every query, table
+  and caveat inside the 8 groups.
+
+**Verified how — this fix:**
+
+* **Content byte-identity**: the file is regenerated by re-serialising the parsed document, and that
+  serialiser was first proved to round-trip the pre-fix file to an **identical 68,777 bytes**. The
+  resulting `diff` is therefore exactly and only the intended change: one `"style": "tabs"` line
+  removed, one 74-line `tab-bar` step added, 8 five-line `conditionalVisibility` blocks added. Zero
+  other lines differ, so no query needed re-execution to know it is unchanged.
+* **Schema-validated** against the official `schema/workbook.json` with `jsonschema` (Draft 7):
+  0 errors for the whole document; the `tab-bar` step also validated in isolation against
+  `definitions.link` and all 8 groups against `definitions.group`.
+* **Structurally diffed against a real, shipped Microsoft tabbed workbook** —
+  `Workbooks/Azure Security Center/Containers Security/Containers Security.workbook` from
+  `microsoft/Application-Insights-Workbooks`. Its tab bar and ours have identical step keys
+  (`type`/`content`/`name`), identical content keys (`version`/`style`/`links`), identical
+  `LinkItem/1.0` + `tabs`, identical `linkItem` key sets
+  (`cellValue`/`id`/`linkLabel`/`linkTarget`/`style`/`subTarget`), identical `linkTarget: parameter`
+  and `style: link` values, and identical `conditionalVisibility` key sets and `isEqualTo`
+  comparison. Two independent sources (Microsoft docs, and a template Microsoft actually ships) agree
+  on the shape.
+* **A real Azure resource was created this time**, closing the gap the previous pass left open. A
+  throwaway workbook `AI Control Tower - TAB FIX TEST` was `PUT` to
+  `Microsoft.Insights/workbooks` (api-version `2022-04-01`) in `rg-invoice-llm-dev`, name
+  `0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6`. `PUT` returned 200; a follow-up `GET` with
+  `canFetchContent=true` returned `serializedData` **byte-identical to what was sent** (71,978 chars
+  both ways, including the non-ASCII `→` characters), so nothing is lost or escaped in storage. The
+  stored copy re-parses with the group-level `style` gone, the `type: 11` tab bar present with all 8
+  labels, all 8 `conditionalVisibility` values matching the 8 `subTarget`s 1:1, and the 6 overview
+  tiles still above the tab bar.
+
+**Still not verified by this pass, and it cannot be from here:** whether the tab row *looks and
+behaves* right when clicked. Every claim above is about JSON structure and what Azure stored, not
+about pixels. The test resource exists so the founder can settle that in one click:
+`https://portal.azure.com/#@/resource/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourcegroups/rg-invoice-llm-dev/providers/microsoft.insights/workbooks/0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6/workbook`
+It is a **disposable verification copy**, not the workbook to use going forward, and should be
+deleted once the render is confirmed.
+
+**Separate finding, worth knowing:** the live workbook resource `Invoice LLM AI Tower`
+(`72843A80-003A-4BA1-AB71-F3F52C355D09`, same resource group) still holds the **pre-restructure**
+definition — a flat list of 27 root items, no group, no overview tiles, `timeModified`
+`2026-08-22T03:02:03Z`, which is *earlier* than the restructure was written to disk. So that saved
+resource never had tabs or tiles to fail at; whatever was viewed with working tiles was an unsaved
+paste into the Advanced Editor. It was intentionally left untouched by this pass.
+
+### The tab bar was below the fold — `customWidth` was written in a form workbooks does not accept (2026-08-22)
+
+With the tabs working, the founder's next report was: *"tab is there but its below, why can't you fix
+the above part side by side so tabs are visible on the page no scroll down needed."* Two things were
+consuming the space above the tab bar, and one of them was a second real defect, not a styling
+preference.
+
+**Defect: `"customWidth": "15%"` is not a valid value.** The six tiles were written with
+`15%` x5 + `20%`, intending one row. The units belong to grid *column* widths (where `ch`/`px`/`fr`/`%`
+are documented), **not** to a step's `customWidth`, which is a bare number meaning percent. Evidence,
+counted rather than assumed: across all **708 workbook templates Microsoft ships** in
+`microsoft/Application-Insights-Workbooks` there are **5,207 `customWidth` values and not one of them
+contains `%`, `px`, or any non-numeric character** — they are `"50"`, `"33"`, `"25"`, `"15"`. The
+official [`schema/workbook.json`](https://raw.githubusercontent.com/microsoft/Application-Insights-Workbooks/master/schema/workbook.json)
+agrees: `definitions.customWidth` is a string whose only example is `"50"`. A malformed width is
+ignored the same way the invented group-level `"style": "tabs"` was ignored, and an item with no
+usable width falls back to full width — which puts **each tile on its own row**. That is six stacked
+rows of tile where one row was intended, and it is the direct cause of the tab bar sitting below the
+fold. Fixed by dropping the `%` from all six: `15, 15, 20, 15, 15, 15` = **95**, deliberately under
+100 so inter-item margins have somewhere to go. The proportions are unchanged from what was always
+intended — the alerts tile stays the wide one because its subtitle carries the severity breakdown.
+`15` with a `tiles` visualization is shipped Microsoft practice, not a guess (`Connection
+Performance`, `Vulnerabilities`, `Overview`, `DefenderCSPM` all do exactly that); tile step `size: 4`
+was already the most compact option (260 of Microsoft's 595 tile steps use it) and was left alone.
+
+**Second: the caption above the tiles was a heading plus a four-line paragraph.** Cut from 384
+characters (an `##` heading, a blank line, and a paragraph that wrapped to roughly four lines) to a
+**single 113-character line with no heading**:
+`**A blank tile means no data, never a healthy zero** — which sources are live today is the **Read me first** tab.`
+No information was lost from the workbook: the honesty rule, the per-source live/empty table and the
+reason each source is empty are all stated at length in the **Read me first** tab already, and the
+one-liner points at it. The tab's own text was **not** edited to compensate — nothing inside any of
+the eight tabs was touched by this pass.
+
+**Net effect on the space above the tab bar**: from `##` heading + ~4 wrapped lines + **six**
+full-width tile rows, down to one line of text + **one** tile row. Nothing else moved: the parameter
+pills row, the tab bar, and all eight tabs' content are unchanged.
+
+**Verified how — this fix:**
+
+* **Diffed against what Azure actually had stored**, not against a local guess. The test workbook
+  resource still held the previous (pre-fix) definition, so it was `GET`-ed and structurally diffed
+  against the new local file: **37 diff lines, all seven of them intended** — one caption string, six
+  `customWidth` values. Every query, table, `noDataMessage` and caveat is identical, so no query
+  needed re-running to know it is unchanged.
+* **Schema-validated** against the official `schema/workbook.json` with `jsonschema` Draft 7:
+  **0 errors** for the whole document. Structure re-asserted from the parsed file: 46 items including
+  groups, tab bar `type: 11` / `style: tabs` with 8 links, 8 `conditionalVisibility` values matching
+  the 8 `subTarget`s, 6 tiles above the tab bar, widths summing to 95, no `%` in any width.
+* **Re-`PUT` to the same throwaway resource and round-tripped.** `PUT` returned 200
+  (`timeModified 2026-08-22T04:03:23Z`); the follow-up `GET` with `canFetchContent=true` returned
+  `serializedData` **byte-identical to what was sent** — 72,594 characters both ways, with all 49 em
+  dashes and 7 arrows intact. Harness note, because it nearly produced a wrong answer: `az rest`
+  piped to a file on Windows encodes its output as cp1252 and **silently discards non-ASCII
+  characters** (`WARNING: Unable to encode the output with cp1252 encoding`), which made a first GET
+  come back 58 characters short. ARM is called through `urllib` with an `az account get-access-token`
+  bearer token instead, which is byte-clean.
+
+**Still not verified, and it cannot be from here:** the rendered pixels. The claim is that six items
+at width `15/15/20/15/15/15` lay out in one row; that is inference from Microsoft's own templates and
+schema, not a screenshot. Same test resource, same URL as before — refresh it:
+`https://portal.azure.com/#@/resource/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourcegroups/rg-invoice-llm-dev/providers/microsoft.insights/workbooks/0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6/workbook`
+What to look at, in one glance: **one** row of six tiles, one line of text above it, and the tab bar
+visible without scrolling. Still a disposable copy; still to be deleted once confirmed.
+
+### "The workbook is not understandable" — every explanation consolidated into one Documentation tab (2026-08-22)
+
+With the tab mechanism and the layout both confirmed working, the remaining complaint was not about
+structure at all: *"the workbook is not understandable."* Every panel carried paragraphs of caveats
+and data-source explanation interleaved with the actual numbers, so finding one figure meant reading
+a wall of text first. The Online signals tab alone was **3,499 characters of prose above three
+panels**; Component quality 2,191; Latency 961 for two charts. Six of the six overview tiles had a
+multi-sentence essay as their *empty-state message* — the pass-rate tile's was 136 characters
+explaining what an empty tile does and does not mean, where the founder wanted `— (not run)`.
+
+The target shape was agreed in chat before anything was written, against two example tables the
+founder confirmed directly: **tiles read as one terse line each**, and **the reference material is
+one table row per metric with no prose**. This pass implements exactly that.
+
+**What moved where.**
+
+| | Before | After |
+|---|---|---|
+| Text (`type: 1`) items | 12 | 16 |
+| Characters of text **outside** the reference tab | 10,998 across 7 tabs | **2,260** (−79%) |
+| Characters of text **in** the reference tab | 5,379 ("Read me first") | 22,170 ("Documentation") |
+| Prose paragraphs outside the reference tab | 20 | 9 — and all 9 are the second line of a two-line tab label |
+| Table rows in the reference tab | 18 | **79** |
+| Named items in the document | 49 | 53 |
+| Tabs | 8 | 8 (unchanged) |
+| KQL queries | 23 | 23, **byte-identical** |
+
+So: **20 prose paragraphs spread across 7 tabs became 79 table rows on one tab.** Each of the seven
+non-documentation tabs is now a `###` heading plus exactly one line of context, then its charts and
+tables. Nothing else.
+
+**"Read me first" became "Documentation"** (`linkLabel`, group `title`, group `name`, and the
+`subTarget`/`conditionalVisibility` pair `readme` → `documentation`, kept 1:1). It now holds seven
+blocks, in reading order:
+
+| Block | What it holds |
+|---|---|
+| `doc-intro` | One paragraph: this is where all the explanation lives, and the shared parameter pills |
+| `doc-metric-reference` | **The new centrepiece** — `Tile/Panel \| What it means \| What makes it move`, one row for each of the 6 overview tiles and each of the 18 panels across all 8 tabs, grouped by tab. 24 rows. The overview-tile rows are the founder's own wording, used verbatim |
+| `doc-data-sources` | The pre-existing live/empty honesty table (kept, retargeted from section numbers to tab names), plus the hardcoded `$/1M tokens` rate assumption — now a 5-row model/rate table rather than a paragraph |
+| `doc-component-scores` | The context/orchestration/persona mechanism table, and the `persona_scored_turns` "not applicable" limitation |
+| `doc-online-signals` | The 5-signal confidence table verbatim (`measured` / `proxy` / `offline-only` / `heuristic` and what each really measures), plus the two reading rules (no alert below 20 observations; a blank value is never 0.0) as their own 2-row table |
+| `doc-proxies` | **New consolidation** — a `Number \| Why it is not a direct measurement \| What would make it one` table gathering every proxy disclosure that used to be scattered: `synthesis_share_pct`'s inference-from-prompt-size, latency's one-round-trip scope, the turn-latency row-timestamp delta, `budget_exhaustion_rate`'s eval-harness-only source, `clarification_rate`'s wording match, and golden-bank coverage's staticness. Plus the Gap 278 rationale for latency having its own tab, and the golden-bank "why 8 and not 53" reasoning with its two caveats and Gap 287 |
+| `doc-import` | Import instructions, the two import-failure cases as a table, the ARG-vs-built-in-Alerts rationale, and a 4-row layout-history table (which absorbs the old restructure note's section-number → tab mapping, since section numbers no longer appear on any tab) |
+
+**Empty-state messages, before → after.** The multi-sentence explanations are gone from the tiles and
+their reasoning now lives in `doc-metric-reference`'s "What makes it move" column:
+
+| Tile | Before | After |
+|---|---|---|
+| Cost today | 187 chars ("...that is a configuration state — `APPLICATIONINSIGHTS_CONNECTION_STRING` is not set...") | `— (no data)` |
+| Quality pass rate | 136 chars | `— (not run)` |
+| Alerts today | 170 chars | `0 (none fired today)` |
+| Clarification rate | 232 chars | `— (not run)` |
+| Zero-result rate | 152 chars | `— (not run)` |
+| Golden-bank coverage | 67 chars | `— (query failed)` |
+
+The Alerts tile is deliberately the one that does **not** say `—`: Azure Resource Graph is genuinely
+live, so an empty result there really is a zero. That distinction — the single most important reading
+rule in the whole workbook — is stated once in `doc-data-sources` instead of once per tile.
+
+Tile titles were shortened to the founder's names (`Latest quality pass rate (%)` → `Quality pass
+rate (%)`, `Alerts fired today, by severity` → `Alerts today`, `Golden-bank coverage (of 53)` →
+`Golden-bank coverage`). Units were kept as bare parentheticals where they are load-bearing for
+reading the number — `(USD)`, `(%)` — because a number with no unit is a worse failure than a
+slightly longer label.
+
+**Two caveats were judged load-bearing enough to survive on their own tab**, compressed to one line
+each rather than deleted, with the full version in Documentation: `get_full_record` makes no LLM call
+so `synthesis_share_pct` is an inference (Cost tab), and the online signals' turn-latency panel title
+still carries `(PROXY — row timestamps, not a timer)`.
+
+**The Golden-bank tab keeps its two number tables.** Its content *is* numbers, not caveats — only the
+surrounding prose ("why 8 and not 53", the over-counting caveat, the gitignored-source caveat, Gap
+287, the regeneration instructions) moved to Documentation.
+
+**Verified how — this pass:**
+
+* **Queries proven untouched three ways, none of which required re-running one.** (1) The build
+  script collects every `query` string by JSON path before and after mutation and asserts equality:
+  **23 queries, 0 differences.** (2) It then asserts the *entire* before/after maps of `queryType`,
+  `resourceType`, `crossComponentResources`, `visualization`, `tileSettings`, `timeContext`,
+  `timeContextFromParameter`, `size` and `customWidth` are equal — so no data-source or rendering
+  property moved either. (3) Independently of the local file: the **23 query strings Azure had
+  stored before this PUT** (the previous round's definition, fetched with `canFetchContent=true`)
+  are set-identical to the 23 it stores after.
+* **Content-loss audit, mechanical rather than by eye.** Every backtick-delimited identifier and
+  every numeric literal in the old workbook text was extracted and checked against the new text:
+  **79/79 identifiers and 47/47 numbers present**, plus a hand-listed set of 49 load-bearing claim
+  phrases. The first build **failed this check on three items** — the five instrumented SAGE call
+  sites with `agents/query_tools.py`, the `infra/monitoring/llm_cost_by_tool.kql` pointer, and the
+  `gap_coverage` block name — which were restored into `doc-metric-reference` and the whole build
+  re-run from the untouched backup. Worth stating because it is the exact failure mode this task was
+  told to avoid, and it was caught by the check rather than by review.
+* **Schema-validated** against the official `schema/workbook.json` with `jsonschema` Draft 7:
+  **0 errors** for the whole document; the tab bar validates as `definitions.link` and all 8 groups
+  as `definitions.group`. Structure re-asserted: 8 `subTarget`s matching 8 `conditionalVisibility`
+  values 1:1 on `SelectedTab`, 6 tiles above the tab bar, widths still `15/15/20/15/15/15`.
+* **PUT to the same throwaway resource and round-tripped.** `PUT` 200
+  (`timeModified 2026-08-22T04:14:13Z`); the follow-up `GET` returned `serializedData`
+  **byte-identical to what was sent** — 79,737 characters / 79,903 UTF-8 bytes both ways, with all
+  75 em dashes, 7 arrows and the `≥` intact. ARM called through `urllib` with an
+  `az account get-access-token` bearer, per the earlier finding that `az rest` piped to a file on
+  Windows silently drops non-ASCII via cp1252.
+* **File hygiene**: CRLF throughout (924 lines), trailing newline, UTF-8 without BOM — the same
+  serialization as before, so the git diff is content only.
+
+**Still not verified, and it cannot be from here:** whether the consolidated tables *read* well on
+screen. The claim is that a 24-row reference table is easier to use than 20 paragraphs beside
+charts; that is a judgement about the agreed format, not a measurement. Same test resource, same URL
+— refresh it:
+`https://portal.azure.com/#@/resource/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourcegroups/rg-invoice-llm-dev/providers/microsoft.insights/workbooks/0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6/workbook`
+What to look at: the first tab is now **Documentation** and every other tab should be a heading, one
+line, then charts. Still a disposable copy; still to be deleted once confirmed.
+
+### "Put the insights at top" — and the three things that were still wrong (2026-08-22)
+
+Founder feedback, verbatim: *"put the insights at top then explanation then graph"*, plus, separately
+and bluntly, that after three rounds of fixes the workbook is still **"not at all user friendly"** in
+one glance. The first is a precise ordering instruction and is implemented exactly. The second was
+treated as an instruction to go and *find* what is wrong rather than to polish what was already
+asked for, and it turned up three concrete defects — one of which the previous pass created.
+
+**Every non-Documentation tab is now `heading → insight → explanation → charts`.** The charts and
+tables are untouched; the insight is genuinely new content, not a relabelled heading.
+
+| Tab | The insight, and where it comes from |
+|---|---|
+| **Cost** | **Computed, live.** A new `cost-insight` tile over the *same* `llm_agent_call` events and the *same* hardcoded rate table as the chart below it. Renders today as `Biggest spender: chat.sql_generation — 47% of the window` / **0.02** / `USD over 9 calls from 4 agents` |
+| **Latency** | **Computed, live.** A new `latency-insight` tile over the same events as the p50/p95 chart. Renders today as `Slowest tail: dashboard.insights — p95 is 1.0x its own median of 14875 ms` / **14875** / `ms p95, worst of 4 agents — 9 calls, 0 errors in the selected time range`. The ratio is the point: a high multiple is a *tail* problem, a high p95 with a multiple near 1 is a uniformly slow agent — which is exactly what `dashboard.insights` is |
+| **Health** | **Computed, live.** A new `health-insight` ARG step over the same `alertsmanagementresources` rows as the bar chart. Renders today as `1 of 25 alerts still firing right now` / **25** / `alerts fired — worst severity Sev1 — noisiest of 6 rules: alert-ca-invoice-be-dev-memory-high (9)` |
+| **Golden-bank coverage** | The headline number restated in plain words: *"8 of the 53 closed answer-quality gaps have a re-runnable regression test today — the other 45 would not be caught by anything automatic if they came back."* |
+| **Quality** | No data yet, so the insight states what a reading will *mean*: read the **change** between runs, not the level, because this judge is known to under-score some correct answers — 100% is not the target |
+| **Component quality** | Same shape: the lowest of the three lines is the fix list — `context` = wrong rows fetched, `orchestration` = right rows but an untraceable figure, `persona` = right data, wrong domain reasoning |
+| **Online signals** | Same shape: a rate above its own `threshold` with a `denominator` of 20 or more is worth acting on; below 20 observations, 1-of-1 reads as 100% |
+
+On the four no-data tabs the insight is a **bold** line in the same markdown block as the heading and
+the existing one-line explanation, so it is visually distinct without costing a second block of
+vertical space. On Cost / Latency / Health the insight is a real query step (`size: 4`, full width,
+titled *The one-line read*) sandwiched between a heading-only markdown item and the pre-existing
+explanation line, because a markdown step cannot hold a computed value.
+
+**Three real problems found beyond the explicit ask.**
+
+1. **The previous pass made Documentation the *first* tab, so the workbook opened on the single
+   biggest wall of text in it.** Consolidating all prose into one Documentation tab was right; leaving
+   it first was not. The first link in a `type: 11` tab bar fires on load, so every open landed on
+   22,170 characters of reference tables before any number. **Fixed: Documentation moved to last, Cost
+   is now first**, so the workbook opens on a live figure. This is the highest-confidence item in this
+   pass and it is a defect the previous round introduced, not a preference.
+2. **`customEvents` is no longer empty, and the Documentation tab still said it was.** As of
+   **2026-08-22T03:48:30Z** `llm_agent_call` events are arriving — `APPLICATIONINSIGHTS_CONNECTION_STRING`
+   has been set as a Container App secret since then. Every prior pass, and the "Data sources" table
+   itself, asserted "**No — empty**, 0 rows over 90 days" for Cost and Latency. A founder reading a
+   `$0.02` tile above a table telling him there is no data is a direct contradiction and a real
+   contributor to "not understandable". **Fixed:** both rows now read live, dated to that timestamp,
+   and the `doc-import` "a tab renders empty" row was narrowed to the three tabs that genuinely are
+   still empty (Quality, Component quality, Online signals). One caveat is stated on the Cost row
+   rather than left to be discovered: the history is only hours long, so a 14-day window is mostly
+   the pre-instrumentation period, not a quiet product.
+3. **There was no colour or icon anywhere in the workbook.** Checked rather than assumed: threshold
+   formatting *is* real and *is* schema-supported — `formatter: 18` with
+   `formatOptions.thresholdsOptions: "icons"` and a `thresholdsGrid`, used **164 times inside
+   `tileSettings`** across the 708 workbook templates Microsoft ships, with `representation` values
+   including `Sev0`–`Sev4`, `success`, `Blank` and the `text: "{0}{1}"` icon+value form. **Applied to
+   exactly one tile — Alerts today** — mapping each severity to its own severity icon, with a
+   `tooltipFormat` explaining the rule.
+
+**Why only one tile got an icon, stated plainly rather than sold as more than it is.** A threshold is
+a claim about what "bad" means. Alerts have one that this repo did not invent (severity). The other
+five tiles do not: there is no cost budget, no target pass rate and no coverage target anywhere in
+this codebase, and inventing one to make a tile go red would break the same honesty rule that made
+the empty-state messages say `— (no data)` instead of `0`. The two online-signal tiles *do* have real
+thresholds — 25% and 20%, carried on the `online_eval_signal` event itself as a `threshold` field, so
+no number would have to be hardcoded — and the four-branch status logic for them
+(`over` / `under` / `too few` / `no threshold`) was written and **proved live against synthetic rows**
+in this pass. It was deliberately **not shipped**, because both tiles are empty and will stay empty
+until something calls `emit_online_signals()` on a schedule; adding invisible machinery to an empty
+tile does not answer a complaint about what is visible. It is a one-line change when that job exists.
+
+**Two things left for the founder rather than guessed at.** Both are vocabulary, and both were
+changed to "the founder's names" in the previous pass, so changing them again unasked would be
+overwriting a decision that was already made:
+
+* **Tile titles.** `Clarification rate (%)` and `Zero-result rate (%)` are the product's internal
+  signal names. A non-engineer reading them cold learns nothing; the plain-English versions already
+  exist in `doc-metric-reference` ("what % the AI answered by asking a follow-up instead of a direct
+  answer", "what % got 'no matching records found'"). Promoting those to the tile titles would help a
+  first-time reader and cost the vocabulary link to `online_eval_signals.py`, and the titles are
+  narrow (`customWidth: 15`) so a longer label costs vertical space above the tab bar — the exact
+  thing round three was spent fixing.
+* **Tab labels.** `Online signals` and `Component quality` are internal names. `Live traffic` and
+  `Which stage is wrong` would read better cold; both are cross-referenced by name throughout the
+  Documentation tab, so renaming means editing those references too.
+
+**Verified how — this pass:**
+
+* **The three new queries were written and run live before being put in the file**, not after. All
+  three return one sane row against real data (values quoted in the table above). The Health query's
+  "still firing" count is `monitorCondition == 'Fired'`, **not** `alertState != 'Closed'` — checked
+  against the real rows, where all 25 alerts have `alertState: New` because nobody closes them, so
+  the `alertState` reading would have said "25 still open" and been useless. That distinction is
+  recorded in `doc-metric-reference`.
+* **All 25 query steps in the written file re-executed live** — 22 Log Analytics against
+  `appi-invoicellm-dev` and 3 Azure Resource Graph — extracted programmatically from the JSON rather
+  than retyped. **0 failures**, every one returning its expected column schema.
+* **The diff is provably only what was intended, measured against what Azure had stored** (the test
+  resource still held the previous round's definition, so it was `GET`-ed and compared, not trusted
+  from a local copy): all **23 pre-existing query strings present and unchanged**, **3 added**,
+  **0 removed**; of the 22 pre-existing query *steps*, **exactly one** has any changed property —
+  `overview-alerts-today`'s `tileSettings.titleContent`, the severity icon. Every other
+  `queryType` / `resourceType` / `crossComponentResources` / `visualization` / `tileSettings` /
+  `timeContext*` / `size` / `customWidth` / `title` / `noDataMessage` is byte-identical.
+* **Content-loss audit, mechanical.** Every backtick-delimited identifier and every numeric literal
+  in the workbook's text before the change was checked against the text after: **88/88 identifiers
+  and 43/43 numbers present, 0 missing.** The audit itself was fixed mid-run — its first version
+  keyed on `version == "TextItem/1.0"`, which these markdown steps do not carry, so it silently
+  audited zero strings and passed vacuously. Worth recording: a green check from a check that
+  examined nothing is the same failure class this step exists to catch.
+* **Schema-validated** against the official `schema/workbook.json` with `jsonschema` Draft 7:
+  **0 errors** for the whole document; the tab bar validates as `definitions.link`, all 8 groups as
+  `definitions.group`, and the 3 new insight steps and the changed alerts tile as `definitions.query`.
+* **Serialiser proved lossless first**: `json.dumps(indent=2, ensure_ascii=False)` + CRLF reproduces
+  the pre-change file byte-for-byte (80,827 bytes), so the git diff is content only.
+* **PUT to the same throwaway resource and round-tripped.** `PUT` 200
+  (`timeModified 2026-08-22T04:33:06Z`); the follow-up `GET` with `canFetchContent=true` returned
+  `serializedData` **byte-identical to what was sent** — 94,466 characters / 94,672 UTF-8 bytes both
+  ways, with all 92 em dashes, 10 arrows and the `≥` intact. ARM via `urllib` + an
+  `az account get-access-token` bearer, per the standing finding that `az rest` piped to a file on
+  Windows drops non-ASCII under cp1252.
+* File hygiene unchanged: CRLF throughout (1,120 lines), trailing newline, UTF-8 without BOM.
+
+**Still not verified, and it cannot be from here — plus one honest caveat.** No pixels were seen this
+round either. Specifically unverified: that a `size: 4` full-width tile with a sentence as its
+`titleContent` reads as an insight rather than as another chart, and that the severity icon renders
+at all on the Alerts tile. And the honest part: **three rounds in, this should not be claimed as "now
+it is user friendly."** What can be claimed is that three specific, nameable defects are gone — the
+workbook no longer opens on a wall of reference tables, the Documentation tab no longer contradicts
+the live tiles, and each tab now leads with a takeaway instead of a label. Whether that is *enough*
+is the founder's call, and the two vocabulary questions above are genuinely his to settle. Same test
+resource, same URL — refresh it:
+`https://portal.azure.com/#@/resource/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourcegroups/rg-invoice-llm-dev/providers/microsoft.insights/workbooks/0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6/workbook`
+What to look at, in one glance: it should open on **Cost**, not Documentation; the first thing under
+the heading should be a sentence naming the biggest spender with `$0.02` beside it; Documentation
+should be the **last** tab. Still a disposable copy; still to be deleted once confirmed.
+
+One cosmetic caveat rather than a silent one: the Health insight's "noisiest rule" is an `arg_max`
+over the per-rule counts, and ties are broken arbitrarily — two rules currently sit at 9 alerts each,
+so that name can change between refreshes without anything having changed.
+
+### The file was reverted outside this workstream, and the rebuild that followed (2026-08-22, later the same day)
+
+**The incident.** `infra/monitoring/ai_control_tower.workbook.json` was found back at its **first,
+primitive state** — 27 flat root items, no `type: 11` links step anywhere, no `type: 12` group
+anywhere, no overview tiles, no Documentation consolidation, `46,472` bytes against the round-4
+definition's `95,792` on disk. Confirmed by reading the file, not inferred: a flat alternation of
+markdown-header and chart per section, exactly the pre-restructure shape. Nothing in this workstream
+wrote it; the founder confirmed another IDE had touched it. The disposable Azure test resource was
+checked too and held a matching early copy (`45,962` chars stored), so it was **not** usable as a
+recovery source either.
+
+**What made recovery exact rather than reconstructive.** The round-3 backup
+(`workbook.before_round4.json`, 80,827 bytes) and the round-4 build script both survived in the
+working scratch directory. Replaying that script over that backup reproduced the round-4 definition
+at **94,466 chars / 94,672 UTF-8 bytes** — byte-for-byte the figure this doc already recorded for it.
+So the 22,170-character Documentation tab, all 23 original queries and every preserved caveat came
+back verbatim; **nothing was re-derived from this doc's narrative**, which is what the narrative
+would otherwise have been needed for. This section records that as luck partly, and partly as the
+reason the previous rounds wrote reproducible build scripts instead of hand-editing JSON.
+
+**The new requirement, which is the actual content of this round.** Founder instruction: every
+non-Documentation tab must be **four visible sections, top to bottom, fitting one screen** —
+*scores/numbers, then a short explanation, then a compressed graph, then table rows*. That is a
+change from round 4's `heading → insight → explanation → charts`: an *insight sentence with one
+number in it* is not the same thing as a row of numbers.
+
+| Section | How it is built | Schema mechanism |
+|---|---|---|
+| 1. **Scores** | A `tiles` step returning **2-3 rows** of `(ord, metric, value, detail)`, one tile each. Every one is a *reduction of that tab's own query* — same events, same hardcoded rate table, same aggregation — never a new metric. The step's `title` carries the tab heading, so no separate heading item costs a row | `visualization: "tiles"`, `size: 4`, `tileSettings.titleContent/leftContent/subtitleContent`, `sortCriteriaField: "ord"` |
+| 2. **Explanation** | One markdown line, plain language, saying what those numbers mean. Round 4's computed insight sentences were folded into here and into the tiles' `detail` strings — e.g. "Biggest spender: `chat.sql_generation` — 47% of the window" is now literally the third tile | `type: 1` |
+| 3. **Compressed graph** | The **same chart, same query, unchanged** — only `size` moved `0` → `1` | `content.size: 1` |
+| 4. **Table rows** | The **same table, same query, unchanged** — capped to the top 5 rows with a filter box for the rest | `gridSettings.rowLimit: 5`, `gridSettings.filter: true` |
+
+**The seven scores queries, and what they show today.** All executed live before being written into
+the file, not after:
+
+| Tab | The 2-3 numbers | Live result today |
+|---|---|---|
+| Cost | Spend today / Spend in window / Biggest spender's share | `0.02` USD over 9 calls · `0.02` · `47%` — `chat.sql_generation` |
+| Latency | Worst p95 / its tail ratio / calls in window | `14875` ms — `dashboard.insights` · `1` x its own median · `9` calls, 0 errors |
+| Quality | Pass rate / faithfulness mean / accuracy mean | no rows — `— (not run)` |
+| Component quality | Context / orchestration / persona, each with its own denominator | no rows — `— (not run)` |
+| Online signals | Clarification rate / zero-result rate / signals over threshold | no rows — `— (nothing has run)` |
+| Golden-bank | 8 with a test / 45 without / 87 cases | static literals, 3 tiles |
+| Health | Alerts fired / still firing now / noisiest rule | `25` from 6 rules · `1` still firing, worst Sev1 · `9` — `alert-ca-invoice-be-dev-memory-high` |
+
+**Two real defects were found by running the new queries rather than by reading them**, both in the
+same family as this workbook's earlier `sum()`-returns-`0` finding:
+
+1. **`latest` is a reserved word in KQL.** `let latest = evals | …` fails to parse
+   (`SYN0002 … could not be parsed at 'latest'`). Three of the seven queries had it. Renamed to
+   `latest_run` / `latest_signals`.
+2. **`avg()` over an empty set returns `NaN`, not null, and `isnotnull(NaN)` is `true`.** The Quality
+   and Component-quality scores tiles therefore rendered a literal **`NaN`** with a `0 turns` subtitle
+   instead of `— (not run)` — a confident-looking non-number where the honesty rule requires nothing
+   at all. Fixed by guarding at source (`| where turns > 0` drops the single row a `by`-less
+   `summarize` always emits) and again on the value (`not(isnan(value))`). **Both branches were then
+   proved on synthetic rows**, the same way the cost tile's guard was: a seeded 2-turn datatable
+   returns `Pass rate 50 / Faithfulness 0.74 / Accuracy 0.8`, and an empty datatable of the same
+   schema returns **0 rows**. The component check additionally proves the NULL-is-not-zero rule
+   survives — persona reports `over 1 scored turns` where context and orchestration report 2.
+
+**Secondary tables moved behind a button rather than below the fold.** Three tabs had a 5th and 6th
+panel that no amount of row-capping fits on one screen. Each now sits in a nested `type: 12` group
+with `loadType: "explicit"`, which renders as a **single button** until clicked — `Show the
+per-SAGE-tool breakdown (2 tables)` on Cost, `Show the worst component per case (1 table)` on
+Component quality, `Show turn-latency percentiles (1 table, PROXY)` on Online signals. Not invented:
+`loadType`/`loadButtonText` are in the official schema's `definitions.group` and are used by 21
+groups across Microsoft's shipped templates. No query, column or caveat inside them changed.
+
+**One tab genuinely cannot have four sections, stated rather than fudged.** **Golden-bank coverage
+has three** — scores, explanation, and its two number tables. There is no compressed graph because
+there is no series to plot: the source is a repo file (`tests/golden_bank/golden_bank.json`), a
+workbook has no data source that can read one, and inventing a time axis for a static figure would be
+a fabricated trend. The tab says so on itself.
+
+**Evidence for the layout choices, counted rather than assumed** — re-derived this round against a
+shallow clone of `microsoft/Application-Insights-Workbooks` (668 template files parsed):
+
+| Choice | Evidence |
+|---|---|
+| `customWidth` as a bare number | **4,674 values, not one with `%`, `px` or any unit.** The only 17 non-integers are decimals (`33.3` x13, `33.33` x3, `66.67` x1). Independently confirms the earlier round's finding; the earlier count (5,207 across 708 files) differs only because it globbed a wider file set |
+| `type: 11` + `conditionalVisibility` as the tab mechanism | **422** tab bars; `isEqualTo` used **3,462** times. Cross-checked field-by-field against `Azure Security Center/Containers Security`, which puts intro → parameters → tab bar → conditionally-visible groups at **root level**, the same shape used here |
+| `size: 1` for the compressed chart | timechart `size: 1` used **50** times against `size: 4`'s **9**; barchart **67** against **21**. `size: 1` is the most compact *well-attested* option; `size: 4` was not taken because a tiny chart drops its axis labels and is thinly used for time series |
+| `gridSettings.rowLimit` | used **748** times, including values as low as 1, 10, 15 and 25 |
+| `loadType: "explicit"` | **21** groups |
+
+**Verified how — this rebuild:**
+
+* **Concurrent-edit defence, and it was a real check not a formality.** The destination file's
+  SHA-256 was recorded at task start (`e0503d11…`, 46,472 bytes) and re-read from disk immediately
+  before writing, and again inside the copy step, with the write refusing to proceed on a mismatch.
+  It matched both times, so nothing else's edit was silently overwritten.
+* **All 30 query steps in the written file executed live** — 26 Log Analytics against
+  `appi-invoicellm-dev` and 4 Azure Resource Graph against subscription `2ae37d8b-…` — extracted
+  programmatically from the JSON rather than retyped. **0 failures**, every one returning its expected
+  column schema. Run through `urllib` with an `az account get-access-token` bearer, per the standing
+  finding that `az rest` piped to a file on Windows drops non-ASCII under cp1252 *and* that invoking
+  `az` from Python truncates a multi-line query argument at the first newline.
+* **Content preserved, checked mechanically**: every backtick identifier and numeric literal in the
+  recovered round-4 text was compared against the rebuilt text — **95/95 identifiers and 44/44
+  numbers present, 0 missing.** Of 26 pre-existing queries, **26 are byte-identical**; exactly
+  **3 are deliberately superseded** (round 4's single-value "one-line read" tiles on Cost, Latency and
+  Health, each replaced by a 3-number scores query over the same events), and that allowance is
+  pinned to three specific query substrings so nothing else can vanish through it.
+* **Schema-validated** against the official `schema/workbook.json` with `jsonschema` Draft 7:
+  **0 errors** for the whole document, and 0 for each part checked in isolation — the tab bar as
+  `definitions.link`, all 8 tab groups and all 3 collapsed groups as `definitions.group`, and all 7
+  scores steps as `definitions.query`.
+* **Structure re-asserted from the parsed file**: 6 overview tiles at `15/15/20/15/15/15` = 95, all
+  bare numbers; `type: 11` tab bar with 8 links on `cellValue: "SelectedTab"`; 8
+  `conditionalVisibility` values matching the 8 `subTarget`s 1:1; **Documentation last, Cost first**.
+* **PUT to the same throwaway resource and round-tripped.** `PUT` 200
+  (`timeModified 2026-08-22T05:28:57Z`); the follow-up `GET` with `canFetchContent=true` returned
+  `serializedData` **byte-identical to what was sent** — **111,428 characters / 111,660 UTF-8 bytes**
+  both ways, with all 104 em dashes, 10 arrows and the `≥` intact. The four-section shape was then
+  re-read back out of what Azure stored, not just asserted locally.
+* File hygiene unchanged: CRLF throughout (1,372 lines), trailing newline, UTF-8 without BOM.
+  **113,032 bytes on disk**, against the reverted file's 46,472 and round 4's 95,792.
+
+**Still not verified, and it cannot be from here.** No pixels were seen. The explicit success bar this
+round — *do the four boxes actually fit one screen with no scrolling* — is a rendering question, and
+the claim here is only that the four steps exist in that order with the most compact schema-supported
+settings for each. On a short browser window the fourth section will still need a scroll and that is
+arithmetic, not a defect: a `size: 1` chart plus a 5-row table plus a tile row plus the parameter
+pills and the tab bar is roughly 540px of the ~580px a 1080p window leaves, with no margin for a
+laptop-height window. Same test resource, same URL — refresh it:
+`https://portal.azure.com/#@/resource/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourcegroups/rg-invoice-llm-dev/providers/microsoft.insights/workbooks/0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6/workbook`
+What to look at, in one glance per tab: a **row of 2-3 numbers first**, one line of words under it, a
+**short** chart, then a 5-row table — and on Cost / Component quality / Online signals a single
+**Show …** button at the bottom rather than more tables. Still a disposable copy; still to be deleted
+once confirmed.
+
+### The six overview tiles were abandoned for a plain table (2026-08-22, round 6)
+
+**Founder feedback, verbatim:** *"still same scroll bar, fonts big, not visible some items. cost today
+is just visible also scroll bar is there and very big font, quality pass r is just visible and no
+value at all, Alerts today unnecessary scroll bar and such big fonts with no alignment, Clarifi is
+only shown nothing in the below section visible, Zero-result rat is text nothing visible below empty
+still not correct way to show empty, Golden bank lower section scroll bar not needed also showing a
+vague partial comment of '53 gaps - static, 2026-08-21'"* — plus, separately: *"for top tiles make
+the fonts very very small"*.
+
+**Read as a list, that is one complaint per tile, in tile order** — cost, quality pass rate, alerts,
+clarification, zero-result, golden-bank — and the truncations name themselves: "quality pass **r**",
+"**Clarifi**", "Zero-result **rat**". Six tiles at `customWidth: 15` are ~15% of the page each, so
+the `title` clips mid-word, the `formatter: 12` big-number renderer fills what is left, and the
+subtitle gets a scrollbar. That is the *tiles* visualization behaving as designed in a box too small
+for it, not a parameter that was set wrongly.
+
+**Three rounds had already tried to fix these same six tiles** — the `customWidth` unit fix (round 3),
+the `latest`/`NaN` query fixes and the group re-wrap (round 5), and the width/row rebalancing in
+between. Each one passed schema validation, live query execution and a byte-identical round-trip, and
+each one still rendered broken in a way nobody predicted. The agreed conclusion, before this round
+started, was to **stop using `tiles` for the overview row** rather than tune it a fourth time.
+
+**What replaced them.** The overview group is now a caption line and **two `visualization: "table"`
+steps** sharing one column layout — `Metric | Value | Detail`:
+
+| Metric | Value today | Detail |
+|---|---|---|
+| Cost today (USD) | `0.02` | 9 calls since midnight |
+| Quality pass rate (%) | `— (not run)` | no agent_eval_run events in the selected time range |
+| Clarification rate (%) | `— (not run)` | nothing calls emit_online_signals() on a schedule yet |
+| Zero-result rate (%) | `— (not run)` | nothing calls emit_online_signals() on a schedule yet |
+| Golden-bank coverage | `8 of 53` | closed answer-quality gaps with a re-runnable test - static, hand-entered 2026-08-21 |
+| Alerts today | `1` | worst Sev2 - Sev2: 1 |
+
+**It is two steps and not one, and that is a hard platform constraint, not a preference.** Five of the
+six metrics come from Log Analytics (`customEvents` on `appi-invoicellm-dev`); *Alerts today* comes
+from Azure Resource Graph (`alertsmanagementresources`). A workbook query step carries exactly one
+`queryType`/`resourceType`, so the two cannot be `union`-ed inside one step. The obvious escape —
+Log Analytics' cross-service `arg()` operator — was **tested rather than assumed, and it fails on the
+path the portal actually uses**:
+
+* `arg("").alertsmanagementresources | take 1` **succeeds** against `api.applicationinsights.io/v1`.
+* The same query against `management.azure.com/{appInsightsResourceId}/query?api-version=2018-04-20`
+  — the ARM-proxied path a workbook step runs on — returns
+  `BadArgumentError / QueryValidationError: "The 'adx' pattern cannot be used with the current
+  authentication scheme"`.
+
+Two other ways to force one step were considered and rejected as *more* exotic than the thing being
+removed: a workbook **merge** step over two hidden source steps, and a **hidden ARG-backed parameter**
+(`isHiddenWhenLocked`, 3,935 uses across Microsoft's 668 shipped templates, so it is a real pattern)
+interpolated into the union query. Both would put all six rows behind a single point of failure; two
+independent steps fail independently, which matters more here than the seam. The two grids carry
+**identical `customColumnWidthSetting` values on identically-named columns**, so they line up as one
+continuous table with a repeated header — which is also the direct answer to "no alignment".
+
+**Empty states cannot be blank, and that is now structural rather than a message.** The old tiles
+relied on `noDataMessage`, which only fires when a step returns *zero rows* — in a six-row union a
+metric with no data would simply have no row at all, which is worse than a blank tile. Every leg
+therefore terminates in a `summarize` with **no `by` clause**, which KQL guarantees emits exactly one
+row even over empty input, and the value column is a **string** so it can hold `— (no data)` /
+`— (not run)` instead of a number. Verified live, not reasoned about: `summarize` over an empty set
+returns 1 row (LA *and* ARG), `max()` over empty returns **null, not NaN**, and `arg_max()` over empty
+returns one all-null row. The round-5 fixes are carried forward unchanged — `latest` is still not used
+as a `let` name, and every numeric guard is `isnull(x) or isnan(x)`, never `isnotnull(x)` alone.
+
+**All four reachable empty branches were executed live**, not inferred: `Tenant=all`, a real tenant,
+a tenant with no data (which drives the cost leg into `— (no data)`), and a forced-empty alerts set
+(which drives *Alerts today* to `0` with `none fired today - this source is live, so 0 here is a real
+zero`). The alerts row is still the deliberate exception to the dash rule, for the same reason as
+before: ARG is genuinely live, so zero there is a real zero.
+
+**The golden-bank wording is now complete rather than a fragment.** `of 53 gaps - static, 2026-08-21`
+was the tail of a clipped subtitle; it is now `8 of 53` in **Value** and `closed answer-quality gaps
+with a re-runnable test - static, hand-entered 2026-08-21` in **Detail**, in a column sized `1fr` so
+it takes all remaining width.
+
+**"Make the fonts very very small" — the honest answer is that no such control exists for a table.**
+Checked, not guessed: the word `font` appears **zero times** in Microsoft's official
+`schema/workbook.json`; `gridSettings` accepts only `formatters`, `labelSettings`, `filter`,
+`rowLimit`, `hierarchySettings` and `sortBy`; and a step's `styleSettings` accepts only `margin`,
+`padding`, `maxWidth` and `showBorder`. Across the 668 templates Microsoft ships there are exactly
+**three** font-ish keys anywhere — `statSettings.valueFontStyle` (19 uses, the *stat* visualization),
+an undocumented `tileSettings.styleSettings.fontSize` (**1** use, and it sets `"large"`), and
+`/layout/options/rowHeight` (2 uses, an Azure *dashboard* property, not a workbook one). **None of
+them applies to a grid.** What actually made the text huge was `formatter: 12`, the big-number
+renderer inside `tileSettings`; a grid cell renders at the portal's standard grid font, which is
+already much smaller. So the font complaint is addressed by removing the big-number renderer, not by
+setting a size — and if the founder wants it smaller still, the schema offers no way to do it and the
+next lever would be browser zoom.
+
+**What was deliberately avoided, because the schema still allows misconfiguring this into the same
+failure:** no `formatter: 12` anywhere (the big-number renderer); no `tileSettings` at all; no
+`customWidth` on either step, so both are full width and no title can clip; no `gridSettings.rowLimit`
+and no `gridSettings.filter` (a filter box is a second row of chrome above a six-row table); and no
+fixed-unit width on the longest column — `Detail` is `1fr`, which the grid documentation defines as a
+share of the *remaining* space, so it cannot overflow into a horizontal scrollbar the way a `px`/`ch`
+value can. Both steps use `size: 4`, the most compact well-attested grid height: every table with
+`gridSettings.rowLimit <= 5` in Microsoft's 668 templates uses it (6 of 6, in
+`Azure Security Center/Containers Security` — the same template this workbook's tab bar was modelled
+on — at `customWidth: 50`, i.e. as compact side-by-side summary panels). The numeric meaning of
+`size` is **not documented anywhere public**; the docs only say "the vertical size of the control:
+small, medium, large, or full", so this is usage evidence, not a specification.
+
+**One real thing was given up: the severity icons.** Round 4's `formatter: 18` threshold grid mapped
+`Sev0`–`Sev4` to their portal icons on the alerts tile, and it was the only colour in the workbook.
+Thresholds on a shared string `Value` column that also holds `— (not run)` would be meaningless, so
+the icons are gone and severity is now words (`worst Sev2 - Sev2: 1`). The sentence that travelled
+with them — *"Sev0/Sev1 are the ones worth interrupting someone for"* — was **kept**, as a
+`tooltipFormat` on the alerts grid's `Metric` column (858 grid formatters carry a `tooltipFormat`
+across Microsoft's templates, so this is ordinary). It is a hover, which is weaker than an icon; it is
+recorded here as a loss rather than dressed up.
+
+**One time-context divergence, stated rather than left to be found.** The six tiles had three
+different time contexts (cost: fixed 24h; golden-bank: fixed 1h; the other three: the `TimeRange`
+pill). One step can only have one, and it is `timeContextFromParameter: "TimeRange"`. For **all four
+values the pill offers** (7/14/30/90 days) every leg returns exactly what its tile returned, because
+the cost leg carries its own `where timestamp >= startofday(now())` filter. The pill also allows a
+*custom* range, and a custom range shorter than the elapsed part of today would make "Cost today"
+under-report. That is the only behavioural difference from the tiles.
+
+**Verified how — this round:**
+
+* **Concurrent-edit defence, and it was load-bearing given what happened in round 5.** The
+  destination file's SHA-256 was recorded at task start (`4a93f912…`, 113,032 bytes), asserted before
+  the build, and **re-read from disk and re-asserted immediately before the write**, with the write
+  refusing to proceed on a mismatch. It matched both times.
+* **Both new queries executed live before being written into the file**, in every reachable branch —
+  4 parameter/time combinations for the union, 2 for the alerts row. Results are the table above.
+* **All 25 query steps in the written file re-executed live** — extracted programmatically from the
+  JSON rather than retyped — **0 failures**, every one returning its expected column schema. (The
+  first run reported 3 Health failures; the fault was in the *harness*, which did not substitute the
+  `{TimeRange:seconds}` workbook formatter, not in the workbook. Recorded because a harness bug that
+  looks like a product bug is the same failure class as round 4's vacuously-passing audit.)
+* **The diff is provably only the overview**, measured against **what Azure had stored**, not a local
+  copy: of 30 query strings held before the PUT, **24 are kept byte-identical, 6 removed (exactly the
+  six tile queries), 2 added**. The `shared-parameters` step and the entire `sections` subtree — the
+  tab bar and all 8 tabs — are **byte-identical** as JSON.
+* **Content-loss audit, mechanical**: every quoted identifier and numeric literal in the old overview
+  text (queries, titles, `noDataMessage`s, caption, tooltip) checked against the new — **17/17
+  identifiers and 20/20 numbers present, 0 missing** — plus 14 hand-listed load-bearing phrases
+  (`gpt-5-mini`, `properties.essentials.severity`, `startofday(now())`, `2026-08-21`, "worth
+  interrupting someone for", …), all present.
+* **Schema-validated** against the official `schema/workbook.json` with `jsonschema` Draft 7:
+  **0 errors** whole-document, plus both new steps validated in isolation as `definitions.query` and
+  the overview group as `definitions.group`.
+* **Serialiser proved lossless first**: `json.dumps(indent=2, ensure_ascii=False)` + CRLF reproduces
+  the pre-change file byte-for-byte, so the git diff is content only.
+* **PUT to the same throwaway resource and round-tripped.** `PUT` 200
+  (`timeModified 2026-08-22T05:59:38Z`); the follow-up `GET` with `canFetchContent=true` returned
+  `serializedData` **byte-identical** to what was sent — 106,862 characters / 107,096 UTF-8 bytes both
+  ways, 105 em dashes, 10 arrows and the `≥` intact. The new shape was then re-read **out of what
+  Azure stored**: two `table` steps, no `tileSettings`, no `customWidth`.
+* File hygiene unchanged: CRLF throughout (1,165 lines), trailing newline, UTF-8 without BOM.
+  **107,096 bytes on disk**, against round 5's 113,032.
+
+**Still not verified, and it cannot be from here.** No pixels were seen. That a `table` avoids the
+scrollbar and the oversized font is a **reasoned bet, not a measurement**: the big-number renderer is
+gone and a grid has no font control to get wrong, but whether `size: 4` gives a five-row grid enough
+height to avoid an internal scrollbar is exactly the kind of rendering question the last three rounds
+each got wrong in a new way. It is a better bet than the previous three because a grid has far fewer
+ways to be misconfigured than a tile — that is the whole argument, and it is worth no more than that.
+Same test resource, same URL — refresh it:
+`https://portal.azure.com/#@/resource/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourcegroups/rg-invoice-llm-dev/providers/microsoft.insights/workbooks/0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6/workbook`
+What to look at, in one glance: **one table of six rows** above the tab bar, no big numbers, no
+scrollbar, and the golden-bank row reading `8 of 53` with its full sentence beside it.
+
+**One thing left untouched that is worth knowing:** the seven per-tab "scores" steps inside the tabs
+(`cost-scores`, `latency-scores`, …) are **still `tiles`**. They were out of scope this round and the
+founder's complaints were all traceable to the six overview tiles, but they are the same
+visualization with the same failure modes, and if they render badly the same table treatment is the
+fix.
+
+### Seven score tiles, one merge step, and every redundant heading deleted (2026-08-22, round 7)
+
+Six founder asks landed during this one round, and the last one **reversed** the decision the round
+started from. In the order they arrived: *"show the full table... no scroll bar"*; simplify the Alerts
+row's Detail; *"show one table only"*; Latency is missing from the overview; delete the overview
+caption and the per-tab headings; and finally *"cant u make 7 score tiles at top like the one in cost
+tab"*. The end state is **7 tiles**, not a table — the intermediate table shape is recorded below
+because the reasoning that produced it is what made the tiles possible.
+
+**The overview group is now three steps and no caption:**
+
+| name | type | role |
+|---|---|---|
+| `overview-table` | 3, `queryType: 0` | 6 Log Analytics rows (`ord` 1-6) — **hidden** |
+| `overview-alerts-row` | 3, `queryType: 1` | 1 Resource Graph row (`ord` 7) — **hidden** |
+| `overview-merged-table` | 3, `queryType: 7` | the only visible step: `union` of the two, rendered as `tiles` |
+
+**1. One step feeding N tiles is exactly why the Cost tab's tiles work, and it needed a merge.** The
+founder pointed at `cost-scores` as the example they are happy with. Read rather than assumed, that
+step is **one full-width query step whose query returns 3 rows**, and the tiles renderer lays those 3
+rows out itself. The six overview tiles that failed three times were the opposite: **six separate
+steps at `customWidth: 15`**, each rendering one tile inside a box ~15% of the page wide. That is the
+difference that root-caused the clipped titles and the subtitle scrollbars, and it is a property of
+the *step layout*, not of `tiles`.
+
+To get 7 tiles out of one step, the two data sources have to become one result set. Round 6's
+constraint stands and was not re-litigated — an LA query and an ARG query cannot be `union`-ed inside
+one *query*, and LA's `arg()` operator fails on the ARM-proxied path a workbook actually uses. What
+round 6 rejected as "more exotic than the thing being removed" turns out to be **ordinary shipped
+Microsoft practice**, and the numbers were counted, not assumed: across the 668 templates in
+`microsoft/Application-Insights-Workbooks` there are **163 `queryType: 7` merge steps**, **49 of them
+`mergeType: "union"`**, and **21 pairing a `queryType: 0` step with a `queryType: 1` step** — exactly
+this pair. A merge step consumes the *results* of two earlier steps client-side, so each source keeps
+its own `queryType`/`resourceType` and the merge carries neither. Microsoft's own
+`Windows Virtual Desktop/AtScale/Overview` does this and then renders the merge as **tiles**, which is
+the same shape built here.
+
+Hiding the sources uses that template's idiom: `conditionalVisibility: {parameterName: "nevershow",
+comparison: "isNotEqualTo"}`, where `nevershow` is deliberately **not a declared parameter** (checked —
+that template declares 7 parameters and `nevershow` is not one of them). `leftTable`/`rightTable`
+reference steps by `name`. Both sides' columns map to the **same** `mergedName` in `projectRename`,
+which is what makes a union stack rows instead of producing `Metric`/`Metric1`. `ord` is carried
+through the merge purely so `tileSettings.sortCriteriaField` can order the tiles, exactly as
+`cost-scores` uses its own `ord`.
+
+**Cost of this, stated plainly: the entire overview is now behind one step.** Two grids failed
+independently; if this merge does not render, the overview is **blank**, because its sources are
+hidden. That is a worse failure mode than round 6's, accepted because the founder asked for one thing
+at the top rather than two.
+
+**2. The tile configuration, property by property, against the one the founder approves of.** Every
+key was copied from `cost-scores`, and the top-level `tileSettings` key set is asserted **identical**
+to it in the build script:
+
+| property | `cost-scores` (the reference) | overview tiles | same? |
+|---|---|---|---|
+| step `customWidth` | absent (full width) | absent | yes — **this is the fix** |
+| step `size` | `4` | `4` | yes |
+| `tileSettings.size` | `"auto"` | `"auto"` | yes |
+| `titleContent` | `metric`, `formatter: 1` | `Metric`, `formatter: 1` | yes |
+| `leftContent.formatter` | `12` (big number) | `12` | yes |
+| `leftContent.formatOptions.palette` | `"auto"` | `"auto"` | yes |
+| `leftContent.numberFormat` | decimal, 2 dp | **absent** | **no — the one deliberate difference** |
+| `subtitleContent` | `detail`, `formatter: 1` | `Detail`, `formatter: 1` | yes |
+| `showBorder` / `sortCriteriaField` / `sortOrderField` | `true` / `ord` / `1` | same | yes |
+
+The single difference has a reason: `cost-scores`' `value` column is a **real number** in every row,
+so a `numberFormat` applies. The overview's `Value` is a **string** by round 6's honesty fix, because
+it has to be able to hold `— (not run)` on a per-row basis (three of the seven metrics have never
+run). A `numberFormat` on a string is meaningless. Shipped precedent for this exact combination was
+looked for rather than assumed: of **802** tile steps with `leftContent.formatter: 12` across the 668
+templates, **3** bind it to a column built by `strcat(...)` — `SapMonitor2.0/AIOpsInsights/
+Availability Insights/Auto RCA`, steps `statTiles` / `hanaStatTilesForService` /
+`hanaStatTilesWoService` — and all three use `formatter: 12` with **no `numberFormat`**, no
+`customWidth`, and `size: 4`. That is the configuration copied.
+
+**Where this could still fail, said before the founder finds it:** 3 shipped uses out of 802 is thin
+evidence that the big-number renderer handles a non-numeric string, and `"99.5%"` (what SapMonitor
+feeds it) is far more number-like than `— (not run)`. If the renderer blanks those three tiles, the
+**`Detail` subtitle still states the reason** on every tile (`no agent_eval_run events in the selected
+time range`, etc.), so the failure degrades to "no big number, explanation still there" rather than to
+a tile that looks like a healthy zero. The second unknown is layout: 7 tiles across one full-width row
+is more than the 3 the Cost tab renders, and whether the renderer wraps them onto two rows or narrows
+them is not knowable from JSON. Wrapping would be fine; narrowing to Cost-tab width is fine; narrowing
+below that would reproduce the clipping. **This is a fourth attempt at `tiles` in this exact spot, and
+the argument for it is one specific structural difference — one full-width step instead of six
+15%-wide ones — not a general belief that it will look right.**
+
+**3. The Alerts Detail is a plain severity count list.** The KQL dropped the
+`worst_num = min(toint(substring(sev, 3)))` leg and the `strcat('worst Sev', worst_num, ' - ', …)`
+framing; `Detail` is now just the breakdown. Run live: today reads `Sev2: 1`; the same query over a
+30-day window — the only way to get more than one severity out of the real data right now — reads
+`Sev1: 8, Sev2: 18`. The zero branch is unchanged (`none fired today - this source is live, so 0 here
+is a real zero`), because with no alerts there are no severities to count and that sentence carries
+the one honest exception to the dash rule.
+
+**One real loss:** the tooltip *"Sev0/Sev1 are the ones worth interrupting someone for"* is gone. It
+was a `tooltipFormat` on a grid column; grid formatters do not exist on a tiles step at all, and even
+in the intermediate table shape that column also held the cost and latency rows, so it would have
+attached an alert-severity sentence to the cost row. Recorded as a loss, not dressed up.
+
+**4. Latency is the 6th Log Analytics row, reduced from the Latency tab's own query.** Same
+`customEvents | where name == 'llm_agent_call'` base and the same `percentile(latency_ms, 50/95)` and
+`top 1 by agent_p95 desc` shape that `latency-scores` and `latency-table` already use — no new metric
+was invented. `Value` is the overall median across agents; `Detail` is
+`p95 <n> ms, slowest agent <name>, <n> calls in window`. Live today: `7214` /
+`p95 14875 ms, slowest agent dashboard.insights, 9 calls in window`. Empty state follows Cost's rule —
+`— (no data)`, never a fabricated `0`. Checked live rather than reasoned about: `percentile()` over an
+empty set returns **null, not NaN**.
+
+**5. The caption and all 7 tab headings are deleted, and nothing they said was dropped.** The overview
+caption (`**A dash means no data, never a healthy zero.** …`) is gone as a step. On every
+non-Documentation tab, two strings were removed: the group's `title` (which rendered the `###` heading)
+and the first step's `title`, which in all 7 cases began with the tab's own name — `Cost — USD per day,
+by agent`, `Latency — p50 and p95 per agent per day`, `Quality — the golden sample, re-asked and
+graded`, `Component quality — which stage of the pipeline is wrong`, `Online signals — live traffic, no
+ground truth`, `Golden-bank coverage — how much of the gap history is re-runnable`, `Health — alerts
+fired per day`. The tab bar already names each tab, so both were repeating it. Documentation keeps its
+heading; it is the reference tab and `# Documentation` is its own H1.
+
+Six of those seven titles said nothing the explainer line directly underneath does not already say —
+checked one by one. **The seventh did**: `Online signals — live traffic, no ground truth`. That caveat
+appears nowhere else in the workbook (grep: zero other occurrences of "ground truth"), so it was moved
+into the explainer as its opening words — `**Live traffic, no ground truth.** A rate above its own
+threshold…` — which costs no vertical space. The caption's honesty rule was already on the
+Documentation tab in substance (`A blank panel means no data, never a healthy zero`); it was widened
+to cover the dash convention: `**A dash (—) on an overview tile, and a blank panel on a tab, both mean
+no data — never a healthy zero**, except on the Health tab and the overview's Alerts tile.`
+
+**Deviation from the stated scope, flagged rather than buried:** this round was scoped "do not touch
+Documentation", and the Documentation tab *was* edited. Three of the edits keep deleted text alive
+(above). Two more fix statements that round 6 left stale and that describe the exact thing being
+changed: `doc-intro` still said the pills were shared by "the six overview tiles", and
+`doc-metric-reference`'s overview table still described `Alerts today` as "one tile per severity, each
+with its severity icon" — icons round 6 had already removed. A `Median latency (ms)` row was added to
+that reference table because it is a new overview metric. Nothing else on that tab was touched.
+
+**6. The scrollbar question — what was actually checkable, and what still is not.** Checked this time
+rather than reasoned about:
+
+* There is **no height property to get wrong**. The official `schema/workbook.json` has **40
+  definitions and not one carries a height**, `minHeight`, `maxHeight` or `rowHeight`; `styleSettings`
+  accepts only `margin`, `padding`, `maxWidth`, `showBorder`, and no overview step sets it. `size` is
+  typed only as `"integer" / "Size of the step"` — no enum, no documented numeric meaning.
+* **No `rowLimit`** anywhere in the overview, so nothing truncates rows.
+* `size: 4` is the **largest value that occurs anywhere** in the 668 templates (observed values are
+  0-4 across 6,376 occurrences, nothing above 4), so there is no "taller" setting to move to.
+* Usage evidence that `4` is what Microsoft picks for *short* panels specifically: among table steps
+  with a **deliberate** `rowLimit` (not the editor default 10000), the median is **7.5 at `size: 4`**
+  (8 of 16 are ≤ 6 rows) against **1000 at `size: 0`** and **1000 at `size: 2`**, where almost none go
+  below 20 rows; and 260 of 595 tile steps use `size: 4`. `cost-scores` — the step the founder is
+  happy with — is `size: 4` with `tileSettings.size: "auto"`, and the overview now matches it exactly.
+
+**That is as far as it goes, and it is not a measurement.** No pixels were seen. What can be stated:
+nothing in the file forces a fixed short height, no `rowLimit` can truncate, and the overview's height
+settings are now byte-identical to the tile step the founder has already looked at and accepted. What
+cannot be stated: the rendered height of 7 tiles in one full-width row in this browser at this zoom.
+That remains an open question and the founder's eyes are the instrument.
+
+**Verified how — this round (five successive writes, each hash-guarded):**
+
+* **Concurrent-edit defence on every write.** Baseline SHA-256 recorded at task start (`487b9b83…`,
+  107,096 bytes); each of the four build scripts asserted the expected hash on entry, proved its
+  serialiser reproduced the on-disk bytes exactly, and **re-read the file and re-asserted the hash
+  immediately before writing**, aborting on mismatch. All ten checks matched.
+* **Every new query executed live before being written into the file**: the 6-row LA union in 4
+  branches (`Tenant=all`; the one real tenant; a non-existent tenant, which drives both event-backed
+  rows to `— (no data)`; a 90-day window) and the alerts query in 3 (today; forced-empty; a 30-day
+  window for the multi-severity format). Results are quoted above.
+* **All 25 executable query steps in the written file re-executed live after every one of the five writes** — extracted
+  from the JSON, not retyped — **0 failures**, expected column schemas, including the final state with
+  `ord` added. The 26th step is the merge descriptor: it is `queryType: 7`, **client-side portal logic
+  with no query API to call**, so it is skipped. That is a genuine verification gap, not a pass.
+* **Diffs measured against what Azure had stored**, not against a local copy. Round 7a: of 25 stored
+  queries, 23 byte-identical, 2 removed, 3 added, and everything outside the overview group
+  byte-identical as JSON. Round 7b: **all 26 queries byte-identical** (a pure text/title change) —
+  29 diff lines, all 7 headings + the caption + 4 markdown strings. Round 7c/d: 23 identical, 3
+  replaced (the two sources gaining `ord`, the merge gaining `ord` in `projectRename`). Round 7e:
+  **all 26 byte-identical again** — 13 diff lines, all of them the three group expanders plus two
+  markdown strings.
+* Content-loss audit: **24/24** load-bearing strings present in the overview subtree (all 7 metric
+  names, `8 of 53`, both empty-state sentences, `gpt-5-mini`, `properties.essentials.severity`,
+  `startofday(now())`, the caption's rule); all three intended removals (`worst Sev`, `worst_num`,
+  "worth interrupting someone for") absent **file-wide**; all 7 deleted tab titles absent file-wide;
+  "ground truth" still present.
+* **Schema-validated** Draft 7 against the official `schema/workbook.json` after every write:
+  **0 errors** whole-document, plus each overview step as `definitions.query` and all 8 tab groups
+  plus the overview group as `definitions.group`. Structure re-asserted each time: 8 tab groups, 8
+  tab-bar links, exactly one group `title` left (Documentation).
+* **PUT to the same throwaway resource and round-tripped, four times.** Final `PUT` 200
+  (`timeModified 2026-08-22T06:36:14Z`); the follow-up `GET` with `canFetchContent=true` returned
+  `serializedData` **byte-identical** to what was sent (106,766 chars / 106,990 UTF-8 bytes both ways,
+  101 em dashes, 10 arrows, the `≥` intact). The final shape was re-read **out of what Azure stored**:
+  two hidden sources and one `queryType: 7` step at `visualization: tiles`, `size: 4`, no
+  `customWidth`; the merge descriptor re-checked there too (`mergeType: union`, both table references
+  resolve to real sibling steps, every non-`unknown` `fromId` equals the merge id, merged columns
+  exactly `ord`/`Metric`/`Value`/`Detail`).
+* File hygiene unchanged: CRLF, trailing newline, UTF-8 no BOM. **108,127 bytes on disk**, against
+  round 6's 107,096.
+
+Same test resource, same URL — refresh it:
+`https://portal.azure.com/#@/resource/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourcegroups/rg-invoice-llm-dev/providers/microsoft.insights/workbooks/0f1e2d3c-4b5a-4c9d-8e7f-a1b2c3d4e5f6/workbook`
+What to look at: **seven** score tiles at the top in the Cost tab's style — Cost, Median latency,
+Quality, Clarification, Zero-result, Golden-bank, Alerts — with **no caption line above them**; the
+Alerts tile reading `1` over `Sev2: 1`; and **no `### Cost` heading inside the Cost tab**, its tiles
+now sitting directly under the tab bar with the by-tool detail collapsed into a section you click
+to open. The three never-run tiles are the ones to look at hardest: if
+their big number is blank rather than `— (not run)`, the string-in-a-big-number-renderer bet did not
+come off, and the fix is `formatter: 1` on `leftContent`.
+
+**7. "Can the summary be the 1st tab since it's not visible totally" — measured, and the cause was
+not the tab order.** There is no tab named Summary; Cost is already first and already the default. So
+the question was turned into a measurement: how many rendered blocks does each tab actually have?
+
+| Tab | Blocks rendered on open (before this round) | After |
+|---|---|---|
+| **Cost** | **6** — heading, tiles, explainer, timechart, grid, **plus a 3-item detail group** | **3** |
+| Latency / Quality / Health | 5 — heading, tiles, explainer, chart, grid | 4 |
+| Component quality / Online signals | 6 — the same 5 plus a 1-item detail group | 4 |
+| Golden-bank coverage | 4 | 3 |
+
+**Cost was measurably the longest tab in the workbook, and two of the things making it long were
+empty.** `cost-by-tool-table` and `cost-by-tool-turn-composition` both return **0 rows** live
+(`ENABLE_AGENTIC_SAGE` is off, so no `sage.*` event exists), and both were rendering unconditionally,
+under a 221-character header, below the chart and the main table. The Documentation tab has claimed
+since the consolidation round that *"detail tables that would not fit sit behind a **Show …** button"*
+— checked, and **no such button ever existed**: none of the three `*-detail` groups carried
+`conditionalVisibility` or anything else. The doc was describing an intention, not the file.
+
+Fixed with the native group expander rather than by reordering tabs: all three detail groups
+(`cost-by-tool-detail`, `component-quality-detail`, `online-signals-detail`) now carry `expandable:
+true`, `expanded: false` and a `title` to click. **`expandable` is not in the published schema** — but
+neither are `crossComponentResources` or `timeContextFromParameter`, both of which demonstrably work
+in this very file, so the schema is known-incomplete rather than authoritative here; the positive
+evidence is **198 shipped uses of `expandable` across the 668 templates, 115 with `expanded`, and all
+198 carrying a `title`** (the clickable header), which is why the titles were added. The `### Cost by
+tool …` markdown heading inside the group was deleted, because the group title now says it — the same
+de-duplication as the seven tab headings. `doc-intro`'s "Show … button" sentence was corrected to say
+what the file now actually does.
+
+**Net effect on the default tab:** Cost opens as tiles → one explainer line → chart → table, with the
+by-tool detail one click away. That is 3 blocks where it was 6. **No tab was renamed or reordered** —
+that would have been guessing at what "summary" meant, and the measurable defect was elsewhere.
+
+**Still untouched and worth knowing:** the seven per-tab `*-scores` steps are unchanged — they were
+already the good configuration, and they are now the reference the overview copies.
+
+## Workbook — split into 9 standalone workbooks (2026-08-23)
+
+The single combined tabbed workbook (`infra/monitoring/ai_control_tower.workbook.json`) was
+**retired and deleted**. Reason: the founder wants each section pinnable to an Azure Dashboard
+individually, and Azure lets you pin a whole workbook or an individual visual to a Dashboard, but a
+pinned tile does not evaluate the source workbook's own `conditionalVisibility`/`SelectedTab` tab
+logic — so a single tab's content could never be reliably pinned out of a combined, tab-gated file.
+
+Replaced by **9 standalone workbook JSON files** in the same folder, none with a tab bar or any
+`conditionalVisibility` gating: `ai_control_tower_summary.workbook.json` (from the old overview
+score-tile group) and one per former tab — `_cost`, `_latency`, `_quality`, `_component_quality`,
+`_online_signals`, `_golden_bank`, `_health`, `_documentation`. Each file carries its own copy of
+the shared `TimeRange`/`Subscription`/`Tenant` `type: 9` parameter block, because every KQL query
+inline-references `{Tenant}` and most use `timeContextFromParameter: "TimeRange"` — without a local
+copy of that block, a standalone file's queries would silently break. Each non-Summary file is its
+former tab's `items` array unwrapped — the outer `type: 12` group wrapper and its `SelectedTab`
+`conditionalVisibility` dropped, content otherwise untouched. Summary preserves the old overview
+group's hidden-query merge mechanism exactly as it was (the two source steps' `nevershow`
+`conditionalVisibility`, feeding a `queryType: 7` union into the `tiles` step).
+
+**Founder follow-up, same session:** the flow needed to be "pin Summary's tiles to the Dashboard →
+click through → the full Summary workbook opens → Documentation is reachable from there," not a dead
+end at the 7 tiles. A cross-workbook deep link was deliberately not built (Azure Workbooks' portal
+blade URL format for linking to another saved workbook resource is fragile and version-dependent).
+Instead, `ai_control_tower_summary.workbook.json` also **embeds the full Documentation content** as
+a collapsed `type: 12` group at the bottom of its `items` array — same collapsible pattern already
+used elsewhere in this workbook (the pre-existing "Cost by tool" section): `groupType: "editable"`,
+`loadType: "explicit"`, `loadButtonText: "Show full documentation"`, `expandable: true`,
+`expanded: false`. Documentation therefore now lives in two places — its own standalone pinnable
+workbook (`ai_control_tower_documentation.workbook.json`) and embedded/collapsed inside Summary —
+kept textually identical (asserted programmatically at build time) so they cannot drift apart.
+
+New `infra/monitoring/ai_control_tower_workbooks.bicep` deploys all 9 as
+`Microsoft.Insights/workbooks@2022-04-01` resources, `serializedData` loaded per file via
+`loadTextContent()` rather than hand-translated into a bicep object literal (avoids escaping bugs on
+large KQL-heavy JSON), `appi-invoicellm-dev` referenced as `existing` for `sourceId`. Deliberately
+not routed through `08-apps.bicep`/`params.dev.json` — same narrow-standalone-deploy rationale as
+`infra/agent-eval-job-only.bicep`. `az bicep build` passed; `az deployment group what-if` against
+`rg-invoice-llm-dev` returned a clean **9 to create, 0 to modify, 0 to delete**. **Not yet
+deployed** — `az deployment group create` was deliberately not run, pending founder go-ahead.
+
 ## Tasks
 
 - [x] Add `agent_name`/`model`/`tokens_in`/`tokens_out` fields to the existing structured logger,
@@ -1000,7 +2202,99 @@ alert rule, a scheduled query rule, or an Azure resource, and no Azure configura
       (p50+p95 per agent per day, no longer folded into the cost query), component-level quality,
       online signals, and a golden-bank coverage tile. All 10 new Log Analytics queries executed
       live against `appi-invoicellm-dev` — correct column schema, 0 rows, because `customEvents`
-      is still empty. See "Workbook — the second pass"
+      is still empty. See "Workbook — the second pass".
+      **Restructured 2026-08-22 on founder feedback** ("you can't scroll 10 pages to see
+      everything"): the 8 sections are now 8 **tabs**, with 6 single-stat overview tiles above the
+      fold reusing the same queries, and the Tenant parameter now resolves to `all` on load instead
+      of needing manual selection. Layout only — all 26 pre-existing items asserted byte-identical
+      after the rebuild, and all 23 queries in the new file re-executed live (0 failures; the
+      alerts-today tile returned a real `Sev2: 1`). See "Workbook — the usability restructure".
+      **Tab mechanism corrected 2026-08-22** after the founder confirmed the restructured workbook
+      still rendered as one scrolling page: `"style": "tabs"` on a `type: 12` group is not a
+      supported property (verified absent from the official `schema/workbook.json`) and was silently
+      ignored. Replaced with the real mechanism — a `type: 11` links step (`style: tabs`,
+      `linkTarget: parameter`) plus `conditionalVisibility` on each of the 8 groups, keyed to
+      `SelectedTab`. Content byte-identical; schema-validated; structurally identical to a shipped
+      Microsoft tabbed template; and **round-trip verified against a real Azure resource** — a
+      throwaway test workbook `AI Control Tower - TAB FIX TEST` in `rg-invoice-llm-dev` stores the
+      JSON byte-for-byte. Visual confirmation that the tab row renders and switches is still
+      **founder action** (open the test URL). See "The tabs did not render — root cause and fix".
+      **Content redesigned 2026-08-22** on the founder's "the workbook is not understandable":
+      every explanatory paragraph from all 8 tabs consolidated into a single **Documentation** tab
+      (renamed from "Read me first") as one table row per metric — 20 prose paragraphs across
+      7 tabs became 79 table rows on one tab, text outside that tab fell 10,998 → 2,260 chars,
+      and the six tiles' multi-sentence empty-state essays became `— (not run)` / `— (no data)`.
+      Relocation and compression, not a cut: a mechanical audit confirms 79/79 identifiers and
+      47/47 numbers from the old text survive. All 23 queries byte-identical (proven against what
+      Azure had stored, not just locally); schema-validated 0 errors; round-trip byte-identical.
+      See "The workbook is not understandable".
+      **Insight-first ordering 2026-08-22** on "put the insights at top then explanation then
+      graph": all 7 non-Documentation tabs reordered to heading → insight → explanation → charts.
+      Cost, Latency and Health got a **computed** insight — three new query steps written and run
+      live *before* being added, over the same events as the tab's own chart; the four tabs with no
+      data got a plain statement of what a reading will mean once there is. Three further defects
+      found and fixed from the "still not at all user friendly" feedback: **Documentation was the
+      first tab**, so the workbook opened on its own 22,170-character reference wall (moved to
+      last, Cost is now first); **the Data sources table still said `customEvents` was empty** when
+      `llm_agent_call` has been arriving since 2026-08-22T03:48:30Z, directly contradicting the live
+      `$0.02` tile (corrected and dated); and **there was no colour or icon anywhere** — severity
+      icons added to the Alerts tile via `formatter: 18` thresholds, deliberately the only tile,
+      because it is the only one with a threshold this repo did not have to invent. 25/25 queries
+      re-executed live, 0 failures; exactly one pre-existing step property changed (proven against
+      what Azure had stored); 88/88 identifiers and 43/43 numbers survive; schema-validated 0
+      errors; round-trip byte-identical (94,466 chars). Two vocabulary questions (tile titles, tab
+      labels) left explicitly to the founder rather than guessed. See "Put the insights at top"
+      **Reverted outside this workstream and rebuilt 2026-08-22**: the file was found back at its
+      first 27-item flat state (46,472 bytes, no tab bar, no tiles, no Documentation tab) — another
+      IDE had written it, and the Azure test resource held a matching early copy so it was no help
+      either. The round-4 definition was recovered **exactly** (94,466 chars, matching the recorded
+      figure) by replaying the surviving round-4 build script over the surviving round-3 backup, so
+      no content was reconstructed from prose. On top of it, the founder's new requirement: every
+      non-Documentation tab is now **four sections on one screen** — a `tiles` step of 2-3 numbers
+      reduced from that tab's own query, one line of explanation, the same chart at `size: 1`, and
+      the same table at `gridSettings.rowLimit: 5` with a filter box. Four secondary tables moved
+      into collapsed `loadType: "explicit"` groups (one button each). Two real defects found by
+      running the seven new queries rather than reading them: **`latest` is a reserved KQL word**,
+      and **`avg()` over an empty set returns `NaN` which passes `isnotnull()`**, so two tiles would
+      have rendered a literal "NaN" instead of `— (not run)`; both fixed and both branches proved on
+      synthetic rows. **Golden-bank coverage has three sections, not four** — no chart is possible
+      from a static repo file, and the tab says so. 30/30 queries executed live, 0 failures;
+      95/95 identifiers and 44/44 numbers preserved; 26/26 pre-existing queries byte-identical with
+      exactly 3 deliberately superseded; schema-validated 0 errors; round-trip byte-identical
+      (111,428 chars / 111,660 UTF-8 bytes). Whether the four boxes genuinely fit one browser screen
+      is **founder verification** — it is a rendering question and is not claimed here. See "The
+      file was reverted outside this workstream"
+      **Overview tiles replaced by a table 2026-08-22 (round 6)**: after three rounds of tile fixes
+      that each passed every automated check and still rendered broken, the six `tiles` steps above
+      the tab bar were **removed** in favour of `visualization: "table"` — six rows of
+      `Metric | Value | Detail`. Each of the founder's six complaints maps 1:1 to a tile, and the
+      truncations name themselves ("quality pass **r**", "**Clarifi**", "Zero-result **rat**"): a
+      `customWidth: 15` box plus the `formatter: 12` big-number renderer is what produced the clipped
+      titles, huge fonts and per-tile scrollbars. It is **two** steps rather than one because
+      *Alerts today* is Azure Resource Graph and the other five are Log Analytics, and a query step
+      carries one `queryType` — the `arg()` escape hatch was tested and **fails on the portal's path**
+      (`"The 'adx' pattern cannot be used with the current authentication scheme"`), though it
+      succeeds on the v1 App Insights API. Both grids share identical column widths so they align as
+      one table. Empty states are now structural instead of a `noDataMessage`: every leg ends in a
+      `summarize` with no `by`, which always emits exactly one row, and `Value` is a **string**, so a
+      metric with no data reads `— (not run)` rather than vanishing from the union — proven live in
+      all four reachable branches, including a tenant with no data and a forced-empty alerts set.
+      Golden-bank's clipped `of 53 gaps - static, 2026-08-21` is now `8 of 53` plus the full sentence
+      in a `1fr` column. On "make the fonts very very small": **no font-size control exists for a
+      grid** — `font` appears 0 times in the official schema, `gridSettings` has no such key,
+      `styleSettings` offers only margin/padding/maxWidth/showBorder, and the only three font-ish
+      keys in Microsoft's 668 templates belong to the *stat* and *tiles* visualizations or to Azure
+      dashboards; removing `formatter: 12` is what shrinks the text. Deliberately avoided: big-number
+      formatter, `tileSettings`, `customWidth`, `rowLimit`, a filter box, and any fixed-unit width on
+      the longest column. One real loss, recorded not dressed up: the `Sev0`–`Sev4` **severity icons**
+      are gone (thresholds on a shared string column would be meaningless); their sentence survives as
+      a `tooltipFormat`. 25/25 query steps executed live, 0 failures; 24 of 30 pre-existing queries
+      byte-identical with exactly 6 removed and 2 added, measured against what Azure had stored;
+      `shared-parameters` and the whole `sections` subtree byte-identical; 17/17 identifiers and 20/20
+      numbers preserved; schema-validated 0 errors; round-trip byte-identical (106,862 chars /
+      107,096 UTF-8 bytes). **Whether a table actually avoids the scrollbar and the big fonts is a
+      reasoned bet, not a measurement** — no pixels were seen. See "The six overview tiles were
+      abandoned for a plain table"
 - [x] Fix the two judge failure modes left unresolved by Phase 3 — both fixed 2026-08-21, both as
       rubric corrections rather than per-question special cases, both diagnosed from
       `tests/agent_eval_output.json` rather than guessed. (3) a correct "no records found" scored

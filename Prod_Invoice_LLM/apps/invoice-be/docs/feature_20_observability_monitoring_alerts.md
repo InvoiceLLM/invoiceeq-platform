@@ -4,6 +4,28 @@ Production-grade observability, automated container health lifecycle management,
 
 ---
 
+### 2026-08-23 — Rethink: this feature is now the home for "Azure Cost" and "Azure Health/Performance"
+
+The founder and architect scoped a 3-area monitoring redesign this day: (1) Azure cost & optimization, (2) Azure resource health/performance & optimization, (3) AI agent eval & observability. **This feature (19/20) now owns areas 1+2**; area 3 stays scoped to Feature 23. The dashboard content below (workbooks, some alert-rule detail) was found to be partially aspirational — much of it describes a design, not a verified-live state — so treat the sections below as historical/target design, and this section as the current source of truth on what's actually confirmed live and what's planned next.
+
+**Verified live, reusable as-is:**
+- 25 metric alerts (`alert-rules.bicep`) covering per-container CPU/memory/restart-loop, Postgres CPU/storage/connections, storage availability, DLQ poison messages, Doc Intelligence/OpenAI client errors — solid, comprehensive.
+- A cost budget (`10-budget.bicep` → `budget-invoicellm-dev`) already exists live — Area 1 is not starting from zero, this piece carries over.
+- Native Azure Monitor metrics for Container Apps / Postgres / Redis need no new instrumentation for Area 2's status panels.
+
+**Verified live, real gaps found (tracked as Gap 290, Gap 291):**
+- `invoice-be`/`invoice-fe`/`invoice-website` run on Azure's un-tuned default HTTP concurrency scale rule (~10 concurrent req/replica) — never deliberately configured. Only `queue-worker` has a real, tuned rule (queue depth ≥ 15).
+- The critical/info alert severity split is correct in the bicep, but both action groups (`ag-invoicellm-dev`, `ag-invoice-llm-dev`) notify the identical email + Teams channel — no actual destination differentiation today.
+- App Insights request auto-instrumentation (`AppRequests`) is empty — zero rows for any route, any time window — despite the connection string being wired in. API performance monitoring has no usable data source yet.
+
+**Area 1 (Cost) — plan:** total spend trend + spend-by-service/resource + forecast-vs-budget, from Cost Management API (new plumbing, separate from App Insights/Log Analytics). Optimization signals: idle/low-utilization resources (cross-referenced with Area 2), cost per invoice processed, day-over-day spend anomaly.
+
+**Area 2 (Health/Performance) — plan:** container status, DB status (Postgres + Redis), DLQ, CI/CD gate, scaling status — plus a small "recent alerts" panel reusing the existing `alertsmanagementresources` Resource Graph query pattern. API performance panel blocked on fixing request auto-instrumentation first. Proposed API grouping for that panel once unblocked: Ingestion & Extraction, Chat, Review & Correction, Autopilot & Connectors, Dashboard & Reporting, Trainer, Billing & Admin, Auth.
+
+**Decision:** don't patch the existing `dashboard.bicep` workbook (6 panels, described below, never actually deployed) or today's AI Control Tower workbook split — rebuild fresh Cost and Health/Performance workbooks once this plan is confirmed, reusing proven KQL patterns and the `loadTextContent()` bicep deploy mechanism where they fit.
+
+---
+
 ### File Coordinates
 
 * **Compute & Container Lifecycle (IaC):**
