@@ -134,27 +134,50 @@ export default function IngestionPage() {
   const autopilotConnectorActive =
     autopilotConnectorStatus?.[autopilotConnectorProvider as "google_drive" | "salesforce"] === "Active";
 
+  // Gap 288: shared by Save and Sync Now so a folder picked in the browser
+  // (which only ever touches local `autopilotConfig` state -- see
+  // FolderTreeExplorer's onFolderSelected below) can't silently diverge from
+  // what's persisted. Sync Now used to skip this and hit the backend
+  // directly, so it synced whatever source_ref was last *saved*, not
+  // whatever the auditor had just picked -- reproducible by picking a new
+  // folder and clicking Sync Now without clicking Save Config first.
+  const saveAutopilotConfigPayload = () =>
+    apiClient.put("/autopilot/config", {
+      source_type: autopilotConfig.source_type,
+      source_ref: autopilotConfig.source_ref.trim(),
+      flow_direction: autopilotConfig.flow_direction,
+      trigger_mode: autopilotConfig.trigger_mode,
+      trigger_value: autopilotConfig.trigger_value.trim(),
+      notify_emails: autopilotConfig.notify_emails_raw
+        .split(",")
+        .map((e: string) => e.trim())
+        .filter(Boolean),
+      send_approval_links: autopilotConfig.send_approval_links,
+    });
+
+  // Gap 288: distinguishes "the backend responded with a real error" from
+  // "the request never got a clean response at all" (network failure, proxy
+  // timeout, non-JSON body) -- the two used to collapse into one generic,
+  // uninformative fallback string.
+  const describeAutopilotError = (err: any, action: string) => {
+    const detail = err?.response?.data?.detail;
+    if (detail) return detail;
+    if (err?.response) {
+      return `${action} failed: unexpected server error (HTTP ${err.response.status}).`;
+    }
+    return `${action} failed: could not reach the server (${err?.message || err?.code || "network error"}). Check your connection and try again.`;
+  };
+
   const handleSaveAutopilotConfig = async () => {
     setAutopilotSaving(true);
     setAutopilotError(null);
     setAutopilotSyncResult(null);
     try {
-      await apiClient.put("/autopilot/config", {
-        source_type: autopilotConfig.source_type,
-        source_ref: autopilotConfig.source_ref.trim(),
-        flow_direction: autopilotConfig.flow_direction,
-        trigger_mode: autopilotConfig.trigger_mode,
-        trigger_value: autopilotConfig.trigger_value.trim(),
-        notify_emails: autopilotConfig.notify_emails_raw
-          .split(",")
-          .map((e: string) => e.trim())
-          .filter(Boolean),
-        send_approval_links: autopilotConfig.send_approval_links,
-      });
+      await saveAutopilotConfigPayload();
       setAutopilotSyncResult("Configuration saved successfully.");
       setTimeout(() => setAutopilotSyncResult(null), 4000);
     } catch (err: any) {
-      setAutopilotError(err?.response?.data?.detail || "Failed to save configuration.");
+      setAutopilotError(describeAutopilotError(err, "Save"));
     } finally {
       setAutopilotSaving(false);
     }
@@ -165,11 +188,12 @@ export default function IngestionPage() {
     setAutopilotError(null);
     setAutopilotSyncResult(null);
     try {
+      await saveAutopilotConfigPayload();
       const res = await apiClient.post("/autopilot/sync");
       setAutopilotSyncResult(res.data.message);
       setAutopilotHistoryKey((k) => k + 1); // refresh history table
     } catch (err: any) {
-      setAutopilotError(err?.response?.data?.detail || "Sync failed. Please check your configuration.");
+      setAutopilotError(describeAutopilotError(err, "Sync"));
     } finally {
       setAutopilotSyncing(false);
     }

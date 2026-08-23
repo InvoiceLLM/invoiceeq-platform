@@ -206,3 +206,36 @@ td, .table-cell {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+
+/* Themed scrollbars — every `overflow-x-auto`/`overflow-y-auto` container
+   (e.g. the Auditor Review Console's Line Items table) otherwise falls back
+   to the OS's default scrollbar chrome, which renders as a stark white box
+   with native arrow buttons against this app's dark panels. Applied
+   app-wide via `*` rather than a scoped class so no individual scroll
+   container needs to opt in. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--border-default);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
