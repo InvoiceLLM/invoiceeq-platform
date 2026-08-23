@@ -20,6 +20,7 @@ setup_structured_logging(service_name="invoice-be")
 
 # Feature 19 (Task 19.2): OpenTelemetry auto-instrumentation for Azure Monitor Application Insights
 appinsights_conn_str = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+azure_monitor_configured = False
 if appinsights_conn_str:
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor
@@ -27,6 +28,7 @@ if appinsights_conn_str:
             connection_string=appinsights_conn_str,
             logger_name="invoice_be_telemetry"
         )
+        azure_monitor_configured = True
         logger.info("Azure Monitor OpenTelemetry successfully configured.")
     except Exception as e:
         logger.warning(f"Could not configure Azure Monitor OpenTelemetry: {e}")
@@ -110,6 +112,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Feature 20 (Gap 292): explicitly instrument THIS app object for HTTP request
+# telemetry. Without this, App Insights' `AppRequests` table is empty for every
+# route, at every time window -- which is exactly what was observed live on
+# `ca-invoice-be-dev` despite APPLICATIONINSIGHTS_CONNECTION_STRING being
+# correctly wired into the container.
+#
+# Root cause is a Python import-order trap, not missing config.
+# `configure_azure_monitor()` above auto-instruments FastAPI by *rebinding the
+# module attribute* -- `FastAPIInstrumentor._instrument()` literally does
+# `fastapi.FastAPI = _InstrumentedFastAPI`. That only affects app objects
+# constructed from `fastapi.FastAPI` **after** the swap. This module did
+# `from fastapi import FastAPI` at line 6, which copied the *original* class
+# into this module's namespace before the swap ever happened, so `app = FastAPI(...)`
+# below kept building a pristine, un-instrumented app. Every other instrumentor
+# the distro enables (psycopg2, requests, urllib/urllib3) patches at the call
+# site rather than swapping a class, which is why dependency telemetry worked
+# and only server-side request telemetry silently went missing.
+#
+# `instrument_app()` is the ordering-independent API: it wraps this specific
+# instance's `build_middleware_stack`, so the OTel ASGI middleware ends up
+# outermost regardless of when it is called relative to the import. It is
+# idempotent (guards on `_is_instrumented_by_opentelemetry`), so it stays safe
+# even if a future distro version starts catching this app some other way.
+#
+# `/health*` is excluded deliberately: ACA startup/liveness/readiness probes poll
+# it every ~5s per replica, which would dominate request volume and skew the
+# latency/error-rate panels this telemetry exists to feed. Probe health is
+# already covered by ACA replica state and the container metric alerts. This
+# mirrors the same exclusion `TracingAndLoggingMiddleware` applies to access logs.
+if azure_monitor_configured:
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app, excluded_urls="/health")
+        logger.info("FastAPI HTTP request instrumentation enabled (AppRequests).")
+    except Exception as e:
+        logger.warning(f"Could not instrument FastAPI app for request telemetry: {e}")
 
 
 app.include_router(auth.router)

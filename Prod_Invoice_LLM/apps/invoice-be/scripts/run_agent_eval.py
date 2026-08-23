@@ -55,11 +55,39 @@ Run:
     python scripts/run_agent_eval.py --paths default,sage
     python scripts/run_agent_eval.py --paths default --cases greeting_no_tool
     python scripts/run_agent_eval.py --paths default --persist-url postgresql://...
+    python scripts/run_agent_eval.py --paths default --provider azure --model gpt-4o
+    python scripts/run_agent_eval.py --paths default --provider ollama --model llama3.2:latest
 
 `--paths sage` sets `ENABLE_AGENTIC_SAGE` **on the in-process settings object
 only**, for the duration of the run, and restores it afterwards. It does not
 write `.env`, and it does not touch any Container App or tenant configuration:
 this is measurement, not a rollout.
+
+`--provider`/`--model` (Phase 4, 2026-08-23) is the same kind of thing for the
+model itself — the substitution axis the "Model comparison" section of
+`docs/feature_23_ai_control_tower.md` describes. Three properties it holds to,
+because a comparison that breaks any of them is not a comparison:
+
+  1. **Test-time only.** Nothing is written to `.env`, `os.environ` or the
+     `Settings` object; `LLM_PROVIDER`/`AZURE_OPENAI_DEPLOYMENT_NAME`/
+     `OLLAMA_MODEL` are read but never assigned. The override is `get_llm`
+     patched to `utils.llm.build_llm(...)` in the three chat-path modules, for
+     the duration of the case loop, and unwound by the context manager. The
+     running application's default provider cannot be reached from here.
+  2. **The judge stays fixed.** `judge_llm` is built from `get_llm()` *before*
+     the override is entered, so every candidate is graded by the same grader
+     against the same cases — swap the judge too and the deltas mean nothing.
+     `services/agent_eval.py` re-imports `get_llm` from `utils.llm` directly
+     (not through the patched module attributes), so the judge cannot be
+     substituted by accident either.
+  3. **A candidate run does not silently join the baseline trend.** An override
+     run does not persist to `agent_eval_run` unless `--persist-candidate` is
+     given, and when it does persist, every row's `notes` carries
+     `model_under_test=<provider>:<model>`.
+
+An override run refuses to fall back to `MockInvoiceLLM` (`allow_mock_fallback=
+False`): a missing key or an unpulled Ollama tag has to fail loudly, because the
+alternative is a results table reporting mock output under a candidate's name.
 """
 from __future__ import annotations
 
@@ -67,6 +95,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import time
 from contextlib import ExitStack, contextmanager
@@ -92,7 +121,11 @@ from services.agent_eval import (  # noqa: E402
     identifiers_from_markdown,
     score_answer,
 )
-from tests.agent_eval_golden_sample import (  # noqa: E402
+# Moved out of tests/ to benchmarks/ on 2026-08-23 -- `.dockerignore` excludes
+# `**/tests/` from the deployed image, which is why the deleted
+# `caj-agent-eval-dev` job could never actually run (ModuleNotFoundError). See
+# benchmarks/__init__.py.
+from benchmarks.agent_eval_golden_sample import (  # noqa: E402
     ALL_ROWS,
     CASES,
     TENANT_ID,
@@ -100,8 +133,9 @@ from tests.agent_eval_golden_sample import (  # noqa: E402
     _CHUNKS,
     tenant_stats_summary,
 )
-from tests.large_invoice_fixture import LARGE, SMALL  # noqa: E402
-from tests.run_agentic_sage_live import _seed  # noqa: E402
+from benchmarks.large_invoice_fixture import LARGE, SMALL  # noqa: E402
+from benchmarks.sage_seed_fixtures import _seed  # noqa: E402
+from utils.llm import SUPPORTED_LLM_PROVIDERS  # noqa: E402
 
 logger = logging.getLogger("run_agent_eval")
 
@@ -470,6 +504,114 @@ def _agentic_sage_enabled(enabled: bool):
         settings.ENABLE_AGENTIC_SAGE = previous
 
 
+# The three modules the two chat paths actually resolve `get_llm` through, read
+# off the code rather than assumed: `agents/query_agent.py` (classification, SQL
+# generation, every synthesis call on the default path), `agents/query_tools.py`
+# (the rewritten tool set's own generation calls) and
+# `agents/sage_orchestrator.py` (planner + synthesis). Each does
+# `from utils.llm import get_llm`, so the module attribute is the binding that
+# has to be replaced — patching `utils.llm.get_llm` would miss all three.
+#
+# Deliberately NOT in this list: `services/agent_eval.py` (the judge, which must
+# stay on the baseline model), and every non-chat call site
+# (`agents/extraction_agent.py`, `agents/trainer_agent.py`, `routers/*`) — this
+# harness does not exercise them, and substituting a model in a module this run
+# never calls would be a claim the output could not support.
+CANDIDATE_LLM_PATCH_TARGETS = (
+    "agents.query_agent.get_llm",
+    "agents.query_tools.get_llm",
+    "agents.sage_orchestrator.get_llm",
+)
+
+
+def default_output_path(model_under_test: Optional[str]) -> str:
+    """Where a run writes when `--out` was not given.
+
+    A baseline run keeps `tests/agent_eval_output.json` — the file the nightly
+    job produces and the one Feature 21's B4 figures were read out of. A
+    substitution run gets its own `..._<provider>_<model>.json`, because
+    silently overwriting the baseline with a candidate's numbers would destroy
+    the very thing the candidate is being compared against.
+    """
+    if not model_under_test:
+        return str(OUTPUT_PATH)
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", model_under_test).strip("_").lower()
+    return str(OUTPUT_PATH.with_name(f"{OUTPUT_PATH.stem}_{slug}{OUTPUT_PATH.suffix}"))
+
+
+def describe_model_under_test(provider: Optional[str], model: Optional[str]) -> Optional[str]:
+    """`provider:model` for the run's output, or None when nothing is overridden.
+
+    None is the signal used everywhere else in the script that this run measured
+    the application's own configured model — it is never rendered as a string
+    like "default", because a comparison table needs the baseline row to name
+    the model it actually ran.
+    """
+    if not provider and not model:
+        return None
+    from config import get_settings
+
+    settings = get_settings()
+    resolved_provider = (provider or getattr(settings, "LLM_PROVIDER", "mock")).lower()
+    if model:
+        resolved_model = model
+    elif resolved_provider == "ollama":
+        resolved_model = settings.OLLAMA_MODEL
+    elif resolved_provider == "azure":
+        resolved_model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
+    else:
+        resolved_model = resolved_provider
+    return f"{resolved_provider}:{resolved_model}"
+
+
+@contextmanager
+def _candidate_model(
+    provider: Optional[str], model: Optional[str], api_version: Optional[str] = None
+):
+    """Run the product's chat paths against one named provider/model, this run only.
+
+    Same discipline as `_agentic_sage_enabled` above: a process-local
+    substitution that disappears when the block exits. It replaces the
+    `get_llm` *binding* in the chat-path modules with a factory closed over
+    `build_llm(provider, model=...)`, so the real call sites keep calling
+    `get_llm(max_tokens=...)` exactly as they do in production and receive a
+    client for the candidate instead of the configured default. No setting is
+    mutated, so nothing here can outlive the process or reach a deployed app.
+
+    A no-op (yields None, patches nothing) when neither flag was passed, so the
+    baseline run's code path is bit-for-bit what it was before this existed.
+    """
+    if not provider and not model:
+        yield None
+        return
+
+    from config import get_settings
+    from utils.llm import build_llm
+
+    resolved_provider = (provider or getattr(get_settings(), "LLM_PROVIDER", "mock")).lower()
+    label = describe_model_under_test(provider, model)
+
+    def _override_get_llm(max_tokens: int | None = None):
+        # `allow_mock_fallback=False`: see the module docstring. A candidate that
+        # cannot be constructed must stop the run, not quietly become the mock.
+        return build_llm(
+            resolved_provider,
+            model=model,
+            max_tokens=max_tokens,
+            api_version=api_version,
+            allow_mock_fallback=False,
+        )
+
+    # Constructed once up front so a bad provider/model/key fails before any
+    # case runs, rather than 20 turns into a paid run.
+    _override_get_llm()
+
+    with ExitStack() as stack:
+        for target in CANDIDATE_LLM_PATCH_TARGETS:
+            stack.enter_context(patch(target, _override_get_llm))
+        yield label
+
+
 def _split_appended_blocks(content: str) -> tuple[str, str]:
     """Separate the model's own prose from the blocks code appends after it."""
     prose = content or ""
@@ -493,8 +635,15 @@ def run_turn(
     stats: str,
     chunks: list[dict],
     invoice_chunks: Optional[dict] = None,
+    model_under_test: Optional[str] = None,
 ) -> dict:
-    """One real turn through one path, measured. Never raises — a failure is data."""
+    """One real turn through one path, measured. Never raises — a failure is data.
+
+    `model_under_test` is recorded, not applied — the substitution itself is the
+    `_candidate_model()` block the caller is already inside. Carrying it on the
+    turn means the output JSON says which model produced each answer instead of
+    that being knowable only from the command line that was typed.
+    """
     from agents.query_agent import run_query_agent
 
     recorder = _ToolOutputRecorder()
@@ -519,6 +668,8 @@ def run_turn(
         "case_id": case.case_id,
         "path": path,
         "agent_name": AGENT_SAGE_PATH if path == "sage" else AGENT_DEFAULT_PATH,
+        # None means "the application's own configured model", not "unknown".
+        "model_under_test": model_under_test,
         "question": case.question,
         "answer": content,
         "answer_prose": prose,
@@ -546,9 +697,17 @@ def run_turn(
     }
 
 
-def score_turn(turn: dict, case: GoldenCase, judge_llm) -> dict:
+def score_turn(turn: dict, case: GoldenCase, judge_llm, combined_judge: bool = False) -> dict:
     """Grade one measured turn. Judge calls are billable and are excluded from
-    the turn's own `llm_call_count` by `_LlmCallCounter`."""
+    the turn's own `llm_call_count` by `_LlmCallCounter`.
+
+    `combined_judge=True` (Feature 23 Track 2, 2026-08-23) takes the one-call
+    five-metric path, which is the only one that produces
+    helpfulness/tone/completeness. The two modes' faithfulness and relevance
+    figures are recorded with `judge_mode` alongside them precisely because they
+    are not assumed to be on the same scale — see `services/agent_eval.py`'s
+    module docstring.
+    """
     scores = score_answer(
         question=case.question,
         answer=turn["answer_prose"],
@@ -558,15 +717,21 @@ def score_turn(turn: dict, case: GoldenCase, judge_llm) -> dict:
         executed_queries=turn.get("executed_queries"),
         expected_invoice_ids=case.expected_invoice_numbers,
         fetched_invoice_ids=turn.get("fetched_invoice_numbers"),
+        combined_judge=combined_judge,
     )
     turn.update(
         {
+            "judge_mode": scores.judge_mode,
             "faithfulness_score": scores.faithfulness_score,
             "relevance_score": scores.relevance_score,
             "accuracy_score": scores.accuracy_score,
             "context_score": scores.context_score,
             "orchestration_score": scores.orchestration_score,
             "persona_score": scores.persona_score,
+            # None in separate mode, which does not score them at all.
+            "helpfulness_score": scores.helpfulness_score,
+            "completeness_score": scores.completeness_score,
+            "tone_score": scores.tone_score,
             "passed": scores.passed,
             "claims": scores.claims,
             "score_notes": scores.note_text(),
@@ -593,6 +758,20 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                 for part in (
                     f"case={turn['case_id']}",
                     f"source={case.source}",
+                    # Feature 23 Track 2: which judge produced these numbers.
+                    # `AgentEvalRun` has no column for it (and none is added
+                    # here -- see the run-artifact note in the feature doc), so
+                    # a reader comparing two rows can still tell whether they
+                    # are on the same scale.
+                    f"judge_mode={turn.get('judge_mode', 'separate')}",
+                    # Only present on a substitution run. A row without it was
+                    # produced by the application's own configured model, which
+                    # is what makes the baseline trend a baseline.
+                    (
+                        f"model_under_test={turn['model_under_test']}"
+                        if turn.get("model_under_test")
+                        else None
+                    ),
                     f"sql={'yes' if turn.get('generated_sql') else 'no'}",
                     (
                         "tools=" + ",".join(turn["agentic"].get("tools_called") or [])
@@ -644,6 +823,21 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                 tenant_id=str(TENANT_ID),
                 tokens_in=turn.get("tokens_in"),
                 tokens_out=turn.get("tokens_out"),
+                # Feature 23 Track 2's three new soft metrics ride the event's
+                # `**extra_attributes` rather than a schema change, so the
+                # workbook can chart them without a migration. `track_eval_result`
+                # drops None values, so a separate-judge run emits no field at
+                # all here rather than a 0.0 that would read as a real failure.
+                judge_mode=turn.get("judge_mode", "separate"),
+                **{
+                    key: value
+                    for key, value in (
+                        ("helpfulness_score", turn.get("helpfulness_score")),
+                        ("completeness_score", turn.get("completeness_score")),
+                        ("tone_score", turn.get("tone_score")),
+                    )
+                    if value is not None
+                },
             )
             written += 1
         session.commit()
@@ -721,6 +915,16 @@ def summarise(turns: list[dict]) -> dict:
             "orchestration_scored_turns": len(scored("orchestration_score")),
             "persona_mean": mean(scored("persona_score")),
             "persona_scored_turns": len(scored("persona_score")),
+            # Feature 23 Track 2 (2026-08-23). None on a separate-judge run,
+            # which does not score these at all -- absent, not zero.
+            "judge_mode": sorted({t.get("judge_mode") for t in rows if t.get("judge_mode")}),
+            "helpfulness_mean": mean(scored("helpfulness_score")),
+            "helpfulness_scored_turns": len(scored("helpfulness_score")),
+            "completeness_mean": mean(scored("completeness_score")),
+            "completeness_scored_turns": len(scored("completeness_score")),
+            "tone_mean": mean(scored("tone_score")),
+            "tone_scored_turns": len(scored("tone_score")),
+            "judge_llm_calls_total": sum(t.get("judge_llm_calls") or 0 for t in rows),
             "errors": sum(1 for t in rows if t.get("error")),
             "tokens_by_agent": _agent_rollup(rows),
             # gpt-5-mini list price, the same $0.25/$2.00 per 1M the previous
@@ -762,7 +966,58 @@ def main() -> None:
     parser.add_argument("--persist-url", default=None, help="SQLAlchemy URL for agent_eval_run rows")
     parser.add_argument("--no-persist", action="store_true")
     parser.add_argument("--no-score", action="store_true", help="measure only; skip the judge")
-    parser.add_argument("--out", default=str(OUTPUT_PATH))
+    parser.add_argument(
+        "--judge",
+        default="separate",
+        choices=["separate", "combined"],
+        help=(
+            "separate (default): faithfulness/relevance/accuracy as their own judge "
+            "calls, the series every figure quoted in the docs so far is on. "
+            "combined: Feature 23 Track 2's one-call five-metric judge -- also the "
+            "only mode that scores helpfulness, persona/tone fit and completeness. "
+            "The two are not assumed comparable; run both over the same cases "
+            "before treating them as one series."
+        ),
+    )
+    # Left as None so a substitution run can default to its own file rather
+    # than overwriting the baseline output the docs quote figures from.
+    parser.add_argument("--out", default=None)
+    # Phase 4 substitution axis. Test-time only -- see the module docstring.
+    parser.add_argument(
+        "--provider",
+        default=None,
+        choices=list(SUPPORTED_LLM_PROVIDERS),
+        help=(
+            "run the chat paths against this provider for this run only, instead of "
+            "LLM_PROVIDER. The judge stays on the configured default either way."
+        ),
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "candidate model for this run only: an Azure deployment name (e.g. gpt-4o) "
+            "or an Ollama tag (e.g. llama3.2:latest). Defaults to the named provider's "
+            "configured model when --provider is given alone."
+        ),
+    )
+    parser.add_argument(
+        "--api-version",
+        default=None,
+        help=(
+            "Azure OpenAI API version for this run only. Strict structured-output "
+            "compliance needs 2024-08-01-preview or later on GPT-4o/4o-mini."
+        ),
+    )
+    parser.add_argument(
+        "--persist-candidate",
+        action="store_true",
+        help=(
+            "allow a --provider/--model run to write agent_eval_run rows. Off by "
+            "default so a candidate's scores cannot silently join the baseline "
+            "quality trend; rows written this way carry model_under_test in notes."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING)
@@ -774,8 +1029,18 @@ def main() -> None:
 
     from utils.llm import get_llm
 
+    # Built BEFORE the candidate override is entered, and from `get_llm()`, so a
+    # substitution run is graded by the same judge as the baseline it will be
+    # compared against. This ordering is the comparability guarantee -- see the
+    # module docstring's point 2.
     judge_llm = get_llm()
     print(f"Judge/model: {type(judge_llm).__name__}")
+    model_under_test = describe_model_under_test(args.provider, args.model)
+    args.out = args.out or default_output_path(model_under_test)
+    if model_under_test:
+        print(f"Model under test (chat paths only, this run only): {model_under_test}")
+        if args.api_version:
+            print(f"  api_version override: {args.api_version}")
     print(f"Cases: {len(selected)}  Paths: {paths}")
 
     engine = create_engine(
@@ -794,38 +1059,71 @@ def main() -> None:
                 f"{sum(len(p['document']) for p in pages):,} chars, "
                 f"{sum(count_tokens(p['document']) for p in pages):,} tokens"
             )
-        for case in selected:
-            for path in paths:
-                print(f"\n=== {case.case_id} [{path}] ===")
-                turn = run_turn(case, path, session, stats, _CHUNKS, invoice_chunks)
-                print(
-                    f"  llm_calls={turn['llm_call_count']}  latency={turn['latency_ms']:.0f}ms  "
-                    f"sql={'yes' if turn['generated_sql'] else 'no'}  err={turn['error']}"
-                )
-                for call in turn["tool_calls"]:
-                    print(
-                        f"    tool {call['tool']} -> {call['status']} in {call['duration_ms']:.0f}ms, "
-                        f"{call.get('chunk_count', 0)} chunk(s), "
-                        f"{call.get('result_json_tokens', 0):,} result tokens"
-                    )
-                if not args.no_score:
-                    turn = score_turn(turn, case, judge_llm)
-                    print(
-                        f"  faithfulness={turn['faithfulness_score']} "
-                        f"relevance={turn['relevance_score']} "
-                        f"accuracy={turn['accuracy_score']} pass={turn['passed']}"
+        # A no-op unless --provider/--model was passed. `score_turn` runs inside
+        # this block only because it is handed the already-built `judge_llm`
+        # object -- it resolves no model of its own, so the override cannot
+        # reach it.
+        with _candidate_model(args.provider, args.model, args.api_version):
+            for case in selected:
+                for path in paths:
+                    print(f"\n=== {case.case_id} [{path}] ===")
+                    turn = run_turn(
+                        case,
+                        path,
+                        session,
+                        stats,
+                        _CHUNKS,
+                        invoice_chunks,
+                        model_under_test=model_under_test,
                     )
                     print(
-                        f"  context={turn['context_score']} "
-                        f"orchestration={turn['orchestration_score']} "
-                        f"persona={turn['persona_score']}"
+                        f"  llm_calls={turn['llm_call_count']}  latency={turn['latency_ms']:.0f}ms  "
+                        f"sql={'yes' if turn['generated_sql'] else 'no'}  err={turn['error']}"
                     )
-                turns.append(turn)
+                    for call in turn["tool_calls"]:
+                        print(
+                            f"    tool {call['tool']} -> {call['status']} in {call['duration_ms']:.0f}ms, "
+                            f"{call.get('chunk_count', 0)} chunk(s), "
+                            f"{call.get('result_json_tokens', 0):,} result tokens"
+                        )
+                    if not args.no_score:
+                        turn = score_turn(
+                            turn, case, judge_llm, combined_judge=args.judge == "combined"
+                        )
+                        print(
+                            f"  faithfulness={turn['faithfulness_score']} "
+                            f"relevance={turn['relevance_score']} "
+                            f"accuracy={turn['accuracy_score']} pass={turn['passed']}"
+                        )
+                        print(
+                            f"  context={turn['context_score']} "
+                            f"orchestration={turn['orchestration_score']} "
+                            f"persona={turn['persona_score']}"
+                        )
+                        if args.judge == "combined":
+                            print(
+                                f"  helpfulness={turn['helpfulness_score']} "
+                                f"tone={turn['tone_score']} "
+                                f"completeness={turn['completeness_score']} "
+                                f"(judge calls={turn['judge_llm_calls']})"
+                            )
+                    turns.append(turn)
 
     summary = summarise(turns)
 
     persisted = 0
-    if not args.no_persist:
+    # A substitution run is opt-in for persistence. `agent_eval_run` is the
+    # baseline quality trend the workbook charts; a candidate's scores landing
+    # in it unannounced would show up there as a quality regression (or an
+    # improvement) of the *deployed* model, which it is not.
+    skip_candidate_persist = bool(model_under_test) and not args.persist_candidate
+    if skip_candidate_persist:
+        print(
+            f"\nNot persisting: this run measured {model_under_test}, not the configured "
+            "model. Pass --persist-candidate to write these rows anyway (they will carry "
+            f"model_under_test={model_under_test} in notes). Results are in {args.out}."
+        )
+    if not args.no_persist and not skip_candidate_persist:
         target = args.persist_url
         if not target:
             from config import get_settings
@@ -840,6 +1138,19 @@ def main() -> None:
     payload = {
         "run_at": datetime.utcnow().isoformat(),
         "paths": paths,
+        # None on a baseline run. Named here as well as per-turn so a saved
+        # output file identifies itself without having to read into `turns`.
+        "model_under_test": model_under_test,
+        "api_version_override": args.api_version,
+        # Feature 23 Track 2. Named at the top level so a saved output file
+        # identifies which judge produced its figures without reading into
+        # `turns`, for the same reason `model_under_test` is.
+        "judge_mode": "none" if args.no_score else args.judge,
+        # Stated because `summarise()`'s cost figure does NOT reprice a
+        # candidate: it applies gpt-5-mini's list rate to whatever tokens were
+        # burned, which makes the number a token-normalised comparison, not the
+        # candidate's real bill.
+        "cost_basis": "gpt-5-mini list price ($0.25/$2.00 per 1M) applied to every run",
         "summary": summary,
         "persisted_rows": persisted,
         "turns": turns,

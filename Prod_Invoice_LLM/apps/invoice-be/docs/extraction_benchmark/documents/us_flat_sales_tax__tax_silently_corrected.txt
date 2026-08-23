@@ -1,0 +1,21 @@
+Cascade Industrial Supply LLC
+1180 Wharf Street, Seattle, WA 98101, United States
+
+TAX INVOICE
+Invoice Number: CIS-2026-4417
+Invoice Date: 2026-07-14
+Due Date: 2026-08-13
+PO Number: PO-58213
+
+Bill To: Northwind Manufacturing Inc.
+
+#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)
+1   Hex bolts M12 x 60mm, galvanised   -   480   1.25   -   600.00
+2   Structural steel angle 50x50x5, 6m   -   24   138.50   -   3,324.00
+3   Welding consumables, ER70S-6 spool   -   12   96.75   -   1,161.00
+
+Subtotal: USD 5,085.00
+Sales Tax @ 8.5%: USD 432.23
+TOTAL DUE: USD 5,517.23
+
+Payment terms: net 30 from invoice date. Remit by ACH.

@@ -1,0 +1,966 @@
+{
+  "generated_at": "2026-08-23T10:57:42+00:00",
+  "generator": "tests/extraction_benchmark/{documents,mutations}.py",
+  "determinism": "No RNG. Regenerating from an unchanged tree reproduces this file byte for byte.",
+  "mutation_policy": {
+    "relative": 0.05,
+    "absolute_floor": 25.0,
+    "why": "verify_line_items_math / verify_totals_math accept max(0.01, 0.5% relative) (Gap 31). Every arithmetic mutation clears that band with about an order of magnitude of headroom, so a recall miss is never explainable as a near-miss."
+  },
+  "clean_documents": [
+    {
+      "doc_id": "us_flat_sales_tax",
+      "flow_direction": "INBOUND",
+      "region": "US",
+      "currency": "USD",
+      "rationale": "The baseline shape: single invoice-level flat sales tax, no discount, no per-line tax. If any check fires here the check is miscalibrated.",
+      "ocr_text": "Cascade Industrial Supply LLC\n1180 Wharf Street, Seattle, WA 98101, United States\n\nTAX INVOICE\nInvoice Number: CIS-2026-4417\nInvoice Date: 2026-07-14\nDue Date: 2026-08-13\nPO Number: PO-58213\n\nBill To: Northwind Manufacturing Inc.\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Hex bolts M12 x 60mm, galvanised   -   480   1.25   -   600.00\n2   Structural steel angle 50x50x5, 6m   -   24   138.50   -   3,324.00\n3   Welding consumables, ER70S-6 spool   -   12   96.75   -   1,161.00\n\nSubtotal: USD 5,085.00\nSales Tax @ 8.5%: USD 432.23\nTOTAL DUE: USD 5,517.23\n\nPayment terms: net 30 from invoice date. Remit by ACH.",
+      "ground_truth": {
+        "invoice_number": "CIS-2026-4417",
+        "invoice_date": "2026-07-14",
+        "due_date": "2026-08-13",
+        "subtotal": 5085.0,
+        "tax_amount": 432.23,
+        "grand_total": 5517.23,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Hex bolts M12 x 60mm, galvanised",
+            "quantity": 480,
+            "unit_price": 1.25,
+            "amount": 600.0
+          },
+          {
+            "description": "Structural steel angle 50x50x5, 6m",
+            "quantity": 24,
+            "unit_price": 138.5,
+            "amount": 3324.0
+          },
+          {
+            "description": "Welding consumables, ER70S-6 spool",
+            "quantity": 12,
+            "unit_price": 96.75,
+            "amount": 1161.0
+          }
+        ],
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
+        "round_off": null,
+        "discount_amount": null
+      }
+    },
+    {
+      "doc_id": "india_cgst_sgst_round_off",
+      "flow_direction": "INBOUND",
+      "region": "INDIA",
+      "currency": "INR",
+      "rationale": "The split-tax shape Gaps 263/264 are about: two printed components (CGST 9% + SGST 9%) that must be summed into one `tax_amount` of 15,570.00 -- a figure that is NOT printed anywhere as a single number. This is the case `verify_tax_amount_in_source_text`'s component-aware fallback (Gap 69) exists for, so it is also the case that would false-positive if that fallback ever broke.",
+      "ocr_text": "Rajesh Steel Traders Pvt Ltd\nPlot 42, MIDC Industrial Area, Pune 411019, Maharashtra, India\nGSTIN: 27AABCR1234M1ZP\nGSTIN: 27AAECD5678Q1Z9\n\nTAX INVOICE\nInvoice Number: RST-2627-0091\nInvoice Date: 2026-07-22\nDue Date: 2026-08-21\n\nBill To: Deccan Fabricators Pvt Ltd\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (INR)\n1   TMT reinforcement bars Fe500D 12mm   7214   8   5,400.00   18   43,200.00\n2   MS plate 10mm, cut to size   7208   5   7,800.00   18   39,000.00\n3   Freight and handling   9965   1   4,300.00   18   4,300.00\n\nSubtotal: INR 86,500.00\nCGST @ 9%: INR 7,785.00\nSGST @ 9%: INR 7,785.00\nRound Off: INR 0.00\nTOTAL DUE: INR 102,070.00\n\nReverse charge applicable: No\nPayment terms: net 30. Interest at 1.5% per month on overdue amounts.",
+      "ground_truth": {
+        "invoice_number": "RST-2627-0091",
+        "invoice_date": "2026-07-22",
+        "due_date": "2026-08-21",
+        "subtotal": 86500.0,
+        "tax_amount": 15570.0,
+        "grand_total": 102070.0,
+        "currency": "INR",
+        "items": [
+          {
+            "description": "TMT reinforcement bars Fe500D 12mm",
+            "quantity": 8,
+            "unit_price": 5400.0,
+            "amount": 43200.0
+          },
+          {
+            "description": "MS plate 10mm, cut to size",
+            "quantity": 5,
+            "unit_price": 7800.0,
+            "amount": 39000.0
+          },
+          {
+            "description": "Freight and handling",
+            "quantity": 1,
+            "unit_price": 4300.0,
+            "amount": 4300.0
+          }
+        ],
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
+        "round_off": 0.0,
+        "discount_amount": null
+      }
+    },
+    {
+      "doc_id": "eu_reverse_charge_zero_vat",
+      "flow_direction": "INBOUND",
+      "region": "EU",
+      "currency": "EUR",
+      "rationale": "Zero tax that is CORRECT, not missing -- the reverse-charge case the persona rubric in `services/agent_eval.py` already names as a real past failure. A benchmark that only contains taxed invoices cannot tell a correctly-zero tax from a dropped one.",
+      "ocr_text": "Nordlicht Datentechnik GmbH\nHafenstrasse 88, 20359 Hamburg, Germany\nEU VAT: DE811234567\nEU VAT: NL004567890B01\n\nTAX INVOICE\nInvoice Number: NDT-2026-00612\nInvoice Date: 2026-06-30\nDue Date: 2026-07-30\nPO Number: PO-EU-3391\n\nBill To: Meridian Analytics BV\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (EUR)\n1   Data platform engineering, senior consultant   -   96   145.00   0   13,920.00\n2   Platform licence, quarterly   -   1   4,250.00   0   4,250.00\n\nSubtotal: EUR 18,170.00\nVAT @ 0%: EUR 0.00\nTOTAL DUE: EUR 18,170.00\n\nReverse charge - VAT to be accounted for by the recipient under Article 196 of Council Directive 2006/112/EC.\nPayment terms: net 30 days.",
+      "ground_truth": {
+        "invoice_number": "NDT-2026-00612",
+        "invoice_date": "2026-06-30",
+        "due_date": "2026-07-30",
+        "subtotal": 18170.0,
+        "tax_amount": 0.0,
+        "grand_total": 18170.0,
+        "currency": "EUR",
+        "items": [
+          {
+            "description": "Data platform engineering, senior consultant",
+            "quantity": 96,
+            "unit_price": 145.0,
+            "amount": 13920.0
+          },
+          {
+            "description": "Platform licence, quarterly",
+            "quantity": 1,
+            "unit_price": 4250.0,
+            "amount": 4250.0
+          }
+        ],
+        "vendor_name": "Nordlicht Datentechnik GmbH",
+        "po_number": "PO-EU-3391",
+        "round_off": null,
+        "discount_amount": null
+      }
+    },
+    {
+      "doc_id": "outbound_trade_discount",
+      "flow_direction": "OUTBOUND",
+      "region": "US",
+      "currency": "USD",
+      "rationale": "The only OUTBOUND document in the set, and the only one where `missing_required_field` can fire at all -- `_DIRECTION_PROFILES`' `required_fields` is empty for INBOUND by design. It also carries a 5% trade discount, which is arithmetically consistent on the document (11,400.00 - 570.00 + 758.10 = 11,588.10) but which `OutboundInvoiceExtractionSchema` has no field for -- see `docs/extraction_benchmark/README.md`, 'What the first run found'. This case is deliberately left in the clean set rather than sanitised: it is the only reason the false-positive rate is a measurement rather than a formality.",
+      "ocr_text": "Meridian Analytics BV\n\nTAX INVOICE\nInvoice Number: OUT-2026-0308\nInvoice Date: 2026-07-09\nDue Date: 2026-08-08\n\nBill To: Ridgeway Components Corp.\n4400 Halsey Boulevard, Columbus, OH 43215, United States\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Managed integration service, July 2026   -   1   9,600.00   -   9,600.00\n2   Additional connector seats   -   15   120.00   -   1,800.00\n\nSubtotal: USD 11,400.00\nDiscount (5%): -USD 570.00\nSales Tax @ 7%: USD 758.10\nTOTAL DUE: USD 11,588.10\n\nPayment terms: net 30. Late payments subject to 1.5% monthly interest.",
+      "ground_truth": {
+        "invoice_number": "OUT-2026-0308",
+        "invoice_date": "2026-07-09",
+        "due_date": "2026-08-08",
+        "subtotal": 11400.0,
+        "tax_amount": 758.1,
+        "grand_total": 11588.1,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Managed integration service, July 2026",
+            "quantity": 1,
+            "unit_price": 9600.0,
+            "amount": 9600.0
+          },
+          {
+            "description": "Additional connector seats",
+            "quantity": 15,
+            "unit_price": 120.0,
+            "amount": 1800.0
+          }
+        ],
+        "customer_name": "Ridgeway Components Corp."
+      }
+    }
+  ],
+  "seeded_cases": [
+    {
+      "case_id": "us_flat_sales_tax__printed_total_broken",
+      "parent_document": "us_flat_sales_tax",
+      "mutation": "mutate_printed_total_does_not_reconcile",
+      "surface": "document",
+      "gradeable_in_live_mode": true,
+      "field_path": "grand_total",
+      "correct_value": 5517.23,
+      "planted_value": 5793.09,
+      "expected_alert_type": "tax_mismatch",
+      "tolerated_alert_types": [
+        "total_not_verified_in_source"
+      ],
+      "rationale": "A vendor totals block that does not add up. The commonest real audit finding, and the reason `verify_totals_math` is the first check.",
+      "mutated_ocr_text": "Cascade Industrial Supply LLC\n1180 Wharf Street, Seattle, WA 98101, United States\n\nTAX INVOICE\nInvoice Number: CIS-2026-4417\nInvoice Date: 2026-07-14\nDue Date: 2026-08-13\nPO Number: PO-58213\n\nBill To: Northwind Manufacturing Inc.\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Hex bolts M12 x 60mm, galvanised   -   480   1.25   -   600.00\n2   Structural steel angle 50x50x5, 6m   -   24   138.50   -   3,324.00\n3   Welding consumables, ER70S-6 spool   -   12   96.75   -   1,161.00\n\nSubtotal: USD 5,085.00\nSales Tax @ 8.5%: USD 432.23\nTOTAL DUE: USD 5,793.09\n\nPayment terms: net 30 from invoice date. Remit by ACH.",
+      "extraction_under_test": {
+        "invoice_number": "CIS-2026-4417",
+        "invoice_date": "2026-07-14",
+        "due_date": "2026-08-13",
+        "subtotal": 5085.0,
+        "tax_amount": 432.23,
+        "grand_total": 5793.09,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Hex bolts M12 x 60mm, galvanised",
+            "quantity": 480,
+            "unit_price": 1.25,
+            "amount": 600.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Structural steel angle 50x50x5, 6m",
+            "quantity": 24,
+            "unit_price": 138.5,
+            "amount": 3324.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Welding consumables, ER70S-6 spool",
+            "quantity": 12,
+            "unit_price": 96.75,
+            "amount": 1161.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          }
+        ],
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
+        "round_off": null,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "Sales Tax",
+            "rate_percent": 8.5,
+            "amount": 432.23
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "india_cgst_sgst_round_off__printed_total_broken_gst",
+      "parent_document": "india_cgst_sgst_round_off",
+      "mutation": "mutate_printed_total_does_not_reconcile",
+      "surface": "document",
+      "gradeable_in_live_mode": true,
+      "field_path": "grand_total",
+      "correct_value": 102070.0,
+      "planted_value": 107173.5,
+      "expected_alert_type": "tax_mismatch",
+      "tolerated_alert_types": [
+        "total_not_verified_in_source"
+      ],
+      "rationale": "The same break on a split-tax invoice, where the tax figure being summed from two components gives the check one more way to go wrong.",
+      "mutated_ocr_text": "Rajesh Steel Traders Pvt Ltd\nPlot 42, MIDC Industrial Area, Pune 411019, Maharashtra, India\nGSTIN: 27AABCR1234M1ZP\nGSTIN: 27AAECD5678Q1Z9\n\nTAX INVOICE\nInvoice Number: RST-2627-0091\nInvoice Date: 2026-07-22\nDue Date: 2026-08-21\n\nBill To: Deccan Fabricators Pvt Ltd\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (INR)\n1   TMT reinforcement bars Fe500D 12mm   7214   8   5,400.00   18   43,200.00\n2   MS plate 10mm, cut to size   7208   5   7,800.00   18   39,000.00\n3   Freight and handling   9965   1   4,300.00   18   4,300.00\n\nSubtotal: INR 86,500.00\nCGST @ 9%: INR 7,785.00\nSGST @ 9%: INR 7,785.00\nRound Off: INR 0.00\nTOTAL DUE: INR 107,173.50\n\nReverse charge applicable: No\nPayment terms: net 30. Interest at 1.5% per month on overdue amounts.",
+      "extraction_under_test": {
+        "invoice_number": "RST-2627-0091",
+        "invoice_date": "2026-07-22",
+        "due_date": "2026-08-21",
+        "subtotal": 86500.0,
+        "tax_amount": 15570.0,
+        "grand_total": 107173.5,
+        "currency": "INR",
+        "items": [
+          {
+            "description": "TMT reinforcement bars Fe500D 12mm",
+            "quantity": 8,
+            "unit_price": 5400.0,
+            "amount": 43200.0,
+            "hsn_sac_code": "7214",
+            "tax_percent": 18
+          },
+          {
+            "description": "MS plate 10mm, cut to size",
+            "quantity": 5,
+            "unit_price": 7800.0,
+            "amount": 39000.0,
+            "hsn_sac_code": "7208",
+            "tax_percent": 18
+          },
+          {
+            "description": "Freight and handling",
+            "quantity": 1,
+            "unit_price": 4300.0,
+            "amount": 4300.0,
+            "hsn_sac_code": "9965",
+            "tax_percent": 18
+          }
+        ],
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
+        "round_off": 0.0,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "CGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          },
+          {
+            "tax_type": "SGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "eu_reverse_charge_zero_vat__printed_subtotal_mismatch",
+      "parent_document": "eu_reverse_charge_zero_vat",
+      "mutation": "mutate_printed_subtotal_not_sum_of_lines",
+      "surface": "document",
+      "gradeable_in_live_mode": true,
+      "field_path": "subtotal",
+      "correct_value": 18170.0,
+      "planted_value": 17261.5,
+      "expected_alert_type": "line_items_mismatch",
+      "tolerated_alert_types": [
+        "tax_mismatch",
+        "subtotal_not_verified_in_source"
+      ],
+      "rationale": "A subtotal that does not equal the lines above it. Planted on the zero-VAT invoice specifically: with tax at 0.00 the totals check and the line-sum check cannot cover for each other.",
+      "mutated_ocr_text": "Nordlicht Datentechnik GmbH\nHafenstrasse 88, 20359 Hamburg, Germany\nEU VAT: DE811234567\nEU VAT: NL004567890B01\n\nTAX INVOICE\nInvoice Number: NDT-2026-00612\nInvoice Date: 2026-06-30\nDue Date: 2026-07-30\nPO Number: PO-EU-3391\n\nBill To: Meridian Analytics BV\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (EUR)\n1   Data platform engineering, senior consultant   -   96   145.00   0   13,920.00\n2   Platform licence, quarterly   -   1   4,250.00   0   4,250.00\n\nSubtotal: EUR 17,261.50\nVAT @ 0%: EUR 0.00\nTOTAL DUE: EUR 18,170.00\n\nReverse charge - VAT to be accounted for by the recipient under Article 196 of Council Directive 2006/112/EC.\nPayment terms: net 30 days.",
+      "extraction_under_test": {
+        "invoice_number": "NDT-2026-00612",
+        "invoice_date": "2026-06-30",
+        "due_date": "2026-07-30",
+        "subtotal": 17261.5,
+        "tax_amount": 0.0,
+        "grand_total": 18170.0,
+        "currency": "EUR",
+        "items": [
+          {
+            "description": "Data platform engineering, senior consultant",
+            "quantity": 96,
+            "unit_price": 145.0,
+            "amount": 13920.0,
+            "hsn_sac_code": null,
+            "tax_percent": 0
+          },
+          {
+            "description": "Platform licence, quarterly",
+            "quantity": 1,
+            "unit_price": 4250.0,
+            "amount": 4250.0,
+            "hsn_sac_code": null,
+            "tax_percent": 0
+          }
+        ],
+        "vendor_name": "Nordlicht Datentechnik GmbH",
+        "po_number": "PO-EU-3391",
+        "round_off": null,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "VAT",
+            "rate_percent": 0.0,
+            "amount": 0.0
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "us_flat_sales_tax__printed_line_amount_off",
+      "parent_document": "us_flat_sales_tax",
+      "mutation": "mutate_printed_line_amount_off",
+      "surface": "document",
+      "gradeable_in_live_mode": true,
+      "field_path": "items[1].amount",
+      "correct_value": 3324.0,
+      "planted_value": 3490.2,
+      "expected_alert_type": "line_item_calculation_mismatch",
+      "tolerated_alert_types": [
+        "line_items_mismatch",
+        "tax_mismatch",
+        "line_item_not_verified_in_source"
+      ],
+      "rationale": "Gap 269's shape: a printed line amount that is not quantity x unit price. The out-of-tolerance line-item mismatch the feature doc names.",
+      "mutated_ocr_text": "Cascade Industrial Supply LLC\n1180 Wharf Street, Seattle, WA 98101, United States\n\nTAX INVOICE\nInvoice Number: CIS-2026-4417\nInvoice Date: 2026-07-14\nDue Date: 2026-08-13\nPO Number: PO-58213\n\nBill To: Northwind Manufacturing Inc.\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Hex bolts M12 x 60mm, galvanised   -   480   1.25   -   600.00\n2   Structural steel angle 50x50x5, 6m   -   24   138.50   -   3,490.20\n3   Welding consumables, ER70S-6 spool   -   12   96.75   -   1,161.00\n\nSubtotal: USD 5,085.00\nSales Tax @ 8.5%: USD 432.23\nTOTAL DUE: USD 5,517.23\n\nPayment terms: net 30 from invoice date. Remit by ACH.",
+      "extraction_under_test": {
+        "invoice_number": "CIS-2026-4417",
+        "invoice_date": "2026-07-14",
+        "due_date": "2026-08-13",
+        "subtotal": 5085.0,
+        "tax_amount": 432.23,
+        "grand_total": 5517.23,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Hex bolts M12 x 60mm, galvanised",
+            "quantity": 480,
+            "unit_price": 1.25,
+            "amount": 600.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Structural steel angle 50x50x5, 6m",
+            "quantity": 24,
+            "unit_price": 138.5,
+            "amount": 3490.2,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Welding consumables, ER70S-6 spool",
+            "quantity": 12,
+            "unit_price": 96.75,
+            "amount": 1161.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          }
+        ],
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
+        "round_off": null,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "Sales Tax",
+            "rate_percent": 8.5,
+            "amount": 432.23
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "outbound_trade_discount__required_field_not_printed",
+      "parent_document": "outbound_trade_discount",
+      "mutation": "mutate_required_field_not_printed",
+      "surface": "document",
+      "gradeable_in_live_mode": true,
+      "field_path": "customer_name",
+      "correct_value": "Ridgeway Components Corp.",
+      "planted_value": null,
+      "expected_alert_type": "missing_required_field",
+      "tolerated_alert_types": [
+        "tax_mismatch"
+      ],
+      "rationale": "An outbound invoice with no customer name printed on it at all. The missing-required-field case from the feature doc's table.",
+      "mutated_ocr_text": "Meridian Analytics BV\n\nTAX INVOICE\nInvoice Number: OUT-2026-0308\nInvoice Date: 2026-07-09\nDue Date: 2026-08-08\n\nBill To:\n4400 Halsey Boulevard, Columbus, OH 43215, United States\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Managed integration service, July 2026   -   1   9,600.00   -   9,600.00\n2   Additional connector seats   -   15   120.00   -   1,800.00\n\nSubtotal: USD 11,400.00\nDiscount (5%): -USD 570.00\nSales Tax @ 7%: USD 758.10\nTOTAL DUE: USD 11,588.10\n\nPayment terms: net 30. Late payments subject to 1.5% monthly interest.",
+      "extraction_under_test": {
+        "invoice_number": "OUT-2026-0308",
+        "invoice_date": "2026-07-09",
+        "due_date": "2026-08-08",
+        "subtotal": 11400.0,
+        "tax_amount": 758.1,
+        "grand_total": 11588.1,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Managed integration service, July 2026",
+            "quantity": 1,
+            "unit_price": 9600.0,
+            "amount": 9600.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Additional connector seats",
+            "quantity": 15,
+            "unit_price": 120.0,
+            "amount": 1800.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          }
+        ],
+        "customer_name": null,
+        "taxes": [
+          {
+            "tax_type": "Sales Tax",
+            "rate_percent": 7.0,
+            "amount": 758.1
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "india_cgst_sgst_round_off__fabricated_total",
+      "parent_document": "india_cgst_sgst_round_off",
+      "mutation": "mutate_fabricated_total",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "grand_total",
+      "correct_value": 102070.0,
+      "planted_value": 107173.87,
+      "expected_alert_type": "total_not_verified_in_source",
+      "tolerated_alert_types": [
+        "tax_mismatch"
+      ],
+      "rationale": "The fabricated total from the feature doc's table. Nothing but the Gap 33 source-text check can see a number the document never printed.",
+      "mutated_ocr_text": "Rajesh Steel Traders Pvt Ltd\nPlot 42, MIDC Industrial Area, Pune 411019, Maharashtra, India\nGSTIN: 27AABCR1234M1ZP\nGSTIN: 27AAECD5678Q1Z9\n\nTAX INVOICE\nInvoice Number: RST-2627-0091\nInvoice Date: 2026-07-22\nDue Date: 2026-08-21\n\nBill To: Deccan Fabricators Pvt Ltd\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (INR)\n1   TMT reinforcement bars Fe500D 12mm   7214   8   5,400.00   18   43,200.00\n2   MS plate 10mm, cut to size   7208   5   7,800.00   18   39,000.00\n3   Freight and handling   9965   1   4,300.00   18   4,300.00\n\nSubtotal: INR 86,500.00\nCGST @ 9%: INR 7,785.00\nSGST @ 9%: INR 7,785.00\nRound Off: INR 0.00\nTOTAL DUE: INR 102,070.00\n\nReverse charge applicable: No\nPayment terms: net 30. Interest at 1.5% per month on overdue amounts.",
+      "extraction_under_test": {
+        "invoice_number": "RST-2627-0091",
+        "invoice_date": "2026-07-22",
+        "due_date": "2026-08-21",
+        "subtotal": 86500.0,
+        "tax_amount": 15570.0,
+        "grand_total": 107173.87,
+        "currency": "INR",
+        "items": [
+          {
+            "description": "TMT reinforcement bars Fe500D 12mm",
+            "quantity": 8,
+            "unit_price": 5400.0,
+            "amount": 43200.0,
+            "hsn_sac_code": "7214",
+            "tax_percent": 18
+          },
+          {
+            "description": "MS plate 10mm, cut to size",
+            "quantity": 5,
+            "unit_price": 7800.0,
+            "amount": 39000.0,
+            "hsn_sac_code": "7208",
+            "tax_percent": 18
+          },
+          {
+            "description": "Freight and handling",
+            "quantity": 1,
+            "unit_price": 4300.0,
+            "amount": 4300.0,
+            "hsn_sac_code": "9965",
+            "tax_percent": 18
+          }
+        ],
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
+        "round_off": 0.0,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "CGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          },
+          {
+            "tax_type": "SGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "us_flat_sales_tax__tax_silently_corrected",
+      "parent_document": "us_flat_sales_tax",
+      "mutation": "mutate_tax_silently_corrected",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "tax_amount",
+      "correct_value": 432.23,
+      "planted_value": 457.36,
+      "expected_alert_type": "tax_amount_not_verified_in_source",
+      "tolerated_alert_types": [
+        "tax_mismatch"
+      ],
+      "rationale": "'A tax figure that doesn't match the OCR text', verbatim from the feature doc. Gap 46: the model recalculating rather than transcribing.",
+      "mutated_ocr_text": "Cascade Industrial Supply LLC\n1180 Wharf Street, Seattle, WA 98101, United States\n\nTAX INVOICE\nInvoice Number: CIS-2026-4417\nInvoice Date: 2026-07-14\nDue Date: 2026-08-13\nPO Number: PO-58213\n\nBill To: Northwind Manufacturing Inc.\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Hex bolts M12 x 60mm, galvanised   -   480   1.25   -   600.00\n2   Structural steel angle 50x50x5, 6m   -   24   138.50   -   3,324.00\n3   Welding consumables, ER70S-6 spool   -   12   96.75   -   1,161.00\n\nSubtotal: USD 5,085.00\nSales Tax @ 8.5%: USD 432.23\nTOTAL DUE: USD 5,517.23\n\nPayment terms: net 30 from invoice date. Remit by ACH.",
+      "extraction_under_test": {
+        "invoice_number": "CIS-2026-4417",
+        "invoice_date": "2026-07-14",
+        "due_date": "2026-08-13",
+        "subtotal": 5085.0,
+        "tax_amount": 457.36,
+        "grand_total": 5517.23,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Hex bolts M12 x 60mm, galvanised",
+            "quantity": 480,
+            "unit_price": 1.25,
+            "amount": 600.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Structural steel angle 50x50x5, 6m",
+            "quantity": 24,
+            "unit_price": 138.5,
+            "amount": 3324.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Welding consumables, ER70S-6 spool",
+            "quantity": 12,
+            "unit_price": 96.75,
+            "amount": 1161.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          }
+        ],
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
+        "round_off": null,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "Sales Tax",
+            "rate_percent": 8.5,
+            "amount": 432.23
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "india_cgst_sgst_round_off__tax_silently_corrected_split",
+      "parent_document": "india_cgst_sgst_round_off",
+      "mutation": "mutate_tax_silently_corrected",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "tax_amount",
+      "correct_value": 15570.0,
+      "planted_value": 16348.63,
+      "expected_alert_type": "tax_amount_not_verified_in_source",
+      "tolerated_alert_types": [
+        "tax_mismatch"
+      ],
+      "rationale": "The same fabrication on the CGST+SGST invoice, where the correct summed figure is itself never printed. This is the case that tells a working Gap 69 component fallback apart from one that just never fires -- the clean version of this document must stay silent and this one must not.",
+      "mutated_ocr_text": "Rajesh Steel Traders Pvt Ltd\nPlot 42, MIDC Industrial Area, Pune 411019, Maharashtra, India\nGSTIN: 27AABCR1234M1ZP\nGSTIN: 27AAECD5678Q1Z9\n\nTAX INVOICE\nInvoice Number: RST-2627-0091\nInvoice Date: 2026-07-22\nDue Date: 2026-08-21\n\nBill To: Deccan Fabricators Pvt Ltd\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (INR)\n1   TMT reinforcement bars Fe500D 12mm   7214   8   5,400.00   18   43,200.00\n2   MS plate 10mm, cut to size   7208   5   7,800.00   18   39,000.00\n3   Freight and handling   9965   1   4,300.00   18   4,300.00\n\nSubtotal: INR 86,500.00\nCGST @ 9%: INR 7,785.00\nSGST @ 9%: INR 7,785.00\nRound Off: INR 0.00\nTOTAL DUE: INR 102,070.00\n\nReverse charge applicable: No\nPayment terms: net 30. Interest at 1.5% per month on overdue amounts.",
+      "extraction_under_test": {
+        "invoice_number": "RST-2627-0091",
+        "invoice_date": "2026-07-22",
+        "due_date": "2026-08-21",
+        "subtotal": 86500.0,
+        "tax_amount": 16348.63,
+        "grand_total": 102070.0,
+        "currency": "INR",
+        "items": [
+          {
+            "description": "TMT reinforcement bars Fe500D 12mm",
+            "quantity": 8,
+            "unit_price": 5400.0,
+            "amount": 43200.0,
+            "hsn_sac_code": "7214",
+            "tax_percent": 18
+          },
+          {
+            "description": "MS plate 10mm, cut to size",
+            "quantity": 5,
+            "unit_price": 7800.0,
+            "amount": 39000.0,
+            "hsn_sac_code": "7208",
+            "tax_percent": 18
+          },
+          {
+            "description": "Freight and handling",
+            "quantity": 1,
+            "unit_price": 4300.0,
+            "amount": 4300.0,
+            "hsn_sac_code": "9965",
+            "tax_percent": 18
+          }
+        ],
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
+        "round_off": 0.0,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "CGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          },
+          {
+            "tax_type": "SGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "eu_reverse_charge_zero_vat__subtotal_not_in_source",
+      "parent_document": "eu_reverse_charge_zero_vat",
+      "mutation": "mutate_subtotal_not_in_source",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "subtotal",
+      "correct_value": 18170.0,
+      "planted_value": 19078.61,
+      "expected_alert_type": "subtotal_not_verified_in_source",
+      "tolerated_alert_types": [
+        "tax_mismatch",
+        "line_items_mismatch"
+      ],
+      "rationale": "Gap 43's check, on the invoice where subtotal and grand total are equal -- so a check that accidentally matched the grand total instead would pass here for the wrong reason and be caught by nothing else.",
+      "mutated_ocr_text": "Nordlicht Datentechnik GmbH\nHafenstrasse 88, 20359 Hamburg, Germany\nEU VAT: DE811234567\nEU VAT: NL004567890B01\n\nTAX INVOICE\nInvoice Number: NDT-2026-00612\nInvoice Date: 2026-06-30\nDue Date: 2026-07-30\nPO Number: PO-EU-3391\n\nBill To: Meridian Analytics BV\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (EUR)\n1   Data platform engineering, senior consultant   -   96   145.00   0   13,920.00\n2   Platform licence, quarterly   -   1   4,250.00   0   4,250.00\n\nSubtotal: EUR 18,170.00\nVAT @ 0%: EUR 0.00\nTOTAL DUE: EUR 18,170.00\n\nReverse charge - VAT to be accounted for by the recipient under Article 196 of Council Directive 2006/112/EC.\nPayment terms: net 30 days.",
+      "extraction_under_test": {
+        "invoice_number": "NDT-2026-00612",
+        "invoice_date": "2026-06-30",
+        "due_date": "2026-07-30",
+        "subtotal": 19078.61,
+        "tax_amount": 0.0,
+        "grand_total": 18170.0,
+        "currency": "EUR",
+        "items": [
+          {
+            "description": "Data platform engineering, senior consultant",
+            "quantity": 96,
+            "unit_price": 145.0,
+            "amount": 13920.0,
+            "hsn_sac_code": null,
+            "tax_percent": 0
+          },
+          {
+            "description": "Platform licence, quarterly",
+            "quantity": 1,
+            "unit_price": 4250.0,
+            "amount": 4250.0,
+            "hsn_sac_code": null,
+            "tax_percent": 0
+          }
+        ],
+        "vendor_name": "Nordlicht Datentechnik GmbH",
+        "po_number": "PO-EU-3391",
+        "round_off": null,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "VAT",
+            "rate_percent": 0.0,
+            "amount": 0.0
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "india_cgst_sgst_round_off__unit_price_not_in_source",
+      "parent_document": "india_cgst_sgst_round_off",
+      "mutation": "mutate_unit_price_not_in_source",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "items[1].unit_price",
+      "correct_value": 7800.0,
+      "planted_value": 8190.07,
+      "expected_alert_type": "unit_price_not_verified_in_source",
+      "tolerated_alert_types": [
+        "line_item_calculation_mismatch"
+      ],
+      "rationale": "Gap 44's check. A wrong unit price with a correct line amount is the quiet version of a transcription error: every total still balances.",
+      "mutated_ocr_text": "Rajesh Steel Traders Pvt Ltd\nPlot 42, MIDC Industrial Area, Pune 411019, Maharashtra, India\nGSTIN: 27AABCR1234M1ZP\nGSTIN: 27AAECD5678Q1Z9\n\nTAX INVOICE\nInvoice Number: RST-2627-0091\nInvoice Date: 2026-07-22\nDue Date: 2026-08-21\n\nBill To: Deccan Fabricators Pvt Ltd\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (INR)\n1   TMT reinforcement bars Fe500D 12mm   7214   8   5,400.00   18   43,200.00\n2   MS plate 10mm, cut to size   7208   5   7,800.00   18   39,000.00\n3   Freight and handling   9965   1   4,300.00   18   4,300.00\n\nSubtotal: INR 86,500.00\nCGST @ 9%: INR 7,785.00\nSGST @ 9%: INR 7,785.00\nRound Off: INR 0.00\nTOTAL DUE: INR 102,070.00\n\nReverse charge applicable: No\nPayment terms: net 30. Interest at 1.5% per month on overdue amounts.",
+      "extraction_under_test": {
+        "invoice_number": "RST-2627-0091",
+        "invoice_date": "2026-07-22",
+        "due_date": "2026-08-21",
+        "subtotal": 86500.0,
+        "tax_amount": 15570.0,
+        "grand_total": 102070.0,
+        "currency": "INR",
+        "items": [
+          {
+            "description": "TMT reinforcement bars Fe500D 12mm",
+            "quantity": 8,
+            "unit_price": 5400.0,
+            "amount": 43200.0,
+            "hsn_sac_code": "7214",
+            "tax_percent": 18
+          },
+          {
+            "description": "MS plate 10mm, cut to size",
+            "quantity": 5,
+            "unit_price": 8190.07,
+            "amount": 39000.0,
+            "hsn_sac_code": "7208",
+            "tax_percent": 18
+          },
+          {
+            "description": "Freight and handling",
+            "quantity": 1,
+            "unit_price": 4300.0,
+            "amount": 4300.0,
+            "hsn_sac_code": "9965",
+            "tax_percent": 18
+          }
+        ],
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
+        "round_off": 0.0,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "CGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          },
+          {
+            "tax_type": "SGST",
+            "rate_percent": 9.0,
+            "amount": 7785.0
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "us_flat_sales_tax__line_amount_not_in_source",
+      "parent_document": "us_flat_sales_tax",
+      "mutation": "mutate_line_amount_not_in_source",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "items[0].amount",
+      "correct_value": 600.0,
+      "planted_value": 630.03,
+      "expected_alert_type": "line_item_not_verified_in_source",
+      "tolerated_alert_types": [
+        "line_item_calculation_mismatch",
+        "line_items_mismatch",
+        "tax_mismatch"
+      ],
+      "rationale": "Gap 36's check: a line amount the document never printed.",
+      "mutated_ocr_text": "Cascade Industrial Supply LLC\n1180 Wharf Street, Seattle, WA 98101, United States\n\nTAX INVOICE\nInvoice Number: CIS-2026-4417\nInvoice Date: 2026-07-14\nDue Date: 2026-08-13\nPO Number: PO-58213\n\nBill To: Northwind Manufacturing Inc.\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Hex bolts M12 x 60mm, galvanised   -   480   1.25   -   600.00\n2   Structural steel angle 50x50x5, 6m   -   24   138.50   -   3,324.00\n3   Welding consumables, ER70S-6 spool   -   12   96.75   -   1,161.00\n\nSubtotal: USD 5,085.00\nSales Tax @ 8.5%: USD 432.23\nTOTAL DUE: USD 5,517.23\n\nPayment terms: net 30 from invoice date. Remit by ACH.",
+      "extraction_under_test": {
+        "invoice_number": "CIS-2026-4417",
+        "invoice_date": "2026-07-14",
+        "due_date": "2026-08-13",
+        "subtotal": 5085.0,
+        "tax_amount": 432.23,
+        "grand_total": 5517.23,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Hex bolts M12 x 60mm, galvanised",
+            "quantity": 480,
+            "unit_price": 1.25,
+            "amount": 630.03,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Structural steel angle 50x50x5, 6m",
+            "quantity": 24,
+            "unit_price": 138.5,
+            "amount": 3324.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Welding consumables, ER70S-6 spool",
+            "quantity": 12,
+            "unit_price": 96.75,
+            "amount": 1161.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          }
+        ],
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
+        "round_off": null,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "Sales Tax",
+            "rate_percent": 8.5,
+            "amount": 432.23
+          }
+        ],
+        "discount_percent": null
+      }
+    },
+    {
+      "case_id": "outbound_trade_discount__required_field_dropped",
+      "parent_document": "outbound_trade_discount",
+      "mutation": "mutate_required_field_dropped",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "customer_name",
+      "correct_value": "Ridgeway Components Corp.",
+      "planted_value": null,
+      "expected_alert_type": "missing_required_field",
+      "tolerated_alert_types": [
+        "tax_mismatch"
+      ],
+      "rationale": "The extraction-side twin of `required_field_not_printed`: the name IS on the document and the model returned nothing.",
+      "mutated_ocr_text": "Meridian Analytics BV\n\nTAX INVOICE\nInvoice Number: OUT-2026-0308\nInvoice Date: 2026-07-09\nDue Date: 2026-08-08\n\nBill To: Ridgeway Components Corp.\n4400 Halsey Boulevard, Columbus, OH 43215, United States\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Managed integration service, July 2026   -   1   9,600.00   -   9,600.00\n2   Additional connector seats   -   15   120.00   -   1,800.00\n\nSubtotal: USD 11,400.00\nDiscount (5%): -USD 570.00\nSales Tax @ 7%: USD 758.10\nTOTAL DUE: USD 11,588.10\n\nPayment terms: net 30. Late payments subject to 1.5% monthly interest.",
+      "extraction_under_test": {
+        "invoice_number": "OUT-2026-0308",
+        "invoice_date": "2026-07-09",
+        "due_date": "2026-08-08",
+        "subtotal": 11400.0,
+        "tax_amount": 758.1,
+        "grand_total": 11588.1,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Managed integration service, July 2026",
+            "quantity": 1,
+            "unit_price": 9600.0,
+            "amount": 9600.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Additional connector seats",
+            "quantity": 15,
+            "unit_price": 120.0,
+            "amount": 1800.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          }
+        ],
+        "customer_name": null,
+        "taxes": [
+          {
+            "tax_type": "Sales Tax",
+            "rate_percent": 7.0,
+            "amount": 758.1
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "us_flat_sales_tax__low_field_confidence",
+      "parent_document": "us_flat_sales_tax",
+      "mutation": "mutate_low_field_confidence",
+      "surface": "extraction",
+      "gradeable_in_live_mode": false,
+      "field_path": "ocr_result.field_confidence.InvoiceTotal",
+      "correct_value": 0.97,
+      "planted_value": 0.31,
+      "expected_alert_type": "low_confidence_field",
+      "tolerated_alert_types": [],
+      "rationale": "Gap 3's confidence router. The only alert whose input is neither the OCR text nor the extracted record but Document Intelligence's own per-field confidence, so it is the only one that would go untested by a benchmark built purely on documents and extractions.",
+      "mutated_ocr_text": "Cascade Industrial Supply LLC\n1180 Wharf Street, Seattle, WA 98101, United States\n\nTAX INVOICE\nInvoice Number: CIS-2026-4417\nInvoice Date: 2026-07-14\nDue Date: 2026-08-13\nPO Number: PO-58213\n\nBill To: Northwind Manufacturing Inc.\n\n#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (USD)\n1   Hex bolts M12 x 60mm, galvanised   -   480   1.25   -   600.00\n2   Structural steel angle 50x50x5, 6m   -   24   138.50   -   3,324.00\n3   Welding consumables, ER70S-6 spool   -   12   96.75   -   1,161.00\n\nSubtotal: USD 5,085.00\nSales Tax @ 8.5%: USD 432.23\nTOTAL DUE: USD 5,517.23\n\nPayment terms: net 30 from invoice date. Remit by ACH.",
+      "extraction_under_test": {
+        "invoice_number": "CIS-2026-4417",
+        "invoice_date": "2026-07-14",
+        "due_date": "2026-08-13",
+        "subtotal": 5085.0,
+        "tax_amount": 432.23,
+        "grand_total": 5517.23,
+        "currency": "USD",
+        "items": [
+          {
+            "description": "Hex bolts M12 x 60mm, galvanised",
+            "quantity": 480,
+            "unit_price": 1.25,
+            "amount": 600.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Structural steel angle 50x50x5, 6m",
+            "quantity": 24,
+            "unit_price": 138.5,
+            "amount": 3324.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          },
+          {
+            "description": "Welding consumables, ER70S-6 spool",
+            "quantity": 12,
+            "unit_price": 96.75,
+            "amount": 1161.0,
+            "hsn_sac_code": null,
+            "tax_percent": null
+          }
+        ],
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
+        "round_off": null,
+        "discount_amount": null,
+        "taxes": [
+          {
+            "tax_type": "Sales Tax",
+            "rate_percent": 8.5,
+            "amount": 432.23
+          }
+        ],
+        "discount_percent": null
+      }
+    }
+  ]
+}

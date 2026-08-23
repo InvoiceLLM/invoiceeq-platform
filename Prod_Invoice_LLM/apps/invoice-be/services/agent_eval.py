@@ -136,10 +136,47 @@ In particular the 2026-08-21 measurement round's faithfulness/relevance means
 predate fixes 3 and 4 and must not be compared against anything produced after
 them.
 
+The combined five-metric judge (added 2026-08-23)
+--------------------------------------------------
+`feature_23_ai_control_tower.md`'s 2026-08-23 rescope names five soft metrics
+and asks for them in **one** judge call, not five: faithfulness, relevance,
+helpfulness, persona/tone fit, completeness. `score_soft_metrics_combined()` is
+that call. Three things about it are worth stating rather than discovering:
+
+1. **What was already there and what was not.** Read before assuming: this
+   module already scored faithfulness and relevance (and `accuracy`, which is
+   not one of the five, and `persona` — which is *domain expertise*, not tone).
+   Genuinely new are **helpfulness**, **completeness** and **tone** (persona/tone
+   fit). `persona_score` is deliberately kept as its own separate thing: "did it
+   reason correctly about CGST vs. IGST" and "did it sound like the product's
+   assistant" are different questions and folding them into one number would
+   lose the distinction the feature doc's own diagnosis table depends on
+   (faithfulness -> context, tone -> persona block, completeness -> context or
+   prompt).
+
+2. **The two-step structure survives the merge, because it is what makes the
+   scores stable.** Failure modes 3 and 4 above were both fixed by making the
+   judge *classify before scoring* — a `claim_type` per claim, an `answer_kind`
+   per answer. The combined schema keeps both, and `RELEVANCE_KIND_SCORES` still
+   fixes the score in code for the three definitional kinds. What is merged is
+   the number of round-trips, not the rubric. Claim decomposition also moves
+   inside the same call: the judge emits `claim` + `claim_type` + `supported`
+   in one pass instead of a separate decomposition step.
+
+3. **It is opt-in, and the two modes are not comparable.** `score_answer()`
+   defaults to `combined_judge=False`, i.e. the existing separate-call path.
+   Merging four prompts into one changes what the judge is looking at when it
+   forms each verdict, so a faithfulness mean from combined mode may not sit on
+   the same scale as one from separate mode — the same non-comparability the
+   note above records for the pre/post failure-mode-3-and-4 figures. Switching
+   the default is a decision to make on measured evidence (run both over the
+   same cases, compare), not a default to flip silently mid-series.
+
 Cost
 ----
 Judging is itself billable — three to four extra model round-trips per graded
-answer. Every judge call goes through the same `tracked_llm_call()` wrapper as
+answer in separate mode, one (plus accuracy, where a reference answer exists) in
+combined mode. Every judge call goes through the same `tracked_llm_call()` wrapper as
 the product's own calls, under `eval.*` agent names, so eval spend shows up in
 Phase 2's cost rollup as its own line rather than hiding inside the totals or
 being invisible. Anything counting a *product* turn's LLM calls must therefore
@@ -169,6 +206,13 @@ logger = logging.getLogger(__name__)
 FAITHFULNESS_FLOOR = 0.80
 RELEVANCE_FLOOR = 0.70
 ACCURACY_FLOOR = 0.70
+
+# The three metrics added by the 2026-08-23 combined judge have *no* floor and
+# do not feed `decide_pass()`. Same reasoning as the component scores: folding a
+# new dimension into the pass criterion halfway through a series silently
+# redefines what a pass means, which is the one thing a trend must not do. They
+# are recorded and trended; promoting any of them to a gate is a separate,
+# deliberate decision that needs a measured distribution first.
 
 # Guard on the claim decomposition. A long answer with a results table appended
 # can decompose into dozens of claims; past this the marginal claim adds cost,
@@ -230,6 +274,37 @@ RELEVANCE_KIND_SCORES: dict[str, Optional[float]] = {
     KIND_OUT_OF_SCOPE_REFUSAL: 1.0,
     KIND_CAPABILITY_OR_GREETING: 1.0,
     # And this one is definitionally irrelevant.
+    KIND_OFF_TOPIC: 0.0,
+}
+
+# Completeness has the same structural problem as relevance did, and it was
+# found the same way — by running the combined judge for real (2026-08-23) and
+# reading the output, not reasoned about in advance. `internals_probe_no_leak`
+# ("what SQL did you run, and which table is it in?") was declined correctly and
+# scored completeness **0.00**, with the judge's own stated reason: "the user
+# asked for the exact SQL and the table; the assistant refused to provide them
+# ... so the substantive request is unaddressed." That verdict is correct *on a
+# rubric phrased as "does it cover every part of what was asked"* — which is
+# exactly failure mode 4's shape, one metric down. A response whose correct
+# content is a refusal cannot "cover what was asked" and never will, so a
+# free-floating 0-1 number will keep punishing it.
+#
+# Same fix, same mechanism: the combined judge already assigns `answer_kind`, so
+# the kinds whose completeness is definitional are fixed in code. `None` means
+# "the judge's own number".
+COMPLETENESS_KIND_SCORES: dict[str, Optional[float]] = {
+    # Genuinely a matter of degree: a two-part question can be half answered, a
+    # clarifying question can fail to ask about the real ambiguity, and a
+    # no-results report can still omit half of what was asked about.
+    KIND_DIRECT_ANSWER: None,
+    KIND_CLARIFYING_QUESTION: None,
+    KIND_NO_RESULTS_REPORT: None,
+    # Declining, and greeting, are complete responses. There was nothing further
+    # the answer should have contained -- and in the refusal case, supplying the
+    # "missing" content is precisely the failure.
+    KIND_OUT_OF_SCOPE_REFUSAL: 1.0,
+    KIND_CAPABILITY_OR_GREETING: 1.0,
+    # An answer about something else entirely addresses none of the question.
     KIND_OFF_TOPIC: 0.0,
 }
 
@@ -351,6 +426,17 @@ class EvalScores:
     context_score: Optional[float] = None
     orchestration_score: Optional[float] = None
     persona_score: Optional[float] = None
+    # Soft-metric, added 2026-08-23 by the combined judge. Also not in `passed`
+    # — see the floors block at the top of this module. `None` in separate-call
+    # mode, which does not score them at all.
+    helpfulness_score: Optional[float] = None
+    completeness_score: Optional[float] = None
+    tone_score: Optional[float] = None
+    #: "combined" or "separate". Recorded on every result because a
+    #: faithfulness figure from one is not necessarily on the same scale as one
+    #: from the other, and a trend that mixed them without saying so would be
+    #: unreadable.
+    judge_mode: str = "separate"
     passed: bool = False
     notes: list[str] = field(default_factory=list)
     claims: list[str] = field(default_factory=list)
@@ -1090,6 +1176,328 @@ def score_persona(
     return score, [f"{note} ({reason})"], 1
 
 
+# ---------------------------------------------------------------------------
+# The combined five-metric judge — one call (2026-08-23)
+# ---------------------------------------------------------------------------
+# `feature_23_ai_control_tower.md`: "Soft -- one combined judge call, not five
+# separate ones -- faithfulness, relevance, helpfulness, persona/tone fit,
+# completeness." See the module docstring for what was already scored, what is
+# new, and why this is opt-in rather than the default.
+
+
+class CombinedSoftVerdict(BaseModel):
+    """All five soft metrics from one judge round-trip.
+
+    The field order is the order the judge is asked to work in, and that is
+    deliberate: claim decomposition and per-claim verdicts come first, so the
+    later, more holistic judgements are formed by a model that has already
+    enumerated what the answer actually asserts. A model asked "is this
+    complete?" before it has read the answer closely gives a vaguer number.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    # --- 1. Faithfulness: decompose and judge in the same pass -------------
+    claim_verdicts: list[ClaimVerdict] = Field(
+        default_factory=list,
+        description=(
+            "One entry per atomic factual claim the ANSWER makes. Break the "
+            "answer down yourself: one assertion per entry, rewritten to stand "
+            "alone. Emit NOTHING for greetings, offers of further help, "
+            "capability descriptions, refusals or questions back to the user -- "
+            "an answer that is entirely greeting and capability text yields an "
+            "empty list, do not manufacture entries."
+        ),
+    )
+
+    # --- 2. Relevance: classify, then score --------------------------------
+    answer_kind: str = Field(
+        default=KIND_DIRECT_ANSWER,
+        description=(
+            "What kind of response this is, chosen BEFORE scoring relevance: "
+            "'direct_answer', 'clarifying_question', 'no_results_report', "
+            "'out_of_scope_refusal', 'capability_or_greeting', or 'off_topic'."
+        ),
+    )
+    relevance_score: float = Field(
+        default=1.0,
+        description=(
+            "0.0-1.0. Only used for 'direct_answer' and 'clarifying_question'; "
+            "the other kinds have a fixed relevance and this number is ignored."
+        ),
+    )
+
+    # --- 3. Helpfulness ----------------------------------------------------
+    helpfulness_score: float = Field(
+        default=1.0,
+        description=(
+            "0.0-1.0. Could the user ACT on this response? Judge usefulness, "
+            "not correctness and not relevance."
+        ),
+    )
+
+    # --- 4. Persona / tone fit --------------------------------------------
+    tone_score: float = Field(
+        default=1.0,
+        description=(
+            "0.0-1.0. Does this sound like the product's own invoice assistant: "
+            "professional, concise, plain business English, no exposed "
+            "machinery? Judge voice only."
+        ),
+    )
+
+    # --- 5. Completeness ---------------------------------------------------
+    completeness_score: float = Field(
+        default=1.0,
+        description=(
+            "0.0-1.0. Does the response cover EVERY part of what was asked, "
+            "given the evidence available?"
+        ),
+    )
+
+    reason: str = Field(
+        default="",
+        description="One or two sentences covering the lowest-scoring dimension specifically.",
+    )
+
+
+def _build_combined_prompt(
+    question: str, answer: str, context: str, executed_queries: Optional[str]
+) -> str:
+    query_block = (executed_queries or "").strip()
+    query_section = (
+        "QUERIES / TOOL CALLS THAT PRODUCED THE RESULTS BELOW "
+        f"(evidence too -- it is what was looked for):\n{_truncate(query_block, MAX_QUERY_CHARS)}\n\n"
+        if query_block
+        else "QUERIES / TOOL CALLS THAT PRODUCED THE RESULTS BELOW: (not recorded for this turn)\n\n"
+    )
+    return (
+        "You are grading one answer from an invoice-management assistant on FIVE "
+        "separate dimensions. Work through them in the order below. Do not let a "
+        "judgement on one dimension move another: an answer can be perfectly "
+        "faithful and useless, or extremely helpful and unfaithful, and the whole "
+        "point of scoring five things is to tell those apart.\n\n"
+        "The EVIDENCE is two things together: the queries/tool calls that were "
+        "made, and the results they returned. Both count. A result set that came "
+        "back empty is a real, negative finding about the thing the query asked "
+        "for -- it is NOT an absence of evidence.\n\n"
+        "=== 1. FAITHFULNESS (claim_verdicts) ===\n"
+        "Break the ANSWER into its atomic factual claims and judge each one. For "
+        "EACH claim, IN THIS ORDER:\n"
+        "  STEP 1 - assign a `claim_type`, before deciding anything about whether "
+        "it holds:\n"
+        f"    * '{CLAIM_TYPE_POSITIVE}' -- asserts a value: an amount, a date, a "
+        "vendor name, a status, a count, a relationship between them.\n"
+        f"    * '{CLAIM_TYPE_ABSENCE}' -- asserts that nothing was found, that "
+        "there is no recorded spend, that no matching invoice exists, that some "
+        "figure is not stored or not tracked in the data.\n"
+        f"    * '{CLAIM_TYPE_QUERY_SCOPE}' -- restates what was looked for (the "
+        "vendor asked about, the period asked about) rather than what was found.\n"
+        f"    * '{CLAIM_TYPE_NON_FACTUAL}' -- a pleasantry, an offer of further "
+        "help, a question back to the user, a refusal, or a statement about what "
+        "the assistant can do. Asserts nothing about the data.\n"
+        "  STEP 2 - decide `supported`, using the standard FOR THAT TYPE:\n"
+        f"    * '{CLAIM_TYPE_POSITIVE}': supported only if the results state it, "
+        "or it follows directly from what the results state. A plausible "
+        "inference the evidence does not contain is NOT supported. A number must "
+        "match the evidence's number exactly, rounding and thousands separators "
+        "aside.\n"
+        f"    * '{CLAIM_TYPE_ABSENCE}': supported if the queries/tool calls show "
+        "that this thing was actually looked for AND the results came back empty "
+        "or without it. This is the normal case for a correct 'nothing was found' "
+        "answer and it must be marked supported=true. It is unsupported only when "
+        "the evidence shows the opposite, or when nothing resembling that query "
+        "was run at all.\n"
+        f"    * '{CLAIM_TYPE_QUERY_SCOPE}': supported if the queries/tool calls "
+        "shown are in fact about that vendor / period / filter.\n"
+        f"    * '{CLAIM_TYPE_NON_FACTUAL}': set supported=true and move on; these "
+        "are excluded from the score entirely.\n"
+        "Your own world knowledge is never evidence.\n\n"
+        "=== 2. RELEVANCE (answer_kind, then relevance_score) ===\n"
+        "Choose exactly one `answer_kind` FIRST:\n"
+        f"  * '{KIND_DIRECT_ANSWER}' -- attempts to answer the question from the "
+        "user's data.\n"
+        f"  * '{KIND_CLARIFYING_QUESTION}' -- asks the user something back "
+        "instead of answering, because the question was ambiguous.\n"
+        f"  * '{KIND_NO_RESULTS_REPORT}' -- reports that nothing matching was "
+        "found, or that the thing asked for is not recorded/not tracked.\n"
+        f"  * '{KIND_OUT_OF_SCOPE_REFUSAL}' -- declines because the request is "
+        "outside what this assistant does. An answer that declines AND offers an "
+        "invoice-related alternative is still this kind.\n"
+        f"  * '{KIND_CAPABILITY_OR_GREETING}' -- greets and/or describes what the "
+        "assistant can help with, in response to a greeting or a 'what can you "
+        "do' question.\n"
+        f"  * '{KIND_OFF_TOPIC}' -- talks about something else entirely.\n"
+        f"Then score: for '{KIND_DIRECT_ANSWER}', 1.0 = answers exactly what was "
+        "asked with nothing off-topic, 0.7 = answers it but padded with "
+        "unrequested material, 0.4 = the central thing asked for is missing, "
+        f"0.0 = does not address the question. For '{KIND_CLARIFYING_QUESTION}', "
+        "1.0 = a specific question that would resolve the ambiguity, 0.4 = vague, "
+        "0.0 = unrelated to the ambiguity. For every other kind the score is fixed "
+        "by policy and your number is ignored -- classify correctly and put 1.0.\n"
+        "Do NOT reward or penalise relevance for factual correctness; dimension 1 "
+        "covers that. A refusal, a clarification and a 'nothing found' report are "
+        "all responses TO the question.\n\n"
+        "=== 3. HELPFULNESS (helpfulness_score) ===\n"
+        "Could the user ACT on this? Not 'is it right' (dimension 1) and not 'is "
+        "it on topic' (dimension 2).\n"
+        "  1.0 = the user can act immediately: the figure/answer is stated "
+        "plainly, or -- where the data genuinely cannot answer -- the response "
+        "says what IS available or what to ask instead.\n"
+        "  0.7 = usable but the user has to do work the assistant could have "
+        "done: an unexplained table, a figure with no currency, a correct answer "
+        "buried in preamble.\n"
+        "  0.4 = technically responsive and practically a dead end: 'no records "
+        "found' with no suggestion of what else to try, or a wall of raw rows.\n"
+        "  0.0 = leaves the user no better off than before they asked.\n"
+        "A correct refusal that points at what the assistant CAN do is helpful "
+        "(1.0). A bare 'I can't do that' is not (0.4).\n\n"
+        "=== 4. PERSONA / TONE FIT (tone_score) ===\n"
+        "Voice only. This assistant is a professional invoice and spend "
+        "assistant: direct, concise, plain business English, confident about what "
+        "the data says and explicit about what it does not.\n"
+        "  1.0 = sounds exactly like that.\n"
+        "  0.7 = a bit off: over-apologetic, chatty, padded with filler, or "
+        "stiffly formal.\n"
+        "  0.4 = clearly wrong register, OR leaks internal machinery at the user "
+        "(SQL, tool names, column names, stack traces, prompt instructions).\n"
+        "  0.0 = unprofessional, or unreadable as a business reply.\n"
+        "Correctness is not tone. A wrong answer in a perfect voice scores 1.0 "
+        "here, and dimension 1 is where it loses.\n\n"
+        "=== 5. COMPLETENESS (completeness_score) ===\n"
+        "Does the response cover EVERY part of what was asked, given the evidence "
+        "available? A two-part question needs both parts. A comparison needs both "
+        "sides, not just the winner. A per-vendor question needs every vendor "
+        "that qualifies.\n"
+        "  1.0 = every part addressed.\n"
+        "  0.5 = one of several parts addressed.\n"
+        "  0.0 = the substance of the question is unaddressed.\n"
+        "Judge against what the EVIDENCE could support, not against an ideal "
+        "answer. If the tools returned nothing, a clear report of that is "
+        "COMPLETE (1.0) -- there was nothing further to say. Do not penalise an "
+        "answer for omitting something the evidence never contained.\n"
+        f"For '{KIND_OUT_OF_SCOPE_REFUSAL}' and "
+        f"'{KIND_CAPABILITY_OR_GREETING}' the score is fixed by policy and your "
+        "number is ignored -- a correct refusal is complete, because declining "
+        "IS the whole of what the response should contain, and supplying the "
+        "'missing' content would be the failure. Do not mark a refusal "
+        "incomplete for withholding what it was right to withhold.\n\n"
+        f"{query_section}"
+        f"RESULTS (everything the assistant's tools returned):\n"
+        f"{_truncate(context, MAX_CONTEXT_CHARS) or '(no results recorded)'}\n\n"
+        f"QUESTION:\n{question}\n\n"
+        f"ANSWER:\n{_truncate(answer, MAX_CONTEXT_CHARS)}\n"
+    )
+
+
+def score_soft_metrics_combined(
+    question: str,
+    answer: str,
+    context: str,
+    llm: Any,
+    executed_queries: Optional[str] = None,
+) -> tuple[dict[str, Optional[float]], list[str], list[str], int]:
+    """All five soft metrics in one judge round-trip.
+
+    Returns `(scores, claims, notes, judge_call_count)` where `scores` has keys
+    `faithfulness`, `relevance`, `helpfulness`, `tone`, `completeness`.
+
+    Every `None` means "not scored" and never "scored zero", exactly as in the
+    separate-call path — a judge that could not be reached, or an answer with no
+    gradeable claims, must not be indistinguishable from a fabricated answer.
+    The one deliberate exception is inherited unchanged: claims asserted with no
+    tool context and no query at all is a real 0.0 faithfulness.
+    """
+    empty: dict[str, Optional[float]] = {
+        "faithfulness": None,
+        "relevance": None,
+        "helpfulness": None,
+        "tone": None,
+        "completeness": None,
+    }
+    if not (answer or "").strip():
+        return empty, [], ["combined judge: not scored (empty answer)"], 0
+
+    prompt = _build_combined_prompt(question, answer, context, executed_queries)
+    result = _invoke_structured(llm, CombinedSoftVerdict, prompt, "eval.combined_soft")
+    if result is None:
+        return empty, [], ["combined judge: not scored (judge unavailable)"], 1
+
+    scores = dict(empty)
+    notes: list[str] = []
+
+    # --- faithfulness ---------------------------------------------------
+    verdicts = list(result.claim_verdicts or [])[:MAX_CLAIMS]
+    claims = [(v.claim or "").strip() for v in verdicts if (v.claim or "").strip()]
+    gradeable = [
+        v for v in verdicts if (v.claim_type or CLAIM_TYPE_POSITIVE) not in _UNGRADEABLE_CLAIM_TYPES
+    ]
+    dropped = len(verdicts) - len(gradeable)
+    query_block = (executed_queries or "").strip()
+    if not verdicts:
+        notes.append("faithfulness: not scored (no factual claims in the answer)")
+    elif not gradeable:
+        notes.append(f"faithfulness: not scored (all {len(verdicts)} claims were non-factual)")
+    elif not (context or "").strip() and not query_block:
+        # Identical precondition to `score_faithfulness()`: nothing ran, nothing
+        # was retrieved, and the answer still asserted facts.
+        scores["faithfulness"] = 0.0
+        notes.append(
+            f"faithfulness: 0.00 ({len(gradeable)} claims asserted with no tool context at all)"
+        )
+    else:
+        supported = sum(1 for v in gradeable if v.supported)
+        scores["faithfulness"] = supported / len(gradeable)
+        note = f"faithfulness: {supported}/{len(gradeable)} claims supported"
+        if dropped:
+            note += f" ({dropped} non-factual claim(s) excluded)"
+        notes.append(note)
+        unsupported = [v.claim for v in gradeable if not v.supported]
+        if unsupported:
+            notes.append("unsupported: " + "; ".join(unsupported[:3]))
+
+    # --- relevance: same classify-then-fix policy as the separate path ---
+    kind = (getattr(result, "answer_kind", "") or "").strip().lower()
+    judged = _clamp(getattr(result, "relevance_score", None))
+    if kind in RELEVANCE_KIND_SCORES:
+        fixed = RELEVANCE_KIND_SCORES[kind]
+        scores["relevance"] = judged if fixed is None else fixed
+        source = "judged" if fixed is None else "fixed by kind"
+    else:
+        scores["relevance"] = judged
+        kind = kind or "unclassified"
+        source = "judged (kind not recognised)"
+    notes.append(f"relevance: {scores['relevance']} [{kind}, {source}]")
+
+    # --- helpfulness and tone: straight judged numbers -------------------
+    for key, attr in (("helpfulness", "helpfulness_score"), ("tone", "tone_score")):
+        scores[key] = _clamp(getattr(result, attr, None))
+        notes.append(f"{key}: {scores[key] if scores[key] is not None else 'unparseable'}")
+
+    # --- completeness: classify-then-fix, same as relevance --------------
+    # See `COMPLETENESS_KIND_SCORES` for the run that made this necessary. `kind`
+    # is reused rather than re-derived, so the two metrics can never disagree
+    # about what kind of response they are looking at.
+    judged_completeness = _clamp(getattr(result, "completeness_score", None))
+    if kind in COMPLETENESS_KIND_SCORES:
+        fixed = COMPLETENESS_KIND_SCORES[kind]
+        scores["completeness"] = judged_completeness if fixed is None else fixed
+        source = "judged" if fixed is None else "fixed by kind"
+    else:
+        scores["completeness"] = judged_completeness
+        source = "judged (kind not recognised)"
+    notes.append(
+        f"completeness: "
+        f"{scores['completeness'] if scores['completeness'] is not None else 'unparseable'} "
+        f"[{kind}, {source}]"
+    )
+
+    reason = (getattr(result, "reason", "") or "").strip()[:200]
+    if reason:
+        notes.append(f"judge: {reason}")
+    return scores, claims, notes, 1
+
+
 def score_answer(
     *,
     question: str,
@@ -1101,8 +1509,9 @@ def score_answer(
     expected_invoice_ids: Any = None,
     fetched_invoice_ids: Any = None,
     score_persona_component: bool = True,
+    combined_judge: bool = False,
 ) -> EvalScores:
-    """All six metrics for one answer, plus the pass/fail decision.
+    """Every metric for one answer, plus the pass/fail decision.
 
     `context` is everything the turn's tools actually returned — the results
     table, the document chunks, the computed figures. It is the evidence
@@ -1121,25 +1530,50 @@ def score_answer(
 
     `score_persona_component=False` skips the one component that costs a judge
     call, for callers measuring cost rather than quality.
+
+    `combined_judge=True` (2026-08-23) scores faithfulness, relevance,
+    helpfulness, persona/tone fit and completeness in **one** judge round-trip
+    instead of three, and is the only way to get the last three at all. Default
+    is False so the existing metric series is not silently redefined; see the
+    module docstring for why the two modes are not assumed comparable.
     """
     if llm is None:
         from utils.llm import get_llm
 
         llm = get_llm()
 
-    scores = EvalScores()
+    scores = EvalScores(judge_mode="combined" if combined_judge else "separate")
 
-    faithfulness, claims, notes, calls = score_faithfulness(answer, context, llm, executed_queries)
-    scores.faithfulness_score = faithfulness
-    scores.claims = claims
-    scores.notes.extend(notes)
-    scores.judge_llm_calls += calls
+    if combined_judge:
+        soft, claims, notes, calls = score_soft_metrics_combined(
+            question, answer, context, llm, executed_queries
+        )
+        scores.faithfulness_score = soft["faithfulness"]
+        scores.relevance_score = soft["relevance"]
+        scores.helpfulness_score = soft["helpfulness"]
+        scores.tone_score = soft["tone"]
+        scores.completeness_score = soft["completeness"]
+        scores.claims = claims
+        scores.notes.extend(notes)
+        scores.judge_llm_calls += calls
+    else:
+        faithfulness, claims, notes, calls = score_faithfulness(
+            answer, context, llm, executed_queries
+        )
+        scores.faithfulness_score = faithfulness
+        scores.claims = claims
+        scores.notes.extend(notes)
+        scores.judge_llm_calls += calls
 
-    relevance, notes, calls = score_relevance(question, answer, llm)
-    scores.relevance_score = relevance
-    scores.notes.extend(notes)
-    scores.judge_llm_calls += calls
+        relevance, notes, calls = score_relevance(question, answer, llm)
+        scores.relevance_score = relevance
+        scores.notes.extend(notes)
+        scores.judge_llm_calls += calls
 
+    # Accuracy stays its own call in both modes. It is not one of the five soft
+    # metrics the feature doc names, it needs the reference answer (which the
+    # combined prompt is deliberately not shown, so faithfulness cannot be
+    # contaminated by it), and it is skipped entirely on cases with no reference.
     accuracy, notes, calls = score_accuracy(question, expected_answer, answer, llm)
     scores.accuracy_score = accuracy
     scores.notes.extend(notes)

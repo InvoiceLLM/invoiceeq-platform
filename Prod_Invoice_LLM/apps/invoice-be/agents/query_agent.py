@@ -3,8 +3,8 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import Literal, Optional
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from telemetry import tracked_llm_call
 from utils.llm import get_llm
@@ -72,8 +72,44 @@ def set_cached_answer(tenant_id: str, user_message: str, result: dict) -> None:
 
 class QueryRoutingSchema(BaseModel):
     model_config = {"extra": "forbid"}
-    route: str = Field(description="The target route for this query. Must be exactly 'RAG', 'SQL', or 'CHAT'")
+    # Feature 23, 2026-08-23: a real `Literal`, not a plain `str` whose
+    # description merely *asks* for one of three values. The difference is in the
+    # emitted JSON schema -- a Literal becomes `"enum": ["RAG", "SQL", "CHAT"]`,
+    # which the provider constrains generation against, where a description is
+    # only advice the model may ignore.
+    #
+    # Why it matters, and where: a hallucinated route is not a loud failure
+    # today. `run_query_agent()` dispatches `if route == "SQL" / elif route ==
+    # "RAG" / else: # CHAT`, so ANY unrecognised value falls through to the
+    # conversational branch -- the user gets a chatty answer with no retrieval
+    # and no indication that routing failed. Constraining the field turns that
+    # silent mis-route into a validation error, which `classify_query()` already
+    # handles by falling back to RAG (retrieval still happens).
+    #
+    # Measured, not assumed: 30/30 live gpt-5-mini classifications on this exact
+    # prompt already returned exactly one of the three, so on Azure this changes
+    # the schema and nothing else. The reliability it buys is on models without
+    # strict-mode structured output (the Ollama candidate), which is exactly
+    # where an out-of-vocabulary value was actually observed.
+    route: Literal["RAG", "SQL", "CHAT"] = Field(
+        description="The target route for this query. Must be exactly 'RAG', 'SQL', or 'CHAT'"
+    )
     reasoning: str = Field(description="Brief reason explaining the routing decision.")
+
+    @field_validator("route", mode="before")
+    @classmethod
+    def _normalise_route(cls, value):
+        """Keep the case/whitespace tolerance the plain `str` field had.
+
+        `classify_query()` has always done `result.route.upper()`, so a model
+        answering `"sql"` routed correctly before this change. A bare Literal
+        would reject it. Normalising *before* validation preserves that exactly;
+        anything that still is not one of the three is left alone for Literal to
+        reject, which is the point.
+        """
+        if isinstance(value, str):
+            return value.strip().strip("'\"").upper()
+        return value
 
 class SQLGenerationSchema(BaseModel):
     model_config = {"extra": "forbid"}

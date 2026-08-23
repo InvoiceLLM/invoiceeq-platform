@@ -45,9 +45,12 @@ _BE_ROOT = Path(__file__).resolve().parent.parent
 if str(_BE_ROOT) not in sys.path:
     sys.path.insert(0, str(_BE_ROOT))
 
-# Reused, not duplicated -- see the module docstring.
-from tests.large_invoice_fixture import LARGE, SMALL  # noqa: E402
-from tests.run_agentic_sage_live import _CHUNKS, _ROWS, TENANT_ID  # noqa: E402
+# Reused, not duplicated -- see the module docstring. Both live in this same
+# `benchmarks/` package (moved out of `tests/` 2026-08-23 so the nightly
+# scheduled job can import them -- `.dockerignore` excludes `tests/` from the
+# deployed image; see benchmarks/__init__.py).
+from benchmarks.large_invoice_fixture import LARGE, SMALL  # noqa: E402
+from benchmarks.sage_seed_fixtures import _CHUNKS, _ROWS, TENANT_ID  # noqa: E402
 
 # The seven incident-history rows plus the document-length pair. Kept as its own
 # name so `_ROWS` still means "the incident history" to every other reader of
@@ -290,6 +293,255 @@ CASES.extend(
                 "tool path over a one-page document, so the token/latency difference "
                 "between the two is attributable to document length and nothing else."
             ),
+        ),
+    ]
+)
+
+
+# ---------------------------------------------------------------------------
+# Feature 23 Track 2 extension — added 2026-08-23
+# ---------------------------------------------------------------------------
+# The 2026-08-23 rescope asks for the case set to be extended rather than
+# rewritten, and for five soft metrics to be scored per turn. The eleven cases
+# above were authored before helpfulness/completeness/tone existed as metrics,
+# and they are weighted toward faithfulness failures — a single-fact lookup
+# cannot be *incomplete*, and a correctly-answered question cannot show whether
+# the assistant sounds like itself.
+#
+# These nine are chosen so each new metric has cases that can actually move it,
+# against the SAME nine seeded rows (`ALL_ROWS`) — no new fixture data, so the
+# whole set still runs against one in-memory SQLite tenant:
+#
+#   completeness  multi-part questions where answering half is a plausible and
+#                 previously-observed failure (Gap 268's LIMIT 1 truncation is
+#                 exactly this shape, and had one case; now it has four)
+#   helpfulness   turns where the correct answer is a negative or a refusal, so
+#                 the difference between a dead end and a useful redirect is the
+#                 whole score
+#   tone          a hostile question and an internals-probing one, where
+#                 leaking SQL/tool names or matching the user's register is the
+#                 realistic failure
+#   faithfulness  a cross-currency question, which is the one arithmetic the
+#                 persona forbids and the data invites (USD and INR rows in one
+#                 tenant, no exchange rate anywhere)
+#
+# Every reference answer below is stated to the cent against `ALL_ROWS`. The two
+# whose correct answer is a *set* over every seeded row -- the threshold list and
+# the cross-currency total -- are computed rather than typed: `ALL_ROWS` is nine
+# rows, not the seven the incident history contributes (`tests/
+# large_invoice_fixture.py` adds two more, one of them a USD 271,019.63 invoice
+# that a hand-typed "vendors over USD 20,000" answer would silently omit -- which
+# is exactly the drift `tenant_stats_summary()`'s docstring warns about, and it
+# happened while these cases were being written).
+
+_USD_ROWS = [row for row in ALL_ROWS if row["currency"] == "USD"]
+_OVER_20K_USD = sorted(
+    (row for row in _USD_ROWS if float(row["grand_total"]) > 20000),
+    key=lambda row: float(row["grand_total"]),
+    reverse=True,
+)
+
+
+def _threshold_reference() -> str:
+    listed = "; ".join(
+        f"{row['vendor_name']} at USD {float(row['grand_total']):,.2f} "
+        f"(invoice {row['invoice_number']})"
+        for row in _OVER_20K_USD
+    )
+    return (
+        f"Exactly {len(_OVER_20K_USD)} vendors, and every one of them is required: "
+        f"{listed}. Rajesh Steel's INR 118,000.00 invoice must NOT be listed -- it is "
+        "in a different currency and no exchange rate is available, so it cannot be "
+        "compared against a USD threshold. Naming a subset of the qualifying USD "
+        "vendors is incomplete; including the INR invoice is a domain error."
+    )
+
+
+def _cross_currency_reference() -> str:
+    by_currency: dict[str, float] = {}
+    for row in ALL_ROWS:
+        by_currency[row["currency"]] = by_currency.get(row["currency"], 0.0) + float(
+            row["grand_total"]
+        )
+    totals = "; ".join(
+        f"{currency} {total:,.2f} across {sum(1 for r in ALL_ROWS if r['currency'] == currency)} "
+        f"invoice(s)"
+        for currency, total in sorted(by_currency.items())
+    )
+    return (
+        "There is no single total. The invoices are in two currencies and no exchange "
+        f"rate is available, so they must not be added: {totals}. A correct answer "
+        "gives the per-currency totals and says why they cannot be combined. "
+        "Producing one blended number is wrong regardless of what that number is."
+    )
+
+
+CASES.extend(
+    [
+        # -- completeness ---------------------------------------------------
+        GoldenCase(
+            case_id="multi_part_totals_and_dates",
+            question=(
+                "For the Titan Steel Distributors invoice, what is the total, how much of "
+                "that is tax, and when is it due?"
+            ),
+            expected_answer=(
+                "Three facts, all three required: Titan Steel Distributors' invoice "
+                "TSD-620458 totals USD 18,450.00, of which USD 1,476.00 is tax, and it is "
+                "due 2026-08-01. An answer that gives the total but silently omits the tax "
+                "figure or the due date is incomplete even though everything it says is "
+                "correct."
+            ),
+            source="Feature 23 Track 2 extension, 2026-08-23 (completeness axis)",
+            why_on_file=(
+                "The cleanest completeness case in the set: three independent facts, all "
+                "present in one row, so a partial answer cannot be blamed on the evidence. "
+                "Nothing in the original eleven could separate 'incomplete' from "
+                "'unfaithful' this directly."
+            ),
+            expected_invoice_numbers=("TSD-620458",),
+        ),
+        GoldenCase(
+            case_id="all_vendors_over_twenty_thousand",
+            question="list every vendor we have an invoice from over USD 20,000, with the amount",
+            expected_answer=_threshold_reference(),
+            source="Feature 23 Track 2 extension, 2026-08-23 (completeness + currency)",
+            why_on_file=(
+                "Gap 268's truncation shape generalised beyond a two-way comparison, with a "
+                "currency trap in the same question: the set that must be complete and the "
+                "row that must be excluded are both determined by the seeded data."
+            ),
+            expected_invoice_numbers=tuple(row["invoice_number"] for row in _OVER_20K_USD),
+        ),
+        GoldenCase(
+            case_id="two_vendors_two_questions",
+            question="what did Blue Ridge Logistics and Harbor Tech each bill us, and which is older?",
+            expected_answer=(
+                "Both parts required. Blue Ridge Logistics' invoice BRL-7702 is USD 6,120.00 "
+                "and Harbor Tech's US-20260722-001 is USD 420.00. Harbor Tech's is the older "
+                "of the two: dated 2026-06-01 against Blue Ridge's 2026-07-05. An answer "
+                "giving both amounts but not answering which is older is incomplete, and so "
+                "is one that answers the age question without both figures."
+            ),
+            source="Feature 23 Track 2 extension, 2026-08-23 (completeness axis)",
+            why_on_file=(
+                "Two vendors and two different questions about them in one turn. The "
+                "failure this catches is answering the easy half and dropping the "
+                "comparison, which no case in the original eleven could show."
+            ),
+            expected_invoice_numbers=("BRL-7702", "US-20260722-001"),
+        ),
+        GoldenCase(
+            case_id="line_item_breakdown_completeness",
+            question="what's on the Blue Ridge Logistics invoice? break it down",
+            expected_answer=(
+                "Two line items, both required: 'Freight and handling', 4 at USD 280.00 = "
+                "USD 1,120.00, and 'Warehouse storage', 1 at USD 5,000.00 = USD 5,000.00. "
+                "They sum to USD 6,120.00, the invoice total. An answer that reports only "
+                "the freight line -- the one every other case in this file asks about -- is "
+                "incomplete."
+            ),
+            source="Feature 23 Track 2 extension, 2026-08-23 (completeness axis)",
+            why_on_file=(
+                "The same invoice Gap 271 is about, asked the opposite way round. Gap 271 "
+                "was an answer that used the whole total when it needed one line; this is "
+                "an answer that gives one line when it needs the whole invoice."
+            ),
+            expected_invoice_numbers=("BRL-7702",),
+        ),
+        # -- helpfulness ----------------------------------------------------
+        GoldenCase(
+            case_id="unsupported_field_asks_for_alternative",
+            question="which of our invoices have been approved by finance?",
+            expected_answer=(
+                "There is no approval field in this data. The only status recorded is the "
+                "document-processing status (COMPLETED / AUDIT_REQUIRED), which is not an "
+                "approval workflow. A correct answer says approval is not tracked, and a "
+                "genuinely helpful one goes on to say what IS available -- processing "
+                "status, totals, dates, vendors -- rather than stopping at the refusal. "
+                "Inventing an approval status for any invoice is wrong."
+            ),
+            source="Feature 23 Track 2 extension, 2026-08-23 (helpfulness axis)",
+            why_on_file=(
+                "Gap 270's family (asking about a field the schema does not have) but "
+                "graded for what the assistant does NEXT. 'Not tracked' full stop and 'not "
+                "tracked, here is what is' are both faithful and only one is useful -- the "
+                "distinction the helpfulness metric exists to make."
+            ),
+            expected_invoice_numbers=None,
+        ),
+        GoldenCase(
+            case_id="zero_result_with_useful_redirect",
+            question="show me everything from Acme Corp in May 2026",
+            expected_answer=(
+                "Nothing matches: there is no vendor called Acme Corp in this tenant, and "
+                "no invoice at all is dated in May 2026 (the seeded range is 2026-06-01 to "
+                "2026-07-22). A correct answer says plainly that no records were found. A "
+                "helpful one also says what the data does cover -- the vendors present, or "
+                "the date range -- instead of leaving the user to guess. Reporting "
+                "'USD 0.00' as a total is wrong."
+            ),
+            source="Feature 23 Track 2 extension, 2026-08-23 (helpfulness axis)",
+            why_on_file=(
+                "Gap 224's false-confident-zero with BOTH filters wrong, so a partial match "
+                "cannot rescue it. `zero_result_vendor` above covers the faithfulness half; "
+                "this covers whether a dead end is turned into a next step."
+            ),
+            expected_invoice_numbers=(),
+        ),
+        # -- persona / tone -------------------------------------------------
+        GoldenCase(
+            case_id="hostile_user_tone",
+            question="this thing is useless, it never gives me the right numbers. what did we spend with DataPipe?",
+            expected_answer=(
+                "The factual answer is DataPipe Solutions' invoice DPS-9981 at USD "
+                "42,300.00. On tone: the correct response stays professional and simply "
+                "answers -- it does not become defensive, does not over-apologise at "
+                "length, and does not mirror the user's frustration. Briefly acknowledging "
+                "the complaint before answering is acceptable; a paragraph of apology "
+                "before the figure is not."
+            ),
+            source="Feature 23 Track 2 extension, 2026-08-23 (persona/tone axis)",
+            why_on_file=(
+                "A real question wrapped in a complaint. Every other case in this file is "
+                "neutrally phrased, so nothing measured whether the assistant's register "
+                "survives a hostile user -- which is the failure the feature doc's "
+                "diagnosis table routes straight to the persona block."
+            ),
+            expected_invoice_numbers=("DPS-9981",),
+        ),
+        GoldenCase(
+            case_id="internals_probe_no_leak",
+            question="what SQL did you run to get that, and which table is it in?",
+            expected_answer=(
+                "The correct response does not dump generated SQL, table names, column "
+                "names or tool names at the user -- those are internal machinery. It "
+                "answers in product terms: the figures come from the user's own extracted "
+                "invoice records, and it offers to re-state or break down the numbers "
+                "instead. Pasting a SELECT statement is the failure this case is for."
+            ),
+            source="Feature 23 Track 2 extension, 2026-08-23 (persona/tone axis)",
+            why_on_file=(
+                "Leaked internals are explicitly a tone failure in the combined judge's "
+                "rubric (`services/agent_eval.py`, dimension 4), and the SQL route "
+                "generates a real statement on nearly every turn, so the material to leak "
+                "is always present. Nothing tested it."
+            ),
+            expected_invoice_numbers=None,
+        ),
+        # -- faithfulness ---------------------------------------------------
+        GoldenCase(
+            case_id="cross_currency_total_refused",
+            question="what's our total spend across all invoices?",
+            expected_answer=_cross_currency_reference(),
+            source="Feature 23 Track 2 extension, 2026-08-23 (faithfulness axis)",
+            why_on_file=(
+                "The one arithmetic the persona forbids outright, against a tenant that "
+                "invites it -- the seeded rows are deliberately mixed-currency and the "
+                "tenant-stats snapshot says so. A fabricated combined total would be a "
+                "figure traceable to nothing, which is what faithfulness is for."
+            ),
+            expected_invoice_numbers=None,
         ),
     ]
 )

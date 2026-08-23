@@ -19,12 +19,32 @@ prior-round design/build history — useful as reference for what was tried, not
 (both the live resource and the `agentEvalJob` module in `08-apps.bicep`). Kept: the 25 real alert
 rules, the cost budget, `scheduled-job.bicep` (generic, reusable for whatever scheduler comes next).
 
-### Scope: two pipelines, not one
+### Scope: every real LLM call site in the registry, not just two
 
-| Pipeline | Unit | Nature |
+**Correction (2026-08-23, same day as the rest of this section):** the first pass of this rethink only
+designed parameters for extraction and "SAGE chat," describing SAGE orchestrator's planner→tools→
+synthesis shape. Two problems with that, caught the same day: SAGE orchestrator is gated behind
+`ENABLE_AGENTIC_SAGE` and is **off today** — the chat path actually live in production is
+`agents/query_agent.py`'s classify + SQL/RAG/CHAT fork, which hadn't been given its own treatment at
+all — and three other real registry rows (Trainer/EVOLVE, Dashboard insights, Trainer QA-panel
+summary) were missed entirely. Corrected scope, against the full registry table below:
+
+**Second correction (2026-08-23, later the same day), on what "missed entirely" meant.** Those three
+rows were missed from *this rescope's parameter design*, not from the telemetry itself. A
+function-by-function read of the code found all three were **already instrumented in Phase 1** and
+needed no new `tracked_llm_call()` at all — see "Lightweight-tier coverage verified" below for which
+named function carries each wrapper. Nothing was added to close a hole here, because there was no
+hole; what was added is the test coverage that keeps it that way.
+
+| Call site | Unit | Depth of treatment |
 |---|---|---|
-| Extraction (Doc Intelligence + extraction LLM, inbound + outbound) | Per document, one-shot | Mostly deterministic — verification already checks extracted values against OCR text |
-| SAGE chat | Per turn, linked to its thread | Threaded — earlier turns affect later ones, needs real trace context |
+| Extraction (inbound + outbound) | Per document, one-shot | Full — see below |
+| **Chat classify + SQL/RAG/CHAT fork** (`query_agent.py`) — **the live default path today** | Per turn, linked to thread | Full — same shape as "SAGE chat" below, this is the path it actually applies to right now |
+| SAGE orchestrator (Phase 2, off by default) | Per turn, linked to thread | Same design, applies once the flag is on |
+| Trainer/EVOLVE correction loop | Per correction | Lightweight — hard metrics only (cost, latency, error rate); lower volume/stakes than extraction or chat, doesn't need the full soft-metric judge treatment |
+| Dashboard insights | Per cache-miss (1h TTL per tenant) | Lightweight — hard metrics only |
+| Trainer QA-panel summary | Per QA-test turn | Lightweight — hard metrics only |
+| SENTINEL | — | **None needed** — confirmed no LLM call of its own (pure regex detectors); its cost is the extraction calls it audits, already covered there |
 
 ### Finalized parameters
 
@@ -38,18 +58,41 @@ rules, the cost budget, `scheduled-job.bicep` (generic, reusable for whatever sc
 | **Alert precision** (% of alerts leading to an actual correction vs. dismissed with no change) | Review Console's dismiss-vs-correct action |
 | Alert volume by check type | Flags a noisy/miscalibrated rule |
 
-**SAGE chat** — hard (trace/cost) + soft (judged), per turn:
+**Built 2026-08-23**: `services/extraction_quality_rollup.py` — `field_correction_rollup()` and
+`alert_precision_rollup()`. No new event logging needed; both read the audit trail
+`routers/audit.py`'s resolve handler already writes to `AuditLog.details` on every
+`RESOLVE_INVOICE`/`REOPEN_INVOICE` (`corrections`, `previous_alerts`, `dismissed_alerts_input`) —
+verified this carries real per-field before/after values and per-alert dismissal linkage (`field` key),
+not just a coarse "resolved" event. Alert precision matches a dismissal to a correction via the alert's
+own `field` key (same linkage the FE review console uses, Gap 112 item 4); an alert with no `field` key
+present can't be confirmed matched, so it's counted as *uncorrected* rather than assumed — a
+deliberate under-count, not a bug. 6 tests, `tests/test_extraction_quality_rollup.py`, all passing.
+Not yet wired to a dashboard panel — that's the Cost + Health/Quality Workbook task.
+
+**Chat** (both the live `query_agent.py` fork and SAGE orchestrator once it's on) — hard (trace/cost) +
+soft (judged), per turn:
 
 | Type | Parameters |
 |---|---|
 | Hard | Cost, latency, tokens in/out, tool-call trace, error/retry rate |
 | Soft — **one combined judge call**, not five separate ones | Faithfulness, relevance, helpfulness, persona/tone fit, completeness |
 
+**Trainer/EVOLVE, Dashboard insights, Trainer QA-summary** — hard only (cost, latency, error/retry
+rate), same reasoning as extraction: lower volume and lower stakes than a multi-turn chat answer,
+doesn't justify the same judge-call cost. Revisit if any of these turns out to have its own real
+quality problem worth measuring.
+
 **Known, accepted gap**: alert *recall* (missed issues) can't be measured from real usage alone —
 nobody flags what wasn't flagged. This is exactly what the benchmark's seeded-document track below
 exists to answer.
 
 ### Audit / benchmark process — 2 tracks
+
+> **Both tracks were built and really run on 2026-08-23** — see "Track 1 as built" and "Track 2 as
+> built" below for the file coordinates, the review-artifact location, the measured numbers, and the
+> one real product defect Track 1 found on its first run. The scoping text immediately below is the
+> original intent, kept because the as-built sections deviate from it in two places and the deviation
+> is easier to read against the original.
 
 **Track 1 — Extraction & alerts (new, doesn't exist yet):**
 | Set | Contains | Measures |
@@ -78,6 +121,19 @@ pattern as the deleted job, new content.
   worth making a standing pattern)
 - Batch the 5 soft-metric judge scores into one call, not five
 
+**These are all cost/efficiency-side.** None of the above touches *content* — using the eval's soft-
+metric scores to actually fix what's wrong with the persona, system prompt, or context assembly. That's
+a distinct, so-far-undesigned optimization axis. Proposed starting map from a low soft-metric score to
+the component most likely responsible, so Feature 24 (below) knows where to point a suggestion:
+
+| Soft metric low | Likely area to fix |
+|---|---|
+| Faithfulness | Context — wrong/incomplete tool results reaching synthesis, or the grounding mandate in the system prompt isn't strong enough |
+| Relevance | Trace — the planner routed to the wrong tool, not a wording problem |
+| Helpfulness | System prompt — scope/tone instructions |
+| Persona/tone fit | Persona block specifically — direct wording issue |
+| Completeness | Context (missing rows/fields) or system prompt (not instructed to be thorough) |
+
 ### Model comparison — a deliberate periodic exercise, not a live metric
 
 Freeze one fixed test set (both tracks above) → run current baseline (gpt-5-mini) once → run each
@@ -91,31 +147,184 @@ justified yet):
 | Candidate | Setup needed | Verified findings |
 |---|---|---|
 | **GPT-4o** (new Azure OpenAI deployment) | New model deployment under the *existing* `openai-invoicellm-dev` resource — no new Azure resource type, no code change (`get_llm()`'s `azure` branch already reads the deployment name from config). Just TPM quota for the model in this region. | Structured-output strict-mode compliance is only *guaranteed* from GPT-4o/GPT-4o-mini onward, API version `2024-08-01-preview`+ — confirmed via Microsoft Learn. Only primitive JSON types allowed in strict mode (no DateTime/Uri) — worth checking the extraction schema's date fields before assuming a swap "just works." `response_format` and `tools` are mutually exclusive in one call — relevant to SAGE's tool-calling planner. |
-| **Ollama / self-hosted open model** | `langchain-ollama>=1.1.0` is **already installed and declared** in `pyproject.toml` (corrected an earlier wrong "not installed" finding — was checking system Python instead of the project's `.venv`). Needs: (1) Ollama itself downloaded and run locally, (2) pull **`llama3.1:8b`**, not the config's current default `llama3:8b` (pre-3.1, no reliable tool-calling support — confirmed via LangChain's own docs), (3) for anything beyond local dev, an actual hosting environment (no Ollama server runs in Azure today). | No hardcoded Azure-specific kwargs in any real `with_structured_output()` call site (`extraction_agent.py`, `query_agent.py`, `query_tools.py`, `trainer_agent.py`, `services/agent_eval.py`, etc.) — nothing will hard-crash from an incompatible parameter. Even on the well-supported Llama 3.1 8B, malformed-JSON rate is well under 1% but non-zero — a real (small) reliability gap vs. Azure OpenAI's strict-mode 100% guarantee, worth knowing going in. |
+| **Ollama / self-hosted open model** | `langchain-ollama>=1.1.0` is **already installed and declared** in `pyproject.toml` (corrected an earlier wrong "not installed" finding — was checking system Python instead of the project's `.venv`). Needs: (1) Ollama itself downloaded and run locally, (2) a post-3.0 tool-calling tag — `config.py`'s `OLLAMA_MODEL` default **was corrected to `llama3.2:latest` on 2026-08-23**, from the pre-3.1 `llama3:8b` that has no reliable tool-calling support (confirmed via LangChain's own docs), (3) for anything beyond local dev, an actual hosting environment (no Ollama server runs in Azure today). | No hardcoded Azure-specific kwargs in any real `with_structured_output()` call site (`extraction_agent.py`, `query_agent.py`, `query_tools.py`, `trainer_agent.py`, `services/agent_eval.py`, etc.) — nothing will hard-crash from an incompatible parameter. Even on the well-supported Llama 3.1 8B, malformed-JSON rate is well under 1% but non-zero — a real (small) reliability gap vs. Azure OpenAI's strict-mode 100% guarantee, worth knowing going in. **A live smoke test on 2026-08-23 found the gap is not only malformed JSON**: llama3.2 returned *syntactically valid* structured output whose `route` value was invented, i.e. schema-valid and semantically wrong. That is what the routing-enum change below addresses. |
+
+### The candidate-model override as built (2026-08-23)
+
+The mechanism the section above needs — "run each candidate through the identical set, swapping only
+the model" — now exists as a **test-time flag on the existing harness**, not a second harness and not
+a config change.
+
+| File | Function / symbol | What it does |
+|---|---|---|
+| `utils/llm.py` | `build_llm(provider, *, model, max_tokens, api_version, allow_mock_fallback)` | The construction logic `get_llm()` always had, parameterised on provider/model instead of reading both off `Settings`. Same three branches (`azure`/`ollama`/`mock`), same fallbacks by default. `model` maps to the Azure **deployment name** and to the Ollama model tag; endpoint/key/API version still come from settings, because a candidate on Azure is a new deployment under the *existing* resource. |
+| | `get_llm(max_tokens)` | Now a thin wrapper: resolves `LLM_PROVIDER` (and the provider's configured model) and delegates to `build_llm()`. One construction path, not two that can drift. **Behaviour unchanged**, fail-safe mock fallback included. |
+| | `LlmConfigurationError`, `SUPPORTED_LLM_PROVIDERS` | Raised only when a caller passed `allow_mock_fallback=False`, i.e. named a provider deliberately. `get_llm()` never raises it. |
+| `scripts/run_agent_eval.py` | `--provider` / `--model` / `--api-version` / `--persist-candidate` | The CLI surface. `--provider` is choice-constrained to the three real providers. |
+| | `_candidate_model()` | Context manager. Patches the `get_llm` **binding** in the three chat-path modules for the duration of the case loop and unwinds it after. Constructs the candidate once up front so a bad key/tag fails before any paid turn runs. |
+| | `CANDIDATE_LLM_PATCH_TARGETS` | `agents.query_agent` / `agents.query_tools` / `agents.sage_orchestrator` — read off the code. Each does `from utils.llm import get_llm`, so the module attribute is the binding that matters; patching `utils.llm.get_llm` would miss all three. A drift-guard test asserts each target really is that function. |
+| | `describe_model_under_test()`, `default_output_path()` | `provider:model` labelling, and a per-candidate output filename so a comparison run cannot overwrite `tests/agent_eval_output.json` — the baseline the candidate is being compared against. |
+| `tests/test_model_substitution.py` (new) | 37 tests | The override's mechanics and the routing enum. No test calls a model. |
+
+**Four properties this holds to, each with a test:**
+
+1. **Test-time only.** No `.env` write, no `os.environ` write, no assignment to the `Settings`
+   object. A test snapshots both and asserts they are identical inside and after the block.
+2. **The judge stays fixed.** `judge_llm` is built from `get_llm()` *before* the override is
+   entered, and `services/agent_eval.py` resolves its default judge through `utils.llm` directly —
+   deliberately not a patch target. Swap the judge with the candidate and the deltas mean nothing.
+3. **A candidate never becomes the mock.** An override run passes `allow_mock_fallback=False`, so a
+   missing Azure key or an unpulled Ollama tag raises instead of producing a results table that
+   reports `MockInvoiceLLM`'s canned output under a candidate's name.
+4. **A candidate's scores do not silently join the baseline trend.** An override run does not write
+   `agent_eval_run` rows unless `--persist-candidate` is passed, and rows written that way carry
+   `model_under_test=<provider>:<model>` in `notes`.
+
+**Stated rather than left to be discovered:** `summarise()`'s `cost_per_turn_usd` still prices every
+run at gpt-5-mini's list rate. On a candidate run that is a *token-normalised* comparison, not the
+candidate's real bill; the output payload now says so in a `cost_basis` field.
+
+**Verified how:** `--provider mock` against a `.env` configured for Azure really produced
+`MockInvoiceLLM`'s canned greeting with 0 tokens (proving the bypass), and
+`--provider azure --model gpt-5-mini --api-version 2024-08-01-preview` really ran a turn against the
+live deployment (proving the Azure branch and the API-version override). **No candidate benchmark has
+been run** — no GPT-4o deployment exists yet, and no Ollama server was running on this machine
+(`localhost:11434` refused connection), so the comparison table this section describes still does not
+exist. The flag is the machinery, not the result.
+
+**One local-config trap worth knowing:** `.env` on this machine sets `OLLAMA_MODEL=qwen2:0.5b`, which
+takes precedence over `config.py`'s corrected `llama3.2:latest` default. `--provider ollama` with no
+`--model` would therefore have benchmarked qwen2 — the run's own `model_under_test` label
+(`ollama:qwen2:0.5b`) makes that visible instead of silent, but pass `--model` explicitly.
+
+### `QueryRoutingSchema.route` is now a real `Literal` (2026-08-23) — Gap 296
+
+`agents/query_agent.py`'s routing field was `route: str` with a description *asking* for one of three
+values. A description is advice; an `enum` in the emitted JSON schema is a constraint the provider
+generates against. The field is now `Literal["RAG", "SQL", "CHAT"]`, plus a `mode="before"` validator
+that strips/upper-cases so the case-tolerance the old `.upper()` gave is preserved exactly.
+
+**Why it matters here specifically:** `run_query_agent()` dispatches
+`if route == "SQL" / elif route == "RAG" / else: # CHAT`, so *any* unrecognised value fell through to
+the conversational branch — the user got a chatty answer, no retrieval ran, and nothing anywhere
+recorded that routing had failed. With the enum, an invented value raises, and `classify_query()`'s
+existing `except` block falls back to RAG, which does retrieve.
+
+**Regression evidence on the Azure path, measured before and after rather than asserted:**
+
+| Check | Result |
+|---|---|
+| Live `gpt-5-mini`, 10 questions × 3, all chosen to miss both keyword fast-path lists | 30/30 parsed, 0 validation errors, **before and after**. Every raw value was already exactly one of the three. |
+| Same-process A/B (old plain-`str` schema vs. new `Literal` schema, alternating calls, same deployment, so run-to-run drift cannot be mistaken for the change) | 0 validation errors in either arm across 96 live calls. On the 3 clearly-routable questions both arms agreed 6/6 and 6/6. |
+| Automated suites | `test_rag.py`, `test_chat_sql_quality.py`, `test_queries.py`, `test_direction_aware_chat.py`, `test_query_tools.py`, `test_agentic_sage.py`, `test_agent_eval.py`, `test_telemetry.py` — 366 passed, 2 failed, neither attributable to this change: `test_rag.py::test_process_crash_during_agent_leaves_no_orphan_user_message` is the pre-existing `post_chat_message() missing 1 required positional argument: 'background_tasks'` failure already recorded in this doc's 2026-08-21 "Verified how", and `test_agent_eval.py::test_each_new_soft_metric_has_cases_that_can_actually_move_it` is an **uncommitted test from concurrent work on the golden sample** (it asserts on case phrasing in `agent_eval_golden_sample.py`, a file this pass did not touch). Plus `test_trainer.py`, `test_extraction.py`, `test_outbound_extraction.py`, `test_dashboard.py`, `test_chat_queue.py`, `test_chat_training.py`, `test_settings.py`, `test_online_eval_signals.py` — 170 passed, 0 failed. |
+
+**The honest qualification, not buried:** on *genuinely ambiguous* questions the sampled route
+distribution does move. `"does any document mention a delivery note number"` went from RAG 7 / SQL 5
+under the old typing to SQL 11 / RAG 1 under the enum in one run, and RAG 7 / SQL 5 → SQL 9 / RAG 3 in
+a second — reproducible. But the old arm was a coin flip on that question, not a correct baseline, and
+the shift is not directional: `"what bank details appear on the Rajesh Steel bill"` went the other way
+(SQL 12/12 old → SQL 10 / RAG 2 new). So: **no parse regression, no change on unambiguous routing,
+and a measurable redistribution on questions the old schema never answered stably either.** Whether
+that redistribution is an improvement is not something this change can claim.
+
+**Not verified:** the actual premise — that the enum fixes llama3.2's invented-route failure — could
+not be tested, because no Ollama server was running. The change is sound on first principles
+(constrained decoding vs. a description) and is proven not to break Azure; the non-Azure benefit is
+still a hypothesis.
 
 ---
 
 ## The real call sites (the registry)
 
-Confirmed by reading the code, not assumed:
+Confirmed by reading the code, not assumed. **Re-verified function-by-function on 2026-08-23** — the
+`Instrumented at` column below is the named function the `tracked_llm_call()` wrapper is actually on,
+read out of the code rather than inferred from this table's own earlier claims:
 
-| Agent | File | Model | Volume driver |
-|---|---|---|---|
-| Extraction (inbound) | `agents/extraction_agent.py` | Azure OpenAI gpt-5-mini | Every ingested invoice |
-| Extraction (outbound) | `agents/outbound_extraction_agent.py` | Azure OpenAI gpt-5-mini | Every outbound invoice |
-| Chat classify + SQL/RAG/CHAT fork | `agents/query_agent.py` | Azure OpenAI gpt-5-mini | Every chat turn (live default path) |
-| SAGE orchestrator (Phase 2) | `agents/sage_orchestrator.py` | Azure OpenAI gpt-5-mini | Every chat turn once `ENABLE_AGENTIC_SAGE` is on (off today) |
-| Trainer / EVOLVE correction loop | Feature 18 | Azure OpenAI gpt-5-mini | Each alert-anchored correction |
-| SENTINEL audit checks | tax/payment-status detectors | **No LLM** — corrected 2026-08-21 during Phase 1. Both named detectors (`detect_tax_component_term`, `detect_payment_status_question`) are pure regex, and no other audit path calls a model. SENTINEL's model cost is the `extraction.*` calls it audits. | Every extracted invoice |
-| Dashboard insights | `routers/dashboard.py` | Azure OpenAI gpt-5-mini | Every cache miss on the Actionable Insights panel (1h TTL per tenant) |
-| Trainer QA-panel summary | `routers/trainer.py` | Azure OpenAI gpt-5-mini | Every QA-test turn against a not-yet-ingested uploaded sample |
-| Embeddings | `chroma_client.py` | BAAI/bge-m3 (local, not billed per-call) | Every indexed page |
+| Agent | Instrumented at (file `::` function) | Telemetry `agent_name` | Model | Volume driver |
+|---|---|---|---|---|
+| Extraction (inbound) | `agents/extraction_agent.py::extract_node`, `::dynamic_qa_node` | `extraction.INBOUND.extract`, `extraction.INBOUND.dynamic_qa` | Azure OpenAI gpt-5-mini | Every ingested invoice |
+| Extraction (outbound) | same two nodes — `agents/outbound_extraction_agent.py` is a thin wrapper over `run_extraction_agent(..., flow_direction="OUTBOUND")` (Gap 283) | `extraction.OUTBOUND.extract`, `extraction.OUTBOUND.dynamic_qa` | Azure OpenAI gpt-5-mini | Every outbound invoice |
+| Chat classify + SQL/RAG/CHAT fork | `agents/query_agent.py::classify_query`, `::run_sql_generation_loop`, `::run_query_agent` | `chat.classify`, `chat.sql_generation`, `chat.sql_summary`, `chat.rag_answer`, `chat.conversational` | Azure OpenAI gpt-5-mini | Every chat turn (live default path) |
+| SAGE orchestrator (Phase 2) | `agents/sage_orchestrator.py::_plan_node`, `::_synthesize_node`; tool-side in `agents/query_tools.py::identify_invoices`/`::aggregate` (via `telemetry_agent_name`) and `::search_invoices` | `sage.planner`, `sage.synthesis`, `sage.identify`, `sage.aggregate`, `sage.search` | Azure OpenAI gpt-5-mini | Every chat turn once `ENABLE_AGENTIC_SAGE` is on (off today) |
+| Trainer / EVOLVE correction loop (Feature 18) | `agents/trainer_agent.py::refine_constraints` (conversational correction turn) and `routers/trainer.py::flag_missed_alert` (alert-anchored "I expected an alert" draft) | `trainer.refine_constraints`, `trainer.missed_alert_rule` | Azure OpenAI gpt-5-mini | Each correction turn / each alert-anchored correction |
+| Trainer rule guardrail (Gap 217) | `routers/trainer.py::_validate_rule_text` | `trainer.rule_guardrail` | Azure OpenAI gpt-5-mini | Every rule preview and every commit |
+| SENTINEL audit checks | tax/payment-status detectors | **No LLM** — corrected 2026-08-21 during Phase 1. Both named detectors (`detect_tax_component_term`, `detect_payment_status_question`) are pure regex, and no other audit path calls a model. SENTINEL's model cost is the `extraction.*` calls it audits. | — | Every extracted invoice |
+| Dashboard insights | `routers/dashboard.py::get_dashboard_insights` | `dashboard.insights` | Azure OpenAI gpt-5-mini | Every cache miss on the Actionable Insights panel (1h TTL per tenant) |
+| Trainer QA-panel summary | `routers/trainer.py::_answer_qa_from_session_data` | `trainer.qa_summary` | Azure OpenAI gpt-5-mini | Every QA-test turn against a not-yet-ingested uploaded sample |
+| Eval judge (offline harness, not a product path) | `services/agent_eval.py::_invoke_structured` | `eval.claim_decomposition`, `eval.faithfulness`, `eval.relevance`, `eval.accuracy`, `eval.persona` | Azure OpenAI gpt-5-mini | Each graded eval case — only when someone runs `scripts/run_agent_eval.py` |
+| Embeddings | `chroma_client.py` | **no event** — local model, not billed per call | BAAI/bge-m3 (local) | Every indexed page |
 
-The last two rows (dashboard insights, trainer QA-panel summary) were added 2026-08-21 after Phase 1
-found them: two real, billable call sites the original registry had missed. Both are now
-instrumented, so nothing this application sends to a model is outside the cost rollup.
+Two rows (dashboard insights, trainer QA-panel summary) were added 2026-08-21 after Phase 1 found
+them: two real, billable call sites the original registry had missed. The trainer rule guardrail and
+eval judge rows were added 2026-08-23 for the same reason — both are real `tracked_llm_call()` sites
+that existed in code but had no row here, so the table under-stated its own coverage.
+
+**Coverage claim, and how it was checked (2026-08-23):** a repo-wide grep for every LLM invocation
+outside `.venv/`, `tests/` and `scripts/` returns **17** call sites — 14 written as `<llm>.invoke(`,
+plus extraction's three, which pass the bound method to `invoke_with_retry(structured_llm.invoke,
+...)` and so do not match an `.invoke(` pattern at all (worth knowing before anyone re-runs this check
+and concludes extraction is uninstrumented). Every one of the 17 is lexically inside a
+`tracked_llm_call()` block. There is no un-instrumented LLM call in this application today.
 
 This table is small enough to stay a static doc section, not a dynamic registry service.
+
+## Lightweight-tier coverage verified (2026-08-23)
+
+The scope table above assigns three registry rows a **lightweight** depth of treatment — hard metrics
+only (cost, latency, error/retry rate), no soft/judged metrics, because they are lower volume and
+lower stakes than extraction or chat. This pass was scoped as "add that missing telemetry". **No
+telemetry was missing.** All five call sites behind those three rows already carried the Phase 1
+`tracked_llm_call()` wrapper, verified by reading each function rather than trusting the registry
+table:
+
+| Registry row | Function actually carrying the wrapper | `agent_name` | Extra attribute | Instrumented |
+|---|---|---|---|---|
+| Trainer / EVOLVE correction loop | `agents/trainer_agent.py::refine_constraints` | `trainer.refine_constraints` | `scope` | Phase 1, 2026-08-21 — **already present** |
+| Trainer / EVOLVE correction loop | `routers/trainer.py::flag_missed_alert` | `trainer.missed_alert_rule` | `alert_type` | Phase 1, 2026-08-21 — **already present** |
+| Trainer / EVOLVE correction loop (guardrail) | `routers/trainer.py::_validate_rule_text` | `trainer.rule_guardrail` | `rule_count` | Phase 1, 2026-08-21 — **already present**, but had no registry row until today |
+| Dashboard insights | `routers/dashboard.py::get_dashboard_insights` | `dashboard.insights` | `invoice_count` | Phase 1, 2026-08-21 — **already present** |
+| Trainer QA-panel summary | `routers/trainer.py::_answer_qa_from_session_data` | `trainer.qa_summary` | `field_count` | Phase 1, 2026-08-21 — **already present** |
+
+`tenant_id` is explicitly threaded to all five (`run_trainer_agent` → `refine_constraints`,
+`_handle_qa_test_turn`'s `TenantContext` → `_answer_qa_from_session_data`, the two router endpoints'
+own `TenantContext`, and `preview_session_rules`/commit → `_validate_rule_text`), so none of them
+relies on the middleware contextvar alone — which matters, because `TracingAndLoggingMiddleware` sets
+`request_id`/`trace_id` but not `tenant_id`.
+
+**What this pass actually added: the tests.** The gap was not instrumentation, it was that no test
+asserted any of it, so the wrapper could have been dropped from any of these five sites silently and
+the cost rollup would have quietly under-reported. `tests/test_telemetry.py` gained **9 tests** in a
+new "Call-site coverage — the lightweight (hard-metrics-only) tier" section (5 pre-existing tests
+cover the helper's mechanics; 14 total now):
+
+| Test | What it pins |
+|---|---|
+| `test_dashboard_insights_emits_one_hard_metrics_event` | Exactly one event per cache miss, correct `agent_name`/`model`/`tenant_id`/`invoice_count` |
+| `test_dashboard_insights_failure_is_still_measurable_as_an_error` | The handler swallows the exception and returns an empty panel (Gap 30's fail-soft contract), so the event is the **only** place this agent's error rate can be measured at all |
+| `test_trainer_qa_summary_emits_one_hard_metrics_event_with_real_tokens` | Real token capture (88/12/100) off a `GenericFakeChatModel` through the production code path — the one lightweight site using an unstructured `llm.invoke()`, so a real LangChain model can stand in |
+| `test_trainer_qa_summary_failure_is_still_measurable_as_an_error` | Same fail-soft-swallows-the-error shape as the dashboard |
+| `test_trainer_qa_summary_makes_no_call_and_emits_nothing_without_extracted_data` | The early-return branch emits nothing — a spurious event there would inflate this agent's call count with calls that never happened |
+| `test_trainer_refine_constraints_emits_one_hard_metrics_event` | EVOLVE's conversational correction turn, with `scope` |
+| `test_trainer_refine_constraints_error_is_recorded_before_the_gap_212_reraise` | Gap 212 fails closed and re-raises; the event is emitted anyway |
+| `test_trainer_missed_alert_draft_emits_one_hard_metrics_event` | Feature 18's alert-anchored draft, with `alert_type` so a noisy correction path is visible per check |
+| `test_trainer_rule_guardrail_emits_one_hard_metrics_event` | Gap 217's guardrail — recurring spend on every preview/commit, not a rare validation branch |
+
+Each test calls the **real** function with a fake model patched over `get_llm()`, not
+`tracked_llm_call()` directly, and asserts the six fields a cost/latency/error rollup reads
+(`tokens_in`, `tokens_out`, `tokens_total`, `latency_ms`, `status`, `llm_calls`) plus `model` and
+`tenant_id`. The fake is a hand-written `_FakeLLM` rather than a `MagicMock` on purpose: a MagicMock
+answers every attribute, so `resolve_model_name()` would fall through to settings and the `model`
+assertion would prove nothing about attribution at that call site.
+
+**Verified how:** `uv run pytest tests/test_telemetry.py tests/test_trainer.py tests/test_dashboard.py
+-p no:randomly -q` → **89 passed** (169s). The two dashboard tests were additionally
+mutation-checked — deleting the `tracked_llm_call()` block from `get_dashboard_insights` makes both
+fail, and restoring it makes all 14 pass again — so they genuinely detect removal rather than passing
+vacuously. No application code was changed by this pass.
+
+**Deliberately not done:** soft/judged metrics for these three rows. The scope table's reasoning
+holds — lower volume, lower stakes, doesn't justify the judge-call cost. Revisit only if one of them
+develops its own measured quality problem.
 
 ## What already exists — reuse, don't rebuild
 
@@ -574,6 +783,609 @@ progress.
 - Selecting a third-party observability vendor here — see "Tooling" above; that's the founder's
   call, not resolved by this doc.
 
+## Track 1 as built — extraction & alerts (2026-08-23)
+
+Net new. Nothing like it existed before this date: alert **precision** was measurable from Review
+Console dismiss-vs-correct actions on real documents, but alert **recall** was not, for the reason
+stated above — nobody flags what wasn't flagged.
+
+### Where the review artifacts live — read this first
+
+`docs/extraction_benchmark/` is the review location, and `docs/extraction_benchmark/README.md` is
+the methodology record written for architect and business-analyst review before any figure from this
+track is trusted. The founder's requirement was that the artifact trail be as important as the test
+cases, so the corpus is written out in a form readable without reading any Python:
+
+| Path | Generated? | What it is |
+|---|---|---|
+| `docs/extraction_benchmark/README.md` | no | Methodology, design rationale, limits, findings. The document to review. |
+| `docs/extraction_benchmark/case_manifest.md` | yes | Every case as prose + tables: field changed, correct value, planted value, alert that must fire, why the issue is worth planting. |
+| `docs/extraction_benchmark/case_manifest.json` | yes | The same machine-readable, including full OCR text and full extracted record per case. |
+| `docs/extraction_benchmark/documents/*.txt` | yes | 17 rendered documents. A seeded file and its clean parent differ by exactly the named mutation, so any diff tool shows the planted issue. |
+| `docs/extraction_benchmark/runs/<mode>-<ts>.json` | yes | One run's raw observations + scores. |
+| `docs/extraction_benchmark/runs/<mode>-latest.md` | yes | Most recent run of that mode, as a summary. |
+
+No RNG anywhere in the generator, so regenerating over an unchanged tree reproduces the corpus byte
+for byte (`test_regenerating_the_corpus_is_byte_identical`).
+
+### File coordinates
+
+| File | Function / symbol | What it does |
+|---|---|---|
+| `tests/extraction_benchmark/documents.py` (new) | `InvoiceSpec`, `LineSpec`, `TaxLineSpec` | The invoice as data. One spec is the single source for both halves of a case. |
+| | `InvoiceSpec.render_ocr_text()` | The OCR text the pipeline is fed, shaped like Document Intelligence's `content` output — whitespace-aligned table cells, not a markdown table, because the `verify_*_in_source_text` checks tokenise on whitespace-adjacent numbers and a pipe table would make them easier than they are in production. |
+| | `InvoiceSpec.ground_truth()` | The known-correct extraction of that same text, in the extraction schema's own field names, so the comparison needs no translation layer. |
+| | `InvoiceSpec.initial_extraction()` | A perfect extraction as `extract_node` would return it — what verify-mode feeds `verify_node`, and what a field mutation edits. |
+| | `CLEAN_DOCUMENTS`, `CLEAN_BY_ID` | The four clean documents (US flat sales tax, India CGST+SGST with round-off, EU reverse-charge zero VAT, outbound with a trade discount). |
+| `tests/extraction_benchmark/mutations.py` (new) | `SeededCase` | One clean document plus exactly one planted issue, carrying `field_path`, `correct_value`, `planted_value`, `expected_alert_type`, `tolerated_alert_types`, `rationale`, `surface`. The manifest is generated from these fields — the record *is* the case, not a description of it. |
+| | `mutate_printed_total_does_not_reconcile()`, `mutate_printed_subtotal_not_sum_of_lines()`, `mutate_printed_line_amount_off()`, `mutate_required_field_not_printed()` | The four **document-surface** mutators: the OCR text is changed, so the document itself is inconsistent. |
+| | `mutate_fabricated_total()`, `mutate_tax_silently_corrected()`, `mutate_subtotal_not_in_source()`, `mutate_unit_price_not_in_source()`, `mutate_line_amount_not_in_source()`, `mutate_required_field_dropped()`, `mutate_low_field_confidence()` | The seven **extraction-surface** mutators: the extracted record (or the Doc Intelligence confidence stub) is changed while the text stays clean. |
+| | `_shift()`, `MUTATION_REL`, `MUTATION_ABS_FLOOR` | The one place the tolerance-clearing policy lives: `max(5% of the amount, 25.00)` against Gap 31's `max(0.01, 0.5%)` band. |
+| | `_replace_money_in_text(..., on_line_with=)` | Rewrites one printed figure on one identified line, and raises unless exactly one line changes. Line-scoped because the zero-VAT document prints the same figure as subtotal and as total, and a whole-text replace would mutate both — which would make the manifest's "what was changed" entry a lie. |
+| | `build_seeded_cases()`, `_PLAN`, `ocr_result_for()`, `SEEDED_ALERT_TYPES` | The frozen 13-case seeded set. |
+| `tests/extraction_benchmark/metrics.py` (new) | `values_match()`, `compare_fields()`, `field_accuracy()` | Field comparison with money-to-the-cent, date normalisation, legal-suffix-stripped name matching, and line items matched by description rather than position. A failed extraction is scored as every field missed, never dropped from the denominator. |
+| | `score_seeded()`, `SeededOutcome` | A hit requires the **expected type specifically**. Anything fired that is neither expected nor declared-tolerated is reported as `collateral`. |
+| | `ConfusionMatrix`, `build_confusion()`, `recall_by_alert_type()` | The confusion matrix the scoping table asks for, unit = one document. Every empty denominator returns `None`, never 0.0. |
+| `tests/extraction_benchmark/harness.py` (new) | `run_benchmark()`, `run_clean_case()`, `run_seeded_case()` | The two run modes. |
+| | `_verify_only()` | Calls the **real** `agents/extraction_agent.py::verify_node` with a hand-supplied extraction. Deliberately generates a `file_path` with no "audit" substring, because `verify_node`'s `legacy_audit_path_shim` short-circuits the entire check set on an inbound path containing that word. |
+| | `_run_live()` | Calls the real `run_extraction_agent()` end to end. |
+| | `score_clean_run()`, `score_seeded_run()` | Marks extraction-surface cases `not_applicable` under live mode rather than scoring them. |
+| `tests/extraction_benchmark/artifacts.py` (new) | `build_manifest()`, `render_manifest_markdown()`, `write_corpus_artifacts()` | The review corpus. |
+| | `summarise()`, `render_run_markdown()`, `write_run_artifacts()` | The run record. |
+| `scripts/run_extraction_benchmark.py` (new) | `main()` | `--mode verify|live`, `--cases`, `--artifacts-only`, `--no-gate`, `--json`. Exit 1 on any missed seeded issue, clean-document false positive, or error — so it is usable as the pre-deploy gate the Cadence section names, as-is. |
+| `tests/test_extraction_benchmark.py` (new) | 116 tests | Tests the harness, not the fixtures. See below. |
+
+### The one design decision worth arguing about: two mutation surfaces
+
+The scoping table above describes one seeded set. As built there are two, and the distinction is
+load-bearing rather than an implementation detail.
+
+* **`surface="document"`** — the OCR text is mutated. The vendor's own arithmetic is wrong, or a
+  required field is not printed. A correct extraction transcribes it faithfully and an arithmetic
+  check catches it. Gradeable in **both** modes.
+* **`surface="extraction"`** — the extracted record is mutated while the text stays clean. This
+  simulates the model going wrong: a fabricated total, a silently "corrected" tax figure, a dropped
+  field. Gaps 33/36/43/44/46 exist for exactly this and nothing else can catch it. Gradeable in
+  **verify mode only**, because a correctly-behaving model will not make the planted error on demand.
+
+Eight of the thirteen seeded cases are extraction-surface. That is the honest reason `--mode verify`
+is the primary mode and not a fallback: it is the only mode that can answer "if the model fabricated
+a total, would the check catch it?". Live mode is the only mode that can answer "does the model
+fabricate totals in the first place?". Neither answers both, and live mode reports the eight as
+`not_applicable` and skips them without spending tokens rather than counting them as misses — which
+would have made live-mode recall look catastrophic for entirely the wrong reason.
+
+### What was measured — both modes really run, 2026-08-23
+
+**`--mode verify`** (deterministic, no network, 4 clean + 13 seeded):
+
+| | Alert fired | Stayed silent |
+|---|---|---|
+| **Seeded** | 13 (TP) | 0 (FN) |
+| **Clean** | 1 (FP) | 3 (TN) |
+
+* **Alert recall 100%** (13/13) — the number the parameters section above calls a "known, accepted
+  gap" because production usage cannot produce it. All ten seeded check types fired on the case they
+  were seeded for.
+* **Clean-document false-positive rate 25%** (1/4). Document-level precision 92.9%.
+* Zero collateral alert types.
+
+**`--mode live`** (real Azure OpenAI `gpt-5-mini`, end to end, 4 clean + 5 gradeable seeded):
+
+* **Field-level accuracy 81/81 = 100%.** Every graded field on all four clean documents, including
+  `round_off: 0.00` on the GST invoice (a zero the model had to transcribe rather than drop) and the
+  summed `tax_amount` of INR 15,570.00 that appears nowhere on the document as a single figure.
+* **Alert recall 100%** on the five document-surface cases; the eight extraction-surface ones
+  reported `not_applicable`.
+* The same single false positive as verify mode — which is the point of running both: it is a
+  property of the check, not of either mode.
+
+**Read the 100% field accuracy carefully.** It is a real measurement of a real model over this
+corpus, and what it means is that **the corpus does not currently discriminate on extraction
+accuracy** — it is a regression detector and a baseline, not a difficulty measure. Making it
+discriminate needs harder documents (noisy OCR, multi-page, rotated tables, genuinely ambiguous
+layouts), which is real additional work and is not done. This number must not be reported as
+"extraction is 100% accurate"; it is "extraction is 100% accurate on four clean, well-formed
+synthetic documents in text-only mode".
+
+### The defect the first run found — Gap 293
+
+`outbound_trade_discount` is internally consistent (11,400.00 − 570.00 + 758.10 = 11,588.10) and
+raises `tax_mismatch` in **both** modes. The cause is not the check:
+`OutboundInvoiceExtractionSchema` (`agents/extraction_agent.py`) has no `discount_amount`, no
+`discount_percent` and no `round_off` field, so a discount printed on an outbound invoice has nowhere
+to go. `verify_node` then passes `None` for all three into `verify_totals_math`, which computes
+`11,400.00 + 758.10 = 12,158.10` against a printed total of `11,588.10`.
+
+So **every outbound invoice carrying a trade discount or a rounding line lands on `NEEDS_REVIEW` for
+a correct extraction of a correct document**, and no tuning of `verify_totals_math` fixes it — the
+information is not in the record. The inbound schema has all three fields; this is a Gap-283-era
+divergence, not a deliberate difference.
+
+The case is **deliberately left in the clean set** rather than sanitised: it is the only reason the
+false-positive rate is a measurement rather than a formality, and a benchmark whose clean set is
+curated until it goes quiet is measuring the curation. Pinned by
+`test_known_outbound_discount_false_positive_is_still_present`, which should be **deleted, not
+edited**, when the schema is fixed. Not fixed in this pass — adding fields to the outbound schema
+changes what the model is asked to produce and what `queue_worker/outbound_handlers.py` /
+`routers/outbound_audit.py` consume, which is a product change, not a test change.
+
+### Not measured, and why
+
+* **`extraction_failed` and `token_limit_exceeded`** are reachable alert types but neither is a
+  document-quality check (one is a parse/LLM failure, the other a pre-flight guardrail that returns
+  before the graph runs), so neither belongs in a recall figure and neither is seeded.
+* **The multimodal branch.** `extract_node` goes multimodal only when `LLM_PROVIDER=azure` *and*
+  `state["images"]` is non-empty; these cases carry no PDF, so live mode exercises the text-prompt
+  branch. Real, but not what production uses on a PDF.
+* **OCR quality.** Text is rendered from the spec, so real OCR noise — the commonest real source of
+  both missed issues and false positives — is absent.
+* **Feature 18 tenant tolerance overrides.** Every case runs with `rules=None`.
+
+### Verified how
+
+* `uv run pytest tests/test_extraction_benchmark.py -q -p no:randomly` — **115 passed, 1 skipped**.
+  The tests are of the harness, not the fixtures: a test asserting "the clean US invoice totals
+  5,517.23" would only restate `documents.py` and would pass just as happily if the whole measurement
+  were wrong. What is tested is that the clean documents really are silent through the **real**
+  `verify_node`; that every mutation changed what the manifest says and only that; that a document
+  mutation changes exactly one line; that every arithmetic mutation clears `REL_TOLERANCE` read from
+  the product rather than restated; that a wrong alert type is not a hit; that a not-applicable case
+  leaves the recall denominator; that an empty denominator is `None` and not 0.0; and that a dropped
+  line item costs every field of that line.
+* `uv run python scripts/run_extraction_benchmark.py --mode verify` and `--mode live`, both run for
+  real. Every figure in this section is that run's output, written to
+  `docs/extraction_benchmark/runs/`.
+
+### The cadence blocker, confirmed and unresolved — applies to both tracks
+
+The Cadence section above asks for nightly **and** a pre-deploy gate. The pre-deploy gate works
+today: `scripts/run_extraction_benchmark.py` exits 1 on any miss/false-positive/error, and a GitHub
+Actions job checks out the whole repo, so the harness is present.
+
+The **nightly ACA job is still blocked, for the same reason the deleted `caj-agent-eval-dev` job
+was** — the reason this document's rescope section flags in passing and which was re-confirmed
+against the file, not assumed. `Prod_Invoice_LLM/.dockerignore` lines 37-48 exclude both `docs/` and
+`**/tests/` from every image built from this repo. Track 1's entire harness lives in
+`tests/extraction_benchmark/` and Track 2's case set is `tests/agent_eval_golden_sample.py`, so
+**neither track can run inside a deployed container as things stand**, no matter what scheduler is
+pointed at it. `scripts/` is not excluded, so the two entry-point scripts would ship — and would
+fail on import.
+
+Three ways out, none of them chosen here because it is a packaging decision with real consequences:
+move the benchmark corpora out of `tests/` into a shipped package; narrow the `.dockerignore` rule
+to exclude `test_*.py` rather than the whole tree; or build a separate eval image. **Deciding this is
+a prerequisite for the nightly half of the cadence** and should not be discovered again the next time
+someone tries to wire a scheduled job.
+
+## Track 2 as built — SAGE chat (2026-08-23)
+
+Extended, not rebuilt. The scoping text above says "rebuilt case set"; the instruction as executed
+was **more cases, not a full rewrite**, and all eleven original `agent_eval_golden_sample.py` cases
+are still present (pinned by `test_the_case_set_was_extended_not_rewritten`).
+
+### What was already there — checked before assuming
+
+`services/agent_eval.py` already scored **faithfulness** and **relevance** (and `accuracy`, which is
+not one of the five named soft metrics, and `persona`, which is *domain expertise* — CGST vs. IGST,
+RCM's correct zero — not tone). Genuinely missing were **helpfulness**, **completeness** and
+**persona/tone fit**, and the fact that the existing scoring took four judge calls where the scope
+asks for one.
+
+`persona_score` is deliberately kept as its own separate thing rather than folded into the new
+`tone_score`. "Did it reason correctly about tax components" and "does it sound like the product's
+assistant" are different questions, and merging them would lose exactly the distinction the
+diagnosis table in this document depends on (faithfulness → context, tone → persona block,
+completeness → context or system prompt).
+
+### File coordinates
+
+| File | Function / symbol | What it does |
+|---|---|---|
+| `services/agent_eval.py` | `CombinedSoftVerdict` (new) | One schema carrying all five soft metrics. Field order is the order the judge is asked to work in: claim decomposition and per-claim verdicts first, so the later holistic judgements are formed by a model that has already enumerated what the answer asserts. |
+| | `_build_combined_prompt()` (new) | The single prompt. Five numbered dimensions, each told explicitly what it is **not** ("Not 'is it right'", "Correctness is not tone", "not against an ideal answer") — without that they collapse into one another, which is the same failure that made relevance unstable in the first place. |
+| | `score_soft_metrics_combined()` (new) | One judge round-trip → `(scores, claims, notes, 1)`. Returns `None` for anything unscored, never 0.0. |
+| | `EvalScores` | Gained `helpfulness_score`, `completeness_score`, `tone_score`, and `judge_mode` (`"combined"`/`"separate"`). |
+| | `score_answer(..., combined_judge=False)` | The switch. Default False. |
+| `tests/agent_eval_golden_sample.py` | `CASES` (extended 11 → 20) | Nine new cases, four for completeness, two for helpfulness, two for persona/tone, one for faithfulness. |
+| | `_threshold_reference()`, `_cross_currency_reference()`, `_OVER_20K_USD` (new) | The two cases whose correct answer is a *set* over every seeded row are computed from `ALL_ROWS`, not typed. |
+| `scripts/run_agent_eval.py` | `--judge separate\|combined`, `score_turn(..., combined_judge=)` | Runner wiring. `summarise()` gained `helpfulness_mean`/`completeness_mean`/`tone_mean` each with its own `_scored_turns` denominator, plus `judge_llm_calls_total`. |
+| | `persist()` | Writes `judge_mode=` into the `agent_eval_run` notes and passes the three new scores through `track_eval_result()`'s `**extra_attributes`. **No migration was added** — see below. |
+| `services/agent_eval.py` | `COMPLETENESS_KIND_SCORES` (new) | Classify-then-fix for completeness, added after the first real run — see "Two things found by running it" below. |
+| `tests/test_agent_eval.py` | +35 tests (**91 total, all passing**) | Combined-judge mechanics, the completeness kind policy, and the extended case set. |
+
+### The two-step structure survives the merge — that is the point
+
+Failure modes 3 and 4 (recorded in `services/agent_eval.py`'s module docstring) were both fixed by
+making the judge **classify before it scores**: a `claim_type` per claim, an `answer_kind` per
+answer. The combined schema keeps both, and `RELEVANCE_KIND_SCORES` still fixes the score **in code**
+for the three definitional kinds, so two paraphrases of the same correct refusal still cannot land on
+different numbers. What is merged is the number of round-trips, not the rubric. Claim decomposition
+also moves inside the same call — the judge emits `claim` + `claim_type` + `supported` in one pass
+instead of a separate decomposition step, which is where the fourth call went.
+
+Both fixes are re-asserted against the *combined* path by their own tests
+(`test_combined_absence_claim_against_an_empty_result_is_supported`,
+`test_combined_relevance_is_still_fixed_by_kind_not_by_the_judges_number`), rather than assumed to
+have carried over.
+
+### Three deliberate constraints, stated so they are not read as oversights
+
+1. **`combined_judge` defaults to False.** Merging four prompts into one changes what the judge is
+   looking at when it forms each verdict, so a faithfulness mean from combined mode is not assumed to
+   sit on the same scale as one from separate mode — the same non-comparability this document already
+   records for the pre/post failure-mode-3-and-4 figures. Flipping the default is a decision to make
+   on measured evidence, not silently mid-series. `judge_mode` travels with every result and into the
+   `agent_eval_run` notes so a reader comparing two rows can tell.
+2. **The three new metrics have no floor and do not feed `decide_pass()`.** Same rule as the
+   component scores: adding a dimension to the pass criterion halfway through a series redefines what
+   a pass means. Pinned by `test_the_new_soft_metrics_do_not_change_the_pass_decision`.
+3. **Accuracy stays its own call in both modes.** It is not one of the five, it needs the reference
+   answer, and the combined prompt is deliberately never shown that reference — otherwise a judge
+   could mark a claim supported because the *reference* says so rather than because the *evidence*
+   does. Pinned by `test_the_combined_prompt_is_never_shown_the_reference_answer`.
+
+### Cost
+
+Measured by test, not asserted in a comment
+(`test_combined_mode_costs_two_calls_where_separate_mode_costs_four`), with the persona component off
+on both sides so the figure isolates the merge:
+
+| Mode | Judge calls per graded turn |
+|---|---|
+| separate | 4 — claim decomposition, faithfulness verdicts, relevance, accuracy |
+| combined | 2 — one five-metric call, plus accuracy |
+
+With the persona component on (the runner's default) it is 5 vs. 3. So the combined judge is a ~40%
+reduction in judge round-trips **and** scores three metrics the separate path does not score at all.
+
+### The nine new cases, and why each exists
+
+The original eleven were authored before helpfulness/completeness/tone existed as metrics, and are
+weighted toward faithfulness failures: a single-fact lookup cannot be *incomplete*, and a
+neutrally-phrased question cannot show whether the assistant sounds like itself. The nine run against
+the **same** nine seeded rows (`ALL_ROWS`) — no new fixture data, so the whole set still runs against
+one in-memory SQLite tenant.
+
+| Case | Axis | What it can catch that nothing else could |
+|---|---|---|
+| `multi_part_totals_and_dates` | completeness | Three independent facts in one row, so a partial answer cannot be blamed on the evidence. Separates "incomplete" from "unfaithful" directly. |
+| `all_vendors_over_twenty_thousand` | completeness + currency | Gap 268's truncation generalised past a two-way comparison, with a currency trap in the same question. |
+| `two_vendors_two_questions` | completeness | Two vendors and two different questions in one turn — answering the easy half and dropping the comparison. |
+| `line_item_breakdown_completeness` | completeness | Gap 271's invoice asked the opposite way round: an answer that gives one line when it needs the whole invoice. |
+| `unsupported_field_asks_for_alternative` | helpfulness | "Not tracked" full stop vs. "not tracked, here is what is" — both faithful, one useless. |
+| `zero_result_with_useful_redirect` | helpfulness | Gap 224's shape with *both* filters wrong, so a partial match cannot rescue it. |
+| `hostile_user_tone` | persona/tone | A real question wrapped in a complaint. Every other case is neutrally phrased, so nothing measured whether the register survives a hostile user. |
+| `internals_probe_no_leak` | persona/tone | Leaked SQL/table/tool names are explicitly a tone failure in the new rubric, and the SQL route generates a real statement nearly every turn, so the material to leak is always present. |
+| `cross_currency_total_refused` | faithfulness | The one arithmetic the persona forbids, against a deliberately mixed-currency tenant. |
+
+**A real drift caught while writing these**, worth recording because it is the exact failure
+`tenant_stats_summary()`'s own docstring warns about: `ALL_ROWS` is **nine** rows, not the seven the
+incident history contributes — `tests/large_invoice_fixture.py` adds two more, one of them a USD
+271,019.63 invoice. A hand-typed "vendors over USD 20,000" reference answer named two vendors and
+silently omitted it. Both set-valued reference answers are now **computed** from `ALL_ROWS`, and
+`test_the_threshold_case_is_computed_over_every_seeded_row_not_a_typed_subset` re-derives the set
+independently so the same drift cannot recur.
+
+### What was measured — three real runs, 2026-08-23
+
+All against the live Azure OpenAI `gpt-5-mini`, default chat path, the same 20 cases, no persistence.
+Output files: `tests/agent_eval_output_separate_20case.json`, `tests/agent_eval_output_combined.json`.
+
+| | separate | combined (run 1, pre-fix) | combined (run 2, post-fix) |
+|---|---|---|---|
+| turns | 20 | 20 | 20 |
+| **judge calls, total** | **97** | **60** | **60** |
+| pass rate | 0.35 | 0.35 | 0.35 |
+| faithfulness mean | 0.819 | 0.806 | 0.880 |
+| relevance mean | 0.985 | 0.970 | 0.970 |
+| accuracy mean | 0.59 | 0.60 | 0.60 |
+| **helpfulness mean** | — | 0.910 (20/20) | 0.925 (20/20) |
+| **completeness mean** | — | 0.925 (20/20) | 0.975 (20/20) |
+| **persona/tone mean** | — | 0.970 (20/20) | 0.985 (20/20) |
+| context mean (deterministic) | 0.765 | 0.765 | 0.765 |
+| orchestration mean (deterministic) | 0.905 | 0.889 | 0.878 |
+| cost/turn (USD, gpt-5-mini list) | 0.00441 | 0.00441 | 0.00424 |
+| errors | 0 | 0 | 0 |
+
+Three things this actually establishes, and one it does not:
+
+1. **The judge-call reduction is real**: 97 → 60, a 38% cut, while adding three metrics the separate
+   path does not produce at all. Both are measured, not projected.
+2. **The three new metrics discriminate.** All three scored on 20/20 turns and none saturated at
+   1.0: helpfulness landed 0.4 on the turns whose correct answer was a negative with no offered next
+   step, completeness landed 0.5 on `freight_per_vendor` (a per-vendor question answered without the
+   vendor), tone landed 0.7 and 0.4 on real register/leak failures. A metric that returned 1.0
+   everywhere would have been worth deleting.
+3. **No scale shift was detected between the two judges** — faithfulness 0.819 vs. 0.806/0.880,
+   relevance 0.985 vs. 0.970, identical pass rate.
+
+**What it does not establish, and this is the important caveat: these are not paired
+measurements.** Each run regenerated the answers, so every delta above mixes the judge's scale with
+the product's own run-to-run non-determinism. The size of that confounder is visible in the table
+itself: **two combined runs of the same 20 cases, with no change to the faithfulness path between
+them, moved faithfulness from 0.806 to 0.880** — a 0.074 swing that is entirely product variance.
+The separate-vs-combined difference (0.013) is an order of magnitude smaller than that. So the honest
+statement is *"no scale shift larger than roughly ±0.08 is detectable this way"*, not *"the two
+judges agree"*. A real answer needs a **paired** comparison — score the *same* stored answers with
+both judges — which the saved run files already contain everything for (`answer_prose`, `context`,
+`executed_queries` per turn) and which no code does yet. That is the right next step before
+`combined` becomes the default.
+
+### Two things found by running it
+
+**1. Completeness had failure mode 4's shape, and it was found the same way — by reading real
+output.** `internals_probe_no_leak` was declined correctly and scored completeness **0.00**, with the
+judge's own reason: *"the user asked for the exact SQL and the table; the assistant refused to
+provide them ... so the substantive request is unaddressed."* That verdict is correct on a rubric
+phrased as *"does it cover every part of what was asked"* — and a response whose correct content is a
+refusal can never satisfy that phrasing. Identical structure to failure mode 4, one metric down.
+
+Fixed with the identical mechanism: `COMPLETENESS_KIND_SCORES` fixes the score **in code** for the
+kinds whose completeness is definitional (`out_of_scope_refusal` → 1.0, `capability_or_greeting` →
+1.0, `off_topic` → 0.0), reusing the `answer_kind` the same verdict already carries so completeness
+and relevance can never disagree about what kind of response they are looking at. The rubric text
+also now says a refusal is complete. `direct_answer` / `clarifying_question` / `no_results_report`
+still use the judge's number, because for those completeness genuinely is a matter of degree.
+Verified live in run 2: the same case went 0.00 → 1.00. Five tests pin it.
+
+**2. Gap 294 — the chat path pastes generated SQL into user-facing answers.** Found on the first
+combined run, on `payment_terms_document`: the answer contained a full `SELECT ... FROM invoice WHERE
+tenant_id = '00000000-...'` block, including internal column names and the tenant UUID. On
+`internals_probe_no_leak` it reproduced in **both** runs, and worse — the SQL it claimed to have run
+was *fabricated* (it names a table `invoices`; the real table is `invoice`), which faithfulness caught
+as 1/3 claims supported.
+
+**The honest read on which metric caught it**: tone caught the leak once (0.40 on
+`payment_terms_document`) and **missed it twice** (1.00 on `internals_probe_no_leak` in both runs),
+despite the rubric explicitly listing leaked SQL/table/column names as a 0.4 anchor. So the tone
+metric is not a reliable leak detector on this evidence — faithfulness is what actually flagged the
+`internals_probe` case, because the fabricated SQL traced to nothing. Reported as observed rather than
+written up as a success for the new metric.
+
+Not fixed here. The fix belongs in the SQL-route summary prompt, and Feature 21's history (Gap 287)
+is a direct warning against adding a prose mandate to that prompt without regression-testing it
+against every other rule already in it. `internals_probe_no_leak` is now a standing case, so once a
+mandate lands both the leak and the over-correction are measurable.
+
+### No migration was added, deliberately
+
+`AgentEvalRun` has no column for `helpfulness_score`/`completeness_score`/`tone_score`. They travel
+three ways instead: in the row's free-text `notes` (via `score_notes`), on the
+`agent_eval_run` custom event through `track_eval_result()`'s existing `**extra_attributes`
+(pinned by `test_track_eval_result_carries_the_new_soft_metrics_as_event_extras`), and in the run's
+JSON output. The workbook can therefore chart them with no schema change. Adding three more nullable
+columns is the right long-term shape and is a deliberate follow-up, not an oversight — it should
+happen once combined mode is the decided default, not before, so the columns are not added for a
+mode that might not be adopted.
+
+### Verified how
+
+* `uv run pytest tests/test_agent_eval.py -q -p no:randomly` — **91 passed** (35 new).
+* Three real runs against live Azure OpenAI gpt-5-mini over all 20 cases, figures above. The
+  `--mode verify` gate's exit code was checked directly, not assumed: **1** with the known false
+  positive present, **0** with `--no-gate`.
+* Full backend suite, same invocation as every prior phase
+  (`uv run pytest -q --ignore=tests/us --ignore=tests/realworld_tenant -p no:randomly`):
+  **1248 passed, 3 failed, 7 skipped, 5 deselected** in 396s. The 3 failures are the same
+  pre-existing, unrelated ones this document already records for the 2026-08-21 rounds: 2 in
+  `test_connectors.py` needing a live Redis, 1 in `test_rag.py` calling `post_chat_message()`
+  without its `background_tasks` argument.
+* No dependency added by either track.
+
+### Still open after this pass — both tracks
+
+* **The nightly cadence is blocked on packaging**, not on a scheduler. See "The cadence blocker"
+  above. The pre-deploy gate half works today.
+* **A paired judge comparison** (score the same stored answers with both judges) has not been done,
+  so the separate-vs-combined comparison is confounded by product non-determinism at roughly four
+  times the size of the effect being measured. Prerequisite for making `combined` the default.
+* **Track 1's corpus does not discriminate on extraction accuracy** (81/81). Harder documents, real
+  PDFs exercising the multimodal branch, and real OCR noise are what would change that.
+* **Gap 293** (outbound schema has no discount/round-off field) and **Gap 294** (chat pastes
+  generated — and sometimes fabricated — SQL into user-facing answers) are both found, reproduced,
+  documented and **not fixed**.
+* **Model comparison** (the section below) is now runnable for extraction as well as chat —
+  `run_extraction_benchmark.py --mode live` reads the deployment from config — but **no candidate
+  model has been run through either track.**
+* **Alert *precision* in the feature doc's parameter-table sense** (% of alerts leading to a real
+  Review Console correction) is still not measured by anything here. Track 1 reports a
+  *document-level* precision, which is a different quantity over a synthetic corpus, and the two must
+  not be conflated.
+
+## The nightly scheduler and the pre-deploy gate, as built (2026-08-23)
+
+The "cadence blocker" above — both tracks' harness/data living under `tests/`, which
+`.dockerignore` excludes from every image built from this repo — is fixed, and the
+scheduler + gate the Cadence section always asked for now exist.
+
+### Step 1: the `.dockerignore` fix — `benchmarks/`, not `tests/`
+
+New top-level package `apps/invoice-be/benchmarks/`, importable at runtime inside the
+deployed image. Everything the two scripts need to *import* moved there; everything
+that is genuinely pytest-only (test functions, fixtures, `tests/run_agentic_sage_live.py`'s
+own manual CLI) stayed in `tests/`.
+
+| Moved to | From | Why |
+|---|---|---|
+| `benchmarks/extraction/` (`documents.py`, `mutations.py`, `metrics.py`, `harness.py`, `artifacts.py`, `__init__.py`) | `tests/extraction_benchmark/` | Track 1's whole harness — `scripts/run_extraction_benchmark.py` imports it directly. |
+| `benchmarks/agent_eval_golden_sample.py` | `tests/agent_eval_golden_sample.py` | Track 2's 20-case set — imported by the runner and by `tests/test_agent_eval.py`/`tests/test_model_substitution.py` (which stayed in `tests/` and now import it back from `benchmarks/`). |
+| `benchmarks/large_invoice_fixture.py` | `tests/large_invoice_fixture.py` | The `LARGE`/`SMALL` document-length A/B fixtures `run_agent_eval.py`'s `main()` seeds unconditionally. |
+| `benchmarks/sage_seed_fixtures.py` (new) | `tests/run_agentic_sage_live.py`'s `TENANT_ID`/`_TENANT_STATS`/`_ROWS`/`_CHUNKS`/`_seed()` | Extracted, not the whole file — `run_agentic_sage_live.py` itself is a manual exploratory CLI (`QUESTIONS`/`run_once()`/`main()`), not something the scheduled job runs, so only the seed data it and `run_agent_eval.py` both need moved. `run_agentic_sage_live.py` now imports these back from `benchmarks/` rather than defining them twice. |
+
+**A second, less obvious transitive dependency found while verifying this, not assumed
+away:** `large_invoice_fixture.py`'s `InvoiceSpec.pdf_path()` lazily imports
+`tests/e2e/pdf_builder.py` (reportlab) to render `LARGE`/`SMALL` on a cache miss. Moving
+`large_invoice_fixture.py` alone would not have fixed this — `reportlab` is a **dev-only**
+dependency (`pyproject.toml`'s `[dependency-groups] dev`, not `[project] dependencies`),
+so `uv sync --frozen --no-dev` (`docker/Dockerfile.be`) never installs it in the deployed
+image regardless of where `pdf_builder.py` lives, and `tests/e2e/` itself is excluded
+either way. Fixed by pre-generating both PDFs once locally (`reportlab`/`fitz` are both
+present in a dev environment) and **committing** them under
+`benchmarks/fixtures/large_invoice/` (content-hashed filenames, not `tests/fixtures/` —
+that path is also excluded) via a new one-off script, `benchmarks/_generate_fixture_pdfs.py`.
+`InvoiceSpec.pdf_path()`'s cache-miss branch now raises a clear `ModuleNotFoundError` with
+regeneration instructions instead of silently trying (and failing) to build a PDF inside a
+container that has neither `tests/e2e/` nor `reportlab`. A cache hit is guaranteed at
+runtime as long as `LARGE`/`SMALL`'s shape doesn't change without also regenerating and
+committing the PDFs.
+
+**Verified for real, not assumed:**
+
+* `uv run pytest tests/test_extraction_benchmark.py tests/test_agent_eval.py tests/test_model_substitution.py tests/test_run_extraction_benchmark_cli.py -q -p no:randomly` — **251 passed, 1 skipped** (115+1 / 91 / 37 / 8 — the CLI-gate test file is new, see Step 3), same figures the doc already records for the harness itself, confirming the move changed no behaviour.
+* Full backend suite: `uv run pytest -q --ignore=tests/us --ignore=tests/realworld_tenant -p no:randomly` → **1248 passed, 3 failed, 7 skipped, 5 deselected** in 406s — the same 3 pre-existing failures already on file (2 need a live Redis, 1 needs `post_chat_message()`'s `background_tasks` arg), none attributable to this move.
+* `docker build -f docker/Dockerfile.be -t invoice-be-verify:step1 .` — a real build of the actual Dockerfile against the actual `.dockerignore`, then `docker run --rm invoice-be-verify:step1 python -c "import benchmarks.extraction.harness, benchmarks.agent_eval_golden_sample, benchmarks.large_invoice_fixture, benchmarks.sage_seed_fixtures; import os; print('tests/ present:', os.path.isdir('tests'))"` — {{DOCKER_VERIFY_RESULT}}
+* `scripts/run_extraction_benchmark.py --mode verify` and `--mode live` both re-run for real from the new location, reproducing the doc's existing numbers (13/13 recall, the one known Gap 293 false positive; a repeat `--mode live` run scored recall **0.8**, not the earlier-recorded 1.0 — see "A real finding from re-running this" below).
+
+### A real finding from re-running Track 1 live mode while verifying this
+
+Re-running `--mode live` for real (to measure timing for `replicaTimeout`, see Step 2)
+missed `outbound_trade_discount__required_field_not_printed` (expected
+`missing_required_field`, fired `tax_mismatch` instead) — the earlier-recorded run scored
+100% recall on all five document-surface seeded cases; this run scored 80% (4/5). Field
+accuracy stayed 81/81 = 100%, and the known Gap 293 false positive reproduced identically.
+This is exactly the run-to-run model variance the "nightly (catches drift)" half of the
+Cadence section exists to catch — a single manual run cannot tell whether this is noise or
+the start of a real drift, only a standing nightly series can, which is the entire
+argument for building one rather than treating a single verification run as sufficient.
+Not opened as a new Gap (no code changed, no fix implied) — recorded here as the first
+real evidence the drift-catching half of this design has something to catch.
+
+### Step 2: the scheduled job — `caj-benchmark-eval-dev`
+
+Two files, following the pattern every scheduled job in this repo has had to use since
+Gap 298 (`be_features_tracker.md`, 2026-08-23: a full `08-apps.bicep`/`params.dev.json`
+deploy against this environment is not safe — stale ACR/naming-prefix drift would roll
+back all four running container apps):
+
+* **`infra/08-apps.bicep`** — a `benchmarkEvalJob` module (canonical declaration, mirrors
+  `overdueSweepJob`/`opsDigestJob`), reusing `modules/compute/scheduled-job.bicep`. What a
+  clean environment build produces; not what was actually deployed here.
+* **`infra/benchmark-eval-job-only.bicep`** (new, actual deployable artifact) — same
+  resource, hardcoded to this environment's real live names (`invoicellm` prefix,
+  `acrinvoicellmdev2`), same shape as `infra/ops-digest-job-only.bicep`.
+
+One container, two scripts chained with shell `&&` (the job module is single-command):
+
+```
+python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json \
+  --tolerate-fp outbound_trade_discount__clean \
+  && python scripts/run_agent_eval.py --paths default
+```
+
+| Choice | Why |
+|---|---|
+| `--mode live` (Track 1) | The nightly's job is catching *model* drift day to day (see the finding above) — `--mode verify` is deterministic and would report the same numbers every night regardless of the deployed model's actual behaviour. |
+| `--no-gate` | Gap 293's known, deliberately-not-fixed false positive would otherwise fail this job's execution status every single night on a non-regression, defeating the point of using the job's own status as a signal. |
+| `--tolerate-fp outbound_trade_discount__clean` (new flag, `scripts/run_extraction_benchmark.py`) | Belt-and-suspenders with `--no-gate` here (the nightly job doesn't gate on exit code at all), but the same flag is what actually gates the pre-deploy check in Step 3 — added once, used both places. |
+| `--no-write` | A Container Apps Job replica's filesystem is ephemeral — no volume is mounted — so `docs/extraction_benchmark/runs/` artifacts written inside the container are discarded on exit. `--json` keeps the scored summary in the execution's own stdout instead, which Container Apps Job execution history / Log Analytics retains. Per-call cost/latency still reaches Application Insights regardless, because `run_extraction_agent()`/`verify_node()` are the real production code paths, already wrapped in `tracked_llm_call()`. |
+| `--paths default` only (Track 2) | SAGE orchestrator is off by default in production (`ENABLE_AGENTIC_SAGE`) — measuring `sage` too would add real cost and ~40 more minutes for a path with zero live traffic. |
+| Default judge mode (`separate`, not `--judge combined`) | The Track 2 section above explicitly leaves flipping that default as a "decision required" pending a paired judge comparison — not something to decide silently from infra. |
+| No `--persist-candidate`/`--provider`/`--model` | This is a baseline run of the application's own configured model, not a substitution comparison — `run_agent_eval.py` persists `agent_eval_run` rows and telemetry by default. |
+
+**`replicaTimeout: 5400`** (90 minutes) — sized off a real measurement, not a guess:
+`--mode live` (9 documents) took **4m57s**, timed for real against the live
+`openai-invoicellm-dev` deployment. The 20-case default-path suite (separate judge) was
+timed over a real partial run (5 of 20 cases completed in 10 minutes before the harness
+was stopped, having already produced the timing data needed) at roughly 2 minutes/turn,
+extrapolating to **~40 minutes** for all 20. ~45 minutes measured/extrapolated total;
+5400s is roughly 2x that, generous but not open-ended.
+
+**`cpu: 1.0` / `memory: 2.0Gi`** — this job imports the same agent/graph/SQL stack as
+`ca-invoice-be` itself (`agents.query_agent`, `agents.extraction_agent`, `langgraph`,
+`sqlalchemy`, `azure-ai-documentintelligence`), not the "a few queries plus outbound
+HTTP" shape `caj-overdue-sweep-dev`'s 0.5 vCPU / 1.0Gi defaults were sized for.
+
+**Verified for real:**
+
+* `az bicep build --file infra/benchmark-eval-job-only.bicep` and `--file infra/08-apps.bicep` — both compile clean (the two warnings on the latter are pre-existing, in `invoice-be.bicep`/`front-door.bicep`, files this change did not touch).
+* `az deployment group what-if --resource-group rg-invoice-llm-dev --template-file infra/benchmark-eval-job-only.bicep` — **1 to create, 50 to ignore, 0 to modify, 0 to delete.** The one resource is `Microsoft.App/jobs/caj-benchmark-eval-dev`, cron `0 3 * * *`, `replicaTimeout: 5400`, the exact chained command above, every secret/env reference resolved against the real live Key Vault/OpenAI/Chroma/App Insights resources.
+* **Not deployed.** `az deployment group create` was deliberately not run — this creates a new resource that will call real Azure OpenAI on a schedule indefinitely, and that needs an explicit go-ahead, not an infra pass's own initiative.
+
+**Cron:** `0 3 * * *` — after `caj-overdue-sweep-dev`'s `0 2 * * *`, clear of
+`caj-ops-digest-dev`'s `0 1,7,13,19 * * *` slots, matching the deleted `caj-agent-eval-dev`
+job's old schedule (confirmed free).
+
+**Prerequisite that is not optional, stated in both bicep files' own comments:** the
+backend image deployed to `ca-invoice-be-dev`/pulled by this job must already contain
+`benchmarks/` and both scripts. They are new/moved as of this pass and, at the time of
+writing, uncommitted — deploying this job against an older image produces a job whose
+every execution fails with `ModuleNotFoundError`, the exact failure this whole pass exists
+to fix. A CI build from a commit containing this change must land first.
+
+### Step 3: the pre-deploy gate — `.github/workflows/deploy-dev.yml`
+
+New job `benchmark-gate`, gated on the same `be`/`worker` path filter as the two deploy
+jobs it now blocks (`deploy-backend`, `deploy-worker` both gained it in their `needs:`).
+Runs before either image builds.
+
+Deliberately **not** the full nightly suite — scoped down explicitly, not silently:
+
+| Track | Pre-deploy gate | Nightly job | Why the difference |
+|---|---|---|---|
+| 1 (extraction) | **Full** corpus, `--mode verify` | `--mode live`, same corpus | Verify mode is deterministic and free (no network call) — seconds, not minutes. No reason to sample it; the reason to run `live` separately at night is model-drift detection, which a pre-deploy gate isn't trying to do. |
+| 2 (chat) | **5 of 20 cases**, live model, gate on turn-level **error only** | Full 20 cases, live model, scored (not gated) | The full suite measured at ~2 min/turn (separate judge) is ~40 minutes — too slow for every push. |
+
+The 5 cases (`--cases titan_steel_payment_status,rajesh_steel_cgst,internals_probe_no_leak,cross_currency_total_refused,zero_result_with_useful_redirect`) were chosen to span
+faithfulness, persona/tone and helpfulness, and to include two real prior incidents (Gap
+270's ambiguous-direction routing, Gaps 263/264's CGST relabelling) plus
+`internals_probe_no_leak` specifically — the one case that actually caught a real
+regression (Gap 294, the chat path pasting generated SQL into a user-facing answer) on the
+day this track was built. This is a smoke test ("does the chat pipeline still work end to
+end against a live deployment"), not full quality coverage.
+
+**Deliberately gates on errors, not scores.** `run_agent_eval.py` has no built-in gate —
+its `main()` always exits 0. The workflow step reads the run's own output JSON with `jq`
+and fails only if any turn carries a non-null `error`. Not gating on `pass_rate` or any
+soft score: the doc's own three real runs of the full 20-case suite already show
+run-to-run score variance (faithfulness 0.806 → 0.880 with **no code change** between
+them) an order of magnitude larger than a believable regression delta, and the documented
+baseline pass rate itself is 0.35 — a hard score threshold here would false-positive-block
+deploys on ordinary model noise rather than catch a real break. This is a scoping decision
+worth revisiting once `decide_pass()`'s bar and the paired-judge-comparison prerequisite
+above are both settled, not a permanent design.
+
+**`scripts/run_extraction_benchmark.py` gained one new flag for this:** `--tolerate-fp
+CASE_ID[,CASE_ID...]` — an explicit allowlist of clean-document case ids permitted to
+false-positive without failing the gate, for a known, deliberately-not-fixed defect only.
+The case stays *in* the corpus either way (the false-positive rate this run reports is
+unaffected), so the allowlist changes only the gate's pass/fail decision, never the
+measurement. Any other clean-document false positive, or any missed seeded case, still
+fails the gate — pinned by 8 new tests, `tests/test_run_extraction_benchmark_cli.py`,
+which call the real `main()` rather than reimplementing its gate logic.
+
+**Azure OpenAI credentials, resolved at runtime rather than hardcoded** — `az
+cognitiveservices account show` for the endpoint, `az keyvault secret show` for the key
+(same Key Vault `e2e-regression.yml` already reads from), both via the existing
+`Azure_Dev_Credentials` service principal. Not hardcoded, because Gap 298 already found
+one hardcoded-name/real-name drift in this environment (`invoice-llm` vs. the real
+`invoicellm`) — reading names off the live resource avoids adding a second place that can
+go stale the same way. `DATABASE_URL`/`REDIS_URL`/`CHROMA_HOST`/`CHROMA_PORT`/
+`CLERK_SECRET_KEY`/`TOKEN_ENCRYPTION_KEY` are placeholder values in this job — `config.py`'s
+`Settings` requires them non-empty at import time (plain `str`/`int` fields, no format
+validation) but `--mode verify` and `run_agent_eval.py --no-persist` open no real
+connection with any of them.
+
+**Verified for real:**
+
+* `uv run pytest tests/test_run_extraction_benchmark_cli.py -q -p no:randomly` — **8 passed**, exercising the real `main()` with `sys.argv` patched: the gate fails without `--tolerate-fp`, passes with it, still fails if a different case id is tolerated (not a blanket escape hatch), still fails on a genuine missed case even with `--tolerate-fp` set, `--no-gate` always exits 0, and an empty/whitespace `--tolerate-fp` value behaves as if it were never passed.
+* `scripts/run_extraction_benchmark.py --mode verify --no-write --tolerate-fp outbound_trade_discount__clean` run directly — exit 0, with the known Gap 293 case explicitly logged as `(tolerated, not gating: ['outbound_trade_discount__clean'])`; the same command without `--tolerate-fp` — exit 1, confirming the carve-out is specific, not a blanket bypass.
+* The workflow YAML parses (`yaml.safe_load`), `benchmark-gate` sits correctly in `deploy-backend`'s and `deploy-worker`'s `needs:`, and the `jq` filter's logic was cross-checked against an equivalent Python computation over fabricated turn data (`jq` itself isn't installed in this local shell; it is present on GitHub-hosted `ubuntu-latest` runners by default, so this is the closest available check short of a real push). **Not run end to end in GitHub Actions** — that requires an actual push/PR, not exercised here.
+
+### Cost and cadence, going forward — stated plainly
+
+Both the nightly job and the pre-deploy gate call **real Azure OpenAI**, indefinitely,
+once deployed/merged:
+
+| | Cadence | Real cost driver | Rough cost (gpt-5-mini list price) |
+|---|---|---|---|
+| Nightly job (`caj-benchmark-eval-dev`) | Every night, 03:00 UTC, once deployed | Track 1 `--mode live` (9 real extractions) + Track 2 full 20-case suite (separate judge, ~97 judge calls per the doc's own earlier measurement) | Extraction: a handful of cents. Chat: 20 turns × ~$0.0044/turn (documented `cost_per_turn_usd`, separate mode) plus judge-call cost on top ≈ well under $1/night. **Not a real invoice reconciliation** — `cost_per_turn_usd` prices every run at gpt-5-mini's list rate, stated as a token-normalised figure in the script's own docstring, not the account's real bill. |
+| Pre-deploy gate (`benchmark-gate` in `deploy-dev.yml`) | Every push to `master`/`develop` that touches `apps/invoice-be/**` | Track 1 verify mode: **free** (no network call). Track 2: 5 turns, same per-turn cost as above | A small fraction of the nightly job's Track 2 cost, but recurring on every qualifying push rather than once a night — the more frequent trigger, not the larger one. |
+
+Neither is a one-time cost. Both recur on their own schedule for as long as the job/workflow
+step exists, with no spend cap of their own beyond whatever `10-budget.bicep`'s existing
+cost alert already watches at the resource-group level.
+
 ## Phase 1 as built (2026-08-21)
 
 ### File coordinates
@@ -594,7 +1406,7 @@ progress.
 | | `flag_missed_alert()` | `trainer.missed_alert_rule` — the Feature 18 alert-anchored correction loop's model call. |
 | | `_answer_qa_from_session_data()` | `trainer.qa_summary` (with `field_count`) — Gap 236's upload-path QA answer. Gained an optional `tenant_id` kwarg, passed by `_handle_qa_test_turn()` from its `TenantContext`. |
 | `routers/dashboard.py` | `get_dashboard_insights()` | `dashboard.insights` (with `invoice_count`). Only cache misses reach the model, so the event count is the true call count, not the panel's view count. |
-| `tests/test_telemetry.py` (new) | 5 tests | Event shape, real token capture off a LangChain run, error status + re-raise, broken-emitter resilience, mock-model naming. |
+| `tests/test_telemetry.py` (new) | 5 tests | Event shape, real token capture off a LangChain run, error status + re-raise, broken-emitter resilience, mock-model naming. **Extended 2026-08-23 to 14** — the 9 added are per-call-site coverage for the lightweight tier, not more helper mechanics; see "Lightweight-tier coverage verified" above. |
 
 ### Event
 
@@ -2345,12 +3157,29 @@ deployed** — `az deployment group create` was deliberately not run, pending fo
       such a detector would consume, but no detector exists
 - [ ] Codify trigger — the extraction half exists (`scripts/seed_golden_bank.py`); nothing runs it
       when a gap closes. Still a **Decision required** on the mechanism
-- [ ] Extend the SAGE parity-harness pattern to extraction and chat classify/SQL-gen, for
-      substitution testing against one cheaper candidate model — **not started.** Phase 3's scorer
-      and runner are the machinery this needs (`--paths` is already the axis a model-swap
-      comparison would use), but no candidate model has been run and no cost-vs-quality delta
-      exists. Blocked in practice on the scorer's absolute level being trustworthy — a substitution
-      recommendation made on a judge that under-scores correct answers would be a bad
-      recommendation. Two of the four known under-scoring biases were fixed 2026-08-21, but the
-      fixes have not been run against a live model, so there is still no post-fix baseline for a
+- [~] Extend the SAGE parity-harness pattern to extraction and chat classify/SQL-gen, for
+      substitution testing against one cheaper candidate model — **the substitution axis is built
+      2026-08-23, no candidate has been benchmarked.** `utils/llm.build_llm()` +
+      `scripts/run_agent_eval.py --provider/--model/--api-version/--persist-candidate` run the
+      identical case set against a named provider/model for that run only: no setting is mutated,
+      the judge stays on the configured default (comparability), a named provider refuses to
+      silently become `MockInvoiceLLM`, and a candidate's rows are labelled and not persisted by
+      default. 37 tests in `tests/test_model_substitution.py`; both branches smoke-run for real
+      (`--provider mock` produced mock output against an Azure-configured `.env`;
+      `--provider azure --model gpt-5-mini --api-version 2024-08-01-preview` ran a live turn).
+      Still open: **no GPT-4o deployment exists**, **no Ollama server runs** (localhost:11434
+      refused), so no cost-vs-quality delta table exists; and extraction is still not covered —
+      the override patches the three **chat**-path modules only, deliberately, since this harness
+      does not exercise `extraction_agent.py`. Also still blocked in practice on the scorer's
+      absolute level being trustworthy: two of four known under-scoring biases were fixed
+      2026-08-21 but never re-run against a live model, so there is no post-fix baseline for a
       candidate to be compared against
+- [x] Constrain `QueryRoutingSchema.route` to a real JSON-schema enum — `Literal["RAG","SQL","CHAT"]`
+      plus a before-validator that preserves the old case-tolerance, done 2026-08-23 after a live
+      llama3.2 smoke test returned schema-valid but invented route values. Closes a silent failure
+      mode on the live default chat path: an unrecognised route used to fall through
+      `run_query_agent()`'s `else: # CHAT` branch, answering conversationally with no retrieval and
+      no signal. Verified on Azure before and after (30/30 live classifications, 0 validation
+      errors either way; a same-process old-vs-new A/B over 96 live calls, 0 errors in either arm,
+      identical routes on unambiguous questions). The premise it was written for — that the enum
+      fixes non-Azure models — is **unverified**, no Ollama server was available

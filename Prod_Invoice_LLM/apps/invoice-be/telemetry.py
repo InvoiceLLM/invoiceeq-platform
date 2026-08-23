@@ -80,6 +80,36 @@ EVAL_RESULT_EVENT_NAME = "agent_eval_run"
 # that renders all five as equally solid is worse than no dashboard.
 ONLINE_SIGNAL_EVENT_NAME = "online_eval_signal"
 
+# Feature 20 Area 1 (`services/azure_cost.py`). Real Azure *infrastructure*
+# spend, which `llm_agent_call` above cannot see: that event measures LLM tokens,
+# and on the live dev environment tokens are ~3% of the bill -- Container Apps,
+# PostgreSQL, ACR and Log Analytics ingestion are the rest.
+#
+# Two names, not one, because a run produces one set of totals and a
+# variable-length breakdown, and KQL cannot chart a list packed into a single
+# row's customDimensions. `azure_cost_snapshot` is one row per collection run
+# (MTD total, latest day, budget, forecast); `azure_cost_slice` is one row per
+# service / resource type per run, so `summarize sum(amount) by name, bin(...)`
+# works directly.
+#
+# These are emitted by `scripts/sweep_azure_cost.py` on a schedule rather than
+# from a request path: the Cost Management API is heavily throttled (429s are
+# routine) and the underlying data only refreshes a few times a day, so a
+# per-request lookup would be both rude and pointless.
+AZURE_COST_SNAPSHOT_EVENT_NAME = "azure_cost_snapshot"
+AZURE_COST_SLICE_EVENT_NAME = "azure_cost_slice"
+
+# Feature 24 (Ops Digest Agent). One event per scheduled digest run.
+#
+# This one is not a mirror of anything -- unlike the four above, there is no
+# durable Postgres row behind it. The digest itself is delivered to a Teams
+# channel and an inbox, neither of which can be queried, so this event is the
+# only way to answer "did the digest job actually run, and what did it find?"
+# after the fact. Without it a dead scheduler and a quiet week look identical,
+# which is the exact failure the feature's own `audit_job_failed` exception
+# exists to catch for Feature 23's eval job.
+OPS_DIGEST_EVENT_NAME = "ops_digest_run"
+
 # Exporter contract — see module docstring.
 _CUSTOM_EVENT_NAME_ATTRIBUTE = "microsoft.custom_event.name"
 
@@ -294,6 +324,167 @@ def track_online_signal(
         _emit_event(ONLINE_SIGNAL_EVENT_NAME, attributes)
     except Exception:  # pragma: no cover - telemetry must never break a run
         logger.debug("track_online_signal failed for %s", signal_name, exc_info=True)
+
+
+def track_azure_cost_snapshot(
+    *,
+    scope: str,
+    currency: str,
+    month_to_date_total: float,
+    latest_day_amount: Optional[float] = None,
+    latest_day: Optional[str] = None,
+    day_over_day_change_pct: Optional[float] = None,
+    budget_name: Optional[str] = None,
+    budget_amount: Optional[float] = None,
+    budget_current_spend: Optional[float] = None,
+    budget_forecast_spend: Optional[float] = None,
+    budget_percent_used: Optional[float] = None,
+    budget_percent_forecast: Optional[float] = None,
+    forecast_projected_total: Optional[float] = None,
+    forecast_remaining: Optional[float] = None,
+    collection_errors: int = 0,
+    **extra_attributes: Any,
+) -> None:
+    """Emit one ``azure_cost_snapshot`` event — totals, budget and forecast.
+
+    Absent values stay absent, for the same reason as ``track_online_signal``'s
+    ``value``: a budget that has not been deployed, or a forecast call that lost
+    a 429 race, is not "0 spend", and rendering it as one would show a healthy
+    month on a chart that has no data behind it. ``collection_errors`` travels
+    on the event so a partial snapshot is visible as partial in the workbook
+    rather than silently reading as a quiet day.
+
+    Never raises, same contract as every other emitter here.
+    """
+    try:
+        attributes: Dict[str, Any] = {
+            "scope": scope or "",
+            "currency": currency or "",
+            "month_to_date_total": round(float(month_to_date_total or 0.0), 4),
+            "collection_errors": int(collection_errors or 0),
+        }
+        for key, value in (
+            ("latest_day_amount", latest_day_amount),
+            ("day_over_day_change_pct", day_over_day_change_pct),
+            ("budget_amount", budget_amount),
+            ("budget_current_spend", budget_current_spend),
+            ("budget_forecast_spend", budget_forecast_spend),
+            ("budget_percent_used", budget_percent_used),
+            ("budget_percent_forecast", budget_percent_forecast),
+            ("forecast_projected_total", forecast_projected_total),
+            ("forecast_remaining", forecast_remaining),
+        ):
+            if value is not None:
+                attributes[key] = round(float(value), 4)
+        for key, text in (("latest_day", latest_day), ("budget_name", budget_name)):
+            if text:
+                attributes[key] = str(text)
+        for key, value in extra_attributes.items():
+            if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
+                continue
+            attributes[key] = value
+
+        _emit_event(AZURE_COST_SNAPSHOT_EVENT_NAME, attributes)
+    except Exception:  # pragma: no cover - telemetry must never break a run
+        logger.debug("track_azure_cost_snapshot failed for %s", scope, exc_info=True)
+
+
+def track_azure_cost_slice(
+    *,
+    dimension: str,
+    dimension_value: str,
+    amount: float,
+    currency: str,
+    scope: str = "",
+    **extra_attributes: Any,
+) -> None:
+    """Emit one ``azure_cost_slice`` event — spend for one service/resource type.
+
+    ``dimension`` is on the event, not implied by the caller, so a single KQL
+    query can separate ``ServiceName`` rows (``Azure Container Apps``) from
+    ``ResourceType`` rows (``microsoft.app/containerapps``) — the two overlap in
+    meaning and would otherwise double-count in any naive ``sum()``.
+
+    The field is ``dimension_value`` and not the obvious ``name`` because
+    ``name`` is one of ``_RESERVED_LOG_RECORD_KEYS`` above: passing it through
+    ``extra=`` makes ``logging`` raise, this function swallows the exception by
+    contract, and the result is an event that silently never appears. Caught by
+    ``tests/test_azure_cost.py`` on the first run rather than in production.
+
+    Never raises.
+    """
+    try:
+        attributes: Dict[str, Any] = {
+            "dimension": dimension or "",
+            "dimension_value": dimension_value or "unattributed",
+            "amount": round(float(amount or 0.0), 4),
+            "currency": currency or "",
+            "scope": scope or "",
+        }
+        for key, value in extra_attributes.items():
+            if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
+                continue
+            attributes[key] = value
+
+        _emit_event(AZURE_COST_SLICE_EVENT_NAME, attributes)
+    except Exception:  # pragma: no cover - telemetry must never break a run
+        logger.debug(
+            "track_azure_cost_slice failed for %s/%s", dimension, dimension_value, exc_info=True
+        )
+
+
+def track_ops_digest_run(
+    *,
+    window_hours: float,
+    items_collected: int,
+    critical_count: int,
+    needs_decision_count: int,
+    self_resolved_count: int,
+    collection_errors: int,
+    llm_calls: int = 0,
+    synthesis_error: str = "",
+    delivered_to: str = "",
+    delivery_errors: int = 0,
+    **extra_attributes: Any,
+) -> None:
+    """Emit one ``ops_digest_run`` event — Feature 24's own run record.
+
+    One row per scheduled run, and the *only* durable evidence that this agent
+    ran at all: a digest goes to Teams/email, neither of which is queryable, so
+    without this event "the digest job has been silently dead for a week" and
+    "nothing happened for a week" are the same observation. That is precisely
+    the failure mode the feature's own ``audit_job_failed`` exception exists to
+    catch for the *eval* job, and it would be careless to build this agent with
+    the same blind spot it was written to close.
+
+    ``delivered_to`` carries channel labels only (``webhook:https://…`` truncated
+    at the query string, ``email:2``) — never a full webhook URL, which is a
+    replayable credential.
+
+    Never raises, same contract as every other emitter here.
+    """
+    try:
+        attributes: Dict[str, Any] = {
+            "window_hours": round(float(window_hours or 0.0), 2),
+            "items_collected": int(items_collected or 0),
+            "critical_count": int(critical_count or 0),
+            "needs_decision_count": int(needs_decision_count or 0),
+            "self_resolved_count": int(self_resolved_count or 0),
+            "collection_errors": int(collection_errors or 0),
+            "llm_calls": int(llm_calls or 0),
+            "synthesis_error": synthesis_error or "",
+            "delivered_to": delivered_to or "",
+            "delivery_errors": int(delivery_errors or 0),
+            "status": _STATUS_ERROR if (synthesis_error or delivery_errors) else _STATUS_SUCCESS,
+        }
+        for key, value in extra_attributes.items():
+            if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
+                continue
+            attributes[key] = value
+
+        _emit_event(OPS_DIGEST_EVENT_NAME, attributes)
+    except Exception:  # pragma: no cover - telemetry must never break a run
+        logger.debug("track_ops_digest_run failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

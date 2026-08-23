@@ -40,6 +40,7 @@ from services.agent_eval import (
     EvalScores,
     ClaimList,
     ClaimVerdict,
+    CombinedSoftVerdict,
     FaithfulnessVerdicts,
     PersonaVerdict,
     RelevanceVerdict,
@@ -1062,3 +1063,504 @@ def test_scores_are_clamped_into_range():
     assert agent_eval._clamp(1.4) == 1.0
     assert agent_eval._clamp(-0.2) == 0.0
     assert agent_eval._clamp("not a number") is None
+
+
+# ---------------------------------------------------------------------------
+# Feature 23 Track 2 — the combined five-metric judge (2026-08-23)
+# ---------------------------------------------------------------------------
+# `feature_23_ai_control_tower.md`: "Soft -- one combined judge call, not five
+# separate ones". Same scope note as the top of this file: these prove the
+# mechanics (one call, the classify-before-score policies survive the merge, the
+# new metrics stay out of `passed`, absent still means absent), not how a real
+# model scores a real answer.
+
+
+def _combined(
+    *,
+    verdicts=(),
+    kind=KIND_DIRECT_ANSWER,
+    relevance=1.0,
+    helpfulness=1.0,
+    tone=1.0,
+    completeness=1.0,
+    accuracy=1.0,
+):
+    return _ScriptedJudge(
+        {
+            CombinedSoftVerdict: CombinedSoftVerdict(
+                claim_verdicts=[
+                    ClaimVerdict(claim=c, supported=s, claim_type=t) for c, s, t in verdicts
+                ],
+                answer_kind=kind,
+                relevance_score=relevance,
+                helpfulness_score=helpfulness,
+                tone_score=tone,
+                completeness_score=completeness,
+                reason="scripted",
+            ),
+            ScoreWithReason: ScoreWithReason(score=accuracy, reason="scripted"),
+        }
+    )
+
+
+def test_the_combined_judge_scores_all_five_soft_metrics_in_one_call():
+    """The headline requirement: five metrics, one round-trip."""
+    llm = _combined(
+        verdicts=[("The total is USD 42,300.00", True, CLAIM_TYPE_POSITIVE)],
+        relevance=1.0,
+        helpfulness=0.7,
+        tone=0.4,
+        completeness=0.5,
+    )
+
+    scores, claims, notes, calls = agent_eval.score_soft_metrics_combined(
+        "whose invoice was bigger",
+        "The total is USD 42,300.00.",
+        "invoice_number | grand_total\nDPS-9981 | 42300.00",
+        llm,
+    )
+
+    assert calls == 1
+    assert len(llm.prompts) == 1
+    assert scores == {
+        "faithfulness": 1.0,
+        "relevance": 1.0,
+        "helpfulness": 0.7,
+        "tone": 0.4,
+        "completeness": 0.5,
+    }
+    assert claims == ["The total is USD 42,300.00"]
+    assert any("helpfulness" in n for n in notes)
+    assert any("completeness" in n for n in notes)
+    assert any("tone" in n for n in notes)
+
+
+def test_combined_mode_costs_two_calls_where_separate_mode_costs_four():
+    """The cost claim, measured rather than asserted in a comment.
+
+    Compared with `score_persona_component=False` on both sides, so the figure
+    isolates the soft-metric merge: the persona component is an orthogonal extra
+    judge call that both modes pay identically. With it on, the two are 3 and 5.
+    """
+    combined_llm = _combined(verdicts=[("x", True, CLAIM_TYPE_POSITIVE)])
+    combined = score_answer(
+        question="q",
+        answer="The total is USD 42,300.00.",
+        context="42300.00",
+        expected_answer="ref",
+        llm=combined_llm,
+        combined_judge=True,
+        score_persona_component=False,
+    )
+
+    separate_llm = _judge(
+        claims=["x"],
+        verdicts=[("x", True, CLAIM_TYPE_POSITIVE)],
+        relevance=1.0,
+        accuracy=1.0,
+        persona=PersonaVerdict(applicable=False),
+    )
+    separate = score_answer(
+        question="q",
+        answer="The total is USD 42,300.00.",
+        context="42300.00",
+        expected_answer="ref",
+        llm=separate_llm,
+        score_persona_component=False,
+    )
+
+    assert combined.judge_llm_calls == 2  # combined soft + accuracy
+    assert separate.judge_llm_calls == 4  # decompose + faithfulness + relevance + accuracy
+    assert combined.judge_mode == "combined"
+    assert separate.judge_mode == "separate"
+
+
+def test_score_answer_defaults_to_the_separate_judge():
+    """The existing metric series must not be redefined by an import."""
+    llm = _judge(
+        claims=["x"],
+        verdicts=[("x", True, CLAIM_TYPE_POSITIVE)],
+        relevance=1.0,
+        accuracy=1.0,
+        persona=PersonaVerdict(applicable=False),
+    )
+    scores = score_answer(question="q", answer="a 500.00", context="500.00", llm=llm)
+    assert scores.judge_mode == "separate"
+    assert (scores.helpfulness_score, scores.completeness_score, scores.tone_score) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_the_new_soft_metrics_do_not_change_the_pass_decision():
+    """Same rule as the component scores: adding a dimension to `passed`
+    halfway through a series silently redefines what a pass means."""
+    passing = EvalScores(faithfulness_score=1.0, relevance_score=1.0, accuracy_score=1.0)
+    assert decide_pass(passing) is True
+    passing.helpfulness_score = 0.0
+    passing.completeness_score = 0.0
+    passing.tone_score = 0.0
+    assert decide_pass(passing) is True
+
+
+def test_combined_faithfulness_excludes_non_factual_claims_from_the_denominator():
+    """Failure mode 2's family, carried into the merged judge: a pleasantry the
+    decomposition failed to filter must cost nothing, not cost score."""
+    llm = _combined(
+        verdicts=[
+            ("The total is USD 500.00", True, CLAIM_TYPE_POSITIVE),
+            ("I can also show you spend summaries", False, CLAIM_TYPE_NON_FACTUAL),
+        ]
+    )
+    scores, _claims, notes, _calls = agent_eval.score_soft_metrics_combined(
+        "q", "answer", "500.00", llm
+    )
+    assert scores["faithfulness"] == 1.0
+    assert any("non-factual claim(s) excluded" in n for n in notes)
+
+
+def test_combined_absence_claim_against_an_empty_result_is_supported():
+    """Failure mode 3's fix survives the merge: an empty result set is a real
+    negative finding, and the executed query is what makes it attributable."""
+    llm = _combined(
+        verdicts=[("No records were found for Nonexistent Holdings", True, CLAIM_TYPE_ABSENCE)],
+        kind=KIND_NO_RESULTS_REPORT,
+        relevance=0.0,  # ignored: the kind fixes it
+    )
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined(
+        "what did we spend with Nonexistent Holdings",
+        "No records were found for Nonexistent Holdings.",
+        "No records found matching the query criteria.",
+        llm,
+        executed_queries="SELECT ... WHERE vendor_name ILIKE '%Nonexistent Holdings%'",
+    )
+    assert scores["faithfulness"] == 1.0
+    assert scores["relevance"] == 1.0
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        (KIND_NO_RESULTS_REPORT, 1.0),
+        (KIND_OUT_OF_SCOPE_REFUSAL, 1.0),
+        (KIND_CAPABILITY_OR_GREETING, 1.0),
+        (KIND_OFF_TOPIC, 0.0),
+    ],
+)
+def test_combined_relevance_is_still_fixed_by_kind_not_by_the_judges_number(kind, expected):
+    """Failure mode 4's fix survives the merge. The judge returns 0.33 every
+    time; only the classification is allowed to decide."""
+    llm = _combined(kind=kind, relevance=0.33)
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined(
+        "q", "an answer", "ctx", llm
+    )
+    assert scores["relevance"] == expected
+
+
+@pytest.mark.parametrize("kind", [KIND_DIRECT_ANSWER, KIND_CLARIFYING_QUESTION])
+def test_combined_relevance_still_uses_the_judges_number_where_it_is_a_matter_of_degree(kind):
+    llm = _combined(kind=kind, relevance=0.4)
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined(
+        "q", "an answer", "ctx", llm
+    )
+    assert scores["relevance"] == 0.4
+
+
+def test_combined_judge_failure_leaves_every_metric_absent_not_zero():
+    llm = _ScriptedJudge({}, raise_for=(CombinedSoftVerdict,))
+    scores, claims, notes, calls = agent_eval.score_soft_metrics_combined("q", "a", "c", llm)
+    assert set(scores.values()) == {None}
+    assert claims == []
+    assert calls == 1
+    assert any("judge unavailable" in n for n in notes)
+
+
+def test_combined_judge_on_an_empty_answer_makes_no_call_at_all():
+    llm = _combined()
+    scores, _claims, _notes, calls = agent_eval.score_soft_metrics_combined("q", "   ", "c", llm)
+    assert calls == 0
+    assert llm.prompts == []
+    assert set(scores.values()) == {None}
+
+
+def test_combined_claims_with_no_evidence_at_all_is_a_real_zero():
+    """The one deliberate 0.0, inherited unchanged from `score_faithfulness`:
+    nothing ran, nothing was retrieved, and the answer still asserted facts."""
+    llm = _combined(verdicts=[("We spent USD 9,000.00", True, CLAIM_TYPE_POSITIVE)])
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined(
+        "q", "We spent USD 9,000.00.", "", llm, executed_queries=""
+    )
+    assert scores["faithfulness"] == 0.0
+
+
+def test_an_answer_that_is_all_greeting_is_not_scored_for_faithfulness():
+    llm = _combined(verdicts=[], kind=KIND_CAPABILITY_OR_GREETING)
+    scores, claims, notes, _calls = agent_eval.score_soft_metrics_combined(
+        "hello", "Hi! I can help with your invoices.", "", llm
+    )
+    assert scores["faithfulness"] is None
+    assert claims == []
+    assert any("no factual claims" in n for n in notes)
+    # The other four still produce numbers -- a greeting is fully gradeable on
+    # relevance, helpfulness, tone and completeness.
+    assert scores["relevance"] == 1.0
+    assert scores["tone"] == 1.0
+
+
+def test_the_combined_prompt_asks_for_all_five_dimensions_by_name():
+    """The prompt is the contract with the judge. If a dimension is dropped from
+    it the schema field still exists and would silently return its default."""
+    prompt = agent_eval._build_combined_prompt("q", "a", "ctx", "SELECT 1")
+    for heading in ("FAITHFULNESS", "RELEVANCE", "HELPFULNESS", "PERSONA / TONE FIT", "COMPLETENESS"):
+        assert heading in prompt
+    # Classify-before-score, both times.
+    assert prompt.index("assign a `claim_type`") < prompt.index("decide `supported`")
+    assert prompt.index("Choose exactly one `answer_kind` FIRST") < prompt.index("Then score:")
+    # The evidence, and the instruction that makes an empty result count as some.
+    assert "SELECT 1" in prompt
+    assert "NOT an absence of evidence" in prompt
+    # Each new dimension must be told what it is NOT, or it collapses into the
+    # others -- the failure that made relevance unstable in the first place.
+    assert "Not 'is it right'" in prompt  # helpfulness is not faithfulness
+    assert "Correctness is not tone" in prompt  # tone is not faithfulness
+    assert "not against an ideal answer" in prompt  # completeness is bounded by the evidence
+
+
+def test_the_combined_prompt_is_never_shown_the_reference_answer():
+    """Accuracy is judged separately precisely so faithfulness cannot be
+    contaminated by the reference. If the reference leaked into this prompt, a
+    model could mark a claim supported because the reference says so rather than
+    because the evidence does."""
+    prompt = agent_eval._build_combined_prompt("q", "a", "the tool returned nothing", None)
+    assert "REFERENCE" not in prompt
+
+
+def test_combined_scores_are_clamped():
+    llm = _combined(helpfulness=1.9, tone=-0.5, completeness=0.5, relevance=1.4)
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined("q", "a", "c", llm)
+    assert scores["helpfulness"] == 1.0
+    assert scores["tone"] == 0.0
+    assert scores["relevance"] == 1.0
+
+
+def test_combined_mode_still_produces_the_deterministic_component_scores():
+    """The two free, no-judge components must not be lost by switching modes."""
+    llm = _combined(verdicts=[("The total is USD 42,300.00", True, CLAIM_TYPE_POSITIVE)])
+    scores = score_answer(
+        question="q",
+        answer="The total is USD 42,300.00.",
+        context="invoice_number | grand_total\nDPS-9981 | 42300.00",
+        llm=llm,
+        expected_invoice_ids=("DPS-9981",),
+        fetched_invoice_ids=("DPS-9981",),
+        score_persona_component=False,
+    )
+    assert scores.context_score == 1.0
+    assert scores.orchestration_score == 1.0
+    assert scores.persona_score is None
+
+
+def test_track_eval_result_carries_the_new_soft_metrics_as_event_extras(caplog):
+    """No migration was added for these three; they ride the event's
+    `**extra_attributes` so the workbook can chart them."""
+    caplog.set_level(logging.INFO, logger="invoice_be_telemetry")
+    telemetry.track_eval_result(
+        "chat.default",
+        "case-x",
+        True,
+        helpfulness_score=0.7,
+        tone_score=1.0,
+        completeness_score=0.5,
+        judge_mode="combined",
+    )
+    record = next(r for r in caplog.records if getattr(r, "case_id", None) == "case-x")
+    assert record.helpfulness_score == 0.7
+    assert record.tone_score == 1.0
+    assert record.completeness_score == 0.5
+    assert record.judge_mode == "combined"
+
+
+# ---------------------------------------------------------------------------
+# The extended golden case set (Feature 23 Track 2)
+# ---------------------------------------------------------------------------
+
+
+def _golden_cases():
+    # Moved out of tests/ to benchmarks/ on 2026-08-23 -- see benchmarks/__init__.py.
+    from benchmarks.agent_eval_golden_sample import ALL_ROWS, CASES
+
+    return CASES, ALL_ROWS
+
+
+def test_the_case_set_was_extended_not_rewritten():
+    """The scope was 'more cases, not a full rewrite'. Every original case id
+    must still be present."""
+    cases, _rows = _golden_cases()
+    ids = {c.case_id for c in cases}
+    original = {
+        "titan_steel_payment_status",
+        "rajesh_steel_cgst",
+        "datapipe_vs_stratedge",
+        "freight_per_vendor",
+        "bolts_reconciliation",
+        "zero_result_vendor",
+        "payment_terms_document",
+        "out_of_scope_code_request",
+        "greeting_no_tool",
+        "large_invoice_full_detail",
+        "small_invoice_full_detail",
+    }
+    assert original <= ids
+    assert len(cases) > len(original)
+
+
+def test_every_case_id_is_unique_and_every_case_states_why_it_is_on_file():
+    cases, _rows = _golden_cases()
+    ids = [c.case_id for c in cases]
+    assert len(ids) == len(set(ids))
+    for case in cases:
+        assert case.why_on_file.strip()
+        assert case.source.strip()
+        assert case.question.strip()
+
+
+def test_every_expected_invoice_number_exists_in_the_seeded_fixture():
+    """A reference answer naming an invoice the fixture does not contain would
+    make `context_score` unachievable and the case permanently red."""
+    cases, rows = _golden_cases()
+    seeded = {row["invoice_number"] for row in rows}
+    for case in cases:
+        for number in case.expected_invoice_numbers or ():
+            assert number in seeded, f"{case.case_id} expects unseeded invoice {number}"
+
+
+def test_the_threshold_case_is_computed_over_every_seeded_row_not_a_typed_subset():
+    """The concrete drift this guards against happened while the case was being
+    written: `ALL_ROWS` is nine rows, not the seven the incident history
+    contributes, and a hand-typed 'vendors over USD 20,000' answer omitted the
+    USD 271,019.63 fixture invoice."""
+    cases, rows = _golden_cases()
+    case = next(c for c in cases if c.case_id == "all_vendors_over_twenty_thousand")
+    expected = {
+        row["invoice_number"]
+        for row in rows
+        if row["currency"] == "USD" and float(row["grand_total"]) > 20000
+    }
+    assert set(case.expected_invoice_numbers) == expected
+    for number in expected:
+        assert number in case.expected_answer
+
+
+def test_the_cross_currency_case_states_both_currency_totals_exactly():
+    cases, rows = _golden_cases()
+    case = next(c for c in cases if c.case_id == "cross_currency_total_refused")
+    by_currency: dict = {}
+    for row in rows:
+        by_currency[row["currency"]] = by_currency.get(row["currency"], 0.0) + float(
+            row["grand_total"]
+        )
+    for currency, total in by_currency.items():
+        assert f"{currency} {total:,.2f}" in case.expected_answer
+
+
+def test_each_new_soft_metric_has_cases_that_can_actually_move_it():
+    """The reason for extending the set at all. A single-fact lookup cannot be
+    incomplete, and a neutrally-phrased question cannot show a tone failure."""
+    cases, _rows = _golden_cases()
+    by_id = {c.case_id: c for c in cases}
+    completeness = [
+        "multi_part_totals_and_dates",
+        "all_vendors_over_twenty_thousand",
+        "two_vendors_two_questions",
+        "line_item_breakdown_completeness",
+    ]
+    helpfulness = ["unsupported_field_asks_for_alternative", "zero_result_with_useful_redirect"]
+    tone = ["hostile_user_tone", "internals_probe_no_leak"]
+    for case_id in completeness + helpfulness + tone:
+        assert case_id in by_id, f"{case_id} missing from the golden sample"
+    # A completeness case is one whose reference answer states that a partial
+    # but otherwise-correct answer is wrong. That property, not the question's
+    # punctuation, is what makes the metric able to move on it.
+    for case_id in completeness:
+        assert "incomplete" in by_id[case_id].expected_answer.lower(), case_id
+    # A helpfulness case is one whose correct answer is a negative, so the whole
+    # score is the difference between a dead end and a useful redirect.
+    for case_id in helpfulness:
+        reference = by_id[case_id].expected_answer.lower()
+        assert "not tracked" in reference or "no records" in reference or "nothing matches" in reference
+    # A tone case has to name the voice failure it is looking for.
+    for case_id in tone:
+        reference = by_id[case_id].expected_answer.lower()
+        assert "tone" in reference or "sql" in reference
+
+
+# ---------------------------------------------------------------------------
+# Completeness's classify-then-fix policy — found by running, 2026-08-23
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        (KIND_OUT_OF_SCOPE_REFUSAL, 1.0),
+        (KIND_CAPABILITY_OR_GREETING, 1.0),
+        (KIND_OFF_TOPIC, 0.0),
+    ],
+)
+def test_completeness_is_fixed_by_kind_where_it_is_definitional(kind, expected):
+    """The concrete failure this closes, from the first real combined-judge run:
+    `internals_probe_no_leak` ("what SQL did you run?") was declined correctly
+    and scored completeness 0.00, the judge reasoning that the substantive
+    request was unaddressed. Correct on a rubric phrased as "covers what was
+    asked" -- and that is failure mode 4's shape, one metric down."""
+    llm = _combined(kind=kind, completeness=0.0 if expected else 1.0)
+    scores, _claims, notes, _calls = agent_eval.score_soft_metrics_combined(
+        "what SQL did you run?", "I can't share that; here is what I can do.", "ctx", llm
+    )
+    assert scores["completeness"] == expected
+    assert any("fixed by kind" in n for n in notes if n.startswith("completeness"))
+
+
+@pytest.mark.parametrize(
+    "kind", [KIND_DIRECT_ANSWER, KIND_CLARIFYING_QUESTION, KIND_NO_RESULTS_REPORT]
+)
+def test_completeness_still_uses_the_judges_number_where_it_is_a_matter_of_degree(kind):
+    """A two-part question CAN be half answered, and a no-results report can
+    still omit half of what was asked about. Only the definitional kinds are
+    taken out of the judge's hands."""
+    llm = _combined(kind=kind, completeness=0.5)
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined(
+        "q", "an answer", "ctx", llm
+    )
+    assert scores["completeness"] == 0.5
+
+
+def test_completeness_and_relevance_cannot_disagree_about_the_response_kind():
+    """Both read the same `answer_kind` off the same verdict. If completeness
+    re-derived it, a refusal could be relevance-1.0 and completeness-0.0 in the
+    same call, which is the incoherence this whole classify-first pattern
+    exists to remove."""
+    llm = _combined(kind=KIND_OUT_OF_SCOPE_REFUSAL, relevance=0.0, completeness=0.0)
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined(
+        "q", "I can't help with that.", "ctx", llm
+    )
+    assert scores["relevance"] == 1.0
+    assert scores["completeness"] == 1.0
+
+
+def test_the_completeness_rubric_tells_the_judge_a_refusal_is_complete():
+    prompt = agent_eval._build_combined_prompt("q", "a", "ctx", None)
+    assert "a correct refusal is complete" in prompt
+    assert "withholding what it was right to withhold" in prompt
+
+
+def test_an_unrecognised_kind_still_yields_a_completeness_number():
+    """Same fallback as relevance: an older double or an invented label must
+    lose the classification, not the score."""
+    llm = _combined(kind="something_new", completeness=0.6)
+    scores, _claims, _notes, _calls = agent_eval.score_soft_metrics_combined(
+        "q", "a", "ctx", llm
+    )
+    assert scores["completeness"] == 0.6
+    assert scores["relevance"] == 1.0  # the judged number, kind unrecognised

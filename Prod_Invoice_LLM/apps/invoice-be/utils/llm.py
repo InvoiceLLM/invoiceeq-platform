@@ -103,43 +103,110 @@ class MockInvoiceLLM:
         return MockResponse(content=content)
 
 
-def get_llm(max_tokens: int | None = None):
+class LlmConfigurationError(RuntimeError):
+    """An explicitly-requested provider/model could not be constructed.
+
+    Only ever raised when ``allow_mock_fallback=False`` — i.e. by a caller that
+    named a provider on purpose (the eval harness's ``--provider``/``--model``
+    override) and for which silently getting `MockInvoiceLLM` instead would
+    produce a *result* rather than an error: a benchmark table reporting mock
+    output under a candidate model's name. `get_llm()` never raises this; its
+    fail-safe fallback behaviour is unchanged.
     """
-    Get the LLM (Mock, Azure, or Ollama) based on configuration.
+
+
+SUPPORTED_LLM_PROVIDERS = ("azure", "ollama", "mock")
+
+
+def build_llm(
+    provider: str,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    api_version: str | None = None,
+    allow_mock_fallback: bool = True,
+):
+    """Construct an LLM client for an *explicitly named* provider/model.
+
+    This is the construction logic `get_llm()` has always had, parameterised on
+    the provider/model instead of reading both off the global settings object.
+    `get_llm()` now calls it with the settings-resolved values, so there is one
+    construction path, not two that can drift.
+
+    Everything the caller does not name still comes from settings — for Azure
+    that is the endpoint, key and (unless overridden) API version, because a
+    candidate model is a new *deployment under the same resource*, not a new
+    resource (see `feature_23_ai_control_tower.md`'s candidates table). `model`
+    maps to the Azure **deployment name** and to Ollama's model tag.
+
+    `api_version` exists because it is not purely cosmetic on Azure: strict
+    structured-output compliance is only guaranteed from GPT-4o/4o-mini onward
+    **and** API version `2024-08-01-preview`+, so comparing GPT-4o against the
+    baseline can legitimately need a different version for that run only.
     """
     setting = get_settings()
-    provider = getattr(setting, "LLM_PROVIDER", "mock").lower()
+    provider = (provider or "mock").lower()
 
     if provider == "mock":
         return MockInvoiceLLM(max_tokens=max_tokens)
     elif provider == "ollama":
-        print(f"[LLM] initialising local Ollama: {setting.OLLAMA_MODEL} using {setting.OLLAMA_BASE_URL}")
+        model_name = model or setting.OLLAMA_MODEL
+        print(f"[LLM] initialising local Ollama: {model_name} using {setting.OLLAMA_BASE_URL}")
         kwargs = {
             "base_url": setting.OLLAMA_BASE_URL,
-            "model": setting.OLLAMA_MODEL,
+            "model": model_name,
         }
         if max_tokens is not None:
             kwargs["num_predict"] = max_tokens
         return ChatOllama(**kwargs)
     elif provider == "azure":
+        deployment = model or setting.AZURE_OPENAI_DEPLOYMENT_NAME
         # Fail-safe fallback to MockInvoiceLLM if Azure credentials or network are unavailable in local dev
         if not setting.AZURE_OPENAI_API_KEY or "your_" in setting.AZURE_OPENAI_API_KEY:
+            if not allow_mock_fallback:
+                raise LlmConfigurationError(
+                    f"Azure OpenAI requested (deployment {deployment!r}) but AZURE_OPENAI_API_KEY "
+                    "is not configured; refusing to fall back to MockInvoiceLLM."
+                )
             print("[LLM] Azure OpenAI key not configured; using local MockInvoiceLLM.")
             return MockInvoiceLLM(max_tokens=max_tokens)
         try:
-            print(f"[LLM] initialising Azure OpenAI: {setting.AZURE_OPENAI_DEPLOYMENT_NAME} on {setting.AZURE_OPENAI_ENDPOINT}")
+            print(f"[LLM] initialising Azure OpenAI: {deployment} on {setting.AZURE_OPENAI_ENDPOINT}")
             kwargs = {
                 "azure_endpoint": setting.AZURE_OPENAI_ENDPOINT,
                 "api_key": setting.AZURE_OPENAI_API_KEY,
-                "api_version": setting.AZURE_OPENAI_API_VERSION,
-                "azure_deployment": setting.AZURE_OPENAI_DEPLOYMENT_NAME,
+                "api_version": api_version or setting.AZURE_OPENAI_API_VERSION,
+                "azure_deployment": deployment,
             }
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
             return AzureChatOpenAI(**kwargs)
         except Exception as e:
+            if not allow_mock_fallback:
+                raise LlmConfigurationError(
+                    f"Could not initialize Azure OpenAI deployment {deployment!r}: {e}"
+                ) from e
             logger.warning("Could not initialize Azure OpenAI (%s); falling back to MockInvoiceLLM", e)
             return MockInvoiceLLM(max_tokens=max_tokens)
-    
+
+    if not allow_mock_fallback:
+        raise LlmConfigurationError(
+            f"Unknown LLM provider {provider!r}; expected one of {', '.join(SUPPORTED_LLM_PROVIDERS)}."
+        )
     return MockInvoiceLLM(max_tokens=max_tokens)
+
+
+def get_llm(max_tokens: int | None = None):
+    """
+    Get the LLM (Mock, Azure, or Ollama) based on configuration.
+
+    The application's single, config-driven entry point: provider from
+    `LLM_PROVIDER`, model from `AZURE_OPENAI_DEPLOYMENT_NAME`/`OLLAMA_MODEL`.
+    A caller that needs a *specific* provider/model for one run (the eval
+    harness's candidate-model override) calls `build_llm()` directly rather
+    than mutating any of those settings.
+    """
+    setting = get_settings()
+    provider = getattr(setting, "LLM_PROVIDER", "mock").lower()
+    return build_llm(provider, max_tokens=max_tokens)
 

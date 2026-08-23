@@ -1,0 +1,25 @@
+Rajesh Steel Traders Pvt Ltd
+Plot 42, MIDC Industrial Area, Pune 411019, Maharashtra, India
+GSTIN: 27AABCR1234M1ZP
+GSTIN: 27AAECD5678Q1Z9
+
+TAX INVOICE
+Invoice Number: RST-2627-0091
+Invoice Date: 2026-07-22
+Due Date: 2026-08-21
+
+Bill To: Deccan Fabricators Pvt Ltd
+
+#   Description   HSN/SAC   Qty   Unit Price   Tax %   Amount (INR)
+1   TMT reinforcement bars Fe500D 12mm   7214   8   5,400.00   18   43,200.00
+2   MS plate 10mm, cut to size   7208   5   7,800.00   18   39,000.00
+3   Freight and handling   9965   1   4,300.00   18   4,300.00
+
+Subtotal: INR 86,500.00
+CGST @ 9%: INR 7,785.00
+SGST @ 9%: INR 7,785.00
+Round Off: INR 0.00
+TOTAL DUE: INR 107,173.50
+
+Reverse charge applicable: No
+Payment terms: net 30. Interest at 1.5% per month on overdue amounts.

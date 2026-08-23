@@ -1,0 +1,1449 @@
+{
+  "summary": {
+    "mode": "verify",
+    "clean_documents": 4,
+    "seeded_cases": 13,
+    "confusion_matrix": {
+      "true_positive": 13,
+      "false_negative": 0,
+      "false_positive": 1,
+      "true_negative": 3,
+      "not_applicable": 0,
+      "recall": 1.0,
+      "false_positive_rate": 0.25,
+      "document_level_precision": 0.9285714285714286
+    },
+    "recall_by_alert_type": {
+      "tax_mismatch": {
+        "seeded": 2,
+        "detected": 2,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "line_items_mismatch": {
+        "seeded": 1,
+        "detected": 1,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "line_item_calculation_mismatch": {
+        "seeded": 1,
+        "detected": 1,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "missing_required_field": {
+        "seeded": 2,
+        "detected": 2,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "total_not_verified_in_source": {
+        "seeded": 1,
+        "detected": 1,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "tax_amount_not_verified_in_source": {
+        "seeded": 2,
+        "detected": 2,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "subtotal_not_verified_in_source": {
+        "seeded": 1,
+        "detected": 1,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "unit_price_not_verified_in_source": {
+        "seeded": 1,
+        "detected": 1,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "line_item_not_verified_in_source": {
+        "seeded": 1,
+        "detected": 1,
+        "missed_cases": [],
+        "recall": 1.0
+      },
+      "low_confidence_field": {
+        "seeded": 1,
+        "detected": 1,
+        "missed_cases": [],
+        "recall": 1.0
+      }
+    },
+    "field_accuracy": {
+      "correct": 0,
+      "total": 0,
+      "ratio": null,
+      "note": "Only measured in live mode; verify mode is handed the extraction it would be grading, so a figure there would measure nothing."
+    },
+    "false_positive_documents": [
+      {
+        "case_id": "outbound_trade_discount__clean",
+        "alerts": [
+          "tax_mismatch"
+        ]
+      }
+    ],
+    "missed_cases": [],
+    "collateral_alert_types": [],
+    "errors": []
+  },
+  "detail": {
+    "mode": "verify",
+    "clean_runs": [
+      {
+        "case_id": "us_flat_sales_tax__clean",
+        "kind": "clean",
+        "doc_id": "us_flat_sales_tax",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "COMPLETED",
+        "alerts": [],
+        "fired_types": [],
+        "extracted_data": {
+          "invoice_number": "CIS-2026-4417",
+          "invoice_date": "2026-07-14",
+          "due_date": "2026-08-13",
+          "subtotal": 5085.0,
+          "tax_amount": 432.23,
+          "grand_total": 5517.23,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Hex bolts M12 x 60mm, galvanised",
+              "quantity": 480,
+              "unit_price": 1.25,
+              "amount": 600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Structural steel angle 50x50x5, 6m",
+              "quantity": 24,
+              "unit_price": 138.5,
+              "amount": 3324.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Welding consumables, ER70S-6 spool",
+              "quantity": 12,
+              "unit_price": 96.75,
+              "amount": 1161.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "vendor_name": "Cascade Industrial Supply LLC",
+          "po_number": "PO-58213",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 8.5,
+              "amount": 432.23
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 5845.5,
+        "error": null
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__clean",
+        "kind": "clean",
+        "doc_id": "india_cgst_sgst_round_off",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "COMPLETED",
+        "alerts": [],
+        "fired_types": [],
+        "extracted_data": {
+          "invoice_number": "RST-2627-0091",
+          "invoice_date": "2026-07-22",
+          "due_date": "2026-08-21",
+          "subtotal": 86500.0,
+          "tax_amount": 15570.0,
+          "grand_total": 102070.0,
+          "currency": "INR",
+          "items": [
+            {
+              "description": "TMT reinforcement bars Fe500D 12mm",
+              "quantity": 8,
+              "unit_price": 5400.0,
+              "amount": 43200.0,
+              "hsn_sac_code": "7214",
+              "tax_percent": 18
+            },
+            {
+              "description": "MS plate 10mm, cut to size",
+              "quantity": 5,
+              "unit_price": 7800.0,
+              "amount": 39000.0,
+              "hsn_sac_code": "7208",
+              "tax_percent": 18
+            },
+            {
+              "description": "Freight and handling",
+              "quantity": 1,
+              "unit_price": 4300.0,
+              "amount": 4300.0,
+              "hsn_sac_code": "9965",
+              "tax_percent": 18
+            }
+          ],
+          "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+          "po_number": null,
+          "round_off": 0.0,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "CGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            },
+            {
+              "tax_type": "SGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 4.7,
+        "error": null
+      },
+      {
+        "case_id": "eu_reverse_charge_zero_vat__clean",
+        "kind": "clean",
+        "doc_id": "eu_reverse_charge_zero_vat",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "COMPLETED",
+        "alerts": [],
+        "fired_types": [],
+        "extracted_data": {
+          "invoice_number": "NDT-2026-00612",
+          "invoice_date": "2026-06-30",
+          "due_date": "2026-07-30",
+          "subtotal": 18170.0,
+          "tax_amount": 0.0,
+          "grand_total": 18170.0,
+          "currency": "EUR",
+          "items": [
+            {
+              "description": "Data platform engineering, senior consultant",
+              "quantity": 96,
+              "unit_price": 145.0,
+              "amount": 13920.0,
+              "hsn_sac_code": null,
+              "tax_percent": 0
+            },
+            {
+              "description": "Platform licence, quarterly",
+              "quantity": 1,
+              "unit_price": 4250.0,
+              "amount": 4250.0,
+              "hsn_sac_code": null,
+              "tax_percent": 0
+            }
+          ],
+          "vendor_name": "Nordlicht Datentechnik GmbH",
+          "po_number": "PO-EU-3391",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "VAT",
+              "rate_percent": 0.0,
+              "amount": 0.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 1.1,
+        "error": null
+      },
+      {
+        "case_id": "outbound_trade_discount__clean",
+        "kind": "clean",
+        "doc_id": "outbound_trade_discount",
+        "mode": "verify",
+        "flow_direction": "OUTBOUND",
+        "status": "NEEDS_REVIEW",
+        "alerts": [
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (11400.00) + Tax (758.10) does not match Grand Total (11588.10)",
+            "field": "tax_amount",
+            "severity": "error"
+          }
+        ],
+        "fired_types": [
+          "tax_mismatch"
+        ],
+        "extracted_data": {
+          "invoice_number": "OUT-2026-0308",
+          "invoice_date": "2026-07-09",
+          "due_date": "2026-08-08",
+          "subtotal": 11400.0,
+          "tax_amount": 758.1,
+          "grand_total": 11588.1,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Managed integration service, July 2026",
+              "quantity": 1,
+              "unit_price": 9600.0,
+              "amount": 9600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Additional connector seats",
+              "quantity": 15,
+              "unit_price": 120.0,
+              "amount": 1800.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "customer_name": "Ridgeway Components Corp.",
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 7.0,
+              "amount": 758.1
+            }
+          ]
+        },
+        "latency_ms": 1.9,
+        "error": null
+      }
+    ],
+    "seeded_runs": [
+      {
+        "case_id": "us_flat_sales_tax__printed_total_broken",
+        "kind": "seeded",
+        "doc_id": "us_flat_sales_tax",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (5085.00) + Tax (432.23) does not match Grand Total (5793.09)",
+            "field": "tax_amount",
+            "severity": "error"
+          }
+        ],
+        "fired_types": [
+          "tax_mismatch"
+        ],
+        "extracted_data": {
+          "invoice_number": "CIS-2026-4417",
+          "invoice_date": "2026-07-14",
+          "due_date": "2026-08-13",
+          "subtotal": 5085.0,
+          "tax_amount": 432.23,
+          "grand_total": 5793.09,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Hex bolts M12 x 60mm, galvanised",
+              "quantity": 480,
+              "unit_price": 1.25,
+              "amount": 600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Structural steel angle 50x50x5, 6m",
+              "quantity": 24,
+              "unit_price": 138.5,
+              "amount": 3324.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Welding consumables, ER70S-6 spool",
+              "quantity": 12,
+              "unit_price": 96.75,
+              "amount": 1161.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "vendor_name": "Cascade Industrial Supply LLC",
+          "po_number": "PO-58213",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 8.5,
+              "amount": 432.23
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.7,
+        "error": null
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__printed_total_broken_gst",
+        "kind": "seeded",
+        "doc_id": "india_cgst_sgst_round_off",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (86500.00) + Tax (15570.00) does not match Grand Total (107173.50)",
+            "field": "tax_amount",
+            "severity": "error"
+          }
+        ],
+        "fired_types": [
+          "tax_mismatch"
+        ],
+        "extracted_data": {
+          "invoice_number": "RST-2627-0091",
+          "invoice_date": "2026-07-22",
+          "due_date": "2026-08-21",
+          "subtotal": 86500.0,
+          "tax_amount": 15570.0,
+          "grand_total": 107173.5,
+          "currency": "INR",
+          "items": [
+            {
+              "description": "TMT reinforcement bars Fe500D 12mm",
+              "quantity": 8,
+              "unit_price": 5400.0,
+              "amount": 43200.0,
+              "hsn_sac_code": "7214",
+              "tax_percent": 18
+            },
+            {
+              "description": "MS plate 10mm, cut to size",
+              "quantity": 5,
+              "unit_price": 7800.0,
+              "amount": 39000.0,
+              "hsn_sac_code": "7208",
+              "tax_percent": 18
+            },
+            {
+              "description": "Freight and handling",
+              "quantity": 1,
+              "unit_price": 4300.0,
+              "amount": 4300.0,
+              "hsn_sac_code": "9965",
+              "tax_percent": 18
+            }
+          ],
+          "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+          "po_number": null,
+          "round_off": 0.0,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "CGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            },
+            {
+              "tax_type": "SGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 1.0,
+        "error": null
+      },
+      {
+        "case_id": "eu_reverse_charge_zero_vat__printed_subtotal_mismatch",
+        "kind": "seeded",
+        "doc_id": "eu_reverse_charge_zero_vat",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "line_items_mismatch",
+            "message": "Line items sum (18170.00) does not match subtotal (17261.50)",
+            "field": "subtotal",
+            "severity": "error"
+          },
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (17261.50) + Tax (0.00) does not match Grand Total (18170.00)",
+            "field": "tax_amount",
+            "severity": "error"
+          }
+        ],
+        "fired_types": [
+          "line_items_mismatch",
+          "tax_mismatch"
+        ],
+        "extracted_data": {
+          "invoice_number": "NDT-2026-00612",
+          "invoice_date": "2026-06-30",
+          "due_date": "2026-07-30",
+          "subtotal": 17261.5,
+          "tax_amount": 0.0,
+          "grand_total": 18170.0,
+          "currency": "EUR",
+          "items": [
+            {
+              "description": "Data platform engineering, senior consultant",
+              "quantity": 96,
+              "unit_price": 145.0,
+              "amount": 13920.0,
+              "hsn_sac_code": null,
+              "tax_percent": 0
+            },
+            {
+              "description": "Platform licence, quarterly",
+              "quantity": 1,
+              "unit_price": 4250.0,
+              "amount": 4250.0,
+              "hsn_sac_code": null,
+              "tax_percent": 0
+            }
+          ],
+          "vendor_name": "Nordlicht Datentechnik GmbH",
+          "po_number": "PO-EU-3391",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "VAT",
+              "rate_percent": 0.0,
+              "amount": 0.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.5,
+        "error": null
+      },
+      {
+        "case_id": "us_flat_sales_tax__printed_line_amount_off",
+        "kind": "seeded",
+        "doc_id": "us_flat_sales_tax",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "line_item_calculation_mismatch",
+            "message": "Line item 'Structural steel angle 50x50x5, 6m' amount (3490.20) does not match calculated amount (3324.00) based on qty/unit_price/discount/tax",
+            "field": "items",
+            "severity": "error"
+          }
+        ],
+        "fired_types": [
+          "line_item_calculation_mismatch"
+        ],
+        "extracted_data": {
+          "invoice_number": "CIS-2026-4417",
+          "invoice_date": "2026-07-14",
+          "due_date": "2026-08-13",
+          "subtotal": 5085.0,
+          "tax_amount": 432.23,
+          "grand_total": 5517.23,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Hex bolts M12 x 60mm, galvanised",
+              "quantity": 480,
+              "unit_price": 1.25,
+              "amount": 600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Structural steel angle 50x50x5, 6m",
+              "quantity": 24,
+              "unit_price": 138.5,
+              "amount": 3490.2,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Welding consumables, ER70S-6 spool",
+              "quantity": 12,
+              "unit_price": 96.75,
+              "amount": 1161.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "vendor_name": "Cascade Industrial Supply LLC",
+          "po_number": "PO-58213",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 8.5,
+              "amount": 432.23
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.3,
+        "error": null
+      },
+      {
+        "case_id": "outbound_trade_discount__required_field_not_printed",
+        "kind": "seeded",
+        "doc_id": "outbound_trade_discount",
+        "mode": "verify",
+        "flow_direction": "OUTBOUND",
+        "status": "NEEDS_REVIEW",
+        "alerts": [
+          {
+            "type": "missing_required_field",
+            "field": "customer_name",
+            "message": "Required field 'customer_name' could not be extracted."
+          },
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (11400.00) + Tax (758.10) does not match Grand Total (11588.10)",
+            "field": "tax_amount",
+            "severity": "error"
+          }
+        ],
+        "fired_types": [
+          "missing_required_field",
+          "tax_mismatch"
+        ],
+        "extracted_data": {
+          "invoice_number": "OUT-2026-0308",
+          "invoice_date": "2026-07-09",
+          "due_date": "2026-08-08",
+          "subtotal": 11400.0,
+          "tax_amount": 758.1,
+          "grand_total": 11588.1,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Managed integration service, July 2026",
+              "quantity": 1,
+              "unit_price": 9600.0,
+              "amount": 9600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Additional connector seats",
+              "quantity": 15,
+              "unit_price": 120.0,
+              "amount": 1800.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "customer_name": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 7.0,
+              "amount": 758.1
+            }
+          ]
+        },
+        "latency_ms": 0.3,
+        "error": null
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__fabricated_total",
+        "kind": "seeded",
+        "doc_id": "india_cgst_sgst_round_off",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (86500.00) + Tax (15570.00) does not match Grand Total (107173.87)",
+            "field": "tax_amount",
+            "severity": "error"
+          },
+          {
+            "type": "total_not_verified_in_source",
+            "message": "107173.87",
+            "field": "grand_total",
+            "severity": "warning"
+          }
+        ],
+        "fired_types": [
+          "tax_mismatch",
+          "total_not_verified_in_source"
+        ],
+        "extracted_data": {
+          "invoice_number": "RST-2627-0091",
+          "invoice_date": "2026-07-22",
+          "due_date": "2026-08-21",
+          "subtotal": 86500.0,
+          "tax_amount": 15570.0,
+          "grand_total": 107173.87,
+          "currency": "INR",
+          "items": [
+            {
+              "description": "TMT reinforcement bars Fe500D 12mm",
+              "quantity": 8,
+              "unit_price": 5400.0,
+              "amount": 43200.0,
+              "hsn_sac_code": "7214",
+              "tax_percent": 18
+            },
+            {
+              "description": "MS plate 10mm, cut to size",
+              "quantity": 5,
+              "unit_price": 7800.0,
+              "amount": 39000.0,
+              "hsn_sac_code": "7208",
+              "tax_percent": 18
+            },
+            {
+              "description": "Freight and handling",
+              "quantity": 1,
+              "unit_price": 4300.0,
+              "amount": 4300.0,
+              "hsn_sac_code": "9965",
+              "tax_percent": 18
+            }
+          ],
+          "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+          "po_number": null,
+          "round_off": 0.0,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "CGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            },
+            {
+              "tax_type": "SGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 1.1,
+        "error": null
+      },
+      {
+        "case_id": "us_flat_sales_tax__tax_silently_corrected",
+        "kind": "seeded",
+        "doc_id": "us_flat_sales_tax",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "tax_amount_not_verified_in_source",
+            "message": "457.36",
+            "field": "tax_amount",
+            "severity": "warning"
+          }
+        ],
+        "fired_types": [
+          "tax_amount_not_verified_in_source"
+        ],
+        "extracted_data": {
+          "invoice_number": "CIS-2026-4417",
+          "invoice_date": "2026-07-14",
+          "due_date": "2026-08-13",
+          "subtotal": 5085.0,
+          "tax_amount": 457.36,
+          "grand_total": 5517.23,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Hex bolts M12 x 60mm, galvanised",
+              "quantity": 480,
+              "unit_price": 1.25,
+              "amount": 600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Structural steel angle 50x50x5, 6m",
+              "quantity": 24,
+              "unit_price": 138.5,
+              "amount": 3324.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Welding consumables, ER70S-6 spool",
+              "quantity": 12,
+              "unit_price": 96.75,
+              "amount": 1161.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "vendor_name": "Cascade Industrial Supply LLC",
+          "po_number": "PO-58213",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 8.5,
+              "amount": 432.23
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.6,
+        "error": null
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__tax_silently_corrected_split",
+        "kind": "seeded",
+        "doc_id": "india_cgst_sgst_round_off",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (86500.00) + Tax (16348.63) does not match Grand Total (102070.00)",
+            "field": "tax_amount",
+            "severity": "error"
+          },
+          {
+            "type": "tax_amount_not_verified_in_source",
+            "message": "16348.63",
+            "field": "tax_amount",
+            "severity": "warning"
+          }
+        ],
+        "fired_types": [
+          "tax_mismatch",
+          "tax_amount_not_verified_in_source"
+        ],
+        "extracted_data": {
+          "invoice_number": "RST-2627-0091",
+          "invoice_date": "2026-07-22",
+          "due_date": "2026-08-21",
+          "subtotal": 86500.0,
+          "tax_amount": 16348.63,
+          "grand_total": 102070.0,
+          "currency": "INR",
+          "items": [
+            {
+              "description": "TMT reinforcement bars Fe500D 12mm",
+              "quantity": 8,
+              "unit_price": 5400.0,
+              "amount": 43200.0,
+              "hsn_sac_code": "7214",
+              "tax_percent": 18
+            },
+            {
+              "description": "MS plate 10mm, cut to size",
+              "quantity": 5,
+              "unit_price": 7800.0,
+              "amount": 39000.0,
+              "hsn_sac_code": "7208",
+              "tax_percent": 18
+            },
+            {
+              "description": "Freight and handling",
+              "quantity": 1,
+              "unit_price": 4300.0,
+              "amount": 4300.0,
+              "hsn_sac_code": "9965",
+              "tax_percent": 18
+            }
+          ],
+          "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+          "po_number": null,
+          "round_off": 0.0,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "CGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            },
+            {
+              "tax_type": "SGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.9,
+        "error": null
+      },
+      {
+        "case_id": "eu_reverse_charge_zero_vat__subtotal_not_in_source",
+        "kind": "seeded",
+        "doc_id": "eu_reverse_charge_zero_vat",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "line_items_mismatch",
+            "message": "Line items sum (18170.00) does not match subtotal (19078.61)",
+            "field": "subtotal",
+            "severity": "error"
+          },
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (19078.61) + Tax (0.00) does not match Grand Total (18170.00)",
+            "field": "tax_amount",
+            "severity": "error"
+          },
+          {
+            "type": "subtotal_not_verified_in_source",
+            "message": "19078.61",
+            "field": "subtotal",
+            "severity": "warning"
+          }
+        ],
+        "fired_types": [
+          "line_items_mismatch",
+          "tax_mismatch",
+          "subtotal_not_verified_in_source"
+        ],
+        "extracted_data": {
+          "invoice_number": "NDT-2026-00612",
+          "invoice_date": "2026-06-30",
+          "due_date": "2026-07-30",
+          "subtotal": 19078.61,
+          "tax_amount": 0.0,
+          "grand_total": 18170.0,
+          "currency": "EUR",
+          "items": [
+            {
+              "description": "Data platform engineering, senior consultant",
+              "quantity": 96,
+              "unit_price": 145.0,
+              "amount": 13920.0,
+              "hsn_sac_code": null,
+              "tax_percent": 0
+            },
+            {
+              "description": "Platform licence, quarterly",
+              "quantity": 1,
+              "unit_price": 4250.0,
+              "amount": 4250.0,
+              "hsn_sac_code": null,
+              "tax_percent": 0
+            }
+          ],
+          "vendor_name": "Nordlicht Datentechnik GmbH",
+          "po_number": "PO-EU-3391",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "VAT",
+              "rate_percent": 0.0,
+              "amount": 0.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.6,
+        "error": null
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__unit_price_not_in_source",
+        "kind": "seeded",
+        "doc_id": "india_cgst_sgst_round_off",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "line_item_calculation_mismatch",
+            "message": "Line item 'MS plate 10mm, cut to size' amount (39000.00) does not match calculated amount (48321.41) based on qty/unit_price/discount/tax",
+            "field": "items",
+            "severity": "error"
+          },
+          {
+            "type": "unit_price_not_verified_in_source",
+            "message": "8190.07",
+            "field": "items",
+            "severity": "warning"
+          }
+        ],
+        "fired_types": [
+          "line_item_calculation_mismatch",
+          "unit_price_not_verified_in_source"
+        ],
+        "extracted_data": {
+          "invoice_number": "RST-2627-0091",
+          "invoice_date": "2026-07-22",
+          "due_date": "2026-08-21",
+          "subtotal": 86500.0,
+          "tax_amount": 15570.0,
+          "grand_total": 102070.0,
+          "currency": "INR",
+          "items": [
+            {
+              "description": "TMT reinforcement bars Fe500D 12mm",
+              "quantity": 8,
+              "unit_price": 5400.0,
+              "amount": 43200.0,
+              "hsn_sac_code": "7214",
+              "tax_percent": 18
+            },
+            {
+              "description": "MS plate 10mm, cut to size",
+              "quantity": 5,
+              "unit_price": 8190.07,
+              "amount": 39000.0,
+              "hsn_sac_code": "7208",
+              "tax_percent": 18
+            },
+            {
+              "description": "Freight and handling",
+              "quantity": 1,
+              "unit_price": 4300.0,
+              "amount": 4300.0,
+              "hsn_sac_code": "9965",
+              "tax_percent": 18
+            }
+          ],
+          "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+          "po_number": null,
+          "round_off": 0.0,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "CGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            },
+            {
+              "tax_type": "SGST",
+              "rate_percent": 9.0,
+              "amount": 7785.0
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 1.0,
+        "error": null
+      },
+      {
+        "case_id": "us_flat_sales_tax__line_amount_not_in_source",
+        "kind": "seeded",
+        "doc_id": "us_flat_sales_tax",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "line_item_calculation_mismatch",
+            "message": "Line item 'Hex bolts M12 x 60mm, galvanised' amount (630.03) does not match calculated amount (600.00) based on qty/unit_price/discount/tax",
+            "field": "items",
+            "severity": "error"
+          },
+          {
+            "type": "line_item_not_verified_in_source",
+            "message": "630.03",
+            "field": "items",
+            "severity": "warning"
+          }
+        ],
+        "fired_types": [
+          "line_item_calculation_mismatch",
+          "line_item_not_verified_in_source"
+        ],
+        "extracted_data": {
+          "invoice_number": "CIS-2026-4417",
+          "invoice_date": "2026-07-14",
+          "due_date": "2026-08-13",
+          "subtotal": 5085.0,
+          "tax_amount": 432.23,
+          "grand_total": 5517.23,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Hex bolts M12 x 60mm, galvanised",
+              "quantity": 480,
+              "unit_price": 1.25,
+              "amount": 630.03,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Structural steel angle 50x50x5, 6m",
+              "quantity": 24,
+              "unit_price": 138.5,
+              "amount": 3324.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Welding consumables, ER70S-6 spool",
+              "quantity": 12,
+              "unit_price": 96.75,
+              "amount": 1161.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "vendor_name": "Cascade Industrial Supply LLC",
+          "po_number": "PO-58213",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 8.5,
+              "amount": 432.23
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.5,
+        "error": null
+      },
+      {
+        "case_id": "outbound_trade_discount__required_field_dropped",
+        "kind": "seeded",
+        "doc_id": "outbound_trade_discount",
+        "mode": "verify",
+        "flow_direction": "OUTBOUND",
+        "status": "NEEDS_REVIEW",
+        "alerts": [
+          {
+            "type": "missing_required_field",
+            "field": "customer_name",
+            "message": "Required field 'customer_name' could not be extracted."
+          },
+          {
+            "type": "tax_mismatch",
+            "message": "Subtotal (11400.00) + Tax (758.10) does not match Grand Total (11588.10)",
+            "field": "tax_amount",
+            "severity": "error"
+          }
+        ],
+        "fired_types": [
+          "missing_required_field",
+          "tax_mismatch"
+        ],
+        "extracted_data": {
+          "invoice_number": "OUT-2026-0308",
+          "invoice_date": "2026-07-09",
+          "due_date": "2026-08-08",
+          "subtotal": 11400.0,
+          "tax_amount": 758.1,
+          "grand_total": 11588.1,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Managed integration service, July 2026",
+              "quantity": 1,
+              "unit_price": 9600.0,
+              "amount": 9600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Additional connector seats",
+              "quantity": 15,
+              "unit_price": 120.0,
+              "amount": 1800.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "customer_name": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 7.0,
+              "amount": 758.1
+            }
+          ]
+        },
+        "latency_ms": 0.3,
+        "error": null
+      },
+      {
+        "case_id": "us_flat_sales_tax__low_field_confidence",
+        "kind": "seeded",
+        "doc_id": "us_flat_sales_tax",
+        "mode": "verify",
+        "flow_direction": "INBOUND",
+        "status": "AUDIT_REQUIRED",
+        "alerts": [
+          {
+            "type": "low_confidence_field",
+            "message": "31% (threshold 40%)",
+            "field": "grand_total",
+            "confidence": 0.31,
+            "severity": "warning"
+          }
+        ],
+        "fired_types": [
+          "low_confidence_field"
+        ],
+        "extracted_data": {
+          "invoice_number": "CIS-2026-4417",
+          "invoice_date": "2026-07-14",
+          "due_date": "2026-08-13",
+          "subtotal": 5085.0,
+          "tax_amount": 432.23,
+          "grand_total": 5517.23,
+          "currency": "USD",
+          "items": [
+            {
+              "description": "Hex bolts M12 x 60mm, galvanised",
+              "quantity": 480,
+              "unit_price": 1.25,
+              "amount": 600.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Structural steel angle 50x50x5, 6m",
+              "quantity": 24,
+              "unit_price": 138.5,
+              "amount": 3324.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            },
+            {
+              "description": "Welding consumables, ER70S-6 spool",
+              "quantity": 12,
+              "unit_price": 96.75,
+              "amount": 1161.0,
+              "hsn_sac_code": null,
+              "tax_percent": null
+            }
+          ],
+          "vendor_name": "Cascade Industrial Supply LLC",
+          "po_number": "PO-58213",
+          "round_off": null,
+          "discount_amount": null,
+          "taxes": [
+            {
+              "tax_type": "Sales Tax",
+              "rate_percent": 8.5,
+              "amount": 432.23
+            }
+          ],
+          "discount_percent": null
+        },
+        "latency_ms": 0.3,
+        "error": null
+      }
+    ],
+    "clean_outcomes": [
+      {
+        "case_id": "us_flat_sales_tax__clean",
+        "fired": [],
+        "false_positive": false,
+        "field_correct": 0,
+        "field_total": 0,
+        "comparisons": []
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__clean",
+        "fired": [],
+        "false_positive": false,
+        "field_correct": 0,
+        "field_total": 0,
+        "comparisons": []
+      },
+      {
+        "case_id": "eu_reverse_charge_zero_vat__clean",
+        "fired": [],
+        "false_positive": false,
+        "field_correct": 0,
+        "field_total": 0,
+        "comparisons": []
+      },
+      {
+        "case_id": "outbound_trade_discount__clean",
+        "fired": [
+          "tax_mismatch"
+        ],
+        "false_positive": true,
+        "field_correct": 0,
+        "field_total": 0,
+        "comparisons": []
+      }
+    ],
+    "seeded_outcomes": [
+      {
+        "case_id": "us_flat_sales_tax__printed_total_broken",
+        "expected_alert_type": "tax_mismatch",
+        "fired": [
+          "tax_mismatch"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__printed_total_broken_gst",
+        "expected_alert_type": "tax_mismatch",
+        "fired": [
+          "tax_mismatch"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "eu_reverse_charge_zero_vat__printed_subtotal_mismatch",
+        "expected_alert_type": "line_items_mismatch",
+        "fired": [
+          "line_items_mismatch",
+          "tax_mismatch"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "us_flat_sales_tax__printed_line_amount_off",
+        "expected_alert_type": "line_item_calculation_mismatch",
+        "fired": [
+          "line_item_calculation_mismatch"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "outbound_trade_discount__required_field_not_printed",
+        "expected_alert_type": "missing_required_field",
+        "fired": [
+          "missing_required_field",
+          "tax_mismatch"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__fabricated_total",
+        "expected_alert_type": "total_not_verified_in_source",
+        "fired": [
+          "tax_mismatch",
+          "total_not_verified_in_source"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "us_flat_sales_tax__tax_silently_corrected",
+        "expected_alert_type": "tax_amount_not_verified_in_source",
+        "fired": [
+          "tax_amount_not_verified_in_source"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__tax_silently_corrected_split",
+        "expected_alert_type": "tax_amount_not_verified_in_source",
+        "fired": [
+          "tax_mismatch",
+          "tax_amount_not_verified_in_source"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "eu_reverse_charge_zero_vat__subtotal_not_in_source",
+        "expected_alert_type": "subtotal_not_verified_in_source",
+        "fired": [
+          "line_items_mismatch",
+          "tax_mismatch",
+          "subtotal_not_verified_in_source"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "india_cgst_sgst_round_off__unit_price_not_in_source",
+        "expected_alert_type": "unit_price_not_verified_in_source",
+        "fired": [
+          "line_item_calculation_mismatch",
+          "unit_price_not_verified_in_source"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "us_flat_sales_tax__line_amount_not_in_source",
+        "expected_alert_type": "line_item_not_verified_in_source",
+        "fired": [
+          "line_item_calculation_mismatch",
+          "line_item_not_verified_in_source"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "outbound_trade_discount__required_field_dropped",
+        "expected_alert_type": "missing_required_field",
+        "fired": [
+          "missing_required_field",
+          "tax_mismatch"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      },
+      {
+        "case_id": "us_flat_sales_tax__low_field_confidence",
+        "expected_alert_type": "low_confidence_field",
+        "fired": [
+          "low_confidence_field"
+        ],
+        "hit": true,
+        "collateral": [],
+        "not_applicable": false,
+        "note": ""
+      }
+    ]
+  }
+}

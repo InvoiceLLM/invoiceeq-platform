@@ -79,7 +79,14 @@ class Settings(BaseSettings):
     # --- ADD THESE THREE LINES ---
     LLM_PROVIDER: str = "azure"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "llama3:8b"
+    # Gap 288-series follow-up (2026-08-23): was "llama3:8b" -- the original
+    # Llama 3, released before Ollama/LangChain tool-calling support existed.
+    # `.with_structured_output()` needs Llama 3.1+ to be reliable. Using
+    # llama3.2:latest specifically because it's already pulled on this
+    # machine (`ollama list`) -- no new multi-GB download needed, and 3.2 is
+    # a later generation than 3.1 with the same tool-calling support carried
+    # forward.
+    OLLAMA_MODEL: str = "llama3.2:latest"
 
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_KEY: str = ""
@@ -227,6 +234,65 @@ class Settings(BaseSettings):
     # before the orchestrator existed; `tests/test_agentic_sage.py` proves that
     # against a golden recorded from the pre-Phase-2 code.
     ENABLE_AGENTIC_SAGE: bool = False
+
+    # Feature 20 Area 1 (`services/azure_cost.py`): what resource group's real
+    # Azure spend to read from the Cost Management API, and how to authenticate.
+    #
+    # Both of the first two must be set for any cost call to happen at all --
+    # `cost_scope()` raises rather than guessing, because a wrong scope returns a
+    # perfectly valid-looking response for somebody else's spend. The live dev
+    # values are subscription `2ae37d8b-...` / `rg-invoice-llm-dev`; they are not
+    # defaulted here because this file is shared with local and prod processes.
+    AZURE_SUBSCRIPTION_ID: str = ""
+    AZURE_COST_RESOURCE_GROUP: str = ""
+    # Empty means "the live budget name", `budget-invoicellm-dev` -- see
+    # `services/azure_cost.py::resolve_budget_name()` for why that is hardcoded
+    # as the default rather than derived from a naming prefix.
+    AZURE_COST_BUDGET_NAME: str = ""
+    # An explicitly supplied ARM bearer token. For one-off local checks and for
+    # the test suite; never set on a container.
+    AZURE_COST_ACCESS_TOKEN: str = ""
+    # Allow falling back to `az account get-access-token` when no managed
+    # identity is present. Default False, same fail-closed reasoning as
+    # ALLOW_MOCK_AUTH: a deployment that lost its managed identity should raise
+    # a clear auth error, not silently run as whoever last ran `az login`.
+    AZURE_COST_CLI_FALLBACK: bool = False
+
+    # Feature 24 (Ops Digest Agent) -- `services/ops_digest*.py`, run by
+    # `scripts/ops_digest_job.py` on a cron. Only deployment-varying values live
+    # here; the thresholds that are judgements *about the data* (what counts as
+    # a sharp quality drop, how many eval runs make a comparison meaningful) are
+    # module constants in `services/ops_digest_collect.py`, following the same
+    # split `services/online_eval_signals.py` already uses.
+    #
+    # How much history one run looks at. Must match the cron in
+    # `infra/08-apps.bicep` (`opsDigestCron`, every 6 hours) -- a window shorter
+    # than the schedule silently drops whatever happened in the gap.
+    OPS_DIGEST_WINDOW_HOURS: float = 6.0
+    # Which Azure Monitor action group defines "the channel critical alerts go
+    # to". Empty means try the names in
+    # `ops_digest_delivery.DEFAULT_ACTION_GROUP_NAMES` -- the bicep-declared
+    # `-critical` split first, then the (currently deployed) unsplit group.
+    OPS_DIGEST_ACTION_GROUP: str = ""
+    # Explicit delivery overrides. Both empty is the intended production state:
+    # the agent then reads the real receivers off the action group instead of
+    # holding a second copy of them that can drift. Set either one for a local
+    # run or a non-Azure environment.
+    OPS_DIGEST_TEAMS_WEBHOOK_URL: str = ""
+    OPS_DIGEST_EMAIL: str = ""
+    # auto | teams | email | none. `none` resolves the channel and sends
+    # nothing, which is how you confirm *where* a digest would land without
+    # posting into a live Teams channel.
+    OPS_DIGEST_DELIVERY: str = "auto"
+    # Day-over-day spend move (percent, absolute) that earns a cost item.
+    OPS_DIGEST_COST_SPIKE_PCT: float = 25.0
+    # Whether budget-breach items are emitted. **Default False because of Gap
+    # 295**: `budget-invoicellm-dev` is denominated in INR with an amount set as
+    # if it were USD, so it has been permanently breached (~10,935% of budget)
+    # for its whole existence. Turning this on today would put one guaranteed,
+    # meaningless line in every digest. Flip it once the budget amount/currency
+    # is corrected -- that is a founder decision, not a default to guess at.
+    OPS_DIGEST_BUDGET_ITEMS: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

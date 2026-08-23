@@ -43,7 +43,17 @@ _BE_ROOT = Path(__file__).resolve().parent.parent
 if str(_BE_ROOT) not in sys.path:
     sys.path.insert(0, str(_BE_ROOT))
 
-_CACHE_DIR = _BE_ROOT / "tests" / "fixtures" / "large_invoice"
+# Committed under benchmarks/, NOT tests/ (moved 2026-08-23 alongside this
+# module) -- `.dockerignore` excludes `**/tests/`, and `pdf_path()`'s builder
+# dependency (`tests/e2e/pdf_builder.py`, and the `reportlab` package it needs)
+# is dev-only and does not ship in the deployed image at all (see pyproject.toml
+# `[dependency-groups] dev`). So the two PDFs this module needs (`LARGE`/`SMALL`)
+# are pre-generated and committed here -- see `_generate_fixture_pdfs.py` in this
+# same directory -- so a cache HIT is guaranteed at runtime inside a Container
+# Apps Job replica, which never builds a PDF from scratch. Regenerating (only
+# needed if `LARGE`/`SMALL`'s shape changes) requires the `reportlab` dev
+# dependency and must be run locally, then the new file committed.
+_CACHE_DIR = _BE_ROOT / "benchmarks" / "fixtures" / "large_invoice"
 
 # Repeating catalogue rows, cycled to whatever length a spec asks for. Real
 # consolidated invoices (logistics, telecom, MRO supply) look like this: the same
@@ -130,7 +140,26 @@ class InvoiceSpec:
         if path.exists():
             return path
 
-        from tests.e2e.pdf_builder import build_invoice_pdf
+        # This branch is a cache MISS -- deliberately never expected to run
+        # inside a deployed container. `tests/e2e/pdf_builder.py` lives under
+        # `tests/`, excluded from the image entirely, and `reportlab` is a
+        # dev-only dependency not installed there either (see pyproject.toml).
+        # Both PDFs (`LARGE`/`SMALL`) are pre-generated and committed under
+        # `_CACHE_DIR`, so a cache hit is guaranteed at runtime -- if this line
+        # is reached in production it means the committed fixture is missing
+        # or stale, which needs regenerating locally and committing, not
+        # generating on the fly.
+        try:
+            from tests.e2e.pdf_builder import build_invoice_pdf
+        except ModuleNotFoundError as e:  # pragma: no cover - only hit if tests/ is absent
+            raise ModuleNotFoundError(
+                f"No cached PDF for {self.key!r} at {path} and tests/e2e/pdf_builder "
+                "is not available in this environment (expected inside a deployed "
+                "container, where tests/ is excluded from the image). Regenerate "
+                "the committed fixture locally with "
+                "`uv run python benchmarks/_generate_fixture_pdfs.py` and commit "
+                "the result under benchmarks/fixtures/large_invoice/."
+            ) from e
 
         symbol = {"USD": "$", "INR": "₹", "EUR": "€"}.get(self.currency, "")
         rows = [
