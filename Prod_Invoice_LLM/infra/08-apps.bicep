@@ -345,6 +345,14 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
   }
 }
 
+// Feature 23's nightly golden-bank eval job (caj-agent-eval-dev) was deployed,
+// then deleted 2026-08-23 along with the rest of that build (9-workbook split,
+// golden_bank.json) when the founder and architect rethought Feature 23's
+// actual scope from scratch -- see feature_23_ai_control_tower.md's dated
+// section. Whatever scheduler the redesigned audit/benchmark process needs
+// gets its own module here once that design is implemented, reusing
+// scheduled-job.bicep the same way this one did.
+
 // Front Door + WAF (Cloud_Architecture_Document.md section 12, Layer 1 --
 // documented at the original design stage but never built until now). Only
 // deploys when a real domain has been purchased and set via

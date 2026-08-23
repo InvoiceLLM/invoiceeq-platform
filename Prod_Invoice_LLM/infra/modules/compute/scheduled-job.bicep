@@ -56,6 +56,9 @@ param azureOpenAiEndpoint string = ''
 @description('Azure OpenAI deployment name. Same rationale as azureOpenAiEndpoint.')
 param azureOpenAiDeploymentName string = ''
 
+@description('Application Insights connection string. Empty by default (the overdue sweep does not emit telemetry); the golden-bank eval job needs it so scripts/run_agent_eval.py\'s track_eval_result()/emit_online_signals() calls actually reach appi-invoicellm-dev instead of silently no-op-ing to stdout.')
+param appInsightsConnectionString string = ''
+
 @description('vCPU allocation. A sweep is a few queries plus outbound HTTP -- far below the worker\'s 2.0.')
 param cpu string = '0.5'
 
@@ -195,6 +198,10 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
               value: azureOpenAiDeploymentName
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: appInsightsConnectionString
             }
           ]
         }
