@@ -71,7 +71,28 @@ param replicaTimeout int = 1800
 @description('Retries for a failed execution. 0 because these entrypoints are idempotent and re-run on the next schedule anyway -- a retry storm against a failing dependency buys nothing.')
 param replicaRetryLimit int = 0
 
+// Feature 24 (2026-08-23): two generic escape hatches, added rather than a
+// third/fourth job-specific parameter pair, because the alternative was this
+// module growing an `azureSubscriptionId`, an `opsDigestWindowHours`, a
+// `sendgridApiKey` and so on for every new scheduled entrypoint -- which is the
+// exact copy-per-job shape the header comment says this module exists to avoid.
+//
+// Both default empty, and `concat()` with an empty array is the identity
+// operation, so every job that does not pass them (the overdue sweep) produces
+// a byte-identical template to before.
+@description('Extra plain environment variables, e.g. [{ name: \'AZURE_SUBSCRIPTION_ID\', value: \'...\' }]. Appended after the standard set, so a job can also override one by re-declaring it (last wins in Container Apps).')
+param extraEnv array = []
+
+@description('Extra Key Vault secret references, e.g. [{ name: \'sendgrid-key-secret\', secretName: \'SENDGRID-API-KEY\' }]. `secretName` is the Key Vault secret name; the vault URL and the managed identity are filled in here so a caller never has to build a keyVaultUrl by hand.')
+param extraSecrets array = []
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
+
+var extraSecretRefs = [for secret in extraSecrets: {
+  name: secret.name
+  keyVaultUrl: '${keyVaultUrl}/secrets/${secret.secretName}'
+  identity: userAssignedIdentityId
+}]
 
 resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
   name: jobName
@@ -102,7 +123,7 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
           identity: userAssignedIdentityId
         }
       ]
-      secrets: [
+      secrets: concat([
         {
           name: 'db-url-secret'
           keyVaultUrl: '${keyVaultUrl}/secrets/DATABASE-URL'
@@ -133,7 +154,7 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
           keyVaultUrl: '${keyVaultUrl}/secrets/AZURE-STORAGE-CONNECTION-STRING'
           identity: userAssignedIdentityId
         }
-      ]
+      ], extraSecretRefs)
     }
     template: {
       containers: [
@@ -146,7 +167,7 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
             cpu: json(cpu)
             memory: memory
           }
-          env: [
+          env: concat([
             {
               name: 'DATABASE_URL'
               secretRef: 'db-url-secret'
@@ -203,7 +224,7 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
               value: appInsightsConnectionString
             }
-          ]
+          ], extraEnv)
         }
       ]
     }

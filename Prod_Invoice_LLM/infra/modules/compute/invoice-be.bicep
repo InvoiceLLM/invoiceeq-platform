@@ -394,12 +394,32 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             // e.g. 3 users uploading large PDFs simultaneously. Doc Intelligence
             // + OpenAI extraction drives CPU up even though only 3 HTTP
             // connections are open, so the HTTP rule alone would miss this.
+            // Gap 290 (2026-08-23): threshold raised 70 -> 85 per founder
+            // decision — this rule and the memory one below existed only in
+            // source until now; the live resource had no scale rules at all
+            // (`az containerapp show` returned `rules: null`), so Azure was
+            // silently falling back to its platform default (~10 concurrent
+            // req/replica) despite this reasoning being written down.
             name: 'cpu-scaling'
             custom: {
               type: 'cpu'
               metadata: {
                 type: 'Utilization'
-                value: '70'
+                value: '85'
+              }
+            }
+          }
+          {
+            // Memory trigger, added Gap 290 (2026-08-23): the CPU rule alone
+            // misses a memory-bound-but-CPU-light scenario (e.g. holding many
+            // large tool-result payloads in memory across concurrent chat
+            // turns without a proportional CPU cost).
+            name: 'memory-scaling'
+            custom: {
+              type: 'memory'
+              metadata: {
+                type: 'Utilization'
+                value: '85'
               }
             }
           }

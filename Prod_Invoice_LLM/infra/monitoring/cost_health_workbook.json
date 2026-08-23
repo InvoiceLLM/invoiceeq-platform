@@ -1,0 +1,255 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Invoice AI — Cost & Health/Performance Operations Workbook (Feature 19/20)\n\nCombined Azure Workbook covering **Area 1 (Cost)** and **Area 2 (Health/Performance)** in one page, per the founder's 2026-08-23 scoping decision recorded in `feature_20_observability_monitoring_alerts.md`.\n\n**Deliberately no tabs.** This session's earlier workbook build (Feature 23's AI Control Tower) hit a real, multi-round set of Workbooks bugs — an invented `\"style\": \"tabs\"` property that Azure silently ignores, a `customWidth` written with a `%` unit that Workbooks does not accept, and a `tiles` visualization that clipped titles and grew scrollbars no matter how it was resized. Every panel below is stacked full-width on a single page instead, which avoids all three failure classes outright rather than re-fixing them a fourth time.\n\n**A blank panel means \"no data returned\", not necessarily \"healthy zero.\"** The table below states, panel by panel, whether it is genuinely live today, checked 2026-08-23 against the real `law-invoicellm-dev` workspace and the real subscription — not assumed from documentation.\n\n| # | Panel | Source | Live today? |\n|---|---|---|---|\n| 1 | Spend trend + budget/forecast | `AppEvents` (`azure_cost_snapshot`) | **Yes.** 1 snapshot event exists. The budget is now correctly 20,000 INR with 50/75/95% thresholds (Gap 295's fix, confirmed live via `az consumption budget show`) — but that fix landed *after* the one sweep run this event came from, so the `budget`/percent-used figures **shown in this event** still reflect the old ₹150 budget until `sweep_azure_cost.py` runs again. |\n| 2 | Spend by service | `AppEvents` (`azure_cost_slice`) | **Yes.** 19 slice events, reconciling to the same month-to-date total as panel 1. |\n| 3 | Container status (replicas / CPU% / memory%) | `AzureMetrics` | **Yes.** Native Container Apps platform metrics — no new instrumentation. |\n| 4 | Container scale config (min/max replicas) | Azure Resource Graph | **Yes.** |\n| 5 | Container restarts (24h) | `AzureMetrics` | **Yes.** 0 rows today is a real verified zero, not a broken query. |\n| 6 | Database status — PostgreSQL | `AzureMetrics` | **Yes.** |\n| 7 | Database status — Redis | `AzureMetrics` | **Yes.** |\n| 8 | Dead-letter queue (poison messages) | `ContainerAppConsoleLogs_CL` | **Yes** — same query the Sev-1 DLQ alert (`alert-rules.bicep`) uses. 0 rows over 7 days today is a real verified zero. |\n| 9 | API performance by feature area | `AppRequests` | **Query mechanics are live** (schema resolves, the `case()` grouping executes correctly against real rows) **but real container traffic is 0.** Gap 292's fix (`FastAPIInstrumentor.instrument_app`) is not yet deployed to `ca-invoice-be-dev`. The only 4 rows in `AppRequests` today are tagged `AppRoleName = invoice-be-local-f20-verify` (a local verification run, not real traffic) and are filtered out of this panel so it does not show fabricated traffic — it will show 0 rows until the fix deploys, which is the honest state. |\n| 10 | Extraction quality | *(none)* | **No, and it cannot be from a workbook.** See the panel below — this data lives in Postgres, not Log Analytics/App Insights. |\n| 11 | CI/CD gate status | *(none)* | **No, and it cannot be from a workbook.** See the panel below — GitHub Actions run state lives in GitHub, not Azure Monitor. |\n| 12 | Recent alerts | Azure Resource Graph (`alertsmanagementresources`) | **Yes.** Reuses the exact query pattern the (now-deleted) AI Control Tower workbook's Health tab used, re-verified live today. |\n\n**How this was verified:** every query below was run live against the real `law-invoicellm-dev` workspace and the real subscription via `az monitor log-analytics query` / `az graph query` on 2026-08-23, and the row counts/values quoted in this table are what those runs returned — not assumed from the underlying feature doc. **What was not verified:** how any of this actually renders in the Azure Portal. This build has no interactive portal access — every claim above is about query correctness and returned data, not pixels.\n"
+      },
+      "name": "header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "subscription",
+            "version": "KqlParameterItem/1.0",
+            "name": "Subscription",
+            "label": "Subscription",
+            "type": 6,
+            "isRequired": true,
+            "value": "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "includeAll": false
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "shared-parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Area 1 — Cost\n\nReal Azure spend from the Cost Management API (Task 19.11), mirrored into Application Insights as `azure_cost_snapshot` / `azure_cost_slice` custom events by `scripts/sweep_azure_cost.py`. Not scheduled yet — each panel reflects however many sweep runs have happened."
+      },
+      "name": "cost-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where Name == \"azure_cost_snapshot\"\n| extend d = parse_json(Properties)\n| project TimeGenerated,\n          month_to_date_spend = todouble(d.month_to_date_total),\n          budget_amount = todouble(d.budget_amount),\n          month_end_forecast = todouble(d.budget_forecast_spend),\n          currency = tostring(d.currency)\n| render timechart",
+        "size": 0,
+        "title": "Month-to-date spend vs. budget vs. forecast (INR)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "cost-trend-budget"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where Name == \"azure_cost_slice\"\n| extend d = parse_json(Properties)\n| where tostring(d.dimension) == \"ServiceName\"\n| summarize arg_max(TimeGenerated, amount = todouble(d.amount)) by service = tostring(d.dimension_value)\n| project service, amount\n| order by amount desc\n| render barchart",
+        "size": 0,
+        "title": "Spend by Azure service (latest snapshot)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart"
+      },
+      "name": "cost-by-service"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Area 2 — Health / Performance"
+      },
+      "name": "health-header"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Container status"
+      },
+      "name": "container-status-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(1h)\n| where ResourceId has \"MICROSOFT.APP/CONTAINERAPPS\"\n| where MetricName in (\"Replicas\", \"CpuPercentage\", \"MemoryPercentage\")\n| summarize Value = avg(Average) by App = tolower(tostring(split(ResourceId, \"/\")[-1])), MetricName\n| evaluate pivot(MetricName, avg(Value))\n| order by App asc",
+        "size": 0,
+        "title": "Current replicas / CPU% / memory% (last 1h average, per container app)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "container-status"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "resources\n| where type =~ \"microsoft.app/containerapps\" and resourceGroup =~ \"rg-invoice-llm-dev\"\n| project App = tolower(tostring(name)),\n          minReplicas = tostring(properties.template.scale.minReplicas),\n          maxReplicas = tostring(properties.template.scale.maxReplicas),\n          provisioningState = tostring(properties.provisioningState),\n          runningStatus = tostring(properties.runningStatus)\n| order by App asc",
+        "size": 0,
+        "title": "Configured scale bounds (min/max replicas) and provisioning state",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "{Subscription}"
+        ]
+      },
+      "name": "container-scale-config"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(24h)\n| where ResourceId has \"MICROSOFT.APP/CONTAINERAPPS\"\n| where MetricName == \"RestartCount\"\n| summarize Restarts24h = sum(Total) by App = tolower(tostring(split(ResourceId, \"/\")[-1]))\n| where Restarts24h > 0\n| order by Restarts24h desc",
+        "size": 0,
+        "title": "Restart count, last 24h (0 rows = 0 restarts, a real zero)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "container-restarts"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Database status — PostgreSQL + Redis"
+      },
+      "name": "db-status-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"PSQL-INVOICELLM-DEV\"\n| where MetricName in (\"cpu_percent\", \"memory_percent\", \"storage_percent\", \"active_connections\", \"max_connections\", \"is_db_alive\")\n| summarize Value = round(avg(Average), 2) by MetricName\n| order by MetricName asc",
+        "size": 0,
+        "title": "PostgreSQL (psql-invoicellm-dev) — last 6h average",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "db-status-postgres"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName in (\"serverLoad\", \"usedmemorypercentage\", \"connectedclients\", \"cachehits\", \"cachemisses\", \"geoReplicationHealthy\")\n| summarize Value = round(avg(Average), 2) by MetricName\n| order by MetricName asc",
+        "size": 0,
+        "title": "Redis (redis-invoicellm-dev) — last 6h average",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "db-status-redis"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Dead-letter queue"
+      },
+      "name": "dlq-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where TimeGenerated > ago(7d)\n| where Log_s has \"POISON MESSAGE ISOLATED\"\n| project TimeGenerated, ContainerAppName_s, Log_s\n| order by TimeGenerated desc\n| take 50",
+        "size": 0,
+        "title": "Poison messages isolated, last 7 days (same query as the Sev-1 DLQ alert)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "dlq-panel"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### CI/CD gate status\n\n**Known gap — not queryable from this workbook.** `.github/workflows/deploy-dev.yml` / `deploy-prod.yml`'s post-deployment `verify-deployment` gate (Task 19.9, extended by BE Gap 258) runs entirely inside GitHub Actions and checks container app revision health directly via `az containerapp revision show` at deploy time — its pass/fail result lives in the GitHub Actions run log, not in Azure Monitor, Log Analytics, Application Insights, or Azure Resource Graph. A workbook has no data source that can read a GitHub Actions run. To see gate status, check the Actions tab on the relevant workflow run in GitHub directly (`gh run list` / `gh run view` from the CLI also works). This is a structural limitation of the platform, not a missing query."
+      },
+      "name": "cicd-header"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## API Performance by Feature Area\n\nGrouped by the 8 feature areas this application already uses elsewhere in its docs (Ingestion & Extraction, Chat, Review & Correction, Autopilot & Connectors, Dashboard & Reporting, Trainer, Billing & Admin, Auth). Reuses the exact `case()` grouping KQL verified live in `feature_20_observability_monitoring_alerts.md`'s Gap 292 write-up, with one addition: rows tagged `AppRoleName = invoice-be-local-f20-verify` (that verification run, not real traffic) are excluded so this panel never shows fabricated traffic. Real container traffic is 0 rows until Gap 292's fix is deployed to `ca-invoice-be-dev` — that is the honest, current state, not a broken query."
+      },
+      "name": "api-perf-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated > ago(30d)\n| where AppRoleName != \"invoice-be-local-f20-verify\"\n| extend Area = case(\n    Name has \"/invoices\" or Name has \"/email-ingestion\", \"Ingestion & Extraction\",\n    Name has \"/chat\",                                    \"Chat\",\n    Name has \"/audit\",                                   \"Review & Correction\",\n    Name has \"/autopilot\" or Name has \"/connectors\",     \"Autopilot & Connectors\",\n    Name has \"/dashboard\",                               \"Dashboard & Reporting\",\n    Name has \"/trainer\",                                 \"Trainer\",\n    Name has \"/billing\" or Name has \"/admin\",            \"Billing & Admin\",\n    Name has \"/settings/security\" or Name has \"/auth\",   \"Auth\",\n    \"Other\")\n| summarize Requests = sum(ItemCount),\n            P95ms = round(percentile(DurationMs, 95)),\n            ErrorRatePct = round(100.0 * sumif(ItemCount, Success == false) / sum(ItemCount), 1)\n  by Area\n| order by Requests desc",
+        "size": 0,
+        "title": "Requests / P95 latency / error rate by feature area, last 30 days",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "api-perf-by-area"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Extraction Quality\n\n**Known gap — not queryable from this workbook, structurally.** `services/extraction_quality_rollup.py`'s `field_correction_rollup()` and `alert_precision_rollup()` are Python functions that read the `AuditLog` table directly from **PostgreSQL** — they are not KQL, and they emit no mirrored event into Application Insights or Log Analytics the way Feature 20's online-signal and cost telemetry do. A workbook's only data sources are Log Analytics, Application Insights, Azure Resource Graph, Azure Resource Manager and Azure Data Explorer clusters — none of which is PostgreSQL, so there is no query this workbook can run to answer \"what is our field-correction rate\" or \"what is our alert precision\" today.\n\nClosing this gap would need the same pattern Feature 20's Area 1 already used for cost (`services/azure_cost.py` reads a source a workbook can't reach, then `telemetry.track_azure_cost_snapshot()` mirrors the result as a custom event) or Feature 23's online-signal mirror (`services/online_eval_signals.py::emit_online_signals()`): a scheduled job that calls `field_correction_rollup()`/`alert_precision_rollup()` and emits their output as a custom event, which a future panel here could then query. That mirroring code does not exist yet — this panel is left out rather than built against data that isn't there, per the explicit scoping decision for this build."
+      },
+      "name": "extraction-quality-header"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Recent Alerts\n\nReuses the Azure Resource Graph `alertsmanagementresources` query pattern from the deleted AI Control Tower workbook's Health tab (`feature_23_ai_control_tower.md`'s \"Workbook — the usability restructure\" section notes it was the one section verified live against this subscription). Covers all of Feature 20's 25+ alert rules (`alert-rules.bicep`) and their action groups — nothing here creates or edits an alert rule."
+      },
+      "name": "alerts-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity),\n         state = tostring(properties.essentials.alertState),\n         rule = tostring(properties.essentials.alertRule),\n         target = tostring(properties.essentials.targetResourceName)\n| where fired > ago(14d)\n| summarize alerts = count() by day = startofday(fired), sev\n| order by day asc",
+        "size": 0,
+        "title": "Alerts fired per day, by severity — last 14 days",
+        "queryType": 1,
+        "visualization": "barchart",
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "{Subscription}"
+        ]
+      },
+      "name": "alerts-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity),\n         state = tostring(properties.essentials.alertState),\n         monitorCondition = tostring(properties.essentials.monitorCondition),\n         rule = tostring(properties.essentials.alertRule),\n         target = tostring(properties.essentials.targetResourceName),\n         targetType = tostring(properties.essentials.targetResourceType)\n| where fired > ago(14d)\n| project fired, sev, state, monitorCondition, rule, target, targetType\n| order by fired desc",
+        "size": 0,
+        "title": "Every alert in the last 14 days",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "{Subscription}"
+        ]
+      },
+      "name": "alerts-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Notes\n\n* **No interactive portal access was used to verify this workbook.** Every query above was run and confirmed live against `law-invoicellm-dev` / the real subscription on 2026-08-23 via `az monitor log-analytics query` and `az graph query` — the row counts and values quoted in the honesty table at the top are real, not assumed. How the panels actually lay out and render in the Azure Portal has not been checked and cannot be from this environment.\n* **Deploy:** `az deployment group create -g rg-invoice-llm-dev -f infra/workbook-cost-health-only.bicep`. Narrow, standalone deployment — not routed through `08-apps.bicep`/`params.dev.json`, matching the golden-bank job and GPT-4o deployment's rationale (those files' image/param drift makes a full deploy risky).\n* **This is a single-page workbook, deliberately.** See the header panel for why tabs were not used this time.\n"
+      },
+      "name": "footer"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.operationalinsights/workspaces/law-invoicellm-dev"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

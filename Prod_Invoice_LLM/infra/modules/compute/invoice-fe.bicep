@@ -157,10 +157,35 @@ resource frontendApp 'Microsoft.App/containerApps@2024-03-01' = {
             // concurrent connections before needing a second replica. Without a
             // rule Azure had no trigger to scale the frontend even if 100+ users
             // loaded the dashboard simultaneously.
+            // Gap 290 (2026-08-23): this rule existed only in source until
+            // now — the live resource had `rules: null` (`az containerapp
+            // show`), so Azure was silently on its platform default (~10
+            // concurrent req/replica) despite this reasoning being written
+            // down. CPU/memory rules added below per founder decision.
             name: 'http-scaling'
             http: {
               metadata: {
                 concurrentRequests: '30'
+              }
+            }
+          }
+          {
+            name: 'cpu-scaling'
+            custom: {
+              type: 'cpu'
+              metadata: {
+                type: 'Utilization'
+                value: '85'
+              }
+            }
+          }
+          {
+            name: 'memory-scaling'
+            custom: {
+              type: 'memory'
+              metadata: {
+                type: 'Utilization'
+                value: '85'
               }
             }
           }

@@ -96,11 +96,67 @@ param frontendMaxReplicas int = 2
 @description('Cron schedule (UTC) for the outbound overdue-webhook sweep. Daily at 02:00 UTC by default -- after any given business day has ended in the tenant time zones this product currently serves, so an invoice due "today" is not notified while today is still in progress somewhere.')
 param overdueSweepCron string = '0 2 * * *'
 
+// Feature 24 (Ops Digest Agent). Four runs a day, six hours apart, matching
+// `OPS_DIGEST_WINDOW_HOURS`'s default of 6 -- the window and the schedule are
+// the same number by construction, because a window shorter than the schedule
+// silently loses whatever happened in the gap and a longer one repeats items in
+// consecutive digests.
+//
+// 01:00 / 07:00 / 13:00 / 19:00 UTC = 06:30 / 12:30 / 18:30 / 00:30 IST. The
+// odd hours are deliberate: `caj-overdue-sweep-dev` is on `0 2 * * *`, so this
+// never starts a replica on the same minute as another job on the same
+// Container Apps environment. The 00:30 IST run is fine precisely *because*
+// this is the digest tier -- it is an email and a Teams message, not a page.
+@description('Cron schedule (UTC) for the Feature 24 ops digest agent. Every six hours by default; must stay consistent with OPS_DIGEST_WINDOW_HOURS.')
+param opsDigestCron string = '0 1,7,13,19 * * *'
+
+@description('Delivery mode for the ops digest: auto | teams | email | none. `auto` sends to every receiver on the critical action group, which is the intended production setting. `none` renders and records the digest without sending it -- useful for a first deploy.')
+@allowed([
+  'auto'
+  'teams'
+  'email'
+  'none'
+])
+param opsDigestDelivery string = 'auto'
+
 @description('vCPU allocation for scheduled jobs.')
 param scheduledJobCpu string = '0.5'
 
 @description('Memory allocation for scheduled jobs.')
 param scheduledJobMemory string = '1.0Gi'
+
+// Feature 23 (AI Control Tower), rescoped 2026-08-23. Runs both benchmark
+// tracks -- scripts/run_extraction_benchmark.py (Track 1) and
+// scripts/run_agent_eval.py (Track 2) -- nightly. 03:00 UTC: after
+// caj-overdue-sweep-dev's 02:00 and clear of caj-ops-digest-dev's
+// 01/07/13/19:00 slots, matching the old (deleted) caj-agent-eval-dev job's
+// schedule, which was never in conflict with anything.
+@description('Cron schedule (UTC) for the nightly Feature 23 benchmark/eval job.')
+param benchmarkEvalCron string = '0 3 * * *'
+
+// Sized off a real measured run on 2026-08-23 against the live
+// openai-invoicellm-dev gpt-5-mini deployment (see
+// feature_23_ai_control_tower.md's "Nightly scheduler as built" section), not
+// a guess: `--mode live` (9 real extractions) took ~5 minutes; the 20-case
+// default-path chat suite (separate judge, the runner's own default) was
+// timed at roughly 2 minutes/turn over a real partial run and extrapolates to
+// ~40 minutes for all 20. ~45 minutes measured/extrapolated total, so 90
+// minutes is roughly 2x headroom -- generous but not open-ended, so a genuine
+// hang still gets killed before the next scheduled execution.
+@description('Seconds before the nightly benchmark/eval job execution is killed.')
+param benchmarkEvalReplicaTimeout int = 5400
+
+// This job imports the same agent/graph/SQL stack as ca-invoice-be itself
+// (agents.query_agent, agents.extraction_agent, langgraph, sqlalchemy,
+// azure-ai-documentintelligence) -- not the "a few queries plus outbound
+// HTTP" shape scheduledJobCpu/scheduledJobMemory's defaults were sized for
+// (see their own description above) -- so it gets its own, larger allocation
+// rather than sharing that pair.
+@description('vCPU allocation for the nightly benchmark/eval job.')
+param benchmarkEvalCpu string = '1.0'
+
+@description('Memory allocation for the nightly benchmark/eval job.')
+param benchmarkEvalMemory string = '2.0Gi'
 
 @description('Website Container App vCPU allocation.')
 param websiteCpu string = '0.5'
@@ -345,13 +401,171 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
   }
 }
 
-// Feature 23's nightly golden-bank eval job (caj-agent-eval-dev) was deployed,
-// then deleted 2026-08-23 along with the rest of that build (9-workbook split,
-// golden_bank.json) when the founder and architect rethought Feature 23's
-// actual scope from scratch -- see feature_23_ai_control_tower.md's dated
-// section. Whatever scheduler the redesigned audit/benchmark process needs
-// gets its own module here once that design is implemented, reusing
-// scheduled-job.bicep the same way this one did.
+// Feature 24: the Ops Digest Agent (`apps/invoice-be/services/ops_digest*.py`,
+// entrypoint `scripts/ops_digest_job.py`). Reuses scheduled-job.bicep exactly as
+// the overdue sweep does -- same module, same image, different command and cron,
+// which is what that module's header comment says it exists for.
+//
+// It needs four things the overdue sweep does not, all supplied through the
+// generic `extraEnv`/`extraSecrets` parameters rather than by growing this
+// module a fourth job-specific parameter set:
+//
+//   * AZURE_SUBSCRIPTION_ID / AZURE_COST_RESOURCE_GROUP -- the Resource Graph
+//     alert query and `services/azure_cost.py` both need a scope. These are the
+//     same two values `scripts/sweep_azure_cost.py` was documented as needing.
+//   * SENDGRID_API_KEY -- one of the two receivers on the critical action group
+//     is an email address, and the digest goes to *both*.
+//   * OPS_DIGEST_* -- window and delivery mode.
+//
+// Deliberately NOT wired here: OPS_DIGEST_TEAMS_WEBHOOK_URL. The webhook URL is
+// read at runtime off the deployed action group instead (see
+// `services/ops_digest_delivery.py`), so it exists in exactly one place and the
+// digest follows the alert channel automatically if it is ever changed. Putting
+// it here as well would create the drift this design exists to avoid -- and the
+// live URL carries a `sig=` bearer credential that has no business in a
+// template's plain env block.
+module opsDigestJob './modules/compute/scheduled-job.bicep' = {
+  name: 'ops-digest-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-ops-digest-${environment}'
+    containerName: 'ops-digest'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/ops_digest_job.py'
+    ]
+    cronExpression: opsDigestCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    // Unlike the overdue sweep, this job emits telemetry (`ops_digest_run`) --
+    // the only durable evidence it ran at all, since the digest itself goes to
+    // Teams and an inbox, neither of which is queryable.
+    appInsightsConnectionString: appInsights.properties.ConnectionString
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
+    // One LLM call plus a handful of ARM reads. 10 minutes is generous; the
+    // 30-minute default would let a stalled Cost Management retry chain run
+    // most of the way to the next scheduled execution.
+    replicaTimeout: 600
+    extraSecrets: [
+      {
+        name: 'sendgrid-key-secret'
+        secretName: 'SENDGRID-API-KEY'
+      }
+    ]
+    extraEnv: [
+      {
+        name: 'AZURE_SUBSCRIPTION_ID'
+        value: subscription().subscriptionId
+      }
+      {
+        name: 'AZURE_COST_RESOURCE_GROUP'
+        value: resourceGroup().name
+      }
+      {
+        name: 'SENDGRID_API_KEY'
+        secretRef: 'sendgrid-key-secret'
+      }
+      {
+        name: 'SENDGRID_SENDING_DOMAIN'
+        value: sendgridSendingDomain
+      }
+      {
+        name: 'OPS_DIGEST_WINDOW_HOURS'
+        value: '6'
+      }
+      {
+        name: 'OPS_DIGEST_DELIVERY'
+        value: opsDigestDelivery
+      }
+    ]
+  }
+}
+
+// Feature 23's original nightly golden-bank eval job (caj-agent-eval-dev) was
+// deployed, then deleted 2026-08-23 along with the rest of that build
+// (9-workbook split, golden_bank.json) when the founder and architect
+// rethought Feature 23's actual scope from scratch -- see
+// feature_23_ai_control_tower.md's dated section. This is that section's
+// replacement: both of the rebuilt tracks (Track 1 extraction/alert
+// benchmark, Track 2 chat eval), run nightly in one job execution.
+//
+// One container, two scripts: scheduled-job.bicep's template is a single
+// command, so the two are chained with a shell `&&` rather than declaring two
+// jobs (which would need two separate cron-collision checks and double the
+// cold-start/import cost for no benefit -- both scripts already import most
+// of the same module tree).
+//
+// `--no-gate` on Track 1: the corpus's one known, deliberately-not-fixed
+// false positive (Gap 293, outbound_trade_discount__clean -- see
+// feature_23_ai_control_tower.md, "The defect the first run found") would
+// otherwise make this job report Failed every single night on a
+// non-regression, which defeats using the job's own execution status as a
+// signal. The pre-deploy gate (.github/workflows/deploy-dev.yml) is where
+// Track 1 actually gates something, using --tolerate-fp for the same case
+// instead of --no-gate, because a CI job's pass/fail IS the signal there.
+//
+// `--no-write` on Track 1: a Container Apps Job replica's filesystem is
+// ephemeral (no volume is mounted here), so writing
+// docs/extraction_benchmark/runs/ artifacts inside the container would just
+// be discarded when the replica exits -- --json keeps the scored summary in
+// the execution's own stdout instead, which Container Apps Job execution
+// history / Log Analytics does retain. Per-call cost/latency reaches
+// Application Insights regardless of --no-write, because
+// run_extraction_agent()/verify_node() are the real production code paths,
+// already wrapped in tracked_llm_call() -- this flag only controls the local
+// review-corpus files, not telemetry.
+//
+// Track 2 runs `--paths default` only (not `--paths default,sage`): SAGE
+// orchestrator is gated behind ENABLE_AGENTIC_SAGE and off by default today
+// (see the feature doc's registry table) -- measuring a path nothing in
+// production is taking would add ~40 more minutes and real token cost for a
+// path with zero traffic. Uses the runner's own default judge mode
+// (`separate`, not `--judge combined`): the feature doc's Track 2 section
+// explicitly leaves flipping that default as a "decision required" pending a
+// paired judge comparison, not something to make silently from infra.
+// run_agent_eval.py persists its own agent_eval_run rows and telemetry
+// (DATABASE_URL/APPLICATIONINSIGHTS_CONNECTION_STRING, both already wired
+// below) -- no extra flag needed for durability, unlike Track 1.
+module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
+  name: 'benchmark-eval-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-benchmark-eval-${environment}'
+    containerName: 'benchmark-eval'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      '/bin/sh'
+      '-c'
+    ]
+    args: [
+      'python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json --tolerate-fp outbound_trade_discount__clean && python scripts/run_agent_eval.py --paths default'
+    ]
+    cronExpression: benchmarkEvalCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    // Both scripts emit telemetry (extraction's tracked_llm_call() sites,
+    // Track 2's track_eval_result()/track_agent_call()) -- without this it
+    // would silently no-op to stdout instead of reaching appi-invoicellm-dev.
+    appInsightsConnectionString: appInsights.properties.ConnectionString
+    cpu: benchmarkEvalCpu
+    memory: benchmarkEvalMemory
+    replicaTimeout: benchmarkEvalReplicaTimeout
+  }
+}
 
 // Front Door + WAF (Cloud_Architecture_Document.md section 12, Layer 1 --
 // documented at the original design stage but never built until now). Only
