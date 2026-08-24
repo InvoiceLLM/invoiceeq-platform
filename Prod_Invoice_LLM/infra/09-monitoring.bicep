@@ -45,6 +45,18 @@ param postgresConnectionsThreshold int = 340
 param storageEgressThresholdBytes int = 200000000
 param aiClientErrorThreshold int = 15
 
+// Gap 301: CPU/memory alerts' Replicas==maxReplicas compound criterion needs
+// each app's real ceiling. This stage deploys independently of Stage 8
+// (08-apps.bicep), so these are separate params, not a cross-stage output --
+// keep the defaults here in sync by hand with 08-apps.bicep's
+// backendMaxReplicas/workerMaxReplicas/frontendMaxReplicas/websiteMaxReplicas
+// and modules/data/chromadb.bicep's maxReplicas if either ever changes.
+param backendMaxReplicas int = 5
+param workerMaxReplicas int = 10
+param frontendMaxReplicas int = 2
+param chromaDbMaxReplicas int = 1
+param websiteMaxReplicas int = 3
+
 var lawName = 'law-${namingPrefix}-${environment}'
 // Hyphens stripped from namingPrefix, matching the real live resource
 // (`appi-invoicellm-dev`, not `appi-invoice-llm-dev`) -- see 08-apps.bicep.
@@ -224,6 +236,11 @@ module alertRules './modules/monitoring/alert-rules.bicep' = {
     postgresConnectionsThreshold: postgresConnectionsThreshold
     storageEgressThresholdBytes: storageEgressThresholdBytes
     aiClientErrorThreshold: aiClientErrorThreshold
+    backendMaxReplicas: backendMaxReplicas
+    workerMaxReplicas: workerMaxReplicas
+    frontendMaxReplicas: frontendMaxReplicas
+    chromaDbMaxReplicas: chromaDbMaxReplicas
+    websiteMaxReplicas: websiteMaxReplicas
   }
 }
 

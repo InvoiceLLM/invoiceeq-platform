@@ -54,15 +54,41 @@ param storageEgressThresholdBytes int = 200000000
 @description('OpenAI/DocIntel client errors in 10m before alerting. Dev: 15, Prod: 10.')
 param aiClientErrorThreshold int = 15
 
+// ---- Gap 301: per-app max-replica ceilings ----
+// The CPU/memory alerts below now require Replicas == maxReplicas as a second
+// AllOf criterion, so they only fire once autoscale (Gap 290, also 85%
+// threshold) has genuinely maxed out and is still insufficient -- not while
+// autoscale is correctly handling load but just hasn't caught up yet within
+// the 15m averaging window. Each value must match the corresponding
+// maxReplicas default/override in 08-apps.bicep (backendMaxReplicas /
+// workerMaxReplicas / frontendMaxReplicas / websiteMaxReplicas) and
+// modules/data/chromadb.bicep (maxReplicas); nothing enforces that match
+// automatically since this stage (09-monitoring.bicep) deploys independently
+// of Stage 8, so keep them in sync by hand if either changes.
+@description('Backend Container App configured max replica count (Gap 301). Must match 08-apps.bicep backendMaxReplicas.')
+param backendMaxReplicas int = 5
+
+@description('Queue-worker Container App configured max replica count (Gap 301). Must match 08-apps.bicep workerMaxReplicas.')
+param workerMaxReplicas int = 10
+
+@description('Frontend Container App configured max replica count (Gap 301). Must match 08-apps.bicep frontendMaxReplicas.')
+param frontendMaxReplicas int = 2
+
+@description('ChromaDB Container App configured max replica count (Gap 301). Must match modules/data/chromadb.bicep maxReplicas. Default 1 -- ChromaDB does not autoscale, so its CPU/memory alerts stay effectively single-condition (Replicas is always at this ceiling).')
+param chromaDbMaxReplicas int = 1
+
+@description('Website Container App configured max replica count (Gap 301). Must match 08-apps.bicep websiteMaxReplicas. Ignored when websiteAppName is empty.')
+param websiteMaxReplicas int = 3
+
 var baseApps = [
-  { name: backendAppName, includeHttp5xx: true }
-  { name: workerAppName, includeHttp5xx: false }
-  { name: frontendAppName, includeHttp5xx: false }
-  { name: chromaDbAppName, includeHttp5xx: false }
+  { name: backendAppName, includeHttp5xx: true, maxReplicas: backendMaxReplicas }
+  { name: workerAppName, includeHttp5xx: false, maxReplicas: workerMaxReplicas }
+  { name: frontendAppName, includeHttp5xx: false, maxReplicas: frontendMaxReplicas }
+  { name: chromaDbAppName, includeHttp5xx: false, maxReplicas: chromaDbMaxReplicas }
 ]
 
 var containerApps = !empty(websiteAppName) ? concat(baseApps, [
-  { name: websiteAppName, includeHttp5xx: true }
+  { name: websiteAppName, includeHttp5xx: true, maxReplicas: websiteMaxReplicas }
 ]) : baseApps
 
 // ---- Container Apps: restart-loop, CPU, memory (all 4 apps) ----
@@ -98,6 +124,11 @@ resource restartAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app i
 
 // CPU: auto-scale fires at 70% — alert at 90% sustained 15m means auto-scale
 // had 3+ eval windows to respond and didn't. Info channel (email only).
+// Gap 301: AllOf now requires a second criterion -- Replicas >= this app's
+// maxReplicas -- so the alert only fires once autoscale (Gap 290) has
+// genuinely hit its configured ceiling and CPU is still over threshold, not
+// while autoscale is correctly handling the load and just hasn't caught up
+// yet within the 15m window.
 resource cpuAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in containerApps: {
   name: 'alert-${app.name}-cpu-high'
   location: location
@@ -120,6 +151,14 @@ resource cpuAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in co
           timeAggregation: 'Average'
           criterionType: 'StaticThresholdCriterion'
         }
+        {
+          name: 'ReplicasAtMax'
+          metricName: 'Replicas'
+          operator: 'GreaterThanOrEqual'
+          threshold: app.maxReplicas  // Gap 301: only alert once autoscale is genuinely maxed out
+          timeAggregation: 'Maximum'
+          criterionType: 'StaticThresholdCriterion'
+        }
       ]
     }
     actions: [
@@ -130,6 +169,8 @@ resource cpuAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in co
 
 // Memory: PDF extraction spikes memory for ~2 min then drops. Window PT15M
 // filters out transient extraction bursts. Info channel (email only).
+// Gap 301: same AllOf compound criterion as cpuAlerts above -- Replicas must
+// also be at this app's maxReplicas ceiling before the alert fires.
 resource memoryAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in containerApps: {
   name: 'alert-${app.name}-memory-high'
   location: location
@@ -150,6 +191,14 @@ resource memoryAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in
           operator: 'GreaterThan'
           threshold: memoryAlertThreshold  // 85% (was 80%)
           timeAggregation: 'Average'
+          criterionType: 'StaticThresholdCriterion'
+        }
+        {
+          name: 'ReplicasAtMax'
+          metricName: 'Replicas'
+          operator: 'GreaterThanOrEqual'
+          threshold: app.maxReplicas  // Gap 301: only alert once autoscale is genuinely maxed out
+          timeAggregation: 'Maximum'
           criterionType: 'StaticThresholdCriterion'
         }
       ]

@@ -42,6 +42,89 @@ artifacts kept for architect/BA review.
 |---|---|---|---|---|
 | Verify digest quality against real fired alerts | F24 | functional-tester | `[ ]` | Digest scheduler built |
 
+## New gaps found during Ops-page field-by-field review (2026-08-24)
+
+**Gap 300** — Azure OpenAI/LLM calls are not tracked in `AppDependencies` telemetry.
+Confirmed live via direct KQL against `law-invoicellm-dev`: zero rows match `openai` in
+`Type`/`Target`/`Name` across the last 30 days, while Postgres (54K calls), Storage Queue
+(183K+ calls), Blob storage, and Document Intelligence are all solidly instrumented in the
+same table. LLM calls are almost certainly the dominant latency source for the Chat and
+Ingestion & Extraction feature areas — without this instrumentation, a dependency-time
+breakdown would either miss LLM time entirely or misattribute it as "app logic" time (the
+gap between total request duration and the sum of tracked dependencies). Unfixed.
+**Depends on this gap being closed**: the proposed "API perf: dependency-time breakdown
+per feature area, with recommendation text generated from whichever dependency dominates"
+build item (raised during the Ops-page field review) — that feature cannot give a correct
+answer for LLM-heavy areas until Azure OpenAI calls are actually tracked as dependencies.
+
+**Gap 301** — CPU-high and memory-high alerts (`alert-rules.bicep`) fire on a 15-minute
+averaged threshold alone (CPU > 90%, memory > 85%), with no check on whether autoscale
+(Gap 290, also triggers at 85% for both) actually could have resolved it. Confirmed live:
+both alerts already use `windowSize: 'PT15M'` specifically to let autoscale stabilize
+first — so brief autoscale-then-resolve blips are already filtered by the time window —
+but a *sustained* 15-minute elevation still fires even if autoscale correctly scaled out
+and is simply still catching up, not stuck. Founder wants these to fire only when
+autoscale is genuinely maxed out and still insufficient, not just "elevated a while."
+**Fix**: add a second required criterion (`AllOf`) to each alert — `Replicas ==
+maxReplicas` alongside the existing CPU/memory threshold — so it only fires when
+autoscale has hit its ceiling and the condition still hasn't cleared. **Fixed
+2026-08-24, not yet deployed.** `modules/monitoring/alert-rules.bicep`'s `cpuAlerts`/
+`memoryAlerts` `[for app in containerApps: ...]` loop now carries a `maxReplicas` field
+per app (5 new params: `backendMaxReplicas`/`workerMaxReplicas`/`frontendMaxReplicas`/
+`chromaDbMaxReplicas`/`websiteMaxReplicas`, defaults matching `08-apps.bicep`'s/
+`modules/data/chromadb.bicep`'s own maxReplicas defaults — this stage deploys
+independently of Stage 8 so they're separate params, not a cross-stage output, kept in
+sync by hand), and each alert's `criteria.allOf` gained a second criterion:
+`{ name: 'ReplicasAtMax', metricName: 'Replicas', operator: 'GreaterThanOrEqual',
+threshold: app.maxReplicas, timeAggregation: 'Maximum' }`. `09-monitoring.bicep` threads
+the same 5 params into the `alertRules` module call. `az bicep build` clean on both
+files. `az deployment group what-if -g rg-invoice-llm-dev --template-file
+09-monitoring.bicep` (filtered params matching `deploy-all.ps1`'s own
+`New-StageParamArgs` pattern) returned `Succeeded`, 22 Modify / 22 Create / 31 Ignore,
+75 total — all 10 CPU/memory alerts show `Modify` with `properties.criteria.allOf`
+gaining the new `ReplicasAtMax` criterion (confirmed threshold `5` on
+`alert-ca-invoice-be-dev-cpu-high`, matching `backendMaxReplicas`'s default). The other
+deltas on those same resources (`properties.actions` action-group id, `properties.
+windowSize` PT5M→PT15M) are pre-existing drift from this session's earlier
+dual-action-group/90%-threshold/PT15M-window edits, already in the file before this
+gap's fix and unrelated to it — the live dev alerts simply haven't been redeployed since.
+**Not deployed** — `az deployment group create` was deliberately not run.
+
+## Cost & Health workbook — 4 manual edits from the field-by-field review, validated 2026-08-24
+
+During the founder's field-by-field Ops-page review that surfaced Gaps 300/301 above, four
+edits were made directly to `infra/monitoring/cost_health_workbook.json` (the source
+`az bicep build`-loaded by `infra/workbook-cost-health-only.bicep` via `loadTextContent`):
+
+1. Removed the `extraction-quality-header` text panel outright — that content belongs to
+   Feature 23's own (future) workbook, not this one.
+2. Removed the `cicd-header` text panel outright and permanently — founder already gets
+   CI/CD gate alerts directly from GitHub, this was a redundant view.
+3. Edited the `header` panel's honesty table: removed the two rows for the panels above,
+   added a dated "2026-08-24 update" note explaining both removals.
+4. Replaced the `alerts-table` full detail-table panel with a single-value count query
+   (`alertsmanagementresources | ... | summarize AlertsFired24h = count()`, `ago(24h)`),
+   retitled to explain why it was shrunk.
+
+**Validated 2026-08-24**, structural-only (the KQL queries in the untouched items were not
+re-run — only the 4 edited regions were checked):
+- `JSON.parse` on the full file: valid JSON, no syntax errors from the manual edits.
+- `az bicep build --file infra/workbook-cost-health-only.bicep`: compiles clean (note:
+  `loadTextContent` embeds the file as a raw string at compile time — bicep build alone
+  does not itself parse/validate the JSON, hence the separate JSON.parse + schema checks).
+- Re-derived the original build's schema-validation approach (the `ajv`-against-Microsoft's-
+  live-`schema/workbook.json` check the doc line below already referenced): downloaded
+  `microsoft/Application-Insights-Workbooks`'s current `schema/workbook.json` fresh and ran
+  `ajv` (installed fresh, not reused from any repo state) against the full file — **0
+  errors**. Did not re-clone the 710-template shipped-example corpus this time since no new
+  item *shapes* (KQL step, param step, ARG step) were introduced — the edits only removed
+  two items and replaced one query/title, reusing shapes already in the file and already
+  cross-checked in the original build.
+- Confirmed structurally: `extraction-quality-header` and `cicd-header` no longer appear
+  anywhere in the file (neither as an item `name` nor referenced elsewhere); `header`'s
+  markdown contains the "2026-08-24 update" note; `alerts-table` now holds the single
+  `AlertsFired24h` count query with the expected title text.
+
 ## Already done (prior to this rollout)
 
 - Ollama installed, config fixed (`llama3.2:latest`), smoke-tested, stopped — 2026-08-23
