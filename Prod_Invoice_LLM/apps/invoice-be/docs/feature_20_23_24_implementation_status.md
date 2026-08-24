@@ -44,6 +44,13 @@ artifacts kept for architect/BA review.
 
 ## New gaps found during Ops-page field-by-field review (2026-08-24)
 
+**Reconciled into the tracker 2026-08-24** — Gaps 300 and 301 below now have proper entries in
+`be_features_tracker.md` (the single source of truth for gap numbering per `.claude/CONVENTIONS.md`);
+they previously existed only in this file. Four further Feature 23 gaps were filed at the same time
+from this session's code-level findings: **Gap 302** (no Trace-level capture), **Gap 303** (no
+Thread-level capture / drift detector), **Gap 304** (every tile field single-sourced, not
+dual-sourced) and **Gap 305** (`emit_online_signals()` has zero callers).
+
 **Gap 300** — Azure OpenAI/LLM calls are not tracked in `AppDependencies` telemetry.
 Confirmed live via direct KQL against `law-invoicellm-dev`: zero rows match `openai` in
 `Type`/`Target`/`Name` across the last 30 days, while Postgres (54K calls), Storage Queue

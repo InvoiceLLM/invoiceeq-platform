@@ -238,6 +238,27 @@ The founder did a field-by-field review of the workbook above with the founder +
 - `az deployment group what-if -g rg-invoice-llm-dev --template-file 09-monitoring.bicep` (parameters filtered to this stage's declared params, mirroring `deploy-all.ps1`'s own `New-StageParamArgs` logic) returned `Succeeded`: 22 Modify / 22 Create / 31 Ignore (75 total). All 10 CPU/memory alerts (backend, worker, frontend, website, chromadb) show `Modify` with a `properties.criteria.allOf` delta adding the new `ReplicasAtMax` criterion — verified directly on `alert-ca-invoice-be-dev-cpu-high`: `threshold: 5` (matching `backendMaxReplicas`'s default), `operator: GreaterThanOrEqual`, `timeAggregation: Maximum`. The same 10 resources also show unrelated pre-existing drift (`properties.actions` action-group id, `properties.windowSize` PT5M→PT15M) from this session's earlier dual-action-group/90%-threshold/PT15M-window edits — those predate this fix and are not caused by it; the live dev alerts simply haven't been redeployed since those changes landed.
 - **Not deployed** — `az deployment group create` was deliberately not run. The founder will decide when to apply this to live Azure.
 
+### 2026-08-24 (later same day) — Tile redesign, real status coloring, spacing cleanup — deployed and verified live
+
+Founder-driven follow-up to the field-by-field review above. Three rounds, each deployed and re-verified against the live `serializedData` (not just deploy status) via `az rest ... canFetchContent=true`.
+
+**Round 1 — charts to tiles.** All remaining chart/table panels (spend trend, spend-by-service, container status, scale config, PostgreSQL, Redis, API perf by area, alerts trend) converted to `visualization: "tiles"`. Old workbook resource (`a7c1e9d4-...`) deleted and recreated fresh as `618c81c7-353d-498a-93be-becc2e3e84cf` (bicep's `workbookId` default updated to match) after a Portal caching concern turned out to need a genuinely new resource ID to rule out.
+
+**Round 2 — header removed, first-pass status coloring.** Main header/honesty-table panel deleted outright per founder instruction. `formatter: 8` (Thresholds) coloring added: ≥90 red / ≥70 yellow / else green on percent metrics, blue as the explicit default for metrics with no status meaning (cost, request counts).
+
+**Round 3 — coloring audit found 3 real defects, all fixed:**
+1. **`is_db_alive`/`geoReplicationHealthy` showed green when down/unhealthy** — both were sharing one threshold column with unrelated percent metrics, and `0` fell under the `<70` "green" bucket regardless of what it meant. Fixed by splitting each into its own dedicated tile (`db-status-postgres-liveness`, `db-status-redis-liveness`) with clean text-equality coloring (`"Alive"`/`"Down"`, `"Healthy"`/`"Unhealthy"`).
+2. **API perf's Error rate never colored** — was merged into the same blue-only tile as Requests/P95 latency. Split into its own tile (`api-perf-error-rate`), ≥10% red / ≥5% yellow / else green.
+3. **Budget overage never colored** — spend/forecast tiles showed the raw $ figure with no threshold. Reworked so the tile's colored `Value` is % of budget consumed (≥100% red / ≥80% yellow / else green), with the real $ amount moved to the `Detail` subtitle.
+
+**Also addressed, same pass, not defects but flagged as "coincidentally correct, not meaningfully evaluated":** Container Replicas count, DB connection counts (`active_connections`/`max_connections`), and Redis cache counts (`connectedclients`/`cachehits`/`cachemisses`) were all sharing the percent-style threshold rule purely by luck (small numbers never crossing 70/90). Split into their own blue (no-status) tiles, and two new **derived, genuinely meaningful** tiles added: PostgreSQL connection utilization % (`active/max`, red/yellow/green) and Redis cache hit ratio % (`hits/(hits+misses)`, inverted scale — low is bad).
+
+**Alerts fired, last 24h** (`alerts-table`) also converted to a colored tile (0=green, ≥5=red, else yellow) — previously the only remaining un-colored, un-tiled panel besides restarts/DLQ.
+
+**Spacing cleanup**, same deploy: removed 3 purely-redundant `### Section` text panels whose content the tile titles already stated (`container-status-header`, `db-status-header`, `dlq-header`); shortened the Cost, API-perf, Alerts, and footer text panels from multi-sentence prose to one-liners. Net panel count went from 20 → 25 (the coloring-correctness splits added more panels than the spacing pass removed), but total page text dropped substantially. **Tabs were explicitly considered and rejected** for this — Feature 23's own build history in this repo hit multiple rounds of real Workbooks tab bugs, and this environment has no portal access to catch a repeat quickly; reducing prose/redundant headers was judged the lower-risk lever.
+
+**Verified live, all 3 rounds**: `az bicep build` clean each time; each deploy's `properties.serializedData` pulled back via direct REST call (not just `provisioningState`) and checked for the expected `tiles`/`thresholdsGrid` content, absence of the old header, and — after the round-3 fix — absence of a broken placeholder threshold rule caught and corrected before that deploy. Final state: 25 items, 0 leftover chart/table visualizations except the 2 panels never in scope (`container-restarts`, `dlq-panel`) and the always-empty API-perf tiles pending Gap 292's instrumentation deploy.
+
 ---
 
 ### File Coordinates

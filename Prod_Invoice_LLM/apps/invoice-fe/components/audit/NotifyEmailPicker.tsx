@@ -49,36 +49,31 @@ export default function NotifyEmailPicker({ emailSet, selected, onChange, classN
   };
 
   return (
-    <div className={className ?? "rounded-lg border border-slate-700/60 bg-slate-900/40 p-3"}>
-      <p className="text-xs font-medium text-slate-300 mb-1">Notify registered emails</p>
-      <p className="text-[11px] text-slate-500 mb-2">
-        Staff only — the app never emails customers. Leave unchecked to skip email.
-      </p>
-      {loading && <p className="text-[11px] text-slate-500">Loading…</p>}
-      {error && <p className="text-[11px] text-amber-400">{error}</p>}
+    <div className={className ?? "flex items-center gap-3 rounded-lg border border-slate-700/60 bg-slate-900/40 px-3 py-1.5 text-xs shrink-0"}>
+      <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">
+        Notify registered emails:
+      </span>
+      {loading && <span className="text-[11px] text-slate-500 italic">Loading…</span>}
+      {error && <span className="text-[11px] text-amber-400">{error}</span>}
       {!loading && !error && senders.length === 0 && (
-        <p className="text-[11px] text-slate-500">
-          No {emailSet} addresses in Settings → Email. Add some to enable notify.
-        </p>
+        <span className="text-[11px] text-slate-500 italic">None set ({emailSet})</span>
       )}
-      <ul className="space-y-1.5 max-h-28 overflow-y-auto">
+      <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar flex-1 py-0.5">
         {senders.map((s) => {
           const email = s.email.toLowerCase();
           return (
-            <li key={s.id}>
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="rounded border-slate-600 bg-slate-800"
-                  checked={selected.includes(email)}
-                  onChange={() => toggle(email)}
-                />
-                <span className="truncate">{s.email}</span>
-              </label>
-            </li>
+            <label key={s.id} className="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer whitespace-nowrap hover:text-white">
+              <input
+                type="checkbox"
+                className="rounded border-slate-600 bg-slate-800 accent-blue-500"
+                checked={selected.includes(email)}
+                onChange={() => toggle(email)}
+              />
+              <span>{s.email}</span>
+            </label>
           );
         })}
-      </ul>
+      </div>
     </div>
   );
 }

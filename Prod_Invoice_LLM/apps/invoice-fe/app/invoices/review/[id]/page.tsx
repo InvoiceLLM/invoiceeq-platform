@@ -388,7 +388,16 @@ export default function AuditorReviewPage() {
         if (res.data.flow_direction?.toUpperCase() === "OUTBOUND") {
           router.replace(`/invoices/outbound-review/${id}`);
         } else {
-          setInvoice(res.data);
+          let items: LineItem[] = [];
+          if (Array.isArray(res.data.items)) {
+            items = res.data.items;
+          } else if (typeof res.data.items === "string") {
+            try {
+              const parsed = JSON.parse(res.data.items);
+              if (Array.isArray(parsed)) items = parsed;
+            } catch {}
+          }
+          setInvoice({ ...res.data, items });
           setAlerts(res.data.sa_alerts ?? []);
           setLoading(false);
         }
@@ -540,7 +549,7 @@ export default function AuditorReviewPage() {
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto xl:overflow-hidden">
+    <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto custom-scrollbar">
         {/* FE Gap 110: title/subtitle/Back all moved into the shared header
             above; the live status badge rides up there too rather than holding
             a row down here.
@@ -697,102 +706,11 @@ export default function AuditorReviewPage() {
             and the Audit Queue is the place to move between them. Confirmed
             absent in code as well */}
 
-        {/* Top Banner — Discrepancy Warnings (Collapsible) */}
-        <section
-          data-testid="alerts-banner"
-          className="flex flex-col rounded-xl border border-yellow-700/50 bg-[#0F172A] overflow-hidden shrink-0"
-        >
-          <button
-            type="button"
-            onClick={() => setIsAlertsExpanded((prev) => !prev)}
-            className="flex items-center justify-between gap-3 px-4 py-2.5 bg-yellow-950/20 hover:bg-yellow-950/30 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                Discrepancy Warnings
-                <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-0.5 font-mono text-[10px] font-semibold normal-case tracking-normal text-[#10B981]">
-                  SENTINEL
-                </span>
-              </p>
-              {alerts.length > 0 ? (
-                <span className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-950/40 px-2 py-0.5 text-[11px] font-medium text-yellow-300">
-                  {alerts.length} open alert{alerts.length === 1 ? "" : "s"}
-                </span>
-              ) : (
-                <span className="shrink-0 rounded-md border border-emerald-700/50 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
-                  No open alerts
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
-              <span>{isAlertsExpanded ? "Collapse" : "Expand alerts"}</span>
-              <ChevronDown
-                size={14}
-                className={`transition-transform duration-200 ${isAlertsExpanded ? "rotate-180" : ""}`}
-              />
-            </div>
-          </button>
 
-          {isAlertsExpanded && (
-            <div className="border-t border-[#222D3D] p-4 max-h-[250px] overflow-y-auto custom-scrollbar">
-              <AlertConsole
-                invoiceId={invoice.id}
-                alerts={alerts}
-                currentStatus={invoice.status}
-                onAlertsChange={setAlerts}
-                corrections={corrections}
-                applyAsStandingRule={applyAsStandingRule}
-                resolveCorrection={resolveCorrection}
-                onFocusField={(field) =>
-                  setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))
-                }
-                onDismissed={(res) => {
-                  if (Object.keys(corrections).length > 0) {
-                    setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
-                    setCorrections({});
-                  }
-                  setApplyAsStandingRule(false);
-                  if (res?.suggested_rule) setSuggestedRule(res.suggested_rule);
-                  if (res?.standing_rule_result) setStandingRuleResult(res.standing_rule_result);
-                }}
-              />
 
-              {standingRuleResult && (
-                <div
-                  className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
-                    standingRuleResult.applied
-                      ? "border-emerald-600/40 bg-emerald-950/20 text-emerald-200"
-                      : "border-amber-600/40 bg-amber-950/20 text-amber-200"
-                  }`}
-                >
-                  <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-                  <div className="flex-1">
-                    {standingRuleResult.applied ? (
-                      <>
-                        <p className="font-medium">Standing rule applied.</p>
-                        {standingRuleResult.rules_added?.map((r, i) => (
-                          <p key={i} className="text-emerald-300/80 mt-0.5">{r}</p>
-                        ))}
-                      </>
-                    ) : (
-                      <p>{standingRuleResult.reason || "Rule not applied."}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => setStandingRuleResult(null)}
-                    className="shrink-0 text-current opacity-60 hover:opacity-100"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
-        <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:overflow-hidden">
-          {/* COLUMN 1 — PDF Viewer (unchanged; it already manages its own
-              internal scrolling and zoom/rotate toolbar). */}
+        {/* 3-COLUMN SPLIT LAYOUT: PDF (40%) | Extracted Fields (30%) | Line Items & Alerts (30%) */}
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)_minmax(0,1fr)] flex-1">
+          {/* COLUMN 1 (40% width) — PDF Viewer */}
           <PdfViewerCanvas
             invoiceId={invoice.id}
             title={`Invoice ${invoice.invoice_number ?? invoice.id}`}
@@ -800,333 +718,150 @@ export default function AuditorReviewPage() {
             coordinates={invoice.coordinates ?? []}
           />
 
-          {/* COLUMN 2 — Fields & Line Items */}
+          {/* COLUMN 2 (30% width) — Extracted Fields & Metadata */}
           <section
             data-testid="fields-panel"
-            className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A] overflow-hidden"
+            className="flex flex-col rounded-xl border border-[#222D3D] bg-[#0F172A] overflow-hidden"
           >
-            {/* SECTION 1: Correctable Fields Form (Independent scroll container) */}
-            <div className="flex flex-col border-b border-[#222D3D]">
-              <div className="flex items-center justify-between gap-2 bg-[#0B1220] px-4 py-2.5 border-b border-[#222D3D]">
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                  Extracted Fields
-                </p>
-                <span className="shrink-0 rounded-md border border-[#222D3D] px-2 py-0.5 text-[11px] text-slate-500">
-                  {isResolved ? "Resolved — read-only" : "Click a field to correct it"}
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-4 overflow-y-auto custom-scrollbar p-4 max-h-[300px] xl:max-h-[340px]">
-                <div className="flex flex-col gap-3">
-                  {CORRECTABLE_FIELDS.map(({ key, label, azureKey, type }) => {
-                    const confidence = invoice.field_confidence?.[azureKey];
-                    const isLowConfidence = confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
-                    const rawValue = displayValue(key);
-                    const displayed =
-                      type === "number" && !(key in corrections)
-                        ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
-                        : rawValue;
-                    return (
-                      <EditableField
-                        key={key as string}
-                        label={label}
-                        value={displayed}
-                        originalDisplay={originalDisplay(key)}
-                        onChange={(next) => handleFieldChange(key as string, next)}
-                        onRevert={() => handleRevertField(key as string)}
-                        isDirty={key in corrections}
-                        isLowConfidence={isLowConfidence}
-                        confidence={confidence}
-                        isFlagged={flaggedFields.has(key as string)}
-                        disabled={isResolved}
-                        focusNonce={
-                          focusRequest?.field === (key as string) ? focusRequest.nonce : undefined
-                        }
-                        inputType={type}
-                      />
-                    );
-                  })}
-                </div>
-
-                {/* Additional Extracted Metadata Panel */}
-                {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
-                  <div
-                    data-testid="extracted-metadata-panel"
-                    className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
-                  >
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
-
-                    {invoice.currency && (
-                      <div className="flex justify-between gap-3 text-xs">
-                        <span className="min-w-0 break-words text-slate-500">Currency</span>
-                        <span className="min-w-0 break-all text-right font-mono text-slate-300">{invoice.currency}</span>
-                      </div>
-                    )}
-
-                    {(invoice.discount_amount != null || invoice.discount_percent != null) && (
-                      <div className="flex justify-between gap-3 text-xs">
-                        <span className="min-w-0 break-words text-slate-500">Invoice Discount</span>
-                        <span className="min-w-0 break-all text-right font-mono text-slate-300">
-                          {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
-                          {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
-                        </span>
-                      </div>
-                    )}
-
-                    {invoice.tax_ids && invoice.tax_ids.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
-                        {invoice.tax_ids.map((t, i) => (
-                          <div key={i} className="flex justify-between gap-3 text-xs">
-                            <span className="min-w-0 break-words text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
-                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{t.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {invoice.taxes && invoice.taxes.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
-                        {invoice.taxes.map((t, i) => (
-                          <div key={i} className="flex justify-between gap-3 text-xs">
-                            <span className="min-w-0 break-words text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
-                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
-                        {invoice.payment_instructions.map((p, i) => (
-                          <div key={i} className="flex min-w-0 flex-col text-xs">
-                            <span className="break-words text-slate-500">{p.method_type}</span>
-                            <span className="font-mono text-slate-400 break-all">{p.details}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {invoice.references && invoice.references.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">References</span>
-                        {invoice.references.map((r, i) => (
-                          <div key={i} className="flex justify-between gap-3 text-xs">
-                            <span className="min-w-0 break-words text-slate-500">{r.ref_type}</span>
-                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{r.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {invoice.discounts && invoice.discounts.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Discount Breakdown</span>
-                        {invoice.discounts.map((d, i) => (
-                          <div key={i} className="flex justify-between gap-3 text-xs">
-                            <span className="min-w-0 break-words text-slate-500">{d.discount_type}{d.percent != null ? ` ${d.percent}%` : ""}</span>
-                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(d.amount, invoice.currency)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
-                        {invoice.compliance_metadata.map((c, i) => (
-                          <div key={i} className="flex justify-between gap-3 text-xs">
-                            <span className="min-w-0 break-words text-slate-500">{c.key}</span>
-                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{c.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+            <div className="flex items-center justify-between gap-2 bg-[#0B1220] px-4 py-2.5 border-b border-[#222D3D]">
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                Extracted Fields
+              </p>
+              <span className="shrink-0 rounded-md border border-[#222D3D] px-2 py-0.5 text-[11px] text-slate-500">
+                {isResolved ? "Resolved — read-only" : "Click to edit"}
+              </span>
             </div>
 
-            {/* SECTION 2: Line Items Table (Independent scroll container with persistent header) */}
-            <div className="flex flex-1 flex-col bg-[#0B1220] p-4 min-h-[220px] overflow-hidden">
-              <div className="mb-3 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                    Line Items
-                  </p>
-                  <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300 border border-slate-700">
-                    {(isEditingItems ? editedItems : (invoice.items ?? [])).length} items
-                  </span>
-                  <span className="rounded bg-blue-950/40 px-2 py-0.5 font-mono text-[11px] text-blue-300 border border-blue-800/40">
-                    Subtotal: {fmt((isEditingItems ? editedItems : (invoice.items ?? [])).reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
-                  </span>
-                </div>
+            <div className="flex flex-1 flex-col gap-4 overflow-y-auto custom-scrollbar p-4">
+              <div className="flex flex-col gap-3">
+                {CORRECTABLE_FIELDS.map(({ key, label, azureKey, type }) => {
+                  const confidence = invoice.field_confidence?.[azureKey];
+                  const isLowConfidence = confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
+                  const rawValue = displayValue(key);
+                  const displayed =
+                    type === "number" && !(key in corrections)
+                      ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
+                      : rawValue;
+                  return (
+                    <EditableField
+                      key={key as string}
+                      label={label}
+                      value={displayed}
+                      originalDisplay={originalDisplay(key)}
+                      onChange={(next) => handleFieldChange(key as string, next)}
+                      onRevert={() => handleRevertField(key as string)}
+                      isDirty={key in corrections}
+                      isLowConfidence={isLowConfidence}
+                      confidence={confidence}
+                      isFlagged={flaggedFields.has(key as string)}
+                      disabled={isResolved}
+                      focusNonce={
+                        focusRequest?.field === (key as string) ? focusRequest.nonce : undefined
+                      }
+                      inputType={type}
+                    />
+                  );
+                })}
+              </div>
 
-                {!isResolved && (
-                  isEditingItems ? (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={saveItems}
-                        className="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors"
-                      >
-                        Save Items
-                      </button>
-                      <button
-                        onClick={() => setIsEditingItems(false)}
-                        className="rounded bg-slate-700 px-2 py-1 text-xs font-semibold text-white hover:bg-slate-650 transition-colors"
-                      >
-                        Cancel
-                      </button>
+              {/* Additional Extracted Metadata Panel */}
+              {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
+                <div
+                  data-testid="extracted-metadata-panel"
+                  className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
+
+                  {invoice.currency && (
+                    <div className="flex justify-between gap-3 text-xs">
+                      <span className="min-w-0 break-words text-slate-500">Currency</span>
+                      <span className="min-w-0 break-all text-right font-mono text-slate-300">{invoice.currency}</span>
                     </div>
-                  ) : (
-                    <button
-                      onClick={startEditingItems}
-                      className="flex items-center gap-1 rounded bg-[#3B82F6] px-2 py-1 text-xs font-semibold text-white hover:bg-blue-500 transition-colors"
-                    >
-                      <Pencil size={12} />
-                      Edit Items
-                    </button>
-                  )
-                )}
-              </div>
+                  )}
 
-              <div className="flex-1 overflow-auto rounded-xl border border-[#222D3D] bg-[#0F172A] p-3 custom-scrollbar">
-                {isEditingItems ? (
-                  <table className="w-full border-collapse text-left">
-                    <thead>
-                      <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="pb-2 pr-3 font-medium w-8">#</th>
-                        <th className="pb-2 pr-3 font-medium">Description</th>
-                        <th className="pb-2 pr-3 text-right font-medium w-16">Qty</th>
-                        <th className="pb-2 pr-3 text-right font-medium w-24">Unit Price</th>
-                        <th className="pb-2 text-right font-medium w-24">Total</th>
-                        <th className="pb-2 text-center font-medium w-12">Delete</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#222D3D]/60">
-                      {editedItems.map((item, idx) => (
-                        <tr key={idx} className="text-sm text-slate-300">
-                          <td className="py-2 pr-3 text-slate-500 align-middle">{idx + 1}</td>
-                          <td className="py-2 pr-3 align-middle">
-                            <input
-                              type="text"
-                              value={item.description}
-                              onChange={(e) => updateItemField(idx, "description", e.target.value)}
-                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 focus:border-blue-500 outline-none"
-                            />
-                          </td>
-                          <td className="py-2 pr-3 align-middle">
-                            <input
-                              type="number"
-                              value={item.quantity ?? ""}
-                              onChange={(e) => {
-                                const qty = e.target.value === "" ? undefined : Number(e.target.value);
-                                updateItemField(idx, "quantity", qty);
-                              }}
-                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
-                            />
-                          </td>
-                          <td className="py-2 pr-3 align-middle">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={item.unit_price ?? ""}
-                              onChange={(e) => {
-                                const price = e.target.value === "" ? undefined : Number(e.target.value);
-                                updateItemField(idx, "unit_price", price);
-                              }}
-                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
-                            />
-                          </td>
-                          <td className="py-2 align-middle text-right">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={item.amount}
-                              onChange={(e) => updateItemField(idx, "amount", Number(e.target.value))}
-                              className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
-                            />
-                          </td>
-                          <td className="py-2 text-center align-middle">
-                            <button
-                              onClick={() => deleteLineItem(idx)}
-                              className="text-rose-500 hover:text-rose-400 p-1 transition-colors"
-                            >
-                              <X size={14} />
-                            </button>
-                          </td>
-                        </tr>
+                  {(invoice.discount_amount != null || invoice.discount_percent != null) && (
+                    <div className="flex justify-between gap-3 text-xs">
+                      <span className="min-w-0 break-words text-slate-500">Invoice Discount</span>
+                      <span className="min-w-0 break-all text-right font-mono text-slate-300">
+                        {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
+                        {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
+                      </span>
+                    </div>
+                  )}
+
+                  {invoice.tax_ids && invoice.tax_ids.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
+                      {invoice.tax_ids.map((t, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{t.value}</span>
+                        </div>
                       ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t border-[#222D3D]">
-                        <td colSpan={6} className="pt-3">
-                          <button
-                            onClick={addLineItem}
-                            className="text-xs text-blue-400 hover:text-blue-300 font-semibold"
-                          >
-                            + Add Line Item
-                          </button>
-                        </td>
-                      </tr>
-                      <tr className="border-t border-[#222D3D]">
-                        <td colSpan={4} className="pt-2 text-xs text-slate-500">
-                          Subtotal
-                        </td>
-                        <td className="pt-2 text-right text-xs font-medium text-slate-300">
-                          {fmt(editedItems.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
-                        </td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                ) : (
-                  invoice.items && invoice.items.length > 0 ? (
-                    <table className="w-full border-collapse text-left">
-                      <thead>
-                        <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
-                          <th className="pb-2 pr-3 font-medium">#</th>
-                          <th className="pb-2 pr-3 font-medium">Description</th>
-                          <th className="pb-2 pr-3 text-right font-medium">Qty</th>
-                          <th className="pb-2 pr-3 text-right font-medium">Unit Price</th>
-                          <th className="pb-2 text-right font-medium">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#222D3D]/60">
-                        {invoice.items.map((item, idx) => (
-                          <tr key={idx} className="text-sm text-slate-300">
-                            <td className="py-2 pr-3 text-slate-500">{idx + 1}</td>
-                            <td className="py-2 pr-3">{item.description}</td>
-                            <td className="py-2 pr-3 text-right text-slate-400">
-                              {item.quantity ?? "—"}
-                            </td>
-                            <td className="py-2 pr-3 text-right text-slate-400">
-                              {item.unit_price != null ? fmt(item.unit_price, invoice.currency) : "—"}
-                            </td>
-                            <td className="py-2 text-right font-medium text-slate-200">
-                              {fmt(item.amount, invoice.currency)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t border-[#222D3D]">
-                          <td colSpan={4} className="pt-2 text-xs text-slate-500">
-                            Subtotal
-                          </td>
-                          <td className="pt-2 text-right text-xs font-medium text-slate-300">
-                            {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  ) : (
-                    <p className="text-xs text-slate-500 italic py-4">No line items extracted.</p>
-                  )
-                )}
-              </div>
+                    </div>
+                  )}
+
+                  {invoice.taxes && invoice.taxes.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
+                      {invoice.taxes.map((t, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
+                      {invoice.payment_instructions.map((p, i) => (
+                        <div key={i} className="flex min-w-0 flex-col text-xs">
+                          <span className="break-words text-slate-500">{p.method_type}</span>
+                          <span className="font-mono text-slate-400 break-all">{p.details}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {invoice.references && invoice.references.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">References</span>
+                      {invoice.references.map((r, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{r.ref_type}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{r.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {invoice.discounts && invoice.discounts.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Discount Breakdown</span>
+                      {invoice.discounts.map((d, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{d.discount_type}{d.percent != null ? ` ${d.percent}%` : ""}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(d.amount, invoice.currency)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
+                      {invoice.compliance_metadata.map((c, i) => (
+                        <div key={i} className="flex justify-between gap-3 text-xs">
+                          <span className="min-w-0 break-words text-slate-500">{c.key}</span>
+                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{c.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Pinned Corrections Footer */}
@@ -1163,12 +898,290 @@ export default function AuditorReviewPage() {
             {isResolved && (
               <div className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A] flex items-center gap-2 text-sm text-slate-400">
                 <CheckCircle size={16} className="text-emerald-400" />
-                This invoice has been resolved as{" "}
-                <strong className="ml-1 text-slate-200">{invoice.status}</strong>.
+                Resolved as <strong className="ml-1 text-slate-200">{invoice.status}</strong>.
               </div>
             )}
           </section>
-        </div>
+
+          {/* COLUMN 3 (30% width) — Discrepancy Warnings & Line Items Table */}
+          <section data-testid="column-3-panel" className="flex flex-col gap-4">
+            {/* Discrepancy Warnings Card */}
+            <div
+              data-testid="alerts-banner"
+              className="flex flex-col rounded-xl border border-yellow-700/50 bg-[#0F172A] overflow-hidden shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => setIsAlertsExpanded((prev) => !prev)}
+                className="flex items-center justify-between gap-3 px-4 py-2.5 bg-yellow-950/20 hover:bg-yellow-950/30 transition-colors text-left"
+              >
+                <div className="flex items-center gap-3">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
+                    Discrepancy Warnings
+                    <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-0.5 font-mono text-[10px] font-semibold normal-case tracking-normal text-[#10B981]">
+                      SENTINEL
+                    </span>
+                  </p>
+                  {alerts.length > 0 ? (
+                    <span className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-950/40 px-2 py-0.5 text-[11px] font-medium text-yellow-300">
+                      {alerts.length} open alert{alerts.length === 1 ? "" : "s"}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 rounded-md border border-emerald-700/50 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
+                      No open alerts
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
+                  <span>{isAlertsExpanded || alerts.length > 0 ? "Collapse" : "Expand alerts"}</span>
+                  <ChevronDown
+                    size={14}
+                    className={`transition-transform duration-200 ${isAlertsExpanded || alerts.length > 0 ? "rotate-180" : ""}`}
+                  />
+                </div>
+              </button>
+
+              {(isAlertsExpanded || alerts.length > 0) && (
+                <div className="border-t border-[#222D3D] p-4 max-h-[300px] overflow-y-auto custom-scrollbar">
+                  <AlertConsole
+                    invoiceId={invoice.id}
+                    alerts={alerts}
+                    currentStatus={invoice.status}
+                    onAlertsChange={setAlerts}
+                    corrections={corrections}
+                    applyAsStandingRule={applyAsStandingRule}
+                    resolveCorrection={resolveCorrection}
+                    onFocusField={(field) =>
+                      setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))
+                    }
+                    onDismissed={(res) => {
+                      if (Object.keys(corrections).length > 0) {
+                        setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
+                        setCorrections({});
+                      }
+                      setApplyAsStandingRule(false);
+                      if (res?.suggested_rule) setSuggestedRule(res.suggested_rule);
+                      if (res?.standing_rule_result) setStandingRuleResult(res.standing_rule_result);
+                    }}
+                  />
+
+                  {standingRuleResult && (
+                    <div
+                      className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                        standingRuleResult.applied
+                          ? "border-emerald-600/40 bg-emerald-950/20 text-emerald-200"
+                          : "border-amber-600/40 bg-amber-950/20 text-amber-200"
+                      }`}
+                    >
+                      <ShieldCheck size={14} className="mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        {standingRuleResult.applied ? (
+                          <>
+                            <p className="font-medium">Standing rule applied.</p>
+                            {standingRuleResult.rules_added?.map((r, i) => (
+                              <p key={i} className="text-emerald-300/80 mt-0.5">{r}</p>
+                            ))}
+                          </>
+                        ) : (
+                          <p>{standingRuleResult.reason || "Rule not applied."}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setStandingRuleResult(null)}
+                        className="shrink-0 text-current opacity-60 hover:opacity-100"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Line Items Card */}
+            <div
+              data-testid="line-items-panel"
+              className="flex flex-col rounded-xl border border-[#222D3D] bg-[#0F172A] overflow-hidden flex-1"
+            >
+            <div className="flex items-center justify-between gap-2 bg-[#0B1220] px-4 py-2.5 border-b border-[#222D3D] shrink-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  Line Items
+                </p>
+                <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300 border border-slate-700">
+                  {(isEditingItems ? editedItems : (invoice.items ?? [])).length} items
+                </span>
+                <span className="rounded bg-blue-950/40 px-2 py-0.5 font-mono text-[11px] text-blue-300 border border-blue-800/40">
+                  Subtotal: {fmt((isEditingItems ? editedItems : (invoice.items ?? [])).reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
+                </span>
+              </div>
+
+              {!isResolved && (
+                isEditingItems ? (
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      onClick={saveItems}
+                      className="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors"
+                    >
+                      Save Items
+                    </button>
+                    <button
+                      onClick={() => setIsEditingItems(false)}
+                      className="rounded bg-slate-700 px-2 py-1 text-xs font-semibold text-white hover:bg-slate-650 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={startEditingItems}
+                    className="flex items-center gap-1 rounded bg-[#3B82F6] px-2 py-1 text-xs font-semibold text-white hover:bg-blue-500 transition-colors shrink-0"
+                  >
+                    <Pencil size={12} />
+                    Edit Items
+                  </button>
+                )
+              )}
+            </div>
+
+            <div className="flex-1 overflow-auto custom-scrollbar p-3">
+              {isEditingItems ? (
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
+                      <th className="pb-2 pr-2 font-medium w-6">#</th>
+                      <th className="pb-2 pr-2 font-medium">Description</th>
+                      <th className="pb-2 pr-2 text-right font-medium w-14">Qty</th>
+                      <th className="pb-2 pr-2 text-right font-medium w-20">Unit Price</th>
+                      <th className="pb-2 text-right font-medium w-20">Total</th>
+                      <th className="pb-2 text-center font-medium w-8">Del</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#222D3D]/60">
+                    {editedItems.map((item, idx) => (
+                      <tr key={idx} className="text-xs text-slate-300">
+                        <td className="py-2 pr-2 text-slate-500 align-middle">{idx + 1}</td>
+                        <td className="py-2 pr-2 align-middle">
+                          <input
+                            type="text"
+                            value={item.description}
+                            onChange={(e) => updateItemField(idx, "description", e.target.value)}
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 focus:border-blue-500 outline-none"
+                          />
+                        </td>
+                        <td className="py-2 pr-2 align-middle">
+                          <input
+                            type="number"
+                            value={item.quantity ?? ""}
+                            onChange={(e) => {
+                              const qty = e.target.value === "" ? undefined : Number(e.target.value);
+                              updateItemField(idx, "quantity", qty);
+                            }}
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                          />
+                        </td>
+                        <td className="py-2 pr-2 align-middle">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={item.unit_price ?? ""}
+                            onChange={(e) => {
+                              const price = e.target.value === "" ? undefined : Number(e.target.value);
+                              updateItemField(idx, "unit_price", price);
+                            }}
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                          />
+                        </td>
+                        <td className="py-2 align-middle text-right">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={item.amount}
+                            onChange={(e) => updateItemField(idx, "amount", Number(e.target.value))}
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                          />
+                        </td>
+                        <td className="py-2 text-center align-middle">
+                          <button
+                            onClick={() => deleteLineItem(idx)}
+                            className="text-rose-500 hover:text-rose-400 p-1 transition-colors"
+                          >
+                            <X size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-[#222D3D]">
+                      <td colSpan={6} className="pt-3">
+                        <button
+                          onClick={addLineItem}
+                          className="text-xs text-blue-400 hover:text-blue-300 font-semibold"
+                        >
+                          + Add Line Item
+                        </button>
+                      </td>
+                    </tr>
+                    <tr className="border-t border-[#222D3D]">
+                      <td colSpan={4} className="pt-2 text-xs text-slate-500">
+                        Subtotal
+                      </td>
+                      <td className="pt-2 text-right text-xs font-medium text-slate-300">
+                        {fmt(editedItems.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              ) : (
+                invoice.items && invoice.items.length > 0 ? (
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
+                        <th className="pb-2 pr-2 font-medium">#</th>
+                        <th className="pb-2 pr-2 font-medium">Description</th>
+                        <th className="pb-2 pr-2 text-right font-medium">Qty</th>
+                        <th className="pb-2 pr-2 text-right font-medium">Unit Price</th>
+                        <th className="pb-2 text-right font-medium">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#222D3D]/60">
+                      {invoice.items.map((item, idx) => (
+                        <tr key={idx} className="text-xs text-slate-300">
+                          <td className="py-2 pr-2 text-slate-500">{idx + 1}</td>
+                          <td className="py-2 pr-2">{item.description}</td>
+                          <td className="py-2 pr-2 text-right text-slate-400">
+                            {item.quantity ?? "—"}
+                          </td>
+                          <td className="py-2 pr-2 text-right text-slate-400">
+                            {item.unit_price != null ? fmt(item.unit_price, invoice.currency) : "—"}
+                          </td>
+                          <td className="py-2 text-right font-medium text-slate-200">
+                            {fmt(item.amount, invoice.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-[#222D3D]">
+                        <td colSpan={4} className="pt-2 text-xs text-slate-500">
+                          Subtotal
+                        </td>
+                        <td className="pt-2 text-right text-xs font-medium text-slate-300">
+                          {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                ) : (
+                  <p className="text-xs text-slate-500 italic py-4">No line items extracted.</p>
+                )
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
 
         {showRejectModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">

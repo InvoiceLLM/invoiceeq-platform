@@ -244,14 +244,13 @@ module alertRules './modules/monitoring/alert-rules.bicep' = {
   }
 }
 
-// Feature 19 (Task 19.5): Deploy Azure Workbook Operations Dashboard
-module dashboard './modules/monitoring/dashboard.bicep' = {
-  name: 'dashboard-deploy'
-  params: {
-    location: location
-    logAnalyticsWorkspaceId: logAnalytics.id
-  }
-}
+// Feature 19 (Task 19.5)'s Azure Workbook Operations Dashboard module was retired
+// 2026-08-24: superseded by infra/workbook-cost-health-only.bicep's
+// cost_health_workbook.json (Feature 20), and its live resource
+// (9a8088e9-a2c8-5957-8f83-84627045826c, "Invoice AI - Production Operations &
+// Observability") was deleted directly via `az resource delete`. This module was
+// never intentionally deployed before -- it only went live because it stayed
+// wired into this stage -- so removing the wiring here stops it recreating.
 
 // ================= Outputs =================
 output logAnalyticsWorkspaceId string = logAnalytics.id
@@ -259,6 +258,5 @@ output actionGroupId string = actionGroup.outputs.actionGroupId
 output criticalActionGroupId string = actionGroup.outputs.criticalActionGroupId
 output infoActionGroupId string = actionGroup.outputs.infoActionGroupId
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
-output workbookId string = dashboard.outputs.workbookId
 
 

@@ -29,7 +29,7 @@ param location string = resourceGroup().location
 param workbookDisplayName string = 'Invoice AI — Cost & Health/Performance (Feature 19/20)'
 
 @description('A stable GUID for this workbook resource name, so re-deploys update the same resource rather than creating duplicates.')
-param workbookId string = 'a7c1e9d4-2b6f-4a3e-9c7d-8e5f1b2a3c4d'
+param workbookId string = '618c81c7-353d-498a-93be-becc2e3e84cf'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: 'law-invoicellm-dev'

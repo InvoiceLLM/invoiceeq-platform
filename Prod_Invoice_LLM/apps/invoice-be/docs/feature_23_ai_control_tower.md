@@ -441,15 +441,17 @@ Mapped onto the real graph in `agents/sage_orchestrator.py`:
 | Level | What it is in SAGE | Captures |
 |---|---|---|
 | **Run** | One LLM call — a `_plan_node` invocation, a `_synthesize_node` invocation, or the LLM inside `identify_invoices`/`search_invoices`/`aggregate` | Assembled system prompt, tool definitions offered, model output including tool calls, tokens, latency |
-| **Trace** | One full turn — `plan → act → plan → … → synthesize` or `→ clarify` | Node sequence, every tool call with its real result, generated SQL, `stop_reason`, total call count. `MAX_TOOL_CALLS`/`tool_call_budget_exhausted` are trace-level properties, currently invisible outside a debugger |
-| **Thread** | A chat session across turns | Where this codebase is weakest — Gap 237 (follow-up dropped rows) and Gap 276 (prior SQL reused after a topic change) are both context-drift failures, and neither is observable today. A thread has to be reconstructed from `ChatMessage` rows plus each turn's trace; "drift" as a signal doesn't exist yet |
+| **Trace** | One full turn — `plan → act → plan → … → synthesize` or `→ clarify` | Node sequence, every tool call with its real result, generated SQL, `stop_reason`, total call count. `MAX_TOOL_CALLS`/`tool_call_budget_exhausted` are trace-level properties, currently invisible outside a debugger — **not built; see Gap 302** |
+| **Thread** | A chat session across turns | Where this codebase is weakest — Gap 237 (follow-up dropped rows) and Gap 276 (prior SQL reused after a topic change) are both context-drift failures, and neither is observable today. A thread has to be reconstructed from `ChatMessage` rows plus each turn's trace; "drift" as a signal doesn't exist yet — **not built; see Gap 303** (note 237/276 are *closed bugs* cited as the failure class, not the gap for building the detector) |
 
 Run-level and Trace-level capture are mostly achievable by extending Phase 1's existing
 `tracked_llm_call()`/`track_agent_call()` (already real, already wired into `sage.planner`/
 `sage.synthesis`) rather than new instrumentation — the primitive already exists, it just doesn't
 yet persist the full prompt/tool-call detail a Trace needs, only the summary fields a cost/latency
 rollup needs. Thread-level capture needs new work: no mechanism today reconstructs a session's turn
-sequence with drift detection.
+sequence with drift detection. **Both are now numbered gaps in `be_features_tracker.md` — Gap 302
+(Trace) and Gap 303 (Thread)** — filed 2026-08-24 so the plan above stops being the only record of
+them.
 
 ## Evaluation tiers, seeded from gap history
 
@@ -700,11 +702,13 @@ read this doc; a None value emits no `value` field at all rather than a 0.0. Nei
 fixed by this — `stop_reason` still never reaches `ChatMessage`, turn latency is still a
 row-timestamp delta — and both statements are reproduced verbatim in workbook section 6's own
 header table. **No job calls `emit_online_signals()` on a schedule**, so the panel is empty today,
-and it says that empty means "nothing has run", not "no problems found".
+and it says that empty means "nothing has run", not "no problems found". **Still true as of
+2026-08-24 and now tracked as Gap 305** — the function has zero callers repo-wide, even though the
+`ChatMessage`/`ChatFeedback` source data is populated by real production traffic.
 
 ### Still open after this pass
 
-* **Thread-level drift detection (Gaps 237/276) is not built, deliberately.** The doc scopes it as
+* **Thread-level drift detection (Gaps 237/276 shape) is not built, deliberately — now Gap 303.** The doc scopes it as
   needing new design work and it does. Nothing in `online_eval_signals.py` detects drift; the seed
   script recovers *ordered multi-turn scripts* (10 follow-up links from the banks' own annotations,
   plus Gap 237's 2-turn capture), which is the bounded input such a detector would need, but no
@@ -1529,7 +1533,11 @@ that has already produced its numbers has nothing to gain from thirty seconds of
   exported. Configuring at import would fix that and would also change ingestion volume
   and cost for a nightly 20-case run; that is its own decision, not one to fold into this
   change silently. The same applies to `track_eval_result`'s per-turn rows, which are
-  emitted during `persist()`, before this call.
+  emitted during `persist()`, before this call. **This is one half of Gap 304** (filed
+  2026-08-24): because benchmark runs are excluded from `llm_agent_call`, cost/latency is
+  sourced from real traffic only — and because `agent_eval_run` is written only by
+  `scripts/run_agent_eval.py:800`, quality is sourced from golden-bank runs only. No field
+  is dual-sourced, which is what the tile design assumes.
 * **No workbook panel reads either new event yet.** The events exist and are shaped for
   KQL (`gate_failed` and `pass_rate` are numbers so `avg()` needs no parse step); no
   `.workbook.json` has been updated to chart them.
@@ -3328,9 +3336,9 @@ deployed** — `az deployment group create` was deliberately not run, pending fo
       `Storage Blob Data Contributor` is already granted at account scope, verified live. **No
       workbook panel reads either event yet**, and nothing has reached `customEvents` for real —
       that needs a commit, a CI build and a deployed job. See "The result mirror"
-- [ ] Thread-level drift detection (Gaps 237/276 shape) — **not started, deliberately.** Needs new
-      design work per "Evaluation tiers"; the seed script recovers the bounded multi-turn scripts
-      such a detector would consume, but no detector exists
+- [ ] Thread-level drift detection (Gaps 237/276 shape) — **not started, deliberately. Now Gap 303.**
+      Needs new design work per "Evaluation tiers"; the seed script recovers the bounded multi-turn
+      scripts such a detector would consume, but no detector exists
 - [ ] Codify trigger — the extraction half exists (`scripts/seed_golden_bank.py`); nothing runs it
       when a gap closes. Still a **Decision required** on the mechanism
 - [~] Extend the SAGE parity-harness pattern to extraction and chat classify/SQL-gen, for

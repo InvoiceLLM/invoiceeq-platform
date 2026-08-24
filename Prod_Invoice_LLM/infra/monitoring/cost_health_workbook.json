@@ -2,13 +2,6 @@
   "version": "Notebook/1.0",
   "items": [
     {
-      "type": 1,
-      "content": {
-        "json": "## Invoice AI — Cost & Health/Performance Operations Workbook (Feature 19/20)\n\nCombined Azure Workbook covering **Area 1 (Cost)** and **Area 2 (Health/Performance)** in one page, per the founder's 2026-08-23 scoping decision recorded in `feature_20_observability_monitoring_alerts.md`.\n\n**Deliberately no tabs.** This session's earlier workbook build (Feature 23's AI Control Tower) hit a real, multi-round set of Workbooks bugs — an invented `\"style\": \"tabs\"` property that Azure silently ignores, a `customWidth` written with a `%` unit that Workbooks does not accept, and a `tiles` visualization that clipped titles and grew scrollbars no matter how it was resized. Every panel below is stacked full-width on a single page instead, which avoids all three failure classes outright rather than re-fixing them a fourth time.\n\n**A blank panel means \"no data returned\", not necessarily \"healthy zero.\"** The table below states, panel by panel, whether it is genuinely live today, checked 2026-08-23 against the real `law-invoicellm-dev` workspace and the real subscription — not assumed from documentation.\n\n| # | Panel | Source | Live today? |\n|---|---|---|---|\n| 1 | Spend trend + budget/forecast | `AppEvents` (`azure_cost_snapshot`) | **Yes.** 1 snapshot event exists. The budget is now correctly 20,000 INR with 50/75/95% thresholds (Gap 295's fix, confirmed live via `az consumption budget show`) — but that fix landed *after* the one sweep run this event came from, so the `budget`/percent-used figures **shown in this event** still reflect the old ₹150 budget until `sweep_azure_cost.py` runs again. |\n| 2 | Spend by service | `AppEvents` (`azure_cost_slice`) | **Yes.** 19 slice events, reconciling to the same month-to-date total as panel 1. |\n| 3 | Container status (replicas / CPU% / memory%) | `AzureMetrics` | **Yes.** Native Container Apps platform metrics — no new instrumentation. |\n| 4 | Container scale config (min/max replicas) | Azure Resource Graph | **Yes.** |\n| 5 | Container restarts (24h) | `AzureMetrics` | **Yes.** 0 rows today is a real verified zero, not a broken query. |\n| 6 | Database status — PostgreSQL | `AzureMetrics` | **Yes.** |\n| 7 | Database status — Redis | `AzureMetrics` | **Yes.** |\n| 8 | Dead-letter queue (poison messages) | `ContainerAppConsoleLogs_CL` | **Yes** — same query the Sev-1 DLQ alert (`alert-rules.bicep`) uses. 0 rows over 7 days today is a real verified zero. |\n| 9 | API performance by feature area | `AppRequests` | **Query mechanics are live** (schema resolves, the `case()` grouping executes correctly against real rows) **but real container traffic is 0.** Gap 292's fix (`FastAPIInstrumentor.instrument_app`) is not yet deployed to `ca-invoice-be-dev`. The only 4 rows in `AppRequests` today are tagged `AppRoleName = invoice-be-local-f20-verify` (a local verification run, not real traffic) and are filtered out of this panel so it does not show fabricated traffic — it will show 0 rows until the fix deploys, which is the honest state. |\n| 10 | Recent alerts | Azure Resource Graph (`alertsmanagementresources`) | **Yes.** Reuses the exact query pattern the (now-deleted) AI Control Tower workbook's Health tab used, re-verified live today. |\n\n**2026-08-24 update:** two panels removed from this workbook. Extraction Quality (formerly row 10) moved to Feature 23's AI Eval & Observability workbook scope — see `services/extraction_quality_rollup.py` and the F23 telemetry mirror (`services/benchmark_artifacts.py`). CI/CD gate status (formerly row 11) was removed outright, not moved — founder already gets separate alerts from GitHub directly, no need for a duplicate view here.\n\n**How this was verified:** every query below was run live against the real `law-invoicellm-dev` workspace and the real subscription via `az monitor log-analytics query` / `az graph query` on 2026-08-23, and the row counts/values quoted in this table are what those runs returned — not assumed from the underlying feature doc. **What was not verified:** how any of this actually renders in the Azure Portal. This build has no interactive portal access — every claim above is about query correctness and returned data, not pixels.\n"
-      },
-      "name": "header"
-    },
-    {
       "type": 9,
       "content": {
         "version": "KqlParameterItem/1.0",
@@ -36,7 +29,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Area 1 — Cost\n\nReal Azure spend from the Cost Management API (Task 19.11), mirrored into Application Insights as `azure_cost_snapshot` / `azure_cost_slice` custom events by `scripts/sweep_azure_cost.py`. Not scheduled yet — each panel reflects however many sweep runs have happened."
+        "json": "## Area 1 — Cost — *from `azure_cost_snapshot`/`azure_cost_slice`, mirrored by `scripts/sweep_azure_cost.py`, not on a schedule yet*"
       },
       "name": "cost-header"
     },
@@ -44,12 +37,37 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where Name == \"azure_cost_snapshot\"\n| extend d = parse_json(Properties)\n| project TimeGenerated,\n          month_to_date_spend = todouble(d.month_to_date_total),\n          budget_amount = todouble(d.budget_amount),\n          month_end_forecast = todouble(d.budget_forecast_spend),\n          currency = tostring(d.currency)\n| render timechart",
+        "query": "AppEvents\n| where Name == \"azure_cost_snapshot\"\n| extend d = parse_json(Properties)\n| top 1 by TimeGenerated desc\n| project month_to_date_spend = todouble(d.month_to_date_total),\n          budget_amount = todouble(d.budget_amount),\n          month_end_forecast = todouble(d.budget_forecast_spend),\n          currency = tostring(d.currency)\n| extend spend_pct = iff(budget_amount > 0, round(100.0 * month_to_date_spend / budget_amount, 1), real(null)),\n         forecast_pct = iff(budget_amount > 0, round(100.0 * month_end_forecast / budget_amount, 1), real(null))\n| project Metrics = pack_array(\n    pack(\"Metric\", \"Month-to-date spend\", \"Value\", spend_pct, \"Detail\", strcat(currency, \" \", tostring(round(month_to_date_spend, 1)), \" of \", currency, \" \", tostring(round(budget_amount, 1)), \" budget\")),\n    pack(\"Metric\", \"Budget\", \"Value\", -1.0, \"Detail\", strcat(currency, \" \", tostring(round(budget_amount, 1)))),\n    pack(\"Metric\", \"Month-end forecast\", \"Value\", forecast_pct, \"Detail\", strcat(currency, \" \", tostring(round(month_end_forecast, 1)), \" projected vs. \", currency, \" \", tostring(round(budget_amount, 1)), \" budget\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
         "size": 0,
-        "title": "Month-to-date spend vs. budget vs. forecast (INR)",
+        "title": "Month-to-date spend vs. budget vs. forecast (INR) — Value is % of budget, actual amounts in Detail",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "timechart"
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": "==", "thresholdValue": "-1", "representation": "blue", "text": "n/a — see Detail" },
+                { "operator": ">=", "thresholdValue": "100", "representation": "red", "text": "{0}% of budget" },
+                { "operator": ">=", "thresholdValue": "80", "representation": "yellow", "text": "{0}% of budget" },
+                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}% of budget" }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
       },
       "name": "cost-trend-budget"
     },
@@ -57,12 +75,35 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where Name == \"azure_cost_slice\"\n| extend d = parse_json(Properties)\n| where tostring(d.dimension) == \"ServiceName\"\n| summarize arg_max(TimeGenerated, amount = todouble(d.amount)) by service = tostring(d.dimension_value)\n| project service, amount\n| order by amount desc\n| render barchart",
+        "query": "AppEvents\n| where Name == \"azure_cost_slice\"\n| extend d = parse_json(Properties)\n| where tostring(d.dimension) == \"ServiceName\"\n| summarize arg_max(TimeGenerated, amount = todouble(d.amount)) by service = tostring(d.dimension_value)\n| project Metric = service, Value = strcat(\"INR \", tostring(round(amount, 1)))\n| order by Metric asc",
         "size": 0,
         "title": "Spend by Azure service (latest snapshot)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "barchart"
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          }
+        }
       },
       "name": "cost-by-service"
     },
@@ -74,21 +115,35 @@
       "name": "health-header"
     },
     {
-      "type": 1,
-      "content": {
-        "json": "### Container status"
-      },
-      "name": "container-status-header"
-    },
-    {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AzureMetrics\n| where TimeGenerated > ago(1h)\n| where ResourceId has \"MICROSOFT.APP/CONTAINERAPPS\"\n| where MetricName in (\"Replicas\", \"CpuPercentage\", \"MemoryPercentage\")\n| summarize Value = avg(Average) by App = tolower(tostring(split(ResourceId, \"/\")[-1])), MetricName\n| evaluate pivot(MetricName, avg(Value))\n| order by App asc",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(1h)\n| where ResourceId has \"MICROSOFT.APP/CONTAINERAPPS\"\n| where MetricName in (\"CpuPercentage\", \"MemoryPercentage\")\n| summarize Value = round(avg(Average), 1) by App = tolower(tostring(split(ResourceId, \"/\")[-1])), MetricName\n| project Metric = strcat(App, \" — \", MetricName), Value\n| order by Metric asc",
         "size": 0,
-        "title": "Current replicas / CPU% / memory% (last 1h average, per container app)",
+        "title": "Current CPU% / memory% (last 1h average, per container app)",
         "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
+                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+              ]
+            }
+          }
+        }
       },
       "name": "container-status"
     },
@@ -96,14 +151,70 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "resources\n| where type =~ \"microsoft.app/containerapps\" and resourceGroup =~ \"rg-invoice-llm-dev\"\n| project App = tolower(tostring(name)),\n          minReplicas = tostring(properties.template.scale.minReplicas),\n          maxReplicas = tostring(properties.template.scale.maxReplicas),\n          provisioningState = tostring(properties.provisioningState),\n          runningStatus = tostring(properties.runningStatus)\n| order by App asc",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(1h)\n| where ResourceId has \"MICROSOFT.APP/CONTAINERAPPS\"\n| where MetricName == \"Replicas\"\n| summarize Value = round(avg(Average), 1) by App = tolower(tostring(split(ResourceId, \"/\")[-1]))\n| project Metric = strcat(App, \" — Replicas\"), Value\n| order by Metric asc",
         "size": 0,
-        "title": "Configured scale bounds (min/max replicas) and provisioning state",
+        "title": "Current replica count (last 1h average, per container app) — no status color, not compared against configured max here",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "name": "container-replicas"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "resources\n| where type =~ \"microsoft.app/containerapps\" and resourceGroup =~ \"rg-invoice-llm-dev\"\n| project Metric = tolower(tostring(name)), Value = tostring(properties.runningStatus)\n| order by Metric asc",
+        "size": 0,
+        "title": "Running status (per container app)",
         "queryType": 1,
         "resourceType": "microsoft.resourcegraph/resources",
         "crossComponentResources": [
           "{Subscription}"
-        ]
+        ],
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": "==", "thresholdValue": "Running", "representation": "green", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "red", "text": "{0}" }
+              ]
+            }
+          }
+        }
       },
       "name": "container-scale-config"
     },
@@ -120,21 +231,39 @@
       "name": "container-restarts"
     },
     {
-      "type": 1,
-      "content": {
-        "json": "### Database status — PostgreSQL + Redis"
-      },
-      "name": "db-status-header"
-    },
-    {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"PSQL-INVOICELLM-DEV\"\n| where MetricName in (\"cpu_percent\", \"memory_percent\", \"storage_percent\", \"active_connections\", \"max_connections\", \"is_db_alive\")\n| summarize Value = round(avg(Average), 2) by MetricName\n| order by MetricName asc",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"PSQL-INVOICELLM-DEV\"\n| where MetricName in (\"cpu_percent\", \"memory_percent\", \"storage_percent\")\n| summarize Value = round(avg(Average), 1) by MetricName\n| extend Detail = case(\n    MetricName == \"cpu_percent\", \"CPU utilization, 6h avg\",\n    MetricName == \"memory_percent\", \"Memory utilization, 6h avg\",\n    MetricName == \"storage_percent\", \"Disk utilization, 6h avg\",\n    \"\")\n| project Metric = MetricName, Value, Detail\n| order by Metric asc",
         "size": 0,
-        "title": "PostgreSQL (psql-invoicellm-dev) — last 6h average",
+        "title": "PostgreSQL (psql-invoicellm-dev) — utilization, last 6h average",
         "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
+                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
       },
       "name": "db-status-postgres"
     },
@@ -142,20 +271,248 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName in (\"serverLoad\", \"usedmemorypercentage\", \"connectedclients\", \"cachehits\", \"cachemisses\", \"geoReplicationHealthy\")\n| summarize Value = round(avg(Average), 2) by MetricName\n| order by MetricName asc",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"PSQL-INVOICELLM-DEV\"\n| where MetricName in (\"active_connections\", \"max_connections\")\n| summarize Value = round(avg(Average), 1) by MetricName\n| extend Detail = case(\n    MetricName == \"active_connections\", \"Open DB connections, 6h avg\",\n    MetricName == \"max_connections\", \"Configured connection limit\",\n    \"\")\n| project Metric = MetricName, Value, Detail\n| order by Metric asc",
         "size": 0,
-        "title": "Redis (redis-invoicellm-dev) — last 6h average",
+        "title": "PostgreSQL — connection counts, last 6h average — no status color, raw counts (see utilization % tile below for the colored signal)",
         "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "db-status-postgres-connections"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"PSQL-INVOICELLM-DEV\"\n| where MetricName in (\"active_connections\", \"max_connections\")\n| summarize Value = avg(Average) by MetricName\n| evaluate pivot(MetricName, avg(Value))\n| extend Value = iff(max_connections > 0, round(100.0 * active_connections / max_connections, 1), real(null))\n| extend Metric = \"connection_utilization_pct\"\n| project Metric, Value",
+        "size": 0,
+        "title": "PostgreSQL — connection utilization % (active/max), last 6h average",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
+                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+              ]
+            }
+          }
+        }
+      },
+      "name": "db-status-postgres-connection-util"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"PSQL-INVOICELLM-DEV\"\n| where MetricName == \"is_db_alive\"\n| summarize Value = avg(Average)\n| extend Metric = \"is_db_alive\", Status = iff(Value >= 1, \"Alive\", \"Down\")\n| project Metric, Status",
+        "size": 0,
+        "title": "PostgreSQL — liveness, last 6h average",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Status",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": "==", "thresholdValue": "Alive", "representation": "green", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "red", "text": "{0}" }
+              ]
+            }
+          }
+        }
+      },
+      "name": "db-status-postgres-liveness"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName in (\"serverLoad\", \"usedmemorypercentage\")\n| summarize Value = round(avg(Average), 1) by MetricName\n| extend Detail = case(\n    MetricName == \"serverLoad\", \"Server load %, 6h avg\",\n    MetricName == \"usedmemorypercentage\", \"Memory used %, 6h avg\",\n    \"\")\n| project Metric = MetricName, Value, Detail\n| order by Metric asc",
+        "size": 0,
+        "title": "Redis (redis-invoicellm-dev) — utilization, last 6h average",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
+                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
       },
       "name": "db-status-redis"
     },
     {
-      "type": 1,
+      "type": 3,
       "content": {
-        "json": "### Dead-letter queue"
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName in (\"connectedclients\", \"cachehits\", \"cachemisses\")\n| summarize Value = round(avg(Average), 1) by MetricName\n| extend Detail = case(\n    MetricName == \"connectedclients\", \"Connected clients, 6h avg\",\n    MetricName == \"cachehits\", \"Cache hits, 6h avg\",\n    MetricName == \"cachemisses\", \"Cache misses, 6h avg\",\n    \"\")\n| project Metric = MetricName, Value, Detail\n| order by Metric asc",
+        "size": 0,
+        "title": "Redis — client/cache counts, last 6h average — no status color, raw counts (see cache hit ratio % tile below for the colored signal)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
       },
-      "name": "dlq-header"
+      "name": "db-status-redis-counts"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName in (\"cachehits\", \"cachemisses\")\n| summarize Value = avg(Average) by MetricName\n| evaluate pivot(MetricName, avg(Value))\n| extend Value = iff((cachehits + cachemisses) > 0, round(100.0 * cachehits / (cachehits + cachemisses), 1), real(null))\n| extend Metric = \"cache_hit_ratio_pct\"\n| project Metric, Value",
+        "size": 0,
+        "title": "Redis — cache hit ratio % (hits / (hits+misses)), last 6h average — low is bad, inverted from the usual scale",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": "<", "thresholdValue": "50", "representation": "red", "text": "{0}" },
+                { "operator": "<", "thresholdValue": "80", "representation": "yellow", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+              ]
+            }
+          }
+        }
+      },
+      "name": "db-status-redis-hit-ratio"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName == \"geoReplicationHealthy\"\n| summarize Value = avg(Average)\n| extend Metric = \"geoReplicationHealthy\", Status = iff(Value >= 1, \"Healthy\", \"Unhealthy\")\n| project Metric, Status",
+        "size": 0,
+        "title": "Redis — geo-replication health, last 6h average",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Status",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": "==", "thresholdValue": "Healthy", "representation": "green", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "red", "text": "{0}" }
+              ]
+            }
+          }
+        }
+      },
+      "name": "db-status-redis-liveness"
     },
     {
       "type": 3,
@@ -172,7 +529,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## API Performance by Feature Area\n\nGrouped by the 8 feature areas this application already uses elsewhere in its docs (Ingestion & Extraction, Chat, Review & Correction, Autopilot & Connectors, Dashboard & Reporting, Trainer, Billing & Admin, Auth). Reuses the exact `case()` grouping KQL verified live in `feature_20_observability_monitoring_alerts.md`'s Gap 292 write-up, with one addition: rows tagged `AppRoleName = invoice-be-local-f20-verify` (that verification run, not real traffic) are excluded so this panel never shows fabricated traffic. Real container traffic is 0 rows until Gap 292's fix is deployed to `ca-invoice-be-dev` — that is the honest, current state, not a broken query."
+        "json": "## API Performance by Feature Area — *real traffic is 0 rows until Gap 292's fix deploys to `ca-invoice-be-dev`, not a broken query*"
       },
       "name": "api-perf-header"
     },
@@ -180,18 +537,79 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppRequests\n| where TimeGenerated > ago(30d)\n| where AppRoleName != \"invoice-be-local-f20-verify\"\n| extend Area = case(\n    Name has \"/invoices\" or Name has \"/email-ingestion\", \"Ingestion & Extraction\",\n    Name has \"/chat\",                                    \"Chat\",\n    Name has \"/audit\",                                   \"Review & Correction\",\n    Name has \"/autopilot\" or Name has \"/connectors\",     \"Autopilot & Connectors\",\n    Name has \"/dashboard\",                               \"Dashboard & Reporting\",\n    Name has \"/trainer\",                                 \"Trainer\",\n    Name has \"/billing\" or Name has \"/admin\",            \"Billing & Admin\",\n    Name has \"/settings/security\" or Name has \"/auth\",   \"Auth\",\n    \"Other\")\n| summarize Requests = sum(ItemCount),\n            P95ms = round(percentile(DurationMs, 95)),\n            ErrorRatePct = round(100.0 * sumif(ItemCount, Success == false) / sum(ItemCount), 1)\n  by Area\n| order by Requests desc",
+        "query": "AppRequests\n| where TimeGenerated > ago(30d)\n| where AppRoleName != \"invoice-be-local-f20-verify\"\n| extend Area = case(\n    Name has \"/invoices\" or Name has \"/email-ingestion\", \"Ingestion & Extraction\",\n    Name has \"/chat\",                                    \"Chat\",\n    Name has \"/audit\",                                   \"Review & Correction\",\n    Name has \"/autopilot\" or Name has \"/connectors\",     \"Autopilot & Connectors\",\n    Name has \"/dashboard\",                               \"Dashboard & Reporting\",\n    Name has \"/trainer\",                                 \"Trainer\",\n    Name has \"/billing\" or Name has \"/admin\",            \"Billing & Admin\",\n    Name has \"/settings/security\" or Name has \"/auth\",   \"Auth\",\n    \"Other\")\n| summarize Requests = sum(ItemCount),\n            P95ms = round(percentile(DurationMs, 95), 1)\n  by Area\n| project Metrics = pack_array(\n    pack(\"Metric\", strcat(Area, \" — Requests\"), \"Value\", tostring(Requests), \"Detail\", \"Total requests, last 30 days\"),\n    pack(\"Metric\", strcat(Area, \" — P95 latency\"), \"Value\", strcat(tostring(P95ms), \" ms\"), \"Detail\", \"95th percentile latency, last 30 days\")\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = tostring(Metrics.Value), Detail = tostring(Metrics.Detail)\n| order by Metric asc",
         "size": 0,
-        "title": "Requests / P95 latency / error rate by feature area, last 30 days",
+        "title": "Requests / P95 latency by feature area, last 30 days — no status color (see Error rate tile below for the colored signal)",
         "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
       },
       "name": "api-perf-by-area"
     },
     {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated > ago(30d)\n| where AppRoleName != \"invoice-be-local-f20-verify\"\n| extend Area = case(\n    Name has \"/invoices\" or Name has \"/email-ingestion\", \"Ingestion & Extraction\",\n    Name has \"/chat\",                                    \"Chat\",\n    Name has \"/audit\",                                   \"Review & Correction\",\n    Name has \"/autopilot\" or Name has \"/connectors\",     \"Autopilot & Connectors\",\n    Name has \"/dashboard\",                               \"Dashboard & Reporting\",\n    Name has \"/trainer\",                                 \"Trainer\",\n    Name has \"/billing\" or Name has \"/admin\",            \"Billing & Admin\",\n    Name has \"/settings/security\" or Name has \"/auth\",   \"Auth\",\n    \"Other\")\n| summarize ErrorRatePct = round(100.0 * sumif(ItemCount, Success == false) / sum(ItemCount), 1) by Area\n| project Metric = strcat(Area, \" — Error rate\"), Value = ErrorRatePct\n| order by Metric asc",
+        "size": 0,
+        "title": "Error rate by feature area, last 30 days",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": ">=", "thresholdValue": "10", "representation": "red", "text": "{0}" },
+                { "operator": ">=", "thresholdValue": "5", "representation": "yellow", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+              ]
+            }
+          }
+        }
+      },
+      "name": "api-perf-error-rate"
+    },
+    {
       "type": 1,
       "content": {
-        "json": "## Recent Alerts\n\nReuses the Azure Resource Graph `alertsmanagementresources` query pattern from the deleted AI Control Tower workbook's Health tab (`feature_23_ai_control_tower.md`'s \"Workbook — the usability restructure\" section notes it was the one section verified live against this subscription). Covers all of Feature 20's 25+ alert rules (`alert-rules.bicep`) and their action groups — nothing here creates or edits an alert rule."
+        "json": "## Recent Alerts — *covers all of Feature 20's alert rules (`alert-rules.bicep`); nothing here creates or edits one*"
       },
       "name": "alerts-header"
     },
@@ -199,15 +617,35 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity),\n         state = tostring(properties.essentials.alertState),\n         rule = tostring(properties.essentials.alertRule),\n         target = tostring(properties.essentials.targetResourceName)\n| where fired > ago(14d)\n| summarize alerts = count() by day = startofday(fired), sev\n| order by day asc",
+        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity)\n| where fired > ago(14d)\n| summarize Value = count() by Metric = sev\n| order by Metric asc",
         "size": 0,
         "title": "Alerts fired per day, by severity — last 14 days",
         "queryType": 1,
-        "visualization": "barchart",
+        "visualization": "tiles",
         "resourceType": "microsoft.resourcegraph/resources",
         "crossComponentResources": [
           "{Subscription}"
-        ]
+        ],
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": "==", "thresholdValue": "0", "representation": "green", "text": "{0}" },
+                { "operator": ">=", "thresholdValue": "5", "representation": "red", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "yellow", "text": "{0}" }
+              ]
+            }
+          }
+        }
       },
       "name": "alerts-trend"
     },
@@ -215,21 +653,42 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime)\n| where fired > ago(24h)\n| summarize AlertsFired24h = count()",
+        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime)\n| where fired > ago(24h)\n| summarize Value = count()\n| extend Metric = \"Alerts fired, last 24h\"\n| project Metric, Value",
         "size": 0,
         "title": "Alerts fired, last 24h",
         "queryType": 1,
         "resourceType": "microsoft.resourcegraph/resources",
         "crossComponentResources": [
           "{Subscription}"
-        ]
+        ],
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                { "operator": "==", "thresholdValue": "0", "representation": "green", "text": "{0}" },
+                { "operator": ">=", "thresholdValue": "5", "representation": "red", "text": "{0}" },
+                { "operator": "Default", "thresholdValue": null, "representation": "yellow", "text": "{0}" }
+              ]
+            }
+          }
+        }
       },
       "name": "alerts-table"
     },
     {
       "type": 1,
       "content": {
-        "json": "### Notes\n\n* **No interactive portal access was used to verify this workbook.** Every query above was run and confirmed live against `law-invoicellm-dev` / the real subscription on 2026-08-23 via `az monitor log-analytics query` and `az graph query` — the row counts and values quoted in the honesty table at the top are real, not assumed. How the panels actually lay out and render in the Azure Portal has not been checked and cannot be from this environment.\n* **Deploy:** `az deployment group create -g rg-invoice-llm-dev -f infra/workbook-cost-health-only.bicep`. Narrow, standalone deployment — not routed through `08-apps.bicep`/`params.dev.json`, matching the golden-bank job and GPT-4o deployment's rationale (those files' image/param drift makes a full deploy risky).\n* **This is a single-page workbook, deliberately.** See the header panel for why tabs were not used this time.\n"
+        "json": "*Deploy: `az deployment group create -g rg-invoice-llm-dev -f infra/workbook-cost-health-only.bicep`. Single-page, deliberately — tabs caused repeated Workbooks bugs on Feature 23's build and this environment has no portal access to catch a repeat quickly.*"
       },
       "name": "footer"
     }

@@ -139,12 +139,18 @@ export default function PdfViewerCanvas({
             transformOrigin: "center top",
           }}
         >
-          {/* PDF iframe */}
-          <iframe
-            src={pdfUrl}
-            className="h-[800px] w-full rounded-md border border-[#222D3D] bg-white shadow-xl"
-            title="Invoice PDF"
-          />
+          {/* PDF iframe - hidden when expand modal is open to avoid rendering two PDFs */}
+          {!isModalOpen ? (
+            <iframe
+              src={pdfUrl}
+              className="h-[800px] w-full rounded-md border border-[#222D3D] bg-white shadow-xl"
+              title="Invoice PDF"
+            />
+          ) : (
+            <div className="h-[800px] w-full rounded-md border border-[#222D3D] bg-[#0F172A] flex items-center justify-center text-xs text-slate-500 italic">
+              PDF expanded in modal view
+            </div>
+          )}
 
           {/* Bounding Box Overlays */}
           {coordinates.map((coord, idx) => (
