@@ -569,11 +569,19 @@ develops its own measured quality problem.
 - **Phase 1 — Telemetry** — **built 2026-08-21**: add agent/model/token fields to the existing
   structured logger; emit as Application Insights custom events. No behaviour change to any agent.
   See "Phase 1 as built" below.
-- **Phase 2 — Cost + quality dashboard** — **built 2026-08-21, not deployed**: nightly cost rollup
-  KQL query (`infra/monitoring/llm_cost_rollup_nightly.kql`) and the workbook
-  (`infra/monitoring/ai_control_tower.workbook.json`) wiring `customEvents` (cost/latency),
-  `agent_eval_run` events (quality) and Azure Resource Graph (alerts) onto one shared time axis.
-  See "Phases 2 and 3 as built" below — including what is genuinely blocked on a founder action.
+- **Phase 2 — Cost + quality dashboard** — **KQL built 2026-08-21 and still present; the workbook
+  file no longer exists** *(corrected 2026-08-24 — the previous wording, "built 2026-08-21, not
+  deployed", named `infra/monitoring/ai_control_tower.workbook.json` as an existing artifact and it
+  has not existed for a day. It was deleted in commit `bd6a255` ("chore: remove Feature 23's
+  deleted golden-bank job/data from infra and tests"). `infra/monitoring/` today holds
+  `cost_health_workbook.json`, `llm_cost_rollup_nightly.kql`, `llm_cost_by_tool.kql` and — new
+  2026-08-24 — `chat_thread_sessions.kql`, and nothing else. Verified by `git log` on the path plus
+  a directory listing, not inferred.)* What survives of Phase 2 is the query layer: the nightly
+  cost rollup (`llm_cost_rollup_nightly.kql`) and the per-tool split (`llm_cost_by_tool.kql`).
+  There is **no AI Control Tower workbook in the repo**, so any statement elsewhere in this
+  document about "the workbook's online panel" or "the quality tiles" describes a design, not a
+  file — see "Workbook — split into 9 standalone workbooks" below for what replaced it. Nothing
+  here is deployed either way.
 - **Phase 3 — Scheduled golden-set regression** — **built and really run 2026-08-21; the
   *schedule* is not**: `agent_eval_run` table + `services/agent_eval.py` scorer +
   `scripts/run_agent_eval.py` runner, run for real against both chat paths (36 turns, real Azure
@@ -600,8 +608,8 @@ Mapped onto the real graph in `agents/sage_orchestrator.py`:
 | Level | What it is in SAGE | Captures |
 |---|---|---|
 | **Run** | One LLM call — a `_plan_node` invocation, a `_synthesize_node` invocation, or the LLM inside `identify_invoices`/`search_invoices`/`aggregate` | Assembled system prompt, tool definitions offered, model output including tool calls, tokens, latency |
-| **Trace** | One full turn — `plan → act → plan → … → synthesize` or `→ clarify` | Node sequence, every tool call with its real result, generated SQL, `stop_reason`, total call count. `MAX_TOOL_CALLS`/`tool_call_budget_exhausted` are trace-level properties, currently invisible outside a debugger — **not built; see Gap 302** |
-| **Thread** | A chat session across turns | Where this codebase is weakest — Gap 237 (follow-up dropped rows) and Gap 276 (prior SQL reused after a topic change) are both context-drift failures, and neither is observable today. A thread has to be reconstructed from `ChatMessage` rows plus each turn's trace; "drift" as a signal doesn't exist yet — **not built; see Gap 303** (note 237/276 are *closed bugs* cited as the failure class, not the gap for building the detector) |
+| **Trace** | One full turn — `plan → act → plan → … → synthesize` or `→ clarify` | Node sequence, every tool call with its real result, generated SQL, `stop_reason`, total call count. `MAX_TOOL_CALLS`/`tool_call_budget_exhausted` are trace-level properties — **built 2026-08-24 as the `chat_turn` event (Gap 302); see "Trace and Thread as built" below.** Not deployed. |
+| **Thread** | A chat session across turns | Where this codebase is weakest — Gap 237 (follow-up dropped rows) and Gap 276 (prior SQL reused after a topic change) are both context-drift failures. **Half built 2026-08-24 (Gap 303):** `turn_index`/`seconds_since_prev_turn` on the `chat_turn` event make a session reconstructible, and session length / abandonment / turns-per-session are derivable in KQL at a 30-minute idle cutoff. **Drift *detection* is still not built** and is now its own number, Gap 307 — it was never the same piece of work as reconstructing a thread (note 237/276 are *closed bugs* cited as the failure class, not the gap for building the detector). |
 
 Run-level and Trace-level capture are mostly achievable by extending Phase 1's existing
 `tracked_llm_call()`/`track_agent_call()` (already real, already wired into `sage.planner`/
@@ -611,6 +619,237 @@ rollup needs. Thread-level capture needs new work: no mechanism today reconstruc
 sequence with drift detection. **Both are now numbered gaps in `be_features_tracker.md` — Gap 302
 (Trace) and Gap 303 (Thread)** — filed 2026-08-24 so the plan above stops being the only record of
 them.
+
+*(The paragraph above is the plan as written on 2026-08-24 morning. What was actually built the same
+day is below; where the two differ, the section below is what is in the code.)*
+
+## Trace and Thread as built — the `chat_turn` event (2026-08-24)
+
+**What changed in one sentence**: `telemetry.py` gained a second per-*turn* event alongside its
+per-*call* one, every chat turn now emits exactly one of them whatever its outcome, and the
+correlation bug that made background-thread telemetry unattributable was fixed on the way through.
+
+### The shape of the problem this closes
+
+Before this, several `llm_agent_call` events shared a `trace_id` and between them said a turn cost
+N tokens and took M ms. They could not say **what the agent did** — which route ran, what SQL it
+wrote, what the tools returned, why the loop stopped — which is the only thing that diagnoses a
+non-deterministic failure. Worse, three whole classes of turn emitted *nothing at all*: a declined
+turn, an errored turn and a cache hit make no successful LLM call on the path that mattered, so
+"how often does the assistant decline?" and "what fraction of turns are served from cache?" were
+not questions the data could answer, at any price.
+
+### File coordinates
+
+| File | Function/symbol | What it does |
+|---|---|---|
+| `telemetry.py` | `CHAT_TURN_EVENT_NAME = "chat_turn"` | The one `customEvents` name. Named for the unit it measures, matching `llm_agent_call`/`agent_eval_run`. |
+| `telemetry.py` | `ChatTurn` | The accumulator. Counters (`llm_calls`, `tokens_in/out`, `agents_called`) filled by `track_agent_call()`; everything else written by the agent as the turn resolves. |
+| `telemetry.py` | `chat_turn_scope()` | Contextmanager installing the accumulator on a contextvar. **Resets in a `finally`**, unlike `main_worker`'s correlation vars — this runs on a pooled thread that will serve another turn. |
+| `telemetry.py` | `current_chat_turn()` | The accumulator or `None`. `None` is the normal state everywhere outside a chat turn: the eval harness, ingestion and the trainer all make LLM calls that belong to no turn. |
+| `telemetry.py` | `track_chat_turn()` | The emitter. Same never-raises contract as every other emitter in the file. |
+| `telemetry.py` | `MAX_TURN_SQL_CHARS` / `MAX_TURN_TOOL_OUTPUT_CHARS` | 3000 / 12000. Deliberately the *same* budgets `services/agent_eval.py` uses for the judge prompt (`MAX_QUERY_CHARS`/`MAX_CONTEXT_CHARS`), not new numbers. |
+| `telemetry.py` | `TURN_STATUS_SUCCESS/DECLINED/ERROR/CACHE_HIT` | The four outcomes. |
+| `agents/query_agent.py` | `run_query_agent()` | Now a thin Trace wrapper: opens the scope, resolves the thread position, calls the body, attaches `turn_telemetry` to the result. |
+| `agents/query_agent.py` | `_run_query_agent()` | The pipeline, unchanged in behaviour; writes route/status/SQL/tool-output onto the turn as it goes. |
+| `agents/query_agent.py` | `_session_turn_position()` | Gap 303 half (a). One query for `(turn_index, seconds_since_prev_turn)`. |
+| `agents/query_agent.py` | `SqlGenerationOutcome.attempts` | New field — the turn-level round-trip count. |
+| `routers/chat.py` | `post_chat_message()` | Emits after its commit, next to `submit_turn_judgement()`; also emits on its own agent-raised fallback path. |
+| `queue_worker/handlers.py` | `handle_process_chat_job()` | Same, plus the correlation binding; also emits from its own `except`. |
+| `utils/logging_config.py` | `correlation_context()` | Binds `tenant_id`/`request_id`/`trace_id` for a block, and **releases them**. |
+| `services/online_quality_judge.py` | `judge_turn()` / `_judge_turn()` | `judge_turn()` is now the correlation-binding wrapper; `_judge_turn()` is the scoring. |
+| `infra/monitoring/chat_thread_sessions.kql` | Queries A–D | Gap 303 half (b): thread analytics at a 30-minute idle cutoff, derived at query time. |
+
+### Founder decision 1 — the Trace carries real content, and what that costs
+
+The decision was that a Trace captures the **real generated SQL text and the real tool-call
+results**, not a structural summary of them. The reasoning is sound and worth restating: a turn
+whose SQL was subtly wrong but executed fine is not diagnosable from `sql_generated=true`, and the
+whole premise of this section is that the execution trace is the source of truth.
+
+`tool_output` is deliberately the *same string* `judge_evidence["context"]` carries — the SQL
+results table or the RAG chunk text — rather than a second rendering of it, so a Trace and a
+quality score for the same turn are demonstrably about the same evidence. `tool_output_chars`
+travels alongside carrying the **pre-truncation** length, so a genuinely short result and one cut
+at the cap are distinguishable without parsing the marker.
+
+**⚠ Security and retention — flagged for security-tester, deliberately NOT reviewed here.** This is
+the opposite choice from the one made for the online quality judge one day earlier (Gap 304 half 2,
+whose row stores *scores only* and explicitly no customer text), and it should be read as a
+conscious, reviewable trade rather than an oversight:
+
+- **What is captured**: the real SQL generated for a tenant's question (which embeds vendor names,
+  invoice numbers, date ranges and amounts as literals), and the real tool output — either the
+  markdown results table of that query (real invoice rows) or the retrieved document chunk text
+  (real invoice PDF content). Up to 3,000 and 12,000 characters respectively, per turn.
+  The user's question and the assistant's answer are **not** on the event.
+- **Where it is stored**: Application Insights `customEvents`, in the workspace-based component
+  `appi-invoicellm-dev`, i.e. physically in the Log Analytics workspace `law-invoicellm-dev`.
+  `infra/modules/monitoring/app-insights.bicep` sets `WorkspaceResourceId` +
+  `IngestionMode: 'LogAnalytics'`, so there is no separate classic-AI retention to consider.
+- **How long it lives**: the workspace's retention, `infra/06-compute-env.bicep`'s
+  `logRetentionInDays` — **30 days in `params.dev.json`, 90 days in `params.prod.json`**. Checked
+  rather than assumed: there is **no** table-level retention override
+  (`Microsoft.OperationalInsights/workspaces/tables`) anywhere in `infra/`, and no purge or
+  data-export policy, so the workspace value is the only control that applies.
+- **No scrubbing or redaction is applied.** The founder did not require it for this pass. There is
+  therefore no PII/PCI classification of this event, no field-level masking, and no per-tenant
+  opt-out. Whether 30/90 days of tenant invoice content in a diagnostics workspace is acceptable —
+  and who in the subscription can read that workspace — is a security review, and this document
+  does not attempt one.
+
+### Founder decision 2 — the judge-attribution bug, fixed on the way through
+
+Not a new field: a **live defect in code shipped the previous day**. `routers/chat.py`'s
+`_chat_background_pool` is a plain `ThreadPoolExecutor`, and `submit()` copies no contextvars. So
+everything handed to that pool ran with `trace_id_ctx`, `tenant_id_ctx` and `request_id_ctx` all
+empty. Concretely, on every production turn with `ENABLE_PRODUCTION_QUALITY_JUDGE` on, the two
+judge calls (`eval.combined_soft`, `eval.persona`) emitted `llm_agent_call` events with
+`trace_id=""`, `tenant_id=""`, `request_id=""` — scores that could not be joined back to the turn
+they scored, which is the one thing that module exists to make possible. The same applied to the
+*entire* queued turn on the `ENABLE_ASYNC_CHAT_QUEUE` path, not just its judging.
+
+Fixed by explicit propagation, matching `queue_worker/main_worker.py::_process_message`'s
+established pattern (bind the correlation vars at the top of the unit of work) rather than by
+`contextvars.copy_context().run(...)`. The reason for preferring explicit: copying the whole
+context would also carry the **OpenTelemetry span context**, silently re-parenting the queued
+turn's GenAI dependency spans under an HTTP request that has already returned 202. That is a
+different and larger semantic change than the one being asked for.
+
+One deliberate difference from `main_worker`: `correlation_context()` **releases** on the way out.
+That worker sets and never resets, which is harmless there because every task sets it again; on a
+*shared* pool that also serves the online judge, a leaked value would attribute one tenant's judge
+call to whichever tenant's chat job ran on that thread previously.
+
+**Behaviour change, stated plainly rather than shipped silently**: worker-path telemetry that
+previously reported `trace_id=""` now reports the originating request's real trace id. Any saved
+query or workbook tile that used empty-vs-populated `trace_id` to tell request-path events from
+worker-path events will stop separating them and needs a different discriminator. Nothing in the
+repo does this today (checked), but a portal-side saved query would not be visible from here.
+
+### Founder decision 3 — a 30-minute idle cutoff, and why it needed no new job
+
+The cutoff is **30 minutes**, not 6 hours, which rules out riding Feature 24's
+`scripts/ops_digest_job.py`: that job runs 4×/day, so a session ending at 09:05 would first be
+noticed at 12:00 and "abandoned 30 minutes ago" would be a label applied up to six hours late.
+
+The next option was a new `Microsoft.App/jobs` resource on a ~15-minute cron. That was **rejected**,
+and the reasoning is the deliverable here as much as the code: Gap 302's `chat_turn` event already
+carries `session_id` and a timestamp on every turn, so a session is fully reconstructible from the
+event stream, and "the latest turn in this session has no successor within 30 minutes" is
+`row_window_session(timestamp, 1d, 30m, session_id != prev(session_id))` — a built-in KQL operator.
+All three analytical needs the scoping identified (session length distribution, abandonment rate,
+turns per session) are a `summarize` over data already being emitted. A new job would have meant its
+own bicep, its own image pull, its own deploy and Gap 298's Stage 8 deployment blocker, to compute
+something the query engine computes for free.
+
+**So: no new emission, no new scheduled component, no new Azure resource.** The artifact is
+`infra/monitoring/chat_thread_sessions.kql`. Because that decision landed, Gap 305's "fold the
+missing `emit_online_signals()` caller into the same new job" contingency never applied — and a
+parallel task had in any case already wired that caller into `ops_digest_job.py` the same day.
+Neither `scripts/ops_digest_job.py` nor `services/online_eval_signals.py` was touched by this work.
+
+**The one honest limitation**: an *alert rule* built on those queries evaluates on its own schedule,
+so the freshness of "abandoned" is that rule's evaluation frequency, not 30 minutes. For a dashboard
+panel that is irrelevant; if a pushed signal is ever genuinely needed the moment a session is
+abandoned, that is when a scheduled emitter earns its keep.
+
+### Two sources for the thread position, kept deliberately
+
+`turn_index`/`seconds_since_prev_turn` are computed in Postgres by `_session_turn_position()`; the
+KQL re-derives the same shape from the event stream with `row_window_session`. Both are kept:
+
+- The emitted fields are per-`session_id`, so a session a user returns to after two days is turn 9
+  of one long session. They also see turns that predate this event existing.
+- `row_window_session(..., 30m)` splits that same `session_id` into two idle-separated sittings,
+  which is what the 30-minute cutoff *means*.
+
+Neither is wrong; they answer different questions, and Query A reports them side by side so a
+divergence is visible rather than silent.
+
+`turn_index` counts **assistant** messages, not all messages, for a reason that is easy to get
+wrong: on the async queue path the user's row is committed before the handler runs and on the
+synchronous path it is not, so counting every row would make the same turn the 2nd on one path and
+the 1st on the other. Counting answers already given is path-independent.
+
+### Every early return is covered — the part that was actually easy to get wrong
+
+`run_query_agent()` has three return paths and all three now fill the turn:
+
+1. **The SAGE branch.** No change was needed in `agents/sage_orchestrator.py` at all: it has
+   *always* returned `stop_reason`, `tool_calls_made` and `tools_called` in its `agentic{}` dict,
+   and every caller has *always* thrown them away — which is precisely why the tracker could say
+   `tool_call_budget_exhausted` was "invisible outside a debugger". This is the stop discarding it.
+2. **The cache hit.** Tagged `cache_hit`, `llm_call_count=0`, and `route="cached"` rather than a
+   guessed original route — the cached payload has never carried one, and guessing from
+   `generated_sql` is wrong for a *declined* SQL turn (which is cached, with no SQL) and would file
+   it under RAG. It is emitted rather than dropped because a session whose every turn was cached
+   would otherwise look like a session that never happened; the status is what lets a cost or
+   latency rollup exclude it without losing the turn.
+3. **The normal path**, whose status is set at each of the five real outcome points (SQL declined,
+   SQL attempts exhausted, SQL summary failed, RAG failed, CHAT failed).
+
+Plus a fourth that is not a return path at all: **the caller's own `except`**. Both
+`routers/chat.py` and `queue_worker/handlers.py` emit an errored turn event from their exception
+handler, because a failure can come from the commit or the Redis publish as well as from the agent,
+and in that case `run_query_agent()`'s accumulator never reached the caller.
+
+The routing override (Gap 237's deterministic RAG→SQL rescue) sets `turn.route` to the route that
+*really ran*, not the one the classifier picked, and records `stop_reason=route_override_followup`.
+A turn event showing "RAG" for a turn that ran SQL would be a worse record than none.
+
+### The two other callers of `run_query_agent()`, and why they emit nothing
+
+`routers/trainer.py`'s QA-test mode and `scripts/run_agent_eval.py` also call
+`run_query_agent()`. Both therefore open a turn scope and receive a `turn_telemetry` key they
+ignore — and **neither emits a `chat_turn` event**, because emission lives at the two chat *write*
+paths (`post_chat_message`, `handle_process_chat_job`), not inside the agent. That is the correct
+placement rather than an omission: a trainer rule preview and a golden-bank eval turn are not
+conversations a user had, and putting them in the same event stream would corrupt every
+session-length, abandonment and turns-per-session figure `chat_thread_sessions.kql` computes. The
+eval harness in particular already runs with `run_source=golden`, so had emission been inside the
+agent those turns would have arrived tagged but still counted as sessions. The cost of the scope
+they do open is one extra `_session_turn_position()` query per call and a discarded accumulator.
+
+### What this does NOT close, stated plainly
+
+- **Nothing is deployed and nothing is verified live.** `chat_turn` has never reached
+  `appi-invoicellm-dev`; every query in `chat_thread_sessions.kql` returns zero rows today. Unlike
+  the `sage.*` queries, this needs no feature flag — it fires on the default chat path as soon as
+  the image ships — so the emptiness is the deploy, not the instrumentation.
+- **No workbook or panel reads it.** There is no AI Control Tower workbook in the repo at all (see
+  the Phase 2 correction above), so "the Trace is on the dashboard" would be false.
+- **Drift detection is not built** and is now Gap 307. Reconstructing a thread and *judging* one
+  are different pieces of work, and only the first was in scope.
+- **Prompt text is not captured.** The Run-level row in the table above lists "assembled system
+  prompt" as part of a Run; `chat_turn` carries neither prompts nor the user's question nor the
+  assistant's answer. That was not asked for and would be a materially larger data-exposure
+  decision than the one taken here.
+
+### Verified how
+
+`ruff check` on all 9 touched files: 3 findings (2× `E402` in `queue_worker/handlers.py`, 1× `F401`
+in `tests/test_agentic_sage.py`), each confirmed pre-existing by running ruff against that file's
+`HEAD` version — zero new. 13 new tests in `tests/test_telemetry.py` (39 → **52**, measured by
+running that file alone before and after). Full `tests/test_*.py`: **1411 passed / 4 failed /
+7 skipped** on a clean baseline run taken before any change, **1431 passed / 3 failed / 7 skipped**
+after, repeated once more after the final two edits with a byte-identical result. The delta is
+larger than 13 because parallel tasks modified `test_agent_eval.py`, `test_ops_digest.py` and
+`test_online_eval_signals.py` mid-session (confirmed by file mtimes) — that is stated rather than
+claimed. The 3 remaining failures are the pre-existing set (2× `test_connectors.py` needing a local
+Redis, 1× `test_rag.py` calling `post_chat_message()` without `background_tasks`).
+
+One real defect the run caught, and how it was *not* fixed: `tests/test_agentic_sage.py`'s flag-off
+parity golden failed on the new return key — the same way it did for `judge_evidence` the day
+before. Not fixed by regenerating the golden (that would silently absorb anything else that had
+drifted since it was recorded). But `turn_telemetry` also could not be kept as a golden record
+field the way `judge_evidence` was, because it is **not deterministic**: it carries a fresh
+`turn_id` UUID and a wall-clock `seconds_since_prev_turn` per run, so a golden containing it could
+never match twice. `run_case()` therefore projects three stable properties out of it
+(`turn_telemetry_present`/`_route`/`_status`) and the parity test asserts those — so "the pipeline
+is unchanged" keeps meaning the answer, the SQL, the citations and the prompts, and the addition is
+still asserted on rather than merely tolerated. It is asserted on all eight parity turns, including
+the decline and the repair-loop failure, which is exactly the coverage the gap exists for.
 
 ## Evaluation tiers, seeded from gap history
 
@@ -860,10 +1099,11 @@ field **on the event**, so the panel can label a proxy as a proxy without depend
 read this doc; a None value emits no `value` field at all rather than a 0.0. Neither gap above is
 fixed by this — `stop_reason` still never reaches `ChatMessage`, turn latency is still a
 row-timestamp delta — and both statements are reproduced verbatim in workbook section 6's own
-header table. **No job calls `emit_online_signals()` on a schedule**, so the panel is empty today,
-and it says that empty means "nothing has run", not "no problems found". **Still true as of
-2026-08-24 and now tracked as Gap 305** — the function has zero callers repo-wide, even though the
-`ChatMessage`/`ChatFeedback` source data is populated by real production traffic.
+header table. **No job called `emit_online_signals()` on a schedule** when this was written, so the
+panel was empty, and it says that empty means "nothing has run", not "no problems found". That was
+tracked as Gap 305 and **closed in code on 2026-08-24**: `scripts/ops_digest_job.py::main()` is now
+the caller, every six hours — see "Gap 305 — `emit_online_signals()` has a scheduled caller". The
+events still do not exist in Azure, because `caj-ops-digest-dev` has never been deployed.
 
 ### Still open after this pass
 
@@ -883,7 +1123,9 @@ Still open after the *second* pass (2026-08-21, component scoring + workbook):
 * **No dedicated domain-knowledge golden set**, so `persona_score` is scored against the general
   sample with a persona rubric and is NULL on most turns. Stated in the code, the workbook panel and
   above — not a thing to discover later from a suspiciously small denominator.
-* **Nothing runs `emit_online_signals()` on a schedule**, so workbook section 6 has no data.
+* ~~**Nothing runs `emit_online_signals()` on a schedule**, so workbook section 6 has no data.~~
+  **Closed in code 2026-08-24 (Gap 305)** — `scripts/ops_digest_job.py` calls it every six hours.
+  Section 6 still has no data until `caj-ops-digest-dev` is actually deployed.
 * **`stop_reason` still never reaches `ChatMessage`, and turn latency is still recorded nowhere.**
   Unchanged by this pass, deliberately: both need a schema change to a table under concurrent
   Feature 21 work.
@@ -1432,9 +1674,13 @@ One container, two scripts chained with shell `&&` (the job module is single-com
 
 ```
 python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json \
-  --tolerate-fp outbound_trade_discount__clean \
-  && python scripts/run_agent_eval.py --paths default
+  --run-label nightly --tolerate-fp outbound_trade_discount__clean \
+  && python scripts/run_agent_eval.py --paths default --run-label nightly
 ```
+
+That is the args string as actually persisted on the job today, in both bicep files.
+Note what is *not* there: any `--out` on Track 2. That was a live crash until 2026-08-24
+— see "What the first real deployed run found", Defect 1 (Gap 308).
 
 | Choice | Why |
 |---|---|
@@ -1571,7 +1817,7 @@ two quality tracks.
 | `telemetry.py` | `EVAL_SCORE_DIMENSIONS` | The nine dimension names, in `EvalScores`' three groups. Pinned against `EvalScores`' own fields by a test, so a tenth dimension cannot be scored and then silently dropped from the trend. |
 | `services/benchmark_artifacts.py` (new) | `mirror_extraction_run()` / `mirror_agent_eval_run()` | What the two scripts call. Upload the raw JSON, then emit the event carrying the blob name. Return a `MirrorResult` rather than raising. |
 | `services/benchmark_artifacts.py` | `upload_artifact()` / `artifact_blob_name()` / `_blob_service_client()` / `_ensure_container()` | Blob half: key structure, auth, create-on-first-use. |
-| `services/benchmark_artifacts.py` | `configure_run_telemetry()` / `flush_run_telemetry()` | Hole 3 above. Attaches the exporter and forces the OTel batch out before a short-lived process exits. |
+| `services/benchmark_artifacts.py` | `configure_run_telemetry()` / `flush_run_telemetry()` | Hole 3 above. Attaches the exporter and forces the OTel batch out before a short-lived process exits. **Changed 2026-08-24 (Gap 304 half 1)**: the attach moved from just-before-the-mirror to just-after `configure_run_source()`, is now idempotent, and switches the auto-instrumentations/live-metrics/perf-counters off — see "Gap 304 half (1)" below. |
 | `scripts/run_extraction_benchmark.py` | `main()` | `--run-label {nightly,predeploy,adhoc}`, `--no-mirror`. |
 | `scripts/run_agent_eval.py` | `main()` | Same two flags. |
 | `tests/test_benchmark_artifacts.py` (new) | 29 tests | The mapping, the absent-not-zero rule, the blob key, and every failure mode. |
@@ -1686,17 +1932,18 @@ that has already produced its numbers has nothing to gain from thirty seconds of
 ### Still open after this pass
 
 * **The container decision above.**
-* **Per-call `llm_agent_call` events from these jobs still do not reach `customEvents`.**
-  `configure_run_telemetry()` is called deliberately *late* — immediately before the
-  mirror, not at script import — so the run's own per-call events are not retroactively
-  exported. Configuring at import would fix that and would also change ingestion volume
-  and cost for a nightly 20-case run; that is its own decision, not one to fold into this
-  change silently. The same applies to `track_eval_result`'s per-turn rows, which are
-  emitted during `persist()`, before this call. **This is one half of Gap 304** (filed
-  2026-08-24): because benchmark runs are excluded from `llm_agent_call`, cost/latency is
-  sourced from real traffic only — and because `agent_eval_run` is written only by
-  `scripts/run_agent_eval.py:800`, quality is sourced from golden-bank runs only. No field
-  is dual-sourced, which is what the tile design assumes.
+* ~~**Per-call `llm_agent_call` events from these jobs still do not reach `customEvents`.**~~
+  **Resolved in code 2026-08-24 — see "Gap 304 half (1)" below.** As originally written:
+  `configure_run_telemetry()` was called deliberately *late* — immediately before the
+  mirror, not at script import — so the run's own per-call events were not retroactively
+  exported, and the same applied to `track_eval_result`'s per-turn rows, emitted during
+  `persist()` before that call. The founder took the decision that paragraph deferred:
+  the attach now happens immediately after `configure_run_source()`, before the first
+  graded turn, accepting the ingestion cost. ~~**The other half of Gap 304 is untouched**:
+  `agent_eval_run` is still written only by `scripts/run_agent_eval.py:800`, so quality
+  is still sourced from golden-bank runs only and no production turn is ever judged.~~
+  **Also resolved in code later the same day** — `services/online_quality_judge.py` now
+  writes a `run_source=production` row per real chat turn; see "Gap 304 half (2)" below.
 * **No workbook panel reads either new event yet.** The events exist and are shaped for
   KQL (`gate_failed` and `pass_rate` are numbers so `avg()` needs no parse step); no
   `.workbook.json` has been updated to chart them.
@@ -1715,6 +1962,795 @@ Neither is a one-time cost. Both recur on their own schedule for as long as the 
 step exists, with no spend cap of their own beyond whatever `10-budget.bicep`'s existing
 cost alert already watches at the resource-group level.
 
+## What the first real deployed run found — two defects (2026-08-24)
+
+`caj-benchmark-eval-dev` was deployed and executed for real against
+`rg-invoice-llm-dev`. Both defects below were found **by running it**, not by reading
+anything: two full passes of design and review over these same files, including the
+mirror section above, had missed both. Recorded here in that spirit — the value of the
+cadence is not only catching model drift, it is that a scheduled job is the first thing
+that ever exercises this code as deployed.
+
+Execution `caj-benchmark-eval-dev-d0gm1bo` ran the full persisted nightly command
+(accidentally, on-demand — which is how this was caught before the first 03:00 UTC fire).
+Everything the job exists to do worked: Track 1 alert recall **1.0**, Track 2 **20 real
+`agent_eval_run` rows committed to Postgres**, both mirror lines printed. It still
+reported `Failed`, and half its telemetry was missing.
+
+### Defect 1 (Gap 308) — the job crashed at the finish line, every night
+
+The persisted nightly args end with `python scripts/run_agent_eval.py --paths default
+--run-label nightly` — **no `--out`** — and that script's default output path was
+`tests/agent_eval_output.json`. `Prod_Invoice_LLM/.dockerignore` line 47 excludes
+`**/tests/` from every image built from this repo. **This is the same exclusion Step 1 of
+the scheduler section above exists to work around** — the `benchmarks/` package move fixed
+the *import* half of it and left the *write* half in place, one line of the same script.
+So the run did all its work and then died on `open(args.out, "w")`:
+
+```
+FileNotFoundError: [Errno 2] No such file or directory: '/app/tests/agent_eval_output.json'
+```
+
+With `retryLimit 0`, Container Apps records that as a `Failed` execution. A nightly job
+that does correct work and reports red every night is worse than one that plainly breaks:
+it makes execution status — which Gap 299 and `services/ops_digest_routing.py::classify()`
+both intend to read as a *signal* — permanently noisy, and a permanently-red panel is one
+that gets ignored.
+
+**Fixed in the script rather than in the two bicep files.** `default_output_dir()` (new,
+`scripts/run_agent_eval.py`) returns `tests/` when that directory exists — every source
+checkout, so local dev, the six committed `agent_eval_output*.json` files and every doc
+here quoting a `tests/…` path are unchanged — and `tempfile.gettempdir()` when it does
+not, which is the image. `tempfile.gettempdir()` rather than a literal `/tmp` because this
+script is also run from Windows.
+
+Adding `--out /tmp/…` to `08-apps.bicep` and `benchmark-eval-job-only.bicep` was the
+alternative and was rejected for two reasons: it needs an infra redeploy to take effect
+(the script fix ships in the image, which Defect 2 requires rebuilding anyway), and it
+would leave the script's own default fatal for the next caller that forgets. The
+pre-deploy gate was never affected — `deploy-dev.yml` already passes
+`--out /tmp/agent_eval_gate.json` explicitly, which is itself the evidence that the
+container-side `/tmp` convention was already the intended one.
+
+### Defect 2 (Gap 309) — `extraction_benchmark_run` never reached Application Insights
+
+Track 1's stdout on that same execution said:
+
+```
+mirror [nightly] -> Application Insights + stdout: 1 telemetry event(s)
+```
+
+and no `extraction_benchmark_run` row exists in `customEvents` — confirmed by the same
+live query that successfully found Track 2's `agent_eval_summary` from the same run. This
+had never worked; it is not a regression.
+
+The cause is neither the exporter nor the flush, both of which the mirror section above
+gets right. It is the standard library's own level check, one line before either could
+matter. `telemetry._emit_event()` calls `logger.info(...)` on `invoice_be_telemetry`, and
+`configure_azure_monitor()` **attaches a handler without ever setting a level** — verified
+against the installed distro, where `azure/monitor/opentelemetry/_configure.py` does only
+`getLogger(logger_name).addHandler(handler)`. The logger is therefore `NOTSET`, inherits
+root's `WARNING` in a bare `python scripts/...` process, and `Logger.isEnabledFor(INFO)`
+is `False`. The record is discarded inside `logging` before any handler is consulted. The
+reassuring stdout line is `MirrorResult.describe()` counting emitter *calls*, which is
+exactly the silent-no-op class Gap 292 named — one level further down than anyone looked.
+
+**Why Track 2 was fine, which is the part that made this invisible:**
+`run_agent_eval.py::_counting_llm_calls()` attaches its per-turn `_LlmCallCounter` to both
+event loggers and calls `lg.setLevel(logging.INFO)` to do it; its `finally` removes the
+handler but never restores the level. Track 2 has been carried this whole time by a side
+effect of an unrelated measurement helper, firing on its first turn. Two other standalone
+scripts are covered by a different accident — `sweep_azure_cost.py` and `ops_digest_job.py`
+both call `utils.logging_config.setup_structured_logging()`, which sets the **root** logger
+to INFO. `run_extraction_benchmark.py` does neither, and was the only one of the four with
+nothing holding the level up.
+
+**A consequence wider than the mirror event:** every per-call `llm_agent_call` from a
+Track 1 `--mode live` run was being dropped the same way. The "Gap 304 half (1)" section
+below is therefore true of Track 2 only until this fix ships.
+
+**Fix:** `_enable_event_logger_level()` (new, `services/benchmark_artifacts.py`), called
+first thing in `configure_run_telemetry()` — the one function both benchmark scripts
+already call to make telemetry work in a standalone process, so an exporter and a logger
+that can actually deliver to it are configured together rather than in two places. It
+raises both names in `telemetry._EVENT_LOGGER_NAMES` to INFO, leaves a deliberately-lower
+level (DEBUG) alone, and runs on the no-connection-string path too so a stdout-only run
+produces the structured console line this module's docstring promises.
+
+### Why 1400 tests did not catch either of these
+
+Worth recording, because it is the reusable lesson rather than the fix. Every existing
+assertion on these events either used `caplog.at_level(logging.INFO)` — which raises the
+level itself — or patched `telemetry._emit_event` outright, so the level check never ran.
+And nothing invoked `run_agent_eval.py`'s `main()` at all, so its final write was
+unexercised. The 12 new tests avoid both shortcuts:
+
+* `tests/test_run_agent_eval_cli.py` (new, 7 tests) drives the real `main()` on the
+  literal nightly argv with `CASES` emptied — no LLM call, no turns, and the write at the
+  end of `main()` reached identically. Two of the seven read `08-apps.bicep` and
+  `benchmark-eval-job-only.bicep` directly and fail if either ever gains an `--out`, so
+  the premise the fix rests on cannot silently rot.
+* `tests/test_benchmark_artifacts.py` (4 new) pins the *premise* first — at default levels
+  an INFO event reaches no handler at all — then the fix, the no-exporter path, and that a
+  caller's DEBUG level survives.
+* `tests/test_run_extraction_benchmark_cli.py` (1 new) drives the real `main()` with a
+  recording handler attached exactly where the distro attaches its own, starting from the
+  levels a fresh process really has.
+
+Both fixes were confirmed by reverting them: with `default_output_dir()` restored to its
+pre-fix form the Gap 308 test reproduces the live failure exactly — `FileNotFoundError` on
+the `open(args.out, "w")` at the end of `main()`, naming a `…/app/tests/
+agent_eval_output.json` that does not exist — and with `_enable_event_logger_level()`
+stubbed out the two Gap 309 tests fail.
+
+### Verified how
+
+* Baseline re-measured **before** touching anything, because the last recorded figure was
+  stale: `uv run pytest tests/test_*.py -p no:randomly -q` → **1431 passed, 3 failed, 7
+  skipped** (406s). After both fixes: **1443 passed, 3 failed, 7 skipped** (410s) — +12,
+  exactly the 12 new tests, same 3 pre-existing failures (2 need a local Redis, 1 is
+  `post_chat_message()` gaining a `background_tasks` argument), none in a file touched here.
+* `ruff check` clean on all five touched files.
+* Both fixes reverted and the suite re-run, to prove the new tests actually fail without
+  them (see above).
+
+**What is not verified, stated rather than implied:** that `extraction_benchmark_run` now
+arrives in `customEvents`. The Gap 309 tests spy on a handler attached exactly where the
+distro attaches its own — which is the level the defect lives at, since the record was
+being dropped before any handler ran — but no test in this suite opens a socket to Azure.
+Confirming the event lands needs a CI build and one more real job execution, and the live
+query methodology that found its absence is the one to re-run.
+
+### Still needed for these to take effect live
+
+**No bicep changed, so no `az deployment group create` is required.** Both fixes are
+application code. The job's template pins `acrinvoicellmdev2.azurecr.io/invoice-be:latest`
+and `deploy-dev.yml` pushes `also_tag_latest: true` on every backend deploy, so a CI build
+containing this commit is what takes them live; the next job execution pulls it. Until
+that build lands, the 03:00 UTC run keeps doing correct work, reporting `Failed`, and
+mirroring only Track 2.
+
+## Two telemetry prerequisites — `run_source` and the zero-result flag (2026-08-24)
+
+Wave 1 of the AI Control Tower plan has two items that are pure telemetry plumbing and
+needed no founder decision, unlike the rest of that wave. Both are **prerequisites for**
+gaps rather than fixes **of** them, and this section says which part of each gap is now
+closed and which is not — the tracker's Gap 304/305 entries carry the same split.
+
+Neither changes any agent's behaviour. No prompt, no routing decision, no returned value
+moved. Both follow `track_agent_call()`'s own contract: a telemetry failure degrades to a
+debug log and the call it wraps carries on untouched.
+
+### 1. `run_source` — telling benchmark traffic apart from real traffic (Gap 304, partial)
+
+**The problem this unblocks, not the problem it solves.** `llm_agent_call` is the only
+source of cost and latency in this product, and it had no field saying whether a row came
+from a real user turn or from a golden-bank eval turn. That is exactly why
+`services/benchmark_artifacts.py::configure_run_telemetry()` attached the Azure Monitor
+exporter **late** — after all eval turns had finished — instead of at script import: with
+no discriminator, letting a benchmark run's per-call events through would silently add
+them to every production cost and latency number in the same dashboards. The deferral was a
+workaround for a missing field, and this is that field.
+
+**What it did not do, at the time it was written:** `configure_run_telemetry()` was
+**unchanged**, so a benchmark run's per-call events still never reached `customEvents`.
+Whether to change that was named here as a separate decision (it costs real ingestion)
+that could now be made safely. **That decision was taken the same day and the change is
+built — see "Gap 304 half (1)" below, which is the current behaviour; this subsection
+describes the field itself and remains accurate about it.**
+
+| Symbol | File | What it is |
+|---|---|---|
+| `RUN_SOURCE_PRODUCTION` / `RUN_SOURCE_GOLDEN` / `RUN_SOURCE_PREDEPLOY` | `telemetry.py` | The three values: `production`, `golden`, `predeploy`. |
+| `run_source_ctx` | `telemetry.py` | `ContextVar`, default `production`. Same pattern as `tenant_id_ctx`/`request_id_ctx`/`trace_id_ctx`, kept in `telemetry.py` rather than `utils/logging_config.py` because it is not a request-correlation ID — nothing outside Feature 23's telemetry reads it. |
+| `set_run_source()` | `telemetry.py` | The override, for eval/benchmark scripts. Never raises; returns the value applied so a script can print it. |
+| `_resolve_run_source()` | `telemetry.py` | Explicit argument → contextvar → `production`. Swallows a broken context rather than losing the event. |
+| `track_agent_call()` | `telemetry.py` | Gained the `run_source` attribute in its attributes dict. |
+| `track_eval_result()` | `telemetry.py` | Same (added in half (1) below): `run_source` resolved through `_resolve_run_source()` rather than left to a caller's `**extra_attributes`. |
+| `_start_llm_dependency_span()` | `telemetry.py` | Same (added in half (1) below): `run_source` on the Gap 300 CLIENT span, i.e. on the `AppDependencies` row. |
+| `configure_run_source(run_label)` | `services/benchmark_artifacts.py` | Maps the **existing** `--run-label` to a population: `nightly`/`adhoc` → `golden`, `predeploy` → `predeploy`. |
+| `main()` | `scripts/run_agent_eval.py`, `scripts/run_extraction_benchmark.py` | Calls it immediately after `parse_args()`, before the first graded turn — `--mode live` makes real LLM calls long before the mirror step is reached. |
+
+**Three decisions worth naming.**
+
+*The default is what makes zero call-site changes correct.* Every production call site —
+all 17 of them — was left alone and is tagged `production` automatically. A design that
+required each site to pass a value would have been wrong the first time someone added a
+new one.
+
+*One flag, both surfaces.* `run_source` is derived from `--run-label` rather than being a
+second switch, so a run cannot end up labelled `predeploy` on its aggregate
+`agent_eval_summary` event and `golden` on its per-call events. `nightly` and `adhoc`
+collapse to one population deliberately: the cadence difference between them is already
+carried by `run_label`, and duplicating it here would make `run_source` a second copy of
+the cadence instead of a population discriminator. `predeploy` stays separate because it
+runs a smaller subset.
+
+*An explicit `run_source=` keyword is popped before the `**extra_attributes` loop.* That
+loop drops any key already present in the attributes dict, so passing `run_source` as an
+extra would have been silently discarded and the call mis-tagged with no error at all —
+the same class of silent-no-op failure as Gap 292 and the `name`-is-a-reserved-`LogRecord`-
+attribute bug Feature 20 Area 1 hit. Pinned by
+`test_an_explicit_run_source_keyword_is_not_silently_dropped`.
+
+### 2. The zero-result flag (Gap 305, partial)
+
+`agents/query_agent.py::run_sql_generation_loop()` already detected the condition —
+`if db_result == NO_RECORDS_FOUND:` is where the deterministic invoice-number fallback
+hangs — and emitted nothing there. The only way to measure `zero_result_rate` was
+`services/online_eval_signals.py` scanning `chat_message.content` in Postgres after the
+fact, which needs direct DB access and cannot be queried from Log Analytics at all.
+
+Two booleans now ride the **existing** `chat.sql_summary` event. Not a new event type.
+
+| Field | Meaning |
+|---|---|
+| `zero_result` | The query ran, matched nothing, and nothing recovered it — the user is being told "no records found". The same state `online_eval_signals.zero_result_rate` reconstructs from message text. |
+| `zero_result_fallback_recovered` | It matched nothing but the deterministic invoice-number fallback *did* find the record, so the user got a real answer. Free to compute at the same point, and the only thing that separates "the generated SQL was wrong" from "there is genuinely no such invoice". |
+
+**Why `chat.sql_summary` and not `chat.sql_generation`.** The call graph was traced rather
+than assumed. `run_sql_generation_loop()`'s own `tracked_llm_call` block **closes at
+`.invoke()`** — deliberately, so `latency_ms` stays model time and does not absorb query
+execution — and `execute_generated_sql()` runs *after* it. The row count simply is not
+known when that event is emitted. `chat.sql_summary` is the turn's next telemetry event
+and is emitted exactly once per turn whose SQL actually executed: a turn the model declined
+(`sql: null`) or one that failed all three attempts never reaches it. So
+`countif(zero_result) / count()` over that `agent_name` is a well-formed rate with no
+separate denominator to build, and the field is present on **every** such event rather than
+only the failing ones.
+
+`SqlGenerationOutcome` gained both fields, so the two SAGE tools that share the same loop
+(`agents/query_tools.py::identify_invoices`/`aggregate`, which pass their own
+`telemetry_agent_name`) get the condition recorded too — but neither makes a follow-up LLM
+call, so there is no existing event of theirs to ride. **The SAGE path is therefore not
+covered** (`ENABLE_AGENTIC_SAGE` is default off and off for every tenant today); wiring it
+later is a call-site change, not a re-derivation of the condition. Pinned by
+`test_the_outcome_records_the_flags_for_every_caller_of_the_shared_loop`.
+
+**What is closed vs. what is not.** Closed: `zero_result_rate` is measurable from Log
+Analytics on real production traffic, immediately, with no scheduled job and no new
+infrastructure. Not closed: this is a *different mechanism* from `emit_online_signals()`,
+so it does **not** populate the `online_eval_signal` events the workbook's online panel
+reads — that panel is still empty for all five signals, and the other four (clarification
+rate, thumbs-down clustering, slow-turn rate, budget-exhaustion rate) still have no source
+at all. Gap 305's actual fix is still a scheduled caller for `emit_online_signals()`.
+
+### Verified how
+
+10 new tests in `tests/test_telemetry.py` (23 → 33), in two sections following the Gap 300
+section's structure. Three of the Gap 305 tests drive the **real** `run_query_agent()` SQL
+route end to end against an in-memory SQLite tenant — not `tracked_llm_call()` directly —
+and assert the flag on the emitted event.
+
+```
+$ uv run pytest tests/test_telemetry.py -p no:randomly -q
+33 passed in 11.98s
+
+$ uv run pytest tests/test_telemetry.py tests/test_query_tools.py tests/test_agentic_sage.py \
+    tests/test_chat_sql_quality.py tests/test_queries.py tests/test_direction_aware_chat.py \
+    tests/test_chat_training.py tests/test_benchmark_artifacts.py tests/test_online_eval_signals.py \
+    -p no:randomly -q
+344 passed, 5 skipped in 125.10s (0:02:05)
+
+$ uv run pytest tests/test_*.py -p no:randomly -q
+3 failed, 1362 passed, 7 skipped in 456.03s (0:07:36)
+
+$ uv run ruff check telemetry.py agents/query_agent.py services/benchmark_artifacts.py \
+    scripts/run_agent_eval.py scripts/run_extraction_benchmark.py tests/test_telemetry.py
+All checks passed!
+```
+
+The 3 full-suite failures are the same 3 this repo has carried for several sessions
+(`test_connectors.py` ×2 needing a local Redis, `test_rag.py::test_process_crash_during_agent_leaves_no_orphan_user_message`
+calling `post_chat_message()` without its required `background_tasks` argument). Confirmed
+pre-existing rather than assumed: re-run with all six changed files `git stash`ed out, the
+same three fail identically and nothing else does.
+
+**One real defect the full-suite run caught, and the fix.** The first version of
+`test_a_call_that_says_nothing_about_its_source_is_tagged_production` passed alone and
+failed in the full suite, reporting `golden`. Cause:
+`tests/test_run_extraction_benchmark_cli.py` drives the benchmark CLI **in process**, so
+its `configure_run_source()` call leaves the contextvar set for every test that runs after
+it. That is correct behaviour for a script that owns its own process and an artefact of
+running a `main()` under pytest — so the test now runs the emission inside an explicitly
+empty `contextvars.Context()`, which is what a fresh request/worker thread really gets, and
+the assertion is about the declared default rather than about ambient state.
+
+**Not verified live.** No `run_source`-tagged or `zero_result`-tagged event has been seen in
+`customEvents` — that needs the same deploy every other 2026-08-24 telemetry change is
+waiting on. First live check after that deploy:
+`customEvents | where name == "llm_agent_call" | summarize count() by tostring(customDimensions.run_source)`
+should return `production` and nothing else — **not because benchmark events are deferred
+any more (half (1) below removed that), but because no eval run has ever executed inside
+Azure: `caj-benchmark-eval-dev` has never been deployed.** A `golden` or `predeploy` row
+appears only once that job (or the CI gate, with the connection string in its
+environment) actually runs. And
+`customEvents | where name == "llm_agent_call" and customDimensions.agent_name == "chat.sql_summary" | summarize zero_rate = countif(tostring(customDimensions.zero_result) == "True") * 1.0 / count()`
+should return a real rate.
+
+## Gap 304 half (1) — an eval run now exports its own telemetry (2026-08-24)
+
+The founder took the decision the section above deferred. **Golden-bank and pre-deploy
+eval runs now export their own cost, latency, dependency spans and per-turn eval results
+to Application Insights, tagged `golden`/`predeploy`, instead of being deliberately
+withheld.** This is the *code-level* half of Gap 304 (1); read "What this does not
+mean" at the end before quoting any of it as a live capability.
+
+### What changed, and why each piece was needed
+
+| File | Function / symbol | Change |
+|---|---|---|
+| `telemetry.py` | `track_eval_result()` | `run_source` is now a first-class resolved field (`_resolve_run_source()`, explicit keyword popped before the `**extra_attributes` loop), exactly as `track_agent_call()` does it. Before this, nothing set it — the field could only arrive if a caller passed it, and no caller did, so every `agent_eval_run` event was untagged. |
+| `telemetry.py` | `_start_llm_dependency_span()` | `run_source` added to the Gap 300 CLIENT span's attribute dict. **The load-bearing one.** `DependencyType` collapses every LLM call this app makes to `GenAI \| az.ai.openai`, so once the exporter attaches early, an eval turn's dependency rows sit in `AppDependencies` with nothing distinguishing them from a real user's. The event-level tag protects `customEvents` only. |
+| `telemetry.py` | `tracked_llm_call()` | Reads an explicit `run_source=` keyword with `.get()` (not `.pop()` — `track_agent_call` pops it for itself) and passes it to the span, so the event and the span describing one call cannot disagree. |
+| `services/benchmark_artifacts.py` | `configure_run_telemetry()` | Attaches early; idempotent via a cached `_exporter_attached`; passes `instrumentation_options` + `enable_live_metrics=False` + `enable_performance_counters=False`. |
+| `services/benchmark_artifacts.py` | `_BENCHMARK_INSTRUMENTATION_OPTIONS` | New. `azure_sdk`/`psycopg2`/`requests`/`urllib`/`urllib3` disabled. |
+| `scripts/run_agent_eval.py`, `scripts/run_extraction_benchmark.py` | `main()` | The attach moved to the line after `configure_run_source()`, i.e. before the first graded turn. Skipped under `--no-mirror`, which means "local run, offline". |
+
+**Why idempotency is not decoration.** `configure_azure_monitor()` is not idempotent: a
+second call attaches a second `LoggingHandler` to `invoice_be_telemetry` and every
+subsequent event exports twice — which would silently double this run's own cost and
+latency figures, the exact numbers the change exists to produce. Both scripts still call
+`configure_run_telemetry()` at the mirror (it reports the destination in the mirror line),
+so the second call is real and had to be made safe rather than removed.
+
+**Why the auto-instrumentations are switched off.** An eval run is DB-heavy per graded
+turn — the SQL route really executes its generated SQL — and the nightly job's
+`replicaTimeout` is 5400s. Leaving the distro's `psycopg2`/`requests`/`urllib`/`urllib3`/
+`azure_sdk` instrumentation on would push a large volume of `AppDependencies` rows that
+say nothing about the thing this export exists to observe (LLM cost and latency), on top
+of the ingestion cost already being accepted. Live metrics has no viewer for a batch job
+and performance counters describe a replica that exists for the length of one run, so both
+are off. Only the GenAI CLIENT spans and the custom events flow. The five names are the
+distro's own library names, pinned by a test against
+`azure.monitor.opentelemetry._constants._ALL_SUPPORTED_INSTRUMENTED_LIBRARIES` — an
+unknown key there is silently ignored by the SDK, so a typo would leave the
+instrumentation on with no error at all.
+
+### The consequence every consumer has to handle: judge cost is mixed in
+
+`services/agent_eval.py::_invoke_structured()` runs **every** judge/grader call through the
+same `tracked_llm_call()` wrapper as the system under test. So from this change on,
+`eval.claim_decomposition`, `eval.faithfulness`, `eval.relevance`, `eval.accuracy`,
+`eval.persona` and `eval.combined_soft` are exported too, tagged `golden`/`predeploy` like
+everything else in the run.
+
+**A "golden cost" rollup therefore measures the grader as well as the thing being
+graded, unless the consumer filters `agent_name !startswith "eval."`.** This is not a
+rounding error: read off the stored run this document already cites
+(`tests/agent_eval_output_combined.json`, 20 cases, combined judge), that run made
+**60 judge calls against 48 system-under-test calls** — so an unfiltered rollup counts
+more than twice as many calls as the system under test actually made. (Calls, not tokens:
+the two have different token profiles, so the cost ratio is not derivable from this and is
+not claimed here.) It affects every consumer of these events — KQL, workbook
+panels, any future cost report — not just the code changed here.
+
+The other rule that follows from the same change: `| where run_source == "production"` is
+now a **required** clause in any production cost/latency query, not an optional one. The
+KQL side (`llm_cost_rollup_nightly.kql`, `llm_cost_by_tool.kql`) is infra-devops's, done in
+parallel with this and not touched here.
+
+### Verified how
+
+```
+$ uv run pytest tests/test_telemetry.py tests/test_benchmark_artifacts.py \
+    tests/test_run_extraction_benchmark_cli.py -p no:randomly -q
+86 passed in 16.81s
+
+$ uv run pytest tests/test_*.py -p no:randomly -q
+3 failed, 1376 passed, 7 skipped in 396.58s (0:06:36)
+
+$ uv run ruff check telemetry.py services/benchmark_artifacts.py scripts/run_agent_eval.py \
+    scripts/run_extraction_benchmark.py tests/test_telemetry.py \
+    tests/test_benchmark_artifacts.py tests/test_run_extraction_benchmark_cli.py
+All checks passed!
+```
+
+14 new tests (`test_telemetry.py` 33 → 39, `test_benchmark_artifacts.py` 29 → 35,
+`test_run_extraction_benchmark_cli.py` 10 → 12), and the full-suite delta is exactly
++14 passed against the previous run's 1362. The 3 failures are the same pre-existing ones
+this document already records (2 in `test_connectors.py` needing a local Redis, 1 in
+`test_rag.py` calling `post_chat_message()` without its required `background_tasks`
+argument) — the failure output was read, not assumed.
+
+Two of the new tests are worth naming because they execute rather than assert-by-reading:
+
+* `test_run_source_survives_the_exporters_own_span_conversion` runs the recorded span
+  through the installed exporter's real `_convert_span_to_envelope` — the same function a
+  deployed container runs — and asserts `run_source` comes out in the dependency's
+  `properties` (i.e. `customDimensions`). Worth executing because that conversion *does*
+  consume some attributes: `peer.service`/`server.address` disappear into the target, and a
+  KQL filter cannot use an attribute the exporter drops.
+* `test_the_exporter_attaches_before_the_first_case_runs` drives the real
+  `scripts/run_extraction_benchmark.py::main()` and asserts the observed order
+  `configure_run_source` → `configure_run_telemetry` → first case. "Before the first graded
+  turn" is the whole correctness claim, and tagging before attaching is what makes it
+  impossible to export an untagged event.
+
+The dependency-span attribute was **mutation-checked**: deleting the `run_source` line from
+`_start_llm_dependency_span()` fails exactly the three span tests
+(`..._carries_run_source_so_appdependencies_stays_separable`,
+`..._survives_the_exporters_own_span_conversion`,
+`..._tags_the_event_and_the_span_identically`) and nothing else; restoring it returns all 39
+to green.
+
+### What this does not mean
+
+* **`caj-benchmark-eval-dev` has never been deployed to Azure** (confirmed by the
+  architect's scoping pass; the same job appears in this document's Cost-and-cadence table
+  as "once deployed", and `infra/benchmark-eval-job-only.bicep` has only ever been
+  what-if'd — "1 to create"). So **there is no live producer of `golden` or `predeploy`
+  events in Azure today.** This change closes the code-level prerequisite; it does not put
+  a number on a dashboard. Saying "golden cost is now visible" would be false.
+* Nothing has been verified live, for the same reason as every other 2026-08-24 telemetry
+  change: it needs a backend image carrying this code and a process with
+  `APPLICATIONINSIGHTS_CONNECTION_STRING` actually running an eval.
+* **Half (2) of Gap 304 was untouched at the time this section was written.** Production
+  chat had no quality measurement: `AgentEvalRun` was constructed in exactly one non-test
+  place (`scripts/run_agent_eval.py:800`), so `agent_eval_run` was golden-bank-only. *That
+  is no longer current — the founder took that decision later the same day and it is built;
+  see "Gap 304 half (2)" immediately below.*
+* The golden bank's cost/latency baseline is now *producible*, not *produced* — the first
+  real one arrives with the first eval run that executes with a connection string set.
+
+## Gap 304 half (2) — every production turn is now scored (2026-08-24)
+
+The other half of the same gap, and the founder took every open decision on it before any
+code was written. **Real end-user chat turns are now graded by the same reference-free
+judge the golden bank uses, and written to `agent_eval_run` tagged
+`run_source=production`.** Before this, `AgentEvalRun` was constructed in exactly one
+non-test place in the repo — `scripts/run_agent_eval.py` — so production traffic had no
+quality signal of any kind, and every quality tile in the control tower was single-sourced.
+
+**The founder's decisions, built exactly as taken:** every turn is judged (no sampling); the
+mechanism is an in-process hook after the response, not a deferred batch scorer; the row
+stores scores and a `message_id` and no customer text; `persona_score` is included, as an
+accepted extra judge call.
+
+### File coordinates
+
+| File | Function / symbol | What it does |
+|---|---|---|
+| `services/online_quality_judge.py` (new) | `judge_turn()` | The whole scoring path for one completed turn: strip the appended blocks, run `score_soft_metrics_combined()` + `score_persona()` + `score_orchestration()`, decide `pass`, write the row, emit the event. Never raises. |
+| | `submit_turn_judgement()` | The only thing a call site touches. Checks `ENABLE_PRODUCTION_QUALITY_JUDGE`, then hands `judge_turn` to `routers/chat.py::_chat_background_pool`. Fire-and-forget: the future is never held. |
+| | `_persist()` / `_notes()` | The row write + telemetry mirror, and the text-free note string. |
+| `agents/query_agent.py` | `run_query_agent()` | Returns a new `judge_evidence` key — `{route, context, executed_queries}` — built from the SQL route's `db_result` and the RAG route's chunk text. Attached **after** `set_cached_answer()`. |
+| `routers/chat.py` | `post_chat_message()` | Times the turn; submits judging after `db_session.commit()`. |
+| `queue_worker/handlers.py` | `handle_process_chat_job._execute()` | Same, after its own commit and after `complete_job()`. |
+| `models.py` | `AgentEvalRun` | `run_source`, `message_id`, nullable `question`/`actual_answer` + `ck_agent_eval_run_text_or_message`, `idx_agent_eval_run_source_time`. |
+| `alembic/versions/a7c3d5e91f04_...py` | — | The migration for the above. |
+| `config.py` | `ENABLE_PRODUCTION_QUALITY_JUDGE` | Default **False**. On/off, not a sampling rate. |
+| `services/ops_digest_collect.py` | `_eval_window_stats()` | Now filters `run_source != production`. Required, not tidiness — see below. |
+| `services/online_eval_signals.py` | `_eval_run_notes()` | Same filter, for a narrower reason — see below. |
+
+### Why an in-process hook and not a batch scorer reading Postgres back
+
+This was the deciding constraint, and it is a property of what the app persists rather
+than a preference. A turn's faithfulness can only be judged against the evidence the turn
+actually retrieved. For a RAG turn that evidence is the **chunk text** — and `ChatMessage`
+stores citations (invoice id, vendor, page) and nothing else. The text never reaches
+Postgres at all. A scorer running an hour later would therefore have to re-run retrieval
+(a different query against a moved index, i.e. not the evidence the answer was written
+from) or grade with an empty context, which `score_soft_metrics_combined()` correctly
+treats as a hard 0.00 faithfulness. Either would be a harness defect reported as a model
+result. The SQL route has the same problem in a milder form: `generated_sql` is persisted
+but the result rows are not.
+
+So the evidence is carried out of `run_query_agent()` while it still exists, on the return
+value, and consumed within the same process. It is **not** persisted onto `ChatMessage`
+(no column, and none added) and **not** written into the Redis answer cache — the
+`judge_evidence` key is attached on the line *after* `set_cached_answer()`, so the cached
+payload keeps exactly the size it had before this change.
+
+That ordering has a second, intended effect: a **cache hit returns no evidence key at
+all**, and `judge_turn()` skips any turn without one. That is correct rather than a hole —
+the identical answer was already judged when it was first produced, and re-judging it from
+an empty context would score its claims 0.00 for lack of evidence that was never absent.
+The same skip covers the two other evidence-less returns: the SAGE branch (out of scope
+for this gap) and the router's own "something went wrong" fallback dict, which is not a
+model answer.
+
+### The schema decision: one table, two populations
+
+`AgentEvalRun.question` and `.actual_answer` were `NOT NULL`, and the founder's decision was
+that a production row stores **no** customer question or answer text. Something had to
+give. Three options were on the table; what was built and why:
+
+* **Rejected — a separate lightweight table.** Every consumer already reads
+  `agent_eval_run` (the ops digest, the online-eval signals, the workbook's quality
+  tiles), and the entire point of Gap 304 is to compare live quality against the bank. A
+  second table means a second query and a `UNION` at every one of those call sites to ask
+  one question.
+* **Rejected — nullable columns alone.** That would also quietly permit a golden row with
+  no text, which is a corrupt row with nothing to diagnose it from.
+* **Built — nullable columns plus a CHECK that carries the invariant:**
+  `message_id IS NOT NULL OR (question IS NOT NULL AND actual_answer IS NOT NULL)`. A row
+  either points at the message that holds its text, or carries the text itself. The golden
+  invariant survives the columns becoming nullable, and the privacy rule is enforced by the
+  database rather than by convention.
+
+`run_source` is `NOT NULL DEFAULT 'golden'`, so every pre-existing row and every existing
+writer keeps its meaning with no data migration. `message_id` deliberately has **no**
+foreign key, matching this table's own `tenant_id`: a quality measurement has to survive
+its subject being deleted, and a cascade from `chatmessage` would silently rewrite quality
+history the first time a user deletes a thread.
+
+The `notes` column gets the same treatment as the text columns, for a reason that is easy
+to miss: `EvalScores.note_text()` embeds unsupported claims **verbatim** ("unsupported:
+<claim>"), and those claims are sentences lifted out of the answer. It is dropped and
+replaced with a structural summary (`run_source=production; message_id=…; route=SQL;
+sql=yes; judge_mode=combined; pass_basis=…`). A test fails if anyone reinstates it for
+debuggability.
+
+### What a production row can and cannot say
+
+| Field | On a production row | Why |
+|---|---|---|
+| `faithfulness_score`, `relevance_score`, `helpfulness`, `tone`, `completeness` | Scored | One `score_soft_metrics_combined()` call. Reference-free by construction. |
+| `persona_score` | Scored | Founder's decision: full parity with the bank, accepted as an extra judge call. NULL on turns needing no domain judgement, same as always. |
+| `orchestration_score` | Scored | Deterministic, no judge call, no reference needed — free at this point. |
+| `accuracy_score` | **Always NULL** | Needs the expected answer. Live traffic has none, and never will. |
+| `context_score` | **Always NULL** | Needs the known-correct invoice set. Same reason. |
+| `pass` | **Reduced** | Same `decide_pass()`, which only grades dimensions that produced a number — so in practice faithfulness + relevance, where a golden row is faithfulness + relevance + accuracy. |
+| `latency_ms` | Real wall clock | Measured at both call sites around `run_query_agent()`. |
+| `llm_call_count` | **0, meaning "not counted"** | Counting a turn's model round-trips needs the eval harness's `_counting_llm_calls()` patch, which is not something to install in a request path. The notes string says so on the row. Per-call production cost/latency already comes from `llm_agent_call`. |
+
+**The two pass rates are not comparable and must never be averaged together.** That is
+stated on the column in `models.py`, in the judge module's docstring, and — the part that
+actually enforces it — in the consumer filters below.
+
+**A judge outage writes nothing at all.** If neither faithfulness nor relevance produced a
+number (unreachable judge, empty answer), `judge_turn()` returns without writing a row.
+`decide_pass()` returns False for "nothing could be graded", which is the right default for
+a nightly harness (going green when the judge breaks is worse) and the wrong one here: a
+judge outage across live traffic would otherwise render as a production quality collapse.
+Writing nothing makes an outage show up as missing volume, which is what it is.
+
+### The two consumer fixes — both are regressions without them
+
+`services/ops_digest_collect.py::_eval_window_stats()` read `agent_eval_run` with no
+population filter. Once production rows exist that breaks Feature 24 in two ways:
+
+1. Every mean blends two populations that are not comparable, so a "quality dropped"
+   finding could fire purely because the traffic mix shifted.
+2. **`audit_job_failed` would never fire again.** It fires on "rows in the baseline, none
+   in this window" — which is how a dead nightly scheduler is detected — and production
+   rows are present in every window by definition. The one alert that catches a dead
+   scheduler would have gone permanently silent.
+
+`services/online_eval_signals.py::_eval_run_notes()` was **checked before being changed**,
+and the finding is narrower: both consumers of that list reduce it to notes matching
+`stop_reason=` before counting anything, and a production row's notes carry no such
+marker — so neither *rate* would have moved. What would have moved is
+`budget_exhaustion_rate`'s `detail["eval_rows_in_window"]`, which counts the unfiltered
+list and is what a reader uses to judge whether the denominator is worth trusting: it
+would have grown with live traffic while the denominator stayed flat, reading as "the
+harness ran 4000 turns and only 12 had a stop reason". Filtered at the query.
+
+Both filters are written as `run_source != production` rather than `== golden`, so a
+predeploy run that persists rows in future still counts as the bank, which is what it is.
+
+### Cost, and the pool it runs on — stated rather than discovered later
+
+Two extra billable model calls per judged turn (`eval.combined_soft`, `eval.persona`).
+`ENABLE_PRODUCTION_QUALITY_JUDGE` defaults **False** for exactly that reason — this is the
+first flag in `config.py` whose cost argument is per-turn spend rather than behaviour risk.
+With it off the turn pays literally nothing: the flag is checked in
+`submit_turn_judgement()` before anything is imported or handed to a thread.
+
+Both judge calls go through `tracked_llm_call()`, so they reach `customEvents` tagged
+`run_source=production` alongside the traffic they are grading. **The half (1) caveat now
+applies to production too**: any cost rollup that does not filter
+`agent_name !startswith "eval."` will attribute judge cost to the product.
+
+Judging occupies one of `_chat_background_pool`'s eight workers for the duration of two
+model calls. With the queue path also enabled, a traffic burst can therefore leave queued
+chat jobs waiting behind judge calls. The pool is reused rather than given a sibling
+because it is already this application's post-response chat worker pool and a second
+executor would double the thread budget for the same class of work; the flag is the
+mitigation, and this is a known trade-off rather than an oversight.
+
+### Verified how
+
+```
+$ uv run pytest tests/test_online_quality_judge.py -p no:randomly -q
+20 passed in 8.57s
+
+$ uv run pytest tests/test_*.py -q
+3 failed, 1404 passed, 7 skipped in 396.73s (0:06:36)
+
+$ uv run ruff check config.py models.py agents/query_agent.py routers/chat.py \
+    services/online_quality_judge.py services/ops_digest_collect.py \
+    services/online_eval_signals.py alembic/versions/a7c3d5e91f04_*.py \
+    tests/test_online_quality_judge.py tests/test_ops_digest.py \
+    tests/test_online_eval_signals.py tests/agentic_sage_parity_cases.py
+All checks passed!
+```
+
+28 new tests, and the full-suite delta is exactly +28 against the previous run's 1376:
+**20** in the new `tests/test_online_quality_judge.py`, **3** in `test_rag.py` (sync path
+hook, the evidence-less error fallback, and a broken pool not reaching the user), **2** in
+`test_chat_queue.py` (queue path hook, and a judge failure not failing the job), **2** in
+`test_ops_digest.py` (the two consumer regressions), **1** in
+`test_online_eval_signals.py`. The 3 failures are the same pre-existing ones this document
+already records (2 in `test_connectors.py` needing a local Redis, 1 in `test_rag.py` calling
+`post_chat_message()` without its required `background_tasks` argument) — re-read off the
+run output, and the `test_rag.py` one was re-confirmed by its `TypeError`, not assumed.
+
+Four of the tests are worth naming because they execute rather than assert-by-reading:
+
+* `test_the_sql_route_returns_its_db_result_as_judge_evidence` and
+  `test_the_rag_route_returns_chunk_text_as_judge_evidence` drive the **real**
+  `run_query_agent()` for both routes. The plumbing's whole claim is that `db_result` and
+  the chunk text never leave that function today, and a stub would prove nothing about it.
+* `test_judge_evidence_is_attached_after_the_cache_write_not_before` serializes the cached
+  payload at call time exactly as `set_cached_answer()` does. Asserting on the mock's
+  `call_args` would have proved nothing — the mock holds the same dict object the function
+  mutates afterwards, so it would show evidence the real `json.dumps` never saw. (This was
+  found by the test failing for that reason first.)
+* `test_the_check_constraint_still_forbids_a_row_with_neither_text_nor_pointer` inserts a
+  bad row and expects the database to reject it, rather than asserting the constraint
+  string is present in the model.
+
+**The migration was applied, not just written.** `alembic upgrade head` over the full
+history is not possible against SQLite in this repo — it fails at the *pre-existing*
+revision `71d18e2c3349` (`AddTenantEmailSenders`), unrelated to this change — so the
+revision was validated on a scratch SQLite database built to the exact pre-migration
+`agent_eval_run` shape (b5d2c8a41f30's `CREATE TABLE` plus c4a91e77b208's three columns)
+and stamped at `c4a91e77b208`, with a real golden row in it:
+
+* `alembic heads` → `a7c3d5e91f04 (head)` (single head, chained correctly).
+* `alembic upgrade head` applied it. Post-state read back from `sqlite_master`: both
+  columns present, `question`/`actual_answer` nullable, the CHECK present, and **all five
+  original indexes still there** plus the three new ones — batch mode recreates the table
+  on SQLite, so index survival is a real thing to check. The pre-existing golden row came
+  through with `run_source='golden'`, `message_id=NULL`.
+* A production-shaped row (no text, `message_id` set) inserted OK; a row with neither text
+  nor pointer was rejected with `CHECK constraint failed:
+  ck_agent_eval_run_text_or_message`.
+* `alembic downgrade -1` round-tripped: the production row deleted, `NOT NULL` restored,
+  exactly the original index set left behind.
+* Postgres DDL was rendered offline (`alembic upgrade c4a91e77b208:a7c3d5e91f04 --sql`
+  against a `postgresql+psycopg2` URL) and is metadata-only: two `ADD COLUMN`, three
+  `CREATE INDEX`, two `ALTER COLUMN … DROP NOT NULL`, one `ADD CONSTRAINT`.
+
+One real defect the test run caught, worth recording because it is the kind of thing a
+parity golden exists for: `tests/test_agentic_sage.py::test_flag_off_output_is_byte_identical_to_the_pre_phase_2_pipeline`
+failed on the new return key. It was **not** fixed by regenerating the golden — rewriting
+it to absorb an additive key would also silently absorb anything else that had drifted
+since it was recorded. `run_case()` now splits `judge_evidence` out into its own record
+field, so "the pipeline is unchanged" keeps meaning the answer, the SQL, the citations and
+the prompts, and the parity test additionally asserts the new payload is present on every
+route rather than merely tolerating it.
+
+### What this does not mean
+
+* **Nothing is verified live, and the flag is off.** No tenant is judging anything today.
+  This is the code and the schema; switching it on is a per-environment decision with a
+  real per-turn cost attached.
+* **No historical backfill.** Turns answered before the flag is switched on have no score
+  and will not get one — the evidence they were graded against no longer exists, which is
+  the same reason the hook is in-process.
+* **The SAGE path is not covered.** `ENABLE_AGENTIC_SAGE` is off for every tenant, and
+  `run_agentic_sage()` returns no evidence payload, so those turns are skipped rather than
+  mis-scored.
+* **No workbook panel reads these rows yet.** The data exists in `agent_eval_run` and in
+  `customEvents`; the AI Control Tower's quality tiles were built against golden-bank rows
+  and have not been re-pointed or given a `run_source` split. Reading a production number
+  off the existing tiles is not possible today and would be wrong if the tiles were changed
+  to blend the two.
+* **Security and retention have not been reviewed** — flagged here for security-tester
+  rather than decided here. The row holds no customer text by design, but it is a new
+  per-turn record keyed to a `chatmessage` id with no FK and no retention policy of its
+  own, and the judge prompts send question/answer/evidence text to the model provider on
+  every turn, which is a different data-flow volume from the golden bank's fixed 87 cases.
+
+## Gap 305 — `emit_online_signals()` has a scheduled caller (2026-08-24)
+
+`emit_online_signals()` had **zero callers anywhere in production code** since it was written on
+2026-08-21. The function was correct — `compute_online_signals()` reads real `ChatMessage`,
+`ChatFeedback` and `AgentEvalRun` rows and all five signals compute properly against seeded data —
+but nothing ever ran it, so every one of the five rendered empty forever no matter how much real
+traffic existed. An empty online panel means "nothing has run", not "no problems found", and that
+distinction had to be read off panel text rather than the data.
+
+### File coordinates
+
+| File | Function / symbol | What it does |
+|---|---|---|
+| `scripts/ops_digest_job.py` | `_compute_online_signals()` (new) | Computes the five signals over the digest's **own** window, while the DB session is still open. Returns `(signals, window_days)`, or `(None, None)` on any failure. |
+| `scripts/ops_digest_job.py` | `_emit_online_signals()` (new) | Calls `services/online_eval_signals.py::emit_online_signals()`. Never raises; logs how many events went out and which signals breached. |
+| `scripts/ops_digest_job.py` | `main()` | Computes inside the existing `run_ops_digest()` try/finally; emits **after** `configure_telemetry()` and after `track_ops_digest_run()`, before `_flush_telemetry()`. |
+| `telemetry.py` | `track_online_signal()` | `window_days` is now a **float** — `int(0.25)` was `0`. |
+| `services/online_eval_signals.py` | `emit_online_signals()` | Docstring's "Not wired to anything yet" replaced with the real caller and cadence; `window_days` retyped to `float`. |
+| `tests/test_ops_digest.py` | 7 new tests | Drive the real `main()` against a real SQLite DB with real chat rows. |
+| `tests/test_online_eval_signals.py` | 1 new test | A 0.25-day window survives onto the event. |
+
+### Why this job and not a new one
+
+The cadence had to come from somewhere, and `caj-ops-digest-dev` already has the right one:
+`0 1,7,13,19 * * *` UTC (`infra/08-apps.bicep::opsDigestCron`, read live rather than taken from the
+gap text), i.e. every six hours, matching `OPS_DIGEST_WINDOW_HOURS=6` by construction. That job also
+*already* reads these exact signals through
+`services/ops_digest_collect.py::_collect_online_signal_items()`, so the data path, the DB session
+and the telemetry exporter attachment all existed. A dedicated Container App Job would have needed
+its own bicep, its own image pull and its own deployment — and would have inherited Gap 298's
+Stage 8 blocker — to make one `track_online_signal()` call per signal.
+
+### The two placement decisions that are load-bearing
+
+1. **Emitted after `configure_telemetry()`.** `track_online_signal()` logs through the
+   `invoice_be_telemetry` logger, and that logger only carries an Application Insights handler
+   because `configure_azure_monitor()` put one there. Emitting at collection time — the obvious
+   place, since that is where the signals are already computed — would produce stdout lines and
+   **nothing in `customEvents`**, which is indistinguishable from the gap being fixed. Pinned by
+   `test_the_signals_are_emitted_after_the_exporter_is_attached`, which records the real call order
+   in `main()` rather than asserting on source layout.
+2. **Emitted after `track_ops_digest_run()`.** The run event is the only durable evidence the job
+   executed at all; a broken signal mirror must not be able to cost it.
+
+### Recomputed rather than lifted off the collection pass
+
+`_collect_online_signal_items()` keeps only `signals.breaches` and discards the `OnlineEvalSignals`
+object. Threading it back out would mean adding a field to `DigestCollection`, `build_digest()` and
+`OpsDigestResult` that exactly one line reads. The recomputation is five windowed reads over six
+hours of `chat_message`/`chat_feedback`/`agent_eval_run` — cheap next to the LLM synthesis call the
+job already makes. The window itself is taken from `result.window_start`/`result.window_end`, so the
+emitted events describe exactly the window the digest reported, and `window_days` is the same
+fractional value the collector passes.
+
+### A real defect this exposed, fixed here
+
+`track_online_signal()` cast `window_days` with `int()`. Every caller this wiring creates passes a
+**fraction** of a day (six hours = 0.25), so every event the scheduled emitter produced would have
+carried `window_days=0` — a zero-length window, which is worse than omitting the field, because a
+reader would divide by it or treat the rate as instantaneous. It is now
+`round(float(window_days), 6)`. Whole numbers still compare equal (`7.0 == 7`), so the pre-existing
+`window_days=7` assertion needed no change. Both the old and the new behaviour are pinned:
+`test_a_sub_day_window_survives_onto_the_event_instead_of_truncating_to_zero` and
+`test_the_emitted_window_is_the_digest_window_not_the_modules_seven_day_default` both fail if the
+cast is restored (checked by restoring it, not by reading the code).
+
+### Fail-soft contract, same as everything else in this job
+
+`_compute_online_signals()` returns `(None, None)` on any exception and `_emit_online_signals()`
+swallows anything the mirror raises. Neither can change the job's exit code, its digest, its
+delivery or its run event. Two tests drive that directly: one makes `compute_online_signals()` raise
+and asserts exit 0 plus a still-emitted `ops_digest_run`, the other makes `emit_online_signals()`
+raise and asserts the same. A run with **no DB session** emits no signal events at all rather than
+five zero-denominator ones — "measured, nothing found" and "never measured" must not render
+identically, which is the same principle the module's `value=None` rule already encodes.
+
+### Verified how
+
+* `uv run pytest tests/test_ops_digest.py tests/test_online_eval_signals.py tests/test_telemetry.py`
+  — **143 passed**.
+* Full `uv run pytest tests/test_*.py` — **1412 passed / 3 failed / 7 skipped**, exactly +8 against
+  the 1404 recorded for Gap 304 half (2), with the same 3 pre-existing failures (2× `test_connectors.py`
+  needing a local Redis, 1× `test_rag.py` calling `post_chat_message()` without `background_tasks`,
+  read off this run's own output).
+* **Mutation-checked, not assumed**: deleting the `_emit_online_signals(...)` call from `main()`
+  fails exactly 4 of the new tests and nothing else; restoring `int(window_days)` fails exactly the
+  2 window tests.
+* `uv run ruff check` clean on all 5 touched files.
+
+### What this does not mean
+
+* **Not verified live.** `caj-ops-digest-dev` **has never been deployed** — that is the sole reason
+  Feature 24 itself is still `[~]`. So the caller exists and runs on every invocation of the job,
+  but no `online_eval_signal` event has ever reached Azure, and it will not until that job is
+  deployed. "The online panel now has data" would be false today.
+* **No workbook panel reads these events yet.** A repo-wide search of `infra/` for
+  `online_eval_signal` returns nothing: the panel described in "Workbook — the second pass" is not
+  in any deployed workbook JSON. The events are queryable from `customEvents` once they flow; the
+  panel is separate work.
+* **The two measurement gaps in the module are untouched.** `stop_reason` still never reaches
+  `ChatMessage` (so `budget_exhaustion_rate` still measures the offline harness only) and turn
+  latency is still a row-timestamp delta rather than a timer. Wiring an emitter does not upgrade a
+  proxy into a measurement.
+* **`clarification_rate` will read near-zero and that is a configuration fact**, not a quality
+  result: `ENABLE_AGENTIC_SAGE` is off, and that is the path that produces most clarifications.
+
 ## Phase 1 as built (2026-08-21)
 
 ### File coordinates
@@ -1728,20 +2764,21 @@ cost alert already watches at the resource-group level.
 | `agents/extraction_agent.py` | `extract_node()`, `dynamic_qa_node()` | `extraction.INBOUND/OUTBOUND.extract`, `extraction.INBOUND/OUTBOUND.dynamic_qa`. `ExtractionState` gained a `tenant_id` key (telemetry attribution only — no node reads it for any extraction decision). |
 | `agents/query_agent.py` | `classify_query()` | `chat.classify`. Only the LLM fallback is instrumented; Gap 182's keyword fast path calls no model. Gained an optional `tenant_id` kwarg. |
 | | `run_sql_generation_loop()` | `chat.sql_generation`, one event per attempt (`attempt` on the event). Shared with `query_tools.identify_invoices()`/`aggregate()`, which pass their own `telemetry_agent_name` (`sage.identify`, `sage.aggregate`) so each SAGE tool's round-trips are attributed to it rather than to the chat route -- one event per call either way, never a nested pair. |
-| | `run_query_agent()` | `chat.sql_summary`, `chat.rag_answer`, `chat.conversational`. |
+| | `run_query_agent()` | `chat.sql_summary`, `chat.rag_answer`, `chat.conversational`. **2026-08-24**: `chat.sql_summary` also carries `zero_result`/`zero_result_fallback_recovered` — see "Two telemetry prerequisites" above for why that event and not `chat.sql_generation`. |
 | `agents/sage_orchestrator.py` | `_plan_node()`, `_synthesize_node()` | `sage.planner` (with `planner_step`/`tool_calls_made`), `sage.synthesis`. `_plan_node` gained an optional `tenant_id` kwarg, passed from `deps` in `build_sage_graph()`. |
 | `agents/trainer_agent.py` | `refine_constraints()` | `trainer.refine_constraints`. Gained an optional `tenant_id` kwarg, passed by `run_trainer_agent()`. |
 | `routers/trainer.py` | `_validate_rule_text()` | `trainer.rule_guardrail` (Gap 217's guardrail is a real billable call on every preview/commit). Gained an optional `tenant_id` kwarg. |
 | | `flag_missed_alert()` | `trainer.missed_alert_rule` — the Feature 18 alert-anchored correction loop's model call. |
 | | `_answer_qa_from_session_data()` | `trainer.qa_summary` (with `field_count`) — Gap 236's upload-path QA answer. Gained an optional `tenant_id` kwarg, passed by `_handle_qa_test_turn()` from its `TenantContext`. |
 | `routers/dashboard.py` | `get_dashboard_insights()` | `dashboard.insights` (with `invoice_count`). Only cache misses reach the model, so the event count is the true call count, not the panel's view count. |
-| `tests/test_telemetry.py` (new) | 5 tests | Event shape, real token capture off a LangChain run, error status + re-raise, broken-emitter resilience, mock-model naming. **Extended 2026-08-23 to 14** — the 9 added are per-call-site coverage for the lightweight tier, not more helper mechanics; see "Lightweight-tier coverage verified" above. |
+| `tests/test_telemetry.py` (new) | 5 tests | Event shape, real token capture off a LangChain run, error status + re-raise, broken-emitter resilience, mock-model naming. **Extended 2026-08-23 to 14** — the 9 added are per-call-site coverage for the lightweight tier, not more helper mechanics; see "Lightweight-tier coverage verified" above. **2026-08-24 to 23** (Gap 300's dependency-span section) and **to 33** (the `run_source` + zero-result sections). |
 
 ### Event
 
 One `customEvents` row named `llm_agent_call` per LLM round-trip, with
 `agent_name`, `model`, `tokens_in`, `tokens_out`, `tokens_total`, `latency_ms`, `status`
-(`success`/`error`), `tenant_id`, `request_id`, `trace_id`, `llm_calls`, plus per-agent extras
+(`success`/`error`), `tenant_id`, `request_id`, `trace_id`, `run_source` (added 2026-08-24;
+`production`/`golden`/`predeploy`), `llm_calls`, plus per-agent extras
 (`flow_direction`, `complexity`, `attempt`, `planner_step`, `alert_type`, ...).
 
 ### How it reaches Application Insights — nothing new was initialised
@@ -1831,6 +2868,9 @@ by observation of the events, not by the test suite. The history is only hours l
 the workbook's Cost and Latency tabs say so on the tab itself rather than letting a mostly-empty
 14-day window read as a quiet product. `agent_eval_run` and `online_eval_signal` are still absent,
 for their own separate reasons (no scheduled eval job, nothing calls `emit_online_signals()`).
+*(The second reason no longer holds in code as of 2026-08-24 — Gap 305 wired
+`scripts/ops_digest_job.py` as the caller — but the events are still absent from Application
+Insights, because that job has never been deployed.)*
 
 No dependency change was needed: `azure-monitor-opentelemetry>=1.6.0` was already in
 `apps/invoice-be/pyproject.toml` and pinned at 1.8.9 in `uv.lock` (this backend has no
@@ -2143,8 +3183,11 @@ deltas discarded, not clamped). Both are in the section header table under an ex
 `confidence` column, alongside the 20-observation alert floor and the "blank means not measured"
 rule.
 
-**Nothing emits these events yet** — no scheduled job calls `emit_online_signals()`. The panel says
-so: an empty panel there means "nothing has run", not "no problems found".
+**Nothing emitted these events when this panel was built** — no scheduled job called
+`emit_online_signals()`. The panel says so: an empty panel there means "nothing has run", not "no
+problems found". **Gap 305 fixed the caller side on 2026-08-24** (`scripts/ops_digest_job.py`, every
+six hours), but the panel stays empty until `caj-ops-digest-dev` is deployed, so the panel text is
+still accurate as written.
 
 **Golden-bank coverage is a static tile, and says so.** A workbook has no data source that can read a
 repo file. The numbers were re-verified against the current `tests/golden_bank/golden_bank.json`
@@ -3320,6 +4363,183 @@ not routed through `08-apps.bicep`/`params.dev.json` — same narrow-standalone-
 `rg-invoice-llm-dev` returned a clean **9 to create, 0 to modify, 0 to delete**. **Not yet
 deployed** — `az deployment group create` was deliberately not run, pending founder go-ahead.
 
+## Wave 3 — the regional question banks, ported into the shipped golden bank (2026-08-24)
+
+**Case set 20 → 35.** Fifteen questions from `tests/{india,us,eu}/chat_question_bank.md` now live in
+`benchmarks/agent_eval_golden_sample.py`, five per region, and therefore run in `caj-benchmark-eval-dev`
+and can be selected by the pre-deploy gate. Nothing was rewritten: all twenty pre-existing cases are
+byte-identical in question, reference answer and fixture, and are pinned as such by
+`test_the_regional_cases_were_added_without_moving_any_existing_case`.
+
+### Why this was blocked, and which half of the blocker this removes
+
+`agent_eval_golden_sample.py`'s own docstring said those banks were "deliberately not used here" for
+two reasons: each needed its region's tenant in **live Postgres with real Chroma embeddings**, and
+`.dockerignore` excludes `**/tests/` so nothing there ships. The second was already solved for Track
+1/2 by the `benchmarks/` package (2026-08-23). This pass solves the first — not by standing up
+Postgres, but by re-expressing each region's nine invoices as ordinary `invoice` rows in the harness's
+existing in-memory SQLite (`benchmarks/region_seed_fixtures.py`), and carrying the handful of facts
+that only ever existed in the PDF's prose as fixed document chunks in the same shape
+`sage_seed_fixtures._CHUNKS` already used. `MOCK_EMBEDDINGS=true` still holds throughout: no embedding
+is computed for any of it, because `scripts/run_agent_eval.py` already patches `query_invoice_chunks`
+and `get_all_invoice_chunks` to return the fixture list.
+
+### Four tenants in one SQLite database — the load-bearing decision
+
+The regional rows are **not** merged into `sage_seed_fixtures._ROWS`. Each region is seeded under its
+own tenant id and every case declares which tenant it is asked against (`GoldenCase.tenant_id`,
+defaulted to the base tenant so the existing twenty are untouched by the field's existence). Merging
+would have silently falsified four of the existing reference answers rather than extended the set:
+
+| Existing case | What its reference answer asserts | What a merge would have done |
+|---|---|---|
+| `freight_per_vendor` | "No other seeded vendor has a freight/delivery/shipping line" | The US tenant has three (Blue Ridge, Cascade, Titan Steel) |
+| `zero_result_with_useful_redirect` | "No invoice at all is dated in May 2026" | IEQ-IN-7003 is 2026-05-20; IEQ-US-9003 is 2026-05-15 |
+| `titan_steel_payment_status` | TSD-620458 = USD 18,450.00 | The US tenant's TSD-620458 is USD 10,557.60 — same number, different invoice |
+| `line_item_breakdown_completeness` / `two_vendors_two_questions` | "the Blue Ridge Logistics invoice" is BRL-7702 | The US tenant also has a Blue Ridge Logistics, BRL-200981 |
+
+Isolation is the product's own, not something the fixture arranges: every generated query is
+tenant-scoped and `execute_generated_sql`'s Safety Check 3 **rejects** one that is not. The TSD-620458
+collision is asserted deliberately in `test_the_regional_tenants_are_isolated_from_the_base_fixture`
+rather than left as a comment, and `test_every_expected_invoice_number_exists_in_the_seeded_fixture`
+was made tenant-aware for exactly that reason — a flat union of all seeded numbers would have passed
+for a case naming the right number against the wrong tenant.
+
+### The fifteen, and what each reaches that the twenty could not
+
+| # | Case id | Source | What it adds |
+|---|---|---|---|
+| 1 | `india_mixed_gst_slab_lines` | India Q2 | Three GST slabs (5/12/18%) on one invoice |
+| 2 | `india_ganesh_subtotal_reconciliation` | India Q4 (required check) | Reconciliation where the wrong figure cascades into GST **and** the total |
+| 3 | `india_reverse_charge_vendor` | India Q8 | RCM, plus the bank's clearest "flag a contradiction nobody asked about" bonus |
+| 4 | `india_outbound_only_disambiguation` | India Q10 | OUTBOUND / `customer_name` (rule 4a's other direction) |
+| 5 | `india_no_due_date_refusal` | India Q14 | Honest refusal where the field is genuinely NULL and the invoice exists |
+| 6 | `us_zero_tax_exemption_reason` | US Q3 | Document-grounded "why", with a near-identical zero-tax decoy in the same tenant |
+| 7 | `us_flagged_inbound_invoices` | US Q6 | The `sa_alerts` / `AUDIT_REQUIRED` audit route |
+| 8 | `us_freight_per_vendor_multi` | US Q9 | Gap 271's own question in full: 3 vendors, 4 lines, a real scoping judgement |
+| 9 | `us_outbound_flagged_and_billed_to` | US Q13 | OUTBOUND + audit + a two-part answer; SENT/NEEDS_REVIEW/PAID status vocabulary |
+| 10 | `us_cross_invoice_grand_total` | US Q11 | Three-invoice arithmetic the model (not SQL) must do, with real cents |
+| 11 | `eu_mixed_vat_rates` | EU Q2 | 20% / 5.5% mixed rates; back-computing one rate yields 16.65%, which is on neither line |
+| 12 | `eu_currency_confusion_trap` | EU Q3 | A second currency dangled in the document text against an EUR column |
+| 13 | `eu_reverse_charge_inbound_line` | EU Q9 | Intra-EU reverse charge on **one line** of a two-line invoice; the other line carries all the VAT |
+| 14 | `eu_outbound_reverse_charge_vs_domestic` | EU Q11 | Three facts plus a domestic-vs-cross-border reason, all four required |
+| 15 | `eu_benelux_line_understated` | EU Q6 / flag 4 | The only reconciliation case where the printed amount is **lower** than qty × rate |
+
+Coverage the base tenant structurally could not reach, now reachable: **OUTBOUND** (all nine base rows
+are INBOUND with a NULL `customer_name`, so rule 4/4a's direction discipline had no case that could
+fail it), **`sa_alerts`** (no base row carries one), **real tax regimes** (GST slabs, CGST/SGST, Indian
+RCM, intra-EU reverse charge, a US resale exemption, mixed VAT, domestic-vs-cross-border VAT), and **a
+field that is genuinely empty** (`due_date` is NULL on all 27 regional rows — ground truth, since none
+of these documents prints one).
+
+### What was deliberately NOT ported, and whether it was a harness limit or a judgement call
+
+| Not ported | Which | Reason |
+|---|---|---|
+| Multi-turn follow-ups | India Q7/Q12, US Q7/Q12, EU Q7/Q13, `realworld_tenant` Q9/Q11/Q15/Q21 | **Harness limitation.** Each resolves a pronoun against the previous turn ("of those three…"); the harness runs one turn per case under a fresh `session_id` with no prior `ChatMessage` rows, so the SQL prompt's conversation-history block is empty. Rewriting them standalone was rejected — it deletes the only property they test. A live-tenant run is the right vehicle. |
+| CGST/SGST split | India flag 4 (PE-2026-0512's uneven Rs 2,000 / Rs 3,700) | **Schema limitation, and already covered.** `invoice` has one combined `tax_amount` and no tax-component column; that limitation *is* the existing `rajesh_steel_cgst` case. Seeding a fake breakdown would test a schema this product does not have. |
+| GSTIN / VAT-ID presence | India Q7, EU Q7 | **Schema limitation.** The counterparty tax identifier is not a queryable column on `invoice`. (The defect is recorded in the seeded `sa_alerts` text, so the fact is not lost — it just is not the subject of a graded question.) |
+| Duplicate incidents | US Q4, US Q8, India Q9, India Q1/Q5, US Q1/Q5, EU Q1/Q5 | **Judgement call.** US Q4 is literally `bolts_reconciliation`'s arithmetic (5,000 × $0.08 = $420); US Q8/India Q9 are `datapipe_vs_stratedge`'s two-entity shape; the Tier-1 single-fact lookups add turns without adding a failure mode. |
+| The `realworld_tenant` (NovaTech) bank | all 25 | **Judgement call, breadth over volume.** It is 15 inbound-only USD invoices with no outbound example at all (its own ground truth records that as an accepted risk), so it adds neither a region nor a direction the three ported tenants do not already cover; its distinctive material is line-item-sum arithmetic across many invoices, which `us_cross_invoice_grand_total` covers in shape. Left for a later pass if per-line cross-invoice summation needs its own case. |
+| India Q6 / EU Q6 (the "which invoices are flagged" pair) | 2 of 3 | **Judgement call.** All three regions ask the same question of the same column; `us_flagged_inbound_invoices` covers the route once, and three copies would have cost three turns for one capability. |
+
+### File coordinates
+
+| File | Function / symbol | What it does |
+|---|---|---|
+| `benchmarks/region_seed_fixtures.py` (new) | `INDIA_ROWS` / `US_ROWS` / `EU_ROWS` | 9 rows per region, every figure from `ground_truth_line_items.md`; `status` and `sa_alerts[].type` from `tests/_extraction_data.json`'s Expected/Actual Alert Type columns, not invented. The 9 deliberate qty × rate defects are preserved, not repaired. |
+| | `_items()` / `_alerts()` | Build `items` with exactly the four keys rule 6d's un-nesting SQL reads, and `sa_alerts` in the `{"type", "message"}` shape `services/invoice_reconciliation.py` writes. Per-line GST/VAT rates ride **inside the description string** because there is no per-line tax field to put them in. |
+| | `INDIA_CHUNKS` / `US_CHUNKS` / `EU_CHUNKS`, `CHUNK_INVOICE_NUMBERS` | 2 chunks per region for the document-only facts; the map binds each to its row's generated id so a `get_full_record` fetch returns a page. |
+| | `region_stats_summary()` | Per-tenant snapshot, computed. Counts **counterparties**, not `vendor_name` — a third of these rows are OUTBOUND, so a `vendor_name`-only count would under-report every region by three. |
+| `benchmarks/agent_eval_golden_sample.py` | `GoldenCase.tenant_id` (new, defaulted) | Which tenant a case is asked against. |
+| | `CASES` (20 → 35) | The fifteen above. |
+| | `stats_for_tenant()` / `chunks_for_tenant()` (new) | One selection point rather than a call-site choice — handing a turn another tenant's grounding facts is the failure `tenant_stats_summary()`'s docstring already records, and four tenants create three more ways to make it. |
+| `benchmarks/sage_seed_fixtures.py` | `_seed(session, rows, tenant_id=)`, `_ROW_DEFAULTS` (new) | Same single INSERT, now writing `po_number` / `subtotal` / `sa_alerts` / a per-call tenant. Defaults rather than a second statement: two insert paths for one table is the drift this module was extracted to prevent. Backward-compatible — `tests/run_agentic_sage_live.py` calls it unchanged. |
+| `scripts/run_agent_eval.py` | `main()` | Seeds the three regional tenants after the base one; `seeded_ids` is deliberately **not** merged (TSD-620458 is in two tenants). |
+| | `run_turn()` | Runs against `case.tenant_id` and records it on the turn; `persist()` and `track_eval_result()` write the turn's own tenant instead of the module constant. |
+| | `_region_invoice_chunk_map()`, `_bind_chunk()` (new) | Without this a regional `get_full_record` would return the row and no pages, and the two chunk-dependent cases would be graded against evidence that could not contain their answer — the same class of harness defect the module docstring records for the tool-result recorder. |
+| `tests/test_agent_eval.py` | +6 tests (97 total) | Tenant-aware expected-invoice guard, the 20/15 and 5-per-region split, row arithmetic, tenant isolation, per-tenant stats/chunks, chunk→invoice binding, and a real `_seed` insert asserting the new columns. |
+
+### Verified by execution
+
+`uv run python scripts/run_agent_eval.py --paths default --cases <the 15> --judge combined`, against
+live Azure `gpt-5-mini`, 2026-08-24. **15/15 turns ran, 0 harness errors.** Fourteen of the fifteen
+generated real SQL carrying their own tenant id; the fifteenth returned a deliberate null-SQL decline,
+which is a product behaviour and is discussed below.
+
+| Metric | Value |
+|---|---|
+| turns / errors | 15 / **0** |
+| pass rate | 0.333 (the 20-case base set's own baseline is 0.35 — same order, not a regression) |
+| faithfulness / relevance / accuracy | 0.900 / 1.000 / 0.567 |
+| context / orchestration / persona | 0.733 / 0.915 / 0.767 (**persona scored on 15/15 turns**) |
+| helpfulness / completeness / tone | 0.920 / 1.000 / 0.960 |
+| median LLM calls / median latency | 3 / 20.9 s |
+| cost per turn | $0.00606 (gpt-5-mini list basis) |
+
+`persona_scored_turns` is 15 of 15 — every one of these questions required a domain judgement, so the
+judge's `applicable=false` escape never fired. That is the single clearest measure of what this port
+added: `persona_score` has been NULL on most base-tenant turns since it was built, and the tracker
+entry for component-level scoring records "there is no dedicated domain-knowledge golden set in this
+repo" as an open limitation. There is one now.
+
+Also run: `uv run pytest tests/test_agent_eval.py` **97 passed**; `tests/test_model_substitution.py` +
+`tests/test_benchmark_artifacts.py` **72 passed**; full suite **1414 passed / 7 failed / 7 skipped**
+(all 7 failures are other in-flight workstreams — 2 need a local Redis, 1 is `post_chat_message()`
+gaining a `background_tasks` argument, 3 are the chat-queue judge work, and 1 is `run_query_agent()`
+gaining a `turn_telemetry` key; none touches `benchmarks/`). `ruff check` clean on all five files
+touched. One collection error exists locally and is unrelated: `tests/us/run_chat_live_test.py` and
+`tests/realworld_tenant/run_chat_live_test.py` are the same module name in two `__init__.py`-less
+directories, so the run above used `--ignore=tests/realworld_tenant` (that directory is gitignored and
+does not exist in CI).
+
+### Three real findings from the first run, recorded and not fixed here
+
+1. **Rule 6b's four-column OR group is emitted with `items` dropped — reproduced independently on two
+   tenants, and it reports a real invoice as not found.** `india_reverse_charge_vendor` and
+   `eu_reverse_charge_inbound_line` both generated the rule-6b shape over `tags`, `sa_alerts`,
+   `vendor_name` and `customer_name` — substituting `sa_alerts` for the mandated
+   `LOWER(CAST(items AS TEXT))` — and `items` is the only column where "reverse charge" actually
+   appears. Both returned zero rows and both answered *"the query returned no matching records"* for
+   an invoice that exists (KE-2026-0089 and RIT-2026-0456). Faithfulness 1.0 and relevance 1.0 on
+   both, because a no-results report is faithful to an empty result set; **accuracy 0.0, context 0.00,
+   persona 0.0** are what caught it. This is Gap 224's false-confident-negative family with a
+   different root cause, and it is filed as **Gap 306**.
+2. **A document-grounded "why" answered from the structured row instead.**
+   `us_zero_tax_exemption_reason` asks why no sales tax was charged; the router classified it SQL, the
+   query returned `tax_amount = 0.00`, and the answer was *"Invoice CMC-330217 shows tax_amount = USD
+   0.00, so no sales tax was charged on that invoice."* — persona **0.5**, accuracy **0.5**, and
+   faithfulness a clean **1.0**, because everything it said was true and none of it was the answer.
+   The Resale Exemption Certificate was sitting in an available chunk. A routing/answering gap, not a
+   fixture gap, and the first case in this bank that can show it.
+3. **Gap 294 reproduced on a new case, alongside a rule-8 over-decline.** `eu_mixed_vat_rates`
+   returned **null SQL**, claiming the schema cannot answer a VAT-rate question — true of the columns,
+   false of the data, since both rates are printed in the line descriptions that rule 6b/6d can reach
+   — and then pasted a full `SELECT ... WHERE tenant_id = '33333333-…'` into the user-facing reply,
+   raw tenant UUID included. Tone **0.4**, accuracy **0.0**, faithfulness **0.00** (4 claims asserted
+   with no tool context at all, because no tool ran). Gap 294 is already open for the SQL leak; the
+   over-decline half is new evidence on the same case.
+
+### One fixture correction made on the run's evidence, not before it
+
+`us_cross_invoice_grand_total` was authored with `expected_invoice_numbers=("SOS-100442",
+"BRL-200981", "CMC-330217")`. The model answered **USD 5,436.31 exactly right** from a single
+`SUM(grand_total) … GROUP BY currency` — a legitimate shape for "what is the combined total" — and an
+aggregate result set carries no `invoice_number` column, so `identifiers_from_markdown` found nothing
+and `context_score` came back **0.00 next to accuracy 1.00**. That is the metric being unobservable on
+this question shape, not a retrieval failure, so the field is now `None`, which the `GoldenCase`
+docstring reserves for exactly this ("declares no known-correct retrieval set; the component is left
+unscored rather than guessed"). Stated in this order deliberately: the 0.733 `context_mean` above is
+the **pre-correction** figure, and the change was made after the run rather than tuned into it.
+
+### One operational consequence, stated rather than discovered later
+
+`caj-benchmark-eval-dev` runs `--paths default,sage`, i.e. **70 turns** now instead of 40, against a
+`replicaTimeout` of 5400s that was sized off a ~40-minute measurement of the 20-case set. On the
+measured per-turn cost of this run that is roughly 60–75 minutes — inside the ceiling, but no longer
+comfortably. The pre-deploy gate is unaffected: it names five base-tenant cases explicitly
+(`deploy-dev.yml`), so its runtime and its scope are unchanged by this.
+
 ## Tasks
 
 - [x] Add `agent_name`/`model`/`tokens_in`/`tokens_out` fields to the existing structured logger,
@@ -3495,6 +4715,19 @@ deployed** — `az deployment group create` was deliberately not run, pending fo
       `Storage Blob Data Contributor` is already granted at account scope, verified live. **No
       workbook panel reads either event yet**, and nothing has reached `customEvents` for real —
       that needs a commit, a CI build and a deployed job. See "The result mirror"
+- [x] Score real production turns, not just the golden bank (Gap 304 half (2)) — new
+      `services/online_quality_judge.py`, hooked into both chat write paths
+      (`routers/chat.py` and `queue_worker/handlers.py`) off the response path, writing
+      `agent_eval_run` rows tagged `run_source=production` with scores and a `message_id`
+      and **no customer text** (nullable `question`/`actual_answer` + a CHECK that keeps the
+      golden invariant, migration `a7c3d5e91f04`). Same reference-free judge as the bank
+      (`score_soft_metrics_combined()` + persona + orchestration); `accuracy`/`context` stay
+      NULL by construction and `pass` is a documented reduced predicate. Both consumers of
+      `agent_eval_run` gained a `run_source` filter, without which Feature 24's
+      `audit_job_failed` alert would have gone permanently silent. 28 new tests; migration
+      applied and round-tripped on a scratch DB. **Gated behind
+      `ENABLE_PRODUCTION_QUALITY_JUDGE`, default off — nothing is judged live today**, and
+      no workbook panel reads the new rows. See "Gap 304 half (2)"
 - [ ] Thread-level drift detection (Gaps 237/276 shape) — **not started, deliberately. Now Gap 303.**
       Needs new design work per "Evaluation tiers"; the seed script recovers the bounded multi-turn
       scripts such a detector would consume, but no detector exists

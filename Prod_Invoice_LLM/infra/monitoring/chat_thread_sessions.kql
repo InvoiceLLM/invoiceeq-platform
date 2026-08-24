@@ -1,0 +1,264 @@
+// Feature 23 (AI Control Tower) — Gap 303 half (b): Thread-level analytics at a
+// 30-minute idle cutoff, derived entirely at query time.
+//
+// ---------------------------------------------------------------------------
+// WHY THIS IS A .kql FILE AND NOT A NEW SCHEDULED JOB — read this first
+// ---------------------------------------------------------------------------
+// The founder's idle cutoff for "this session is over" is **30 minutes**. The
+// obvious build was a scheduled rollup that wakes up, finds sessions with no
+// turn in the last 30 minutes and emits a `chat_session` event per one. That was
+// considered and rejected, for a reason that is worth stating rather than
+// leaving as a preference:
+//
+//   * Feature 24's `scripts/ops_digest_job.py` runs every 6h. A 30-minute idle
+//     definition cannot ride it — a session that ends at 09:05 would first be
+//     noticed at 12:00, so "abandoned 30 minutes ago" would be a label applied
+//     up to six hours late. So piggybacking was genuinely not available.
+//   * The alternative was a new `Microsoft.App/jobs` resource on a ~15-minute
+//     cron: its own bicep, its own image pull, its own deploy, and Gap 298's
+//     Stage 8 deployment blocker on top — all to compute something that is a
+//     `summarize` over data the app is already emitting.
+//   * Gap 302's `chat_turn` event carries `session_id` and a timestamp on
+//     **every** turn, including the declined, errored and cache-hit ones. A
+//     session is therefore fully reconstructible from the event stream, and
+//     "no successor within 30 minutes" is `row_window_session(..., 30m)` — a
+//     built-in KQL operator, not a hand-rolled `prev()`/`next()` scan.
+//
+// So: **no new emission, no new scheduled component, no new Azure resource.**
+// The three analytical needs the scoping pass named — session length
+// distribution, abandonment rate, turns per session — are all Query A/B/C
+// below. If a future need genuinely requires a *pushed* signal (an alert the
+// moment a session is abandoned, rather than a number on a panel), that is when
+// a scheduled emitter earns its keep; a panel does not.
+//
+// One real limitation of the query-time approach, stated rather than found
+// later: an alert rule built on these queries evaluates on its own schedule, so
+// the freshness of "abandoned" is that rule's evaluation frequency, not 30
+// minutes. For a dashboard panel that is irrelevant; for an alert it is not.
+//
+// ---------------------------------------------------------------------------
+// TWO SOURCES OF THE SAME NUMBER, AND WHY BOTH EXIST
+// ---------------------------------------------------------------------------
+// `chat_turn` also carries `turn_index` and `seconds_since_prev_turn`, computed
+// in Postgres by `agents/query_agent.py::_session_turn_position()` against
+// `chat_message`. Those are the authoritative per-turn values — they see turns
+// that predate this event existing, and they survive telemetry sampling.
+// `row_window_session` below re-derives the same shape from the event stream
+// alone. They are kept as two sources deliberately:
+//
+//   * `turn_index`/`seconds_since_prev_turn` are per-*session_id*, so a session
+//     a user comes back to after two days is turn 9 of one long session.
+//   * `row_window_session(..., 30m)` splits that same `session_id` into two
+//     idle-separated sittings, which is what the 30-minute cutoff means.
+//
+// Neither is wrong; they answer different questions. Query A uses the derived
+// windows (the cutoff's own definition) and reports the emitted fields beside
+// them so a divergence is visible rather than silent.
+//
+// ---------------------------------------------------------------------------
+// WHAT IS LIVE TODAY — stated plainly, 2026-08-24
+// ---------------------------------------------------------------------------
+// **Nothing.** `chat_turn` was added on 2026-08-24 and has not been deployed to
+// Azure, so every query in this file returns zero rows against
+// `appi-invoicellm-dev` right now. This is the query, not a verified result.
+// The emptiness is the deploy, not the instrumentation — unlike the `sage.*`
+// queries in `llm_cost_by_tool.kql`, `chat_turn` needs no feature flag: it fires
+// on every chat turn on the default path as soon as the image ships.
+//
+// **Retention**: these events live in `customEvents` in the workspace-based
+// Application Insights component, so they inherit the Log Analytics workspace
+// retention set by `infra/06-compute-env.bicep`'s `logRetentionInDays` — 30 days
+// in `params.dev.json`, 90 in `params.prod.json`. Any Thread-level trend asked
+// over a longer window than that has no data behind it, and `chat_turn` carries
+// real generated SQL and real tool output (see `telemetry.py`'s
+// `MAX_TURN_SQL_CHARS` block for the founder decision and the security caveat).
+// ---------------------------------------------------------------------------
+let lookback = 14d;
+let idle_cutoff = 30m;
+// A single sitting is capped at 1d: `row_window_session`'s first bound is the
+// maximum distance from the window's *start*, and without it one continuous
+// stream of turns would form an unbounded session.
+let max_session_span = 1d;
+let turns =
+    customEvents
+    | where timestamp > ago(lookback)
+    | where name == "chat_turn"
+    | extend
+        session_id  = tostring(customDimensions["session_id"]),
+        turn_id     = tostring(customDimensions["turn_id"]),
+        message_id  = tostring(customDimensions["message_id"]),
+        tenant_id   = tostring(customDimensions["tenant_id"]),
+        trace_id    = tostring(customDimensions["trace_id"]),
+        route       = tostring(customDimensions["route"]),
+        status      = tostring(customDimensions["status"]),
+        stop_reason = tostring(customDimensions["stop_reason"]),
+        latency_ms  = todouble(customDimensions["latency_ms"]),
+        llm_call_count = toint(customDimensions["llm_call_count"]),
+        tokens_total   = toint(customDimensions["tokens_total"]),
+        sql_generated  = tobool(customDimensions["sql_generated"]),
+        zero_result    = tobool(customDimensions["zero_result"]),
+        citation_count = toint(customDimensions["citation_count"]),
+        result_invoice_count = toint(customDimensions["result_invoice_count"]),
+        // Emitted only when known — a first turn has no predecessor, and the
+        // emitter drops the field rather than sending 0. `toint`/`todouble` of
+        // an absent key give null, which is the correct reading here.
+        turn_index = toint(customDimensions["turn_index"]),
+        seconds_since_prev_turn = todouble(customDimensions["seconds_since_prev_turn"]),
+        run_source = tostring(customDimensions["run_source"])
+    | extend run_source = iff(isempty(run_source), "production", run_source)
+    // Same discriminator as every other Feature 23 query (Gap 304): a
+    // golden/predeploy eval run's turns are not a user's session and must never
+    // be pooled into a session-length or abandonment figure.
+    | where run_source == "production"
+    | where isnotempty(session_id);
+let sittings =
+    turns
+    // `row_window_session` needs the rows ordered within each partition; the
+    // `Restart` predicate is what makes the partition `session_id` rather than
+    // the whole table.
+    | order by session_id asc, timestamp asc
+    | extend sitting_start =
+        row_window_session(timestamp, max_session_span, idle_cutoff, session_id != prev(session_id));
+//
+// ===========================================================================
+// QUERY A — one row per sitting: length, turns, and how it ended
+// ===========================================================================
+// This is the table the other two queries summarise. `is_ended` is the 30-minute
+// cutoff applied to *now*: a sitting whose last turn is older than the cutoff
+// has no successor and is over. Anything more recent is still in progress and
+// must be excluded from a length or abandonment figure, or every currently-live
+// conversation reads as a short abandoned one.
+sittings
+| summarize
+    turns              = count(),
+    first_turn         = min(timestamp),
+    last_turn          = max(timestamp),
+    routes             = make_set(route),
+    total_latency_ms   = sum(latency_ms),
+    llm_calls          = sum(llm_call_count),
+    tokens_total       = sum(tokens_total),
+    declined_turns     = countif(status == "declined"),
+    errored_turns      = countif(status == "error"),
+    cache_hits         = countif(status == "cache_hit"),
+    zero_result_turns  = countif(zero_result == true),
+    sql_turns          = countif(sql_generated == true),
+    // The emitted per-session_id counter, kept alongside the derived count so
+    // the two can be compared. They diverge exactly when one `session_id`
+    // contains more than one sitting, which is the case this cutoff exists for.
+    max_emitted_turn_index = max(turn_index),
+    // How this sitting ended, read off the chronologically last turn rather
+    // than any aggregate — "the user gave up after an error" is a property of
+    // the final turn, not of the session's error count.
+    last_status        = arg_max(timestamp, status),
+    last_stop_reason   = anyif(stop_reason, isnotempty(stop_reason))
+  by session_id, sitting_start, tenant_id
+| extend
+    session_seconds = datetime_diff('second', last_turn, first_turn),
+    is_ended        = last_turn < ago(idle_cutoff)
+| extend
+    // Abandonment, defined narrowly and deliberately: the sitting is over *and*
+    // its final turn did not give the user an answer. A session that ended on a
+    // successful answer is a satisfied user leaving, which is not abandonment
+    // and must not be counted as one — that conflation is the easiest way to
+    // build a metric that goes up when the product gets more useful.
+    abandoned = is_ended and (last_status in ("declined", "error") or zero_result_turns > 0 and turns == 1)
+| project
+    session_id, sitting_start, tenant_id, turns, max_emitted_turn_index,
+    first_turn, last_turn, session_seconds, is_ended, abandoned,
+    last_status, last_stop_reason, routes,
+    sql_turns, zero_result_turns, declined_turns, errored_turns, cache_hits,
+    llm_calls, tokens_total, total_latency_ms
+| order by last_turn desc
+//
+// ===========================================================================
+// QUERY B — the three distributions, per day
+// ===========================================================================
+// Percentiles, not means, for the same reason `llm_cost_by_tool.kql`'s Query C
+// uses them: most sessions are one turn, and a mean turns-per-session hides the
+// long multi-turn conversations that are the only place Gap 237/276-shaped
+// context drift can happen at all. Replace everything from `sittings` down with:
+//
+//     sittings
+//     | summarize
+//         turns = count(), first_turn = min(timestamp), last_turn = max(timestamp)
+//       by session_id, sitting_start, tenant_id
+//     | where last_turn < ago(idle_cutoff)   // completed sittings only
+//     | extend session_seconds = datetime_diff('second', last_turn, first_turn)
+//     | summarize
+//         sessions            = count(),
+//         single_turn_pct     = round(100.0 * countif(turns == 1) / count(), 1),
+//         p50_turns           = percentile(turns, 50),
+//         p90_turns           = percentile(turns, 90),
+//         max_turns           = max(turns),
+//         p50_session_seconds = percentile(session_seconds, 50),
+//         p90_session_seconds = percentile(session_seconds, 90),
+//         max_session_seconds = max(session_seconds)
+//       by day = startofday(last_turn)
+//     | order by day desc
+//
+// `single_turn_pct` is the number to read first. A product whose sessions are
+// almost all one turn has no thread-level failure surface to speak of, and the
+// multi-turn evaluation tier `feature_23_ai_control_tower.md` scopes would be
+// measuring something that barely happens — worth knowing before investing in
+// it, and unknowable before this event existed.
+//
+// ===========================================================================
+// QUERY C — abandonment rate, and what it was abandoned on
+// ===========================================================================
+// The split by `last_stop_reason` is the diagnostic half: an abandonment rate
+// on its own says users leave, and says nothing about whether they leave after
+// a refusal, after an error, or after a query that found nothing. Those are
+// three different product problems. Replace from `sittings` down with:
+//
+//     sittings
+//     | summarize
+//         turns = count(), last_turn = max(timestamp),
+//         zero_result_turns = countif(zero_result == true),
+//         last_status = arg_max(timestamp, status),
+//         last_stop_reason = anyif(stop_reason, isnotempty(stop_reason))
+//       by session_id, sitting_start, tenant_id
+//     | where last_turn < ago(idle_cutoff)
+//     | extend abandoned = last_status in ("declined", "error")
+//                          or (zero_result_turns > 0 and turns == 1)
+//     | summarize
+//         sessions       = count(),
+//         abandoned      = countif(abandoned),
+//         ended_declined = countif(last_status == "declined"),
+//         ended_error    = countif(last_status == "error"),
+//         ended_zero     = countif(zero_result_turns > 0 and turns == 1)
+//       by day = startofday(last_turn)
+//     | extend abandonment_rate_pct = round(100.0 * abandoned / sessions, 1)
+//     | order by day desc
+//
+// Note `cache_hit` is deliberately *not* an abandonment condition: a cached
+// answer is a real answer the user received, and the status exists to keep it
+// out of cost/latency averages, not to mark the turn as a non-answer.
+//
+// ===========================================================================
+// QUERY D — the drill-down, which is the point of Gap 302 existing
+// ===========================================================================
+// Given one abandoned session from Query A, this is the full trace of every turn
+// in it, including the real SQL and the real tool output. Nothing before Gap 302
+// could produce this at all — several `llm_agent_call` rows sharing a
+// `trace_id` could say a turn cost N tokens and could not say what the agent
+// did. Replace from `turns` down with:
+//
+//     turns
+//     | where session_id == "<paste a session_id from Query A>"
+//     | order by timestamp asc
+//     | project
+//         timestamp, turn_index, seconds_since_prev_turn, route, status,
+//         stop_reason, latency_ms, llm_call_count, tokens_total,
+//         sql_attempts   = toint(customDimensions["sql_attempts"]),
+//         generated_sql  = tostring(customDimensions["generated_sql"]),
+//         tool_output    = tostring(customDimensions["tool_output"]),
+//         tool_output_chars = toint(customDimensions["tool_output_chars"]),
+//         tools_called   = tostring(customDimensions["tools_called"]),
+//         agents_called  = tostring(customDimensions["agents_called"]),
+//         citation_count, result_invoice_count, trace_id, message_id
+//
+// `tool_output_chars` next to `tool_output` is how a reader tells a genuinely
+// short result from one cut at `MAX_TURN_TOOL_OUTPUT_CHARS` (12000). `trace_id`
+// joins back to that turn's individual `llm_agent_call` rows and its
+// `AppDependencies` GenAI spans; `message_id` joins to the `agent_eval_run` row
+// the online quality judge wrote for the same turn, if the judge was enabled.

@@ -244,6 +244,22 @@ def test_flag_off_output_is_byte_identical_to_the_pre_phase_2_pipeline():
         actual = run_case(*case)
         assert actual["case"] == expected["case"]
         assert actual["result"] == expected["result"], f"{actual['case']}: result dict changed"
+        # Gap 304 half (2): the one deliberate addition to what
+        # `run_query_agent()` returns since this golden was recorded. It is
+        # compared separately (see `run_case`) precisely so that "the pipeline is
+        # unchanged" keeps meaning the answer, the SQL, the citations and the
+        # prompts — and so that the addition itself is still asserted on rather
+        # than merely tolerated.
+        evidence = actual["judge_evidence"]
+        assert evidence is not None, f"{actual['case']}: no judge evidence returned"
+        assert evidence["route"] == actual["route"]
+        # Gap 302: the second deliberate addition. Same treatment — asserted
+        # here rather than absorbed into the golden, because it is emitted on
+        # every one of these eight turns including the decline and the
+        # repair-loop failure, which is the property the gap exists for.
+        assert actual["turn_telemetry_present"], f"{actual['case']}: no turn telemetry returned"
+        assert actual["turn_telemetry_route"] == actual["route"]
+        assert actual["turn_telemetry_status"] in {"success", "declined", "error"}
         assert actual["sql_prompts"] == expected["sql_prompts"], f"{actual['case']}: SQL prompt changed"
         assert (
             actual["summary_prompts"] == expected["summary_prompts"]

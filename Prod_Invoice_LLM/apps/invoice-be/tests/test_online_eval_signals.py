@@ -165,6 +165,32 @@ def test_budget_exhaustion_declares_itself_offline_only_and_names_the_gap(db):
     assert "stop_reason" in signal.caveat
 
 
+def test_production_judged_rows_are_not_counted_as_eval_rows(db):
+    """Gap 304 half (2): `agent_eval_run` now also holds one row per real chat
+    turn. Neither rate moves (a production row's notes carry no `stop_reason=`,
+    so it was never in either count), but `eval_rows_in_window` would have grown
+    with live traffic — and that number is exactly what a reader uses to judge
+    whether the denominator is trustworthy."""
+    add_eval_run(db, "route=sage; stop_reason=tool_call_budget_exhausted")
+    for _ in range(25):
+        db.add(
+            AgentEvalRun(
+                agent_name="chat.default_path",
+                run_at=NOW - timedelta(hours=2),
+                run_source="production",
+                message_id=uuid4(),
+                tenant_id=TENANT_A,
+                notes="run_source=production; route=SQL; judge_mode=combined",
+            )
+        )
+    db.commit()
+
+    signal = budget_exhaustion_rate(db, **WINDOW)
+    assert signal.detail["eval_rows_in_window"] == 1
+    assert signal.denominator == 1
+    assert signal.numerator == 1
+
+
 def test_budget_exhaustion_with_no_eval_rows_is_none_not_zero(db):
     signal = budget_exhaustion_rate(db, **WINDOW)
     assert signal.value is None
@@ -583,6 +609,26 @@ def test_an_unmeasured_signal_emits_no_value_rather_than_a_zero(db, caplog):
     assert len(records) == 5
     assert all(not hasattr(r, "value") for r in records)
     assert all(r.denominator == 0 for r in records)
+
+
+def test_a_sub_day_window_survives_onto_the_event_instead_of_truncating_to_zero(db, caplog):
+    """Gap 305. The only scheduled caller (`scripts/ops_digest_job.py`) runs every
+    six hours and therefore passes 0.25 days, which `track_online_signal()`'s old
+    `int()` cast turned into `window_days=0` — a zero-length window, and worse
+    than omitting the field, since every event the live emitter produces would
+    have carried it."""
+    import logging
+
+    import telemetry
+
+    with caplog.at_level(logging.INFO):
+        emit_online_signals(compute_online_signals(db, now=NOW), window_days=0.25)
+
+    records = [
+        r for r in caplog.records if r.getMessage() == telemetry.ONLINE_SIGNAL_EVENT_NAME
+    ]
+    assert len(records) == 5
+    assert all(r.window_days == 0.25 for r in records)
 
 
 def test_a_broken_emitter_never_loses_a_computed_window(db, monkeypatch):

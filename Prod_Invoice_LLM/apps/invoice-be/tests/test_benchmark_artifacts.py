@@ -182,6 +182,24 @@ def _events(caplog, name):
     return [r for r in caplog.records if r.getMessage() == name]
 
 
+class _RecordingHandler(logging.Handler):
+    """A stand-in for Azure Monitor's `LoggingHandler`, attached the same way.
+
+    Used only by the Gap 309 tests below, and deliberately not `caplog`: every
+    other test in this module reaches for `caplog.at_level(logging.INFO)`, which
+    raises the level *itself* — that is precisely why a suite of 1400 tests
+    never noticed that in a real script process the level was never raised at
+    all and every event record was discarded before any handler ran.
+    """
+
+    def __init__(self, sink):
+        super().__init__()
+        self.sink = sink
+
+    def emit(self, record):
+        self.sink.append(record)
+
+
 # ---------------------------------------------------------------------------
 # Blob key structure
 # ---------------------------------------------------------------------------
@@ -594,6 +612,263 @@ def test_describe_reports_honestly_rather_than_reassuringly():
     assert "1 telemetry event(s)" in described
     assert "no artifact" in described
     assert "artifact upload failed" in described
+
+
+# ---------------------------------------------------------------------------
+# Gap 304 half (1) — the exporter attaches early, and attaches narrowly
+# ---------------------------------------------------------------------------
+#
+# `configure_run_telemetry()` used to be called immediately before the mirror,
+# deliberately, so an eval run's own per-call events could never reach
+# `customEvents`. With `run_source` on every event and every GenAI span they can
+# be exported and told apart, so both scripts now call it right after
+# `configure_run_source()` — before the first graded turn.
+#
+# That makes two properties load-bearing that were not before: the call has to be
+# idempotent (the mirror still calls it, and `configure_azure_monitor()` attaches
+# a *second* handler if called twice — every event would then export twice and
+# double this run's own cost figures), and it has to switch off the
+# auto-instrumentations, because an eval run is DB-heavy per graded turn and the
+# nightly job's replica timeout is 5400s.
+
+
+@pytest.fixture
+def fresh_exporter_state(monkeypatch):
+    """Undo the module-level attach decision for one test.
+
+    `_exporter_attached` is cached for the life of the process by design, so
+    without this the first test to touch it would fix the answer for every test
+    after it — the same in-process leak `run_source_ctx` hit in
+    `tests/test_telemetry.py`.
+    """
+    monkeypatch.setattr(benchmark_artifacts, "_exporter_attached", None)
+
+
+@pytest.fixture
+def fake_configure_azure_monitor(monkeypatch):
+    """Record the kwargs the distro would really be called with.
+
+    Patched on the installed `azure.monitor.opentelemetry` module rather than
+    faked in `sys.modules`: `configure_run_telemetry()` does the import inside
+    the function, so this is the object it genuinely resolves.
+    """
+    import azure.monitor.opentelemetry as azure_monitor
+
+    calls = []
+    monkeypatch.setattr(
+        azure_monitor, "configure_azure_monitor", lambda **kwargs: calls.append(kwargs)
+    )
+    monkeypatch.setenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=fake")
+    return calls
+
+
+def test_the_exporter_is_configured_without_the_instrumentations_an_eval_run_does_not_need(
+    fresh_exporter_state, fake_configure_azure_monitor
+):
+    """Only the GenAI CLIENT spans and the custom events should flow. A graded
+    turn executes real SQL, so leaving `psycopg2` on would fill `AppDependencies`
+    with rows that say nothing about LLM cost or latency — the thing this export
+    exists to make visible."""
+    assert benchmark_artifacts.configure_run_telemetry() is True
+
+    kwargs = fake_configure_azure_monitor[0]
+    assert kwargs["connection_string"] == "InstrumentationKey=fake"
+    assert kwargs["logger_name"] == "invoice_be_telemetry"
+    assert kwargs["instrumentation_options"] == {
+        "azure_sdk": {"enabled": False},
+        "psycopg2": {"enabled": False},
+        "requests": {"enabled": False},
+        "urllib": {"enabled": False},
+        "urllib3": {"enabled": False},
+    }
+    # A batch job has no live-metrics viewer, and performance counters describe a
+    # replica that exists for the length of one run.
+    assert kwargs["enable_live_metrics"] is False
+    assert kwargs["enable_performance_counters"] is False
+
+
+def test_every_disabled_instrumentation_is_a_name_the_distro_actually_knows():
+    """A typo here would be silently ignored — the distro matches on its own
+    library names and does nothing with an unknown key, so the instrumentation
+    would stay on and nobody would find out until an ingestion bill. Pinned
+    against the installed package's own tuple rather than a copy of it."""
+    from azure.monitor.opentelemetry._constants import (
+        _ALL_SUPPORTED_INSTRUMENTED_LIBRARIES,
+    )
+
+    assert set(benchmark_artifacts._BENCHMARK_INSTRUMENTATION_OPTIONS).issubset(
+        set(_ALL_SUPPORTED_INSTRUMENTED_LIBRARIES)
+    )
+    # Nothing web-framework-shaped is switched off: none of django/fastapi/flask
+    # is running in a `python scripts/...` process to begin with.
+    assert not {"django", "fastapi", "flask"} & set(
+        benchmark_artifacts._BENCHMARK_INSTRUMENTATION_OPTIONS
+    )
+
+
+def test_a_second_call_does_not_attach_a_second_exporter(
+    fresh_exporter_state, fake_configure_azure_monitor
+):
+    """The mirror block still calls this at the end of a run. Attaching twice
+    would put a second handler on `invoice_be_telemetry` and export every event
+    twice — i.e. silently double the run's own cost and latency figures."""
+    assert benchmark_artifacts.configure_run_telemetry() is True
+    assert benchmark_artifacts.configure_run_telemetry() is True
+
+    assert len(fake_configure_azure_monitor) == 1
+
+
+def test_no_connection_string_is_a_stdout_only_run_and_is_remembered(
+    fresh_exporter_state, monkeypatch
+):
+    """The local/CI case. The negative answer is cached too, so a second call
+    cannot start dialling because an env var appeared mid-run."""
+    monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
+    assert benchmark_artifacts.configure_run_telemetry() is False
+
+    monkeypatch.setenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=fake")
+    import azure.monitor.opentelemetry as azure_monitor
+
+    def _explode(**_kwargs):  # pragma: no cover - must not be reached
+        raise AssertionError("the cached decision was re-evaluated")
+
+    monkeypatch.setattr(azure_monitor, "configure_azure_monitor", _explode)
+    assert benchmark_artifacts.configure_run_telemetry() is False
+
+
+def test_an_exporter_that_cannot_be_configured_does_not_fail_the_run(
+    fresh_exporter_state, monkeypatch
+):
+    """Same contract as the rest of this module: a benchmark gate must not block
+    a deploy because Application Insights had a bad minute."""
+    import azure.monitor.opentelemetry as azure_monitor
+
+    def _explode(**_kwargs):
+        raise RuntimeError("exporter unavailable")
+
+    monkeypatch.setenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=fake")
+    monkeypatch.setattr(azure_monitor, "configure_azure_monitor", _explode)
+
+    assert benchmark_artifacts.configure_run_telemetry() is False
+
+
+# ---------------------------------------------------------------------------
+# Gap 309 — attaching the exporter is necessary and, on its own, not sufficient
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def event_loggers_at_warning():
+    """Both event loggers as a fresh `python scripts/...` process finds them.
+
+    `configure_azure_monitor()` adds a handler and never sets a level, so the
+    logger sits at `NOTSET` and inherits root's `WARNING`. Restored afterwards
+    because `_enable_event_logger_level()` deliberately does not restore it —
+    a real run wants the level to stay up for the rest of the process.
+    """
+    loggers = [logging.getLogger(name) for name in telemetry._EVENT_LOGGER_NAMES]
+    previous = [lg.level for lg in loggers]
+    root = logging.getLogger()
+    previous_root = root.level
+    for lg in loggers:
+        lg.setLevel(logging.NOTSET)
+    root.setLevel(logging.WARNING)
+    yield loggers
+    for lg, level in zip(loggers, previous):
+        lg.setLevel(level)
+    root.setLevel(previous_root)
+
+
+def test_an_info_event_is_dropped_before_any_handler_at_the_default_level(
+    event_loggers_at_warning,
+):
+    """The premise, pinned so the fix below is not testing itself.
+
+    This is the whole of Gap 309: `telemetry._emit_event()` logs at INFO, and in
+    a bare script process `Logger.isEnabledFor(INFO)` is False — the record never
+    reaches a handler, so it does not matter how correctly Azure Monitor was
+    configured. Found live 2026-08-24 when `extraction_benchmark_run` was absent
+    from `customEvents` after a run whose own stdout said it had been mirrored.
+    """
+    event_logger = event_loggers_at_warning[0]
+    seen = []
+    event_logger.addHandler(_RecordingHandler(seen))
+    try:
+        assert event_logger.isEnabledFor(logging.INFO) is False
+        telemetry._emit_event("extraction_benchmark_run", {"run_label": "nightly"})
+        assert seen == []
+    finally:
+        event_logger.handlers = [
+            h for h in event_logger.handlers if not isinstance(h, _RecordingHandler)
+        ]
+
+
+def test_configuring_run_telemetry_raises_both_event_loggers_to_info(
+    fresh_exporter_state, event_loggers_at_warning, fake_configure_azure_monitor
+):
+    """...and the fix: the one function both benchmark scripts call to make
+    telemetry work in a standalone process now lifts the level too, so the
+    handler it attaches actually receives something."""
+    assert benchmark_artifacts.configure_run_telemetry() is True
+
+    for event_logger in event_loggers_at_warning:
+        assert event_logger.isEnabledFor(logging.INFO) is True
+
+
+def test_the_level_is_raised_even_when_there_is_no_exporter_to_attach(
+    fresh_exporter_state, event_loggers_at_warning, monkeypatch
+):
+    """A stdout-only run still has to emit. Without this, a local/CI run would
+    not even produce the structured console line this module's docstring
+    promises it falls back to."""
+    monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
+
+    assert benchmark_artifacts.configure_run_telemetry() is False
+
+    for event_logger in event_loggers_at_warning:
+        assert event_logger.isEnabledFor(logging.INFO) is True
+
+
+def test_a_level_the_caller_set_lower_than_info_is_left_alone(
+    fresh_exporter_state, event_loggers_at_warning, monkeypatch
+):
+    """A debugging run at DEBUG must not be quietly turned down to INFO."""
+    monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
+    event_loggers_at_warning[0].setLevel(logging.DEBUG)
+
+    benchmark_artifacts.configure_run_telemetry()
+
+    assert event_loggers_at_warning[0].level == logging.DEBUG
+
+
+def test_configure_run_source_still_runs_before_anything_can_be_exported(
+    fresh_exporter_state, fake_configure_azure_monitor, monkeypatch
+):
+    """Order is the whole safety argument: the tag is set first, the exporter
+    second, so no event can leave the process untagged. Asserted on the two
+    functions' real side effects rather than by reading the scripts."""
+    order = []
+    real_set_run_source = telemetry.set_run_source
+
+    def _recording_set_run_source(value):
+        order.append(("tag", value))
+        return real_set_run_source(value)
+
+    monkeypatch.setattr(telemetry, "set_run_source", _recording_set_run_source)
+
+    # Reset afterwards: this suite runs with `pytest-randomly`, and a contextvar
+    # left set here would leak `golden` into whatever test runs next in the same
+    # thread — the exact intermittent failure `tests/test_telemetry.py` records.
+    token = telemetry.run_source_ctx.set(telemetry.RUN_SOURCE_PRODUCTION)
+    try:
+        # Exactly the two lines both scripts now run, in that order.
+        benchmark_artifacts.configure_run_source(RUN_LABEL_NIGHTLY)
+        order.append(("exporter", benchmark_artifacts.configure_run_telemetry()))
+
+        assert order == [("tag", "golden"), ("exporter", True)]
+        assert telemetry.run_source_ctx.get() == "golden"
+    finally:
+        telemetry.run_source_ctx.reset(token)
 
 
 # ---------------------------------------------------------------------------

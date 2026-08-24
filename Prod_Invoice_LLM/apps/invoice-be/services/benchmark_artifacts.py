@@ -116,6 +116,86 @@ _CONNECTION_STRING_PLACEHOLDER = "your_azure_storage"
 #: and it should fail in a second, not thirty.
 _BLOB_CLIENT_OPTIONS = {"retry_total": 1, "connection_timeout": 10, "read_timeout": 30}
 
+#: What the exporter is asked *not* to collect in a benchmark/eval process
+#: (Gap 304 half 1, 2026-08-24). Every name here is one of the distro's own
+#: library names (`azure.monitor.opentelemetry._constants
+#: ._FULLY_SUPPORTED_INSTRUMENTED_LIBRARIES` — `azure_sdk`, `django`, `fastapi`,
+#: `flask`, `psycopg2`, `requests`, `urllib`, `urllib3`), so an unknown key
+#: cannot be silently ignored here. `django`/`fastapi`/`flask` are left alone
+#: because none of them is running in a `python scripts/...` process at all.
+#:
+#: The reason this is not "just leave the defaults on": an eval run is
+#: DB-heavy per graded turn (the SQL route really executes its generated SQL)
+#: and the nightly job's `replicaTimeout` is 5400s, so full auto-instrumentation
+#: would push a large volume of `psycopg2`/`requests`/`urllib3` dependency rows
+#: into `AppDependencies` that say nothing about the thing this export exists to
+#: observe — LLM cost and latency. Only the GenAI CLIENT spans that
+#: `telemetry._start_llm_dependency_span()` opens, and the custom events, flow.
+_BENCHMARK_INSTRUMENTATION_OPTIONS = {
+    "azure_sdk": {"enabled": False},
+    "psycopg2": {"enabled": False},
+    "requests": {"enabled": False},
+    "urllib": {"enabled": False},
+    "urllib3": {"enabled": False},
+}
+
+#: Set once `configure_run_telemetry()` has decided, so a second call is a no-op
+#: that returns the same answer. `configure_azure_monitor()` is not idempotent —
+#: calling it twice attaches a second handler to `invoice_be_telemetry` and every
+#: event is exported twice, which would double this run's own cost/latency rows.
+_exporter_attached: Optional[bool] = None
+
+
+def _enable_event_logger_level() -> None:
+    """Raise the two event loggers to INFO. Without this the exporter is decoration.
+
+    Gap 309, found live 2026-08-24: `caj-benchmark-eval-dev` printed
+    ``mirror [nightly] -> Application Insights + stdout: 1 telemetry event(s)``
+    and **no `extraction_benchmark_run` row ever reached `customEvents`**, while
+    Track 2's `agent_eval_summary` from the very same execution did.
+
+    The cause is not the exporter and not the flush — it is the standard-library
+    level check, one line before either of them could matter.
+    `telemetry._emit_event()` calls ``logger.info(...)`` on `invoice_be_telemetry`,
+    and `configure_azure_monitor()` **adds a handler without ever setting a
+    level** (verified against the installed distro: `azure/monitor/opentelemetry/
+    _configure.py` only does `getLogger(logger_name).addHandler(handler)`). That
+    logger's own level is therefore `NOTSET`, so its effective level is inherited
+    from root — `WARNING` in a bare `python scripts/...` process — and
+    `Logger.isEnabledFor(INFO)` is False. The record is discarded inside
+    `logging` before any handler, Azure Monitor's included, is consulted. The
+    reassuring stdout line is `MirrorResult.describe()` counting emitter *calls*,
+    which is exactly the "silent no-op" class Gap 292 named.
+
+    Why Track 2 was not affected, which is the part that makes this hard to see:
+    `scripts/run_agent_eval.py::_counting_llm_calls()` attaches its per-turn
+    `_LlmCallCounter` to both of these loggers and calls
+    ``lg.setLevel(logging.INFO)`` to do it — and its `finally` removes the
+    handler but never restores the level. So Track 2 has been carried this whole
+    time by a side effect of an unrelated measurement helper, on the first turn
+    of every run. `scripts/sweep_azure_cost.py` and `scripts/ops_digest_job.py`
+    are covered by a different accident: both call
+    `utils.logging_config.setup_structured_logging()`, which sets the **root**
+    logger to INFO. `scripts/run_extraction_benchmark.py` does neither, and was
+    the only one of the four with nothing holding the level up.
+
+    Done here, in the one function both benchmark scripts already call to make
+    telemetry work in a standalone process, rather than in either script: an
+    exporter attached to a logger that drops the records is not a partial fix,
+    it is the whole defect, and the two belong together.
+
+    Called before the connection-string check as well, so the no-exporter path
+    keeps the stdout behaviour this module's docstring claims for it (the record
+    propagating to root for Feature 19's `StructuredJsonFormatter`) instead of
+    being dropped just as silently.
+    """
+    from telemetry import _EVENT_LOGGER_NAMES
+
+    for name in _EVENT_LOGGER_NAMES:
+        event_logger = logging.getLogger(name)
+        if event_logger.getEffectiveLevel() > logging.INFO:
+            event_logger.setLevel(logging.INFO)
+
 
 @dataclass
 class MirrorResult:
@@ -157,17 +237,61 @@ def configure_run_telemetry() -> bool:
     as structured data. That is the same silent-no-op class of failure Gap 292
     was, so it is done explicitly rather than assumed.
 
-    Called *late* — immediately before the mirror, not at script import — on
-    purpose. Configuring at import would also start exporting every
-    `llm_agent_call` event the benchmark's own turns produce, which is a real
-    (if small) change in ingestion volume and cost that belongs in its own
-    decision, not in this one. Attaching the handler afterwards still works:
-    `telemetry._resolve_event_logger()` caches only once a handler is genuinely
-    present, precisely so a late attach is picked up.
+    Attaching the handler is necessary and, on its own, **not sufficient** — Gap
+    309, found live 2026-08-24. The named logger's level is left at `NOTSET` by
+    `configure_azure_monitor()`, so in a bare script process it inherits root's
+    `WARNING` and `logging` discards every `INFO` event record before any handler
+    runs. `_enable_event_logger_level()` above is the other half, and this
+    function calls it first.
+
+    **Called early since 2026-08-24 (Gap 304 half 1) — this is a reversal.**
+    Until then it was called deliberately *late*, immediately before the mirror,
+    so a benchmark run's own per-call `llm_agent_call` events never reached
+    `customEvents`: with no way to tell eval traffic from real traffic, letting
+    them through would have silently polluted every production cost and latency
+    number in the same dashboards. `run_source` is that discriminator, so the
+    deferral no longer buys anything and costs the whole point of the exercise —
+    the golden bank had no cost/latency baseline of its own. Both eval scripts
+    now call this immediately after `configure_run_source()`, i.e. before the
+    first graded turn, so the run's per-call events **and** the GenAI CLIENT
+    spans `telemetry._start_llm_dependency_span()` opens are exported, tagged
+    `golden`/`predeploy`.
+
+    Two consequences worth stating rather than discovering later:
+
+      * **Ingestion volume and cost go up** for every nightly/gate run. That is
+        the accepted trade, not an oversight; `_BENCHMARK_INSTRUMENTATION_OPTIONS`
+        above keeps it to the LLM calls by switching the auto-instrumentations
+        off, and live metrics/performance counters are off because a batch job
+        that exits in minutes has no use for either.
+      * **Judge/grader calls are exported too.** `services/agent_eval.py::
+        _invoke_structured()` runs every judge call through the same
+        `tracked_llm_call()` wrapper, so `eval.claim_decomposition`,
+        `eval.faithfulness`, `eval.relevance`, `eval.accuracy`, `eval.persona`
+        and `eval.combined_soft` arrive tagged `golden`/`predeploy` alongside the
+        system under test. A "golden cost" rollup therefore mixes the cost of
+        what is being measured with the cost of measuring it unless the consumer
+        filters `agent_name !startswith "eval."`.
+
+    Idempotent: the decision is cached in `_exporter_attached`, because
+    `configure_azure_monitor()` is not — a second call attaches a second handler
+    to the same logger and every event is exported twice.
 
     Returns True when the exporter is attached, so the caller can report which
     destination the run actually reached instead of assuming.
+
+    Raises the event loggers to INFO first — see `_enable_event_logger_level()`
+    for Gap 309, where attaching the exporter correctly and still exporting
+    nothing was the entire failure.
     """
+    global _exporter_attached
+    # Outside the idempotence short-circuit and before every other step: a
+    # second caller costs two `getEffectiveLevel()` reads, and getting this
+    # wrong costs the whole run's telemetry.
+    _enable_event_logger_level()
+    if _exporter_attached is not None:
+        return _exporter_attached
+
     connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
     if not connection_string:
         logger.info(
@@ -175,6 +299,7 @@ def configure_run_telemetry() -> bool:
             "written as structured stdout JSON only (queryable via ContainerAppConsoleLogs_CL, "
             "not customEvents)."
         )
+        _exporter_attached = False
         return False
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor
@@ -182,11 +307,49 @@ def configure_run_telemetry() -> bool:
         configure_azure_monitor(
             connection_string=connection_string,
             logger_name="invoice_be_telemetry",
+            instrumentation_options=_BENCHMARK_INSTRUMENTATION_OPTIONS,
+            # A batch job's live-metrics stream has no viewer, and performance
+            # counters describe a replica that exists for the length of one run.
+            enable_live_metrics=False,
+            enable_performance_counters=False,
         )
+        _exporter_attached = True
         return True
     except Exception as exc:  # pragma: no cover - exporter/SDK availability
         logger.warning("Could not configure Azure Monitor: %s", exc)
+        _exporter_attached = False
         return False
+
+
+def configure_run_source(run_label: str) -> str:
+    """Tag every ``llm_agent_call`` this run's own turns emit (Gap 304, partial).
+
+    Extends the existing ``--run-label`` plumbing rather than adding a second
+    switch, so a run cannot end up labelled ``predeploy`` on its aggregate event
+    and ``golden`` on its per-call events. One flag, both surfaces.
+
+    `nightly` and `adhoc` are both golden-bank traffic — the cadence difference
+    between them is already carried by `run_label` on the aggregate event, and
+    collapsing them here keeps `run_source` a *population* discriminator rather
+    than a second copy of the cadence. `predeploy` stays its own population for
+    the reason `telemetry.RUN_SOURCE_PREDEPLOY` records: it runs a smaller
+    subset.
+
+    Called for its side effect on `telemetry.run_source_ctx`, which is read at
+    emit time by `track_agent_call()`, `track_eval_result()` and the GenAI
+    dependency span. **This does not by itself send anything to Application
+    Insights** — `configure_run_telemetry()` below is what attaches the
+    exporter, and since 2026-08-24 both scripts call it on the very next line,
+    so a run's own per-call events and dependency spans now do reach
+    `customEvents`/`AppDependencies` carrying this tag. Order matters and is not
+    incidental: this runs first so nothing can be exported untagged.
+
+    Lazily imported like the two mirror functions below, and never raises.
+    """
+    from telemetry import RUN_SOURCE_GOLDEN, RUN_SOURCE_PREDEPLOY, set_run_source
+
+    run_source = RUN_SOURCE_PREDEPLOY if run_label == RUN_LABEL_PREDEPLOY else RUN_SOURCE_GOLDEN
+    return set_run_source(run_source)
 
 
 def flush_run_telemetry() -> None:
@@ -563,6 +726,7 @@ __all__ = [
     "TRACK_AGENT_EVAL",
     "TRACK_EXTRACTION",
     "artifact_blob_name",
+    "configure_run_source",
     "configure_run_telemetry",
     "flush_run_telemetry",
     "mirror_agent_eval_run",

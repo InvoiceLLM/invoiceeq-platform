@@ -251,3 +251,102 @@ def test_sync_mode_backward_compatibility(db_session):
         assert data["content"] == "Synchronous reply"
         assert data["role"] == "assistant"
         assert data["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Production quality judging on the queue path (Feature 23, Gap 304 half (2))
+# ---------------------------------------------------------------------------
+
+def _judged_agent_output():
+    return {
+        "content": "Total spend across 5 invoices is $12,500.00",
+        "generated_sql": "SELECT SUM(grand_total) FROM invoice",
+        "citations": [],
+        "result_invoice_ids": [],
+        "judge_evidence": {
+            "route": "SQL",
+            "context": "DATABASE RESULTS:\nsum | 12500",
+            "executed_queries": "SELECT SUM(grand_total) FROM invoice",
+        },
+    }
+
+
+def _run_queue_turn(db_session, agent_output, job_id="judge-job-1"):
+    session_id = uuid4()
+    user_msg_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Judged Thread"))
+    db_session.add(
+        ChatMessage(
+            id=user_msg_id,
+            session_id=session_id,
+            role="user",
+            content="Show total spend",
+            status="queued",
+            job_id=job_id,
+        )
+    )
+    db_session.commit()
+
+    with patch("agents.query_agent.run_query_agent", return_value=agent_output), \
+         patch("services.chat_queue.ChatQueueService.publish_progress"), \
+         patch("services.chat_queue.ChatQueueService.complete_job"):
+        res = handle_process_chat_job(
+            job_id=job_id,
+            session_id=str(session_id),
+            user_msg_id=str(user_msg_id),
+            content="Show total spend",
+            tenant_id=str(MOCK_TENANT_ID),
+            db_session=db_session,
+        )
+    return session_id, res
+
+
+def test_the_queue_path_hands_its_own_committed_turn_to_the_same_judge(db_session):
+    """Gap 304 half (2): both write paths build their own ChatMessage, so both
+    hook the judge — and both call the *same* function, not two copies of it."""
+    # Patched at the source module: `handlers._execute` imports the name inside
+    # the function, which is also what makes "one implementation, two entry
+    # points" checkable at all.
+    with patch("services.online_quality_judge.submit_turn_judgement") as submit:
+        session_id, res = _run_queue_turn(db_session, _judged_agent_output())
+
+    assert res["status"] == "completed"
+    assert submit.called
+    kwargs = submit.call_args.kwargs
+
+    assistant = db_session.exec(
+        select(ChatMessage).where(
+            ChatMessage.session_id == session_id, ChatMessage.role == "assistant"
+        )
+    ).first()
+    assert kwargs["message_id"] == str(assistant.id)
+    assert kwargs["question"] == "Show total spend"
+    assert kwargs["evidence"]["route"] == "SQL"
+    assert kwargs["latency_ms"] > 0
+
+    # ...and the synchronous path in `routers/chat.py` holds the very same
+    # function object, so there is genuinely one implementation of this hook.
+    import routers.chat as chat_router
+    from services import online_quality_judge
+
+    assert chat_router.submit_turn_judgement is online_quality_judge.submit_turn_judgement
+
+
+def test_a_judge_failure_does_not_fail_the_queued_job(db_session, monkeypatch):
+    """The job is already marked complete and the answer already delivered to
+    the poller before this runs. A scoring failure must not flip it to failed."""
+    import config
+
+    monkeypatch.setattr(config.settings, "ENABLE_PRODUCTION_QUALITY_JUDGE", True)
+
+    with patch("routers.chat._chat_background_pool") as pool:
+        pool.submit.side_effect = RuntimeError("cannot schedule new futures after shutdown")
+        session_id, res = _run_queue_turn(db_session, _judged_agent_output(), job_id="judge-job-2")
+
+    assert res["status"] == "completed"
+    assistant = db_session.exec(
+        select(ChatMessage).where(
+            ChatMessage.session_id == session_id, ChatMessage.role == "assistant"
+        )
+    ).first()
+    assert assistant.status == "completed"

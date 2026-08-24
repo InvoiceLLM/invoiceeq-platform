@@ -52,7 +52,24 @@ customEvents
     status     = tostring(customDimensions["status"]),
     tokens_in  = toint(customDimensions["tokens_in"]),
     tokens_out = toint(customDimensions["tokens_out"]),
-    latency_ms = todouble(customDimensions["latency_ms"])
+    latency_ms = todouble(customDimensions["latency_ms"]),
+    run_source = tostring(customDimensions["run_source"])
+// Gap 304 (2026-08-24): `run_source` distinguishes real user/queue traffic
+// (`production`) from golden-bank/predeploy eval runs (`golden`/`predeploy`) —
+// `telemetry.py`'s own comment on the field now calls this filter "a required
+// clause in a production cost/latency query, not an available one", because
+// `services/benchmark_artifacts.py::configure_run_telemetry()` was changed the
+// same day to export a benchmark run's own `llm_agent_call` events instead of
+// withholding them. Rows emitted before that field existed carry no
+// `run_source` key at all; `telemetry.py::run_source_ctx` defaults an unset
+// value to `production`, so an empty string here means the same thing the code
+// means by it, not a data gap — treated identically below.
+| extend run_source = iff(isempty(run_source), "production", run_source)
+// This rollup answers "what did real usage cost" — golden-bank and predeploy
+// eval runs must never be blended into that number silently. See the
+// VARIANTS section at the bottom for a query that compares them side by side
+// instead of excluding them.
+| where run_source == "production"
 // Failed calls are kept, not filtered: a call that errored after the provider
 // had already read the prompt still cost input tokens, and a spike in errored
 // spend is exactly the kind of thing this rollup exists to make visible.
@@ -92,15 +109,29 @@ customEvents
 // they are inside the totals above by design. To separate them:
 //     | extend spend_kind = iff(agent_name startswith "eval.", "evaluation", "product")
 //
+// Production vs. golden/predeploy, side by side rather than blended (Gap 304)
+// — replace the `| where run_source == "production"` line above with nothing,
+// and change the `summarize ... by` clause to also group `by run_source`:
+//     | summarize
+//         calls = count(), tokens_in = sum(tokens_in), tokens_out = sum(tokens_out),
+//         cost_usd = sum(...)
+//       by day = startofday(timestamp), agent_name, model, run_source
+// Never `sum(cost_usd)` across `run_source` values in the same row — that is
+// exactly the silent blending this field exists to prevent.
+//
 // ---------------------------------------------------------------------------
 // NOT DONE HERE — founder action required
 // ---------------------------------------------------------------------------
-// 1. `APPLICATIONINSIGHTS_CONNECTION_STRING` must exist as a Container App secret
-//    of that exact name on `invoice-be` and `queue-worker`. Until it does, Phase 1
-//    emits to stdout only and `customEvents` is empty — this query will return
-//    zero rows against a live workspace, which is a configuration state, not a
-//    zero-cost month. (`infra/modules/compute/*.bicep` already declare the env var
-//    and secretRef; nothing in this repo sets the value.)
-// 2. Nothing here creates a scheduled query rule / saved search. Running this
-//    "nightly" today means a human (or the workbook) running it. Wiring it to a
-//    Log Analytics scheduled rule with an action group is a separate infra change.
+// 1. RESOLVED, re-verified live 2026-08-24 (`az monitor app-insights query`
+//    against `appi-invoicellm-dev`, workspace `law-invoicellm-dev` /
+//    `a0f26ce7-43d6-457d-9f7b-47e36af39a02`): `APPLICATIONINSIGHTS_CONNECTION_STRING`
+//    is set and `customEvents` is **not** empty. First real `llm_agent_call` row
+//    2026-08-22T03:48:30Z; 46 rows total as of this check (`chat.*`,
+//    `extraction.*`, `dashboard.insights` — all production traffic, zero
+//    `sage.*` rows because `ENABLE_AGENTIC_SAGE` is off, not because telemetry
+//    is missing). This query returns real rows today against a live workspace,
+//    not zero-by-configuration.
+// 2. Still true: nothing here creates a scheduled query rule / saved search.
+//    Running this "nightly" today means a human (or the workbook) running it.
+//    Wiring it to a Log Analytics scheduled rule with an action group is a
+//    separate infra change.

@@ -1427,12 +1427,168 @@ def test_every_case_id_is_unique_and_every_case_states_why_it_is_on_file():
 
 def test_every_expected_invoice_number_exists_in_the_seeded_fixture():
     """A reference answer naming an invoice the fixture does not contain would
-    make `context_score` unachievable and the case permanently red."""
+    make `context_score` unachievable and the case permanently red.
+
+    Tenant-aware since Wave 3 (2026-08-24), and it has to be: `TSD-620458` is a
+    real invoice number in BOTH the base tenant and the US tenant, with
+    different totals, so a flat union of every seeded number would pass this
+    test for a case that names the right number against the wrong tenant --
+    exactly the confusion the separate tenant ids exist to prevent.
+    """
+    from benchmarks.region_seed_fixtures import REGION_TENANTS
+
     cases, rows = _golden_cases()
-    seeded = {row["invoice_number"] for row in rows}
+    seeded_by_tenant = {
+        tenant_id: {row["invoice_number"] for row in region["rows"]}
+        for tenant_id, region in REGION_TENANTS.items()
+    }
+    base = {row["invoice_number"] for row in rows}
     for case in cases:
+        seeded = seeded_by_tenant.get(case.tenant_id, base)
         for number in case.expected_invoice_numbers or ():
-            assert number in seeded, f"{case.case_id} expects unseeded invoice {number}"
+            assert number in seeded, (
+                f"{case.case_id} expects invoice {number}, which is not seeded in "
+                f"tenant {case.tenant_id}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# The regional banks (Feature 23 Wave 3, 2026-08-24)
+# ---------------------------------------------------------------------------
+
+
+def test_the_regional_cases_were_added_without_moving_any_existing_case():
+    """Wave 3's rule: extend, do not disturb. Every pre-Wave-3 case must still
+    be bound to the base tenant, because all twenty reference answers are
+    computed or stated against those nine rows and nothing else."""
+    from benchmarks.agent_eval_golden_sample import TENANT_ID
+    from benchmarks.region_seed_fixtures import REGION_TENANTS
+
+    cases, _rows = _golden_cases()
+    regional = [c for c in cases if c.tenant_id != TENANT_ID]
+    base = [c for c in cases if c.tenant_id == TENANT_ID]
+    assert len(base) == 20, "an existing case changed tenant"
+    assert len(regional) == 15
+    # Breadth over volume was the explicit goal -- five per region, not fifteen
+    # drained out of India.
+    per_tenant = {tenant_id: 0 for tenant_id in REGION_TENANTS}
+    for case in regional:
+        assert case.tenant_id in REGION_TENANTS, case.case_id
+        per_tenant[case.tenant_id] += 1
+    assert set(per_tenant.values()) == {5}
+
+
+def test_regional_rows_reconcile_against_their_own_line_items():
+    """Every figure in a regional reference answer is stated to the cent off
+    these rows, so the rows themselves have to add up: line amounts sum to the
+    subtotal, and subtotal + tax is the grand total. The deliberate qty x rate
+    mismatches are NOT repaired -- they are the ground-truth defects three of
+    the ported questions are about."""
+    import json as _json
+
+    from benchmarks.region_seed_fixtures import REGION_TENANTS
+
+    for region in REGION_TENANTS.values():
+        for row in region["rows"]:
+            items = _json.loads(row["items"])
+            line_sum = round(sum(item["amount"] for item in items), 2)
+            assert line_sum == pytest.approx(row["subtotal"]), row["invoice_number"]
+            assert round(row["subtotal"] + row["tax_amount"], 2) == pytest.approx(
+                row["grand_total"]
+            ), row["invoice_number"]
+
+
+def test_the_regional_tenants_are_isolated_from_the_base_fixture():
+    """The reason there are four tenants and not one. Vendor names and even an
+    invoice number are shared across them with different figures, which is only
+    safe because a case is asked against exactly one tenant id."""
+    from benchmarks.agent_eval_golden_sample import ALL_ROWS, TENANT_ID
+    from benchmarks.region_seed_fixtures import REGION_TENANTS, US_ROWS
+
+    assert TENANT_ID not in REGION_TENANTS
+    assert len(set(REGION_TENANTS)) == 3
+    base_numbers = {row["invoice_number"] for row in ALL_ROWS}
+    us_numbers = {row["invoice_number"] for row in US_ROWS}
+    # Stated as an assertion rather than a comment: the collision is real.
+    assert "TSD-620458" in base_numbers & us_numbers
+    base_titan = next(r for r in ALL_ROWS if r["invoice_number"] == "TSD-620458")
+    us_titan = next(r for r in US_ROWS if r["invoice_number"] == "TSD-620458")
+    assert base_titan["grand_total"] != us_titan["grand_total"]
+
+
+def test_each_tenant_gets_its_own_snapshot_and_its_own_document_chunks():
+    """Handing a turn another tenant's grounding facts is the failure
+    `tenant_stats_summary()`'s own docstring records. With four tenants there
+    are three more ways to make it, so the selection is a function, not a
+    call-site choice."""
+    from benchmarks.agent_eval_golden_sample import (
+        TENANT_ID,
+        chunks_for_tenant,
+        stats_for_tenant,
+        tenant_stats_summary,
+    )
+    from benchmarks.region_seed_fixtures import REGION_TENANTS
+
+    assert stats_for_tenant(TENANT_ID) == tenant_stats_summary()
+    base_chunk_ids = {chunk["id"] for chunk in chunks_for_tenant(TENANT_ID)}
+    for tenant_id, region in REGION_TENANTS.items():
+        stats = stats_for_tenant(tenant_id)
+        assert stats != tenant_stats_summary()
+        assert "9 total invoices" in stats
+        assert "No invoice in this tenant has a due date recorded." in stats
+        chunk_ids = {chunk["id"] for chunk in chunks_for_tenant(tenant_id)}
+        assert chunk_ids == {chunk["id"] for chunk in region["chunks"]}
+        assert not chunk_ids & base_chunk_ids
+
+
+def test_every_regional_chunk_names_the_invoice_it_belongs_to():
+    """`scripts/run_agent_eval.py` binds each chunk to its row's generated id so
+    a `get_full_record` fetch returns a page. A chunk with no entry here would
+    be silently unreachable on the agentic path."""
+    from benchmarks.region_seed_fixtures import CHUNK_INVOICE_NUMBERS, REGION_TENANTS
+
+    for region in REGION_TENANTS.values():
+        numbers = {row["invoice_number"] for row in region["rows"]}
+        for chunk in region["chunks"]:
+            invoice_number = CHUNK_INVOICE_NUMBERS.get(chunk["id"])
+            assert invoice_number, f"{chunk['id']} is not bound to an invoice"
+            assert invoice_number in numbers
+
+
+def test_seed_writes_to_the_named_tenant_and_fills_the_regional_columns():
+    """`_seed` gained a `tenant_id` and three optional columns for Wave 3. Both
+    halves are asserted against a real insert rather than read off the SQL."""
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine, text
+
+    from benchmarks.region_seed_fixtures import US_ROWS, US_TENANT_ID
+    from benchmarks.sage_seed_fixtures import _seed
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        _seed(session, US_ROWS, tenant_id=US_TENANT_ID)
+        row = session.execute(
+            text(
+                "SELECT tenant_id, po_number, subtotal, due_date, sa_alerts, customer_name, "
+                "flow_direction FROM invoice WHERE invoice_number = 'IEQ-US-9002'"
+            )
+        ).one()
+        assert row[0] == US_TENANT_ID
+        assert row[1] is None
+        assert row[2] == 6200.00
+        assert row[3] is None  # ground truth: none of these invoices prints a due date
+        assert "subtotal_mismatch" in row[4]
+        assert row[5] == "Fieldstone Analytics LLC"
+        assert row[6] == "OUTBOUND"
+        titan = session.execute(
+            text("SELECT po_number, sa_alerts FROM invoice WHERE invoice_number = 'TSD-620458'")
+        ).one()
+        assert titan[0] == "PO-71004"
+        assert "line_item_calculation_mismatch" in titan[1]
+    engine.dispose()
 
 
 def test_the_threshold_case_is_computed_over_every_seeded_row_not_a_typed_subset():

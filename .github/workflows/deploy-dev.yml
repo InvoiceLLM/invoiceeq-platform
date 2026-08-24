@@ -140,9 +140,198 @@ jobs:
   # CI to re-sync on every push. If the key ever needs to rotate, update
   # params.dev.secrets.json locally and re-run Stage 5.
 
-  deploy-backend:
+  # Feature 23 pre-deploy gate (2026-08-23, re-designed 2026-08-24 after the
+  # inline version in commit fe021a3 was reverted in b1b9ff3 -- see that
+  # revert's message for the failure: the GitHub Actions service principal
+  # (Azure_Dev_Credentials, Contributor+AcrPush on the RG only) tried to read
+  # AZURE-OPENAI-API-KEY directly from Key Vault and got ForbiddenByRbac, a
+  # role that SP was never meant to hold).
+  #
+  # This version never reads the OpenAI key on the runner at all. It starts
+  # an on-demand execution of the SAME caj-benchmark-eval-dev Container App
+  # Job that infra/benchmark-eval-job-only.bicep / 08-apps.bicep's
+  # benchmarkEvalJob module already declare for the 03:00 UTC nightly run,
+  # with its container command/args overridden for this one execution only
+  # via `az containerapp job start --command/--args` -- that override is
+  # per-execution and does not touch the job's persisted template, so the
+  # nightly Schedule-trigger run is untouched and keeps using its own
+  # (broader, --no-gate, live-mode) command. The job's managed identity
+  # (id-invoicellm-dev) already holds Key Vault Secrets User on
+  # kv-invoicellm-dev and Cognitive Services User on the OpenAI account
+  # (confirmed live via `az role assignment list`, 2026-08-24) -- the Key
+  # Vault read happens inside Azure under that identity, never on this
+  # runner, and Azure_Dev_Credentials needs nothing beyond what it already
+  # has: starting/polling a job execution and reading its logs are all
+  # Microsoft.App/jobs/* actions, already covered by Contributor on the RG.
+  #
+  # One job definition serves both callers rather than a second job/bicep
+  # file: `az containerapp job start` is not gated by the job's configured
+  # triggerType (confirmed via `az containerapp job start --help` -- no
+  # trigger-type precondition is documented, and the ARM action it maps to,
+  # `Microsoft.App/jobs/{name}/start`, is not restricted by
+  # `configuration.triggerType` in the resource schema either). Switching
+  # the job to `Manual` or `Event` triggerType was considered and rejected:
+  # `Manual` jobs have no `scheduleTriggerConfig` at all, which would kill
+  # the nightly 03:00 UTC run outright; `Event` is for KEDA event-source
+  # scaling (queue depth etc.), which has no analog here. `Schedule` (what
+  # the bicep already declares) is correct for both the nightly cron AND
+  # this on-demand trigger.
+  #
+  # NOT YET LIVE-TESTED end-to-end: caj-benchmark-eval-dev has never been
+  # deployed (benchmark-eval-job-only.bicep's own header says so), so this
+  # job cannot actually run until someone applies that template AND the
+  # invoice-be image in ACR contains benchmarks/ + the two scripts (both
+  # true as of this workflow edit, per that bicep file's prerequisite note).
+  #
+  # Track selection identical to the original inline gate (fe021a3) --
+  # Track 1 full corpus in `--mode verify` (deterministic, no network call,
+  # `--tolerate-fp outbound_trade_discount__clean` carves out Gap 293's one
+  # known non-regression false positive); Track 2 the same 5-case smoke
+  # subset (not the nightly's full 20). `--no-gate` is deliberately omitted
+  # from Track 1 here (unlike the nightly job's args) so its own exit code
+  # reflects a real verify failure. Track 2's own process always exits 0
+  # (run_agent_eval.py has no gate of its own), so the trailing `python -c`
+  # here replaces the original inline `jq` check (the invoice-be image has
+  # no jq) -- it is what turns a turn-level error into this container's
+  # exit code, which Container Apps then reports as the execution's
+  # terminal status.
+  benchmark-gate:
     needs: changes
-    if: needs.changes.outputs.be == 'true'
+    if: needs.changes.outputs.be == 'true' || needs.changes.outputs.worker == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      JOB_NAME: caj-benchmark-eval-dev
+      CONTAINER_NAME: benchmark-eval
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.Azure_Dev_Credentials }}
+
+      - name: Start pre-deploy gate execution (scoped-down override of the nightly job)
+        id: start
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Single sh -c argument, chained with &&: any of the three stages
+          # failing (verify gate, run_agent_eval crashing, or the trailing
+          # check finding a turn-level error) exits this container non-zero,
+          # which Container Apps records as the execution's terminal status
+          # ("Failed") -- that status, not any output file, is the gate's
+          # pass/fail signal read back by the poll step below. Only single
+          # quotes are used inside the python literal so it can sit inside
+          # the outer \"...\" (sh -c argument) unescaped.
+          # `--run-label predeploy` on both tracks: each script mirrors its own
+          # scored run into Application Insights (extraction_benchmark_run /
+          # agent_eval_summary) and uploads the raw JSON to the
+          # benchmark-artifacts blob container. Without the label this 5-case
+          # smoke subset would join the nightly 20-case series unmarked and read
+          # as a quality cliff on every push. Track 2 runs --no-persist here, so
+          # this aggregate event is the ONLY queryable record a gate run leaves
+          # (per-turn `agent_eval_run` telemetry is emitted from persist()); the
+          # /tmp output file the jq check below reads dies with the replica,
+          # which is exactly what the blob upload preserves. Both halves are
+          # non-fatal by contract and cannot change this gate's verdict.
+          gate_args="python scripts/run_extraction_benchmark.py --mode verify --no-write --run-label predeploy --tolerate-fp outbound_trade_discount__clean && python scripts/run_agent_eval.py --paths default --no-persist --run-label predeploy --out /tmp/agent_eval_gate.json --cases titan_steel_payment_status,rajesh_steel_cgst,internals_probe_no_leak,cross_currency_total_refused,zero_result_with_useful_redirect && python -c \"import json,sys; d=json.load(open('/tmp/agent_eval_gate.json')); errored=[t['case_id'] for t in d['turns'] if t.get('error') is not None]; turns=len(d['turns']); print('BENCHMARK GATE FAILED -- turn-level error(s) on: ' + ','.join(errored)) if errored else print('Chat eval smoke test: ' + str(turns) + ' turns, 0 errors.'); sys.exit(1 if errored else 0)\""
+
+          start_out=$(az containerapp job start \
+            --name "$JOB_NAME" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --container-name "$CONTAINER_NAME" \
+            --command /bin/sh -c \
+            --args "$gate_args" \
+            --cpu 1.0 --memory 2.0Gi \
+            -o json)
+
+          echo "$start_out"
+          exec_name=$(echo "$start_out" | python3 -c "import json,sys; print(json.load(sys.stdin).get('name',''))" 2>/dev/null || true)
+
+          # Belt-and-suspenders: `az containerapp job start`'s exact return
+          # shape for a Schedule-triggerType job has not been confirmed live
+          # against this environment (the job does not exist yet -- see the
+          # comment above this job). If the start command's own JSON does
+          # not carry a usable `name`, fall back to asking for the most
+          # recently started execution directly.
+          if [ -z "$exec_name" ] || [ "$exec_name" = "None" ]; then
+            echo "Could not read an execution name from 'az containerapp job start' output -- falling back to the most recently started execution." >&2
+            exec_name=$(az containerapp job execution list \
+              --name "$JOB_NAME" --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query "sort_by(@, &properties.startTime)[-1].name" -o tsv)
+          fi
+
+          if [ -z "$exec_name" ]; then
+            echo "ERROR: could not determine the name of the execution that was just started." >&2
+            exit 1
+          fi
+
+          echo "Started execution: $exec_name"
+          echo "exec_name=$exec_name" >> "$GITHUB_OUTPUT"
+
+      - name: Poll for gate execution completion
+        id: poll
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec_name="${{ steps.start.outputs.exec_name }}"
+          # Budget: Track 1 verify mode is seconds (full corpus, no network
+          # call); Track 2's 5-case subset is measured at roughly 2 min/turn
+          # (feature doc), so ~10-12 min expected end to end. 40 attempts *
+          # 30s = 20 min ceiling before this gate fails closed rather than
+          # hanging -- same polling style as this file's verify-deployment
+          # job, just a longer budget for a real LLM-backed run vs. an HTTP
+          # health probe.
+          status="Running"
+          for i in $(seq 1 40); do
+            status=$(az containerapp job execution show \
+              --name "$JOB_NAME" --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --job-execution-name "$exec_name" \
+              --query properties.status -o tsv)
+            echo "Attempt $i/40: execution $exec_name status=$status"
+            case "$status" in
+              Succeeded|Failed|Stopped) break ;;
+            esac
+            sleep 30
+          done
+          echo "final_status=$status" >> "$GITHUB_OUTPUT"
+
+      # Always runs (even on a poll timeout / non-Succeeded status) so the
+      # actual pass/fail reason -- which case missed, which turn errored, a
+      # stack trace -- shows up directly in this CI run's log instead of a
+      # bare "job failed". No separate Storage/Log Analytics plumbing: the
+      # container's own stdout (Track 1's `MISSED`/`FALSE POSITIVE`/`ERROR`
+      # lines, Track 2's `BENCHMARK GATE FAILED -- turn-level error(s) on:`
+      # line) already says exactly what broke.
+      - name: Fetch gate execution logs
+        if: always() && steps.start.outputs.exec_name != ''
+        shell: bash
+        run: |
+          set +e
+          echo "=== $JOB_NAME logs, execution ${{ steps.start.outputs.exec_name }} ==="
+          az containerapp job logs show \
+            --name "$JOB_NAME" --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --container "$CONTAINER_NAME" \
+            --execution "${{ steps.start.outputs.exec_name }}" \
+            --tail 300 --format text
+          exit 0
+
+      - name: Gate on execution result
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="${{ steps.poll.outputs.final_status }}"
+          if [ "$status" != "Succeeded" ]; then
+            echo "BENCHMARK GATE FAILED -- execution status: $status (see logs above)."
+            exit 1
+          fi
+          echo "Benchmark gate passed (execution status: Succeeded)."
+
+  deploy-backend:
+    needs: [changes, benchmark-gate]
+    if: >-
+      needs.changes.outputs.be == 'true' &&
+      (needs.benchmark-gate.result == 'success' || needs.benchmark-gate.result == 'skipped')
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: rg-invoice-llm-dev
@@ -156,8 +345,10 @@ jobs:
       azure_credentials: ${{ secrets.Azure_Dev_Credentials }}
 
   deploy-worker:
-    needs: changes
-    if: needs.changes.outputs.worker == 'true'
+    needs: [changes, benchmark-gate]
+    if: >-
+      needs.changes.outputs.worker == 'true' &&
+      (needs.benchmark-gate.result == 'success' || needs.benchmark-gate.result == 'skipped')
     uses: ./.github/workflows/_deploy-service.yml
     with:
       resource_group: rg-invoice-llm-dev

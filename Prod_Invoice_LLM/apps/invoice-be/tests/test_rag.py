@@ -300,6 +300,101 @@ def test_agent_failure_still_pairs_a_fallback_reply_with_the_user_turn(db_sessio
 
 
 # ---------------------------------------------------------------------------
+# Production quality judging (Feature 23, Gap 304 half (2))
+# ---------------------------------------------------------------------------
+
+def _post_sync_turn(db_session, agent_output, content="what did we spend?"):
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Judged"))
+    db_session.commit()
+    client = TestClient(app)
+    with patch("routers.chat.run_query_agent", return_value=agent_output):
+        res = client.post(
+            f"/api/v1/chat/sessions/{session_id}/message?sync=true", json={"content": content}
+        )
+    return session_id, res
+
+
+def test_the_sync_chat_path_hands_the_committed_turn_to_the_judge(db_session):
+    """Gap 304 half (2): the hook fires after the commit, with the *committed*
+    assistant row's id and the turn's evidence — not before, or `message_id`
+    would point at a row that may never exist."""
+    from models import ChatMessage
+
+    agent_output = {
+        "content": "Total spend was USD 1,200.",
+        "generated_sql": "SELECT 1",
+        "citations": [],
+        "result_invoice_ids": [],
+        "judge_evidence": {
+            "route": "SQL",
+            "context": "DATABASE RESULTS:\nid | total",
+            "executed_queries": "SELECT 1",
+        },
+    }
+
+    with patch("routers.chat.submit_turn_judgement") as submit:
+        session_id, res = _post_sync_turn(db_session, agent_output)
+
+    assert res.status_code == 200
+    assert submit.called
+    kwargs = submit.call_args.kwargs
+
+    assistant = db_session.exec(
+        select(ChatMessage).where(
+            ChatMessage.session_id == session_id, ChatMessage.role == "assistant"
+        )
+    ).first()
+    assert kwargs["message_id"] == str(assistant.id)
+    assert kwargs["question"] == "what did we spend?"
+    assert kwargs["answer"] == "Total spend was USD 1,200."
+    assert kwargs["evidence"]["route"] == "SQL"
+    # Real wall clock, not a placeholder that would average into the golden
+    # bank's latency series as a free turn.
+    assert kwargs["latency_ms"] > 0
+
+
+def test_the_error_fallback_turn_carries_no_evidence_to_judge(db_session):
+    """The router's "something went wrong" reply is not a model answer, and has
+    no evidence — the judge skips it rather than scoring the apology."""
+    with patch("routers.chat.submit_turn_judgement") as submit:
+        with patch("routers.chat.run_query_agent", side_effect=RuntimeError("LLM timeout")):
+            session_id = uuid4()
+            db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Broken"))
+            db_session.commit()
+            res = TestClient(app).post(
+                f"/api/v1/chat/sessions/{session_id}/message?sync=true", json={"content": "hi"}
+            )
+
+    assert res.status_code == 200
+    assert submit.call_args.kwargs["evidence"] is None
+
+
+def test_a_judge_scheduling_failure_never_reaches_the_user(db_session, monkeypatch):
+    """The turn is already committed and about to be returned. Nothing about
+    scoring it is allowed to turn a 200 into a 500 — flag on, pool broken."""
+    import config
+
+    monkeypatch.setattr(config.settings, "ENABLE_PRODUCTION_QUALITY_JUDGE", True)
+
+    agent_output = {
+        "content": "Answer.",
+        "generated_sql": None,
+        "citations": [],
+        "result_invoice_ids": [],
+        "judge_evidence": {"route": "CHAT", "context": "", "executed_queries": ""},
+    }
+    with patch("routers.chat._chat_background_pool") as pool:
+        pool.submit.side_effect = RuntimeError("cannot schedule new futures after shutdown")
+        session_id, res = _post_sync_turn(db_session, agent_output)
+
+    assert res.status_code == 200
+    assert res.json()["content"] == "Answer."
+    history = TestClient(app).get(f"/api/v1/chat/sessions/{session_id}").json()
+    assert [m["role"] for m in history] == ["user", "assistant"]
+
+
+# ---------------------------------------------------------------------------
 # Thread rename (FE Gap 216)
 # ---------------------------------------------------------------------------
 

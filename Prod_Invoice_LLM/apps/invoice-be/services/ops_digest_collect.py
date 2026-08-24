@@ -102,6 +102,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import settings
 from services.ops_digest_routing import Signal
+# Gap 304 half (2): the `run_source` value `_eval_window_stats()` must never
+# read. Imported rather than re-spelled so the string cannot drift away from
+# what `services/online_quality_judge.py` actually writes.
+from telemetry import RUN_SOURCE_PRODUCTION
 
 logger = logging.getLogger(__name__)
 
@@ -600,6 +604,26 @@ def _as_naive_utc(value: datetime) -> datetime:
 def _eval_window_stats(session: Any, start: datetime, end: datetime) -> Dict[str, Any]:
     """Mean of each score column plus the pass rate, over one window.
 
+    **Golden-bank rows only** (Gap 304 half (2), 2026-08-24). `agent_eval_run`
+    now holds a second population — one row per real production chat turn,
+    written by `services/online_quality_judge.py` and tagged
+    `run_source=production` — and reading both here would break this collector in
+    two separate ways:
+
+      * Every mean would blend two populations that are not comparable. A
+        production row has no `accuracy_score` and no `context_score` (both need
+        a reference answer) and its `pass` is decided on two dimensions instead
+        of three, so a "quality dropped" finding could fire purely because the
+        traffic mix shifted.
+      * `audit_job_failed` — the finding that says the nightly eval job did not
+        run — would never fire again. It fires on "rows in the baseline, none in
+        this window", and production rows are present in every window by
+        definition, so the one alert that catches a dead scheduler would go
+        permanently silent.
+
+    Filtered as "not production" rather than "== golden" so that a predeploy run
+    persisting rows in future still counts as the bank, which is what it is.
+
     Means are computed in Python over the fetched rows rather than in SQL
     because every score column is nullable-means-not-scored (see
     `models.AgentEvalRun`) and each column therefore has its own denominator —
@@ -615,6 +639,7 @@ def _eval_window_stats(session: Any, start: datetime, end: datetime) -> Dict[str
         select(AgentEvalRun).where(
             AgentEvalRun.run_at >= _as_naive_utc(start),
             AgentEvalRun.run_at < _as_naive_utc(end),
+            AgentEvalRun.run_source != RUN_SOURCE_PRODUCTION,
         )
     ).all()
 

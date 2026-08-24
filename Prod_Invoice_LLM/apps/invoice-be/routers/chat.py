@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
@@ -7,9 +8,12 @@ from sqlmodel import Session, select
 from uuid import UUID, uuid4
 from datetime import datetime
 
+import telemetry
 from dependencies import get_db_session, get_tenant_context, require_can_train, TenantContext
 from models import ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
 from agents.query_agent import run_query_agent
+from services.online_quality_judge import submit_turn_judgement
+from utils.logging_config import request_id_ctx, trace_id_ctx
 from services.chat_rules import (
     list_chat_rule_categories,
     render_chat_rule,
@@ -357,7 +361,19 @@ def post_chat_message(
             job_id=job_id,
         )
 
-        # Immediate asynchronous background executor (sub-millisecond handoff)
+        # Immediate asynchronous background executor (sub-millisecond handoff).
+        #
+        # Gap 302/304 attribution fix: `ThreadPoolExecutor.submit()` does not
+        # copy contextvars, so before this the whole queued turn ran on a pool
+        # thread where `trace_id_ctx`/`tenant_id_ctx`/`request_id_ctx` were all
+        # empty -- every `llm_agent_call` it emitted, and every judge call it
+        # went on to submit, landed in `customEvents` with `trace_id=""`. The
+        # IDs are passed explicitly and re-bound inside the handler, the same
+        # shape `queue_worker/main_worker.py::_process_message` uses for the
+        # real queue path, rather than `copy_context().run(...)`: copying the
+        # whole context would also carry the OpenTelemetry span context, which
+        # would silently re-parent this turn's dependency spans under an HTTP
+        # request that has already returned 202.
         _chat_background_pool.submit(
             handle_process_chat_job,
             job_id=job_id,
@@ -365,6 +381,8 @@ def post_chat_message(
             user_msg_id=str(user_msg.id),
             content=payload.content,
             tenant_id=str(tenant_context.tenant_id),
+            trace_id=trace_id_ctx.get(),
+            request_id=request_id_ctx.get(),
         )
 
         return JSONResponse(
@@ -387,6 +405,10 @@ def post_chat_message(
     )
     db_session.add(user_msg)
 
+    # Gap 304 half (2): the turn's own wall clock, so a production
+    # `agent_eval_run` row carries a real `latency_ms` instead of a 0.0 that
+    # would average into the golden bank's latency series as a free turn.
+    turn_started = time.perf_counter()
     try:
         agent_output = run_query_agent(
             session_id=str(session_id),
@@ -402,7 +424,23 @@ def post_chat_message(
             "generated_sql": None,
             "citations": [],
             "result_invoice_ids": [],
+            # Gap 302: a turn that blew up inside the agent still has to appear
+            # in the turn stream -- this is the one outcome that previously
+            # produced no telemetry of any kind, and an error rate cannot be
+            # computed from events that were never emitted. `run_query_agent()`
+            # raised, so its own accumulator never reached the caller; this is
+            # the minimum honest record of what happened.
+            "turn_telemetry": {
+                "status": telemetry.TURN_STATUS_ERROR,
+                "route": "unknown",
+                "error_type": type(e).__name__,
+                "stop_reason": "agent_raised",
+                "session_id": str(session_id),
+                "tenant_id": str(tenant_context.tenant_id),
+            },
         }
+
+    turn_latency_ms = (time.perf_counter() - turn_started) * 1000.0
 
     if user_msg not in db_session:
         db_session.add(user_msg)
@@ -423,6 +461,40 @@ def post_chat_message(
     db_session.add(assistant_msg)
     db_session.commit()
     db_session.refresh(assistant_msg)
+
+    # Gap 304 half (2): score this turn with the golden bank's own judge, off the
+    # response path. After the commit, so `message_id` points at a row that
+    # exists; on the background pool, so the two judge model calls happen after
+    # the user already has their answer. Fire and forget by construction -- the
+    # future is not held, and `submit_turn_judgement()` is a no-op with
+    # `ENABLE_PRODUCTION_QUALITY_JUDGE` off (the default) and never raises.
+    submit_turn_judgement(
+        question=payload.content,
+        answer=assistant_msg.content,
+        evidence=agent_output.get("judge_evidence"),
+        generated_sql=agent_output.get("generated_sql"),
+        tenant_id=str(tenant_context.tenant_id),
+        message_id=str(assistant_msg.id),
+        latency_ms=turn_latency_ms,
+        # Gap 304 attribution fix: the judge's two model calls run on the same
+        # pool and inherit no contextvars, so without these `eval.combined_soft`
+        # and `eval.persona` landed in `customEvents` with empty trace/tenant/
+        # request ids on every judged turn -- a score that could not be joined
+        # back to the turn it scored.
+        trace_id=trace_id_ctx.get(),
+        request_id=request_id_ctx.get(),
+    )
+
+    # Gap 302/303: the Trace. Same hook point and same reasoning as the judging
+    # call above -- after the commit, so `message_id` points at a row that
+    # exists. Unlike judging this is *not* flag-gated and fires on every outcome
+    # including declined, errored and cache-hit turns, because those three are
+    # exactly the ones that had no telemetry before and are the whole point.
+    telemetry.track_chat_turn(
+        **(agent_output.get("turn_telemetry") or {}),
+        message_id=str(assistant_msg.id),
+        latency_ms=turn_latency_ms,
+    )
 
     return MessageResponse.model_validate(assistant_msg)
 

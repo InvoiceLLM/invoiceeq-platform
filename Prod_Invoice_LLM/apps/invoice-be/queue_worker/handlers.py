@@ -943,15 +943,38 @@ def handle_process_chat_job(
     content: str,
     tenant_id: str,
     db_session: Optional[Session] = None,
+    trace_id: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> dict:
     """Gap 280: Asynchronous background worker handler for a chat query turn.
 
     Executes LangGraph/Query Agent in background worker thread, emits live
     progress events to Redis Pub/Sub, persists assistant ChatMessage, updates
     the user ChatMessage to 'completed', and releases tenant concurrency slot.
+
+    `trace_id`/`request_id` (Gap 302/304 attribution fix, 2026-08-24) are the
+    calling request's correlation IDs, passed explicitly because this function
+    has three call sites on three different threads and none of them propagates
+    contextvars: `routers/chat.py` submits it to `_chat_background_pool`,
+    `queue_worker/main_worker.py::_process_message` calls it after setting
+    `request_id_ctx`/`tenant_id_ctx` itself (but never `trace_id_ctx`), and
+    `_process_redis_chat_tasks` submits it to the worker's executor with nothing
+    bound at all. `tenant_id` is bound from the argument on every path, so a
+    turn's `llm_agent_call` events carry the right tenant regardless of which
+    caller ran it.
+
+    **Behaviour change worth stating rather than discovering**: worker-path
+    telemetry that previously reported `trace_id=""` now reports the originating
+    request's real trace id. Any saved query that used empty-vs-populated
+    `trace_id` to tell request-path events from worker-path events will stop
+    separating them and needs a different discriminator.
     """
+    import telemetry
+    from utils.logging_config import correlation_context, request_id_ctx, trace_id_ctx
+
     from services.chat_queue import ChatQueueService
     from agents.query_agent import run_query_agent
+    from services.online_quality_judge import submit_turn_judgement
     from models import ChatMessage
 
     def _execute(session: Session) -> dict:
@@ -964,12 +987,16 @@ def handle_process_chat_job(
             )
 
             # 2. Run query agent
+            # Gap 304 half (2): timed for the production `agent_eval_run` row's
+            # `latency_ms`, same as the synchronous path in `routers/chat.py`.
+            turn_started = time.perf_counter()
             agent_output = run_query_agent(
                 session_id=str(session_id),
                 user_message=content,
                 tenant_id=str(tenant_id),
                 db_session=session,
             )
+            turn_latency_ms = (time.perf_counter() - turn_started) * 1000.0
 
             # 3. Publish synthesis step
             ChatQueueService.publish_progress(
@@ -1025,6 +1052,41 @@ def handle_process_chat_job(
                 tenant_id=str(tenant_id),
                 result_payload=result_dict,
             )
+
+            # 6. Gap 304 half (2): same judging call as the synchronous path in
+            # `routers/chat.py` -- one implementation, two entry points, because
+            # both paths build their own `ChatMessage` independently. Submitted
+            # rather than called inline even here: this handler runs on a worker
+            # thread that still holds the tenant's concurrency slot until it
+            # returns (`queue_worker/main_worker.py` releases it in a `finally`),
+            # so blocking it for two judge model calls would throttle the tenant
+            # for the duration of scoring a turn they have already been given.
+            submit_turn_judgement(
+                question=content,
+                answer=assistant_msg.content,
+                evidence=agent_output.get("judge_evidence"),
+                generated_sql=agent_output.get("generated_sql"),
+                tenant_id=str(tenant_id),
+                message_id=str(assistant_msg.id),
+                latency_ms=turn_latency_ms,
+                # Read off this thread's own contextvars, which the
+                # `correlation_context(...)` block at the bottom of this
+                # function has bound -- so a judge call submitted from here
+                # carries the originating request's ids rather than the empty
+                # strings it carried before (Gap 304 attribution fix).
+                trace_id=trace_id_ctx.get(),
+                request_id=request_id_ctx.get(),
+            )
+
+            # 7. Gap 302/303: the Trace, same hook point as the judging call and
+            # for the same reason (after the commit, so `message_id` resolves).
+            # Not flag-gated: it fires on every outcome, which is what makes a
+            # declined-turn rate or a cache-hit rate computable at all.
+            telemetry.track_chat_turn(
+                **(agent_output.get("turn_telemetry") or {}),
+                message_id=str(assistant_msg.id),
+                latency_ms=turn_latency_ms,
+            )
             return result_dict
 
         except Exception as e:
@@ -1051,10 +1113,25 @@ def handle_process_chat_job(
                 tenant_id=str(tenant_id),
                 error_message=error_msg,
             )
+            # Gap 302: a failed queued turn is still a turn. Emitted from the
+            # handler's own `except` rather than from `run_query_agent()`,
+            # because the failure can come from anywhere in this block --
+            # including the commit and the Redis publish, neither of which the
+            # agent knows about.
+            telemetry.track_chat_turn(
+                status=telemetry.TURN_STATUS_ERROR,
+                route="unknown",
+                error_type=type(e).__name__,
+                stop_reason="queue_handler_raised",
+                session_id=str(session_id),
+                tenant_id=str(tenant_id),
+                message_id=str(user_msg_id or ""),
+            )
             return {"job_id": job_id, "status": "failed", "error": str(e)}
 
-    if db_session is not None:
-        return _execute(db_session)
-    with Session(engine) as session:
-        return _execute(session)
+    with correlation_context(tenant_id=tenant_id, trace_id=trace_id, request_id=request_id):
+        if db_session is not None:
+            return _execute(db_session)
+        with Session(engine) as session:
+            return _execute(session)
 

@@ -3,6 +3,7 @@ import logging
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -14,6 +15,58 @@ from starlette.responses import Response
 request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
 tenant_id_ctx: ContextVar[str] = ContextVar("tenant_id", default="")
 trace_id_ctx: ContextVar[str] = ContextVar("trace_id", default="")
+
+
+@contextmanager
+def correlation_context(
+    *,
+    tenant_id: str | None = None,
+    request_id: str | None = None,
+    trace_id: str | None = None,
+):
+    """Bind the three correlation contextvars for the duration of a block.
+
+    Why this exists (Gap 302/304, 2026-08-24). `TracingAndLoggingMiddleware`
+    below is the only thing that sets `trace_id_ctx`, and it sets it on the
+    **request** thread. Work handed to `routers/chat.py::_chat_background_pool`
+    — the async chat-queue path, and the online quality judge — runs on a pool
+    thread that inherits none of it, because `ThreadPoolExecutor.submit()` does
+    not copy contextvars. The measured consequence was that every
+    `eval.combined_soft`/`eval.persona` event the production judge emits landed
+    in `customEvents` with `trace_id=""`, `tenant_id=""` and `request_id=""`, so
+    a judged turn could not be joined back to the turn it judged.
+
+    Same pattern as `queue_worker/main_worker.py::_process_message`, which sets
+    `request_id_ctx`/`tenant_id_ctx` at the top of the unit of work it owns —
+    with one deliberate difference: this resets on the way out. That worker sets
+    and never resets, which is harmless there because every task sets it again;
+    on a *shared* pool that also serves the online judge, a leaked value would
+    attribute one tenant's judge call to whichever tenant's chat job ran on that
+    thread previously.
+
+    Only non-empty values are bound, so a caller that knows the tenant but not
+    the trace does not blank out a trace the thread legitimately already had.
+    """
+    tokens = []
+    for ctx, value in (
+        (tenant_id_ctx, tenant_id),
+        (request_id_ctx, request_id),
+        (trace_id_ctx, trace_id),
+    ):
+        if not value:
+            continue
+        try:
+            tokens.append((ctx, ctx.set(str(value))))
+        except Exception:  # pragma: no cover - correlation must never break work
+            pass
+    try:
+        yield
+    finally:
+        for ctx, token in reversed(tokens):
+            try:
+                ctx.reset(token)
+            except Exception:  # pragma: no cover
+                pass
 
 
 class StructuredJsonFormatter(logging.Formatter):

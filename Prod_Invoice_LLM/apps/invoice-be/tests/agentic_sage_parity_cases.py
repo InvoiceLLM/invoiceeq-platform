@@ -247,11 +247,34 @@ def run_case(name: str, question: str, route: str, sql_results, with_prior_turn:
                 result = query_agent.run_query_agent(
                     str(_SESSION_ID), question, str(MOCK_TENANT_ID), session
                 )
+            # Gap 304 half (2), 2026-08-24: `run_query_agent()` now also returns
+            # `judge_evidence` — the turn's own tool output, for the online
+            # quality judge. Split out of `result` here rather than regenerating
+            # the golden, deliberately: the golden's claim is that the *pipeline*
+            # is unchanged (same answer, same SQL, same citations, same prompts),
+            # and rewriting it to absorb an additive key would also silently
+            # absorb anything else that had drifted since it was recorded. It is
+            # returned as its own record field instead, so the parity test can
+            # still assert the new payload is present on every route.
+            judge_evidence = result.pop("judge_evidence", None)
+            # Gap 302, 2026-08-24: same treatment, same reasoning, for the Trace
+            # payload `run_query_agent()` now also returns. Split out rather than
+            # folded into the golden — and additionally *not* kept as a record
+            # field, because unlike `judge_evidence` it is not deterministic: it
+            # carries a fresh `turn_id` UUID and a wall-clock
+            # `seconds_since_prev_turn` per run, so a golden containing it could
+            # never match twice. The parity test asserts its presence and shape
+            # separately instead.
+            turn_telemetry = result.pop("turn_telemetry", None)
             return {
                 "case": name,
                 "question": question,
                 "route": route,
                 "result": json.loads(json.dumps(result, default=str)),
+                "judge_evidence": judge_evidence,
+                "turn_telemetry_present": turn_telemetry is not None,
+                "turn_telemetry_route": (turn_telemetry or {}).get("route"),
+                "turn_telemetry_status": (turn_telemetry or {}).get("status"),
                 "sql_prompts": list(llm.prompts),
                 "summary_prompts": list(llm.summary_prompts),
             }

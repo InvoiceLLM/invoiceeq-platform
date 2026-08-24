@@ -2,9 +2,9 @@
 
 Every LLM invocation this application makes emits exactly one Application Insights
 ``customEvents`` row named ``llm_agent_call``, carrying ``agent_name``, ``model``,
-``tokens_in``, ``tokens_out``, ``latency_ms``, ``status``, ``tenant_id`` and
-``request_id``. Phase 2's cost rollup is a KQL query over those rows — no new
-storage, no new Azure resource.
+``tokens_in``, ``tokens_out``, ``latency_ms``, ``status``, ``tenant_id``,
+``request_id`` and ``run_source``. Phase 2's cost rollup is a KQL query over
+those rows — no new storage, no new Azure resource.
 
 Instrumentation only: nothing here changes what any agent returns. Every path is
 wrapped so a telemetry failure degrades to a debug log and the agent call carries
@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Dict, Iterator, Optional
@@ -151,6 +152,70 @@ AGENT_EVAL_SUMMARY_EVENT_NAME = "agent_eval_summary"
 # exists to catch for Feature 23's eval job.
 OPS_DIGEST_EVENT_NAME = "ops_digest_run"
 
+# ---------------------------------------------------------------------------
+# Gap 302/303 — the Trace: one event per whole chat turn
+# ---------------------------------------------------------------------------
+# `llm_agent_call` is per *call*. Several of them share a `trace_id` and between
+# them they say a turn cost N tokens and took M ms; they cannot say what the
+# agent actually did — which route ran, what SQL it wrote, what the tools
+# returned, why the loop stopped. For a non-deterministic agent that is the only
+# thing that diagnoses a failure, which is Feature 23's "Run, Trace, Thread"
+# premise and the reason Gap 302 exists.
+#
+# One row per turn, emitted by the two places that own a completed turn
+# (`routers/chat.py::post_chat_message` and
+# `queue_worker/handlers.py::handle_process_chat_job`), after their commit. It
+# fires on **every** outcome, including a declined turn, an errored turn and a
+# cache hit — before this event those three produced no turn-level telemetry at
+# all, so "the agent refused 400 times today" was unaskable.
+#
+# Gap 303 half (a) rides the same event: `turn_index` and
+# `seconds_since_prev_turn` make the Thread level a `summarize ... by session_id`
+# over this one stream rather than a second event type. Half (b) — session
+# length / abandonment at a 30-minute idle cutoff — is then derivable in KQL from
+# these two fields with no new emission and no new scheduled job; see
+# `infra/monitoring/chat_thread_sessions.kql`.
+CHAT_TURN_EVENT_NAME = "chat_turn"
+
+# ---------------------------------------------------------------------------
+# How much real content a `chat_turn` event carries — founder decision, 2026-08-24
+# ---------------------------------------------------------------------------
+# The decision was that a Trace captures the **real generated SQL text and the
+# real tool-call results**, not a structural summary of them: a turn whose SQL
+# was subtly wrong is not diagnosable from `sql_generated=true`.
+#
+# So this event genuinely carries customer-adjacent content, and the caps below
+# are the only thing bounding it. They are deliberately the same two budgets
+# `services/agent_eval.py` already uses for the judge prompt
+# (`MAX_QUERY_CHARS = 3000` / `MAX_CONTEXT_CHARS = 12000`) rather than new
+# numbers — the same two payloads, sized by the same reasoning, and a reader
+# comparing an event against a judge prompt sees the same truncation.
+#
+# **Retention and review, stated here because nothing else states it**: these
+# events land in `customEvents` in the workspace-based Application Insights
+# component, i.e. in the Log Analytics workspace, and inherit *its* retention —
+# `infra/06-compute-env.bicep`'s `logRetentionInDays`, which is **30 days** in
+# `params.dev.json` and **90 days** in `params.prod.json`. There is no
+# table-level retention override anywhere in `infra/` and no purge policy. No
+# scrubbing or redaction is applied here, deliberately (the founder did not
+# require it for this pass) — which is the opposite of the choice made for the
+# online quality judge, whose row stores scores only. security-tester owns the
+# review of that decision; it is **not** done here.
+MAX_TURN_SQL_CHARS = 3000
+MAX_TURN_TOOL_OUTPUT_CHARS = 12000
+
+#: `status` on a `chat_turn`. Four outcomes, all of which really happen and only
+#: one of which produced any telemetry before this event existed.
+TURN_STATUS_SUCCESS = "success"
+#: The model returned `sql: null` — a deliberate refusal, not a failure.
+TURN_STATUS_DECLINED = "declined"
+#: The route raised, or every SQL attempt failed. The user got an error string.
+TURN_STATUS_ERROR = "error"
+#: Served from the Redis answer cache. Excluded from any "what did the agent do"
+#: analysis by construction: no model call was made and no SQL was generated, so
+#: averaging these into a latency or token trend would report free turns.
+TURN_STATUS_CACHE_HIT = "cache_hit"
+
 # Exporter contract — see module docstring.
 _CUSTOM_EVENT_NAME_ATTRIBUTE = "microsoft.custom_event.name"
 
@@ -243,6 +308,73 @@ _RESERVED_LOG_RECORD_KEYS = frozenset(
 _STATUS_SUCCESS = "success"
 _STATUS_ERROR = "error"
 
+# ---------------------------------------------------------------------------
+# Gap 304 — `run_source`: which population of traffic a call belongs to
+# ---------------------------------------------------------------------------
+# `llm_agent_call` is the only source of cost and latency in this product, and
+# until this field existed it had no way to say whether a given row came from a
+# real user turn or from a golden-bank/benchmark eval turn. That is not a
+# reporting nicety: `services/benchmark_artifacts.py::configure_run_telemetry()`
+# used to attach the Azure Monitor exporter *late* (after all eval turns had
+# finished) precisely so a benchmark run's own per-call events never reached
+# `customEvents` — because with no discriminator they would silently be added to
+# every production cost/latency number in the same dashboards.
+#
+# This field was the prerequisite for changing that, and **the change has since
+# been made** (2026-08-24, Gap 304 half 1): both eval scripts now attach the
+# exporter immediately after `configure_run_source()`, i.e. before the first
+# graded turn, so an eval run's per-call events, its per-turn `agent_eval_run`
+# events and its GenAI dependency spans all export tagged `golden`/`predeploy`.
+# Every consumer of any of the three must therefore filter on this field:
+# `| where run_source == "production"` is now a required clause in a production
+# cost/latency query, not an available one.
+#
+# Three values, matching the three ways this app's LLM calls are really made:
+#   * `production` — a real user/queue turn. The default, so every existing call
+#     site is correctly tagged with no change at any of them.
+#   * `golden`     — a golden-bank eval turn (`scripts/run_agent_eval.py`,
+#     `scripts/run_extraction_benchmark.py`) on the nightly or an ad-hoc cadence.
+#   * `predeploy`  — the same scripts run as the pre-deploy gate, over a smaller
+#     subset. Kept distinct from `golden` for the same reason `run_label` is on
+#     the aggregate events: a 5-case gate subset and a 20-case nightly run are
+#     not one trend.
+RUN_SOURCE_PRODUCTION = "production"
+RUN_SOURCE_GOLDEN = "golden"
+RUN_SOURCE_PREDEPLOY = "predeploy"
+
+# Same pattern as `tenant_id_ctx`/`request_id_ctx`/`trace_id_ctx` above, and for
+# the same reason: a contextvar with a safe default means the value travels to
+# every emitter without being threaded through any call site's signature. It
+# lives here rather than in `utils/logging_config.py` because unlike those three
+# it is not a request-correlation ID — nothing outside Feature 23's telemetry
+# reads it.
+run_source_ctx: ContextVar[str] = ContextVar("run_source", default=RUN_SOURCE_PRODUCTION)
+
+
+def set_run_source(run_source: str) -> str:
+    """Tag every ``llm_agent_call`` this context emits from here on.
+
+    For eval/benchmark scripts only — production sets nothing and gets
+    ``production`` from the contextvar's default. Returns the value actually
+    applied so the caller can print it. Never raises, same contract as every
+    emitter here.
+    """
+    resolved = str(run_source or RUN_SOURCE_PRODUCTION)
+    try:
+        run_source_ctx.set(resolved)
+    except Exception:  # pragma: no cover - telemetry must never break a call
+        logger.debug("Could not set run_source to %s", run_source, exc_info=True)
+    return resolved
+
+
+def _resolve_run_source(explicit: Optional[str] = None) -> str:
+    """Explicit argument wins, then the contextvar, then ``production``."""
+    try:
+        return str(explicit or run_source_ctx.get() or RUN_SOURCE_PRODUCTION)
+    except Exception:  # pragma: no cover - telemetry must never break a call
+        return RUN_SOURCE_PRODUCTION
+
+
 _cached_event_logger: Optional[logging.Logger] = None
 
 
@@ -284,8 +416,14 @@ def track_agent_call(
     Feature 19's ``TracingAndLoggingMiddleware`` (API) and ``main_worker`` (queue)
     already populate, so this event correlates with the existing structured log
     lines on the same IDs rather than inventing a second scheme.
+
+    ``run_source`` (Gap 304) is resolved the same way, from ``run_source_ctx``,
+    defaulting to ``production``. It can also be passed explicitly as a keyword —
+    handled before the ``extra_attributes`` loop below, which would otherwise
+    drop it as a duplicate key and leave a call site silently mis-tagged.
     """
     try:
+        run_source = _resolve_run_source(extra_attributes.pop("run_source", None))
         attributes: Dict[str, Any] = {
             "agent_name": agent_name,
             "model": model or "unknown",
@@ -297,11 +435,20 @@ def track_agent_call(
             "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
             "request_id": str(request_id or request_id_ctx.get() or ""),
             "trace_id": str(trace_id_ctx.get() or ""),
+            "run_source": run_source,
         }
         for key, value in extra_attributes.items():
             if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
                 continue
             attributes[key] = value
+
+        # Gap 302: if this call happened inside a chat turn, it is part of that
+        # turn's cost. Done here rather than in `tracked_llm_call()` so a call
+        # site that emits the event directly is counted too, and inside the
+        # existing `try` so the never-raises contract already covers it.
+        turn = _chat_turn_ctx.get()
+        if turn is not None:
+            turn.record_llm_call(agent_name, attributes["tokens_in"], attributes["tokens_out"])
 
         _emit_event(LLM_CALL_EVENT_NAME, attributes)
     except Exception:  # pragma: no cover - telemetry must never break a call
@@ -347,8 +494,19 @@ def track_eval_result(
 
     Never raises, same contract as ``track_agent_call``: a nightly quality job
     must not fail because telemetry was unavailable.
+
+    ``run_source`` (Gap 304) is resolved here exactly as ``track_agent_call``
+    resolves it — from ``run_source_ctx``, with an explicit keyword winning —
+    rather than being left to whatever a caller happens to pass through
+    ``**extra_attributes``. It has to be first-class for the same reason it does
+    on ``llm_agent_call``: once the exporter attaches at the *start* of an eval
+    run (2026-08-24), these per-turn rows reach ``customEvents`` alongside
+    production events and need the same discriminator. Popped before the
+    ``extra_attributes`` loop below, which drops any key already present in the
+    dict and would therefore have silently discarded an explicit value.
     """
     try:
+        run_source = _resolve_run_source(extra_attributes.pop("run_source", None))
         attributes: Dict[str, Any] = {
             "agent_name": agent_name,
             "case_id": case_id,
@@ -360,6 +518,7 @@ def track_eval_result(
             "llm_call_count": int(llm_call_count or 0),
             "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
             "request_id": str(request_id_ctx.get() or ""),
+            "run_source": run_source,
         }
         # Absent scores stay absent -- a 0.0 would be indistinguishable from a
         # real zero in every trend chart built on this event.
@@ -396,7 +555,7 @@ def track_online_signal(
     confidence: str = "",
     threshold: Optional[float] = None,
     breached: bool = False,
-    window_days: Optional[int] = None,
+    window_days: Optional[float] = None,
     tenant_id: str = "",
     **extra_attributes: Any,
 ) -> None:
@@ -407,6 +566,15 @@ def track_online_signal(
     from that module means "the denominator was empty, nothing was measured",
     and emitting it as 0.0 would render an ingestion outage as a perfectly
     healthy day on every chart built on this event.
+
+    ``window_days`` is a **float**, not an int (changed with Gap 305's wiring).
+    `compute_online_signals()` has always taken a window *length* in days and
+    `services/ops_digest_collect.py` has always passed a fraction of one — a
+    6-hour digest window is 0.25 days — so the previous ``int()`` cast would have
+    emitted ``window_days=0`` for every event the scheduled caller produces,
+    i.e. a zero-length window, which is worse than omitting the field. Whole
+    numbers still compare equal (``7.0 == 7``), so nothing that read the old
+    field breaks.
 
     Never raises, same contract as the other two emitters.
     """
@@ -426,7 +594,7 @@ def track_online_signal(
         if threshold is not None:
             attributes["threshold"] = round(float(threshold), 6)
         if window_days is not None:
-            attributes["window_days"] = int(window_days)
+            attributes["window_days"] = round(float(window_days), 6)
         for key, extra in extra_attributes.items():
             if extra is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
                 continue
@@ -750,6 +918,271 @@ def track_agent_eval_summary(
         logger.debug("track_agent_eval_summary failed for path %s", path, exc_info=True)
 
 
+# ---------------------------------------------------------------------------
+# Gap 302 — the turn accumulator
+# ---------------------------------------------------------------------------
+
+
+def _truncate(text: Any, limit: int) -> str:
+    """Cut `text` at `limit`, saying so in the value itself.
+
+    Same shape as `services/agent_eval.py::_truncate` — a marker in the string,
+    not a silent cut — because a reader of a `chat_turn` event has to be able to
+    tell "the SQL was this" from "the SQL started like this".
+    """
+    value = str(text or "")
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"\n... (truncated at {limit} chars)"
+
+
+class ChatTurn:
+    """Everything one chat turn did, accumulated while it happens.
+
+    Two kinds of field, filled from two directions:
+
+      * the counters (`llm_calls`, `tokens_in`, `tokens_out`, `agents_called`)
+        are incremented by `track_agent_call()` below for every
+        `tracked_llm_call()` that runs inside the scope, so a turn's model cost
+        is summed without any route knowing it is being counted;
+      * everything else is set by `agents/query_agent.py` as the turn resolves —
+        the route it picked, the SQL it wrote, what the tools returned, why it
+        stopped.
+
+    Deliberately a plain mutable object rather than a frozen record: the point is
+    that the SQL branch, the RAG branch and the accumulator all write into the
+    same instance during one turn without threading a return value through six
+    call sites.
+    """
+
+    __slots__ = (
+        "turn_id", "session_id", "tenant_id", "route", "status", "stop_reason",
+        "tool_calls_made", "tools_called", "llm_calls", "tokens_in", "tokens_out",
+        "agents_called", "generated_sql", "sql_attempts", "zero_result",
+        "zero_result_fallback_recovered", "citation_count", "result_invoice_count",
+        "tool_output", "turn_index", "seconds_since_prev_turn", "error_type",
+    )
+
+    def __init__(self, *, session_id: str = "", tenant_id: str = "") -> None:
+        #: Stable per-turn id, generated here rather than reusing the assistant
+        #: `message_id`: a turn that errors before its message row is written
+        #: still needs one identifier, and the message id is only known to the
+        #: router, after this object is finished with.
+        self.turn_id = str(uuid.uuid4())
+        self.session_id = str(session_id or "")
+        self.tenant_id = str(tenant_id or "")
+        self.route = ""
+        self.status = TURN_STATUS_SUCCESS
+        self.stop_reason = ""
+        self.tool_calls_made = 0
+        self.tools_called: list = []
+        self.llm_calls = 0
+        self.tokens_in = 0
+        self.tokens_out = 0
+        self.agents_called: list = []
+        self.generated_sql = ""
+        self.sql_attempts = 0
+        self.zero_result = False
+        self.zero_result_fallback_recovered = False
+        self.citation_count = 0
+        self.result_invoice_count = 0
+        self.tool_output = ""
+        self.turn_index: Optional[int] = None
+        self.seconds_since_prev_turn: Optional[float] = None
+        self.error_type = ""
+
+    def record_llm_call(self, agent_name: str, tokens_in: int, tokens_out: int) -> None:
+        """One `tracked_llm_call()` finished inside this turn."""
+        self.llm_calls += 1
+        self.tokens_in += int(tokens_in or 0)
+        self.tokens_out += int(tokens_out or 0)
+        if agent_name and agent_name not in self.agents_called:
+            self.agents_called.append(str(agent_name))
+
+    def event_fields(self) -> Dict[str, Any]:
+        """The keyword arguments `track_chat_turn()` takes, as a plain dict.
+
+        Returned to the caller on `run_query_agent()`'s result rather than
+        emitted from inside the agent, because the two things this event still
+        needs — the assistant `message_id` and the turn's wall clock — are only
+        known to whichever of the two write paths owns the turn.
+        """
+        return {
+            "turn_id": self.turn_id,
+            "session_id": self.session_id,
+            "tenant_id": self.tenant_id,
+            "route": self.route,
+            "status": self.status,
+            "stop_reason": self.stop_reason,
+            "tool_calls_made": self.tool_calls_made,
+            "tools_called": ",".join(str(t) for t in self.tools_called),
+            "llm_call_count": self.llm_calls,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "agents_called": ",".join(self.agents_called),
+            "generated_sql": self.generated_sql,
+            "sql_attempts": self.sql_attempts,
+            "zero_result": self.zero_result,
+            "zero_result_fallback_recovered": self.zero_result_fallback_recovered,
+            "citation_count": self.citation_count,
+            "result_invoice_count": self.result_invoice_count,
+            "tool_output": self.tool_output,
+            "turn_index": self.turn_index,
+            "seconds_since_prev_turn": self.seconds_since_prev_turn,
+            "error_type": self.error_type,
+        }
+
+
+_chat_turn_ctx: ContextVar[Optional[ChatTurn]] = ContextVar("chat_turn", default=None)
+
+
+@contextmanager
+def chat_turn_scope(*, session_id: str = "", tenant_id: str = "") -> Iterator[ChatTurn]:
+    """Count every `tracked_llm_call()` made inside this block against one turn.
+
+    Reset in a `finally` rather than left set, unlike
+    `queue_worker/main_worker.py`'s correlation contextvars: this one runs on a
+    pooled thread that will serve another turn, and a leaked accumulator would
+    add the next turn's model calls to this turn's totals — silently, and only
+    under load, which is the worst way to find it.
+
+    Nesting is additive on purpose: SAGE's tools call
+    `run_sql_generation_loop()`, which opens its own `tracked_llm_call`, and
+    those round-trips genuinely are part of this turn's cost.
+
+    Never raises — a failure to install the accumulator degrades to "no counters
+    on this turn's event", not a failed turn.
+    """
+    turn = ChatTurn(session_id=session_id, tenant_id=tenant_id)
+    token = None
+    try:
+        token = _chat_turn_ctx.set(turn)
+    except Exception:  # pragma: no cover - telemetry must never break a turn
+        logger.debug("Could not install the chat turn accumulator", exc_info=True)
+    try:
+        yield turn
+    finally:
+        if token is not None:
+            try:
+                _chat_turn_ctx.reset(token)
+            except Exception:  # pragma: no cover
+                logger.debug("Could not reset the chat turn accumulator", exc_info=True)
+
+
+def current_chat_turn() -> Optional[ChatTurn]:
+    """The turn being accumulated on this context, or None outside a turn.
+
+    None is the normal state everywhere except inside `run_query_agent()` — the
+    eval harness, the ingestion pipeline and the trainer all make LLM calls that
+    belong to no chat turn, and they must not be counted into one.
+    """
+    try:
+        return _chat_turn_ctx.get()
+    except Exception:  # pragma: no cover
+        return None
+
+
+def track_chat_turn(
+    *,
+    turn_id: str = "",
+    session_id: str = "",
+    message_id: str = "",
+    route: str = "",
+    status: str = TURN_STATUS_SUCCESS,
+    latency_ms: float = 0.0,
+    stop_reason: str = "",
+    tool_calls_made: int = 0,
+    tools_called: str = "",
+    llm_call_count: int = 0,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    agents_called: str = "",
+    generated_sql: str = "",
+    sql_attempts: int = 0,
+    zero_result: bool = False,
+    zero_result_fallback_recovered: bool = False,
+    citation_count: int = 0,
+    result_invoice_count: int = 0,
+    tool_output: str = "",
+    turn_index: Optional[int] = None,
+    seconds_since_prev_turn: Optional[float] = None,
+    error_type: str = "",
+    tenant_id: str = "",
+    **extra_attributes: Any,
+) -> None:
+    """Emit one ``chat_turn`` custom event — the Trace (Gap 302) for one turn.
+
+    Never raises, same contract as every other emitter here: this fires after the
+    user already has their answer, and a telemetry failure must be invisible to
+    a turn that has already succeeded.
+
+    ``generated_sql`` and ``tool_output`` carry the **real** text, truncated at
+    ``MAX_TURN_SQL_CHARS``/``MAX_TURN_TOOL_OUTPUT_CHARS`` — see the constants
+    block for the founder decision behind that and for the retention/security
+    caveat it creates. ``tool_output_chars`` travels alongside so a reader can
+    tell a short result from a truncated one without parsing the marker.
+
+    ``trace_id``/``request_id``/``run_source`` are resolved from the contextvars
+    exactly as ``track_agent_call`` resolves them, so a turn event and the
+    ``llm_agent_call`` events it counted correlate on the same IDs. On the queue
+    path that only works because ``handle_process_chat_job`` now binds those
+    contextvars on the thread it really runs on (Gap 304's attribution fix).
+
+    Absent ``turn_index``/``seconds_since_prev_turn`` stay absent rather than
+    becoming 0: a first turn in a session genuinely has no predecessor, and a 0
+    there would read as "the user sent two messages in the same instant" in
+    every Thread-level query built on this event.
+    """
+    try:
+        run_source = _resolve_run_source(extra_attributes.pop("run_source", None))
+        sql_text = _truncate(generated_sql, MAX_TURN_SQL_CHARS)
+        tool_text = _truncate(tool_output, MAX_TURN_TOOL_OUTPUT_CHARS)
+        attributes: Dict[str, Any] = {
+            "turn_id": str(turn_id or ""),
+            "session_id": str(session_id or ""),
+            "message_id": str(message_id or ""),
+            "route": str(route or "unknown"),
+            "status": str(status or TURN_STATUS_SUCCESS),
+            "latency_ms": round(float(latency_ms or 0.0), 2),
+            "stop_reason": str(stop_reason or ""),
+            "tool_calls_made": int(tool_calls_made or 0),
+            "tools_called": str(tools_called or ""),
+            "llm_call_count": int(llm_call_count or 0),
+            "tokens_in": int(tokens_in or 0),
+            "tokens_out": int(tokens_out or 0),
+            "tokens_total": int(tokens_in or 0) + int(tokens_out or 0),
+            "agents_called": str(agents_called or ""),
+            "sql_generated": bool(generated_sql),
+            "generated_sql": sql_text,
+            "sql_attempts": int(sql_attempts or 0),
+            "zero_result": bool(zero_result),
+            "zero_result_fallback_recovered": bool(zero_result_fallback_recovered),
+            "citation_count": int(citation_count or 0),
+            "result_invoice_count": int(result_invoice_count or 0),
+            "tool_output": tool_text,
+            # Pre-truncation length, so "12000 chars of results" and "the whole
+            # result was 11,998 chars" are distinguishable in a query.
+            "tool_output_chars": len(str(tool_output or "")),
+            "error_type": str(error_type or ""),
+            "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
+            "request_id": str(request_id_ctx.get() or ""),
+            "trace_id": str(trace_id_ctx.get() or ""),
+            "run_source": run_source,
+        }
+        if turn_index is not None:
+            attributes["turn_index"] = int(turn_index)
+        if seconds_since_prev_turn is not None:
+            attributes["seconds_since_prev_turn"] = round(float(seconds_since_prev_turn), 3)
+        for key, value in extra_attributes.items():
+            if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
+                continue
+            attributes[key] = value
+
+        _emit_event(CHAT_TURN_EVENT_NAME, attributes)
+    except Exception:  # pragma: no cover - telemetry must never break a turn
+        logger.debug("track_chat_turn failed for route %s", route, exc_info=True)
+
+
 def track_ops_digest_run(
     *,
     window_hours: float,
@@ -1007,6 +1440,7 @@ def _start_llm_dependency_span(
     llm: Any = None,
     tenant_id: Optional[str] = None,
     request_id: Optional[str] = None,
+    run_source: Optional[str] = None,
 ) -> Optional[Any]:
     """Open one CLIENT span for an LLM call, or return ``None``.
 
@@ -1021,6 +1455,12 @@ def _start_llm_dependency_span(
     Never raises. Without a configured tracer provider (local dev, tests, CI, any
     process with no ``APPLICATIONINSIGHTS_CONNECTION_STRING``) the OpenTelemetry
     API hands back a no-op tracer, and this costs an object allocation.
+
+    Carries ``run_source`` (Gap 304) for the same reason ``llm_agent_call``
+    does, and this is the load-bearing half of it: from 2026-08-24 an eval run
+    attaches the exporter at *start*, so these spans land in ``AppDependencies``
+    next to production dependency spans. ``run_source`` is the only field that
+    tells them apart — the event-level tag protects ``customEvents`` only.
     """
     try:
         from opentelemetry import trace as _otel_trace
@@ -1038,6 +1478,7 @@ def _start_llm_dependency_span(
             "agent_name": agent_name,
             "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
             "request_id": str(request_id or request_id_ctx.get() or ""),
+            "run_source": _resolve_run_source(run_source),
         }
         peer = resolve_gen_ai_peer(gen_ai_system)
         if peer:
@@ -1133,8 +1574,17 @@ def tracked_llm_call(
             model_name = resolve_model_name(llm)
         except Exception:  # pragma: no cover - resolve_model_name is defensive already
             model_name = None
+    # `.get()`, not `.pop()`: `track_agent_call` pops it for itself below, and the
+    # two surfaces must agree about the same call — a call site that passes
+    # `run_source=` explicitly would otherwise tag its event and its dependency
+    # span differently.
     span = _start_llm_dependency_span(
-        agent_name, model_name, llm=llm, tenant_id=tenant_id, request_id=request_id
+        agent_name,
+        model_name,
+        llm=llm,
+        tenant_id=tenant_id,
+        request_id=request_id,
+        run_source=extra_attributes.get("run_source"),
     )
 
     started = time.perf_counter()

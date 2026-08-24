@@ -565,6 +565,62 @@ def test_a_job_that_has_never_run_is_not_reported_as_a_silent_failure(db_session
     assert [i for i in items if i.key == "ai_eval:audit_job_failed"] == []
 
 
+def test_production_rows_do_not_silence_the_audit_job_failed_finding(db_session):
+    """Gap 304 half (2) regression. `agent_eval_run` now also holds one row per
+    real chat turn, and live traffic is present in *every* window — so without a
+    `run_source` filter, "rows in the baseline, none in this window" would never
+    be true again and the only alert that catches a dead nightly scheduler would
+    go permanently silent."""
+    window_start = NOW - timedelta(hours=6)
+    for _ in range(3):
+        db_session.add(_eval_row(window_start - timedelta(hours=5), faithfulness_score=0.9))
+    # Real traffic, judged online, inside the current window.
+    for _ in range(20):
+        db_session.add(
+            _eval_row(
+                window_start + timedelta(hours=1),
+                run_source="production",
+                question=None,
+                actual_answer=None,
+                message_id=uuid4(),
+                faithfulness_score=0.5,
+            )
+        )
+    db_session.commit()
+
+    items, _ = collect_ai_eval_items(db_session, window_start=window_start, window_end=NOW)
+    assert [i.key for i in items if i.key == "ai_eval:audit_job_failed"] == [
+        "ai_eval:audit_job_failed"
+    ]
+
+
+def test_production_rows_are_excluded_from_the_quality_means(db_session):
+    """The two populations are not comparable: a production row has no accuracy
+    or context score and its `pass` is decided on two dimensions instead of
+    three. Blending them means the traffic mix can fire a quality alert."""
+    window_start = NOW - timedelta(hours=6)
+    for _ in range(6):
+        db_session.add(_eval_row(window_start - timedelta(hours=5), faithfulness_score=0.90))
+        db_session.add(_eval_row(window_start + timedelta(hours=1), faithfulness_score=0.90))
+    # Terrible live turns in the current window. If these were read, the mean
+    # would collapse and a cliff would be reported.
+    for _ in range(30):
+        db_session.add(
+            _eval_row(
+                window_start + timedelta(hours=2),
+                run_source="production",
+                question=None,
+                actual_answer=None,
+                message_id=uuid4(),
+                faithfulness_score=0.05,
+            )
+        )
+    db_session.commit()
+
+    items, _ = collect_ai_eval_items(db_session, window_start=window_start, window_end=NOW)
+    assert [i for i in items if i.key == "ai_eval:faithfulness_score"] == []
+
+
 def test_a_pass_rate_collapse_is_reported_but_does_not_page(db_session):
     window_start = NOW - timedelta(hours=6)
     for _ in range(6):
@@ -1101,3 +1157,247 @@ def test_a_run_that_could_not_deliver_is_recorded_as_an_error(caplog):
         )
     record = [r for r in caplog.records if r.getMessage() == OPS_DIGEST_EVENT_NAME][-1]
     assert record.status == "error"
+
+
+# ---------------------------------------------------------------------------
+# Feature 23, Gap 305 — this job is the scheduled caller of
+# `services/online_eval_signals.py::emit_online_signals()`
+#
+# Driven through the real `scripts/ops_digest_job.py::main()`, not by calling the
+# helpers directly: the whole gap was that nothing *called* the emitter, so a
+# test that calls it proves nothing. Only two seams are stubbed, both process
+# boundaries this file already stubs elsewhere — the Resource Graph read
+# (`AZURE_SUBSCRIPTION_ID`) and the Cost Management read (`is_configured`) — plus
+# `configure_telemetry()`, which would otherwise reconfigure root logging for the
+# rest of the suite. `--no-llm` keeps the model out of it.
+# ---------------------------------------------------------------------------
+
+
+def _seed_live_traffic(db_session, *, turns: int = 3, down_votes: int = 0):
+    """Real `ChatMessage`/`ChatFeedback` rows inside the job's own 6-hour window.
+
+    Seeded against the wall clock rather than this file's frozen `NOW`, because
+    `main()` collects over the six hours ending *now* — a fixed timestamp would
+    fall outside the window and the test would pass on an empty denominator,
+    which is exactly the "nothing has run" state this gap is about.
+    """
+    from models import ChatFeedback, ChatMessage, ChatSession
+    from services.online_eval_signals import NO_RECORDS_FOUND
+
+    tenant_id = uuid4()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    chat_session = ChatSession(
+        tenant_id=tenant_id, title="t", created_at=now - timedelta(hours=1)
+    )
+    db_session.add(chat_session)
+    db_session.commit()
+
+    for index in range(turns):
+        asked_at = now - timedelta(minutes=30 + index)
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session.id, role="user", content="q", created_at=asked_at
+            )
+        )
+        db_session.add(
+            ChatMessage(
+                session_id=chat_session.id,
+                role="assistant",
+                content=f"{NO_RECORDS_FOUND} ({index})",
+                created_at=asked_at + timedelta(seconds=5),
+            )
+        )
+    for _ in range(down_votes):
+        db_session.add(
+            ChatFeedback(
+                tenant_id=tenant_id,
+                session_id=chat_session.id,
+                message_id=uuid4(),
+                vote="down",
+                reason="wrong_data",
+                created_at=now - timedelta(minutes=20),
+            )
+        )
+    db_session.commit()
+    return chat_session.id
+
+
+def _run_digest_job(monkeypatch, db_session, argv=("--dry-run", "--no-llm")):
+    import sys
+
+    import scripts.ops_digest_job as job
+
+    monkeypatch.setattr(ops_digest_collect.settings, "AZURE_SUBSCRIPTION_ID", "")
+    monkeypatch.setattr("services.azure_cost.is_configured", lambda: False)
+    monkeypatch.setattr(job, "_open_session", lambda: db_session)
+    # The real one calls setup_structured_logging(), which re-points root logging
+    # for every test that runs after this one.
+    monkeypatch.setattr(job, "configure_telemetry", lambda: False)
+    monkeypatch.setattr(sys, "argv", ["ops_digest_job.py", *argv])
+    return job.main()
+
+
+def _signal_records(caplog):
+    from telemetry import ONLINE_SIGNAL_EVENT_NAME
+
+    return [r for r in caplog.records if r.getMessage() == ONLINE_SIGNAL_EVENT_NAME]
+
+
+def test_the_digest_job_emits_an_online_eval_signal_event_for_every_signal(
+    db_session, monkeypatch, caplog
+):
+    """Gap 305's closing condition. Before this, `emit_online_signals()` had zero
+    callers anywhere in production code, so all five signals rendered empty
+    forever no matter how much real traffic existed."""
+    _seed_live_traffic(db_session, turns=3, down_votes=3)
+
+    with caplog.at_level(logging.INFO):
+        exit_code = _run_digest_job(monkeypatch, db_session)
+
+    assert exit_code == 0
+    records = _signal_records(caplog)
+    assert {r.signal_name for r in records} == {
+        "budget_exhaustion_rate",
+        "clarification_rate",
+        "zero_result_rate",
+        "slow_turn_rate",
+        "thumbs_down_clustering",
+    }
+
+
+def test_real_chat_rows_produce_a_real_measured_rate_not_an_empty_event(
+    db_session, monkeypatch, caplog
+):
+    """The seeded rows are three genuine "no records found" answers, so the event
+    has to carry a measured 1.0 over a denominator of 3 — an event with an empty
+    denominator would look identical to the pre-fix state on a dashboard."""
+    _seed_live_traffic(db_session, turns=3, down_votes=3)
+
+    with caplog.at_level(logging.INFO):
+        _run_digest_job(monkeypatch, db_session)
+
+    by_name = {r.signal_name: r for r in _signal_records(caplog)}
+    zero_result = by_name["zero_result_rate"]
+    assert zero_result.denominator == 3
+    assert zero_result.value == 1.0
+    assert zero_result.confidence == "measured"
+    # `ChatFeedback` is read too, not just `ChatMessage`: three downs on one
+    # session is a cluster, which breaches even below the sample floor.
+    assert by_name["thumbs_down_clustering"].breached == 1
+
+
+def test_the_emitted_window_is_the_digest_window_not_the_modules_seven_day_default(
+    db_session, monkeypatch, caplog
+):
+    """`compute_online_signals()` defaults to 7 days; this job runs every 6 hours
+    (`0 1,7,13,19 * * *`, `08-apps.bicep::opsDigestCron`). Emitting a 7-day window
+    four times a day would restate the same week's traffic as if it were new, and
+    a `window_days` of `0` — what the old `int()` cast in `track_online_signal()`
+    produced for a fractional window — would read as a zero-length window."""
+    _seed_live_traffic(db_session, turns=3)
+
+    with caplog.at_level(logging.INFO):
+        _run_digest_job(monkeypatch, db_session)
+
+    records = _signal_records(caplog)
+    assert records
+    assert all(abs(r.window_days - 0.25) < 1e-6 for r in records)
+
+
+def test_a_failure_computing_the_signals_does_not_cost_the_digest(
+    db_session, monkeypatch, caplog
+):
+    """Same fail-soft contract as every other source in this job: the digest, its
+    delivery and its run event all survive a broken signal computation."""
+    import services.online_eval_signals as online
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("chat_message is unreadable")
+
+    monkeypatch.setattr(online, "compute_online_signals", _explode)
+    _seed_live_traffic(db_session, turns=3)
+
+    with caplog.at_level(logging.INFO):
+        exit_code = _run_digest_job(monkeypatch, db_session)
+
+    assert exit_code == 0
+    assert _signal_records(caplog) == []
+    assert [r for r in caplog.records if r.getMessage() == OPS_DIGEST_EVENT_NAME]
+
+
+def test_a_broken_signal_emitter_does_not_cost_the_run_event(
+    db_session, monkeypatch, caplog
+):
+    """The run event is the only durable evidence the job executed at all, so the
+    signal mirror is emitted *after* it and cannot take it down."""
+    import services.online_eval_signals as online
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("Application Insights is down")
+
+    monkeypatch.setattr(online, "emit_online_signals", _explode)
+    _seed_live_traffic(db_session, turns=3)
+
+    with caplog.at_level(logging.INFO):
+        exit_code = _run_digest_job(monkeypatch, db_session)
+
+    assert exit_code == 0
+    assert [r for r in caplog.records if r.getMessage() == OPS_DIGEST_EVENT_NAME]
+
+
+def test_the_signals_are_emitted_after_the_exporter_is_attached(
+    db_session, monkeypatch, caplog
+):
+    """The load-bearing ordering property. `track_online_signal()` logs through
+    `invoice_be_telemetry`, and that logger only reaches `customEvents` once
+    `configure_telemetry()` has attached the Azure Monitor handler — emitting at
+    collection time would produce stdout lines and nothing in Application
+    Insights, which is indistinguishable from the gap it closes."""
+    import sys
+
+    import scripts.ops_digest_job as job
+    import services.online_eval_signals as online
+
+    order: list[str] = []
+    real_emit = online.emit_online_signals
+
+    def _spy_emit(signals, **kwargs):
+        order.append("emit_online_signals")
+        return real_emit(signals, **kwargs)
+
+    def _spy_configure():
+        order.append("configure_telemetry")
+        return False
+
+    monkeypatch.setattr(online, "emit_online_signals", _spy_emit)
+    monkeypatch.setattr(job, "configure_telemetry", _spy_configure)
+    monkeypatch.setattr(ops_digest_collect.settings, "AZURE_SUBSCRIPTION_ID", "")
+    monkeypatch.setattr("services.azure_cost.is_configured", lambda: False)
+    monkeypatch.setattr(job, "_open_session", lambda: db_session)
+    monkeypatch.setattr(sys, "argv", ["ops_digest_job.py", "--dry-run", "--no-llm"])
+    _seed_live_traffic(db_session, turns=3)
+
+    assert job.main() == 0
+    assert order == ["configure_telemetry", "emit_online_signals"]
+
+
+def test_a_run_with_no_database_session_emits_no_signals_rather_than_empty_ones(
+    monkeypatch, caplog
+):
+    """No session means the signals were never computed. Emitting five
+    zero-denominator events for that case would report "measured, nothing found"
+    for a window nothing was measured in."""
+    import sys
+
+    import scripts.ops_digest_job as job
+
+    monkeypatch.setattr(ops_digest_collect.settings, "AZURE_SUBSCRIPTION_ID", "")
+    monkeypatch.setattr("services.azure_cost.is_configured", lambda: False)
+    monkeypatch.setattr(job, "_open_session", lambda: None)
+    monkeypatch.setattr(job, "configure_telemetry", lambda: False)
+    monkeypatch.setattr(sys, "argv", ["ops_digest_job.py", "--dry-run", "--no-llm"])
+
+    with caplog.at_level(logging.INFO):
+        assert job.main() == 0
+
+    assert _signal_records(caplog) == []

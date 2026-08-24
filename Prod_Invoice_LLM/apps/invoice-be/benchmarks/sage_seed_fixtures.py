@@ -107,13 +107,43 @@ _CHUNKS = [
 ]
 
 
-def _seed(session, rows=None) -> dict:
+# Columns a fixture row may leave out, with the value used when it does. Added
+# 2026-08-24 alongside `benchmarks/region_seed_fixtures.py`, whose India/US/EU
+# rows need three columns the seven incident-history rows never set: `po_number`
+# (a real, queryable column the SQL prompt already exposes), `subtotal` (not in
+# the SQL prompt's schema, but the agentic path's `get_full_record` dumps the ORM
+# row, so seeding it keeps that record faithful to the source document), and
+# `sa_alerts` (the audit trail a "which invoices are flagged" question reads).
+# Defaults, not a second INSERT statement: two insert paths for one table is the
+# drift this module was extracted to prevent.
+_ROW_DEFAULTS = {
+    "customer_name": None,
+    "flow_direction": "INBOUND",
+    "due_date": None,
+    "po_number": None,
+    "subtotal": None,
+    "status": "COMPLETED",
+    "items": "[]",
+    "tags": "[]",
+    "sa_alerts": "[]",
+}
+
+
+def _seed(session, rows=None, tenant_id: str = TENANT_ID) -> dict:
     """Insert the fixture rows and hand back `{invoice_number: id}`.
 
     `rows` defaults to the seven incident-history invoices. It is a parameter
     because `scripts/run_agent_eval.py` seeds those *plus* the large/small
     document-length pair from `benchmarks/large_invoice_fixture.py`, and needs
     the generated ids to attach page chunks to the right invoice.
+
+    `tenant_id` defaults to the base fixture tenant. It is a parameter because
+    the same script now also seeds three regional tenants
+    (`benchmarks/region_seed_fixtures.py`) into the same SQLite database — each
+    under its own id, so a case bound to one of them cannot see the others'
+    rows. Every generated query is tenant-scoped and `execute_generated_sql`
+    rejects a query that is not, so that isolation is the product's own, not
+    something this fixture has to arrange.
     """
     seeded: dict = {}
     for row in rows if rows is not None else _ROWS:
@@ -122,16 +152,20 @@ def _seed(session, rows=None) -> dict:
         session.execute(
             text(
                 "INSERT INTO invoice (id, tenant_id, file_path, vendor_name, customer_name, "
-                "flow_direction, invoice_number, grand_total, tax_amount, currency, invoice_date, "
-                "due_date, status, items, tags, sa_alerts, created_at, processing_attempts) "
+                "flow_direction, invoice_number, subtotal, grand_total, tax_amount, currency, "
+                "invoice_date, due_date, po_number, status, items, tags, sa_alerts, created_at, "
+                "processing_attempts) "
                 "VALUES (:id, :tenant_id, :file_path, :vendor_name, :customer_name, :flow_direction, "
-                ":invoice_number, :grand_total, :tax_amount, :currency, :invoice_date, :due_date, "
-                ":status, :items, '[]', '[]', '2026-07-22 00:00:00', 0)"
+                ":invoice_number, :subtotal, :grand_total, :tax_amount, :currency, :invoice_date, "
+                ":due_date, :po_number, :status, :items, :tags, :sa_alerts, "
+                "'2026-07-22 00:00:00', 0)"
             ),
             {
                 "id": invoice_id,
-                "tenant_id": TENANT_ID,  # dashed on purpose -- see run_agentic_sage_live.py's docstring
+                # Dashed on purpose -- see run_agentic_sage_live.py's docstring.
+                "tenant_id": tenant_id,
                 "file_path": f"seed/{row['invoice_number']}.pdf",
+                **_ROW_DEFAULTS,
                 **row,
             },
         )

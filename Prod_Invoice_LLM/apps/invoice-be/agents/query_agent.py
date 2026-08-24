@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
+import telemetry
 from telemetry import tracked_llm_call
 from utils.llm import get_llm
 from utils.rule_schema import normalize_constraints
@@ -1424,12 +1425,34 @@ class SqlGenerationOutcome:
                                   final answer text, already carrying Gap 237's
                                   "no fresh query was run" note when applicable.
       * `last_error` set with `db_result` None -- every attempt failed.
+
+    `zero_result` / `zero_result_fallback_recovered` (Gap 305, partial) describe
+    the *executed* query's row count, and are meaningful only when `db_result` is
+    set. They are recorded here rather than emitted here because this function's
+    own `tracked_llm_call` block (SQL generation) has already closed by the time
+    the query runs -- see the loop below.
     """
 
     generated_sql: Optional[str] = None
     db_result: Optional[str] = None
     declined_text: Optional[str] = None
     last_error: Optional[Exception] = None
+    #: The query ran and matched nothing, and nothing recovered it -- i.e. the
+    #: user is about to be told "no records found". Same condition
+    #: `services/online_eval_signals.py::zero_result_rate` reconstructs by
+    #: scanning `chat_message.content` after the fact.
+    zero_result: bool = False
+    #: The query matched nothing but the deterministic invoice-number fallback
+    #: below did find the record, so the user got a real answer. Free to record
+    #: at the same point, and the only way to tell "the generated SQL was wrong"
+    #: apart from "there is genuinely no such invoice".
+    zero_result_fallback_recovered: bool = False
+    #: How many generation round-trips this turn really made (Gap 302). Already
+    #: on each `chat.sql_generation` event as `attempt`, but that is per call —
+    #: a turn-level Trace needs the total without a `summarize` over the call
+    #: events, and a declined turn's retry (Gap 237's one regeneration) is part
+    #: of it. 1 for the normal case; 0 only if the loop never ran.
+    attempts: int = 0
 
 
 def run_sql_generation_loop(
@@ -1468,9 +1491,14 @@ def run_sql_generation_loop(
     # accepted-with-a-note. Not looped to exhaustion -- if the model declines
     # twice, badgering it a third time costs a round-trip for the same answer.
     null_sql_retried = False
+    # Gap 302: the turn-level count. Incremented before the call, so an attempt
+    # that raised still counts as one made -- a turn that burned three failing
+    # round-trips is exactly the shape a Trace has to be able to show.
+    attempts_made = 0
 
     for attempt in range(max_attempts):
         try:
+            attempts_made += 1
             structured_sql = llm.with_structured_output(SQLGenerationSchema)
             # Feature 23 Phase 1: one event per generation attempt, not per loop --
             # a repair retry is a second billable round-trip and `attempt` is on
@@ -1507,7 +1535,9 @@ def run_sql_generation_loop(
                 declined_text = res.explanation_or_error or "I'm sorry, but I cannot answer that question with the available database fields."
                 if prior_turn_sql:
                     declined_text += _NO_FRESH_QUERY_NOTE
-                return SqlGenerationOutcome(declined_text=declined_text)
+                return SqlGenerationOutcome(
+                    declined_text=declined_text, attempts=attempts_made
+                )
 
             generated_sql = res.sql
             logger.info("Generated SQL (attempt %d): %s", attempt + 1, generated_sql)
@@ -1531,24 +1561,136 @@ def run_sql_generation_loop(
     # case-insensitive lookup before giving up. Catches whatever formatting
     # quirk (extra clause, wrong join, subtly malformed literal) caused the
     # generated SQL to miss an invoice that does exist.
-    if db_result == NO_RECORDS_FOUND:
+    # Gap 305 (partial): this is where a zero-result turn is already detected, so
+    # it is where it gets recorded. Until now the only way to measure
+    # `zero_result_rate` was `services/online_eval_signals.py` scanning
+    # `chat_message.content` in Postgres after the fact, which needs direct DB
+    # access and cannot be queried from Log Analytics at all. Recorded on the
+    # outcome and carried onto the turn's next telemetry event by the caller --
+    # the SQL-generation `tracked_llm_call` above has already exited (its block
+    # ends at `.invoke()`, deliberately, so `latency_ms` stays model time and does
+    # not absorb query execution), so the flag cannot ride on that event.
+    zero_result = db_result == NO_RECORDS_FOUND
+    fallback_recovered = False
+    if zero_result:
         candidate = _find_invoice_number_candidate(user_message)
         if candidate:
             fallback_result = lookup_invoice_by_number_fallback(candidate, tenant_id, db_session)
             if fallback_result:
                 logger.info("SQL route found 0 rows; direct invoice_number fallback matched '%s'", candidate)
                 db_result = fallback_result
+                fallback_recovered = True
+                zero_result = False
 
     return SqlGenerationOutcome(
-        generated_sql=generated_sql, db_result=db_result, last_error=last_error
+        generated_sql=generated_sql,
+        db_result=db_result,
+        last_error=last_error,
+        zero_result=zero_result,
+        zero_result_fallback_recovered=fallback_recovered,
+        attempts=attempts_made,
     )
+
+
+def _session_turn_position(session_id: str, db_session) -> tuple[Optional[int], Optional[float]]:
+    """Gap 303 half (a): where this turn sits in its session, and the idle gap.
+
+    `turn_index` counts *assistant* messages, not all messages, for a reason that
+    is easy to get wrong: on the async queue path (`ENABLE_ASYNC_CHAT_QUEUE`) the
+    user's row is already committed before the handler runs, while on the
+    synchronous path it is not — counting every row would make the same turn the
+    2nd on one path and the 1st on the other. Counting answers already given is
+    path-independent, so this turn is always `answers_so_far + 1`.
+
+    `seconds_since_prev_turn` is measured from the previous *answer*, for the
+    same reason and one more: it is the number a 30-minute idle cutoff is defined
+    on, and "time since the last thing the assistant said" is what a user
+    actually waited between turns.
+
+    Returns `(None, None)` on any failure. A Trace with no thread position is
+    worth strictly more than a turn that fell over collecting one, and a first
+    turn genuinely has no predecessor — the emitter drops both fields when they
+    are None rather than sending 0, which would read as an instant follow-up.
+    """
+    try:
+        from datetime import datetime, timezone
+        from uuid import UUID as _UUID
+
+        from sqlalchemy import func
+        from sqlmodel import select
+
+        from models import ChatMessage
+
+        row = db_session.exec(
+            select(func.count(ChatMessage.id), func.max(ChatMessage.created_at)).where(
+                ChatMessage.session_id == _UUID(str(session_id)),
+                ChatMessage.role == "assistant",
+            )
+        ).first()
+        if row is None:
+            return 1, None
+        answered, last_at = row[0] or 0, row[1]
+        turn_index = int(answered) + 1
+        if last_at is None:
+            return turn_index, None
+        # `chat_message.created_at` is naive UTC (same convention
+        # `services/ops_digest_collect.py::_as_naive_utc` documents), so the
+        # comparison is made naive on both sides rather than assuming a tz.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if last_at.tzinfo is not None:
+            last_at = last_at.astimezone(timezone.utc).replace(tzinfo=None)
+        return turn_index, max((now - last_at).total_seconds(), 0.0)
+    except Exception as e:
+        # Rolled back for the same reason `run_sql_generation_loop()` rolls back
+        # on a failed attempt: a raised DB error leaves the session needing one,
+        # and every later query in this turn would fail with `PendingRollbackError`
+        # instead. Safe here specifically because this runs before the turn does
+        # any work of its own — the only thing pending is `post_chat_message()`'s
+        # `user_msg`, which that function already re-adds after the agent returns.
+        try:
+            db_session.rollback()
+        except Exception:  # pragma: no cover - nothing left to salvage
+            pass
+        logger.debug("Could not resolve thread position for session %s: %s", session_id, e)
+        return None, None
 
 
 def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_session) -> dict:
     """
     RAG Query Agent routing natural language inputs to semantic context indexers,
     safe database queries, or conversational chat saves with multi-turn short-term memory.
+
+    Gap 302/303: this is also the boundary of one **Trace**. The wrapper opens a
+    `telemetry.chat_turn_scope()`, so every `tracked_llm_call()` made anywhere
+    beneath it — the SQL generate/repair loop, the summary call, SAGE's tools —
+    is counted against this one turn without any of them knowing, and attaches
+    the accumulated record to the result as `turn_telemetry`. The two callers
+    that own a completed turn (`routers/chat.py::post_chat_message`,
+    `queue_worker/handlers.py::handle_process_chat_job`) emit it after their
+    commit, because only they know the assistant `message_id` and the turn's
+    wall clock.
+
+    Every return path fills it, including the two that shortcut the pipeline —
+    the SAGE branch and the cache hit. That is the point: before this, a declined
+    turn, an errored turn and a cache hit produced no turn-level telemetry
+    whatsoever, so their rates were unaskable.
     """
+    with telemetry.chat_turn_scope(session_id=str(session_id), tenant_id=str(tenant_id)) as turn:
+        turn.turn_index, turn.seconds_since_prev_turn = _session_turn_position(
+            session_id, db_session
+        )
+        result = _run_query_agent(session_id, user_message, tenant_id, db_session, turn)
+        # Attached here rather than inside, so no early return can skip it and
+        # so it lands after `set_cached_answer()` for the same reason
+        # `judge_evidence` does: the Redis payload keeps exactly the shape it had.
+        result["turn_telemetry"] = turn.event_fields()
+        return result
+
+
+def _run_query_agent(
+    session_id: str, user_message: str, tenant_id: str, db_session, turn
+) -> dict:
+    """The turn itself. See `run_query_agent()` above for the Trace wrapper."""
     # Feature 21 Phase 2: the only wiring the orchestrator gets. Default off, and
     # off is the only state any tenant is in today -- everything below this
     # branch is untouched, and tests/test_agentic_sage.py proves the flag-off
@@ -1562,13 +1704,48 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     if get_settings().ENABLE_AGENTIC_SAGE:
         from agents.sage_orchestrator import run_agentic_sage
 
-        return run_agentic_sage(session_id, user_message, tenant_id, db_session)
+        sage_result = run_agentic_sage(session_id, user_message, tenant_id, db_session)
+        # Gap 302: the orchestrator has always returned `stop_reason`,
+        # `tool_calls_made` and `tools_called` in its `agentic{}` dict and every
+        # caller has always thrown them away -- which is exactly why
+        # `tool_call_budget_exhausted` was "invisible outside a debugger". No
+        # change is needed there; this is the stop discarding it.
+        agentic = sage_result.get("agentic") or {}
+        turn.route = "SAGE"
+        turn.stop_reason = str(agentic.get("stop_reason") or "")
+        turn.tool_calls_made = int(agentic.get("tool_calls_made") or 0)
+        turn.tools_called = list(agentic.get("tools_called") or [])
+        turn.generated_sql = str(sage_result.get("generated_sql") or "")
+        turn.citation_count = len(sage_result.get("citations") or [])
+        turn.result_invoice_count = len(sage_result.get("result_invoice_ids") or [])
+        if agentic.get("clarification_reason"):
+            turn.status = telemetry.TURN_STATUS_DECLINED
+        elif str(turn.stop_reason).startswith(("planner_error", "synthesis_error")):
+            turn.status = telemetry.TURN_STATUS_ERROR
+        return sage_result
 
     logger.info("Executing Query Agent for session %s, tenant %s", session_id, tenant_id)
 
     cached = get_cached_answer(tenant_id, user_message)
     if cached is not None:
         logger.info("Serving cached answer for tenant %s (Task 6.11 semantic cache hit)", tenant_id)
+        # Gap 302: a cache hit is a real turn the user took and must appear in
+        # the turn stream -- a session whose every turn was cached would
+        # otherwise look like a session that never happened. It is tagged
+        # `cache_hit` rather than `success` precisely so cost/latency/quality
+        # rollups can exclude it: no model call was made, so counting it as a
+        # fresh turn would report free turns and dilute every per-turn average.
+        turn.status = telemetry.TURN_STATUS_CACHE_HIT
+        # `"cached"`, not the route that originally answered: the cached payload
+        # is `{content, generated_sql, citations, result_invoice_ids}` and has
+        # never carried a route. It could be *guessed* from `generated_sql`
+        # being present, but that guess is wrong for a declined SQL turn (which
+        # is cached, with no SQL) and would put it in the RAG bucket. A route
+        # breakdown should filter `status != "cache_hit"` anyway.
+        turn.route = "cached"
+        turn.generated_sql = str(cached.get("generated_sql") or "")
+        turn.citation_count = len(cached.get("citations") or [])
+        turn.result_invoice_count = len(cached.get("result_invoice_ids") or [])
         return cached
 
     # Retrieve short-term context history
@@ -1594,6 +1771,7 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     # 1. Routing classification
     route = classify_query(user_message, tenant_id=str(tenant_id))
     logger.info("Selected Route: %s", route)
+    turn.route = route
 
     # Gap 237 step 2: the previous turn's exact query, when there was one. Needed
     # before the route is final, because it is also the evidence that this
@@ -1623,6 +1801,12 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
             "SQL-answered turn in session %s", route, session_id,
         )
         route = "SQL"
+        # The Trace records the route that really ran, not the one the classifier
+        # picked -- the override is the whole reason Gap 237 was diagnosable at
+        # all, and a turn event showing "RAG" for a turn that ran SQL would be a
+        # worse record than none.
+        turn.route = route
+        turn.stop_reason = "route_override_followup"
 
     llm = get_llm()
     response_text = ""
@@ -1632,6 +1816,16 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     # Feature 18 (Gap 231): which invoices fed this reply. Request-local by
     # construction; empty means "couldn't determine", never "no invoices".
     result_invoice_ids: list[str] = []
+    # Gap 304 half (2): what this turn's tools actually returned, kept so the
+    # online quality judge can grade the answer against its real evidence.
+    # Request-local and transient -- it is returned to the caller, never written
+    # to `ChatMessage` and never put in the answer cache (see the end of this
+    # function). Built here rather than re-derived later because `db_result` and
+    # the RAG chunk text exist only inside this call: only citations survive to
+    # Postgres, so a scorer reading the row back later could not check
+    # faithfulness against the document text at all.
+    judge_context_parts: list[str] = []
+    judge_queries: list[str] = []
 
     if route == "SQL":
         # Feature 21 Phase 1: the prompt build and the generate/execute/repair loop
@@ -1667,14 +1861,42 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
         generated_sql = outcome.generated_sql
         db_result = outcome.db_result
         last_error = outcome.last_error
+        # Gap 302: the Trace's SQL half. The real generated text (truncated by
+        # the emitter, not here -- `generated_sql` still goes to `ChatMessage`
+        # in full), how many round-trips it took, and the Gap 305 flags that
+        # already ride `chat.sql_summary` per call, now also at turn level so a
+        # zero-result rate can be computed per turn rather than per call.
+        turn.generated_sql = str(generated_sql or "")
+        turn.sql_attempts = outcome.attempts
+        turn.zero_result = outcome.zero_result
+        turn.zero_result_fallback_recovered = outcome.zero_result_fallback_recovered
+        # Gap 304 half (2). Both halves of the evidence, in the same shape
+        # `scripts/run_agent_eval.py::_ToolOutputRecorder` renders for the golden
+        # bank ("DATABASE RESULTS:" / the raw SQL), so a production faithfulness
+        # score and a golden one are computed from identically-formatted input.
+        # The query is recorded even when execution failed: "no records for
+        # Nonexistent Holdings" is only gradeable if the judge can see what was
+        # searched for (`services/agent_eval.py`'s failure mode 3).
+        if generated_sql:
+            judge_queries.append(str(generated_sql))
+        if db_result is not None:
+            judge_context_parts.append(f"DATABASE RESULTS:\n{db_result}")
         if outcome.declined_text is not None:
             response_text = outcome.declined_text
             route_succeeded = True
+            # A refusal is not a failure and must not be counted as one. Before
+            # this event a declined turn produced no turn-level telemetry at
+            # all, so "how often does SAGE decline?" was unanswerable.
+            turn.status = telemetry.TURN_STATUS_DECLINED
+            turn.stop_reason = turn.stop_reason or "sql_declined"
 
         if not route_succeeded:
             if db_result is None:
                 logger.error("SQL path execution failed after %d attempts: %s", max_attempts, last_error)
                 response_text = f"Failed to execute database check: {str(last_error)}"
+                turn.status = telemetry.TURN_STATUS_ERROR
+                turn.error_type = type(last_error).__name__ if last_error else "sql_no_result"
+                turn.stop_reason = "sql_attempts_exhausted"
             else:
                 # Formulate final output matching the raw numbers
                 summary_prompt = f"""Format a friendly summary explaining these database query results.
@@ -1706,8 +1928,20 @@ User Query: {user_message}
                     )
 
                 try:
-                    # Feature 23 Phase 1
-                    with tracked_llm_call("chat.sql_summary", llm=llm, tenant_id=tenant_id):
+                    # Feature 23 Phase 1. Gap 305 (partial): `zero_result` rides
+                    # this existing event rather than becoming a new one. This is
+                    # the right carrier -- it is emitted exactly once per turn
+                    # whose SQL actually executed (a declined or 3-attempts-failed
+                    # turn never reaches here), so
+                    # `countif(zero_result) / count()` over `chat.sql_summary` is
+                    # a well-formed rate with no separate denominator to build.
+                    with tracked_llm_call(
+                        "chat.sql_summary",
+                        llm=llm,
+                        tenant_id=tenant_id,
+                        zero_result=outcome.zero_result,
+                        zero_result_fallback_recovered=outcome.zero_result_fallback_recovered,
+                    ):
                         final_res = llm.invoke(summary_prompt)
                     # One blank line before the heading, one after -- db_result
                     # itself now starts directly with the table (see
@@ -1718,6 +1952,9 @@ User Query: {user_message}
                 except Exception as e:
                     logger.error("SQL summary synthesis failed: %s", e)
                     response_text = f"Failed to format database check: {str(e)}"
+                    turn.status = telemetry.TURN_STATUS_ERROR
+                    turn.error_type = type(e).__name__
+                    turn.stop_reason = "sql_summary_failed"
 
     elif route == "RAG":
         # Vector search (Long-term semantic facts)
@@ -1726,6 +1963,11 @@ User Query: {user_message}
         context_str = ""
         for chunk in chunks:
             context_str += f"--- CHUNK ---\n{chunk['document']}\n"
+            # Gap 304 half (2): the chunk *text* is the only faithfulness
+            # evidence this route has, and it is precisely what never reaches
+            # Postgres -- `ChatMessage` keeps citations (ids, vendor, page) and
+            # nothing else. Same rendering as the golden bank's recorder.
+            judge_context_parts.append(f"DOCUMENT CHUNK:\n{chunk['document']}")
             citations.append({
                 "invoice_id": chunk["metadata"].get("invoice_id"),
                 "vendor_name": chunk["metadata"].get("vendor_name"),
@@ -1824,6 +2066,9 @@ Conversation History (Short-term context):
         except Exception as e:
             logger.error("RAG path execution failed: %s", e)
             response_text = f"Failed to run document lookup: {str(e)}"
+            turn.status = telemetry.TURN_STATUS_ERROR
+            turn.error_type = type(e).__name__
+            turn.stop_reason = "rag_answer_failed"
             
     else:  # CHAT
         system_prompt = f"""You are a helpful assistant for an AI Invoice Processing platform.
@@ -1848,6 +2093,9 @@ Conversation History:
         except Exception as e:
             logger.error("Chat path execution failed: %s", e)
             response_text = f"Error generating message response: {str(e)}"
+            turn.status = telemetry.TURN_STATUS_ERROR
+            turn.error_type = type(e).__name__
+            turn.stop_reason = "chat_answer_failed"
             
     # The RAG route already knew its invoice ids (each citation carries one) --
     # they just never went anywhere structured. Fold them into the same snapshot
@@ -1924,4 +2172,34 @@ Conversation History:
     if route in ("SQL", "RAG") and route_succeeded:
         set_cached_answer(tenant_id, user_message, result)
 
+    # Gap 304 half (2): attached AFTER the cache write, deliberately. Two
+    # consequences, both wanted:
+    #   * the cached payload keeps exactly the shape and size it had before this
+    #     change -- a full results table and five document chunks per entry
+    #     would be a real change to Redis memory for a value nothing reads back;
+    #   * a cache hit therefore returns a dict with no `judge_evidence` key, and
+    #     `services/online_quality_judge.py` skips judging turns without one.
+    #     That is correct rather than a hole: the identical answer was already
+    #     judged when it was first produced, and re-judging it from an empty
+    #     context would score its claims 0.00 faithfulness for lack of evidence
+    #     that was never absent.
+    # The same skip covers the two other evidence-less returns: the SAGE branch
+    # at the top of this function (out of scope for Gap 304) and the router's own
+    # "something went wrong" fallback dict, neither of which is a model answer
+    # this judge should be grading.
+    result["judge_evidence"] = {
+        "route": route,
+        "context": "\n\n".join(judge_context_parts),
+        "executed_queries": "\n".join(judge_queries),
+    }
+
+    # Gap 302: the Trace's outcome half. `tool_output` is the *same* text the
+    # judge grades against -- the SQL results table or the RAG chunks -- rather
+    # than a second rendering of it, so a Trace and a quality score for one turn
+    # are demonstrably about the same evidence. It is emitted truncated
+    # (`telemetry.MAX_TURN_TOOL_OUTPUT_CHARS`); see that constant for the
+    # founder's full-content decision and the retention caveat it carries.
+    turn.tool_output = "\n\n".join(judge_context_parts)
+    turn.citation_count = len(citations)
+    turn.result_invoice_count = len(result["result_invoice_ids"])
     return result

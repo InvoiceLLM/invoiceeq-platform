@@ -38,6 +38,29 @@ cleanly produces no message at all by default (``--send-empty`` overrides).
 Four "nothing to report" messages a day is exactly the noise this feature exists
 to remove. The `ops_digest_run` telemetry event is emitted either way, so a
 silent channel and a dead job are still distinguishable.
+
+Feature 23's online-eval signals ride this job (Gap 305)
+-------------------------------------------------------
+`services/online_eval_signals.py::emit_online_signals()` had **zero callers** —
+its five signals are computed in SQL over Postgres and a workbook cannot query
+Postgres, so without a scheduled emitter the online panel renders empty forever
+and that empty state means "nothing has run", not "nothing is wrong".
+
+This job is the caller rather than a new `Microsoft.App/jobs` resource because it
+already runs on the only cadence that fits (every 6h) and already reads the same
+signals through `services/ops_digest_collect.py::_collect_online_signal_items()`;
+a job of its own would need its own bicep, its own image pull and its own
+deployment, for one `track_online_signal()` call per signal.
+
+Two properties this placement has to hold, both easy to get wrong:
+
+* It emits **after** `configure_telemetry()`. `track_online_signal()` logs
+  through `invoice_be_telemetry`, and that logger only reaches `customEvents`
+  once the exporter is attached — emitting at collection time would produce
+  stdout lines and nothing in Application Insights.
+* It is emitted for **every** run, including `--dry-run` and a clean window that
+  delivers nothing, for the same reason `ops_digest_run` is: the events are the
+  evidence the measurement happened, not a notification.
 """
 from __future__ import annotations
 
@@ -46,6 +69,7 @@ import json
 import logging
 import os
 import sys
+from datetime import timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -123,6 +147,69 @@ def _open_session():
         return None
 
 
+def _compute_online_signals(session, window_start, window_end):
+    """`(signals, window_days)` for this digest's own window, or `(None, None)`.
+
+    Gap 305's caller. Recomputed here rather than lifted off the collection pass:
+    `_collect_online_signal_items()` keeps only the *breached* signals and throws
+    the `OnlineEvalSignals` object away, and threading it back out would mean
+    changing `DigestCollection`, `build_digest()` and `OpsDigestResult` to carry
+    a field only this line reads. The recomputation is five windowed reads of
+    `chat_message`/`chat_feedback`/`agent_eval_run` over six hours — cheap next
+    to the LLM synthesis call this job already makes.
+
+    The window is taken from the result rather than rebuilt from the arguments,
+    so the emitted events describe exactly the window the digest reported, and
+    `window_days` is the same fractional value `_collect_online_signal_items()`
+    passes (a 6-hour window is 0.25 days).
+
+    Never raises: a failure here must cost nothing but these events.
+    """
+    if session is None:
+        return None, None
+    try:
+        from services.online_eval_signals import compute_online_signals  # noqa: PLC0415
+
+        # `chat_message.created_at` / `agent_eval_run.run_at` are naive UTC.
+        # Same boundary conversion as `ops_digest_collect._as_naive_utc()`:
+        # a tz-aware bound raises on Postgres and compares wrong on SQLite.
+        naive_end = (
+            window_end
+            if window_end.tzinfo is None
+            else window_end.astimezone(timezone.utc).replace(tzinfo=None)
+        )
+        window_days = max((window_end - window_start).total_seconds() / 86400.0, 0.01)
+        return compute_online_signals(session, window_days=window_days, now=naive_end), window_days
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Online-eval signals could not be computed, none emitted: %s", exc)
+        return None, None
+
+
+def _emit_online_signals(signals, window_days) -> int:
+    """Mirror the computed window onto Application Insights. Never raises.
+
+    Separate from the `ops_digest_run` emission and deliberately after it: the
+    run event is the evidence this job executed at all, and a broken signal
+    mirror must not be able to cost it.
+    """
+    if signals is None:
+        return 0
+    try:
+        from services.online_eval_signals import emit_online_signals  # noqa: PLC0415
+
+        emitted = emit_online_signals(signals, window_days=window_days)
+        logger.info(
+            "Emitted %d online_eval_signal events (window_days=%.4f, breached=%s).",
+            emitted,
+            window_days or 0.0,
+            ", ".join(s.name for s in signals.breaches) or "none",
+        )
+        return emitted
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not emit the online_eval_signal events: %s", exc)
+        return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Collect Azure alerts, cost and AI-eval findings, write an LLM digest, deliver it."
@@ -173,11 +260,18 @@ def main() -> int:
         return 0 if not channel.is_empty else 1
 
     session = _open_session()
+    online_signals = None
+    online_window_days = None
     try:
         result: OpsDigestResult = run_ops_digest(
             session,
             window_hours=args.window_hours,
             use_llm=not args.no_llm,
+        )
+        # Computed while the session is still open; emitted further down, once
+        # the exporter is attached (see the module docstring, Gap 305).
+        online_signals, online_window_days = _compute_online_signals(
+            session, result.window_start, result.window_end
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("Ops digest run failed: %s", exc, exc_info=True)
@@ -236,6 +330,9 @@ def main() -> int:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not emit the ops_digest_run event: %s", exc)
+
+    _emit_online_signals(online_signals, online_window_days)
+
     if exporter_attached:
         _flush_telemetry()
 

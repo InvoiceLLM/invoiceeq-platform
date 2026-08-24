@@ -97,6 +97,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import time
 from contextlib import ExitStack, contextmanager
 from datetime import datetime
@@ -128,17 +129,21 @@ from services.agent_eval import (  # noqa: E402
 from benchmarks.agent_eval_golden_sample import (  # noqa: E402
     ALL_ROWS,
     CASES,
+    REGION_TENANTS,
     TENANT_ID,
     GoldenCase,
     _CHUNKS,
-    tenant_stats_summary,
+    chunks_for_tenant,
+    stats_for_tenant,
 )
 from benchmarks.large_invoice_fixture import LARGE, SMALL  # noqa: E402
+from benchmarks.region_seed_fixtures import CHUNK_INVOICE_NUMBERS  # noqa: E402
 from benchmarks.sage_seed_fixtures import _seed  # noqa: E402
 from services.benchmark_artifacts import (  # noqa: E402
     RUN_LABEL_ADHOC,
     RUN_LABEL_NIGHTLY,
     RUN_LABEL_PREDEPLOY,
+    configure_run_source,
     configure_run_telemetry,
     flush_run_telemetry,
     mirror_agent_eval_run,
@@ -147,7 +152,13 @@ from utils.llm import SUPPORTED_LLM_PROVIDERS  # noqa: E402
 
 logger = logging.getLogger("run_agent_eval")
 
-OUTPUT_PATH = _BE_ROOT / "tests" / "agent_eval_output.json"
+#: Where a baseline run writes when `--out` is not given, **in a source
+#: checkout**. Every earlier run's output already lives here (the files
+#: `docs/feature_21_architecture.md` B4 and `services/agent_eval.py`'s module
+#: docstring quote figures out of, and the six committed `agent_eval_output*.json`
+#: files), so this stays the default wherever the directory exists.
+_CHECKOUT_OUTPUT_DIR = _BE_ROOT / "tests"
+OUTPUT_NAME = "agent_eval_output.json"
 
 # The two path-level agent names. Deliberately in Phase 1's `chat.*` / `sage.*`
 # namespace so cost telemetry and quality rows join on one vocabulary, but
@@ -532,19 +543,59 @@ CANDIDATE_LLM_PATCH_TARGETS = (
 )
 
 
+def default_output_dir() -> Path:
+    """`tests/` in a source checkout, the system temp directory in the image.
+
+    Gap 308, found live 2026-08-24 by actually running `caj-benchmark-eval-dev`
+    rather than by reading this file. `Prod_Invoice_LLM/.dockerignore` excludes
+    `**/tests/` from the backend image (line 47 — the same exclusion that broke
+    the deleted `caj-agent-eval-dev` job with `ModuleNotFoundError`, see the
+    `benchmarks.*` import block above), so `/app/tests/` **does not exist in the
+    container**. The nightly job's persisted args are
+    `python scripts/run_agent_eval.py --paths default --run-label nightly` with
+    no `--out` override, so every scheduled run did all of its real work — every
+    graded turn, 20 `agent_eval_run` rows committed to Postgres, the
+    `agent_eval_summary` mirror emitted — and then died on the very last write
+    with `FileNotFoundError: '/app/tests/agent_eval_output.json'`. Container
+    Apps has `retryLimit 0` here, so it recorded a `Failed` execution every
+    night for a run whose results were entirely correct, which is worse than a
+    plain crash: it makes job-execution status useless as a monitoring signal.
+
+    A directory check rather than a hardcoded `/tmp` because local dev must not
+    move. When `tests/` is there — every checkout — this returns exactly what it
+    always did, so the six committed `agent_eval_output*.json` files, the docs
+    that quote paths under `tests/`, and the founder's own "read the last run's
+    output" habit are all untouched. `tempfile.gettempdir()` rather than a
+    literal `/tmp` because this script is also run from Windows, where `/tmp`
+    resolves to a `C:\\tmp` that need not exist.
+
+    The pre-deploy gate never hit this: it already passes
+    `--out /tmp/agent_eval_gate.json` explicitly (`.github/workflows/
+    deploy-dev.yml`), which is also why fixing it here rather than by adding an
+    `--out` to the two bicep files keeps one behaviour for both cadences and
+    needs no infra redeploy.
+    """
+    return (
+        _CHECKOUT_OUTPUT_DIR
+        if _CHECKOUT_OUTPUT_DIR.is_dir()
+        else Path(tempfile.gettempdir())
+    )
+
+
 def default_output_path(model_under_test: Optional[str]) -> str:
     """Where a run writes when `--out` was not given.
 
-    A baseline run keeps `tests/agent_eval_output.json` — the file the nightly
-    job produces and the one Feature 21's B4 figures were read out of. A
-    substitution run gets its own `..._<provider>_<model>.json`, because
-    silently overwriting the baseline with a candidate's numbers would destroy
-    the very thing the candidate is being compared against.
+    A baseline run keeps `agent_eval_output.json` in `default_output_dir()` —
+    the file the nightly job produces and the one Feature 21's B4 figures were
+    read out of. A substitution run gets its own `..._<provider>_<model>.json`,
+    because silently overwriting the baseline with a candidate's numbers would
+    destroy the very thing the candidate is being compared against.
     """
+    base = default_output_dir() / OUTPUT_NAME
     if not model_under_test:
-        return str(OUTPUT_PATH)
+        return str(base)
     slug = re.sub(r"[^A-Za-z0-9]+", "_", model_under_test).strip("_").lower()
-    return str(OUTPUT_PATH.with_name(f"{OUTPUT_PATH.stem}_{slug}{OUTPUT_PATH.suffix}"))
+    return str(base.with_name(f"{base.stem}_{slug}{base.suffix}"))
 
 
 def describe_model_under_test(provider: Optional[str], model: Optional[str]) -> Optional[str]:
@@ -664,7 +715,11 @@ def run_turn(
         with _harness_patches(recorder, stats, chunks, invoice_chunks):
             with _agentic_sage_enabled(path == "sage"):
                 try:
-                    result = run_query_agent(session_id, case.question, TENANT_ID, session)
+                    # `case.tenant_id`, not the module-level base tenant: Wave 3's
+                    # regional cases are seeded under their own ids and the
+                    # generated SQL is tenant-scoped, so this is what keeps a
+                    # US-tenant question from reading the base tenant's rows.
+                    result = run_query_agent(session_id, case.question, case.tenant_id, session)
                 except Exception as e:  # a harness failure is data too
                     error = f"{type(e).__name__}: {e}"
                     logger.exception("Turn raised for %s/%s", case.case_id, path)
@@ -675,6 +730,10 @@ def run_turn(
     return {
         "case_id": case.case_id,
         "path": path,
+        # Which seeded tenant this turn was asked against. Carried per turn so a
+        # saved output file (and every persisted row) says so, rather than that
+        # being knowable only by looking the case up in the golden sample.
+        "tenant_id": case.tenant_id,
         "agent_name": AGENT_SAGE_PATH if path == "sage" else AGENT_DEFAULT_PATH,
         # None means "the application's own configured model", not "unknown".
         "model_under_test": model_under_test,
@@ -812,7 +871,7 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                     persona_score=turn.get("persona_score"),
                     latency_ms=turn["latency_ms"],
                     llm_call_count=turn["llm_call_count"],
-                    tenant_id=UUID(str(TENANT_ID)),
+                    tenant_id=UUID(str(turn.get("tenant_id") or TENANT_ID)),
                     notes=notes[:4000],
                 )
             )
@@ -828,7 +887,7 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                 persona_score=turn.get("persona_score"),
                 latency_ms=turn["latency_ms"],
                 llm_call_count=turn["llm_call_count"],
-                tenant_id=str(TENANT_ID),
+                tenant_id=str(turn.get("tenant_id") or TENANT_ID),
                 tokens_in=turn.get("tokens_in"),
                 tokens_out=turn.get("tokens_out"),
                 # Feature 23 Track 2's three new soft metrics ride the event's
@@ -872,10 +931,36 @@ def _build_invoice_chunk_map(seeded_ids: dict) -> dict:
         invoice_id = seeded_ids.get(invoice_number)
         if not invoice_id:
             continue
-        bound = json.loads(json.dumps(chunk))
-        bound["metadata"]["invoice_id"] = invoice_id
-        bound["matched_by"] = "invoice_id"
-        mapping[invoice_id] = [bound]
+        mapping[invoice_id] = [_bind_chunk(chunk, invoice_id)]
+    return mapping
+
+
+def _bind_chunk(chunk: dict, invoice_id: str) -> dict:
+    """A copy of `chunk` addressed to one seeded invoice id."""
+    bound = json.loads(json.dumps(chunk))
+    bound["metadata"]["invoice_id"] = invoice_id
+    bound["matched_by"] = "invoice_id"
+    return bound
+
+
+def _region_invoice_chunk_map(region: dict, seeded_ids: dict) -> dict:
+    """The same `{invoice_id: [chunk, ...]}` binding, for one regional tenant.
+
+    Wave 3, 2026-08-24. Without this, a `get_full_record` fetch on the agentic
+    path would return the row and **no** document pages for every regional
+    invoice, so the two chunk-dependent cases (`us_zero_tax_exemption_reason`,
+    `eu_currency_confusion_trap`) would be graded against evidence that could not
+    contain their answer — the same harness defect the module docstring records
+    for the tool-result recorder, which looked like a model result until it was
+    found.
+    """
+    mapping: dict[str, list[dict]] = {}
+    for chunk in region["chunks"]:
+        invoice_number = CHUNK_INVOICE_NUMBERS.get(chunk["id"])
+        invoice_id = seeded_ids.get(invoice_number) if invoice_number else None
+        if not invoice_id:
+            continue
+        mapping[invoice_id] = [_bind_chunk(chunk, invoice_id)]
     return mapping
 
 
@@ -1024,8 +1109,9 @@ def main() -> None:
         help=(
             "which cadence produced this run, carried on the agent_eval_summary "
             "telemetry event and in the artifact blob name. The nightly job runs all "
-            "20 cases; the pre-deploy gate runs a 5-case subset -- mixing the two into "
-            "one unlabelled trend would show every push as a quality cliff."
+            "35 cases (20 base tenant + Wave 3's 15 India/US/EU cases); the pre-deploy "
+            "gate runs a 5-case subset -- mixing the two into one unlabelled trend "
+            "would show every push as a quality cliff."
         ),
     )
     parser.add_argument(
@@ -1046,10 +1132,29 @@ def main() -> None:
 
     logging.basicConfig(level=logging.WARNING)
 
+    # Gap 304: every `llm_agent_call` emitted from here on belongs to this eval
+    # run, not to production. Set before the first graded turn (and before the
+    # judge is built), reusing `--run-label` so the per-call tag and the
+    # aggregate event's label can never disagree.
+    run_source = configure_run_source(args.run_label)
+    # Gap 304 half (1), 2026-08-24: the exporter attaches here, not down at the
+    # mirror. It used to be deliberately late so that this run's own per-call
+    # events could never reach `customEvents` — with `run_source` on every event,
+    # every per-turn `agent_eval_run` row and every GenAI dependency span, they
+    # can be exported and told apart instead. Skipped under `--no-mirror` (a
+    # local, offline run). Idempotent, so the mirror block below re-calls it
+    # safely. Note this also exports the judge's own `eval.*` calls, tagged the
+    # same — a "golden cost" rollup that does not filter
+    # `agent_name !startswith "eval."` is measuring the grader too.
+    exporter_attached = False if args.no_mirror else configure_run_telemetry()
+    print(
+        f"Run source (per-call telemetry tag): {run_source} "
+        f"({'exported to Application Insights' if exporter_attached else 'stdout only'})"
+    )
+
     paths = [p.strip() for p in args.paths.split(",") if p.strip()]
     selected = [c for c in CASES if not args.cases or c.case_id in args.cases.split(",")]
     case_by_id = {c.case_id: c for c in selected}
-    stats = tenant_stats_summary()
 
     from utils.llm import get_llm
 
@@ -1076,6 +1181,18 @@ def main() -> None:
     with Session(engine) as session:
         seeded_ids = _seed(session, ALL_ROWS)
         invoice_chunks = _build_invoice_chunk_map(seeded_ids)
+        # Wave 3: the India/US/EU banks, each under its own tenant id in this
+        # same database. `seeded_ids` is deliberately NOT merged with these --
+        # `TSD-620458` is a real invoice number in both the base tenant and the
+        # US tenant, with different totals, so one flat number->id map would
+        # silently bind one tenant's document pages to the other's row.
+        for region_tenant_id, region in REGION_TENANTS.items():
+            region_ids = _seed(session, region["rows"], tenant_id=region_tenant_id)
+            invoice_chunks.update(_region_invoice_chunk_map(region, region_ids))
+            print(
+                f"seeded tenant {region['label']} ({region_tenant_id}): "
+                f"{len(region_ids)} invoice(s), {len(region['chunks'])} document chunk(s)"
+            )
         for invoice_number, spec in ((LARGE.invoice_number, LARGE), (SMALL.invoice_number, SMALL)):
             pages = invoice_chunks.get(seeded_ids[invoice_number], [])
             print(
@@ -1095,8 +1212,13 @@ def main() -> None:
                         case,
                         path,
                         session,
-                        stats,
-                        _CHUNKS,
+                        # Per case, not per run: a regional case must be given
+                        # its OWN tenant's snapshot and its own tenant's
+                        # document chunks. Handing it the base tenant's would be
+                        # the wrong-grounding-fact failure
+                        # `tenant_stats_summary()`'s docstring already records.
+                        stats_for_tenant(case.tenant_id),
+                        chunks_for_tenant(case.tenant_id),
                         invoice_chunks,
                         model_under_test=model_under_test,
                     )
@@ -1190,6 +1312,8 @@ def main() -> None:
     # `--out` file holds, which on a gate run lives in the container's `/tmp`
     # and dies with the replica.
     if not args.no_mirror:
+        # Idempotent since 2026-08-24 — attached at startup, this returns the
+        # same answer rather than attaching a second handler.
         exporter_attached = configure_run_telemetry()
         mirrored = mirror_agent_eval_run(payload, run_label=args.run_label)
         print(

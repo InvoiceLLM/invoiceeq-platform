@@ -68,6 +68,7 @@ from services.benchmark_artifacts import (  # noqa: E402
     RUN_LABEL_ADHOC,
     RUN_LABEL_NIGHTLY,
     RUN_LABEL_PREDEPLOY,
+    configure_run_source,
     configure_run_telemetry,
     flush_run_telemetry,
     mirror_extraction_run,
@@ -126,6 +127,20 @@ def main() -> int:
     args = parser.parse_args()
     tolerated_fp_ids = {c.strip() for c in args.tolerate_fp.split(",") if c.strip()}
 
+    # Gap 304: tag this run's own `llm_agent_call` events before a single case
+    # runs, so they can never be mistaken for production traffic. Set here rather
+    # than next to the mirror below because `--mode live` makes real LLM calls
+    # long before the mirror step is reached.
+    run_source = configure_run_source(args.run_label)
+    # ...and attach the exporter on the next line, which is the Gap 304 half (1)
+    # change itself: this used to happen down at the mirror, after every case had
+    # run, precisely so the run's own per-call events could not reach
+    # `customEvents`. Tagged traffic no longer needs to be withheld. Skipped
+    # under `--no-mirror`, which means "local run, offline" — exporting per-call
+    # events there would contradict the flag. Idempotent, so the mirror block's
+    # own call below is a no-op returning this same answer.
+    exporter_attached = False if args.no_mirror else configure_run_telemetry()
+
     written = write_corpus_artifacts()
     print(f"Corpus artifacts written to {ARTIFACT_ROOT} ({len(written)} files)")
     if args.artifacts_only:
@@ -180,6 +195,8 @@ def main() -> int:
     # the exit code -- `mirror_extraction_run()` never raises and reports what it
     # managed to do.
     if not args.no_mirror:
+        # Re-called rather than assumed: idempotent, and this keeps the mirror
+        # working even if the early attach above is ever moved or skipped.
         exporter_attached = configure_run_telemetry()
         mirrored = mirror_extraction_run(
             summary, result.to_dict(), run_label=args.run_label
@@ -188,6 +205,10 @@ def main() -> int:
             f"  mirror [{args.run_label}] -> "
             f"{'Application Insights + stdout' if exporter_attached else 'stdout only'}: "
             f"{mirrored.describe()}"
+        )
+        print(
+            f"  per-call events from this run are tagged run_source={run_source} "
+            f"and {'exported' if exporter_attached else 'stdout only'}"
         )
         if exporter_attached:
             flush_run_telemetry()

@@ -733,3 +733,951 @@ def test_a_hostile_span_object_is_still_ended_and_never_raises():
 
     # And a None span (the no-tracer path) is simply a no-op.
     telemetry._end_llm_dependency_span(None, usage=telemetry.LlmUsage(), status="error")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap 304 (partial) — `run_source` on every `llm_agent_call`
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The whole point of this field is that it is a *prerequisite*, not a feature:
+# `services/benchmark_artifacts.py::configure_run_telemetry()` deliberately
+# attaches the exporter after all eval turns have run, so a benchmark's own
+# per-call events never reach `customEvents`. Before that can safely change,
+# there has to be a way to tell benchmark traffic apart from real traffic —
+# otherwise every production cost and latency number is silently polluted.
+#
+# So what these tests protect is: (1) a production call site that says nothing
+# is tagged `production`, which is what makes zero call-site changes correct;
+# (2) an eval script tags its own run through the *existing* `--run-label`
+# switch, so the per-call tag and the aggregate event's label cannot disagree;
+# (3) neither path can raise. They do **not** assert that a benchmark's events
+# reach Application Insights — they still deliberately do not.
+
+
+@pytest.fixture
+def isolated_run_source():
+    """Reset `run_source_ctx` after the test.
+
+    A contextvar set inside a test would otherwise leak into every test that
+    runs after it in the same thread — and this suite runs with `pytest-randomly`
+    ordering, so that leak would be intermittent rather than reproducible.
+    """
+    token = telemetry.run_source_ctx.set(telemetry.RUN_SOURCE_PRODUCTION)
+    try:
+        yield
+    finally:
+        telemetry.run_source_ctx.reset(token)
+
+
+def test_a_call_that_says_nothing_about_its_source_is_tagged_production(caplog):
+    """The reason no production call site needed to change: the default is the
+    honest answer for every one of them.
+
+    Run inside an explicitly empty `contextvars.Context()`, which is what a fresh
+    request/worker thread really gets. Asserting against the ambient context
+    instead would make this test order-dependent: `tests/
+    test_run_extraction_benchmark_cli.py` drives the benchmark CLI *in process*,
+    so its `configure_run_source()` call leaves `golden` set for every test that
+    runs after it — which is correct behaviour for a script that owns its own
+    process, and an artefact of running a script's `main()` under pytest.
+    """
+    import contextvars
+
+    def _emit():
+        track_agent_call("chat.sql_summary", "gpt-5-mini", 10, 5, 100.0, "success", "t")
+
+    with caplog.at_level(logging.INFO):
+        contextvars.Context().run(_emit)
+
+    assert _events(caplog)[-1].run_source == "production"
+    assert telemetry.RUN_SOURCE_PRODUCTION == "production"
+
+
+def test_set_run_source_tags_every_subsequent_event_in_this_context(
+    caplog, isolated_run_source
+):
+    """What an eval script gets for one call at startup: every `llm_agent_call`
+    its turns produce afterwards is separable from real traffic."""
+    telemetry.set_run_source(telemetry.RUN_SOURCE_GOLDEN)
+
+    with caplog.at_level(logging.INFO):
+        with tracked_llm_call("chat.sql_generation", model="gpt-5-mini", tenant_id="t"):
+            pass
+        track_agent_call("eval.judge", "gpt-5-mini", 1, 1, 1.0, "success", "t")
+
+    assert [r.run_source for r in _events(caplog)] == ["golden", "golden"]
+
+
+def test_configure_run_source_reuses_the_existing_run_label_switch(isolated_run_source):
+    """`--run-label` is the one flag; `run_source` is derived from it rather than
+    being a second switch that could be set inconsistently. `nightly`/`adhoc` are
+    both golden-bank populations — the cadence difference between them is already
+    carried by `run_label` on the aggregate event."""
+    from services.benchmark_artifacts import (
+        RUN_LABEL_ADHOC,
+        RUN_LABEL_NIGHTLY,
+        RUN_LABEL_PREDEPLOY,
+        configure_run_source,
+    )
+
+    assert configure_run_source(RUN_LABEL_NIGHTLY) == "golden"
+    assert telemetry.run_source_ctx.get() == "golden"
+    assert configure_run_source(RUN_LABEL_ADHOC) == "golden"
+    assert configure_run_source(RUN_LABEL_PREDEPLOY) == "predeploy"
+    assert telemetry.run_source_ctx.get() == "predeploy"
+
+
+def test_an_explicit_run_source_keyword_is_not_silently_dropped(caplog, isolated_run_source):
+    """`track_agent_call` drops any extra whose key already exists in the
+    attribute dict — so `run_source` has to be handled *before* that loop, or a
+    call site passing it explicitly would be mis-tagged with no error at all.
+    This is the regression test for exactly that trap."""
+    telemetry.set_run_source(telemetry.RUN_SOURCE_GOLDEN)
+
+    with caplog.at_level(logging.INFO):
+        track_agent_call(
+            "chat.classify", "gpt-5-mini", 1, 1, 1.0, "success", "t",
+            run_source=telemetry.RUN_SOURCE_PREDEPLOY,
+        )
+
+    assert _events(caplog)[-1].run_source == "predeploy"
+
+
+def test_a_broken_run_source_context_still_emits_a_production_tagged_event(
+    monkeypatch, caplog
+):
+    """Same contract as every other emitter here: this field can never be the
+    reason an event is lost, and an unreadable source degrades to the safe
+    default rather than to a missing field."""
+
+    class _HostileContextVar:
+        def get(self, *_args, **_kwargs):
+            raise RuntimeError("context is gone")
+
+    monkeypatch.setattr(telemetry, "run_source_ctx", _HostileContextVar())
+
+    with caplog.at_level(logging.INFO):
+        track_agent_call("chat.sql_summary", "gpt-5-mini", 1, 1, 1.0, "success", "t")
+
+    assert _events(caplog)[-1].run_source == "production"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap 304 half (1) — the other two surfaces an exported eval run now reaches
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The section above tagged `llm_agent_call`, which was enough while
+# `services/benchmark_artifacts.py::configure_run_telemetry()` still deferred
+# the exporter until after every graded turn. Since 2026-08-24 it attaches
+# *before* the first turn, so an eval run also exports:
+#
+#   * its per-turn `agent_eval_run` events (`track_eval_result`), and
+#   * one GenAI CLIENT span per LLM call, into `AppDependencies`.
+#
+# Both land in the same table as production rows. The span is the load-bearing
+# one: `DependencyType` collapses every LLM call to `GenAI | az.ai.openai`, so
+# without `run_source` in its attributes there is no way at all to tell an eval
+# run's dependency rows from a real user's. These tests pin the field on both.
+
+
+def _eval_events(caplog):
+    return [r for r in caplog.records if r.getMessage() == telemetry.EVAL_RESULT_EVENT_NAME]
+
+
+def test_an_eval_result_carries_the_population_that_produced_it(caplog, isolated_run_source):
+    """`agent_eval_run` events now reach `customEvents` from a real eval run, so
+    they need the same discriminator `llm_agent_call` has. Resolved from the
+    contextvar rather than left to whatever the caller passes — nothing set it
+    before this change, so the field was absent on every row."""
+    telemetry.set_run_source(telemetry.RUN_SOURCE_GOLDEN)
+
+    with caplog.at_level(logging.INFO):
+        telemetry.track_eval_result(
+            "chat.default", "titan_steel_payment_status", True, latency_ms=1200.0
+        )
+
+    record = _eval_events(caplog)[-1]
+    assert record.run_source == "golden"
+    assert record.case_id == "titan_steel_payment_status"
+    assert getattr(record, "microsoft.custom_event.name") == telemetry.EVAL_RESULT_EVENT_NAME
+
+
+def test_an_explicit_run_source_on_an_eval_result_is_not_silently_dropped(
+    caplog, isolated_run_source
+):
+    """Same trap as `track_agent_call`: the `**extra_attributes` loop drops any
+    key already in the dict, so an explicit `run_source=` had to be popped
+    *before* it or the row would be mis-tagged with no error at all."""
+    telemetry.set_run_source(telemetry.RUN_SOURCE_GOLDEN)
+
+    with caplog.at_level(logging.INFO):
+        telemetry.track_eval_result(
+            "chat.default", "greeting_no_tool", False,
+            run_source=telemetry.RUN_SOURCE_PREDEPLOY,
+        )
+
+    assert _eval_events(caplog)[-1].run_source == "predeploy"
+
+
+def test_an_eval_result_from_production_context_still_says_production(caplog):
+    """The default is what makes the gate/nightly split honest: a row that says
+    nothing about its source is a production row."""
+    import contextvars
+
+    def _emit():
+        telemetry.track_eval_result("chat.default", "case", True)
+
+    with caplog.at_level(logging.INFO):
+        contextvars.Context().run(_emit)
+
+    assert _eval_events(caplog)[-1].run_source == "production"
+
+
+def test_the_dependency_span_carries_run_source_so_appdependencies_stays_separable(
+    recorded_spans, azure_openai_configured, isolated_run_source
+):
+    """The half of Gap 304 (1) that actually needed new code.
+
+    `DependencyType` is `GenAI | az.ai.openai` for every LLM call this app makes,
+    production or eval — so once an eval run exports its spans, this attribute is
+    the only thing that keeps a dependency-time breakdown from silently including
+    the nightly job's 20 graded turns.
+    """
+    telemetry.set_run_source(telemetry.RUN_SOURCE_GOLDEN)
+
+    with tracked_llm_call("chat.sql_generate", model="gpt-5-mini", tenant_id="t"):
+        pass
+
+    span = _llm_spans(recorded_spans)[0]
+    assert span.attributes["run_source"] == "golden"
+
+
+def test_run_source_survives_the_exporters_own_span_conversion(
+    recorded_spans, azure_openai_configured, isolated_run_source
+):
+    """Executed rather than reasoned: the recorded span goes through the installed
+    exporter's real span→envelope function, and `run_source` has to come out in
+    `customDimensions` — a KQL filter cannot use an attribute the exporter drops
+    (`peer.service`/`server.address` are consumed into the target exactly that
+    way, which is why this is worth asserting)."""
+    exporter_module = pytest.importorskip(
+        "azure.monitor.opentelemetry.exporter.export.trace._exporter"
+    )
+    telemetry.set_run_source(telemetry.RUN_SOURCE_PREDEPLOY)
+
+    with tracked_llm_call("eval.faithfulness", model="gpt-5-mini", tenant_id="t"):
+        pass
+
+    envelope = exporter_module._convert_span_to_envelope(_llm_spans(recorded_spans)[0])
+    dependency = envelope.data.base_data
+    assert dependency.type == "GenAI | az.ai.openai"
+    assert dependency.properties["run_source"] == "predeploy"
+    # And the caveat this makes measurable rather than invisible: the judge's own
+    # calls are exported under the same tag as the system under test, so a
+    # "golden cost" rollup that does not exclude `eval.*` is measuring the grader
+    # too. `services/agent_eval.py::_invoke_structured` names them this way.
+    assert dependency.properties["agent_name"].startswith("eval.")
+
+
+def test_an_explicit_run_source_tags_the_event_and_the_span_identically(
+    recorded_spans, azure_openai_configured, isolated_run_source, caplog
+):
+    """`tracked_llm_call` reads the explicit keyword without consuming it, so the
+    two surfaces describing one call cannot disagree about which population it
+    belongs to."""
+    telemetry.set_run_source(telemetry.RUN_SOURCE_GOLDEN)
+
+    with caplog.at_level(logging.INFO):
+        with tracked_llm_call(
+            "chat.classify",
+            model="gpt-5-mini",
+            tenant_id="t",
+            run_source=telemetry.RUN_SOURCE_PREDEPLOY,
+        ):
+            pass
+
+    assert _events(caplog)[-1].run_source == "predeploy"
+    assert _llm_spans(recorded_spans)[0].attributes["run_source"] == "predeploy"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap 305 (partial) — the zero-result flag on `chat.sql_summary`
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `zero_result_rate` is one of `services/online_eval_signals.py`'s five signals,
+# and today the only way to compute it is to scan `chat_message.content` in
+# Postgres for the `NO_RECORDS_FOUND` sentinel after the fact — which needs
+# direct DB access and cannot be queried from Log Analytics at all.
+#
+# `agents/query_agent.py`'s SQL loop already detects the condition; nothing was
+# emitted there. These tests pin two things: that the loop records it (including
+# the deterministic invoice-number fallback's outcome, which distinguishes "the
+# generated SQL was wrong" from "there is genuinely no such invoice"), and that
+# it rides the *existing* `chat.sql_summary` event rather than becoming a new
+# event type. `chat.sql_summary` is the carrier because it is emitted exactly
+# once per turn whose SQL actually executed — a declined turn or one that failed
+# all three attempts never reaches it — so `countif(zero_result) / count()` over
+# that agent_name is a well-formed rate with no separate denominator to build.
+#
+# Scope stated rather than implied: this covers the default chat SQL route only.
+# `agents/query_tools.py`'s `identify_invoices`/`aggregate` share the same loop
+# and get the flags on their `SqlGenerationOutcome`, but neither tool makes a
+# follow-up LLM call, so there is no existing event of theirs to ride; the SAGE
+# path (`ENABLE_AGENTIC_SAGE`, default off, and off for every tenant today) is
+# therefore not covered.
+
+from sqlalchemy.pool import StaticPool  # noqa: E402
+from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
+
+# Imported at module scope, not inside the tests: `SQLModel.metadata` is only
+# populated once `models` has been imported, so a `create_all()` that runs before
+# it produces an empty schema and every query fails with "no such table".
+from dependencies import MOCK_TENANT_ID  # noqa: E402
+import models  # noqa: E402,F401 - imported for its `SQLModel.metadata` side effect
+
+_ZERO_RESULT_ENGINE = create_engine(
+    "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+)
+
+
+@pytest.fixture(name="sql_route_session")
+def sql_route_session_fixture():
+    SQLModel.metadata.create_all(_ZERO_RESULT_ENGINE)
+    with Session(_ZERO_RESULT_ENGINE) as session:
+        yield session
+    SQLModel.metadata.drop_all(_ZERO_RESULT_ENGINE)
+
+
+class _ScriptedSqlLLM:
+    """One scripted SQL-generation result, then a fixed summary answer.
+
+    Same shape as `tests/test_chat_sql_quality.py::_RecordingLLM`, kept local so
+    this file stays runnable on its own.
+    """
+
+    def __init__(self, sql):
+        self._sql = sql
+        self.summary_prompts = []
+        self.model_name = "gpt-5-mini-fake"
+
+    def with_structured_output(self, schema):  # noqa: ARG002 - shape only
+        outer = self
+
+        class _Structured:
+            def invoke(self, prompt):  # noqa: ARG002 - shape only
+                return MagicMock(sql=outer._sql, explanation_or_error=None)
+
+        return _Structured()
+
+    def invoke(self, prompt):
+        self.summary_prompts.append(prompt)
+        return MagicMock(content="Formatted summary.")
+
+
+def _run_sql_route(
+    db_session, llm, message, *, execute=None, session_id=None, cached=None, route="SQL"
+):
+    """One turn through the real `run_query_agent()` SQL route.
+
+    `session_id`/`cached`/`route` were added for Gap 302's tests: the thread
+    position (`turn_index`) needs several turns in one session, and the
+    cache-hit status needs `get_cached_answer()` to actually return something.
+    All three default to the pre-Gap-302 behaviour.
+    """
+    from contextlib import ExitStack
+
+    from agents import query_agent
+
+    patches = [
+        patch("agents.query_agent.classify_query", return_value=route),
+        patch("agents.query_agent.query_invoice_chunks", return_value=[]),
+        patch("agents.query_agent.get_llm", return_value=llm),
+        patch("agents.query_agent.get_cached_answer", return_value=cached),
+        patch("agents.query_agent.set_cached_answer"),
+        patch("agents.query_agent._get_tenant_stats_summary", return_value=""),
+    ]
+    if execute is not None:
+        patches.append(patch("agents.query_agent.execute_generated_sql", side_effect=execute))
+
+    with ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        return query_agent.run_query_agent(
+            str(session_id or uuid4()), message, str(MOCK_TENANT_ID), db_session
+        )
+
+
+def _summary_events(caplog):
+    return [r for r in _events(caplog) if r.agent_name == "chat.sql_summary"]
+
+
+def test_a_zero_result_turn_is_flagged_on_the_sql_summary_event(sql_route_session, caplog):
+    """The measurement this unblocks: a real turn that found nothing is now
+    queryable from Log Analytics, with no Postgres access and no new event."""
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    with caplog.at_level(logging.INFO):
+        result = _run_sql_route(sql_route_session, llm, "how much did we spend on freight?")
+
+    # No rows were seeded, so the real query genuinely matched nothing — and the
+    # user really is told so, which is the state `zero_result_rate` measures.
+    from agents.query_agent import NO_RECORDS_FOUND
+
+    assert NO_RECORDS_FOUND in result["content"]
+    record = _summary_events(caplog)[-1]
+    assert record.zero_result is True
+    assert record.zero_result_fallback_recovered is False
+
+
+def test_a_turn_that_found_rows_carries_the_flag_as_false(sql_route_session, caplog):
+    """The denominator half. The field is present on *every* summary event, not
+    only the zero ones — a rate needs both, and a field that only appears on
+    failures cannot produce one."""
+    ids = [str(uuid4())]
+
+    def _execute(sql, tenant_id, db_sess, snapshot=None):  # noqa: ARG001 - shape only
+        if snapshot is not None:
+            snapshot.extend(ids)
+        return "\n\nid | currency\n--- | ---\n" + "\n".join(f"{i} | USD" for i in ids)
+
+    llm = _ScriptedSqlLLM(f"SELECT id, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    with caplog.at_level(logging.INFO):
+        _run_sql_route(sql_route_session, llm, "what did we spend?", execute=_execute)
+
+    record = _summary_events(caplog)[-1]
+    assert record.zero_result is False
+    assert record.zero_result_fallback_recovered is False
+
+
+def test_the_invoice_number_fallback_reports_recovered_rather_than_zero_result(
+    sql_route_session, caplog
+):
+    """The distinction that makes the flag diagnostic rather than decorative: the
+    generated SQL missed an invoice that really exists, and the deterministic
+    fallback found it. The user got an answer, so this is not a zero-result turn
+    — but it is a generated-SQL defect, and only this second field says so.
+
+    The fallback lookup itself is stubbed rather than driven through real rows:
+    it issues raw SQL with a *dashed* tenant literal, and SQLModel stores UUID
+    columns dashless on SQLite (checked, not assumed:
+    `SELECT tenant_id FROM invoice` returns `'00000000...'` with no hyphens), so
+    no seeded row can be matched by it under this engine. What is under test here
+    is the flag the fallback's outcome sets, not the fallback's own SQL — which
+    `tests/test_chat_sql_quality.py` already covers for the same reason.
+    """
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    recovered_rows = "\n\ninvoice_number | vendor_name\n--- | ---\nUS-20260722-001 | Titan Steel"
+
+    with caplog.at_level(logging.INFO):
+        with patch(
+            "agents.query_agent.lookup_invoice_by_number_fallback",
+            return_value=recovered_rows,
+        ):
+            result = _run_sql_route(
+                sql_route_session, llm, "give me the details of invoice US-20260722-001"
+            )
+
+    from agents.query_agent import NO_RECORDS_FOUND
+
+    assert NO_RECORDS_FOUND not in result["content"]
+    record = _summary_events(caplog)[-1]
+    assert record.zero_result_fallback_recovered is True
+    assert record.zero_result is False
+
+
+def test_the_flag_does_not_appear_on_the_sql_generation_event(sql_route_session, caplog):
+    """It rides one specific existing event, deliberately. The SQL-generation
+    block closes at `.invoke()` so its `latency_ms` stays model time and never
+    absorbs query execution — the row count is not known yet when that event is
+    emitted, and a field that was sometimes absent would break the rate."""
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    with caplog.at_level(logging.INFO):
+        _run_sql_route(sql_route_session, llm, "how much did we spend on freight?")
+
+    generation = [r for r in _events(caplog) if r.agent_name == "chat.sql_generation"]
+    assert len(generation) == 1
+    assert not hasattr(generation[0], "zero_result")
+
+
+def test_the_outcome_records_the_flags_for_every_caller_of_the_shared_loop():
+    """`run_sql_generation_loop()` is shared with SAGE's `identify_invoices` /
+    `aggregate` tools. They have no follow-up LLM call to carry the flag onto,
+    but the loop still records it on the outcome — so wiring the SAGE path later
+    is a call-site change, not a re-derivation of the condition."""
+    from agents.query_agent import NO_RECORDS_FOUND, run_sql_generation_loop
+
+    llm = _ScriptedSqlLLM("SELECT id FROM invoice WHERE tenant_id = 'x'")
+
+    with patch("agents.query_agent.execute_generated_sql", return_value=NO_RECORDS_FOUND):
+        outcome = run_sql_generation_loop(
+            llm=llm,
+            system_prompt="prompt",
+            wrapped_user_message="q",
+            user_message="q",
+            tenant_id="x",
+            db_session=MagicMock(),
+            telemetry_agent_name="sage.aggregate",
+        )
+
+    assert outcome.zero_result is True
+    assert outcome.zero_result_fallback_recovered is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap 302 (Trace) + Gap 303 half (a) (Thread position) — the `chat_turn` event
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# What these pin, in the order the risk sits:
+#
+# 1. **Every turn outcome produces exactly one event.** Before this, a declined
+#    turn, an errored turn and a cache hit produced no turn-level telemetry at
+#    all, so their rates were unaskable. A test that only covered the happy path
+#    would leave the entire reason the gap was opened uncovered.
+# 2. **The content is real, not structural.** The founder's decision was that a
+#    Trace carries the actual generated SQL and the actual tool output — a turn
+#    whose SQL was subtly wrong is not diagnosable from `sql_generated=true`.
+#    Asserted against the real strings, and the truncation caps are asserted
+#    separately so "full content" cannot silently become "unbounded content".
+# 3. **The correlation IDs really reach the background pool.** This is a live
+#    attribution bug being fixed, not a new field: `ThreadPoolExecutor.submit()`
+#    copies no context, so every judge call and every queued turn's
+#    `llm_agent_call` events were landing with `trace_id=""`. Pinned by observing
+#    the contextvars from inside the work itself rather than by reading the code.
+# 4. **The accumulator counts the turn, not the thread.** It is reset on the way
+#    out, because the pool thread will serve another turn and a leaked
+#    accumulator would inflate the next one's totals silently and only under
+#    load.
+
+
+def _turn_events(caplog):
+    return [
+        r for r in caplog.records if r.getMessage() == telemetry.CHAT_TURN_EVENT_NAME
+    ]
+
+
+def _emit_turn(result, **overrides):
+    """Emit the turn `run_query_agent()` just described, as the routers do."""
+    fields = dict(result.get("turn_telemetry") or {})
+    fields.update(overrides)
+    telemetry.track_chat_turn(**fields)
+
+
+def test_a_successful_sql_turn_carries_the_real_sql_and_the_real_tool_output(
+    sql_route_session, caplog
+):
+    """The founder decision, asserted as content rather than as a flag: the event
+    holds the SQL the model actually wrote and the rows the database actually
+    returned, because "the SQL was wrong in a way that still executed" is the
+    failure this exists to diagnose and no boolean can express it."""
+    sql = f"SELECT id, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'"
+    rows = "\n\nid | currency\n--- | ---\nabc | USD"
+    llm = _ScriptedSqlLLM(sql)
+
+    with caplog.at_level(logging.INFO):
+        result = _run_sql_route(
+            sql_route_session, llm, "what did we spend?", execute=lambda *a, **k: rows
+        )
+        _emit_turn(result, message_id="msg-1", latency_ms=1234.5)
+
+    events = _turn_events(caplog)
+    assert len(events) == 1
+    event = events[0]
+    assert getattr(event, "microsoft.custom_event.name") == telemetry.CHAT_TURN_EVENT_NAME
+    assert event.status == telemetry.TURN_STATUS_SUCCESS
+    assert event.route == "SQL"
+    assert event.sql_generated is True
+    assert event.generated_sql == sql
+    assert rows.strip() in event.tool_output
+    assert event.tool_output_chars == len(f"DATABASE RESULTS:\n{rows}")
+    assert event.sql_attempts == 1
+    assert event.message_id == "msg-1"
+    assert event.latency_ms == 1234.5
+    assert event.tenant_id == str(MOCK_TENANT_ID)
+    assert event.turn_id
+
+
+def test_the_turn_accumulates_every_llm_call_made_inside_it(sql_route_session, caplog):
+    """A turn's cost is the sum of its calls, and nothing at the call sites knows
+    it is being counted. The SQL route makes two — generation and summary — and
+    both must land on one turn event without a `summarize` over `llm_agent_call`."""
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    with caplog.at_level(logging.INFO):
+        result = _run_sql_route(
+            sql_route_session, llm, "what did we spend?", execute=lambda *a, **k: "| id |"
+        )
+        _emit_turn(result, message_id="msg-2")
+
+    event = _turn_events(caplog)[0]
+    assert event.llm_call_count == 2
+    assert "chat.sql_generation" in event.agents_called
+    assert "chat.sql_summary" in event.agents_called
+    # Same two calls, counted independently by the per-call events.
+    assert len([r for r in _events(caplog) if r.agent_name.startswith("chat.")]) == 2
+
+
+def test_the_accumulator_does_not_leak_into_the_next_turn(sql_route_session, caplog):
+    """The reason `chat_turn_scope()` resets in a `finally` rather than leaving
+    the contextvar set the way `main_worker` does: this runs on a pooled thread
+    that will serve another turn, and a leaked accumulator would add turn N's
+    model calls to turn N+1's totals — silently, and only under load."""
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    with caplog.at_level(logging.INFO):
+        first = _run_sql_route(
+            sql_route_session, llm, "first question?", execute=lambda *a, **k: "| id |"
+        )
+        second = _run_sql_route(
+            sql_route_session, llm, "second question?", execute=lambda *a, **k: "| id |"
+        )
+
+    assert first["turn_telemetry"]["llm_call_count"] == 2
+    assert second["turn_telemetry"]["llm_call_count"] == 2
+    assert first["turn_telemetry"]["turn_id"] != second["turn_telemetry"]["turn_id"]
+    # Outside a turn there is no accumulator at all, so the eval harness, the
+    # ingestion pipeline and the trainer cannot be counted into one.
+    assert telemetry.current_chat_turn() is None
+
+
+def test_a_declined_turn_is_recorded_as_declined_rather_than_as_a_failure(
+    sql_route_session, caplog
+):
+    """A refusal is a real product outcome, not an error — the two must not share
+    a status, or "how often does the assistant decline?" and "how often does it
+    break?" become one unreadable number. Before this event neither was
+    measurable at all: a declined turn emitted no turn-level telemetry."""
+    llm = _ScriptedSqlLLM(None)  # `sql: null` — the model declined
+
+    with caplog.at_level(logging.INFO):
+        result = _run_sql_route(sql_route_session, llm, "write me some code")
+        _emit_turn(result, message_id="msg-3")
+
+    event = _turn_events(caplog)[0]
+    assert event.status == telemetry.TURN_STATUS_DECLINED
+    assert event.stop_reason == "sql_declined"
+    assert event.sql_generated is False
+    assert event.generated_sql == ""
+    # The refusal really was returned to the user, i.e. this is the live shape
+    # rather than a synthetic status.
+    assert "cannot answer" in result["content"]
+
+
+def test_an_errored_turn_is_recorded_with_the_exception_type(sql_route_session, caplog):
+    """Every attempt failed and the user got an error string. `error_type` is on
+    the event because "the SQL route is down" and "the SQL route is generating
+    invalid SQL" are the same status and different problems."""
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    def _always_fails(*args, **kwargs):
+        raise RuntimeError("relation \"invoice\" does not exist")
+
+    with caplog.at_level(logging.INFO):
+        result = _run_sql_route(
+            sql_route_session, llm, "what did we spend?", execute=_always_fails
+        )
+        _emit_turn(result, message_id="msg-4")
+
+    event = _turn_events(caplog)[0]
+    assert event.status == telemetry.TURN_STATUS_ERROR
+    assert event.error_type == "RuntimeError"
+    assert event.stop_reason == "sql_attempts_exhausted"
+    # All three attempts were really burned, which is the shape a Trace has to
+    # be able to show and which no per-call event totals for the turn.
+    assert event.sql_attempts == 3
+    assert "Failed to execute database check" in result["content"]
+
+
+def test_a_cache_hit_is_flagged_so_it_can_be_excluded_from_per_turn_averages(
+    sql_route_session, caplog
+):
+    """A cached answer is a real turn the user took — a session whose every turn
+    was cached would otherwise look like a session that never happened. It is
+    tagged `cache_hit` rather than dropped precisely so cost/latency rollups can
+    exclude it: no model call was made, so counting it as a fresh turn would
+    report free turns and dilute every per-turn average."""
+    cached = {
+        "content": "Total spend is $12,500.00",
+        "generated_sql": "SELECT SUM(grand_total) FROM invoice",
+        "citations": [],
+        "result_invoice_ids": ["a", "b"],
+    }
+    llm = _ScriptedSqlLLM("SELECT 1")
+
+    with caplog.at_level(logging.INFO):
+        result = _run_sql_route(sql_route_session, llm, "what did we spend?", cached=cached)
+        _emit_turn(result, message_id="msg-5")
+
+    event = _turn_events(caplog)[0]
+    assert event.status == telemetry.TURN_STATUS_CACHE_HIT
+    assert event.llm_call_count == 0
+    assert event.tokens_total == 0
+    assert event.result_invoice_count == 2
+    # `"cached"`, not a guessed original route: the cached payload has never
+    # carried one, and guessing from `generated_sql` is wrong for a declined SQL
+    # turn (which is cached, with no SQL) and would file it under RAG.
+    assert event.route == "cached"
+    # Nothing about this turn is written back into Redis. `turn_telemetry` is
+    # attached to the dict `get_cached_answer()` hands back, which in production
+    # is a fresh `json.loads()` of the stored payload on every hit — the stored
+    # value is never re-serialised, so the cache entry keeps exactly the size and
+    # shape it had, same property `judge_evidence` relies on.
+    assert result["content"] == "Total spend is $12,500.00"
+    assert "turn_telemetry" in result
+
+
+def test_turn_index_and_the_idle_gap_are_measured_across_a_multi_turn_session(
+    sql_route_session, caplog
+):
+    """Gap 303 half (a). `turn_index` counts *assistant* messages, not all
+    messages, because on the async queue path the user's row is committed before
+    the handler runs and on the synchronous path it is not — counting every row
+    would make the same turn the 2nd on one path and the 1st on the other."""
+    from datetime import datetime, timedelta
+
+    from models import ChatMessage, ChatSession
+
+    session_id = uuid4()
+    sql_route_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="T"))
+    sql_route_session.commit()
+
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    first = _run_sql_route(
+        sql_route_session, llm, "q1", session_id=session_id, execute=lambda *a, **k: "| id |"
+    )
+    assert first["turn_telemetry"]["turn_index"] == 1
+    # No predecessor, so the field is absent rather than 0 — a 0 would read as
+    # "the user sent two messages in the same instant".
+    assert first["turn_telemetry"]["seconds_since_prev_turn"] is None
+
+    # The turn the router would have committed, backdated so the idle gap is a
+    # real measured number rather than a sub-millisecond one.
+    sql_route_session.add(
+        ChatMessage(
+            id=uuid4(),
+            session_id=session_id,
+            role="assistant",
+            content="answer 1",
+            status="completed",
+            created_at=datetime.utcnow() - timedelta(minutes=45),
+        )
+    )
+    sql_route_session.commit()
+
+    second = _run_sql_route(
+        sql_route_session, llm, "q2", session_id=session_id, execute=lambda *a, **k: "| id |"
+    )
+    assert second["turn_telemetry"]["turn_index"] == 2
+    gap = second["turn_telemetry"]["seconds_since_prev_turn"]
+    # 45 minutes — past the 30-minute idle cutoff, i.e. the same session_id
+    # really can contain two sittings, which is why the KQL in
+    # `infra/monitoring/chat_thread_sessions.kql` re-derives windows with
+    # `row_window_session(..., 30m)` instead of trusting session_id alone.
+    assert gap is not None and gap > 30 * 60
+
+    with caplog.at_level(logging.INFO):
+        _emit_turn(second, message_id="msg-6")
+    event = _turn_events(caplog)[0]
+    assert event.turn_index == 2
+    assert event.seconds_since_prev_turn > 30 * 60
+
+
+def test_a_first_turn_omits_the_thread_fields_rather_than_sending_zero(caplog):
+    """The emitter's half of the same rule, asserted at the boundary: absent
+    stays absent. Same reason `track_online_signal` drops a None value — a 0
+    there is a measurement, and "there was no previous turn" is not."""
+    with caplog.at_level(logging.INFO):
+        telemetry.track_chat_turn(route="CHAT", status="success", session_id="s1")
+
+    event = _turn_events(caplog)[0]
+    assert not hasattr(event, "turn_index")
+    assert not hasattr(event, "seconds_since_prev_turn")
+
+
+def test_full_content_is_capped_at_the_documented_budgets(caplog):
+    """"Full content" must not mean "unbounded content". The two caps are
+    deliberately the same budgets `services/agent_eval.py` already uses for the
+    judge prompt, so a reader comparing an event against a judge prompt sees the
+    same truncation — and the marker is in the value, so "the SQL was this" and
+    "the SQL started like this" stay distinguishable."""
+    from services.agent_eval import MAX_CONTEXT_CHARS, MAX_QUERY_CHARS
+
+    assert telemetry.MAX_TURN_SQL_CHARS == MAX_QUERY_CHARS
+    assert telemetry.MAX_TURN_TOOL_OUTPUT_CHARS == MAX_CONTEXT_CHARS
+
+    huge_sql = "SELECT " + ("x," * 5000)
+    huge_output = "row\n" * 8000
+    with caplog.at_level(logging.INFO):
+        telemetry.track_chat_turn(
+            route="SQL", generated_sql=huge_sql, tool_output=huge_output
+        )
+
+    event = _turn_events(caplog)[0]
+    assert event.generated_sql.startswith(huge_sql[: telemetry.MAX_TURN_SQL_CHARS])
+    assert "truncated at 3000 chars" in event.generated_sql
+    assert "truncated at 12000 chars" in event.tool_output
+    # The pre-truncation size travels separately, so a genuinely short result and
+    # a cut one are distinguishable without parsing the marker.
+    assert event.tool_output_chars == len(huge_output)
+
+
+def test_a_broken_turn_emitter_never_breaks_a_completed_turn(monkeypatch, caplog):
+    """Same never-raises contract as every other emitter in this module, and it
+    matters more here: this fires *after* the user already has their answer and
+    after the commit, so anything it raised would turn a delivered answer into a
+    500."""
+    monkeypatch.setattr(
+        telemetry, "_emit_event", MagicMock(side_effect=RuntimeError("exporter down"))
+    )
+    with caplog.at_level(logging.DEBUG):
+        telemetry.track_chat_turn(route="SQL", status="success")  # must not raise
+    assert not _turn_events(caplog)
+
+
+# ── the correlation-ID fix: the background pool inherits no context ───────────
+
+
+def test_the_queue_path_binds_the_originating_requests_correlation_ids(caplog):
+    """The live attribution bug, pinned rather than assumed.
+
+    `routers/chat.py` submits this handler to `_chat_background_pool`, and
+    `ThreadPoolExecutor.submit()` copies no contextvars — so before this fix the
+    entire queued turn ran with `trace_id_ctx`/`tenant_id_ctx`/`request_id_ctx`
+    empty, and every `llm_agent_call` it emitted (plus every judge call it went
+    on to submit) landed in `customEvents` with `trace_id=""`.
+
+    Observed from *inside* the work rather than off the event alone, because the
+    contextvars are what `tracked_llm_call` reads at every call site — proving
+    them bound here proves it for all of them.
+    """
+    from queue_worker.handlers import handle_process_chat_job
+    from utils.logging_config import request_id_ctx, tenant_id_ctx, trace_id_ctx
+
+    seen = {}
+
+    def _fake_agent(**kwargs):
+        seen["trace_id"] = trace_id_ctx.get()
+        seen["tenant_id"] = tenant_id_ctx.get()
+        seen["request_id"] = request_id_ctx.get()
+        return {
+            "content": "answer",
+            "generated_sql": "SELECT 1",
+            "citations": [],
+            "result_invoice_ids": [],
+            "turn_telemetry": {"route": "SQL", "status": "success", "session_id": "s9"},
+        }
+
+    session_id, user_msg_id = uuid4(), uuid4()
+    with Session(_ZERO_RESULT_ENGINE) as db:
+        SQLModel.metadata.create_all(_ZERO_RESULT_ENGINE)
+        with caplog.at_level(logging.INFO), \
+             patch("agents.query_agent.run_query_agent", side_effect=_fake_agent), \
+             patch("services.chat_queue.ChatQueueService.publish_progress"), \
+             patch("services.chat_queue.ChatQueueService.complete_job"):
+            handle_process_chat_job(
+                job_id="job-trace",
+                session_id=str(session_id),
+                user_msg_id=str(user_msg_id),
+                content="what did we spend?",
+                tenant_id=str(MOCK_TENANT_ID),
+                db_session=db,
+                trace_id="0af7651916cd43dd8448eb211c80319c",
+                request_id="req-from-the-http-request",
+            )
+
+    assert seen["trace_id"] == "0af7651916cd43dd8448eb211c80319c"
+    assert seen["request_id"] == "req-from-the-http-request"
+    assert seen["tenant_id"] == str(MOCK_TENANT_ID)
+
+    # And the turn event the handler emitted carries them too.
+    event = _turn_events(caplog)[0]
+    assert event.trace_id == "0af7651916cd43dd8448eb211c80319c"
+    assert event.request_id == "req-from-the-http-request"
+    assert event.tenant_id == str(MOCK_TENANT_ID)
+    assert event.route == "SQL"
+    assert event.message_id  # the assistant row's id, resolved after the commit
+
+    # Bound for the duration and released after it: the pool thread goes on to
+    # serve another tenant's turn.
+    assert trace_id_ctx.get() == ""
+
+
+def test_a_queued_turn_that_raises_still_emits_an_errored_turn_event(caplog):
+    """The outcome that previously produced nothing at all. An error rate cannot
+    be computed from events that were never emitted, and the handler's own
+    `except` is the only place that sees failures from the commit and the Redis
+    publish as well as from the agent."""
+    from queue_worker.handlers import handle_process_chat_job
+
+    session_id, user_msg_id = uuid4(), uuid4()
+    with Session(_ZERO_RESULT_ENGINE) as db:
+        SQLModel.metadata.create_all(_ZERO_RESULT_ENGINE)
+        with caplog.at_level(logging.INFO), \
+             patch(
+                 "agents.query_agent.run_query_agent",
+                 side_effect=ValueError("chroma is unreachable"),
+             ), \
+             patch("services.chat_queue.ChatQueueService.publish_progress"), \
+             patch("services.chat_queue.ChatQueueService.complete_job"), \
+             patch("services.chat_queue.ChatQueueService.fail_job"):
+            res = handle_process_chat_job(
+                job_id="job-boom",
+                session_id=str(session_id),
+                user_msg_id=str(user_msg_id),
+                content="what did we spend?",
+                tenant_id=str(MOCK_TENANT_ID),
+                db_session=db,
+                trace_id="trace-boom",
+            )
+
+    assert res["status"] == "failed"
+    event = _turn_events(caplog)[0]
+    assert event.status == telemetry.TURN_STATUS_ERROR
+    assert event.error_type == "ValueError"
+    assert event.stop_reason == "queue_handler_raised"
+    assert event.trace_id == "trace-boom"
+
+
+def test_the_online_judge_runs_with_the_turns_correlation_ids_bound(caplog):
+    """The other half of the same bug, and the one that was already live in
+    production code: `eval.combined_soft` and `eval.persona` go through
+    `tracked_llm_call()` on the same context-free pool thread, so every judged
+    turn was emitting judge events with `trace_id=""`/`tenant_id=""` — scores
+    that could not be joined back to the turn they scored, which is the one
+    thing `services/online_quality_judge.py` exists to make possible."""
+    from services.online_quality_judge import judge_turn
+    from utils.logging_config import request_id_ctx, tenant_id_ctx, trace_id_ctx
+
+    seen = {}
+
+    def _fake_combined(question, answer, context, llm, queries):  # noqa: ARG001
+        seen["trace_id"] = trace_id_ctx.get()
+        seen["tenant_id"] = tenant_id_ctx.get()
+        seen["request_id"] = request_id_ctx.get()
+        return {"faithfulness": 0.9, "relevance": 0.8}, [], [], 1
+
+    with caplog.at_level(logging.INFO), \
+         patch("services.online_quality_judge.score_soft_metrics_combined", _fake_combined), \
+         patch("services.online_quality_judge.score_persona", return_value=(None, [], 0)), \
+         patch("services.online_quality_judge.score_orchestration", return_value=(1.0, [])), \
+         patch("services.online_quality_judge._persist") as persist:
+        judge_turn(
+            question="what did we spend?",
+            answer="Total spend is $12,500.00",
+            evidence={"route": "SQL", "context": "rows", "executed_queries": "SELECT 1"},
+            tenant_id=str(MOCK_TENANT_ID),
+            message_id=str(uuid4()),
+            trace_id="trace-from-the-judged-turn",
+            request_id="req-from-the-judged-turn",
+            llm=MagicMock(),
+        )
+
+    assert persist.called
+    assert seen["trace_id"] == "trace-from-the-judged-turn"
+    assert seen["request_id"] == "req-from-the-judged-turn"
+    assert seen["tenant_id"] == str(MOCK_TENANT_ID)
+    # Released again — the pool is shared with queued chat jobs, so a leaked
+    # tenant id would attribute one tenant's judge call to another's turn.
+    assert tenant_id_ctx.get() == ""

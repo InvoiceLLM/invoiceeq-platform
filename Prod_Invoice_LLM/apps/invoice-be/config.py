@@ -235,6 +235,23 @@ class Settings(BaseSettings):
     # against a golden recorded from the pre-Phase-2 code.
     ENABLE_AGENTIC_SAGE: bool = False
 
+    # Feature 23 / Gap 304 half (2): score every real production chat turn with
+    # the same reference-free judge the golden bank uses
+    # (`services/online_quality_judge.py`), writing an `agent_eval_run` row
+    # tagged `run_source=production`.
+    #
+    # This is an on/off switch, not a sampling control -- when it is on, every
+    # turn is judged. Default False for the same fail-closed reason as the two
+    # flags above, plus one this file has not had before: turning it on adds
+    # **two billable LLM calls to every chat turn** (the combined soft judge and
+    # the persona judge). That is a real per-tenant cost change, so it is opted
+    # into per environment rather than arriving switched on with a merge.
+    #
+    # Off is inert by construction: the judge is submitted, not called, and the
+    # submit helper checks this flag before it hands anything to a thread, so
+    # with the flag off nothing extra runs on the turn at all.
+    ENABLE_PRODUCTION_QUALITY_JUDGE: bool = False
+
     # Feature 20 Area 1 (`services/azure_cost.py`): what resource group's real
     # Azure spend to read from the Cost Management API, and how to authenticate.
     #

@@ -73,6 +73,9 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from models import ChatFeedback, ChatMessage, ChatSession
+# Gap 304 half (2): `agent_eval_run` holds production rows now, and the
+# stop-reason signals below mean the golden bank. See `_eval_run_notes()`.
+from telemetry import RUN_SOURCE_PRODUCTION
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +270,20 @@ def _eval_run_notes(
     Imported lazily and defensively: `AgentEvalRun` is Feature 23 Phase 3's
     table and is under concurrent Feature 21 work, so this module reads what is
     there and degrades to "no data" rather than assuming a shape.
+
+    **Golden-bank rows only** (Gap 304 half (2), 2026-08-24), for the same reason
+    as `services/ops_digest_collect.py::_eval_window_stats`. Checked rather than
+    assumed before adding the filter: both consumers of this list
+    (`budget_exhaustion_rate`, `clarification_rate`) reduce it to
+    `[note for note in notes if _STOP_REASON_ANY.search(note)]` before counting
+    anything, and a production row's notes are a structural summary with no
+    `stop_reason=` marker in them — so neither *rate* would have moved. What
+    would have moved is `budget_exhaustion_rate`'s
+    `detail["eval_rows_in_window"]`, which counts the unfiltered list and is what
+    a reader uses to judge whether the denominator is worth trusting; it would
+    have grown with live traffic while the denominator stayed flat, which reads
+    as "the eval harness ran 4000 turns and only 12 had a stop reason". Filtering
+    at the query keeps that number meaning what its name says.
     """
     try:
         from models import AgentEvalRun  # noqa: PLC0415
@@ -277,6 +294,7 @@ def _eval_run_notes(
         select(AgentEvalRun.notes)
         .where(AgentEvalRun.run_at >= window_start)
         .where(AgentEvalRun.run_at <= window_end)
+        .where(AgentEvalRun.run_source != RUN_SOURCE_PRODUCTION)
     )
     if tenant_id is not None:
         statement = statement.where(AgentEvalRun.tenant_id == tenant_id)
@@ -713,7 +731,7 @@ def compute_online_signals(
 
 
 def emit_online_signals(
-    signals: OnlineEvalSignals, *, window_days: Optional[int] = None
+    signals: OnlineEvalSignals, *, window_days: Optional[float] = None
 ) -> int:
     """Mirror a computed window onto Application Insights, one event per signal.
 
@@ -726,10 +744,19 @@ def emit_online_signals(
     Postgres stays the durable record. This is fire-and-forget: it never raises,
     and a telemetry outage must not lose a computed window.
 
-    **Not wired to anything yet, stated plainly.** No scheduled job, no ACA cron
-    and no request path calls this. Until something does, the workbook panel that
-    reads these events renders empty — which is a "nothing has run" state, not a
-    healthy one, and the panel's own text says so.
+    **Called on a schedule since 2026-08-24 (Gap 305).** The caller is
+    `scripts/ops_digest_job.py::main()` — Feature 24's digest job, which runs
+    every six hours (`0 1,7,13,19 * * *` UTC, `08-apps.bicep::opsDigestCron`) and
+    already reads these same signals through
+    `services/ops_digest_collect.py::_collect_online_signal_items()`. It emits
+    after its own `configure_telemetry()`, because these events reach
+    `customEvents` only once the Azure Monitor exporter is attached to the
+    `invoice_be_telemetry` logger. Before that wiring this function had zero
+    callers and the panel rendered empty forever, which reads as "nothing is
+    wrong" while actually meaning "nothing has run".
+
+    `window_days` is a float and is expected to be fractional here: the digest's
+    six-hour window is 0.25 days.
 
     Returns the number of signals emitted, so a caller/test can assert it did
     something.

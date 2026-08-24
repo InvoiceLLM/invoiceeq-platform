@@ -596,6 +596,32 @@ class AgentEvalRun(SQLModel, table=True):
     The `pass` column is spelled that way in SQL deliberately (it is not a reserved
     word in Postgres or SQLite) but `pass` is a Python keyword, so the attribute is
     `passed` and the column name is pinned via `sa_column`.
+
+    **Two populations live in this table since Gap 304 half (2) (2026-08-24)**, and
+    `run_source` is the only thing that tells them apart:
+
+      * `golden` — one graded question from the fixed bank, written by
+        `scripts/run_agent_eval.py`. Carries its own `question`/`actual_answer`
+        text, because a golden case's text is test data the repo owns.
+      * `production` — one real end-user chat turn, scored by
+        `services/online_quality_judge.py`. Carries **no question or answer text
+        at all**: it is scores plus `message_id`, which points at the
+        `chatmessage` row that already holds the text. Duplicating a customer's
+        question into an analytics table is a second copy of the same personal
+        data with its own retention story, and the founder's decision was that
+        this table never gets one.
+
+    That is why `question`/`actual_answer` became nullable and why the
+    `ck_agent_eval_run_text_or_message` CHECK exists: nullable alone would have
+    quietly allowed a golden row with no text, which is a corrupt row. The check
+    keeps the golden invariant ("a bank row carries its text") while allowing the
+    production shape ("a live row carries a pointer instead").
+
+    Every consumer that trends the golden bank must filter on `run_source`, or it
+    blends two populations that are not comparable — production rows can never
+    have `accuracy_score`/`context_score` (both need a reference answer) and their
+    `pass` is decided on fewer dimensions. See
+    `services/ops_digest_collect.py::_eval_window_stats`.
     """
     __tablename__ = "agent_eval_run"
     __table_args__ = (
@@ -603,19 +629,61 @@ class AgentEvalRun(SQLModel, table=True):
         # time: "how did agent X trend" and "what happened on day D".
         sa.Index("idx_agent_eval_run_agent_time", "agent_name", "run_at"),
         sa.Index("idx_agent_eval_run_tenant_time", "tenant_id", "run_at"),
+        # Gap 304 half (2): every consumer of this table now has to say which
+        # population it means, and the ops digest asks for exactly this pair
+        # (one source, one time window) twice per run.
+        sa.Index("idx_agent_eval_run_source_time", "run_source", "run_at"),
+        # A golden row without its text is a corrupt row; a production row with
+        # text is a privacy regression. One constraint, both directions.
+        sa.CheckConstraint(
+            "message_id IS NOT NULL OR (question IS NOT NULL AND actual_answer IS NOT NULL)",
+            name="ck_agent_eval_run_text_or_message",
+        ),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     agent_name: str = Field(max_length=100, index=True)
     run_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
-    question: str
+    #: Which population this row belongs to — `golden` or `production` (Gap 304
+    #: half (2)). Defaults to `golden` so every pre-existing row and every
+    #: existing writer keeps its meaning without a data migration; only the
+    #: online judge ever writes `production`. Deliberately a plain string rather
+    #: than an enum, matching `telemetry.RUN_SOURCE_*` (which also has a
+    #: `predeploy` value; the DB only needs the population, not the schedule).
+    run_source: str = Field(
+        default="golden",
+        max_length=20,
+        sa_column=sa.Column(
+            "run_source", sa.String(length=20), nullable=False, server_default="golden", index=True
+        ),
+    )
+
+    #: The `chatmessage.id` this score belongs to, on production rows only.
+    #: NULL on every golden row (a bank case is not a chat message). No FK on
+    #: purpose, matching this table's own `tenant_id`: the score is a
+    #: measurement that must survive its subject being deleted, and a cascade
+    #: from `chatmessage` would silently rewrite quality history when a user
+    #: deletes a thread.
+    message_id: UUID | None = Field(default=None, index=True)
+
+    # Nullable since Gap 304 half (2) — production rows carry `message_id`
+    # instead. See the class docstring and the CHECK above.
+    question: str | None = Field(default=None)
     # NULL where the golden case has no single reference answer to compare
     # against (a clarification-shaped case, a greeting). Accuracy is then not
     # scored at all rather than scored against a guess.
     expected_answer: str | None = Field(default=None)
-    actual_answer: str
+    # Nullable since Gap 304 half (2), same reason as `question` above.
+    actual_answer: str | None = Field(default=None)
 
+    # NOT the same predicate on both populations, and a chart that compares the
+    # two pass rates without saying so is wrong: a `golden` row's pass is decided
+    # over faithfulness + relevance + accuracy, a `production` row's over
+    # faithfulness + relevance only, because accuracy needs a reference answer
+    # that live traffic does not have. Both come from the same `decide_pass()`,
+    # which only grades the dimensions that produced a number -- the difference
+    # is in the inputs, not the rule. Filter by `run_source` before averaging.
     passed: bool = Field(
         default=False,
         sa_column=sa.Column("pass", sa.Boolean(), nullable=False, server_default=sa.false()),
