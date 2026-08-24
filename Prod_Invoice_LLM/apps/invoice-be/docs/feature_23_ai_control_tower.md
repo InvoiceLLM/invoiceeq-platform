@@ -197,6 +197,165 @@ takes precedence over `config.py`'s corrected `llama3.2:latest` default. `--prov
 `--model` would therefore have benchmarked qwen2 — the run's own `model_under_test` label
 (`ollama:qwen2:0.5b`) makes that visible instead of silent, but pass `--model` explicitly.
 
+### GPT-4o candidate — deployed and live-verified (2026-08-24)
+
+The first candidate from the table above now actually exists. `infra/gpt4o-deployment.bicep`
+(standalone, not routed through `08-apps.bicep` — same reasoning as `agent-eval-job-only.bicep`,
+see the file's own header comment) provisions a `gpt-4o` deployment under the existing
+`openai-invoicellm-dev` resource (`rg-invoice-llm-dev`, `eastus2`). **Deployment name: `gpt-4o`** —
+pass `--model gpt-4o --provider azure --api-version 2024-08-01-preview` (or later) to
+`run_agent_eval.py` to target it.
+
+| Field | Value |
+|---|---|
+| Model / version | `gpt-4o`, `2024-11-20` (latest GA version offered in this resource's region at scoping time) |
+| SKU | `GlobalStandard`, capacity `10` (10K TPM — sized for benchmark/comparison runs, not production traffic) |
+| Quota headroom | `OpenAI.GlobalStandard.gpt-4o` regional quota is 450K TPM; this deployment uses 10K, leaving 440K TPM free for other GlobalStandard gpt-4o deployments in this subscription/region if ever needed |
+| `jsonSchemaResponse` capability | `true` — confirmed via `az cognitiveservices account deployment list` |
+
+**Verified live, three ways, not just `az` reporting success:**
+
+1. Plain chat completion via `POST .../deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview` — HTTP 200, `model: gpt-4o-2024-11-20`, real completion content returned.
+2. Strict-mode structured output (`response_format.json_schema.strict: true`, the property Feature 23's extraction/routing agents actually depend on) — HTTP 200, schema-conformant JSON (`{"invoice_number":"INV-2026-0042","total_amount":1523.5}`) with no repair needed.
+3. Through the repo's own comparison machinery: `python scripts/run_agent_eval.py --paths default --cases greeting_no_tool --provider azure --model gpt-4o --api-version 2024-08-01-preview --no-persist --no-mirror` — ran one real turn against the live `gpt-4o` deployment (judge stayed on the configured default per the four properties above), `llm_calls=1`, `relevance=1.0 accuracy=1.0 pass=True`, `errors=0`. Not persisted (no `--persist-candidate` passed), consistent with property 4.
+
+**Ongoing cost, stated plainly:** GPT-4o `GlobalStandard`, `eastus2`, confirmed live via the Azure
+Retail Prices API (`prices.azure.com`, meters `gpt 4o 1120 Inp glbl` / `gpt 4o 1120 Outp glbl`,
+effective since 2024-12-01) — **$2.50 / 1M input tokens, $10.00 / 1M output tokens**. That is ~17x
+the input rate and ~20x the output rate of the `gpt-5-mini` baseline this repo runs in production
+(gpt-5-mini's rate is what `cost_per_turn_usd` prices every run at today, per the `cost_basis` note
+above). A candidate benchmark run over the full case set will cost real money at this rate — small
+in absolute terms for a periodic comparison exercise (the smoke-test turn above cost a fraction of a
+cent), but the *per-token* multiple is real and matters if GPT-4o is ever considered for anything
+beyond a periodic benchmark.
+
+**Still not run:** the actual comparison table (baseline vs. GPT-4o vs. Ollama, full case set,
+`--persist-candidate`). Today's work proves the candidate is live and reachable, not that it wins or
+loses against the baseline.
+
+### Ollama hosting in Azure — sizing research, no deployment (2026-08-24)
+
+No Ollama server exists anywhere in this setup yet — confirmed live again this session
+(`localhost:11434` connection refused on this dev machine). Founder wants it actually running in
+Azure so it is a real, not hypothetical, candidate. This is research only; **nothing was deployed**.
+
+**Target model:** `llama3.2:latest` (the 3B-parameter default tag, per `config.py`'s 2026-08-23
+correction). At 3B parameters this is a materially lighter model than the 7B/8B class most "does
+Ollama need a GPU" guidance is written about — CPU-only inference is a reasonable starting point for
+an *occasional* comparison run, not continuous serving. The known open caveat from the 2026-08-23
+smoke test still applies regardless of host: llama3.2 3B produced schema-valid but semantically
+invented routing values on well-supported hardware, so hosting choice does not by itself fix the
+tool-calling quality gap already documented above.
+
+**Real, not assumed, constraint found this session:** Azure Container Apps GPU workload profiles
+(`Consumption-GPU-NC8as-T4`, `Consumption-GPU-NC24-A100`, plus dedicated `NC24/48/96-A100`) are
+**not offered in `eastus2`** — confirmed via `az containerapp env workload-profile list-supported
+--location eastus2` (returns only `D4/D8/D16/D32`, `E4/E8/E16/E32`, `Consumption`, `Flex` — no `NC*`
+entries). This repo's whole stack (`cae-invoicellm-dev`, `rg-invoice-llm-dev`) lives in `eastus2`. A
+GPU-backed option is real, but not in the region everything else already runs in — confirmed
+available in `eastus`, `westus3`, `northeurope`, `swedencentral`, `australiaeast`, `uksouth` among
+others (checked directly, not assumed). The existing `cae-invoicellm-dev` environment is also
+Consumption-only today (`workloadProfiles: null`) — no workload-profile plan is configured on it at
+all.
+
+**Three options, each with a real Azure Retail Prices API-confirmed rate (`eastus`/`eastus2`, as of
+2026-08-24, not rounded guesses):**
+
+| Option | Shape | Rate while running | Rate while idle | Est. monthly (periodic use, ~8 active hours/month) |
+|---|---|---|---|---|
+| **A — CPU-only, scale-to-zero (recommended starting point)** | New Container App in the existing `cae-invoicellm-dev` (`eastus2`), Consumption plan, 4 vCPU / 8 GiB, `min replicas: 0`, started only for a comparison run | vCPU $0.000024/s + Memory $0.000003/s/GiB → 4 vCPU + 8 GiB = **$0.432/hour active** | **$0** (true scale-to-zero, no idle meter fires at `min replicas: 0`) | **~$3.50/month** |
+| **B — CPU-only, always-on** | Same shape, `min replicas: 1` (avoids cold-start/model-reload latency per invocation) | Same active rate | vCPU Idle $0.000003/s + Memory Idle $0.000003/s/GiB → **$0.1296/hour idle floor** | **~$95/month idle floor alone**, before any active-run cost — not justified for a periodic-only cadence |
+| **C — GPU-backed, scale-to-zero** | New Container Apps environment in `eastus` (region move required — `eastus2` has no GPU profile), `Consumption-GPU-NC8as-T4` workload profile, `min replicas: 0` | **$0.2628/hour active** (T4); A100 profile is **$1.9044/hour active** if T4 proves insufficient | **$0** (scale-to-zero) | **~$2.10/month** (T4) at the same usage cadence — cheaper per hour than CPU, but adds a second region and a second Container Apps environment to operate |
+
+**Recommendation:** start with **Option A** — a 3B model is small enough that CPU-only is worth
+trying first, it stays in the same region/environment as everything else (no new infra surface), and
+at periodic-use cadence the cost is negligible either way. Move to **Option C** only if CPU throughput
+or output quality proves inadequate for the comparison to be meaningful (mirroring the existing
+malformed-JSON/invented-routing-value caveat already on file for Ollama) — that would be a deliberate
+follow-up decision with its own region/environment cost, not a default.
+
+**Awaiting founder decision before any resource is created:** which option (or none yet) to build,
+and confirmation that a second region (`eastus`) is acceptable if Option C is ever chosen.
+
+### Ollama candidate — Option A built and live-verified (2026-08-24)
+
+Founder approved **Option A** from the research above. `infra/ollama-eval-only.bicep` (narrow,
+standalone deploy, same pattern as `gpt4o-deployment.bicep`/`benchmark-eval-job-only.bicep`) provisions
+a CPU-only `ollama/ollama:latest` Container App, `ca-ollama-eval-dev`, in the existing
+`cae-invoicellm-dev` environment. **Endpoint:**
+`https://ca-ollama-eval-dev.thankfulmeadow-4281ea23.eastus2.azurecontainerapps.io` — pass this as
+`OLLAMA_BASE_URL` and `--model llama3.2:latest --provider ollama` to `run_agent_eval.py`.
+
+**Sizing correction found live, not assumed:** the approved shape was 4 vCPU / 8 GiB. `az deployment
+group what-if`/`create` against the real `cae-invoicellm-dev` environment rejected that combination
+(`ContainerAppInvalidResourceTotal`) — `az containerapp env show` confirms `workloadProfiles: null`,
+i.e. this environment is the **classic Consumption-only plan** (predates/never opted into the
+workload-profiles feature), whose real per-container-app ceiling is **2.0 vCPU / 4.0 GiB**, not the
+4.0/8.0 ceiling that applies to a workload-profile-enabled Consumption plan. Deployed at 2.0 vCPU /
+4.0 GiB, the actual maximum obtainable here without a separate, out-of-scope environment migration.
+This does not change the model choice or the CPU-only premise — llama3.2:latest is a 3B model — but it
+is a real correction to the prior research pass's cost table, which assumed the larger ceiling.
+
+**Why external ingress, not internal:** `run_agent_eval.py` runs from a local dev machine (same as the
+GPT-4o verification above), not from inside the CAE's network, so internal-only ingress (like
+`ca-chromadb-dev`/`ca-invoice-be-dev`) would be unreachable from where the script actually runs.
+External ingress on port 11434 matches `ca-invoice-website-dev`'s existing external ingress in this
+same environment — not a new networking posture for `rg-invoice-llm-dev`. Because Ollama's API has no
+built-in authentication, inbound access is locked to a single IP via `ipSecurityRestrictions`
+(confirmed applied live: `az containerapp show` returns exactly one `Allow` entry, the dev machine's
+public IP at deploy time) — an otherwise fully open, unauthenticated LLM inference endpoint was judged
+an unnecessary risk for a comparison tool. This needs a redeploy (or `az containerapp ingress
+access-restriction set`) if the calling machine's IP changes.
+
+**Model persistence across scale-to-zero:** `minReplicas: 0`/`maxReplicas: 1`, and a persistent Azure
+Files volume (same storage account as ChromaDB's file share, new share `ollama-models`) mounted at
+`/root/.ollama` so the ~2GB `llama3.2:latest` weights are pulled once and survive every cold start
+instead of being re-pulled on each scale-to-zero cycle. The container's startup command was changed
+from the image's default `ollama serve` to `ollama serve & (poll ollama list until ready) && ollama
+pull llama3.2:latest && wait` — confirmed necessary live: Ollama's `/api/generate`/`/api/chat`
+endpoints do **not** auto-pull a missing model (unlike the `ollama run` CLI); a request against an
+unpulled model returns an error, so the model has to be pulled explicitly before the app can serve
+anything.
+
+**Live verification actually run, in order:**
+
+1. Deploy: `az deployment group create` → `provisioningState: Succeeded`, 3 resources created (Container
+   App, CAE→storage link, file share), 0 modified (`what-if` confirmed narrow/additive before deploy).
+2. Cold start + pull, watched via `az containerapp logs show`: revision created 08:36:56 UTC; download
+   reached 2.0/2.0 GB and finished digest verification at 08:44:38 UTC (~7.5 min for the ~2GB pull over
+   this container's network path, all inside the startup command, no manual step).
+3. `GET /api/tags` → `{"models":[{"name":"llama3.2:latest", ..., "parameter_size":"3.2B",
+   "quantization_level":"Q4_K_M", "capabilities":["completion","tools"]}]}` — model present, tool-calling
+   capability flagged by Ollama itself.
+4. `POST /api/generate` (`{"model":"llama3.2:latest","prompt":"In one short sentence, what is an
+   invoice?","stream":false}`) → HTTP 200, real completion: *"An invoice is a formal document sent by a
+   supplier or vendor to a customer, typically requesting payment for goods or services provided."*
+5. Through the repo's own comparison machinery, from the local dev machine, `OLLAMA_BASE_URL` pointed at
+   the live endpoint: `python scripts/run_agent_eval.py --paths default --cases greeting_no_tool
+   --provider ollama --model llama3.2:latest --no-persist --no-mirror` → `llm_calls=1`,
+   `latency_ms=21282`, `relevance=1.0 accuracy=1.0 pass=True`, `errors=0`, `cost_per_turn_usd=0.00021`
+   (Ollama itself is free; this is the judge's Azure OpenAI cost for scoring the turn). Not persisted (no
+   `--persist-candidate`), same as the GPT-4o smoke test. Output written to
+   `tests/agent_eval_output_ollama_llama3_2_latest.json`.
+
+**Ongoing cost, stated plainly:** Azure Retail Prices API, `eastus2`, Consumption plan, confirmed live
+2026-08-24 — vCPU Active $0.000024/vCPU-second, Memory Active $0.000003/GiB-second. At the deployed 2.0
+vCPU / 4.0 GiB: **$0.216/hour while a replica is active, $0 while scaled to zero** (`minReplicas: 0`,
+`cooldownPeriod: 300`s — confirmed via `az containerapp show`, i.e. ~5 minutes of no-request idle before
+the replica is torn down). At the same ~8 active-hours/month cadence used in the research table, this
+revises Option A's estimate from ~$3.50/month to **~$1.75/month** (half the CPU/memory, half the cost)
+— a correction, not a new number pulled from nowhere. This session's own verification window (deploy
+through the eval-harness run, ~12-15 minutes of continuous active replica time while the model pulled
+and the checks above ran) cost on the order of **$0.05**, computed from the confirmed rate above; actual
+billed Cost Management data lags real-time and was not separately queried.
+
+**Still not run:** the actual 3-way comparison table (baseline gpt-5-mini vs. GPT-4o vs. Ollama
+llama3.2:latest, full case set, `--persist-candidate`). Today's work proves the Ollama candidate is
+live, reachable, and produces real completions through the same harness as the other two candidates —
+not that it wins or loses against either baseline. The known open caveat from the 2026-08-23 smoke test
+(llama3.2 3B producing schema-valid but semantically invented routing values) has not been re-tested
+against this live server; the `greeting_no_tool` case above does not exercise routing.
+
 ### `QueryRoutingSchema.route` is now a real `Literal` (2026-08-23) — Gap 296
 
 `agents/query_agent.py`'s routing field was `route: str` with a description *asking* for one of three

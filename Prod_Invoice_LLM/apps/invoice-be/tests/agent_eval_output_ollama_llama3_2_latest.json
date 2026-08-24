@@ -1,0 +1,112 @@
+{
+  "run_at": "2026-08-24T08:47:03.494739",
+  "paths": [
+    "default"
+  ],
+  "model_under_test": "ollama:llama3.2:latest",
+  "api_version_override": null,
+  "judge_mode": "separate",
+  "cost_basis": "gpt-5-mini list price ($0.25/$2.00 per 1M) applied to every run",
+  "summary": {
+    "default": {
+      "turns": 1,
+      "llm_calls_min": 1,
+      "llm_calls_median": 1,
+      "llm_calls_max": 1,
+      "llm_calls_total": 1,
+      "latency_ms_min": 21282.5,
+      "latency_ms_median": 21282.5,
+      "latency_ms_max": 21282.5,
+      "tokens_in_total": 505,
+      "tokens_out_total": 40,
+      "pass_rate": 1.0,
+      "faithfulness_mean": null,
+      "relevance_mean": 1.0,
+      "accuracy_mean": 1.0,
+      "context_mean": 1.0,
+      "context_scored_turns": 1,
+      "orchestration_mean": null,
+      "orchestration_scored_turns": 0,
+      "persona_mean": null,
+      "persona_scored_turns": 0,
+      "judge_mode": [
+        "separate"
+      ],
+      "helpfulness_mean": null,
+      "helpfulness_scored_turns": 0,
+      "completeness_mean": null,
+      "completeness_scored_turns": 0,
+      "tone_mean": null,
+      "tone_scored_turns": 0,
+      "judge_llm_calls_total": 4,
+      "errors": 0,
+      "tokens_by_agent": {
+        "chat.conversational": {
+          "calls": 1,
+          "tokens_in": 505,
+          "tokens_out": 40,
+          "latency_ms": 21147.9
+        }
+      },
+      "cost_per_turn_usd": 0.00021
+    }
+  },
+  "persisted_rows": 0,
+  "turns": [
+    {
+      "case_id": "greeting_no_tool",
+      "path": "default",
+      "agent_name": "chat.default_path",
+      "model_under_test": "ollama:llama3.2:latest",
+      "question": "hello there",
+      "answer": "Hello! It's nice to assist you with your invoice-related queries. I'm ready to help with any questions or concerns you have about your invoices or our platform. What's on your mind?",
+      "answer_prose": "Hello! It's nice to assist you with your invoice-related queries. I'm ready to help with any questions or concerns you have about your invoices or our platform. What's on your mind?",
+      "appended_blocks": "",
+      "context": "",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "generated_sql": null,
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 21282.5,
+      "llm_call_count": 1,
+      "llm_events": [
+        {
+          "agent_name": "chat.conversational",
+          "model": "llama3.2:latest",
+          "tokens_in": 505,
+          "tokens_out": 40,
+          "latency_ms": 21147.87,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 505,
+      "tokens_out": 40,
+      "tokens_by_agent": {
+        "chat.conversational": {
+          "calls": 1,
+          "tokens_in": 505,
+          "tokens_out": 40,
+          "latency_ms": 21147.9
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": null,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": null,
+      "persona_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": true,
+      "claims": [],
+      "score_notes": "faithfulness: not scored (no factual claims in the answer) | relevance: 1.0 [capability_or_greeting, fixed by kind] (The user greeted; the response is a greeting that describes the assistant's capability to help with invoices, so it matches the greeting/capability category.) | accuracy: 1.0 (The reply is a brief greeting that offers help with invoice questions and states no specifics about any invoice, vendor, or amount, matching the reference.) | context: 1.00 (correctly fetched nothing) | orchestration: not scored (no gradeable figures in the answer) | persona: not scored (no domain judgement required by this turn)",
+      "judge_llm_calls": 4
+    }
+  ]
+}
