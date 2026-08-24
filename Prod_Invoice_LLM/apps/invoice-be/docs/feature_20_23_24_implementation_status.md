@@ -58,11 +58,48 @@ Confirmed live via direct KQL against `law-invoicellm-dev`: zero rows match `ope
 same table. LLM calls are almost certainly the dominant latency source for the Chat and
 Ingestion & Extraction feature areas — without this instrumentation, a dependency-time
 breakdown would either miss LLM time entirely or misattribute it as "app logic" time (the
-gap between total request duration and the sum of tracked dependencies). Unfixed.
+gap between total request duration and the sum of tracked dependencies).
 **Depends on this gap being closed**: the proposed "API perf: dependency-time breakdown
 per feature area, with recommendation text generated from whichever dependency dominates"
 build item (raised during the Ops-page field review) — that feature cannot give a correct
 answer for LLM-heavy areas until Azure OpenAI calls are actually tracked as dependencies.
+
+**Fixed 2026-08-24, not yet deployed.** Both options in the gap's own suggested fix were
+checked against the real installed packages first. **Option (a) rejected on evidence**:
+`pyproject.toml`/`uv.lock` carry only the django/fastapi/flask/logging/psycopg2/requests/
+urllib/urllib3 instrumentations `azure-monitor-opentelemetry` 1.8.9 pulls in — there is no
+`opentelemetry-instrumentation-openai(-v2)`, `openinference` or `traceloop` in the lock at
+all, so enabling one means a new dependency pinning its own
+`opentelemetry-instrumentation` (0.64b0, owned by the Azure distro), and it patches the
+`openai` SDK client only, covering neither the `ollama` provider nor `MockInvoiceLLM`.
+**Option (b) taken**: `telemetry.py` now opens one `SpanKind.CLIENT` span per LLM call from
+inside `tracked_llm_call()` — the wrapper already present at every real call site, so **no
+call site changed**. New: `resolve_gen_ai_system()` (→ `az.ai.openai` / `ollama` / `mock`,
+reusing `resolve_model_name()`'s mock detection so a fabricated call is never labelled as a
+real one), `resolve_gen_ai_peer()` (endpoint **hostname only** — the configured endpoint's
+query string is where `api-version`/keys travel), `_start_llm_dependency_span()` and
+`_end_llm_dependency_span()`. The span carries `gen_ai.system`/`gen_ai.operation.name`/
+`gen_ai.request.model`/`peer.service`/`server.address` plus `agent_name`, `tenant_id`,
+`request_id`, and — set at close, when they're known — `gen_ai.usage.input_tokens`/
+`output_tokens`/`llm_calls`. Exporter contract read off the installed
+`azure-monitor-opentelemetry-exporter` **1.0.0b56** rather than assumed: a CLIENT span
+exports as `RemoteDependencyData` (the `AppDependencies` table), `gen_ai.system` sets
+`DependencyType = "GenAI | {value}"` (`_GEN_AI_ATTRIBUTE_PREFIX`, `_exporter.py:120`) and
+takes precedence over the HTTP/DB branches, `peer.service` sets `DependencyTarget`.
+Fails closed like every other emitter here — the start path returns `None` on any
+exception and the end path ends the span from its own `finally`, so a span failure can
+never raise into an agent call. **Verified by execution**: 9 new tests in
+`tests/test_telemetry.py` against a real OTel SDK `TracerProvider` + in-memory exporter
+(full file 23 passed; adjacent `test_query_tools`/`test_agentic_sage`/`test_agent_eval`/
+`test_ops_digest` 277 passed; `ruff` clean), including one that runs the recorded span
+through the exporter's own `_convert_span_to_envelope` and asserts
+`RemoteDependencyData` / `type = "GenAI | az.ai.openai"` / `target =
+"oai-invoicellm-dev.openai.azure.com"`, and one that asserts the span is a **child of the
+surrounding request span** — the parent link that makes the dependency-vs-request
+breakdown possible at all. **Not deployed** — same blocker as Gap 292's fix; live
+`AppDependencies` keeps returning zero GenAI rows until a backend image carrying this
+code ships. First live check after that deploy: `AppDependencies | where TimeGenerated >
+ago(1h) | summarize count() by DependencyType` should gain a sixth kind.
 
 **Gap 301** — CPU-high and memory-high alerts (`alert-rules.bicep`) fire on a 15-minute
 averaged threshold alone (CPU > 90%, memory > 85%), with no check on whether autoscale

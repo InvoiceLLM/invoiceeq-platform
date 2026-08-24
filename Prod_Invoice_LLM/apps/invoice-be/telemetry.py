@@ -36,6 +36,17 @@ configured at all.
 Container App secret of that name on ``invoice-be`` and ``queue-worker`` (the bicep
 in ``infra/modules/compute/`` already declares the env var + secretRef). With the
 secret unset the module no-ops into stdout-only logging — it never raises.
+
+The one thing here that is *not* a custom event (Gap 300)
+---------------------------------------------------------
+``tracked_llm_call()`` also opens an OpenTelemetry **CLIENT span** around the call it
+wraps, which the same Azure Monitor exporter writes to ``AppDependencies`` — not
+``customEvents``. That is the whole point of it: a dependency-vs-request-duration
+breakdown ("how much of this turn was the model, the database, app logic?") is a join
+between ``AppRequests`` and ``AppDependencies``, and no ``customEvents`` row can
+participate in it. See the ``Gap 300`` constants block below for the exporter contract
+that turns that span into a dependency row, and why it is emitted by hand rather than
+by adding an OpenAI auto-instrumentation package.
 """
 
 from __future__ import annotations
@@ -45,6 +56,7 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Dict, Iterator, Optional
+from urllib.parse import urlparse
 
 from utils.logging_config import request_id_ctx, tenant_id_ctx, trace_id_ctx
 
@@ -141,6 +153,76 @@ OPS_DIGEST_EVENT_NAME = "ops_digest_run"
 
 # Exporter contract — see module docstring.
 _CUSTOM_EVENT_NAME_ATTRIBUTE = "microsoft.custom_event.name"
+
+# ---------------------------------------------------------------------------
+# Gap 300 — the LLM call as an `AppDependencies` row
+# ---------------------------------------------------------------------------
+# `llm_agent_call` above answers "what did this call cost?". It cannot answer
+# "how much of this request's duration was the model?", because it lives in
+# `customEvents` and a dependency-vs-request breakdown is a join between
+# `AppRequests` and `AppDependencies`. Confirmed live 2026-08-24: `AppDependencies`
+# in `law-invoicellm-dev` carried exactly five DependencyTypes -- `InProc`,
+# `Azure queue`, `postgresql`, `HTTP`, `Azure blob` -- and zero rows matching
+# `openai`, because the Azure Monitor distro auto-instruments psycopg2/requests/
+# urllib3 and the Azure SDKs but has no instrumentation for the openai/LangChain
+# client path.
+#
+# So the span is emitted by hand, from `tracked_llm_call()` -- the wrapper that
+# is already at every real LLM call site -- rather than by adding an
+# `opentelemetry-instrumentation-openai*` package. Three reasons, all checked
+# rather than assumed: (1) no such package is in `pyproject.toml` or `uv.lock`
+# (the distro pulls in django/fastapi/flask/logging/psycopg2/requests/urllib/
+# urllib3 and nothing else), so it would be a new dependency pinning its own
+# `opentelemetry-instrumentation` against the one the Azure distro owns;
+# (2) it patches the `openai` SDK client, so it would cover neither the `ollama`
+# provider nor `MockInvoiceLLM`, both of which this app really runs on; and
+# (3) it sits outside the "telemetry never raises" contract everything in this
+# module follows.
+#
+# How a hand-made span becomes a dependency row -- exporter contract, same
+# status as `microsoft.custom_event.name` above, read off
+# `azure/monitor/opentelemetry/exporter/export/trace/_exporter.py` (1.0.0b56):
+#
+#   * a span whose kind is CLIENT is exported as `RemoteDependencyData`, i.e.
+#     the `AppDependencies` table (`_exporter.py:353-369`);
+#   * `gen_ai.system` on that span sets `DependencyType` to
+#     `"GenAI | <value>"` (`_GEN_AI_ATTRIBUTE_PREFIX`, `_exporter.py:120`), and
+#     the exporter applies it *after* the HTTP/DB/messaging branches, so it wins
+#     even if the span also carries HTTP attributes;
+#   * `peer.service` sets `DependencyTarget`
+#     (`_get_target_for_dependency_from_peer`, `export/trace/_utils.py:148`),
+#     falling back to the `gen_ai.system` value when absent.
+#
+# The `gen_ai.*` names are OpenTelemetry semantic conventions (the
+# `opentelemetry.semconv._incubating.attributes.gen_ai_attributes` module carries
+# the same strings). They are written out as literals here rather than imported
+# because that module is under a `_incubating` private path — the same reason
+# `microsoft.custom_event.name` is a literal.
+_GEN_AI_SYSTEM_ATTRIBUTE = "gen_ai.system"
+_GEN_AI_OPERATION_ATTRIBUTE = "gen_ai.operation.name"
+_GEN_AI_REQUEST_MODEL_ATTRIBUTE = "gen_ai.request.model"
+_GEN_AI_INPUT_TOKENS_ATTRIBUTE = "gen_ai.usage.input_tokens"
+_GEN_AI_OUTPUT_TOKENS_ATTRIBUTE = "gen_ai.usage.output_tokens"
+_PEER_SERVICE_ATTRIBUTE = "peer.service"
+_SERVER_ADDRESS_ATTRIBUTE = "server.address"
+_ERROR_TYPE_ATTRIBUTE = "error.type"
+
+# Every call this app makes is a chat completion; `embeddings` runs through
+# sentence-transformers locally, not through `tracked_llm_call`.
+_GEN_AI_OPERATION_CHAT = "chat"
+
+# semconv `GenAiSystemValues` members. `mock` is not one of theirs -- it is this
+# app's own honest label for a `MockInvoiceLLM` answer, for exactly the reason
+# `resolve_model_name()` reports `"mock"` rather than the configured deployment:
+# a fabricated call must not be indistinguishable from a real one in a rollup.
+_GEN_AI_SYSTEM_AZURE_OPENAI = "az.ai.openai"
+_GEN_AI_SYSTEM_OLLAMA = "ollama"
+_GEN_AI_SYSTEM_MOCK = "mock"
+
+# Instrumentation scope name on the emitted spans — what `AppDependencies` shows
+# in `SDKVersion`/scope, and the string to grep for when auditing where a
+# dependency row came from.
+_LLM_TRACER_NAME = "invoice_be.telemetry.llm"
 
 # The two logger names configure_azure_monitor() is called with, in the two
 # processes that make LLM calls. Order matters only for the no-App-Insights
@@ -855,6 +937,167 @@ def resolve_model_name(llm: Any = None) -> str:
         return "unknown"
 
 
+# ---------------------------------------------------------------------------
+# Dependency span (Gap 300) — see the constants block for the exporter contract
+# ---------------------------------------------------------------------------
+
+
+def resolve_gen_ai_system(llm: Any = None, model: Optional[str] = None) -> str:
+    """The `gen_ai.system` value for this call — what `DependencyType` becomes.
+
+    Reads the already-resolved model name first: ``resolve_model_name()`` walks
+    the ``RunnableBinding`` chain and reports ``"mock"`` for a ``MockInvoiceLLM``
+    answer, so checking its output catches a wrapped mock that a bare
+    ``type(llm).__name__`` check would miss.
+    """
+    if (model or "").strip().lower() == _GEN_AI_SYSTEM_MOCK:
+        return _GEN_AI_SYSTEM_MOCK
+    if type(llm).__name__ == "MockInvoiceLLM":
+        return _GEN_AI_SYSTEM_MOCK
+    try:
+        from config import get_settings
+
+        provider = (getattr(get_settings(), "LLM_PROVIDER", "") or "").strip().lower()
+    except Exception:  # pragma: no cover - settings unavailable
+        provider = ""
+    if provider == "azure":
+        return _GEN_AI_SYSTEM_AZURE_OPENAI
+    if provider == "ollama":
+        return _GEN_AI_SYSTEM_OLLAMA
+    # `LLM_PROVIDER` defaults to "azure" in config.py, so this is the
+    # someone-configured-something-else case; report what they configured.
+    return provider or _GEN_AI_SYSTEM_AZURE_OPENAI
+
+
+def resolve_gen_ai_peer(gen_ai_system: str) -> str:
+    """Hostname of the endpoint that served the call — what `DependencyTarget` becomes.
+
+    **Hostname only, deliberately**: the configured endpoint can carry a path and
+    query string, and an Azure OpenAI URL's query string is a place API versions
+    and (in some SDK shapes) keys travel. A dependency target is a host, so
+    nothing beyond ``.hostname`` is ever read.
+
+    Empty for a mock — there is no peer, and the exporter then falls back to the
+    ``gen_ai.system`` value for the target, which is the honest answer.
+    """
+    if gen_ai_system == _GEN_AI_SYSTEM_MOCK:
+        return ""
+    try:
+        from config import get_settings
+
+        settings = get_settings()
+        if gen_ai_system == _GEN_AI_SYSTEM_OLLAMA:
+            endpoint = getattr(settings, "OLLAMA_BASE_URL", "") or ""
+        else:
+            endpoint = getattr(settings, "AZURE_OPENAI_ENDPOINT", "") or ""
+        endpoint = endpoint.strip()
+        if not endpoint:
+            return ""
+        if "://" not in endpoint:
+            endpoint = "https://" + endpoint
+        return urlparse(endpoint).hostname or ""
+    except Exception:  # pragma: no cover - settings unavailable/unparseable
+        return ""
+
+
+def _start_llm_dependency_span(
+    agent_name: str,
+    model: Optional[str],
+    *,
+    llm: Any = None,
+    tenant_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> Optional[Any]:
+    """Open one CLIENT span for an LLM call, or return ``None``.
+
+    Started rather than entered as the *current* span on purpose. Making it
+    current would mutate the OpenTelemetry context across the ``yield`` of a
+    contextmanager that is used inside both sync and async call sites; starting
+    it plainly still reads the current context for its **parent**, which is the
+    only part that matters here — the parent is the FastAPI request span, so the
+    resulting row carries the request's ``operation_Id``/``operation_ParentId``
+    and the "how much of this request was the model?" breakdown works.
+
+    Never raises. Without a configured tracer provider (local dev, tests, CI, any
+    process with no ``APPLICATIONINSIGHTS_CONNECTION_STRING``) the OpenTelemetry
+    API hands back a no-op tracer, and this costs an object allocation.
+    """
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        gen_ai_system = resolve_gen_ai_system(llm, model)
+        model_name = model or "unknown"
+        attributes: Dict[str, Any] = {
+            _GEN_AI_SYSTEM_ATTRIBUTE: gen_ai_system,
+            _GEN_AI_OPERATION_ATTRIBUTE: _GEN_AI_OPERATION_CHAT,
+            _GEN_AI_REQUEST_MODEL_ATTRIBUTE: model_name,
+            # Not semconv, and the reason this is worth carrying: `DependencyType`
+            # collapses every LLM call in the app to one value, so the per-feature
+            # -area breakdown Gap 300 exists to unblock needs the agent name in
+            # `customDimensions` to group by.
+            "agent_name": agent_name,
+            "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
+            "request_id": str(request_id or request_id_ctx.get() or ""),
+        }
+        peer = resolve_gen_ai_peer(gen_ai_system)
+        if peer:
+            attributes[_PEER_SERVICE_ATTRIBUTE] = peer
+            attributes[_SERVER_ADDRESS_ATTRIBUTE] = peer
+
+        return _otel_trace.get_tracer(_LLM_TRACER_NAME).start_span(
+            # semconv span name for a chat completion: "{operation} {model}".
+            f"{_GEN_AI_OPERATION_CHAT} {model_name}",
+            kind=_otel_trace.SpanKind.CLIENT,
+            attributes=attributes,
+        )
+    except Exception:  # pragma: no cover - telemetry must never break a call
+        logger.debug("Could not start LLM dependency span for %s", agent_name, exc_info=True)
+        return None
+
+
+def _end_llm_dependency_span(
+    span: Optional[Any],
+    *,
+    usage: Optional[LlmUsage] = None,
+    status: str = _STATUS_SUCCESS,
+    error_type: Optional[str] = None,
+) -> None:
+    """Close the span opened by ``_start_llm_dependency_span``.
+
+    Token counts are only known here, after the wrapped block has run, which is
+    why the span is closed by hand rather than with a ``with`` block.
+
+    Never raises, and ends the span even if setting an attribute failed — an
+    unended span is a leak in the batch processor, so the ``end()`` lives in its
+    own ``finally``.
+    """
+    if span is None:
+        return
+    try:
+        from opentelemetry.trace import Status, StatusCode
+
+        if usage is not None:
+            span.set_attribute(_GEN_AI_INPUT_TOKENS_ATTRIBUTE, int(usage.tokens_in))
+            span.set_attribute(_GEN_AI_OUTPUT_TOKENS_ATTRIBUTE, int(usage.tokens_out))
+            span.set_attribute("llm_calls", int(usage.llm_calls))
+        if status == _STATUS_ERROR:
+            # The exporter reads `span.status.is_ok` for the dependency's
+            # `Success` column, so this is what makes a failed call show as a
+            # failed dependency rather than a slow one.
+            span.set_status(Status(StatusCode.ERROR, error_type or ""))
+            if error_type:
+                span.set_attribute(_ERROR_TYPE_ATTRIBUTE, error_type)
+        else:
+            span.set_status(Status(StatusCode.OK))
+    except Exception:  # pragma: no cover - telemetry must never break a call
+        logger.debug("Could not annotate LLM dependency span", exc_info=True)
+    finally:
+        try:
+            span.end()
+        except Exception:  # pragma: no cover
+            logger.debug("Could not end LLM dependency span", exc_info=True)
+
+
 @contextmanager
 def tracked_llm_call(
     agent_name: str,
@@ -870,10 +1113,29 @@ def tracked_llm_call(
     Times the block, captures token counts, records ``status`` as ``success`` or
     ``error``, and re-raises anything the block raised completely unchanged — so a
     call site's own error handling behaves exactly as it did before.
+
+    Gap 300: the same block also produces one OpenTelemetry CLIENT span, which
+    the Azure Monitor exporter writes to ``AppDependencies``. Two emissions, one
+    wrapper, because they answer different questions — the event carries tokens
+    and cost, the span carries duration *inside the parent request*.
     """
     usage = LlmUsage()
     handler = _build_usage_handler(usage)
     reset_token = _usage_handler_ctx.set(handler) if handler is not None else None
+
+    # Resolved up front rather than in the `finally` below, because the
+    # dependency span needs the model name at *start* time. The `model_name or
+    # resolve_model_name(llm)` in the finally keeps the pre-Gap-300 behaviour
+    # exactly if this ever came back empty.
+    model_name = model
+    if not model_name:
+        try:
+            model_name = resolve_model_name(llm)
+        except Exception:  # pragma: no cover - resolve_model_name is defensive already
+            model_name = None
+    span = _start_llm_dependency_span(
+        agent_name, model_name, llm=llm, tenant_id=tenant_id, request_id=request_id
+    )
 
     started = time.perf_counter()
     status = _STATUS_SUCCESS
@@ -890,9 +1152,12 @@ def tracked_llm_call(
                 _usage_handler_ctx.reset(reset_token)
         except Exception:  # pragma: no cover
             logger.debug("Failed to reset LLM usage context", exc_info=True)
+        # Closed before the event is emitted so the span's own duration stays as
+        # close as possible to the `latency_ms` the event reports.
+        _end_llm_dependency_span(span, usage=usage, status=status, error_type=error_type)
         track_agent_call(
             agent_name,
-            model or resolve_model_name(llm),
+            model_name or resolve_model_name(llm),
             usage.tokens_in,
             usage.tokens_out,
             (time.perf_counter() - started) * 1000.0,

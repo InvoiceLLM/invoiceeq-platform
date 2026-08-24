@@ -458,3 +458,278 @@ def test_trainer_rule_guardrail_emits_one_hard_metrics_event(caplog):
     _assert_hard_metrics(records[0], "trainer.rule_guardrail")
     assert records[0].tenant_id == "tenant-evolve"
     assert records[0].rule_count == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap 300 — the LLM call as an `AppDependencies` row
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# These are deliberately not caplog tests: the dependency span is the one thing
+# `telemetry.py` emits that is *not* a log record. They install a real
+# OpenTelemetry SDK `TracerProvider` with an in-memory exporter, so what is
+# asserted is the actual span object the Azure Monitor exporter would receive.
+#
+# `test_llm_dependency_span_converts_to_a_remote_dependency_envelope` goes one
+# step further and runs that span through the real
+# `azure-monitor-opentelemetry-exporter` conversion function — the same code
+# path a deployed container runs — so the claim "this lands in AppDependencies
+# with DependencyType 'GenAI | az.ai.openai'" is executed, not asserted from
+# reading the exporter's source. It is the closest a local test can get to the
+# live KQL that opened this gap; the live check itself needs a deploy.
+
+import config  # noqa: E402
+
+
+@pytest.fixture
+def recorded_spans():
+    """Spans emitted during the test, captured in memory.
+
+    Attaches to the process-global `TracerProvider` (creating an SDK one on the
+    first use) rather than swapping it: OpenTelemetry only honours
+    `set_tracer_provider` once per process, and `telemetry.py` resolves its
+    tracer from the global on every call, exactly as it does in a container.
+    """
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    provider = otel_trace.get_tracer_provider()
+    if not isinstance(provider, TracerProvider):
+        provider = TracerProvider()
+        otel_trace.set_tracer_provider(provider)
+
+    exporter = InMemorySpanExporter()
+    processor = SimpleSpanProcessor(exporter)
+    provider.add_span_processor(processor)
+    try:
+        yield exporter
+    finally:
+        # There is no public "remove processor"; shutting it down stops it
+        # recording so it cannot capture a later test's spans.
+        processor.shutdown()
+
+
+@pytest.fixture
+def azure_openai_configured(monkeypatch):
+    """Pin the provider/endpoint so the span's system + target don't depend on
+    the developer's local `.env`. `get_settings()` is `lru_cache`d, so patching
+    the singleton's attributes is what `telemetry.py` will read."""
+    settings = config.get_settings()
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "azure")
+    monkeypatch.setattr(
+        settings, "AZURE_OPENAI_ENDPOINT", "https://oai-invoicellm-dev.openai.azure.com/"
+    )
+    # `resolve_model_name()` falls back to the configured deployment for a model
+    # object that carries no name of its own (which `GenericFakeChatModel` is).
+    monkeypatch.setattr(settings, "AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-5-mini")
+    yield settings
+
+
+def _llm_spans(exporter):
+    return [
+        s
+        for s in exporter.get_finished_spans()
+        if s.instrumentation_scope is not None
+        and s.instrumentation_scope.name == "invoice_be.telemetry.llm"
+    ]
+
+
+def test_tracked_llm_call_emits_one_client_span_with_the_gen_ai_attributes(
+    recorded_spans, azure_openai_configured
+):
+    """The core of Gap 300: a CLIENT span carrying `gen_ai.system`, which is what
+    makes the exporter write an `AppDependencies` row typed as GenAI."""
+    from opentelemetry.trace import SpanKind
+
+    model = GenericFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content="ok",
+                    usage_metadata={"input_tokens": 77, "output_tokens": 12, "total_tokens": 89},
+                )
+            ]
+        )
+    )
+
+    with tracked_llm_call("chat.sql_generate", llm=model, tenant_id="tenant-dep"):
+        model.invoke("how many invoices are overdue?")
+
+    spans = _llm_spans(recorded_spans)
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.kind is SpanKind.CLIENT
+    # semconv span name for a chat completion, "{operation} {model}".
+    assert span.name == "chat gpt-5-mini"
+    assert span.attributes["gen_ai.system"] == "az.ai.openai"
+    assert span.attributes["gen_ai.operation.name"] == "chat"
+    assert span.attributes["gen_ai.request.model"] == "gpt-5-mini"
+    # The endpoint hostname, which becomes DependencyTarget.
+    assert span.attributes["peer.service"] == "oai-invoicellm-dev.openai.azure.com"
+    assert span.attributes["server.address"] == "oai-invoicellm-dev.openai.azure.com"
+    # Same token counts the `llm_agent_call` event carries — the two surfaces
+    # must not disagree about the same call.
+    assert span.attributes["gen_ai.usage.input_tokens"] == 77
+    assert span.attributes["gen_ai.usage.output_tokens"] == 12
+    assert span.attributes["llm_calls"] == 1
+    # Not semconv; the per-feature-area grouping key the gap exists to unblock.
+    assert span.attributes["agent_name"] == "chat.sql_generate"
+    assert span.attributes["tenant_id"] == "tenant-dep"
+    assert span.status.is_ok
+    assert span.end_time > span.start_time
+
+
+def test_llm_dependency_span_is_a_child_of_the_surrounding_request_span(
+    recorded_spans, azure_openai_configured
+):
+    """Why the span exists at all: `AppDependencies` rows only support a
+    dependency-vs-request-duration breakdown if they hang off the request's
+    trace. This asserts the parent link the FastAPI request span supplies."""
+    from opentelemetry import trace as otel_trace
+
+    tracer = otel_trace.get_tracer("test.request")
+    with tracer.start_as_current_span("POST /api/chat") as request_span:
+        request_context = request_span.get_span_context()
+        with tracked_llm_call("chat.conversational", model="gpt-5-mini", tenant_id="t"):
+            pass
+
+    span = _llm_spans(recorded_spans)[0]
+    assert span.parent is not None
+    assert span.parent.span_id == request_context.span_id
+    assert span.context.trace_id == request_context.trace_id
+
+
+def test_llm_dependency_span_converts_to_a_remote_dependency_envelope(
+    recorded_spans, azure_openai_configured
+):
+    """Executed proof that this reaches `AppDependencies`, not `traces`.
+
+    Runs the recorded span through the installed
+    `azure-monitor-opentelemetry-exporter`'s own span→envelope conversion (the
+    exact function the deployed container runs on export) and asserts the
+    envelope is `RemoteDependencyData` typed `GenAI | az.ai.openai` — i.e. the
+    `DependencyType` the KQL that opened this gap searched for and did not find.
+    """
+    exporter_module = pytest.importorskip(
+        "azure.monitor.opentelemetry.exporter.export.trace._exporter"
+    )
+
+    with tracked_llm_call("sage.plan", model="gpt-5-mini", tenant_id="tenant-dep"):
+        pass
+
+    envelope = exporter_module._convert_span_to_envelope(_llm_spans(recorded_spans)[0])
+
+    assert envelope.data.base_type == "RemoteDependencyData"
+    dependency = envelope.data.base_data
+    assert dependency.type == "GenAI | az.ai.openai"
+    assert dependency.target == "oai-invoicellm-dev.openai.azure.com"
+    assert dependency.name == "chat gpt-5-mini"
+    assert dependency.success is True
+    # `agent_name` survives into customDimensions; the semconv-standard
+    # `peer.*`/`server.*` keys are consumed into the target instead.
+    assert dependency.properties["agent_name"] == "sage.plan"
+
+
+def test_llm_dependency_span_marks_a_failed_call_as_a_failed_dependency(
+    recorded_spans, azure_openai_configured
+):
+    """A model outage has to show as a failed dependency, not a fast one — the
+    exporter reads `span.status.is_ok` for the `Success` column."""
+    from opentelemetry.trace import StatusCode
+
+    with pytest.raises(RuntimeError, match="upstream 503"):
+        with tracked_llm_call("chat.classify", model="gpt-5-mini", tenant_id="t"):
+            raise RuntimeError("upstream 503")
+
+    span = _llm_spans(recorded_spans)[0]
+    assert span.status.status_code is StatusCode.ERROR
+    assert span.attributes["error.type"] == "RuntimeError"
+    assert span.end_time is not None  # ended despite the exception
+
+
+def test_a_mock_llm_answer_is_never_labelled_as_azure_openai(
+    recorded_spans, azure_openai_configured
+):
+    """Same rule `resolve_model_name` follows: a call a mock answered must not be
+    indistinguishable from a real one in a dependency rollup."""
+    from utils.llm import MockInvoiceLLM
+
+    with tracked_llm_call("chat.conversational", llm=MockInvoiceLLM(), tenant_id="t"):
+        pass
+
+    span = _llm_spans(recorded_spans)[0]
+    assert span.attributes["gen_ai.system"] == "mock"
+    assert span.attributes["gen_ai.request.model"] == "mock"
+    # No peer for a mock — there was no network call to name.
+    assert "peer.service" not in span.attributes
+
+
+def test_ollama_provider_is_reported_as_its_own_gen_ai_system(monkeypatch):
+    """The other provider this app really supports. Asserted on the resolvers
+    directly so it does not depend on a tracer provider being installed."""
+    settings = config.get_settings()
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(settings, "OLLAMA_BASE_URL", "http://ollama-host:11434")
+
+    system = telemetry.resolve_gen_ai_system(None, "llama3")
+    assert system == "ollama"
+    assert telemetry.resolve_gen_ai_peer(system) == "ollama-host"
+
+
+def test_resolve_gen_ai_peer_never_leaks_more_than_a_hostname(monkeypatch):
+    """A dependency target is a host. The configured endpoint can carry a path
+    and query string, and an Azure OpenAI URL's query string is where api-version
+    (and in some SDK shapes, a key) travels."""
+    settings = config.get_settings()
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "azure")
+    monkeypatch.setattr(
+        settings,
+        "AZURE_OPENAI_ENDPOINT",
+        "https://oai-invoicellm-dev.openai.azure.com/openai/deployments/x?api-key=secret",
+    )
+
+    assert telemetry.resolve_gen_ai_peer("az.ai.openai") == "oai-invoicellm-dev.openai.azure.com"
+
+
+def test_a_broken_dependency_span_never_breaks_the_wrapped_call(monkeypatch, caplog):
+    """Same contract as `test_a_broken_emitter_never_breaks_the_wrapped_call`,
+    for the new emission path: span failure is not an agent failure, and the
+    `llm_agent_call` event must still be emitted."""
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("no tracer provider")
+
+    monkeypatch.setattr(telemetry, "resolve_gen_ai_system", _explode)
+
+    with caplog.at_level(logging.INFO):
+        with tracked_llm_call("unit.resilient", model="gpt-5-mini", tenant_id="tenant-5"):
+            answer = "the agent still returns its answer"
+
+    assert answer == "the agent still returns its answer"
+    assert _events(caplog)[-1].agent_name == "unit.resilient"
+
+
+def test_a_hostile_span_object_is_still_ended_and_never_raises():
+    """`_end_llm_dependency_span` ends the span even when annotating it fails —
+    an unended span is a leak in the batch processor."""
+
+    class _HostileSpan:
+        def __init__(self):
+            self.ended = False
+
+        def set_attribute(self, *_args, **_kwargs):
+            raise RuntimeError("span is already ended")
+
+        def set_status(self, *_args, **_kwargs):
+            raise RuntimeError("span is already ended")
+
+        def end(self):
+            self.ended = True
+
+    span = _HostileSpan()
+    telemetry._end_llm_dependency_span(span, usage=telemetry.LlmUsage(), status="success")
+    assert span.ended is True
+
+    # And a None span (the no-tracer path) is simply a no-op.
+    telemetry._end_llm_dependency_span(None, usage=telemetry.LlmUsage(), status="error")
