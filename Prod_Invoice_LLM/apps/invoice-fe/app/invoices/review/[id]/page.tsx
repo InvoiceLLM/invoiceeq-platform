@@ -14,6 +14,7 @@ import {
   Undo2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import { formatCurrency } from "@/lib/utils";
@@ -276,6 +277,7 @@ export default function AuditorReviewPage() {
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
   const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
+  const [isAlertsExpanded, setIsAlertsExpanded] = useState(false);
 
   // FE Gap 272: Previous/Next between AUDIT_REQUIRED invoices, without
   // becoming the tab/queue strip that FE Gap 112 item 3 deliberately
@@ -689,13 +691,106 @@ export default function AuditorReviewPage() {
             stacked into one scrolling right-hand column, so the two things an
             auditor has to compare (the alert and the field it refers to) were
             usually not on screen at the same time.
-
-            FE Gap 112 item 3: there is deliberately no invoice tab/queue strip
+        {/* FE Gap 112 item 3: there is deliberately no invoice tab/queue strip
             above this grid. One was drawn during the mockup pass and rejected
             -- this route renders exactly one invoice (`/invoices/review/[id]`)
             and the Audit Queue is the place to move between them. Confirmed
-            absent in code as well: nothing here has ever rendered one. */}
-        <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
+            absent in code as well */}
+
+        {/* Top Banner — Discrepancy Warnings (Collapsible) */}
+        <section
+          data-testid="alerts-banner"
+          className="flex flex-col rounded-xl border border-yellow-700/50 bg-[#0F172A] overflow-hidden shrink-0"
+        >
+          <button
+            type="button"
+            onClick={() => setIsAlertsExpanded((prev) => !prev)}
+            className="flex items-center justify-between gap-3 px-4 py-2.5 bg-yellow-950/20 hover:bg-yellow-950/30 transition-colors text-left"
+          >
+            <div className="flex items-center gap-3">
+              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
+                Discrepancy Warnings
+                <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-0.5 font-mono text-[10px] font-semibold normal-case tracking-normal text-[#10B981]">
+                  SENTINEL
+                </span>
+              </p>
+              {alerts.length > 0 ? (
+                <span className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-950/40 px-2 py-0.5 text-[11px] font-medium text-yellow-300">
+                  {alerts.length} open alert{alerts.length === 1 ? "" : "s"}
+                </span>
+              ) : (
+                <span className="shrink-0 rounded-md border border-emerald-700/50 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
+                  No open alerts
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
+              <span>{isAlertsExpanded ? "Collapse" : "Expand alerts"}</span>
+              <ChevronDown
+                size={14}
+                className={`transition-transform duration-200 ${isAlertsExpanded ? "rotate-180" : ""}`}
+              />
+            </div>
+          </button>
+
+          {isAlertsExpanded && (
+            <div className="border-t border-[#222D3D] p-4 max-h-[250px] overflow-y-auto custom-scrollbar">
+              <AlertConsole
+                invoiceId={invoice.id}
+                alerts={alerts}
+                currentStatus={invoice.status}
+                onAlertsChange={setAlerts}
+                corrections={corrections}
+                applyAsStandingRule={applyAsStandingRule}
+                resolveCorrection={resolveCorrection}
+                onFocusField={(field) =>
+                  setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))
+                }
+                onDismissed={(res) => {
+                  if (Object.keys(corrections).length > 0) {
+                    setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
+                    setCorrections({});
+                  }
+                  setApplyAsStandingRule(false);
+                  if (res?.suggested_rule) setSuggestedRule(res.suggested_rule);
+                  if (res?.standing_rule_result) setStandingRuleResult(res.standing_rule_result);
+                }}
+              />
+
+              {standingRuleResult && (
+                <div
+                  className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                    standingRuleResult.applied
+                      ? "border-emerald-600/40 bg-emerald-950/20 text-emerald-200"
+                      : "border-amber-600/40 bg-amber-950/20 text-amber-200"
+                  }`}
+                >
+                  <ShieldCheck size={14} className="mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    {standingRuleResult.applied ? (
+                      <>
+                        <p className="font-medium">Standing rule applied.</p>
+                        {standingRuleResult.rules_added?.map((r, i) => (
+                          <p key={i} className="text-emerald-300/80 mt-0.5">{r}</p>
+                        ))}
+                      </>
+                    ) : (
+                      <p>{standingRuleResult.reason || "Rule not applied."}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setStandingRuleResult(null)}
+                    className="shrink-0 text-current opacity-60 hover:opacity-100"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:overflow-hidden">
           {/* COLUMN 1 — PDF Viewer (unchanged; it already manages its own
               internal scrolling and zoom/rotate toolbar). */}
           <PdfViewerCanvas
@@ -705,102 +800,199 @@ export default function AuditorReviewPage() {
             coordinates={invoice.coordinates ?? []}
           />
 
-          {/* COLUMN 2 — Fields. min-h-0 is required on every one of these flex
-              columns: without it, a flex child's default min-height:auto lets
-              it grow to its full content height instead of respecting the grid
-              row's bounds, so overflow-y-auto never actually engages and the
-              overflow gets silently clipped by the grid parent's
-              overflow-hidden instead of becoming scrollable. */}
+          {/* COLUMN 2 — Fields & Line Items */}
           <section
             data-testid="fields-panel"
-            className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
+            className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A] overflow-hidden"
           >
-            <div className="flex items-center justify-between gap-2 border-b border-[#222D3D] px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                Extracted Fields
-              </p>
-              <span className="shrink-0 rounded-md border border-[#222D3D] px-2 py-1 text-[11px] text-slate-500">
-                {isResolved ? "Resolved — read-only" : "Click a field to correct it"}
-              </span>
-            </div>
-
-            {/* Gap 156: max-h ensures internal scroll on non-XL screens so the section
-                doesn't grow unbounded and force the whole page to scroll. */}
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 max-h-[calc(100vh-180px)] xl:max-h-none">
-              {/* Metadata Fields — editable (Task 4.6), confidence-flagged
-                  (Task 4.5), alert-flagged and correction-visible (Gap 112
-                  item 4). Single column now that this is a dedicated panel
-                  rather than half the screen: two columns of inputs plus their
-                  correction rows would not fit at 1280px. */}
-              <div className="flex flex-col gap-3">
-                {CORRECTABLE_FIELDS.map(({ key, label, azureKey, type }) => {
-                  const confidence = invoice.field_confidence?.[azureKey];
-                  const isLowConfidence = confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
-                  const rawValue = displayValue(key);
-                  const displayed =
-                    type === "number" && !(key in corrections)
-                      ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
-                      : rawValue;
-                  return (
-                    <EditableField
-                      key={key as string}
-                      label={label}
-                      value={displayed}
-                      originalDisplay={originalDisplay(key)}
-                      onChange={(next) => handleFieldChange(key as string, next)}
-                      onRevert={() => handleRevertField(key as string)}
-                      isDirty={key in corrections}
-                      isLowConfidence={isLowConfidence}
-                      confidence={confidence}
-                      isFlagged={flaggedFields.has(key as string)}
-                      disabled={isResolved}
-                      focusNonce={
-                        focusRequest?.field === (key as string) ? focusRequest.nonce : undefined
-                      }
-                      // Gap 208: pass correct native input type for date/number fields
-                      // so the browser renders a calendar picker or numeric input
-                      inputType={type}
-                    />
-                  );
-                })}
+            {/* SECTION 1: Correctable Fields Form (Independent scroll container) */}
+            <div className="flex flex-col border-b border-[#222D3D]">
+              <div className="flex items-center justify-between gap-2 bg-[#0B1220] px-4 py-2.5 border-b border-[#222D3D]">
+                <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  Extracted Fields
+                </p>
+                <span className="shrink-0 rounded-md border border-[#222D3D] px-2 py-0.5 text-[11px] text-slate-500">
+                  {isResolved ? "Resolved — read-only" : "Click a field to correct it"}
+                </span>
               </div>
 
-              {/* Line Items (FE Gap 10): tabular view -- Description, Qty, Unit
-                  Price, Total -- quantity/unit_price were already present on
-                  LineItem but never rendered, only description + amount were. */}
-              <div className="overflow-x-auto rounded-xl border border-[#222D3D] bg-[#0B1220] p-4">
-                <div className="mb-3 flex items-center justify-between">
+              <div className="flex flex-col gap-4 overflow-y-auto custom-scrollbar p-4 max-h-[300px] xl:max-h-[340px]">
+                <div className="flex flex-col gap-3">
+                  {CORRECTABLE_FIELDS.map(({ key, label, azureKey, type }) => {
+                    const confidence = invoice.field_confidence?.[azureKey];
+                    const isLowConfidence = confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
+                    const rawValue = displayValue(key);
+                    const displayed =
+                      type === "number" && !(key in corrections)
+                        ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
+                        : rawValue;
+                    return (
+                      <EditableField
+                        key={key as string}
+                        label={label}
+                        value={displayed}
+                        originalDisplay={originalDisplay(key)}
+                        onChange={(next) => handleFieldChange(key as string, next)}
+                        onRevert={() => handleRevertField(key as string)}
+                        isDirty={key in corrections}
+                        isLowConfidence={isLowConfidence}
+                        confidence={confidence}
+                        isFlagged={flaggedFields.has(key as string)}
+                        disabled={isResolved}
+                        focusNonce={
+                          focusRequest?.field === (key as string) ? focusRequest.nonce : undefined
+                        }
+                        inputType={type}
+                      />
+                    );
+                  })}
+                </div>
+
+                {/* Additional Extracted Metadata Panel */}
+                {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
+                  <div
+                    data-testid="extracted-metadata-panel"
+                    className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
+                  >
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
+
+                    {invoice.currency && (
+                      <div className="flex justify-between gap-3 text-xs">
+                        <span className="min-w-0 break-words text-slate-500">Currency</span>
+                        <span className="min-w-0 break-all text-right font-mono text-slate-300">{invoice.currency}</span>
+                      </div>
+                    )}
+
+                    {(invoice.discount_amount != null || invoice.discount_percent != null) && (
+                      <div className="flex justify-between gap-3 text-xs">
+                        <span className="min-w-0 break-words text-slate-500">Invoice Discount</span>
+                        <span className="min-w-0 break-all text-right font-mono text-slate-300">
+                          {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
+                          {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
+                        </span>
+                      </div>
+                    )}
+
+                    {invoice.tax_ids && invoice.tax_ids.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
+                        {invoice.tax_ids.map((t, i) => (
+                          <div key={i} className="flex justify-between gap-3 text-xs">
+                            <span className="min-w-0 break-words text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
+                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{t.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {invoice.taxes && invoice.taxes.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
+                        {invoice.taxes.map((t, i) => (
+                          <div key={i} className="flex justify-between gap-3 text-xs">
+                            <span className="min-w-0 break-words text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
+                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
+                        {invoice.payment_instructions.map((p, i) => (
+                          <div key={i} className="flex min-w-0 flex-col text-xs">
+                            <span className="break-words text-slate-500">{p.method_type}</span>
+                            <span className="font-mono text-slate-400 break-all">{p.details}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {invoice.references && invoice.references.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">References</span>
+                        {invoice.references.map((r, i) => (
+                          <div key={i} className="flex justify-between gap-3 text-xs">
+                            <span className="min-w-0 break-words text-slate-500">{r.ref_type}</span>
+                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{r.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {invoice.discounts && invoice.discounts.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Discount Breakdown</span>
+                        {invoice.discounts.map((d, i) => (
+                          <div key={i} className="flex justify-between gap-3 text-xs">
+                            <span className="min-w-0 break-words text-slate-500">{d.discount_type}{d.percent != null ? ` ${d.percent}%` : ""}</span>
+                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(d.amount, invoice.currency)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
+                        {invoice.compliance_metadata.map((c, i) => (
+                          <div key={i} className="flex justify-between gap-3 text-xs">
+                            <span className="min-w-0 break-words text-slate-500">{c.key}</span>
+                            <span className="min-w-0 break-all text-right font-mono text-slate-300">{c.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SECTION 2: Line Items Table (Independent scroll container with persistent header) */}
+            <div className="flex flex-1 flex-col bg-[#0B1220] p-4 min-h-[220px] overflow-hidden">
+              <div className="mb-3 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
                   <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
                     Line Items
                   </p>
-                  {!isResolved && (
-                    isEditingItems ? (
-                      <div className="flex gap-2">
-                        <button
-                          onClick={saveItems}
-                          className="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors"
-                        >
-                          Save Items
-                        </button>
-                        <button
-                          onClick={() => setIsEditingItems(false)}
-                          className="rounded bg-slate-700 px-2 py-1 text-xs font-semibold text-white hover:bg-slate-650 transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={startEditingItems}
-                        className="flex items-center gap-1 rounded bg-[#3B82F6] px-2 py-1 text-xs font-semibold text-white hover:bg-blue-500 transition-colors"
-                      >
-                        <Pencil size={12} />
-                        Edit Items
-                      </button>
-                    )
-                  )}
+                  <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300 border border-slate-700">
+                    {(isEditingItems ? editedItems : (invoice.items ?? [])).length} items
+                  </span>
+                  <span className="rounded bg-blue-950/40 px-2 py-0.5 font-mono text-[11px] text-blue-300 border border-blue-800/40">
+                    Subtotal: {fmt((isEditingItems ? editedItems : (invoice.items ?? [])).reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
+                  </span>
                 </div>
 
+                {!isResolved && (
+                  isEditingItems ? (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveItems}
+                        className="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors"
+                      >
+                        Save Items
+                      </button>
+                      <button
+                        onClick={() => setIsEditingItems(false)}
+                        className="rounded bg-slate-700 px-2 py-1 text-xs font-semibold text-white hover:bg-slate-650 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={startEditingItems}
+                      className="flex items-center gap-1 rounded bg-[#3B82F6] px-2 py-1 text-xs font-semibold text-white hover:bg-blue-500 transition-colors"
+                    >
+                      <Pencil size={12} />
+                      Edit Items
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div className="flex-1 overflow-auto rounded-xl border border-[#222D3D] bg-[#0F172A] p-3 custom-scrollbar">
                 {isEditingItems ? (
                   <table className="w-full border-collapse text-left">
                     <thead>
@@ -935,139 +1127,11 @@ export default function AuditorReviewPage() {
                   )
                 )}
               </div>
-
-              {/* Gap 205: Extended extracted metadata panel — currency, discounts, tax IDs, payment instructions.
-                  Gap 286: this used to sit *outside* the scroll container that
-                  closes below, as a direct flex child of the panel <section>
-                  alongside the header, the scroll area and the corrections
-                  footer. A flex item's default `min-height: auto` meant it
-                  could not shrink below its own content height, so on an
-                  invoice carrying a real amount of metadata (tax breakdown +
-                  tax IDs + payment instructions + compliance/e-invoice rows)
-                  it claimed the column's height for itself, squeezed the
-                  `flex-1` fields/line-items area down towards zero, and then
-                  overflowed the section anyway -- clipped silently by the
-                  grid's `xl:overflow-hidden`. Moving it inside the scroll
-                  container makes it scroll with the fields it belongs to, so
-                  the panel accommodates any amount of metadata rather than
-                  being sized to one particular schema. `mx-4 mb-4` dropped
-                  with the move: the scroll container already supplies p-4/gap-4. */}
-              {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
-                <div
-                  data-testid="extracted-metadata-panel"
-                  className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
-                >
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
-
-                  {/* Currency */}
-                  {invoice.currency && (
-                    <div className="flex justify-between gap-3 text-xs">
-                      <span className="min-w-0 break-words text-slate-500">Currency</span>
-                      <span className="min-w-0 break-all text-right font-mono text-slate-300">{invoice.currency}</span>
-                    </div>
-                  )}
-
-                  {/* Discount Amount / Percent */}
-                  {(invoice.discount_amount != null || invoice.discount_percent != null) && (
-                    <div className="flex justify-between gap-3 text-xs">
-                      <span className="min-w-0 break-words text-slate-500">Invoice Discount</span>
-                      <span className="min-w-0 break-all text-right font-mono text-slate-300">
-                        {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
-                        {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Tax IDs */}
-                  {invoice.tax_ids && invoice.tax_ids.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
-                      {invoice.tax_ids.map((t, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{t.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Taxes breakdown */}
-                  {invoice.taxes && invoice.taxes.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
-                      {invoice.taxes.map((t, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Payment Instructions */}
-                  {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
-                      {invoice.payment_instructions.map((p, i) => (
-                        <div key={i} className="flex min-w-0 flex-col text-xs">
-                          <span className="break-words text-slate-500">{p.method_type}</span>
-                          <span className="font-mono text-slate-400 break-all">{p.details}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* References. Gap 286: `references` was already counted in
-                      this panel's render gate above and declared on
-                      InvoiceDetail, but Gap 205 never gave it a block -- an
-                      invoice carrying only references rendered an empty
-                      "Additional Extracted Metadata" box. */}
-                  {invoice.references && invoice.references.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">References</span>
-                      {invoice.references.map((r, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{r.ref_type}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{r.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Discounts breakdown. Gap 286: same as `references` --
-                      counted in the gate, declared on the type, never rendered. */}
-                  {invoice.discounts && invoice.discounts.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Discount Breakdown</span>
-                      {invoice.discounts.map((d, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{d.discount_type}{d.percent != null ? ` ${d.percent}%` : ""}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(d.amount, invoice.currency)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Compliance Metadata */}
-                  {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
-                      {invoice.compliance_metadata.map((c, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{c.key}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{c.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
-            {/* Pending-corrections footer, pinned to the bottom of this panel
-                rather than scrolling away with the fields it summarises. */}
+            {/* Pinned Corrections Footer */}
             {hasUnsavedCorrections && !isResolved && (
-              <div className="shrink-0 border-t border-[#222D3D] p-3">
+              <div className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A]">
                 <div className="flex flex-col gap-2 rounded-lg border border-blue-600/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
                   <div className="flex items-center justify-between gap-2">
                     <span className="flex items-center gap-2">
@@ -1082,9 +1146,6 @@ export default function AuditorReviewPage() {
                       {savingCorrection ? "Saving..." : "Save Correction"}
                     </button>
                   </div>
-                  {/* Task 4.10 (Gap 67 / BE Gap 62): vendor-scoped only -- no
-                      vendor name resolved on this invoice means there's nothing
-                      to scope the rule to. */}
                   {invoice.vendor_name && (
                     <label className="flex cursor-pointer items-center gap-2 text-blue-300/90">
                       <input
@@ -1099,96 +1160,13 @@ export default function AuditorReviewPage() {
                 </div>
               </div>
             )}
-          </section>
-
-          {/* COLUMN 3 — Alerts. Everything about resolving the invoice lives
-              here: the open alerts, each with the correction staged against
-              its own field (Gap 112 item 4), and the standing-rule outcome
-              that a dismiss can produce. */}
-          <section
-            data-testid="alerts-panel"
-            className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-[#222D3D] px-4 py-3">
-              {/* Moved out of AlertConsole itself, which used to draw this
-                  strip inline above the list; as a panel header it matches
-                  the PDF and Fields columns. */}
-              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                Discrepancy Warnings
-                <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-0.5 font-mono text-[10px] font-semibold normal-case tracking-normal text-[#10B981]">
-                  SENTINEL
-                </span>
-              </p>
-              {alerts.length > 0 && (
-                <span className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-950/30 px-2 py-1 text-[11px] font-medium text-yellow-300">
-                  {alerts.length} open
-                </span>
-              )}
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-              <AlertConsole
-                invoiceId={invoice.id}
-                alerts={alerts}
-                currentStatus={invoice.status}
-                onAlertsChange={setAlerts}
-                corrections={corrections}
-                applyAsStandingRule={applyAsStandingRule}
-                resolveCorrection={resolveCorrection}
-                onFocusField={(field) =>
-                  setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))
-                }
-                onDismissed={(res) => {
-                  if (Object.keys(corrections).length > 0) {
-                    setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
-                    setCorrections({});
-                  }
-                  setApplyAsStandingRule(false);
-                  if (res?.suggested_rule) setSuggestedRule(res.suggested_rule);
-                  if (res?.standing_rule_result) setStandingRuleResult(res.standing_rule_result);
-                }}
-              />
-
-              {/* Task 4.10 result banner -- surfaced after any Dismiss / Save
-                  Correction / Mark Paid / Reject call made with the box checked. */}
-              {standingRuleResult && (
-                <div
-                  className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
-                    standingRuleResult.applied
-                      ? "border-emerald-600/40 bg-emerald-950/20 text-emerald-200"
-                      : "border-amber-600/40 bg-amber-950/20 text-amber-200"
-                  }`}
-                >
-                  <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-                  <div className="flex-1">
-                    {standingRuleResult.applied ? (
-                      <>
-                        <p className="font-medium">Standing rule applied.</p>
-                        {standingRuleResult.rules_added?.map((r, i) => (
-                          <p key={i} className="mt-0.5 text-emerald-300/80">{r}</p>
-                        ))}
-                      </>
-                    ) : (
-                      <p>{standingRuleResult.reason || "Rule not applied."}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => setStandingRuleResult(null)}
-                    className="shrink-0 text-current opacity-60 hover:opacity-100"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-
-              {isResolved && (
-                <div className="flex items-center gap-2 rounded-xl border border-[#222D3D] bg-[#1E293B] px-4 py-3 text-sm text-slate-400">
-                  <CheckCircle size={16} className="text-emerald-400" />
-                  This invoice has been resolved as{" "}
-                  <strong className="ml-1 text-slate-200">{invoice.status}</strong>.
-                </div>
-              )}
-            </div>
+            {isResolved && (
+              <div className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A] flex items-center gap-2 text-sm text-slate-400">
+                <CheckCircle size={16} className="text-emerald-400" />
+                This invoice has been resolved as{" "}
+                <strong className="ml-1 text-slate-200">{invoice.status}</strong>.
+              </div>
+            )}
           </section>
         </div>
 

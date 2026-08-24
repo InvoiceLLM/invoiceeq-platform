@@ -268,3 +268,30 @@ Prod_Invoice_LLM/
    - Start Ollama (`ollama run llama3:8b`) and set `LLM_PROVIDER=ollama`.
 3. **Running the Full Regression Suite**:
    - Run `pytest` across all backend test suites anytime: `pytest tests/test_chat_queue.py -v`.
+
+---
+
+## 8. Audit Review Console Layout Redesign
+
+> **Milestone**: Audit Review Console Layout & Line Items Visibility Redesign  
+> **Date**: August 24, 2026  
+> **Status**: ✅ 100% Implemented & Verified (TypeScript clean build passed)
+
+### Key Improvements Delivered:
+* **Collapsible Top Banner for Discrepancy Warnings**:
+  - Relocated `<AlertConsole />` (Inbound) and `<OutboundAlertConsole />` (Outbound) out of Column 3 into a dedicated expandable top banner positioned directly above the main grid.
+  - Displays Sentinel status badge and open alert count in collapsed state; expands inline on click with full resolution & field focus functionality.
+* **2-Column Main Content Grid**:
+  - Transformed layout from 3 columns to 2 columns: PDF Viewer (`minmax(0, 1.15fr)`) | Extracted Fields & Line Items Area (`minmax(0, 1fr)`).
+* **Independently Scrolled & Visually Bounded Sections**:
+  - **Correctable Fields Container**: Independent vertical scroll container (`custom-scrollbar max-h-[300px] xl:max-h-[340px]`) containing all metadata inputs and Additional Extracted Metadata panel.
+  - **Line Items Container**: Independent scroll container with a persistent header showing item count (`N items`) and computed subtotal (`Subtotal: $X.XX`), visible at all times without scrolling past fields.
+* **Themed Custom Scrollbar Bug Fix**:
+  - Applied `.custom-scrollbar` class ensuring dark themed scrollbar styling (`styles/globals.css:210-241`) applies cleanly across browsers without native white scrollbar chrome.
+* **Pinned Action Footer**:
+  - Maintained pinned unsaved corrections footer outside all scroll containers at the bottom of Column 2.
+
+### Modified Files:
+* [`apps/invoice-fe/app/invoices/review/[id]/page.tsx`](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/invoices/review/%5Bid%5D/page.tsx) — Inbound Auditor Review Console
+* [`apps/invoice-fe/app/invoices/outbound-review/[id]/page.tsx`](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/app/invoices/outbound-review/%5Bid%5D/page.tsx) — Outbound Auditor Console
+

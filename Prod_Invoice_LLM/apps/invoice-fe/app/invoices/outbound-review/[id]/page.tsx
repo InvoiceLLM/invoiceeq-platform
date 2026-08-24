@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle, Trash2 } from "lucide-react";
+import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle, Trash2, ChevronDown } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import { formatCurrency } from "@/lib/utils";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
@@ -166,6 +166,7 @@ export default function OutboundAuditorReviewPage() {
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
   const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
+  const [isAlertsExpanded, setIsAlertsExpanded] = useState(false);
 
   const [focusRequest, setFocusRequest] = useState<{ field: string; nonce: number } | null>(null);
 
@@ -399,7 +400,94 @@ export default function OutboundAuditorReviewPage() {
         <NotifyEmailPicker emailSet="outbound" selected={notifyEmails} onChange={setNotifyEmails} />
       )}
 
-      <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)] xl:overflow-hidden">
+      {/* Top Banner — Discrepancy Warnings (Collapsible) */}
+      <section
+        data-testid="alerts-banner"
+        className="flex flex-col rounded-xl border border-yellow-700/50 bg-[#0F172A] overflow-hidden shrink-0"
+      >
+        <button
+          type="button"
+          onClick={() => setIsAlertsExpanded((prev) => !prev)}
+          className="flex items-center justify-between gap-3 px-4 py-2.5 bg-yellow-950/20 hover:bg-yellow-950/30 transition-colors text-left"
+        >
+          <div className="flex items-center gap-3">
+            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
+              Discrepancy Warnings
+              <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-0.5 font-mono text-[10px] font-semibold normal-case tracking-normal text-[#10B981]">
+                SENTINEL
+              </span>
+            </p>
+            {alerts.length > 0 ? (
+              <span className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-950/40 px-2 py-0.5 text-[11px] font-medium text-yellow-300">
+                {alerts.length} open alert{alerts.length === 1 ? "" : "s"}
+              </span>
+            ) : (
+              <span className="shrink-0 rounded-md border border-emerald-700/50 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
+                No open alerts
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors">
+            <span>{isAlertsExpanded ? "Collapse" : "Expand alerts"}</span>
+            <ChevronDown
+              size={14}
+              className={`transition-transform duration-200 ${isAlertsExpanded ? "rotate-180" : ""}`}
+            />
+          </div>
+        </button>
+
+        {isAlertsExpanded && (
+          <div className="border-t border-[#222D3D] p-4 max-h-[250px] overflow-y-auto custom-scrollbar">
+            <OutboundAlertConsole
+              invoiceId={invoice.id}
+              alerts={alerts}
+              currentStatus={invoice.status}
+              onAlertsChange={setAlerts}
+              corrections={corrections}
+              applyAsStandingRule={applyAsStandingRule}
+              resolveCorrection={resolveCorrection}
+              onFocusField={(field) => setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))}
+              onDismissed={(res) => {
+                if (Object.keys(corrections).length > 0) {
+                  setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
+                  setCorrections({});
+                }
+                setApplyAsStandingRule(false);
+                if (res?.standing_rule_result) setStandingRuleResult(res.standing_rule_result);
+              }}
+            />
+
+            {standingRuleResult && (
+              <div
+                className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                  standingRuleResult.applied
+                    ? "border-emerald-600/40 bg-emerald-950/20 text-emerald-200"
+                    : "border-amber-600/40 bg-amber-950/20 text-amber-200"
+                }`}
+              >
+                <ShieldCheck size={14} className="mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  {standingRuleResult.applied ? (
+                    <>
+                      <p className="font-medium">Standing rule applied.</p>
+                      {standingRuleResult.rules_added?.map((r, i) => (
+                        <p key={i} className="text-emerald-300/80 mt-0.5">{r}</p>
+                      ))}
+                    </>
+                  ) : (
+                    <p>{standingRuleResult.reason || "Rule not applied."}</p>
+                  )}
+                </div>
+                <button onClick={() => setStandingRuleResult(null)} className="shrink-0 text-current opacity-60 hover:opacity-100">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <div className="grid flex-1 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] xl:overflow-hidden">
         {/* COLUMN 1 — PDF Viewer */}
         <PdfViewerCanvas
           invoiceId={invoice.id}
@@ -408,51 +496,68 @@ export default function OutboundAuditorReviewPage() {
           coordinates={invoice.coordinates ?? []}
         />
 
-        {/* COLUMN 2 — Extracted Fields */}
+        {/* COLUMN 2 — Extracted Fields & Line Items */}
         <section
           data-testid="fields-panel"
-          className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
+          className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A] overflow-hidden"
         >
-          <div className="flex items-center justify-between gap-2 border-b border-[#222D3D] px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-              Extracted Fields
-            </p>
-            <span className="shrink-0 rounded-md border border-[#222D3D] px-2 py-1 text-[11px] text-slate-500">
-              {isResolved ? "Resolved — read-only" : "Click a field to correct it"}
-            </span>
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 max-h-[calc(100vh-180px)] xl:max-h-none">
-            <div className="flex flex-col gap-3">
-              {CORRECTABLE_FIELDS.map(({ key, label, type }) => {
-                const rawValue = displayValue(key);
-                const displayed =
-                  type === "number" && !(key in corrections)
-                    ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
-                    : rawValue;
-                return (
-                  <EditableField
-                    key={key as string}
-                    label={label}
-                    value={displayed}
-                    originalDisplay={originalDisplay(key)}
-                    onChange={(next) => handleFieldChange(key as string, next)}
-                    onRevert={() => handleRevertField(key as string)}
-                    isDirty={key in corrections}
-                    isFlagged={flaggedFields.has(key as string)}
-                    disabled={isResolved}
-                    focusNonce={focusRequest?.field === (key as string) ? focusRequest.nonce : undefined}
-                    inputType={type === "number" ? "text" : type === "date" ? "text" : "text"}
-                  />
-                );
-              })}
+          {/* SECTION 1: Correctable Fields Form (Independent scroll container) */}
+          <div className="flex flex-col border-b border-[#222D3D]">
+            <div className="flex items-center justify-between gap-2 bg-[#0B1220] px-4 py-2.5 border-b border-[#222D3D]">
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                Extracted Fields
+              </p>
+              <span className="shrink-0 rounded-md border border-[#222D3D] px-2 py-0.5 text-[11px] text-slate-500">
+                {isResolved ? "Resolved — read-only" : "Click a field to correct it"}
+              </span>
             </div>
 
-            {invoice.items && invoice.items.length > 0 && (
-              <div className="overflow-x-auto rounded-xl border border-[#222D3D] bg-[#0B1220] p-4">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                  Line Items
-                </p>
+            <div className="flex flex-col gap-4 overflow-y-auto custom-scrollbar p-4 max-h-[300px] xl:max-h-[340px]">
+              <div className="flex flex-col gap-3">
+                {CORRECTABLE_FIELDS.map(({ key, label, type }) => {
+                  const rawValue = displayValue(key);
+                  const displayed =
+                    type === "number" && !(key in corrections)
+                      ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
+                      : rawValue;
+                  return (
+                    <EditableField
+                      key={key as string}
+                      label={label}
+                      value={displayed}
+                      originalDisplay={originalDisplay(key)}
+                      onChange={(next) => handleFieldChange(key as string, next)}
+                      onRevert={() => handleRevertField(key as string)}
+                      isDirty={key in corrections}
+                      isFlagged={flaggedFields.has(key as string)}
+                      disabled={isResolved}
+                      focusNonce={focusRequest?.field === (key as string) ? focusRequest.nonce : undefined}
+                      inputType={type === "number" ? "text" : type === "date" ? "text" : "text"}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 2: Line Items Table (Independent scroll container with persistent header) */}
+          {invoice.items && invoice.items.length > 0 && (
+            <div className="flex flex-1 flex-col bg-[#0B1220] p-4 min-h-[220px] overflow-hidden">
+              <div className="mb-3 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                    Line Items
+                  </p>
+                  <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300 border border-slate-700">
+                    {invoice.items.length} items
+                  </span>
+                  <span className="rounded bg-blue-950/40 px-2 py-0.5 font-mono text-[11px] text-blue-300 border border-blue-800/40">
+                    Subtotal: {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto rounded-xl border border-[#222D3D] bg-[#0F172A] p-3 custom-scrollbar">
                 <table className="w-full border-collapse text-left">
                   <thead>
                     <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
@@ -476,11 +581,12 @@ export default function OutboundAuditorReviewPage() {
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
+          {/* Pinned Action Footer */}
           {hasUnsavedCorrections && !isResolved && (
-            <div className="shrink-0 border-t border-[#222D3D] p-3">
+            <div className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A]">
               <div className="flex flex-col gap-2 rounded-lg border border-blue-600/40 bg-blue-950/20 px-3 py-2 text-xs text-blue-200">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2">
@@ -507,74 +613,6 @@ export default function OutboundAuditorReviewPage() {
               </div>
             </div>
           )}
-        </section>
-
-        {/* COLUMN 3 — Discrepancy Warnings */}
-        <section
-          data-testid="alerts-panel"
-          className="flex min-h-[400px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]"
-        >
-          <div className="flex items-center justify-between gap-2 border-b border-[#222D3D] px-4 py-3">
-            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
-              Discrepancy Warnings
-              <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-0.5 font-mono text-[10px] font-semibold normal-case tracking-normal text-[#10B981]">
-                SENTINEL
-              </span>
-            </p>
-            {alerts.length > 0 && (
-              <span className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-950/30 px-2 py-1 text-[11px] font-medium text-yellow-300">
-                {alerts.length} open
-              </span>
-            )}
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4 max-h-[calc(100vh-180px)] xl:max-h-none">
-            <OutboundAlertConsole
-              invoiceId={invoice.id}
-              alerts={alerts}
-              currentStatus={invoice.status}
-              onAlertsChange={setAlerts}
-              corrections={corrections}
-              applyAsStandingRule={applyAsStandingRule}
-              resolveCorrection={resolveCorrection}
-              onFocusField={(field) => setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))}
-              onDismissed={(res) => {
-                if (Object.keys(corrections).length > 0) {
-                  setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
-                  setCorrections({});
-                }
-                setApplyAsStandingRule(false);
-                if (res?.standing_rule_result) setStandingRuleResult(res.standing_rule_result);
-              }}
-            />
-
-            {standingRuleResult && (
-              <div
-                className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
-                  standingRuleResult.applied
-                    ? "border-emerald-600/40 bg-emerald-950/20 text-emerald-200"
-                    : "border-amber-600/40 bg-amber-950/20 text-amber-200"
-                }`}
-              >
-                <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-                <div className="flex-1">
-                  {standingRuleResult.applied ? (
-                    <>
-                      <p className="font-medium">Standing rule applied.</p>
-                      {standingRuleResult.rules_added?.map((r, i) => (
-                        <p key={i} className="text-emerald-300/80 mt-0.5">{r}</p>
-                      ))}
-                    </>
-                  ) : (
-                    <p>{standingRuleResult.reason || "Rule not applied."}</p>
-                  )}
-                </div>
-                <button onClick={() => setStandingRuleResult(null)} className="shrink-0 text-current opacity-60 hover:opacity-100">
-                  <X size={12} />
-                </button>
-              </div>
-            )}
-          </div>
         </section>
       </div>
     </div>

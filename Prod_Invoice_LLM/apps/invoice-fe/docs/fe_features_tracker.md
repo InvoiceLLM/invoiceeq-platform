@@ -728,4 +728,15 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
 
 - `[x]` **Gap 273 (FE): Chat thread list had no way to hide, permanently consuming screen width alongside the sidebar** — `components/chat/ChatWindow.tsx` gains the same collapse pattern as Gap 272, also persisted to `localStorage`.
 
+- `[x]` **Gap 282 (FE): Redesign Audit Review Console layout — Extracted Fields & Line Items visibility (Inbound & Outbound)** — opened and closed 2026-08-24.
+  - **Problem**: Inbound and Outbound Auditor Review Consoles used a 3-column layout where Extracted Fields, Line Items, and Additional Metadata were nested inside a single vertical scroll container, burying line items below correctable fields. Native unstyled scrollbars also appeared near the Line Items subtotal.
+  - **Fix**:
+    - Relocated `<AlertConsole />` (Inbound) and `<OutboundAlertConsole />` (Outbound) into a top collapsible Discrepancy Warnings banner (SENTINEL status badge + open alert count).
+    - Restructured layout into 2 main columns: PDF Viewer (`minmax(0, 1.15fr)`) | Extracted Fields & Line Items Area (`minmax(0, 1fr)`).
+    - Split Column 2 into two independently scrolled sections: Correctable Fields Form (`max-h-[300px] xl:max-h-[340px]`) and Line Items Table section with persistent header showing item count (`N items`) and computed subtotal (`Subtotal: $X.XX`).
+    - Applied `.custom-scrollbar` class ensuring dark themed scrollbar styling (`styles/globals.css:210-241`) applies cleanly across browsers without native white scrollbar chrome.
+    - Pinned unsaved corrections action footer at the bottom of Column 2 outside all scroll containers.
+  - **Verification**: `npx tsc --noEmit` clean (0 errors), interactive HTML mockup verified (`mockup_preview.html`), and walkthrough recorded.
+
+
 
