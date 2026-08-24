@@ -1278,7 +1278,8 @@ python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --js
 | `--mode live` (Track 1) | The nightly's job is catching *model* drift day to day (see the finding above) — `--mode verify` is deterministic and would report the same numbers every night regardless of the deployed model's actual behaviour. |
 | `--no-gate` | Gap 293's known, deliberately-not-fixed false positive would otherwise fail this job's execution status every single night on a non-regression, defeating the point of using the job's own status as a signal. |
 | `--tolerate-fp outbound_trade_discount__clean` (new flag, `scripts/run_extraction_benchmark.py`) | Belt-and-suspenders with `--no-gate` here (the nightly job doesn't gate on exit code at all), but the same flag is what actually gates the pre-deploy check in Step 3 — added once, used both places. |
-| `--no-write` | A Container Apps Job replica's filesystem is ephemeral — no volume is mounted — so `docs/extraction_benchmark/runs/` artifacts written inside the container are discarded on exit. `--json` keeps the scored summary in the execution's own stdout instead, which Container Apps Job execution history / Log Analytics retains. Per-call cost/latency still reaches Application Insights regardless, because `run_extraction_agent()`/`verify_node()` are the real production code paths, already wrapped in `tracked_llm_call()`. |
+| `--no-write` | A Container Apps Job replica's filesystem is ephemeral — no volume is mounted — so `docs/extraction_benchmark/runs/` artifacts written inside the container are discarded on exit. `--json` keeps the scored summary in the execution's own stdout instead, which Container Apps Job execution history / Log Analytics retains. **Corrected 2026-08-24:** this row previously claimed per-call cost/latency "reaches Application Insights regardless, because `run_extraction_agent()`/`verify_node()` are already wrapped in `tracked_llm_call()`". The wrapping is real, but nothing in a `python scripts/...` process ever calls `configure_azure_monitor()`, so those events reached **stdout only** and never the `customEvents` table — see "The result mirror" below, which fixes this for the mirror's own events and states plainly what is still not fixed for the per-call ones. |
+| `--run-label nightly` (both tracks, 2026-08-24) | Turns on the result mirror and marks the series. See "The result mirror" below. |
 | `--paths default` only (Track 2) | SAGE orchestrator is off by default in production (`ENABLE_AGENTIC_SAGE`) — measuring `sage` too would add real cost and ~40 more minutes for a path with zero live traffic. |
 | Default judge mode (`separate`, not `--judge combined`) | The Track 2 section above explicitly leaves flipping that default as a "decision required" pending a paired judge comparison — not something to decide silently from infra. |
 | No `--persist-candidate`/`--provider`/`--model` | This is a baseline run of the application's own configured model, not a substitution comparison — `run_agent_eval.py` persists `agent_eval_run` rows and telemetry by default. |
@@ -1371,6 +1372,167 @@ connection with any of them.
 * `uv run pytest tests/test_run_extraction_benchmark_cli.py -q -p no:randomly` — **8 passed**, exercising the real `main()` with `sys.argv` patched: the gate fails without `--tolerate-fp`, passes with it, still fails if a different case id is tolerated (not a blanket escape hatch), still fails on a genuine missed case even with `--tolerate-fp` set, `--no-gate` always exits 0, and an empty/whitespace `--tolerate-fp` value behaves as if it were never passed.
 * `scripts/run_extraction_benchmark.py --mode verify --no-write --tolerate-fp outbound_trade_discount__clean` run directly — exit 0, with the known Gap 293 case explicitly logged as `(tolerated, not gating: ['outbound_trade_discount__clean'])`; the same command without `--tolerate-fp` — exit 1, confirming the carve-out is specific, not a blanket bypass.
 * The workflow YAML parses (`yaml.safe_load`), `benchmark-gate` sits correctly in `deploy-backend`'s and `deploy-worker`'s `needs:`, and the `jq` filter's logic was cross-checked against an equivalent Python computation over fabricated turn data (`jq` itself isn't installed in this local shell; it is present on GitHub-hosted `ubuntu-latest` runners by default, so this is the closest available check short of a real push). **Not run end to end in GitHub Actions** — that requires an actual push/PR, not exercised here.
+
+## The result mirror — telemetry events + blob artifacts (2026-08-24)
+
+Both tracks produced real scored numbers that **nothing could query**. Stated as the
+three concrete holes it was, before the nightly job / gate ever ran for real:
+
+1. The nightly job runs Track 1 with `--no-write` (the replica's filesystem is
+   discarded), so its only output was the execution's stdout.
+2. The pre-deploy gate runs Track 2 with `--no-persist`, and Track 2's *only*
+   telemetry — `telemetry.track_eval_result()` — is emitted from inside `persist()`.
+   A gate run therefore left **no queryable record of itself whatsoever**.
+3. Neither script ever calls `configure_azure_monitor()`. `telemetry._emit_event()`
+   logs through the `invoice_be_telemetry` logger, and that logger carries an
+   Application Insights handler only because `main.py` attaches one at import in the
+   API process. In a `python scripts/...` process the record propagates to root and
+   Feature 19's `StructuredJsonFormatter` writes it to stdout as JSON — visible in
+   `ContainerAppConsoleLogs_CL`, invisible in `customEvents`. So even the events the
+   nightly job *did* emit (`agent_eval_run` per turn, `llm_agent_call` per call) have
+   **never reached the table a workbook queries**. This is the same silent-no-op class
+   of failure as Gap 292, found the same way: by checking rather than assuming.
+
+An Azure Monitor workbook can query Log Analytics / App Insights, Azure Resource
+Graph, ARM and ADX. It cannot query a container's stdout as structured data, a local
+JSON file, or Postgres. So this is the same two-part mirror Feature 20 Area 1 built for
+cost (`emit_cost_snapshot_telemetry()` + `scripts/sweep_azure_cost.py`), applied to the
+two quality tracks.
+
+### File coordinates
+
+| File | Function / symbol | What it does |
+|---|---|---|
+| `telemetry.py` | `track_extraction_benchmark_run()` | One `extraction_benchmark_run` event per Track 1 run: the 5 raw confusion-matrix cells, the 3 derived percentages, field accuracy, `mode`, `run_label`, `gate_failed`, `artifact_blob`. Never raises. |
+| `telemetry.py` | `track_agent_eval_summary()` | One `agent_eval_summary` event per Track 2 run **per path**: all 9 scored dimensions as means with their own denominators, `pass_rate`, `judge_mode`, `turns`/`cases`/`errors`, token and judge-call totals, `artifact_blob`. Never raises. |
+| `telemetry.py` | `EVAL_SCORE_DIMENSIONS` | The nine dimension names, in `EvalScores`' three groups. Pinned against `EvalScores`' own fields by a test, so a tenth dimension cannot be scored and then silently dropped from the trend. |
+| `services/benchmark_artifacts.py` (new) | `mirror_extraction_run()` / `mirror_agent_eval_run()` | What the two scripts call. Upload the raw JSON, then emit the event carrying the blob name. Return a `MirrorResult` rather than raising. |
+| `services/benchmark_artifacts.py` | `upload_artifact()` / `artifact_blob_name()` / `_blob_service_client()` / `_ensure_container()` | Blob half: key structure, auth, create-on-first-use. |
+| `services/benchmark_artifacts.py` | `configure_run_telemetry()` / `flush_run_telemetry()` | Hole 3 above. Attaches the exporter and forces the OTel batch out before a short-lived process exits. |
+| `scripts/run_extraction_benchmark.py` | `main()` | `--run-label {nightly,predeploy,adhoc}`, `--no-mirror`. |
+| `scripts/run_agent_eval.py` | `main()` | Same two flags. |
+| `tests/test_benchmark_artifacts.py` (new) | 29 tests | The mapping, the absent-not-zero rule, the blob key, and every failure mode. |
+
+### Aggregate, not itemised — and why that is not the same decision on both tracks
+
+Track 1's unit of measurement genuinely **is** the run. Recall, clean-document
+false-positive rate and document-level precision are ratios over the whole corpus; a
+per-case event could not carry any of the three.
+
+Track 2's is not, and the decision there is narrower than "aggregate". Per-turn rows
+already exist (`track_eval_result`, and the durable `agent_eval_run` Postgres rows), so
+this event is the aggregate they cannot produce: **a mean over a self-selected subset.**
+`persona_score` is NULL on most turns by design, so `avg(persona_score)` in KQL over the
+per-turn events averages a different denominator than the other eight dimensions do, and
+a panel showing all nine side by side would be comparing incomparable things. Each mean
+here is therefore emitted next to its own `*_scored_turns` count. One event **per path**,
+not per run: a `--paths default,sage` run measures two different systems, and averaging
+them describes neither.
+
+Two things travel on every event for the same reason the raw counts do — because the
+alternative silently misleads:
+
+* **The five raw cells alongside the three percentages.** The derived figures are `None`
+  whenever their denominator is empty, and a panel that could only see the ratio could
+  not tell "0 clean documents were run" from "0% false positives". The counts also let a
+  KQL query recompute any of the three over a *window* of runs, which averaging per-run
+  percentages gets wrong.
+* **`run_label`.** The nightly job and the pre-deploy gate run the same two scripts
+  against the same Application Insights resource over different corpus sizes — Track 2
+  nightly is 20 cases, the gate is 5. An unlabelled trend would render every push as a
+  quality cliff.
+
+Absent stays absent throughout, the rule `track_azure_cost_snapshot` already established:
+a `separate`-judge run does not score helpfulness/completeness/tone at all, and emitting
+0.0 would read as "maximally unhelpful, every night" on the exact panel this exists to feed.
+
+### The artifact — and the container that does not exist yet
+
+Blob key: `{track}/{stamp}-{mode}-{run_label}.json`, e.g.
+`extraction/20260824T031500Z-live-nightly.json`,
+`agent-eval/20260824T031500Z-default-predeploy.json`. Track first so each track is its
+own virtual folder; timestamp before mode/label because a blob listing sorts lexically
+and "newest runs of this track together" is the ordering a reader wants. The stamp
+format is `write_run_artifacts()`'s, so a run that also wrote locally is trivially
+matched to its blob. The event carries the blob name in `artifact_blob` **and** the ISO
+instant in `generated_at` — that is the whole join: a panel shows recall dropping at a
+timestamp, the row names the blob, the blob holds every case that produced it. The field
+is empty rather than guessed when the upload did not happen, so a link that is present is
+a link that resolves.
+
+Contents are the full raw JSON, not a summary: Track 1's `summary` + `BenchmarkResult.to_dict()`
+(exactly the two halves `write_run_artifacts()` writes to disk, so the blob and the local
+artifact are the same document), and Track 2's entire `--out` payload including every
+turn's answer, context, tool calls and judge notes. Megabytes per run — which is also why
+it is blob and not Log Analytics ingestion.
+
+**Verified live 2026-08-24, and one finding that needs a decision:**
+
+* `az role assignment list --assignee 1c0e1f4c-…` — `id-invoicellm-dev` holds
+  **Storage Blob Data Contributor** at `stinvoicellmdev2` account scope. **Zero new RBAC
+  is required**, and that role's `containers/write` is also what permits the create below.
+* `az storage container list --account-name stinvoicellmdev2 --auth-mode login` — the
+  account has **exactly one container, `invoices`. `benchmark-artifacts` does not exist**,
+  and `infra/modules/data/storage.bicep` declares only `invoicesContainer`. Handled by
+  create-on-first-use in `_ensure_container()`, the same thing `services/storage.py`
+  already does for `invoices`, so nothing is blocked on an infra deploy. **Flagged, not
+  silently decided:** declaring it in `storage.bicep` next to `invoicesContainer` is the
+  tidier long-run answer and would make a clean-environment build produce it, but that is
+  a Stage-4 redeploy against an environment with known naming-prefix drift (Gap 298), so
+  it is left as a decision rather than made here.
+* The upload path itself is **not verified against live storage** — doing so would create
+  the container, which is precisely the decision above. It is verified against a fake
+  client (container creation, JSON body, content type, overwrite, key structure) and
+  end-to-end against a *stopped* local Azurite, which exercises the failure path for real.
+
+Auth order is `AZURE_STORAGE_CONNECTION_STRING` (already wired into every scheduled job
+from Key Vault by `modules/compute/scheduled-job.bicep`, and already what
+`services/storage.py` uses) and then managed identity against `AZURE_STORAGE_ACCOUNT`.
+`azure-identity` is imported lazily and its absence degrades to a warning, because it is
+present only **transitively** here, via `azure-monitor-opentelemetry-exporter` — it is not
+a declared dependency and it would be dishonest to build a primary path on that.
+
+### Non-fatal is the entire contract
+
+A gate that blocked a deploy because a storage account was briefly unreachable, or a
+nightly quality job that failed because the exporter had a bad minute, would be
+instrumentation breaking the thing it instruments. Every function in
+`services/benchmark_artifacts.py` swallows its own exceptions and returns what it
+managed to do; `MirrorResult.describe()` prints that honestly ("1 telemetry event(s), no
+artifact, 1 error(s): …") rather than a reassuring line that is not true.
+
+Track 1's mirror also runs **before** the gate verdict and outside it — a failing gate
+run is exactly the run whose numbers most need to reach the workbook, so it must not sit
+behind an early `return 1`. Two tests in `tests/test_run_extraction_benchmark_cli.py` pin
+both halves of that through the real `main()`.
+
+`_BLOB_CLIENT_OPTIONS` sets `retry_total=1` / `connection_timeout=10`, far below the SDK
+defaults. Found by running the suite: the default `retry_total=3` with exponential backoff
+turned every local test invocation into a multi-second wait against the `.env`'s Azurite
+connection string with no Azurite running. An artifact upload at the very end of a run
+that has already produced its numbers has nothing to gain from thirty seconds of retries.
+
+### Verified how
+
+* `uv run pytest tests/test_benchmark_artifacts.py tests/test_run_extraction_benchmark_cli.py tests/test_telemetry.py tests/test_azure_cost.py tests/test_agent_eval.py tests/test_model_substitution.py tests/test_extraction_benchmark.py -q -p no:randomly` — **336 passed, 1 skipped** in 15s (29 new + 2 new CLI tests among them).
+* `uv run python scripts/run_extraction_benchmark.py --mode verify --no-write --run-label predeploy --tolerate-fp outbound_trade_discount__clean` — real run, exit 0, the doc's existing figures reproduced (13/13 recall, 25% clean FP), and the mirror line printed `mirror [predeploy] -> stdout only: 1 telemetry event(s), no artifact, 1 error(s): artifact upload failed (ServiceRequestError: …10061…)`. That is the failure path working: no exporter configured locally, no Azurite running, exit code unchanged.
+* `uv run python scripts/run_agent_eval.py --paths default --cases greeting_no_tool --no-score --no-persist --provider mock --run-label predeploy --out …` — real run, `INFO:invoice_be_telemetry:agent_eval_summary` emitted and `Mirror [predeploy] -> …: 1 telemetry event(s)` printed, on a `--no-persist` run, which is the case that previously emitted nothing at all.
+* `az bicep build` on `08-apps.bicep` and `benchmark-eval-job-only.bicep` — both compile (the two warnings are the pre-existing ones in `invoice-be.bicep`/`front-door.bicep`). `deploy-dev.yml` re-parses with `yaml.safe_load` and `benchmark-gate` still sits in both deploy jobs' `needs:`.
+* **Not verified:** that any of this arrives in `customEvents`. That needs the job/gate to run in Azure against a real `APPLICATIONINSIGHTS_CONNECTION_STRING`, which needs a commit and a CI build first — the same prerequisite the scheduler section already records.
+
+### Still open after this pass
+
+* **The container decision above.**
+* **Per-call `llm_agent_call` events from these jobs still do not reach `customEvents`.**
+  `configure_run_telemetry()` is called deliberately *late* — immediately before the
+  mirror, not at script import — so the run's own per-call events are not retroactively
+  exported. Configuring at import would fix that and would also change ingestion volume
+  and cost for a nightly 20-case run; that is its own decision, not one to fold into this
+  change silently. The same applies to `track_eval_result`'s per-turn rows, which are
+  emitted during `persist()`, before this call.
+* **No workbook panel reads either new event yet.** The events exist and are shaped for
+  KQL (`gate_failed` and `pass_rate` are numbers so `avg()` needs no parse step); no
+  `.workbook.json` has been updated to chart them.
 
 ### Cost and cadence, going forward — stated plainly
 
@@ -3152,6 +3314,20 @@ deployed** — `az deployment group create` was deliberately not run, pending fo
 - [x] Online-eval signal queries — `services/online_eval_signals.py` + 34 tests, all five shapes the
       "Where each tier runs" section names, over existing tables only. Two real gaps surfaced and
       **left open**: no live turn persists `stop_reason`, and turn latency is recorded nowhere
+- [x] Benchmark result mirror — both tracks' scored runs now leave the process as queryable data.
+      `telemetry.track_extraction_benchmark_run()` / `track_agent_eval_summary()` +
+      `services/benchmark_artifacts.py` + `--run-label`/`--no-mirror` on both scripts, wired into
+      both callers (nightly job bicep = `nightly`, `deploy-dev.yml` gate = `predeploy`). 29 new
+      tests + 2 CLI non-fatality tests; 336 passed across the affected files. Three real findings:
+      **neither script ever called `configure_azure_monitor()`**, so no telemetry from either job
+      has ever reached `customEvents` (the "reaches App Insights regardless" claim in the scheduler
+      section was stale and is corrected); **a `--no-persist` gate run emitted nothing at all**,
+      because Track 2's only telemetry lived inside `persist()`; and the **`benchmark-artifacts`
+      blob container does not exist** on `stinvoicellmdev2` (created on first use at runtime;
+      declaring it in `storage.bicep` is flagged as a decision, not made). RBAC needed nothing —
+      `Storage Blob Data Contributor` is already granted at account scope, verified live. **No
+      workbook panel reads either event yet**, and nothing has reached `customEvents` for real —
+      that needs a commit, a CI build and a deployed job. See "The result mirror"
 - [ ] Thread-level drift detection (Gaps 237/276 shape) — **not started, deliberately.** Needs new
       design work per "Evaluation tiers"; the seed script recovers the bounded multi-turn scripts
       such a detector would consume, but no detector exists

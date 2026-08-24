@@ -512,16 +512,35 @@ module opsDigestJob './modules/compute/scheduled-job.bicep' = {
 // Track 1 actually gates something, using --tolerate-fp for the same case
 // instead of --no-gate, because a CI job's pass/fail IS the signal there.
 //
+// As of 2026-08-24, that pre-deploy gate is not a second job/bicep resource
+// -- it is `az containerapp job start --command/--args ...` against this
+// SAME caj-benchmark-eval-${environment} job, overriding the container
+// command for that one on-demand execution only (the override is
+// per-execution; it never touches this module's persisted `args` below, so
+// the 03:00 UTC Schedule trigger keeps running the full/live/--no-gate
+// command unmodified regardless of how many times the gate has fired that
+// day). See `benchmark-eval-job-only.bicep`'s header and the
+// `benchmark-gate` job's own header comment in deploy-dev.yml for the full
+// rationale -- keep this note and both of those in sync if the mechanism
+// changes.
+//
 // `--no-write` on Track 1: a Container Apps Job replica's filesystem is
 // ephemeral (no volume is mounted here), so writing
 // docs/extraction_benchmark/runs/ artifacts inside the container would just
 // be discarded when the replica exits -- --json keeps the scored summary in
 // the execution's own stdout instead, which Container Apps Job execution
-// history / Log Analytics does retain. Per-call cost/latency reaches
-// Application Insights regardless of --no-write, because
-// run_extraction_agent()/verify_node() are the real production code paths,
-// already wrapped in tracked_llm_call() -- this flag only controls the local
+// history / Log Analytics does retain. This flag only controls the local
 // review-corpus files, not telemetry.
+//
+// `--run-label nightly` on BOTH tracks (2026-08-24): each script now mirrors
+// its own scored run out of the process -- one aggregate custom event
+// (extraction_benchmark_run / agent_eval_summary) plus the full raw JSON to
+// the benchmark-artifacts blob container -- because stdout is not a queryable
+// data source for an Azure Monitor workbook. The label is what keeps this
+// nightly series apart from the pre-deploy gate's 5-case smoke runs, which
+// execute the same two scripts against the same App Insights resource; see
+// services/benchmark_artifacts.py. Both halves are non-fatal by contract, so
+// neither can fail this job.
 //
 // Track 2 runs `--paths default` only (not `--paths default,sage`): SAGE
 // orchestrator is gated behind ENABLE_AGENTIC_SAGE and off by default today
@@ -531,9 +550,11 @@ module opsDigestJob './modules/compute/scheduled-job.bicep' = {
 // (`separate`, not `--judge combined`): the feature doc's Track 2 section
 // explicitly leaves flipping that default as a "decision required" pending a
 // paired judge comparison, not something to make silently from infra.
-// run_agent_eval.py persists its own agent_eval_run rows and telemetry
+// run_agent_eval.py also persists its own agent_eval_run rows
 // (DATABASE_URL/APPLICATIONINSIGHTS_CONNECTION_STRING, both already wired
-// below) -- no extra flag needed for durability, unlike Track 1.
+// below) -- that per-turn record is the durable Postgres one; the
+// agent_eval_summary event `--run-label` produces is the aggregate a workbook
+// can actually query, which Postgres is not reachable for.
 module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
   name: 'benchmark-eval-job-deploy'
   params: {
@@ -551,7 +572,7 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
       '-c'
     ]
     args: [
-      'python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json --tolerate-fp outbound_trade_discount__clean && python scripts/run_agent_eval.py --paths default'
+      'python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json --run-label nightly --tolerate-fp outbound_trade_discount__clean && python scripts/run_agent_eval.py --paths default --run-label nightly'
     ]
     cronExpression: benchmarkEvalCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn

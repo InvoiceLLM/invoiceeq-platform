@@ -997,6 +997,53 @@ The original Feature 21 (RAG faithfulness mandates, chunk reordering, near-match
   not the earlier-recorded 100% — no code changed, this is the first real evidence of the
   model drift the nightly cadence exists to catch, not something this pass fixed.
 
+- `[x]` **Feature 23 benchmark result mirror — 2026-08-24, before either cadence's first
+  live run.** Both tracks produced real scored numbers that **nothing could query**: the
+  nightly job runs Track 1 `--no-write` (the replica's filesystem is discarded), the
+  pre-deploy gate runs Track 2 `--no-persist` and Track 2's only telemetry lives inside
+  `persist()` — so a gate run emitted nothing at all — and an Azure Monitor workbook can
+  read neither stdout nor a local JSON file. Built, mirroring Feature 20 Area 1's cost
+  pattern exactly: `telemetry.track_extraction_benchmark_run()` (the 5 raw
+  confusion-matrix cells **and** the 3 derived percentages — the counts are what let a
+  KQL query recompute a ratio over a *window* of runs, and what distinguishes "0 clean
+  documents ran" from "0% false positives") and `telemetry.track_agent_eval_summary()`
+  (all 9 `EvalScores` dimensions as means, each next to its own `*_scored_turns`
+  denominator, because `persona_score` is NULL on most turns by design and a bare
+  `avg()` over the per-turn events silently averages a different denominator than the
+  other eight); new `services/benchmark_artifacts.py` uploading each run's **full** raw
+  JSON to a `benchmark-artifacts` blob container under
+  `{track}/{stamp}-{mode}-{run_label}.json`, with the blob name carried on the event as
+  `artifact_blob` so a workbook row is followable back to the per-case/per-turn detail
+  behind it. `--run-label {nightly,predeploy,adhoc}` + `--no-mirror` on both scripts,
+  wired into **both** callers (the nightly job in `08-apps.bicep`/
+  `benchmark-eval-job-only.bicep`, and `deploy-dev.yml`'s `benchmark-gate`). Strictly
+  non-fatal — Track 1's mirror deliberately runs *before* the gate verdict and outside
+  it, since a failing gate run is the one whose numbers most need to reach the workbook.
+  **Three real findings.** (1) **Neither benchmark script has ever called
+  `configure_azure_monitor()`**, so no telemetry from either job — including the
+  `agent_eval_run` and `llm_agent_call` events the docs credited it with — has ever
+  reached `customEvents`; same silent-no-op class as Gap 292, and the scheduler section's
+  "reaches App Insights regardless" claim is now corrected in the feature doc. Fixed for
+  the mirror's own events (`configure_run_telemetry()` + a forced OTel flush before the
+  process exits); deliberately **not** fixed for the per-call events, which would change
+  ingestion volume/cost and is its own decision. (2) The **`benchmark-artifacts` container
+  does not exist** on `stinvoicellmdev2` (verified live — the account has exactly one
+  container, `invoices`, and `storage.bicep` declares only that one); handled by
+  create-on-first-use at runtime, the same thing `services/storage.py` already does,
+  with declaring it in bicep **flagged as a decision rather than made** (Stage 4 against
+  a naming-prefix-drifted environment, Gap 298). (3) **Zero new RBAC was needed** —
+  `id-invoicellm-dev` already holds `Storage Blob Data Contributor` at account scope,
+  confirmed by `az role assignment list`, and that role's `containers/write` is what
+  permits the create. Verified: **336 passed, 1 skipped** across the 7 affected test files
+  (29 new in `tests/test_benchmark_artifacts.py`, 2 new CLI non-fatality tests), full
+  backend suite unchanged from its known baseline, both bicep templates `az bicep
+  build`-clean, `deploy-dev.yml` re-parses with `benchmark-gate` still in both deploy
+  jobs' `needs:`, and both scripts smoke-run for real (Track 1 verify mode exit 0 with
+  the mirror line printed; Track 2 `--provider mock --no-persist` emitting
+  `agent_eval_summary`, the case that previously emitted nothing). **Not verified:** that
+  anything arrives in `customEvents` — that needs a commit, a CI build and a deployed
+  job. **No workbook panel reads either event yet.**
+
 - `[ ]` **Gap 299 (F23/F24): AI-eval "critical" findings currently page nobody.** Found 2026-08-23 building the Ops Digest Agent's collection layer. The two-tier design (`services/ops_digest_routing.py::classify()`) correctly labels a sharp AI-quality-score drop or a Track-1/2 benchmark-job failure as `"critical"`, but no delivery mechanism for AI-eval criticals exists anywhere yet — Azure Monitor alert rules only fire off Azure Monitor/Log Analytics signals, and nothing evaluates `classify()`'s output outside of a digest run. Until the digest scheduler is actually deployed and running (blocked on Gap 298's prerequisites — see Wave 2 in `feature_20_23_24_implementation_status.md`), an AI-eval "critical" is realistically **silent** until the next digest batch reads it, the same as everything else. The Ops Digest Agent code deliberately still **names** these items explicitly in its output as "critical, not yet paged" rather than silently treating them the same as an ordinary digest item once the scheduler is running — but until it is running, this is an open gap, not a documented limitation of a shipped system.
 
 - **Real product defect surfaced by the Phase 3 run, recorded here rather than lost in a JSON file** — 2026-08-21. Asked *"whats the CGST we paid to Rajesh Steel"* against a fixture holding one combined `tax_amount` of INR 18,000.00 and no per-component breakdown, the **current default chat path** answered *"The CGST recorded for Rajesh Steel is INR 18,000.00"* — relabelling the combined tax as CGST. That is Gaps 263/264's failure mode, live, reproduced against the real model. SAGE Phase 2 answered the same question correctly (*"This schema does not store per-tax-type lines…the combined tax total…is ₹18,000"*). Not opened as a new Gap: it is the same class Feature 21 exists to fix structurally, and Gap 285's entry already records the decision not to patch this one field at a time. Evidence: `tests/agent_eval_output.json`, case `rajesh_steel_cgst`.

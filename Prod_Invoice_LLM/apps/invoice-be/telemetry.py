@@ -99,6 +99,35 @@ ONLINE_SIGNAL_EVENT_NAME = "online_eval_signal"
 AZURE_COST_SNAPSHOT_EVENT_NAME = "azure_cost_snapshot"
 AZURE_COST_SLICE_EVENT_NAME = "azure_cost_slice"
 
+# Feature 23's two benchmark tracks (`scripts/run_extraction_benchmark.py`,
+# `scripts/run_agent_eval.py`). One event per completed *run*, not per case.
+#
+# These exist for the same reason `azure_cost_snapshot` does: both tracks
+# currently report only to stdout (the nightly job runs `--no-write`, because a
+# Container Apps Job replica's filesystem is discarded on exit) or to a local
+# JSON file, and an Azure Monitor workbook can query neither. Without these two
+# events there is no data source at all behind a "is extraction recall drifting?"
+# or "is chat quality drifting?" panel.
+#
+# Aggregate, not itemised, and deliberately so on both tracks:
+#
+#   * Track 1's unit of measurement genuinely *is* the run -- recall,
+#     false-positive rate and document-level precision are ratios over the whole
+#     corpus, and a per-case event could not carry any of the three.
+#   * Track 2 already emits one `agent_eval_run` row per graded turn
+#     (`track_eval_result` above) -- but only from `persist()`, so a
+#     `--no-persist` run (which is exactly what the pre-deploy gate runs) emits
+#     nothing today. This event is per path per run, so the gate's runs join the
+#     same trend, and the per-turn detail lives in the blob artifact whose name
+#     travels on the event.
+#
+# `run_label` is on both events because the same two scripts are invoked by two
+# different cadences against the same telemetry resource -- the nightly job and
+# the pre-deploy gate -- and a trend that silently mixed a 5-case smoke subset
+# into a 20-case nightly series would show every push as a quality cliff.
+EXTRACTION_BENCHMARK_EVENT_NAME = "extraction_benchmark_run"
+AGENT_EVAL_SUMMARY_EVENT_NAME = "agent_eval_summary"
+
 # Feature 24 (Ops Digest Agent). One event per scheduled digest run.
 #
 # This one is not a mirror of anything -- unlike the four above, there is no
@@ -431,6 +460,212 @@ def track_azure_cost_slice(
         logger.debug(
             "track_azure_cost_slice failed for %s/%s", dimension, dimension_value, exc_info=True
         )
+
+
+def track_extraction_benchmark_run(
+    *,
+    run_label: str,
+    mode: str,
+    clean_documents: int,
+    seeded_cases: int,
+    true_positive: int,
+    false_negative: int,
+    false_positive: int,
+    true_negative: int,
+    not_applicable: int,
+    alert_recall_pct: Optional[float] = None,
+    clean_false_positive_rate_pct: Optional[float] = None,
+    document_level_precision_pct: Optional[float] = None,
+    field_accuracy_correct: int = 0,
+    field_accuracy_total: int = 0,
+    field_accuracy_pct: Optional[float] = None,
+    missed_cases: int = 0,
+    false_positive_documents: int = 0,
+    collateral_alert_types: int = 0,
+    errors: int = 0,
+    generated_at: str = "",
+    artifact_blob: str = "",
+    **extra_attributes: Any,
+) -> None:
+    """Emit one ``extraction_benchmark_run`` event — Track 1's scored run.
+
+    The five raw confusion-matrix counts travel alongside the three derived
+    percentages rather than instead of them. That is not redundancy: the derived
+    figures are ``None`` whenever their denominator is empty (a
+    ``--cases``-filtered run with no clean documents in it has no
+    false-positive rate at all), and a panel that could only see the ratio would
+    be unable to tell "0 clean documents were run" from "0% false positives".
+    The counts also let a KQL query recompute any of the three over a *window*
+    of runs, which averaging the per-run percentages would get wrong.
+
+    Absent derived metrics stay absent, same rule and the same reason as
+    ``track_azure_cost_snapshot``'s budget fields: a 0.0 recall reads as "every
+    seeded issue was missed", which is the loudest possible signal, and emitting
+    it for "nothing was measured" would make the alert on that panel worthless.
+
+    ``mode`` (``verify``/``live``) and ``run_label`` (``nightly``/``predeploy``/
+    ``adhoc``) are both required, because a single number here is meaningless
+    without them: verify mode is deterministic and free, live mode measures the
+    deployed model, and the two produce different figures over the same corpus
+    by design.
+
+    Never raises, same contract as every other emitter here.
+    """
+    try:
+        attributes: Dict[str, Any] = {
+            "run_label": run_label or "adhoc",
+            "mode": mode or "unknown",
+            "clean_documents": int(clean_documents or 0),
+            "seeded_cases": int(seeded_cases or 0),
+            "true_positive": int(true_positive or 0),
+            "false_negative": int(false_negative or 0),
+            "false_positive": int(false_positive or 0),
+            "true_negative": int(true_negative or 0),
+            "not_applicable": int(not_applicable or 0),
+            "field_accuracy_correct": int(field_accuracy_correct or 0),
+            "field_accuracy_total": int(field_accuracy_total or 0),
+            "missed_cases": int(missed_cases or 0),
+            "false_positive_documents": int(false_positive_documents or 0),
+            "collateral_alert_types": int(collateral_alert_types or 0),
+            "errors": int(errors or 0),
+            # 0/1, same reason as `pass` on the eval event: a gate verdict is
+            # `avg()`-ed into a pass rate in KQL, which needs a number.
+            "gate_failed": 1 if (missed_cases or false_positive_documents or errors) else 0,
+        }
+        for key, value in (
+            ("alert_recall_pct", alert_recall_pct),
+            ("clean_false_positive_rate_pct", clean_false_positive_rate_pct),
+            ("document_level_precision_pct", document_level_precision_pct),
+            ("field_accuracy_pct", field_accuracy_pct),
+        ):
+            if value is not None:
+                attributes[key] = round(float(value), 4)
+        # The join back to the raw per-case detail. Empty when the upload was
+        # skipped or failed -- never a fabricated path, so a workbook link that
+        # is present is always a link that resolves.
+        for key, text in (("generated_at", generated_at), ("artifact_blob", artifact_blob)):
+            if text:
+                attributes[key] = str(text)
+        for key, value in extra_attributes.items():
+            if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
+                continue
+            attributes[key] = value
+
+        _emit_event(EXTRACTION_BENCHMARK_EVENT_NAME, attributes)
+    except Exception:  # pragma: no cover - telemetry must never break a run
+        logger.debug("track_extraction_benchmark_run failed for %s", mode, exc_info=True)
+
+
+#: The nine scored dimensions of ``services.agent_eval.EvalScores``, in the
+#: three groups that class's docstring keeps deliberately apart: answer-level
+#: (the only three ``decide_pass()`` reads), component-level (the "which part of
+#: the pipeline broke" decomposition), and soft-metric (combined judge only).
+#: Named here so the event and the workbook agree on one vocabulary and a
+#: dimension cannot be silently dropped from the mirror by a typo.
+EVAL_SCORE_DIMENSIONS = (
+    "faithfulness",
+    "relevance",
+    "accuracy",
+    "context",
+    "orchestration",
+    "persona",
+    "helpfulness",
+    "completeness",
+    "tone",
+)
+
+
+def track_agent_eval_summary(
+    *,
+    run_label: str,
+    path: str,
+    judge_mode: str,
+    turns: int,
+    errors: int = 0,
+    pass_rate: Optional[float] = None,
+    scores: Optional[Dict[str, Optional[float]]] = None,
+    scored_turns: Optional[Dict[str, Optional[int]]] = None,
+    llm_calls_total: int = 0,
+    judge_llm_calls_total: int = 0,
+    tokens_in_total: int = 0,
+    tokens_out_total: int = 0,
+    latency_ms_median: Optional[float] = None,
+    cost_per_turn_usd: Optional[float] = None,
+    model_under_test: str = "",
+    generated_at: str = "",
+    artifact_blob: str = "",
+    **extra_attributes: Any,
+) -> None:
+    """Emit one ``agent_eval_summary`` event — Track 2's whole run, per path.
+
+    One row per path per run, not per turn: ``track_eval_result`` above already
+    emits the per-turn row, and this is the aggregate that turn-level event
+    cannot produce — a mean over a *self-selected* subset. ``persona_score`` is
+    NULL on most turns by design, so ``avg(persona_score)`` in KQL over the
+    per-turn events silently averages a different denominator than the other
+    eight dimensions do. That is why each mean here is emitted next to its own
+    ``*_scored_turns`` count.
+
+    A dimension that scored nothing is absent from the event entirely, not zero
+    — a ``separate``-judge run does not score helpfulness/completeness/tone at
+    all, and a 0.0 there would render as "the assistant was maximally unhelpful
+    every night" on the exact panel this event exists to feed.
+
+    ``judge_mode`` travels on every event because a faithfulness figure from the
+    combined judge is not assumed to be on the same scale as one from the
+    separate judge (see ``services/agent_eval.py``), and a trend that mixed them
+    without saying so would be unreadable.
+
+    Never raises, same contract as every other emitter here.
+    """
+    try:
+        attributes: Dict[str, Any] = {
+            "run_label": run_label or "adhoc",
+            "path": path or "unknown",
+            "judge_mode": judge_mode or "separate",
+            "turns": int(turns or 0),
+            "errors": int(errors or 0),
+            "llm_calls_total": int(llm_calls_total or 0),
+            "judge_llm_calls_total": int(judge_llm_calls_total or 0),
+            "tokens_in_total": int(tokens_in_total or 0),
+            "tokens_out_total": int(tokens_out_total or 0),
+        }
+        if pass_rate is not None:
+            attributes["pass_rate"] = round(float(pass_rate), 4)
+        if latency_ms_median is not None:
+            attributes["latency_ms_median"] = round(float(latency_ms_median), 2)
+        if cost_per_turn_usd is not None:
+            attributes["cost_per_turn_usd"] = round(float(cost_per_turn_usd), 6)
+
+        scores = scores or {}
+        scored_turns = scored_turns or {}
+        for dimension in EVAL_SCORE_DIMENSIONS:
+            value = scores.get(dimension)
+            if value is None:
+                continue
+            attributes[f"{dimension}_mean"] = round(float(value), 4)
+            count = scored_turns.get(dimension)
+            if count is not None:
+                attributes[f"{dimension}_scored_turns"] = int(count)
+
+        for key, text in (
+            # Empty on a baseline run, and deliberately not rendered as
+            # "default": a comparison table needs the baseline row to name the
+            # model it actually ran, which only the run's own output can say.
+            ("model_under_test", model_under_test),
+            ("generated_at", generated_at),
+            ("artifact_blob", artifact_blob),
+        ):
+            if text:
+                attributes[key] = str(text)
+        for key, value in extra_attributes.items():
+            if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
+                continue
+            attributes[key] = value
+
+        _emit_event(AGENT_EVAL_SUMMARY_EVENT_NAME, attributes)
+    except Exception:  # pragma: no cover - telemetry must never break a run
+        logger.debug("track_agent_eval_summary failed for path %s", path, exc_info=True)
 
 
 def track_ops_digest_run(

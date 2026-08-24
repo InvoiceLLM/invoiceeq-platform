@@ -135,6 +135,14 @@ from benchmarks.agent_eval_golden_sample import (  # noqa: E402
 )
 from benchmarks.large_invoice_fixture import LARGE, SMALL  # noqa: E402
 from benchmarks.sage_seed_fixtures import _seed  # noqa: E402
+from services.benchmark_artifacts import (  # noqa: E402
+    RUN_LABEL_ADHOC,
+    RUN_LABEL_NIGHTLY,
+    RUN_LABEL_PREDEPLOY,
+    configure_run_telemetry,
+    flush_run_telemetry,
+    mirror_agent_eval_run,
+)
 from utils.llm import SUPPORTED_LLM_PROVIDERS  # noqa: E402
 
 logger = logging.getLogger("run_agent_eval")
@@ -1010,6 +1018,22 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--run-label",
+        default=RUN_LABEL_ADHOC,
+        choices=[RUN_LABEL_NIGHTLY, RUN_LABEL_PREDEPLOY, RUN_LABEL_ADHOC],
+        help=(
+            "which cadence produced this run, carried on the agent_eval_summary "
+            "telemetry event and in the artifact blob name. The nightly job runs all "
+            "20 cases; the pre-deploy gate runs a 5-case subset -- mixing the two into "
+            "one unlabelled trend would show every push as a quality cliff."
+        ),
+    )
+    parser.add_argument(
+        "--no-mirror",
+        action="store_true",
+        help="emit no agent_eval_summary event and upload no artifact (local run, offline)",
+    )
+    parser.add_argument(
         "--persist-candidate",
         action="store_true",
         help=(
@@ -1157,6 +1181,24 @@ def main() -> None:
     }
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
+
+    # Independent of `--no-persist`, and that is the point: the pre-deploy gate
+    # runs with `--no-persist`, and the only telemetry this script had until now
+    # (`track_eval_result`, per turn) is emitted from inside `persist()` -- so a
+    # gate run produced no queryable record of itself whatsoever. The aggregate
+    # event here fires on every run, and the blob keeps the per-turn detail the
+    # `--out` file holds, which on a gate run lives in the container's `/tmp`
+    # and dies with the replica.
+    if not args.no_mirror:
+        exporter_attached = configure_run_telemetry()
+        mirrored = mirror_agent_eval_run(payload, run_label=args.run_label)
+        print(
+            f"\nMirror [{args.run_label}] -> "
+            f"{'Application Insights + stdout' if exporter_attached else 'stdout only'}: "
+            f"{mirrored.describe()}"
+        )
+        if exporter_attached:
+            flush_run_telemetry()
 
     print("\n" + json.dumps(summary, indent=2))
     print(f"\nWrote {len(turns)} turns to {args.out}")

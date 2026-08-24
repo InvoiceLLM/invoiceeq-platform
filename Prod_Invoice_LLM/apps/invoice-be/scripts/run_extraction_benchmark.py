@@ -17,6 +17,15 @@ Artifacts land under `docs/extraction_benchmark/` — the corpus manifest is the
 review record architect and a business analyst read before this set is trusted
 as the real benchmark; `runs/<mode>-latest.md` is the most recent measurement.
 
+Every run also **mirrors itself out of the process** unless `--no-mirror` is
+given: one `extraction_benchmark_run` Application Insights custom event (what a
+workbook charts) plus the full raw JSON to Blob Storage (what you read when the
+chart moves). This is the only way a nightly job's results survive at all — that
+job runs `--no-write`, because a Container Apps Job replica's filesystem is
+discarded on exit. See `services/benchmark_artifacts.py`. Both halves are
+strictly non-fatal: a telemetry or storage failure prints a warning and changes
+neither the printed report nor the exit code.
+
 Exit code is 1 if any seeded case in a gradeable surface was missed, if any
 clean document raised an alert, or if any case errored — so this is usable as a
 pre-deploy gate as-is, which is one of the two cadences the feature doc names.
@@ -55,6 +64,14 @@ from benchmarks.extraction.harness import (  # noqa: E402
     MODE_VERIFY,
     run_benchmark,
 )
+from services.benchmark_artifacts import (  # noqa: E402
+    RUN_LABEL_ADHOC,
+    RUN_LABEL_NIGHTLY,
+    RUN_LABEL_PREDEPLOY,
+    configure_run_telemetry,
+    flush_run_telemetry,
+    mirror_extraction_run,
+)
 
 #: A stable synthetic tenant, used only for telemetry attribution on live runs
 #: (`ExtractionState["tenant_id"]` — no node reads it for any extraction
@@ -89,6 +106,22 @@ def main() -> int:
             "the false-positive rate this run reports is unaffected; only the gate's "
             "pass/fail decision is. Any other clean-document false positive still fails."
         ),
+    )
+    parser.add_argument(
+        "--run-label",
+        default=RUN_LABEL_ADHOC,
+        choices=[RUN_LABEL_NIGHTLY, RUN_LABEL_PREDEPLOY, RUN_LABEL_ADHOC],
+        help=(
+            "which cadence produced this run, carried on the telemetry event and in "
+            "the artifact blob name. The nightly job and the pre-deploy gate invoke "
+            "this same script against the same Application Insights resource, and a "
+            "trend that could not tell them apart would be unreadable."
+        ),
+    )
+    parser.add_argument(
+        "--no-mirror",
+        action="store_true",
+        help="emit no telemetry event and upload no artifact (local run, offline)",
     )
     args = parser.parse_args()
     tolerated_fp_ids = {c.strip() for c in args.tolerate_fp.split(",") if c.strip()}
@@ -140,6 +173,24 @@ def main() -> int:
         paths = write_run_artifacts(result)
         for name in paths:
             print(f"  wrote runs/{name}")
+
+    # Deliberately before the gate verdict, and outside it: a failing gate run is
+    # exactly the run whose numbers most need to reach the workbook, so the
+    # mirror must not sit behind an early `return 1`. Nothing in here can change
+    # the exit code -- `mirror_extraction_run()` never raises and reports what it
+    # managed to do.
+    if not args.no_mirror:
+        exporter_attached = configure_run_telemetry()
+        mirrored = mirror_extraction_run(
+            summary, result.to_dict(), run_label=args.run_label
+        )
+        print(
+            f"  mirror [{args.run_label}] -> "
+            f"{'Application Insights + stdout' if exporter_attached else 'stdout only'}: "
+            f"{mirrored.describe()}"
+        )
+        if exporter_attached:
+            flush_run_telemetry()
 
     if args.no_gate:
         return 0

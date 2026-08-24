@@ -258,6 +258,27 @@ class Settings(BaseSettings):
     # a clear auth error, not silently run as whoever last ran `az login`.
     AZURE_COST_CLI_FALLBACK: bool = False
 
+    # Feature 23 benchmark artifacts (`services/benchmark_artifacts.py`). Where
+    # the two tracks' full raw JSON output is kept, so a workbook panel's
+    # `extraction_benchmark_run` / `agent_eval_summary` event can be followed
+    # back to the per-case (Track 1) / per-turn (Track 2) detail behind it.
+    #
+    # A separate container from `invoices`, not a prefix inside it: that one
+    # holds tenant PDFs, is the target of `delete_pdf_from_storage()`, and would
+    # end up under whatever retention/lifecycle policy tenant data eventually
+    # gets. Benchmark output is neither tenant data nor subject to that.
+    BENCHMARK_ARTIFACT_CONTAINER: str = "benchmark-artifacts"
+    # Only consulted when AZURE_STORAGE_CONNECTION_STRING is unset/placeholder --
+    # the managed-identity path, which needs the account name because there is no
+    # connection string to read it out of. `id-invoicellm-dev` already holds
+    # `Storage Blob Data Contributor` on `stinvoicellmdev2` (verified live
+    # 2026-08-24), so that path needs no new role assignment.
+    AZURE_STORAGE_ACCOUNT: str = ""
+    # Off switch for the upload half of the mirror. The telemetry event is still
+    # emitted -- it carries no `artifact_blob` and the workbook panel simply has
+    # no link to follow. For a local run that should not touch Azure at all.
+    BENCHMARK_ARTIFACT_UPLOAD: bool = True
+
     # Feature 24 (Ops Digest Agent) -- `services/ops_digest*.py`, run by
     # `scripts/ops_digest_job.py` on a cron. Only deployment-varying values live
     # here; the thresholds that are judgements *about the data* (what counts as

@@ -35,7 +35,20 @@ from scripts.run_extraction_benchmark import main  # noqa: E402
 GAP_293_KNOWN_FP = "outbound_trade_discount__clean"
 
 
-def _run_main(argv, monkeypatch):
+def _run_main(argv, monkeypatch, mirror=False):
+    """Invoke the real `main()`.
+
+    `--no-mirror` by default: the telemetry/blob mirror added 2026-08-24 is
+    exercised properly in `tests/test_benchmark_artifacts.py`, and leaving it on
+    here would make every one of these gate assertions wait on a storage
+    connection attempt that cannot succeed in CI. `mirror=True` is used by the
+    one test below that specifically pins the mirror's non-fatality *through the
+    CLI*.
+    """
+    if mirror:
+        argv = [a for a in argv if a != "--no-mirror"]
+    elif "--no-mirror" not in argv:
+        argv = [*argv, "--no-mirror"]
     monkeypatch.setattr(sys, "argv", ["run_extraction_benchmark.py", *argv])
     return main()
 
@@ -95,3 +108,52 @@ def test_empty_tolerate_fp_behaves_like_not_passing_it(monkeypatch, cases):
         ["--mode", "verify", "--no-write", "--tolerate-fp", cases], monkeypatch
     )
     assert exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# The telemetry/blob mirror (2026-08-24) must never change the gate's verdict
+# ---------------------------------------------------------------------------
+
+
+def test_a_failing_mirror_does_not_change_the_gate_verdict(monkeypatch, capsys):
+    """Instrumentation must not break the thing it instruments.
+
+    Both halves are broken here -- the blob client raises on construction and
+    the telemetry emitter raises on emit -- and the gate still has to reach the
+    same exit code it reaches with neither of them present (0 with the known
+    Gap 293 false positive tolerated, per the test above).
+    """
+    import telemetry
+    from services import benchmark_artifacts
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("storage/exporter down")
+
+    monkeypatch.setattr(benchmark_artifacts, "_blob_service_client", _explode)
+    monkeypatch.setattr(telemetry, "_emit_event", _explode)
+
+    exit_code = _run_main(
+        ["--mode", "verify", "--no-write", "--tolerate-fp", GAP_293_KNOWN_FP],
+        monkeypatch,
+        mirror=True,
+    )
+    assert exit_code == 0
+    # ...and it said so, rather than reporting a mirror that did not happen.
+    assert "mirror [adhoc]" in capsys.readouterr().out
+
+
+def test_the_mirror_runs_even_when_the_gate_fails(monkeypatch, capsys):
+    """A failing gate run is exactly the run whose numbers most need to reach the
+    workbook, so the mirror must not sit behind an early `return 1`."""
+    emitted = []
+    import telemetry
+    from services import benchmark_artifacts
+
+    monkeypatch.setattr(benchmark_artifacts, "_blob_service_client", lambda: None)
+    monkeypatch.setattr(
+        telemetry, "_emit_event", lambda name, attributes: emitted.append(name)
+    )
+
+    exit_code = _run_main(["--mode", "verify", "--no-write"], monkeypatch, mirror=True)
+    assert exit_code == 1  # Gap 293's false positive, untolerated
+    assert telemetry.EXTRACTION_BENCHMARK_EVENT_NAME in emitted

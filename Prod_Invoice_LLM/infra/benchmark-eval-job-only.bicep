@@ -52,6 +52,24 @@ targetScope = 'resourceGroup'
 // (see the feature doc's "Nightly scheduler as built" section for the
 // measurement this is based on) -- small, but not zero, and it recurs every
 // night indefinitely once deployed.
+//
+// Second caller as of 2026-08-24: `.github/workflows/deploy-dev.yml`'s
+// `benchmark-gate` job starts an ON-DEMAND execution of this same job
+// (`az containerapp job start --command/--args ...`) as the Feature 23
+// pre-deploy gate, with the container command/args overridden for that one
+// execution only -- a scoped-down verify-mode/5-case command, distinct from
+// the `args` below, which is what the 03:00 UTC Schedule trigger still
+// runs unmodified. This is why the job's identity needs Key Vault Secrets
+// User + Cognitive Services User regardless of which caller is asking: the
+// original inline-in-CI version of this gate (git history: fe021a3,
+// reverted b1b9ff3) failed with ForbiddenByRbac because the GitHub Actions
+// service principal tried to read AZURE-OPENAI-API-KEY itself and holds no
+// Key Vault data-plane role -- running under this job's identity instead
+// means that secret read never leaves Azure. See the `benchmark-gate` job's
+// own header comment in deploy-dev.yml for the full design rationale
+// (including why one job serves both callers instead of a second bicep
+// file, and why `Schedule` triggerType -- not `Manual`/`Event` -- is
+// correct for both).
 
 @description('Deployment environment (e.g. dev, uat, prod)')
 param environment string = 'dev'
@@ -126,7 +144,7 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
       '-c'
     ]
     args: [
-      'python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json --tolerate-fp outbound_trade_discount__clean && python scripts/run_agent_eval.py --paths default'
+      'python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json --run-label nightly --tolerate-fp outbound_trade_discount__clean && python scripts/run_agent_eval.py --paths default --run-label nightly'
     ]
     cronExpression: benchmarkEvalCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
