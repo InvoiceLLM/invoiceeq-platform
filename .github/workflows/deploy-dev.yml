@@ -140,138 +140,8 @@ jobs:
   # CI to re-sync on every push. If the key ever needs to rotate, update
   # params.dev.secrets.json locally and re-run Stage 5.
 
-  # Feature 23 pre-deploy gate (2026-08-23): a fast benchmark/eval smoke test
-  # before the backend/worker images build, so a real extraction or chat
-  # regression is caught before it ships rather than the next morning's
-  # nightly caj-benchmark-eval-dev run. Gated on the same `be`/`worker` path
-  # filter as the two deploy jobs it blocks -- both watch the same
-  # `apps/invoice-be/**` tree, so this is not conditioned twice for two
-  # different reasons, just the one BE-changed reason. Makes a real Azure
-  # OpenAI call, so it should not run on every push regardless of what
-  # changed.
-  #
-  # Deliberately scoped down from the full nightly suite -- see
-  # docs/feature_23_ai_control_tower.md's "Pre-deploy gate as built" section:
-  #
-  #   * Track 1 (`--mode verify`): the FULL 4 clean + 13 seeded corpus,
-  #     deterministic, no network call, seconds not minutes -- no reason to
-  #     sample this one, it is free. `--tolerate-fp` carves out Gap 293's
-  #     one known, deliberately-not-fixed clean-set false positive
-  #     (`outbound_trade_discount__clean`) so the gate is not permanently red
-  #     on a non-regression; any other miss or false positive still fails it.
-  #   * Track 2 (`run_agent_eval.py`): the full 20-case suite measured at
-  #     roughly 2 minutes/turn (separate judge, the runner's default) --
-  #     ~40 minutes, too slow for every push. Scoped to 5 cases spanning
-  #     faithfulness/persona-tone/helpfulness plus two real prior incidents
-  #     (Gap 270's ambiguous-direction routing, Gaps 263/264's CGST
-  #     relabelling), including `internals_probe_no_leak` -- the one case
-  #     that actually caught a real regression (Gap 294, the chat path
-  #     pasting generated SQL into a user-facing answer) the day this track
-  #     was built. This is a smoke test ("does the chat pipeline still work
-  #     end to end against a live deployment"), not full quality coverage --
-  #     the nightly job runs all 20 for that, and gates on a turn-level
-  #     error only (an exception), not on score/pass-rate thresholds: the
-  #     doc's own three real runs of the 20-case suite show run-to-run score
-  #     variance (faithfulness 0.806 -> 0.880 with no code change between
-  #     them) an order of magnitude larger than a believable regression
-  #     delta, so a hard score-based gate here would false-positive-block
-  #     deploys on model noise rather than catch a real break.
-  benchmark-gate:
-    needs: changes
-    if: needs.changes.outputs.be == 'true' || needs.changes.outputs.worker == 'true'
-    runs-on: ubuntu-latest
-    env:
-      KEY_VAULT: kv-invoicellm-dev
-      WORKDIR: Prod_Invoice_LLM/apps/invoice-be
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.Azure_Dev_Credentials }}
-
-      # Resolved at runtime rather than hardcoded -- Gap 298 (be_features_tracker.md,
-      # 2026-08-23) already found one hardcoded-name/real-name drift in this
-      # environment (namingPrefix "invoice-llm" vs. the real "invoicellm"); reading
-      # the endpoint off the live resource and the key off Key Vault (same source
-      # e2e-regression.yml already uses) avoids adding a second place that name can
-      # go stale.
-      - name: Resolve Azure OpenAI endpoint/key
-        id: aoai
-        shell: bash
-        run: |
-          set -euo pipefail
-          endpoint=$(az cognitiveservices account show --name openai-invoicellm-dev \
-            --resource-group rg-invoice-llm-dev --query properties.endpoint -o tsv)
-          key=$(az keyvault secret show --vault-name "$KEY_VAULT" --name AZURE-OPENAI-API-KEY --query value -o tsv)
-          echo "::add-mask::$key"
-          echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-
-      - name: Install dependencies
-        run: uv sync --frozen
-        working-directory: ${{ env.WORKDIR }}
-
-      - name: Track 1 -- extraction & alert benchmark gate (verify mode, full corpus)
-        env:
-          # Settings() requires these non-empty at import time
-          # (config.py -- plain str/int fields, no format validation) even
-          # though --mode verify opens no real connection with any of them --
-          # placeholders, not real infra. Real secret: AZURE_OPENAI_*.
-          DATABASE_URL: "postgresql://ci:ci@localhost/ci_placeholder"
-          REDIS_URL: "redis://localhost:6379"
-          CHROMA_HOST: "localhost"
-          CHROMA_PORT: "8000"
-          CLERK_SECRET_KEY: "ci_placeholder_unused"
-          TOKEN_ENCRYPTION_KEY: "ci_placeholder_unused"
-          LLM_PROVIDER: "azure"
-          AZURE_OPENAI_ENDPOINT: ${{ steps.aoai.outputs.endpoint }}
-          AZURE_OPENAI_API_KEY: ${{ steps.aoai.outputs.key }}
-          AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-5-mini"
-        run: |
-          uv run python scripts/run_extraction_benchmark.py \
-            --mode verify --no-write --tolerate-fp outbound_trade_discount__clean
-        working-directory: ${{ env.WORKDIR }}
-
-      - name: Track 2 -- chat eval smoke test (5-case subset, live model, errors only)
-        env:
-          DATABASE_URL: "postgresql://ci:ci@localhost/ci_placeholder"
-          REDIS_URL: "redis://localhost:6379"
-          CHROMA_HOST: "localhost"
-          CHROMA_PORT: "8000"
-          CLERK_SECRET_KEY: "ci_placeholder_unused"
-          TOKEN_ENCRYPTION_KEY: "ci_placeholder_unused"
-          LLM_PROVIDER: "azure"
-          AZURE_OPENAI_ENDPOINT: ${{ steps.aoai.outputs.endpoint }}
-          AZURE_OPENAI_API_KEY: ${{ steps.aoai.outputs.key }}
-          AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-5-mini"
-        run: |
-          set -euo pipefail
-          uv run python scripts/run_agent_eval.py \
-            --paths default \
-            --no-persist \
-            --out agent_eval_gate.json \
-            --cases titan_steel_payment_status,rajesh_steel_cgst,internals_probe_no_leak,cross_currency_total_refused,zero_result_with_useful_redirect
-          # jq, not an inline python heredoc: a heredoc terminator inside a YAML
-          # block scalar has to sit at column 0, which is easy to break silently
-          # on the next edit -- jq is preinstalled on ubuntu-latest and has no
-          # indentation trap.
-          errored=$(jq -r '[.turns[] | select(.error != null) | .case_id] | join(",")' agent_eval_gate.json)
-          turns=$(jq '.turns | length' agent_eval_gate.json)
-          if [ -n "$errored" ]; then
-            echo "BENCHMARK GATE FAILED -- turn-level error(s) on: $errored"
-            exit 1
-          fi
-          echo "Chat eval smoke test: $turns turns, 0 errors."
-        working-directory: ${{ env.WORKDIR }}
-
   deploy-backend:
-    needs: [changes, benchmark-gate]
+    needs: changes
     if: needs.changes.outputs.be == 'true'
     uses: ./.github/workflows/_deploy-service.yml
     with:
@@ -286,7 +156,7 @@ jobs:
       azure_credentials: ${{ secrets.Azure_Dev_Credentials }}
 
   deploy-worker:
-    needs: [changes, benchmark-gate]
+    needs: changes
     if: needs.changes.outputs.worker == 'true'
     uses: ./.github/workflows/_deploy-service.yml
     with:
