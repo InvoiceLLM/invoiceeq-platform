@@ -5,44 +5,39 @@ persist pass/fail to `agent_eval_run`"), written so it can be run three ways:
 a local measurement run (what it was first used for), a nightly ACA scheduled
 job against a real tenant, or a one-off comparison of two paths.
 
+Gap 316 (2026-08-25) removed this script's second path. `--paths sage` ran
+Feature 21's LangGraph orchestrator behind an in-process `ENABLE_AGENTIC_SAGE`
+flip; the orchestrator, the flag and the four tools only it called were deleted
+after the live head-to-head, so `default` is now the only path. What is left of
+the two-path machinery is noted where it survives; the design and the measured
+numbers are in `docs/be_features_tracker.md`, Feature 21 and Gap 316.
+
 WHAT IS REAL AND WHAT IS NOT in the default (`--fixture seeded-sqlite`) mode,
-stated plainly, same as `tests/run_agentic_sage_live.py` does:
+stated plainly:
 
   * REAL: the configured Azure OpenAI deployment (no mock at the LLM boundary),
-    the real `run_query_agent()` / `run_agentic_sage()` entry points, the real
-    SQL generation prompt and repair loop, real SQL execution, the real
-    per-turn LLM-call count (counted from Phase 1's own telemetry events, not
-    estimated) and real wall-clock latency.
+    the real `run_query_agent()` entry point, the real SQL generation prompt and
+    repair loop, real SQL execution, the real per-turn LLM-call count (counted
+    from Phase 1's own telemetry events, not estimated) and real wall-clock
+    latency.
   * NOT real: the database is a seeded in-memory SQLite holding nine invoices
     (seven incident-history rows plus the two document-length fixtures below),
     not a live Postgres tenant, because no local Postgres/Chroma/Redis is
     running. Document chunks are a fixed set (no Chroma). The Redis answer cache
     is stubbed out — not to flatter the numbers, but because with no Redis
     listening every `get_cached_answer()` call pays a TCP connect timeout that
-    has nothing to do with either path's real cost, and it would land entirely
-    on the default path (the agentic path deliberately never touches the cache),
-    i.e. it would bias the comparison. The tenant-stats snapshot is computed
-    from the seeded rows.
+    has nothing to do with the path's real cost. The tenant-stats snapshot is
+    computed from the seeded rows.
 
-What the 2026-08-21 round added, and why (the numbers it produced supersede the
-earlier ones and live in `docs/feature_21_architecture.md` B4):
+Surviving from the 2026-08-21 two-path round (measurements now in the tracker's
+Feature 21 section):
 
   * **Per-call-site token attribution** (`tokens_by_agent`). A turn total cannot
-    answer "what does `get_full_record` cost?", because `get_full_record` makes
-    no LLM call at all — its cost lands entirely on the `sage.synthesis` prompt
-    that renders its record and its document pages.
-  * **Per-tool-call measurement** (`tool_calls`): wall time, result size, and for
-    a full-record fetch the chunk count/characters/tokens. `chroma_client.
-    get_all_invoice_chunks()` bounds nothing, so this is where that shows up.
+    answer "what does this call site cost?".
   * **A document-length A/B** (`large_invoice_full_detail` /
-    `small_invoice_full_detail`, backed by `tests/large_invoice_fixture.py`):
+    `small_invoice_full_detail`, backed by `benchmarks/large_invoice_fixture.py`):
     the same question over an 11-page and a 1-page invoice, so the difference
     between the two turns is attributable to document length and nothing else.
-  * **Tool results collected as the faithfulness evidence on the agentic path.**
-    The new tool set reads the ORM row and Chroma directly, so none of its
-    evidence passes through the two wrapped functions the default path uses.
-    Without this every correct full-record answer would have scored a hard 0.00
-    faithfulness — a harness defect that would have looked like a model result.
 
 Known judge limitation, worth stating because this round hit it: `services/
 agent_eval.py` truncates the context it shows the judge at `MAX_CONTEXT_CHARS`
@@ -52,16 +47,11 @@ drawn from later pages unsupported. Faithfulness on `large_invoice_full_detail`
 is therefore not comparable to faithfulness on the small cases.
 
 Run:
-    python scripts/run_agent_eval.py --paths default,sage
+    python scripts/run_agent_eval.py --paths default
     python scripts/run_agent_eval.py --paths default --cases greeting_no_tool
     python scripts/run_agent_eval.py --paths default --persist-url postgresql://...
     python scripts/run_agent_eval.py --paths default --provider azure --model gpt-4o
     python scripts/run_agent_eval.py --paths default --provider ollama --model llama3.2:latest
-
-`--paths sage` sets `ENABLE_AGENTIC_SAGE` **on the in-process settings object
-only**, for the duration of the run, and restores it afterwards. It does not
-write `.env`, and it does not touch any Container App or tenant configuration:
-this is measurement, not a rollout.
 
 `--provider`/`--model` (Phase 4, 2026-08-23) is the same kind of thing for the
 model itself — the substitution axis the "Model comparison" section of
@@ -118,7 +108,6 @@ from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
 import telemetry  # noqa: E402
 from models import AgentEvalRun  # noqa: E402
 from services.agent_eval import (  # noqa: E402
-    collect_invoice_identifiers,
     identifiers_from_markdown,
     score_answer,
 )
@@ -154,17 +143,19 @@ logger = logging.getLogger("run_agent_eval")
 
 #: Where a baseline run writes when `--out` is not given, **in a source
 #: checkout**. Every earlier run's output already lives here (the files
-#: `docs/feature_21_architecture.md` B4 and `services/agent_eval.py`'s module
+#: the tracker's Feature 21 section and `services/agent_eval.py`'s module
 #: docstring quote figures out of, and the six committed `agent_eval_output*.json`
 #: files), so this stays the default wherever the directory exists.
 _CHECKOUT_OUTPUT_DIR = _BE_ROOT / "tests"
 OUTPUT_NAME = "agent_eval_output.json"
 
-# The two path-level agent names. Deliberately in Phase 1's `chat.*` / `sage.*`
-# namespace so cost telemetry and quality rows join on one vocabulary, but
-# distinct from any single call site: these name a whole turn.
+# The path-level agent name. Deliberately in Phase 1's `chat.*` namespace so cost
+# telemetry and quality rows join on one vocabulary, but distinct from any single
+# call site: this names a whole turn. Its `sage.agentic_path` sibling went with
+# the orchestrator (Gap 316); rows carrying it survive in the committed
+# `agent_eval_output*.json` files and in `agent_eval_run`, which is why nothing
+# downstream treats the name as a closed set.
 AGENT_DEFAULT_PATH = "chat.default_path"
-AGENT_SAGE_PATH = "sage.agentic_path"
 
 # Appended by code, not written by the model, and identical on both paths. Both
 # are stripped before scoring: leaving the results table in would score the
@@ -234,12 +225,11 @@ class _LlmCallCounter(logging.Handler):
     def by_agent(self) -> dict:
         """Tokens and calls per instrumented call site, within this turn.
 
-        Added 2026-08-21 for the new tool set. A turn total cannot answer the
-        question this round was run to answer -- "what does `get_full_record`'s
-        chunk dump cost?" -- because `get_full_record` makes no LLM call at all:
-        its cost lands entirely on the `sage.synthesis` prompt that renders its
-        record and every page of its document. Splitting the turn by agent name
-        is what makes that visible.
+        Added 2026-08-21 for the (since-deleted) SAGE tool set, kept because the
+        question generalises: a turn total cannot say what a step that makes no
+        LLM call of its own costs -- `get_full_record`'s cost lands entirely on
+        the prompt that renders its record. Splitting the turn by agent name is
+        what makes that visible.
         """
         rollup: dict[str, dict] = {}
         for event in self.events:
@@ -291,39 +281,29 @@ def count_tokens(text: str) -> int:
 
 
 class _ToolOutputRecorder:
-    """Everything this turn's tools actually returned — the faithfulness evidence.
+    """Everything this turn actually retrieved — the faithfulness evidence.
 
-    Two collection routes, because the two paths funnel through different code:
+    Collected by wrapping `execute_generated_sql` (structured results) and
+    `query_invoice_chunks` (document text), rather than by parsing it back out of
+    the answer.
 
-      * default path — `execute_generated_sql` (structured results) and
-        `query_invoice_chunks` (document text), wrapped rather than parsed out of
-        the answer.
-      * agentic path — every `_ToolBox.dispatch()` result, whole. This had to be
-        added for the new tool set (2026-08-21): `get_full_record` reads the ORM
-        row and `get_all_invoice_chunks()` directly, so **none** of its evidence
-        passes through either wrapped function, and a faithfulness score computed
-        without it would have been "claims asserted with no tool context at all",
-        i.e. a hard 0.00 for every correct detail answer. That is a harness
-        defect, not a model result, and it would have silently poisoned this
-        round's quality numbers.
-
-    The dispatch route also carries the per-call cost measurements: wall time,
-    result size, and for `get_full_record` the chunk count/characters/tokens that
-    are the whole reason this round exists.
+    Gap 316 removed the second collection route. The deleted orchestrator's
+    `_ToolBox.dispatch()` results had to be recorded whole, because
+    `get_full_record` read the ORM row and Chroma directly and none of that
+    evidence passed through either wrapped function — without it every correct
+    full-record answer scored a hard 0.00 faithfulness, a harness defect that
+    looked like a model result. Feature 6's own `get_full_record` call needs no
+    equivalent: its record is interpolated into the summary prompt beside the
+    results table this recorder already captures.
     """
 
     def __init__(self) -> None:
         self.sql_results: list[str] = []
         self.chunks: list[dict] = []
-        self.tool_calls: list[dict] = []
-        self.tool_contexts: list[str] = []
         self.queries: list[str] = []
         self.fetched_ids: set[str] = set()
 
     def context(self) -> str:
-        if self.tool_contexts:
-            # The agentic path: the tools' own results are the evidence set.
-            return "\n\n".join(self.tool_contexts)
         parts = []
         for markdown in self.sql_results:
             parts.append(f"DATABASE RESULTS:\n{markdown}")
@@ -346,66 +326,11 @@ class _ToolOutputRecorder:
     def fetched_invoice_numbers(self) -> set[str]:
         """Which invoices the context builder actually pulled, for `context_score`.
 
-        Two extraction routes, because the two paths leave different traces: the
-        agentic path's tool results are structures (walked by key name), and the
-        default path's evidence is a rendered markdown table (read by column
-        header). Both are deterministic — nothing here is pattern-matched out of
-        prose, which would happily collect a PO number or a date.
+        Read off the rendered markdown table by column header — deterministic,
+        never pattern-matched out of prose, which would happily collect a PO
+        number or a date.
         """
         return set(self.fetched_ids)
-
-
-def _measure_tool_result(name: str, result_dict: dict) -> dict:
-    """Size one tool result the way the synthesis prompt will actually carry it."""
-    measured: dict[str, Any] = {}
-    record = result_dict.get("record") or {}
-    chunks = result_dict.get("chunks") or []
-    if record:
-        rendered = json.dumps(record, indent=2, default=str)
-        measured["record_chars"] = len(rendered)
-        measured["record_tokens"] = count_tokens(rendered)
-    if chunks:
-        document_text = "\n".join(
-            f"--- PAGE {chunk.get('page')} ---\n{chunk.get('document')}" for chunk in chunks
-        )
-        measured["chunk_count"] = len(chunks)
-        measured["chunk_chars"] = len(document_text)
-        measured["chunk_tokens"] = count_tokens(document_text)
-    markdown = result_dict.get("results_markdown") or ""
-    if markdown:
-        measured["results_markdown_chars"] = len(markdown)
-        measured["results_markdown_tokens"] = count_tokens(markdown)
-    whole = json.dumps(result_dict, default=str)
-    measured["result_json_chars"] = len(whole)
-    measured["result_json_tokens"] = count_tokens(whole)
-    return measured
-
-
-def _evidence_text(name: str, args: dict, result_dict: dict) -> str:
-    """One tool result, rendered for the faithfulness judge.
-
-    Deliberately close to what `_synthesize_node()` puts in front of the model:
-    the judge has to grade the answer against the evidence the answer was written
-    from, not against a summary of it.
-    """
-    status = result_dict.get("status")
-    header = f"TOOL {name} (status={status})"
-    parts = [header]
-    if result_dict.get("candidates"):
-        parts.append(json.dumps(result_dict["candidates"], indent=2, default=str))
-    if result_dict.get("record"):
-        parts.append(json.dumps(result_dict["record"], indent=2, default=str))
-    for chunk in result_dict.get("chunks") or []:
-        parts.append(f"--- PAGE {chunk.get('page')} ---\n{chunk.get('document')}")
-    if result_dict.get("results_markdown"):
-        parts.append(result_dict["results_markdown"])
-    if result_dict.get("formatted"):
-        parts.extend(str(line) for line in result_dict["formatted"])
-    if result_dict.get("question"):  # a clarification IS the turn's output
-        parts.append(str(result_dict["question"]))
-    if result_dict.get("message"):
-        parts.append(str(result_dict["message"]))
-    return "\n".join(parts)
 
 
 @contextmanager
@@ -417,10 +342,8 @@ def _harness_patches(
 ):
     """Pin everything that is not the thing being measured."""
     from agents import query_agent
-    from agents.sage_orchestrator import _ToolBox
 
     real_execute = query_agent.execute_generated_sql
-    real_dispatch = _ToolBox.dispatch
 
     def _recording_execute(sql, tenant_id, db_session, snapshot=None):
         result = real_execute(sql, tenant_id, db_session, snapshot=snapshot)
@@ -436,100 +359,37 @@ def _harness_patches(
 
     def _fixture_invoice_chunks(invoice_id, tenant_id):
         """Stand in for `chroma_client.get_all_invoice_chunks()` — same shape, no
-        Chroma. Deliberately NOT bounded here: the point of the run is to measure
-        what the real function's unbounded return costs."""
+        Chroma. Kept although Feature 6 calls `get_full_record` with
+        `include_document_pages=False`: the parameter is a default, not a
+        guarantee, and an unpatched call here would reach a Chroma that is not
+        running."""
         return list((invoice_chunks or {}).get(str(invoice_id).replace("-", ""), []))
-
-    def _recording_dispatch(self, name, args):
-        started = time.perf_counter()
-        # Recorded before the call, so a tool that raises still leaves a record
-        # of what was asked for -- see `_ToolOutputRecorder.executed_queries()`.
-        recorder.queries.append(f"TOOL CALL: {name}({json.dumps(args, default=str)})")
-        try:
-            result = real_dispatch(self, name, args)
-        except Exception as e:
-            recorder.tool_calls.append(
-                {
-                    "tool": name,
-                    "args": args,
-                    "status": "raised",
-                    "error": f"{type(e).__name__}: {e}",
-                    "duration_ms": round((time.perf_counter() - started) * 1000.0, 1),
-                }
-            )
-            raise
-        duration_ms = (time.perf_counter() - started) * 1000.0
-        result_dict = result.to_dict() if hasattr(result, "to_dict") else {}
-        entry = {
-            "tool": name,
-            "args": args,
-            "status": result_dict.get("status"),
-            "duration_ms": round(duration_ms, 1),
-        }
-        entry.update(_measure_tool_result(name, result_dict))
-        recorder.tool_calls.append(entry)
-        recorder.tool_contexts.append(_evidence_text(name, args, result_dict))
-        recorder.fetched_ids |= collect_invoice_identifiers(result_dict)
-        recorder.fetched_ids |= identifiers_from_markdown(
-            str(result_dict.get("results_markdown") or "")
-        )
-        return result
 
     with ExitStack() as stack:
         for target in (
             patch("agents.query_agent.execute_generated_sql", _recording_execute),
             patch("agents.query_agent.query_invoice_chunks", _recording_chunks),
-            patch("agents.query_tools.query_invoice_chunks", _recording_chunks),
-            # New for the rewritten tool set: `get_full_record` fetches document
-            # pages through this, not through `query_invoice_chunks`, so without
-            # this patch every full-record fetch would reach a Chroma that is not
-            # running and come back empty — the document half of the tool would go
-            # unmeasured while looking like it had been measured.
             patch("agents.query_tools.get_all_invoice_chunks", _fixture_invoice_chunks),
-            patch.object(_ToolBox, "dispatch", _recording_dispatch),
             # No Redis locally; see the module docstring for why this is stubbed
             # rather than left to time out.
             patch("agents.query_agent.get_cached_answer", return_value=None),
             patch("agents.query_agent.set_cached_answer"),
             # The ORM snapshot query returns an empty tenant against this
             # fixture (dashed-UUID rows, inserted that way on purpose), which
-            # would hand the planner a "you have no invoices" grounding fact.
+            # would hand the model a "you have no invoices" grounding fact.
             patch("agents.query_agent._get_tenant_stats_summary", return_value=stats),
-            patch("agents.query_tools._get_tenant_stats_summary", return_value=stats),
-            patch("agents.sage_orchestrator._get_tenant_stats_summary", return_value=stats),
         ):
             stack.enter_context(target)
         yield
 
 
-@contextmanager
-def _agentic_sage_enabled(enabled: bool):
-    """Flip `ENABLE_AGENTIC_SAGE` on the in-process settings object only.
-
-    Mutating the cached `Settings` instance, not `os.environ` and not `.env`:
-    the flag is read as `get_settings().ENABLE_AGENTIC_SAGE` at the top of
-    `run_query_agent()`, so this exercises the real branch — the same thing that
-    would happen in production if the flag moved — while remaining a
-    process-local change that disappears when the script exits.
-    """
-    from config import get_settings
-
-    settings = get_settings()
-    previous = settings.ENABLE_AGENTIC_SAGE
-    settings.ENABLE_AGENTIC_SAGE = enabled
-    try:
-        yield
-    finally:
-        settings.ENABLE_AGENTIC_SAGE = previous
-
-
-# The three modules the two chat paths actually resolve `get_llm` through, read
-# off the code rather than assumed: `agents/query_agent.py` (classification, SQL
-# generation, every synthesis call on the default path), `agents/query_tools.py`
-# (the rewritten tool set's own generation calls) and
-# `agents/sage_orchestrator.py` (planner + synthesis). Each does
-# `from utils.llm import get_llm`, so the module attribute is the binding that
-# has to be replaced — patching `utils.llm.get_llm` would miss all three.
+# The module the chat path actually resolves `get_llm` through, read off the code
+# rather than assumed: `agents/query_agent.py` (classification, SQL generation,
+# every synthesis call). It does `from utils.llm import get_llm`, so the module
+# attribute is the binding that has to be replaced — patching `utils.llm.get_llm`
+# would miss it. `agents/query_tools.py` and `agents/sage_orchestrator.py` were
+# the other two entries until Gap 316: the orchestrator is deleted and
+# `query_tools` no longer makes an LLM call of any kind.
 #
 # Deliberately NOT in this list: `services/agent_eval.py` (the judge, which must
 # stay on the baseline model), and every non-chat call site
@@ -538,8 +398,6 @@ def _agentic_sage_enabled(enabled: bool):
 # never calls would be a claim the output could not support.
 CANDIDATE_LLM_PATCH_TARGETS = (
     "agents.query_agent.get_llm",
-    "agents.query_tools.get_llm",
-    "agents.sage_orchestrator.get_llm",
 )
 
 
@@ -574,6 +432,17 @@ def default_output_dir() -> Path:
     deploy-dev.yml`), which is also why fixing it here rather than by adding an
     `--out` to the two bicep files keeps one behaviour for both cadences and
     needs no infra redeploy.
+
+    Re-verified 2026-08-25 under Gap 317 against a real `docker build -f
+    docker/Dockerfile.be` of the current tree: `/app/tests` is absent, the
+    nightly argv (`--paths default --run-label nightly`, no `--out`) completes
+    and writes `/tmp/agent_eval_output.json`, and reverting this function to its
+    pre-Gap-308 form inside that same image reproduces the live
+    `FileNotFoundError: '/app/tests/agent_eval_output.json'` exactly. Note this
+    ships only when the image is rebuilt — the `acrinvoicellmdev2` image the
+    nightly job runs was built 2026-08-24T09:08Z and carries no
+    `default_output_dir` at all, so the deployed job keeps failing until a
+    backend image refresh lands.
     """
     return (
         _CHECKOUT_OUTPUT_DIR
@@ -629,8 +498,7 @@ def _candidate_model(
 ):
     """Run the product's chat paths against one named provider/model, this run only.
 
-    Same discipline as `_agentic_sage_enabled` above: a process-local
-    substitution that disappears when the block exits. It replaces the
+    A process-local substitution that disappears when the block exits. It replaces the
     `get_llm` *binding* in the chat-path modules with a factory closed over
     `build_llm(provider, model=...)`, so the real call sites keep calling
     `get_llm(max_tokens=...)` exactly as they do in production and receive a
@@ -713,16 +581,15 @@ def run_turn(
     result: dict[str, Any] = {}
     with _counting_llm_calls() as counter:
         with _harness_patches(recorder, stats, chunks, invoice_chunks):
-            with _agentic_sage_enabled(path == "sage"):
-                try:
-                    # `case.tenant_id`, not the module-level base tenant: Wave 3's
-                    # regional cases are seeded under their own ids and the
-                    # generated SQL is tenant-scoped, so this is what keeps a
-                    # US-tenant question from reading the base tenant's rows.
-                    result = run_query_agent(session_id, case.question, case.tenant_id, session)
-                except Exception as e:  # a harness failure is data too
-                    error = f"{type(e).__name__}: {e}"
-                    logger.exception("Turn raised for %s/%s", case.case_id, path)
+            try:
+                # `case.tenant_id`, not the module-level base tenant: Wave 3's
+                # regional cases are seeded under their own ids and the
+                # generated SQL is tenant-scoped, so this is what keeps a
+                # US-tenant question from reading the base tenant's rows.
+                result = run_query_agent(session_id, case.question, case.tenant_id, session)
+            except Exception as e:  # a harness failure is data too
+                error = f"{type(e).__name__}: {e}"
+                logger.exception("Turn raised for %s/%s", case.case_id, path)
     latency_ms = (time.perf_counter() - started) * 1000.0
 
     content = result.get("content") or ""
@@ -734,7 +601,7 @@ def run_turn(
         # saved output file (and every persisted row) says so, rather than that
         # being knowable only by looking the case up in the golden sample.
         "tenant_id": case.tenant_id,
-        "agent_name": AGENT_SAGE_PATH if path == "sage" else AGENT_DEFAULT_PATH,
+        "agent_name": AGENT_DEFAULT_PATH,
         # None means "the application's own configured model", not "unknown".
         "model_under_test": model_under_test,
         "question": case.question,
@@ -749,17 +616,15 @@ def run_turn(
         "fetched_invoice_numbers": sorted(recorder.fetched_invoice_numbers()),
         "generated_sql": result.get("generated_sql"),
         "citations": result.get("citations") or [],
-        "agentic": result.get("agentic"),
         "latency_ms": round(latency_ms, 1),
         "llm_call_count": counter.call_count,
         "llm_events": counter.events,
         "tokens_in": counter.tokens_in,
         "tokens_out": counter.tokens_out,
-        # Added 2026-08-21: a turn total says nothing about which call site or
-        # which tool result the tokens came from, and that attribution is the
-        # question this round was run to answer.
+        # Added 2026-08-21: a turn total says nothing about which call site the
+        # tokens came from, and that attribution is the question this round was
+        # run to answer.
         "tokens_by_agent": counter.by_agent(),
-        "tool_calls": recorder.tool_calls,
         "error": error,
     }
 
@@ -840,16 +705,10 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                         else None
                     ),
                     f"sql={'yes' if turn.get('generated_sql') else 'no'}",
-                    (
-                        "tools=" + ",".join(turn["agentic"].get("tools_called") or [])
-                        if turn.get("agentic")
-                        else None
-                    ),
-                    (
-                        "stop_reason=" + str(turn["agentic"].get("stop_reason"))
-                        if turn.get("agentic") and turn["agentic"].get("stop_reason")
-                        else None
-                    ),
+                    # `tools=` / `stop_reason=` were emitted here for the deleted
+                    # SAGE path (Gap 316). `services/online_eval_signals.py` still
+                    # parses them off historical `AgentEvalRun.notes` rows, which
+                    # is why nothing there was changed.
                     ("error=" + turn["error"]) if turn.get("error") else None,
                     turn.get("score_notes"),
                 )
@@ -946,13 +805,14 @@ def _bind_chunk(chunk: dict, invoice_id: str) -> dict:
 def _region_invoice_chunk_map(region: dict, seeded_ids: dict) -> dict:
     """The same `{invoice_id: [chunk, ...]}` binding, for one regional tenant.
 
-    Wave 3, 2026-08-24. Without this, a `get_full_record` fetch on the agentic
-    path would return the row and **no** document pages for every regional
-    invoice, so the two chunk-dependent cases (`us_zero_tax_exemption_reason`,
+    Wave 3, 2026-08-24. Without this, any `get_full_record` fetch that asks for
+    document pages returns the row and **no** pages for a regional invoice, so
+    the two chunk-dependent cases (`us_zero_tax_exemption_reason`,
     `eu_currency_confusion_trap`) would be graded against evidence that could not
-    contain their answer — the same harness defect the module docstring records
-    for the tool-result recorder, which looked like a model result until it was
-    found.
+    contain their answer — a harness defect that looks like a model result. Kept
+    after Gap 316 for the same reason `_fixture_invoice_chunks` is: Feature 6
+    passes `include_document_pages=False`, but that is a default, not a
+    guarantee.
     """
     mapping: dict[str, list[dict]] = {}
     for chunk in region["chunks"]:
@@ -1054,7 +914,11 @@ def _agent_rollup(rows: list[dict]) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--paths", default="default", help="comma list: default,sage")
+    parser.add_argument(
+        "--paths",
+        default="default",
+        help="comma list; `default` is the only path since Gap 316 deleted SAGE",
+    )
     parser.add_argument("--cases", default=None, help="comma list of case ids (default: all)")
     parser.add_argument("--persist-url", default=None, help="SQLAlchemy URL for agent_eval_run rows")
     parser.add_argument("--no-persist", action="store_true")
@@ -1226,12 +1090,6 @@ def main() -> None:
                         f"  llm_calls={turn['llm_call_count']}  latency={turn['latency_ms']:.0f}ms  "
                         f"sql={'yes' if turn['generated_sql'] else 'no'}  err={turn['error']}"
                     )
-                    for call in turn["tool_calls"]:
-                        print(
-                            f"    tool {call['tool']} -> {call['status']} in {call['duration_ms']:.0f}ms, "
-                            f"{call.get('chunk_count', 0)} chunk(s), "
-                            f"{call.get('result_json_tokens', 0):,} result tokens"
-                        )
                     if not args.no_score:
                         turn = score_turn(
                             turn, case, judge_llm, combined_judge=args.judge == "combined"
@@ -1301,6 +1159,16 @@ def main() -> None:
         "persisted_rows": persisted,
         "turns": turns,
     }
+    # Gap 317 (2026-08-25): the same failure class as Gap 308, closed from the
+    # other end. Gap 308 made the *default* safe in an image with no `tests/`;
+    # this makes an explicitly requested `--out` safe too, so no caller — a
+    # future `--out` on the two bicep files, a gate writing under a directory
+    # that only exists in a checkout — can reproduce "every graded turn ran,
+    # every row committed, then the process died on the final write". A crash
+    # here is the worst possible place for one: with `retryLimit 0` Container
+    # Apps records the whole execution as `Failed`, which is exactly the signal
+    # the Feature 20/23/24 recommendation pass is designed to trigger off.
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
 

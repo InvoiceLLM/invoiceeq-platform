@@ -133,7 +133,7 @@ Confirmed against subscription `2ae37d8b-…` before any parsing code was writte
 | `azure_cost_snapshot` / `azure_cost_slice` | Real, but from a sweep run predating the budget fix, and the sweep is **not scheduled** |
 | `chat_turn` (Sections B, C) | 0 rows — the live backend image predates the commit that added it |
 | `extraction_benchmark_run` (Section E) | 0 rows until the Gap 309 logging-level fix reaches a deployed image |
-| `online_eval_signal` (Section F) | 0 rows on a schedule basis; `clarification_rate`/`budget_exhaustion_rate` are known-degenerate while `ENABLE_AGENTIC_SAGE=false` |
+| `online_eval_signal` (Section F) | 0 rows on a schedule basis; `clarification_rate`/`budget_exhaustion_rate` are **permanently** degenerate as of Gap 316 (2026-08-25) — both read `stop_reason`/clarification state that only SAGE's deleted orchestrator ever produced, so they now measure nothing rather than measuring a flag that is off |
 | `agent_eval_run` where `run_source == "production"` (Section G) | 0 rows |
 | SAGE per-tool cost (`a6`), stop reasons (`b6`) | Structurally empty while the SAGE flag is off — stated on the panel, not omitted |
 
@@ -247,35 +247,56 @@ value, explanation, recommendation-or-NA.
 
 ## Not yet built — the actual remaining scope
 
-All three items below are **not started**. Nothing today produces or stores a per-field
-recommendation; the table above exists only as a one-off message.
+The prerequisite is **done** (2026-08-25, Gaps 308 + 317 — code-level; the image refresh it needs is
+tracked as a deploy, in the blockers table below). Items (a)–(c) are **not started**: nothing today
+produces or stores a per-field recommendation, and the table above exists only as a one-off message.
+Design finalized 2026-08-25 (see "Open decisions" above); real Gap numbers are filed in
+`be_features_tracker.md` once each item starts — (a) = Gap 318, (b) = Gap 319, (c) = Gap 320.
 
-- `[ ]` **(a) The recommendation pass.** A periodic job that reads the **live value** for every field in
-  the table above — the same queries the workbook panels run — and generates the explanation +
-  recommendation column at runtime. Reuses what already exists: the workbook JSONs are the field
-  inventory, and both files' queries are already live-verified.
+- `[x]` ~~**(prerequisite) Fix the nightly job's crash.**~~ **Fixed in code — Gaps 308 + 317.** The
+  `FileNotFoundError` after all real work (`.dockerignore` strips `tests/` from the production image) was
+  fixed on 2026-08-24 by `default_output_dir()` in `scripts/run_agent_eval.py` (Gap 308) and re-verified
+  2026-08-25 against a real `docker build -f docker/Dockerfile.be` (Gap 317): the literal nightly argv
+  `--paths default --run-label nightly`, no `--out`, all 35 cases, real model, real Postgres →
+  `NIGHTLY_EXIT=0`, 35 rows persisted, output written to `/tmp/agent_eval_output.json`. Gap 317 also
+  closed the caller-side half of the same failure class (`main()` creates `--out`'s parent directory), so
+  adding an `--out` to the job later cannot reintroduce it. **One thing is still open, and it is a
+  deploy, not a code fix**: the image the job runs (`acrinvoicellmdev2.azurecr.io/invoice-be:latest`,
+  built 2026-08-24T09:08:22Z) predates the fix and contains no `default_output_dir` at all, so the 03:00
+  UTC schedule keeps failing until a backend image refresh lands — the same pending refresh the blockers
+  table below already carries for `chat_turn`/GenAI-span/`AppRequests`. The trigger is reliable in code;
+  it becomes reliable in Azure with that deploy.
+- `[ ]` **(a) The recommendation pass.** A step appended to the nightly job's own script (not a new
+  scheduled resource): reads Track 1/2's just-produced eval results, queries current cost/health
+  (reusing `azure_cost.py`), and for each of the three categories (container health, cost, AI
+  improvement) either confirms "everything worked" or writes a recommendation.
 - `[ ]` **(b) Somewhere to persist a run's recommendations.** New. Nothing today survives past a one-off
   message. A workbook can only read Log Analytics / App Insights / Resource Graph / ARM / ADX — **it
   cannot query Postgres** — so persistence has to land somewhere a workbook can query (the established
-  pattern in this repo is a custom event mirror, i.e. one `AppEvents` row per field per run, the same
+  pattern in this repo is a custom event mirror, i.e. one `AppEvents` row per category per run, the same
   way `agent_eval_run` and `online_eval_signal` are mirrored).
 - `[ ]` **(c) A new Workbook panel that renders the persisted recommendations.** One panel, on both
-  workbooks or on one of them — a grid of `Field | Value | Explanation | Recommendation` filtered to the
-  latest run. Must obey the existing rules above: data only, minimum-sample guard, no customer content.
+  workbooks or on one of them — a grid of `Category | Status | Explanation | Recommendation` filtered to
+  the latest run. Must obey the existing rules above: data only, minimum-sample guard, no customer content.
 
-### Open decisions — pending the user, do not guess
+### Open decisions — closed 2026-08-25
 
-1. **Cadence.** How often the review runs. (For reference, not a proposal: the deployed nightly benchmark
-   job is `0 3 * * *` UTC; the superseded digest used 6-hourly.)
-2. **Coverage per run.** Whether every field gets a recommendation every run, or only fields worth
-   commenting on. This decides whether the panel is a fixed-length table or a variable one, and it
-   changes the cost of the pass.
+1. ~~**Cadence.**~~ **Closed: event-triggered off the existing nightly benchmark-eval job's completion**
+   (`caj-benchmark-eval-dev`, `0 3 * * *` UTC), not a new independent schedule. Most of this system's
+   data has no discrete "record populated" event to hook (Azure Monitor/ARG metrics are live-queried,
+   not inserted); `chat_turn` populates on every message, far too often to trigger a full review. The
+   nightly job finishing is the one already-existing, infrequent, meaningful "new data landed" moment —
+   the recommendation pass becomes a step appended to that job's own script, not a new scheduled resource.
+2. ~~**Coverage per run.**~~ **Closed: check-and-flag, not an exhaustive per-field dump.** Three
+   categories — **container health, cost** (Feature 20) and **AI improvement** (Feature 23 quality). For
+   each: confirm "everything worked," or write a recommendation. Not every one of the ~90 fields gets a
+   line every run.
 
 ---
 
 ## Known blockers carried forward
 
-Verified as of 2026-08-24, still open:
+Verified as of 2026-08-24, still open (last row added 2026-08-25 under Gap 317):
 
 | Blocker | Detail |
 |---|---|
@@ -286,6 +307,7 @@ Verified as of 2026-08-24, still open:
 | Stage 8 (`08-apps.bicep`) is unrunnable against dev | `params.dev.json`'s `backendImage` points at `acrinvoicellmdev.azurecr.io` — **that registry does not exist**, the real one is `acrinvoicellmdev2` — and its `namingPrefix: "invoice-llm"` rewrites every Key Vault secret URI and the identity to names that do not exist. A Stage 8 deploy would also roll back the live CPU/memory scale rules. Anything new must deploy through a narrow standalone template, the pattern `workbook-cost-health-only.bicep` / `workbook-ai-control-tower-only.bicep` / `benchmark-eval-job-only.bicep` already use. |
 | Alert-rule fix pending deploy | `alert-rules.bicep`'s CPU/memory alerts gained a second `AllOf` criterion (`Replicas >= app.maxReplicas`) so they only fire once autoscale is genuinely maxed out. `az bicep build` clean, `what-if` Succeeded — **`az deployment group create` deliberately not run.** |
 | `chat_turn` / GenAI-span / `AppRequests` fixes pending deploy | All three are code-complete and locally verified but the live backend image predates them, so Sections B/C stay at 0 rows and `AppDependencies` has no `GenAI | az.ai.openai` rows until a backend deploy lands (no longer blocked by `benchmark-gate` — that gate is removed as of 2026-08-25, see the row above). |
+| Nightly eval job's `FileNotFoundError` fix pending the *same* deploy | Code-complete (Gap 308's `default_output_dir()`, 2026-08-24; re-verified and extended by Gap 317, 2026-08-25) and proven inside a real `Dockerfile.be` build — the literal nightly argv now exits 0 and writes `/tmp/agent_eval_output.json`. But `acrinvoicellmdev2.azurecr.io/invoice-be:latest` was built **2026-08-24T09:08:22Z**, ~4h before the fix commit, and reading `/app/scripts/run_agent_eval.py` inside it shows **no `default_output_dir` at all** — so `caj-benchmark-eval-dev` still fails at 03:00 UTC every night (all real work done, then the crash, recorded `Failed` under `retryLimit 0`) until an image refresh lands. Same deploy as the row above; nothing else is needed. |
 
 ---
 
@@ -297,12 +319,14 @@ Verified as of 2026-08-24, still open:
       dependency span, `chat_turn`, `agent_eval_summary`/`agent_eval_run`, `extraction_benchmark_run`,
       `online_eval_signal`
 - `[x]` Field-by-field review of both workbooks, with a sample recommendation per field (the table above)
-- `[ ]` **Decide cadence** for the recommendation pass — user
-- `[ ]` **Decide coverage** — every field every run, or only fields worth commenting on — user
-- `[ ]` **(a)** Build the recommendation pass: read every workbook field's live value, produce
-      explanation + recommendation
-- `[ ]` **(b)** Persist each run's recommendations somewhere a workbook can query (not Postgres)
-- `[ ]` **(c)** Add the Workbook panel that renders the latest run's recommendations
+- `[x]` **Decide cadence** — closed 2026-08-25: triggered off the nightly job's completion, not a new schedule
+- `[x]` **Decide coverage** — closed 2026-08-25: check-and-flag across 3 categories (container health, cost, AI improvement), not an exhaustive per-field dump
+- `[x]` **(prerequisite)** Fix the nightly job's `FileNotFoundError` crash — done in code (Gap 308 fixed
+      the default output dir 2026-08-24; Gap 317 re-verified it against a real image build and closed the
+      caller-supplied-`--out` half, 2026-08-25). Needs the pending backend image refresh to take effect live.
+- `[ ]` **(a)** Build the recommendation pass as a step in the nightly job's script — not started
+- `[ ]` **(b)** Persist each run's recommendations somewhere a workbook can query (not Postgres) — not started
+- `[ ]` **(c)** Add the Workbook panel that renders the latest run's recommendations — not started
 - `[x]` Unblock deploys: `benchmark-gate` removed from `deploy-dev.yml` entirely (2026-08-25, Gap 312) — not fixed, per standing rule that CI/CD must never execute tests/benchmarks
-- `[ ]` Grant `Monitoring Reader` to `id-invoicellm-dev` via a narrow template
-- `[ ]` Deploy the pending backend image so Sections B/C and the GenAI dependency rows carry real data
+- `[ ]` Grant `Monitoring Reader` to `id-invoicellm-dev` via a narrow template — not started
+- `[ ]` Deploy the pending backend image so Sections B/C and the GenAI dependency rows carry real data — not started

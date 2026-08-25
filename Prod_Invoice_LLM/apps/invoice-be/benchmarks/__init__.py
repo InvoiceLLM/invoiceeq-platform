@@ -9,10 +9,11 @@ run). This package is the fix: the benchmark/eval *code and data* the nightly
 scheduler (`scripts/run_extraction_benchmark.py`, `scripts/run_agent_eval.py`)
 needs to import at runtime live here instead, one level up from `tests/`, so
 they ship with the image. Genuinely pytest-only content (test functions,
-fixtures, the manual `tests/run_agentic_sage_live.py` CLI harness) stays in
-`tests/` and imports back from here where it needs the same data.
+fixtures) stays in `tests/` and imports back from here where it needs the same
+data. (`tests/run_agentic_sage_live.py`, the manual CLI harness this note used to
+name, was deleted with the orchestrator -- Gap 316.)
 
-See `docs/feature_23_ai_control_tower.md`'s 2026-08-23 section, "The cadence
+See `docs/feature_20_23_24_ops_workbook.md`'s 2026-08-23 section, "The cadence
 blocker", for the history.
 
 2026-08-24 (Wave 3): `region_seed_fixtures.py` joins this package for the same

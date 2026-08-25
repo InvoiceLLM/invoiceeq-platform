@@ -20,8 +20,9 @@ rather than authored freehand: for each case, the correct answer is a fact about
 seven specific rows, so it can be stated exactly and checked.
 
 The fixture rows and document chunks are imported, not copied, from
-`tests/run_agentic_sage_live.py` — the same seven incident-history invoices that
-harness already seeds. Duplicating them would let the two drift.
+`benchmarks/sage_seed_fixtures.py` — the same seven incident-history invoices the
+(since-deleted) `tests/run_agentic_sage_live.py` harness seeded. Duplicating them
+would let the two drift.
 
 `tests/us|india|eu/chat_question_bank.md` are the repo's *real* answer-bearing
 question banks (question + reference answer + grading rubric, ~15 questions per
@@ -1029,11 +1030,11 @@ def tenant_stats_summary() -> str:
     """The tenant snapshot the planner/SQL prompts are given, computed from the
     seeded rows rather than hand-written.
 
-    `tests/run_agentic_sage_live.py` hardcodes this string because
+    `benchmarks/sage_seed_fixtures._TENANT_STATS` hardcodes this string because
     `_get_tenant_stats_summary()`'s ORM query returns an empty tenant against
     this SQLite fixture (the rows are inserted with a dashed UUID literal on
-    purpose -- see that file's docstring). Recomputing it here instead of
-    reusing that literal is deliberate: the literal reports USD 96,420.00, while
+    purpose). Recomputing it here instead of reusing that literal is deliberate:
+    the literal reports USD 96,420.00, while
     the seven rows it describes actually total USD 102,565.50, so reusing it
     would hand every measured turn a wrong grounding fact.
 

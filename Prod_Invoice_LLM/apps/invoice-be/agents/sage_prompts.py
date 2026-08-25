@@ -1,8 +1,39 @@
 """Feature 21 — SAGE's prompt blocks, as named constants rather than one literal.
 
-`feature_21_architecture.md` § "Implementation note -- compose these from named
-blocks, don't hand-type one literal" is the requirement this module exists to
-satisfy, and it is not a style preference: every schema-drift bug this rewrite
+**What is live here (updated 2026-08-25 by Gap 306): `PERSONA_BLOCK` and the
+schema-reflection half.** The orchestrator these blocks were written for is
+deleted (Gap 316); the surviving consumer of both live halves is
+`agents/query_agent.py`.
+
+  * `PERSONA_BLOCK` -- Feature 6's shared `CHAT_PERSONA_BLOCK` is derived from it
+    (Gap 313); the tax-domain, category-judgment and data-honesty knowledge in it
+    is real and in use on the one route that answers users.
+  * `invoice_columns()`, `CATEGORY_MATCH_EXCLUDED_COLUMNS`,
+    `_category_match_columns_typed()`, `category_match_columns()`,
+    `category_match_branches()`, `category_match_expression()`,
+    `render_category_match_clause()`, `quoted_column()` -- Gap 306's fix imports
+    these. When the SQL route's own generated category query comes back empty,
+    the chat path re-runs the search over the reflected column set instead of
+    reporting a real invoice as "not found". Gap 316 flagged this machinery as a
+    founder call on whether the reflected-schema idea was worth keeping for a
+    future non-agentic use; Gap 306 is that use, and it answered the question by
+    needing it. The founder call it did NOT answer is the one below.
+
+Still orphaned as of 2026-08-25, unchanged by Gap 306 and still a founder call:
+`IDENTIFY_*`, `AGGREGATE_*`, `build_identify_system_prompt()`,
+`build_aggregate_system_prompt()` and `aggregate_schema_block()` -- the prompt
+text SAGE's two SQL-writing tools were assembled from. Those have zero callers
+and zero tests, and nothing in Feature 6 asks a model to write an aggregate from
+a reflected schema block, so keeping them is a bet on a future non-agentic use,
+exactly as Gap 316 recorded. Flagged rather than deleted, the same way Gap 314
+flagged the orphaned ops-digest telemetry.
+
+The doc these blocks were transcribed from (`feature_21_sage.md`) was deleted
+with the code; the closing record is `docs/be_features_tracker.md`, Feature 21
+and Gap 316, and the full text is in git history.
+
+Named blocks rather than one literal was the original requirement, and it is not
+a style preference: every schema-drift bug this rewrite
 was opened for (Gaps 263/264/285, the SGST regression) lives inside one long
 hand-typed prompt string that nobody wanted to hunt through to change one rule.
 So each block below is separately named, separately editable and separately
@@ -19,10 +50,13 @@ than typed out:
   * `category_match_columns()` / `render_category_match_clause()` build rule 4's
     OR-group from that same reflection, replacing the hardcoded 4-column list
     (`tags`, `items`, `vendor_name`, `customer_name`) that rule 6b has carried
-    since it was written.
+    since it was written. Gap 306 added `category_match_branches()` /
+    `category_match_expression()` alongside them: the same group, same columns,
+    same cast decisions, as bound SQLAlchemy expressions rather than text -- the
+    form you can actually execute against a tenant's rows.
 
-Nothing in here calls an LLM or touches the database; `agents/query_tools.py`
-owns that. This module is text.
+Nothing in here calls an LLM or opens a database session. It renders text and,
+since Gap 306, SQL expression objects; running them is the caller's job.
 """
 
 from __future__ import annotations
@@ -35,9 +69,9 @@ from models import Invoice
 # Postgres's identifier preparer, used only to decide whether a column name has
 # to be double-quoted in generated SQL. `references` is a RESERVED word in both
 # PostgreSQL and SQLite -- `CAST(references AS TEXT)` is a syntax error, not a
-# style nit, and `feature_21_architecture.md`'s worked example writes it unquoted
-# (see this feature's deviation note). Every clause this module renders goes
-# through here, so the quoting is correct by construction instead of by memory.
+# style nit; the old architecture doc's worked example wrote it unquoted. Every
+# clause this module renders goes through here, so the quoting is correct by
+# construction instead of by memory.
 _IDENTIFIER_PREPARER = postgresql.dialect().identifier_preparer
 
 
@@ -50,7 +84,7 @@ def quoted_column(name: str) -> str:
 # The persona block — shared by the planner prompt and the synthesis prompt
 # ---------------------------------------------------------------------------
 
-# Verbatim from `feature_21_architecture.md` § "System prompts -- full text".
+# Verbatim from Feature 21's design (deleted with the doc; see git history).
 # Shared by BOTH prompt builders on purpose: the planner decides which tool to
 # reach for and the synthesis step decides what the returned data means, and a
 # persona present in only one of them is a persona that disagrees with itself
@@ -139,7 +173,7 @@ selects FROM invoice. Only these columns are visible to you:
   tenant's own invoice sent to a customer)
 - grand_total, currency: for disambiguating between several same-named matches only"""
 
-# Rules 1-6 as drafted in `feature_21_architecture.md`. Rules 1/2 are rules 1/4/4a
+# Rules 1-6 as drafted in Feature 21's design. Rules 1/2 are rules 1/4/4a
 # of the SQL route restated for this narrower job; 5 is rule 9; 6 is rule 10.
 IDENTIFY_RULES_BLOCK = """Rules:
 1. Always filter by tenant_id = '{tenant_id}'.
@@ -205,7 +239,7 @@ Conversation History for Context:
 # "packaging" street name matching a packaging-spend query).
 CATEGORY_MATCH_ADDRESS_EXCLUSION = "addresses"
 
-# Deviation from `feature_21_architecture.md` rule 4's literal "every JSONB/text
+# Deviation from Feature 21's rule 4 as drafted -- its literal "every JSONB/text
 # column in the schema EXCEPT `addresses`", flagged rather than applied silently.
 # Read literally, "every text/JSONB column" also sweeps in five columns that are
 # not category evidence at all, and one of them actively defeats the `addresses`
@@ -304,6 +338,28 @@ def invoice_columns() -> list:
     return list(Invoice.__table__.columns)
 
 
+def _category_match_columns_typed() -> list[tuple[sa.Column, bool]]:
+    """`(column, needs_text_cast)` for every category-matchable column.
+
+    The single place the three renderers below agree on two separate questions:
+    which columns are in scope at all, and which of them have to be cast to text
+    before `LOWER`/`LIKE` touches them (rule 6(a) -- there is no `lower(jsonb)`,
+    and an uncast call aborts the whole query on Postgres). Split out for Gap 306:
+    the executable form added below must not be allowed to disagree with the
+    rendered one about either answer, and two hand-kept copies of the same
+    `if _is_json_column(...)` branch is exactly how that disagreement starts.
+    """
+    typed: list[tuple[sa.Column, bool]] = []
+    for column in invoice_columns():
+        if column.name in CATEGORY_MATCH_EXCLUDED_COLUMNS:
+            continue
+        if _is_json_column(column):
+            typed.append((column, True))
+        elif _is_text_column(column):
+            typed.append((column, False))
+    return typed
+
+
 def category_match_columns() -> list[str]:
     """The columns rule 4's OR-group scans, reflected off the live model.
 
@@ -312,12 +368,23 @@ def category_match_columns() -> list[str]:
     `references` and was invisible to the old list; it is visible to this one,
     and so is any text/JSONB column added to the model after this was written.
     """
-    return [
-        column.name
-        for column in invoice_columns()
-        if (_is_text_column(column) or _is_json_column(column))
-        and column.name not in CATEGORY_MATCH_EXCLUDED_COLUMNS
-    ]
+    return [column.name for column, _ in _category_match_columns_typed()]
+
+
+def category_match_json_columns() -> list[str]:
+    """The subset of `category_match_columns()` that is JSONB, reflected.
+
+    Gap 306's trigger condition, and the reason it is derived rather than the
+    literal `("tags", "items", "sa_alerts")` it would have been easiest to type:
+    a `LIKE` against a JSON blob column is, by construction, a subject-matter
+    search. Nothing else on this route has a reason to reach into one -- a name
+    lookup uses `vendor_name`/`customer_name` (rules 6a/4a), an invoice lookup
+    uses `invoice_number`, a status filter uses `status`. So "did this query
+    LIKE-match a phrase against a JSONB column" is a structural fingerprint of a
+    rule 6b category query, holds for every subset of the group the model might
+    emit, and stays correct when a JSONB column is added to `models.py`.
+    """
+    return [column.name for column, needs_cast in _category_match_columns_typed() if needs_cast]
 
 
 def render_category_match_clause(phrase: str) -> str:
@@ -328,18 +395,56 @@ def render_category_match_clause(phrase: str) -> str:
     columns are not cast. Reserved names are quoted -- see `quoted_column`.
 
     `phrase` is interpolated as a SQL literal, so callers must pass a sanitized
-    phrase (`agents/query_tools._sanitize_like_phrase`). Nothing here escapes it.
+    phrase. Nothing here escapes it -- which is why the *executed* form of this
+    clause is `category_match_branches()` below, not this one. This renderer is
+    for prompt/diagnostic text.
     """
     branches = []
-    for column in invoice_columns():
-        if column.name in CATEGORY_MATCH_EXCLUDED_COLUMNS:
-            continue
+    for column, needs_cast in _category_match_columns_typed():
         name = quoted_column(column.name)
-        if _is_json_column(column):
+        if needs_cast:
             branches.append(f"LOWER(CAST({name} AS TEXT)) LIKE LOWER('%{phrase}%')")
-        elif _is_text_column(column):
+        else:
             branches.append(f"LOWER({name}) LIKE LOWER('%{phrase}%')")
     return "(" + "\n    OR ".join(branches) + ")"
+
+
+def category_match_branches(phrase: str) -> list[tuple[str, sa.sql.ColumnElement]]:
+    """The same OR-group as `render_category_match_clause()`, as bound SQL expressions.
+
+    `(column_name, predicate)` per in-scope column, so a caller can build both the
+    match itself (`category_match_expression()`) and a "which column did this row
+    actually match in" projection from one reflection pass.
+
+    Three things this form has that the rendered string cannot (Gap 306, which is
+    what made it necessary):
+
+      * **The phrase is a bound parameter**, never interpolated. The phrase this
+        product searches on is lifted out of model-written SQL, so "the caller
+        sanitizes it" is not a guarantee anyone should be relying on.
+      * **The cast is the dialect's own.** `sa.cast(col, sa.Text)` compiles to
+        `CAST(... AS TEXT)` on Postgres and on SQLite; nothing here has to know
+        which engine the request is bound to.
+      * **It is composable with a typed tenant predicate.** `Invoice.tenant_id ==
+        <UUID>` goes through SQLModel's UUID type, which is the only form that
+        matches on *both* engines -- SQLite stores those columns dashless, so the
+        dashed literal a text clause would carry matches zero rows there.
+
+    `phrase` is lowered in Python rather than wrapped in a second SQL `LOWER()`:
+    the column side is already lowered, and lowering a bound literal in SQL buys
+    nothing but an extra function call per row.
+    """
+    pattern = f"%{phrase.lower()}%"
+    branches: list[tuple[str, sa.sql.ColumnElement]] = []
+    for column, needs_cast in _category_match_columns_typed():
+        target = sa.cast(column, sa.Text) if needs_cast else column
+        branches.append((column.name, sa.func.lower(target).like(pattern)))
+    return branches
+
+
+def category_match_expression(phrase: str) -> sa.sql.ColumnElement:
+    """`category_match_branches()` OR'd together -- the whole clause, ready to filter on."""
+    return sa.or_(*(predicate for _, predicate in category_match_branches(phrase)))
 
 
 def aggregate_schema_block() -> str:
@@ -368,7 +473,7 @@ AGGREGATE_TASK_BLOCK = """You are generating a cross-invoice aggregation query -
 breakdown across more than one invoice, not a single identified invoice's detail (that is
 identify_invoices + get_full_record's job)."""
 
-# Rules 1-10 from `feature_21_architecture.md`. Two placeholders are filled at
+# Rules 1-10 from Feature 21's design. Two placeholders are filled at
 # call time rather than typed: `{category_columns}` from `category_match_columns()`
 # and `{line_item_rule}` from `agents/query_agent._line_item_rule()`, which is
 # already split by dialect (`_LINE_ITEM_RULE_SQLITE`/`_LINE_ITEM_RULE_POSTGRES`).

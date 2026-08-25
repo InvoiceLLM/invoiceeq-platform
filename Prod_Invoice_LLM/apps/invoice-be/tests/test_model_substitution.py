@@ -28,8 +28,6 @@ from pydantic import ValidationError
 from sqlmodel import Session, create_engine, select
 
 import agents.query_agent as query_agent
-import agents.query_tools as query_tools
-import agents.sage_orchestrator as sage_orchestrator
 import utils.llm as llm_module
 from agents.query_agent import QueryRoutingSchema
 from config import get_settings
@@ -45,7 +43,10 @@ from scripts.run_agent_eval import (
 from benchmarks.agent_eval_golden_sample import GoldenCase
 from utils.llm import LlmConfigurationError, MockInvoiceLLM, build_llm, get_llm
 
-_CHAT_PATH_MODULES = (query_agent, query_tools, sage_orchestrator)
+# Gap 316: `agents/query_tools.py` and `agents/sage_orchestrator.py` were the
+# other two entries. The orchestrator is deleted and `query_tools` no longer
+# makes an LLM call of any kind, so `query_agent` is the whole chat path.
+_CHAT_PATH_MODULES = (query_agent,)
 
 
 def _settings_snapshot() -> dict:

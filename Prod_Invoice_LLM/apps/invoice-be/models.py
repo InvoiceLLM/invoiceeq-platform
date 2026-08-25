@@ -591,7 +591,9 @@ class AgentEvalRun(SQLModel, table=True):
     (`chat.*`, `sage.*`, `extraction.*`), so cost telemetry and quality rows join
     on one name. Phase 3's own runs add two path-level names that identify a whole
     turn rather than a single call site: `chat.default_path` (`run_query_agent()`)
-    and `sage.agentic_path` (`run_agentic_sage()`).
+    and, until Gap 316 deleted the orchestrator on 2026-08-25, `sage.agentic_path`
+    (`run_agentic_sage()`). Historical rows still carry the latter, so nothing
+    reading this column may treat the vocabulary as a closed set.
 
     The `pass` column is spelled that way in SQL deliberately (it is not a reserved
     word in Postgres or SQLite) but `pass` is a Python keyword, so the attribute is

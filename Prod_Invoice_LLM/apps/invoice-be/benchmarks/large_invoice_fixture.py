@@ -4,11 +4,12 @@ Why this exists
 ---------------
 `chroma_client.get_all_invoice_chunks()` returns **every** indexed chunk for an
 invoice, unranked and unthresholded, and `agents/query_tools.get_full_record()`
-puts all of them into the synthesis prompt (`sage_orchestrator._synthesize_node`
-renders them under "EVERY INDEXED PAGE OF THIS INVOICE'S DOCUMENT"). Neither
-function has a page, chunk or character bound. Every fixture this repo had for
-the SAGE path is a two-chunk, ~150-character stand-in, so nothing in it could
-ever have shown what that costs on a real multi-page document.
+returned all of them to the (now deleted) SAGE synthesis step, which rendered
+them under "EVERY INDEXED PAGE OF THIS INVOICE'S DOCUMENT". Neither function had
+a page, chunk or character bound. Every fixture this repo had was a two-chunk,
+~150-character stand-in, so nothing in it could ever have shown what that costs
+on a real multi-page document. The measurement this module made possible is what
+produced `query_tools.MAX_FULL_RECORD_CHUNK_CHARS`, which is still live.
 
 This module builds the missing measurement input, and builds it the same way the
 product does rather than by writing plausible-looking chunk text by hand:
@@ -231,7 +232,7 @@ class InvoiceSpec:
         return chunks
 
     def row(self) -> dict:
-        """The `invoice` row, in the shape `tests/run_agentic_sage_live._seed()` inserts."""
+        """The `invoice` row, in the shape `benchmarks/sage_seed_fixtures._seed()` inserts."""
         import json
 
         return dict(
@@ -253,8 +254,9 @@ class InvoiceSpec:
 # page. Nothing else differs between them. 400 is chosen as a *plausible* large
 # invoice rather than a worst case — a consolidated monthly MRO/logistics invoice
 # of this length is ordinary — and the measured page/char/token curve for other
-# sizes is in `feature_21_architecture.md`'s B4 section so the shape is visible
-# without re-running anything.
+# sizes is recorded in `docs/be_features_tracker.md`'s Feature 21 section (the
+# 2026-08-21 live-model entry) so the shape is visible without re-running
+# anything.
 LARGE = InvoiceSpec(
     key="large",
     vendor_name="Meridian Industrial Supply",

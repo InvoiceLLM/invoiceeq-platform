@@ -1,14 +1,12 @@
-"""SQLite seed data shared by the chat-eval harness and its manual live-run CLI.
+"""SQLite seed data for the chat-eval harness.
 
-Extracted from `tests/run_agentic_sage_live.py` on 2026-08-23 so it ships inside
-the deployed image (see `benchmarks/__init__.py`). `tests/run_agentic_sage_live.py`
-keeps its own `QUESTIONS`/`run_once()`/`main()` — the manual exploratory CLI that
-is not needed by the scheduled job — and imports `TENANT_ID`/`_TENANT_STATS`/
-`_ROWS`/`_CHUNKS`/`_seed` back from here so both callers stay on one copy of the
-fixture data, not two that can drift.
-
-Only `_seed` and its inputs are what `scripts/run_agent_eval.py` and
-`benchmarks/agent_eval_golden_sample.py` actually import.
+Extracted on 2026-08-23 from `tests/run_agentic_sage_live.py` (the manual
+live-run CLI, deleted by Gap 316) so it ships inside the deployed image -- see
+`benchmarks/__init__.py`. `scripts/run_agent_eval.py` and
+`benchmarks/agent_eval_golden_sample.py` import `_seed` and its inputs; they are
+the only callers now. The module keeps its `sage_` name because the fixture rows
+themselves are unchanged and are cited by invoice number in the tracker's Gap
+263/264/269/270/271 entries.
 """
 from __future__ import annotations
 
@@ -188,7 +186,9 @@ def _seed(session, rows=None, tenant_id: str = TENANT_ID) -> dict:
             ),
             {
                 "id": invoice_id,
-                # Dashed on purpose -- see run_agentic_sage_live.py's docstring.
+                # Dashed on purpose -- `_get_tenant_stats_summary()`'s ORM query
+                # then returns an empty tenant, which is why
+                # `agent_eval_golden_sample.tenant_stats_summary()` recomputes it.
                 "tenant_id": tenant_id,
                 "file_path": f"seed/{row['invoice_number']}.pdf",
                 **_ROW_DEFAULTS,

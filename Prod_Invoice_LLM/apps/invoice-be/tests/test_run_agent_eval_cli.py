@@ -19,6 +19,17 @@ do rely on the default, so the default is what has to be safe) and the behaviour
 (`main()` completes and writes its payload when `tests/` is absent, exactly as
 in the image).
 
+Gap 317 (2026-08-25) re-ran that repro against a real `docker build -f
+docker/Dockerfile.be` of the current tree — before: `FileNotFoundError` on
+`/app/tests/agent_eval_output.json`, exit 1, after every graded turn and one
+committed row; after: exit 0, `/tmp/agent_eval_output.json`, and the full 35-case
+nightly argv completing with 35 persisted rows — and closed the half Gap 308 left
+open: a caller-supplied `--out` naming a directory that only exists in a checkout
+could still crash in exactly the same place, which is what "just add `--out` to
+the two bicep files" would have reintroduced. The last two tests here cover that,
+including the point that the container default must be safe because the temp
+directory already exists, not because `mkdir` hides it.
+
 `main()` is driven with the literal nightly argv. The case list is emptied
 instead of shortened so no LLM is called and no turn runs — the defect is in the
 write at the end of `main()`, which is reached identically either way — and the
@@ -195,3 +206,53 @@ def test_an_explicit_out_still_wins_over_the_fallback(
     assert explicit.is_file()
     # ...and the fallback was not written to at all.
     assert list(fallback.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# Gap 317 — the same failure class closed from the caller's end
+# ---------------------------------------------------------------------------
+
+
+def test_an_explicit_out_under_a_missing_directory_is_created_not_crashed(
+    monkeypatch, tmp_path, clean_run_source
+):
+    """Gap 317. Gap 308 made the *default* safe in an image with no `tests/`;
+    a caller-supplied `--out` was still able to reproduce the identical crash
+    (every turn graded and every row committed, then `FileNotFoundError` on the
+    final write) by naming a directory that only exists in a checkout — which is
+    precisely what a "just add `--out` to the two bicep files" fix would have
+    reintroduced. `main()` now creates the parent instead."""
+    monkeypatch.setattr(script, "_CHECKOUT_OUTPUT_DIR", tmp_path / "no-such-dir")
+    explicit = tmp_path / "app" / "tests" / "agent_eval_output.json"
+    assert not explicit.parent.exists()
+
+    _run_nightly_main(monkeypatch, extra_argv=["--out", str(explicit)])
+
+    assert explicit.is_file()
+    assert json.loads(explicit.read_text(encoding="utf-8"))["paths"] == ["default"]
+
+
+def test_the_nightly_default_needs_no_directory_creation_at_all(
+    monkeypatch, tmp_path, clean_run_source
+):
+    """The container case must be safe *because the fallback already exists*,
+    not because `mkdir` papers over it — a temp directory the process cannot
+    create would be the same bug wearing a different path. Asserted by making
+    `mkdir` fatal for the duration: the nightly run must still complete."""
+    written_to = tmp_path / "fallback-tmp"
+    written_to.mkdir()
+    monkeypatch.setattr(script, "_CHECKOUT_OUTPUT_DIR", tmp_path / "app" / "tests")
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(written_to))
+
+    real_mkdir = Path.mkdir
+
+    def _explode_if_it_has_to_create_anything(self, *args, **kwargs):
+        if not self.exists():
+            raise AssertionError(f"had to create {self}")
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", _explode_if_it_has_to_create_anything)
+
+    _run_nightly_main(monkeypatch)
+
+    assert (written_to / OUTPUT_NAME).is_file()
