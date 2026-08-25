@@ -138,16 +138,26 @@ CASES: list[GoldenCase] = [
         case_id="rajesh_steel_cgst",
         question="whats the CGST we paid to Rajesh Steel",
         expected_answer=(
-            "There is no CGST figure stored. The Rajesh Steel invoice INDIA-20260722-003 records "
-            "one combined tax_amount of INR 18,000.00 on a grand total of INR 118,000.00, with no "
-            "per-component (CGST/SGST/IGST) breakdown anywhere in the data. A correct answer says "
-            "the CGST component is not separately recorded and gives the combined INR 18,000.00 "
-            "tax figure instead; it must not invent a CGST number (e.g. half of the total tax)."
+            "The CGST is INR 9,000.00. The Rajesh Steel invoice INDIA-20260722-003 itemizes its "
+            "tax as CGST 9% INR 9,000.00 and SGST 9% INR 9,000.00 -- the two components of the "
+            "combined INR 18,000.00 tax_amount, on an INR 100,000.00 subtotal and an INR "
+            "118,000.00 grand total. A correct answer states the CGST figure as INR 9,000.00 and "
+            "may also give the SGST half and/or the combined total; it must READ those figures "
+            "from the record, not derive them by halving the total tax, and it must not claim "
+            "that no per-component breakdown is stored."
         ),
         source="tests/test_chat_sql_quality.py:878; tests/run_agentic_sage_live.py (gap263)",
         why_on_file=(
-            "Gaps 263/264: this schema stores one combined tax_amount, so a CGST lookup is "
-            "guaranteed to find nothing -- and the live failure was a fabricated SGST/CGST split."
+            "Gaps 263/264 originally, Gap 310 now. Rewritten 2026-08-24: this case used to "
+            "expect a DECLINE ('no per-component breakdown exists anywhere in the data'), "
+            "which was true of the default chat route and never true of the data -- "
+            "`Invoice.taxes` has carried the itemized components since extraction started "
+            "populating it, and only the route's hand-typed schema block could not see them. "
+            "The default route now hands the identified invoice's whole ORM row to its "
+            "answering step (`query_agent._full_record_block_for`), so this is the case that "
+            "proves the real breakdown comes back. The original live failure -- a FABRICATED "
+            "CGST/SGST split -- is still what the rubric guards: the figures must be the "
+            "stored ones, not half of the total."
         ),
         expected_invoice_numbers=("INDIA-20260722-003",),
     ),

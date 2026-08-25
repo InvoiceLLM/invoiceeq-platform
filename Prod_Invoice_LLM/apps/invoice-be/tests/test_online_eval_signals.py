@@ -612,8 +612,8 @@ def test_an_unmeasured_signal_emits_no_value_rather_than_a_zero(db, caplog):
 
 
 def test_a_sub_day_window_survives_onto_the_event_instead_of_truncating_to_zero(db, caplog):
-    """Gap 305. The only scheduled caller (`scripts/ops_digest_job.py`) runs every
-    six hours and therefore passes 0.25 days, which `track_online_signal()`'s old
+    """Gap 305. The only caller (`scripts/emit_online_signals_job.py`) defaults to
+    a six-hour window and therefore passes 0.25 days, which `track_online_signal()`'s old
     `int()` cast turned into `window_days=0` — a zero-length window, and worse
     than omitting the field, since every event the live emitter produces would
     have carried it."""

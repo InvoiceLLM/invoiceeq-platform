@@ -34,8 +34,8 @@ accuracy. Two consequences, both deliberate:
 
   * The two pass rates are not comparable and must never be averaged together.
     `models.AgentEvalRun.passed` says so at the column, and
-    `services/ops_digest_collect.py::_eval_window_stats` filters `run_source` so
-    the digest's own alerting cannot blend them by accident.
+    `services/online_eval_signals.py` filters `run_source` for the same reason so
+    the online signals cannot blend them by accident.
   * If neither faithfulness nor relevance produced a number — an unreachable
     judge, an empty answer — **no row is written at all**. `decide_pass()`
     returns False for "nothing could be graded", which is right for a nightly

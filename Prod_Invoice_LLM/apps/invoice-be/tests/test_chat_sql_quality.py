@@ -109,7 +109,15 @@ class _RecordingLLM:
         return MagicMock(content=self._summary)
 
 
-def _run(db_session, llm, message, session_id, surfaced_rows=None, classified_route="SQL"):
+def _run(
+    db_session,
+    llm,
+    message,
+    session_id,
+    surfaced_rows=None,
+    classified_route="SQL",
+    surfaced_ids=None,
+):
     """Run the SQL route with the LLM mocked out.
 
     `surfaced_rows`: when given, `execute_generated_sql` is stubbed to report
@@ -118,7 +126,15 @@ def _run(db_session, llm, message, session_id, surfaced_rows=None, classified_ro
     SQLite stores UUID columns as dashless hex, so the dashed tenant literal
     every generated query carries (and the tenant-isolation safety check
     requires) matches zero rows under this fixture's engine.
+
+    `surfaced_ids` (Gap 310): the same stub, but reporting the ids you pass
+    instead of freshly invented ones. The full-record block is keyed on the
+    invoice ids a turn identified, so a test about it has to be able to name a
+    REAL seeded row (or, for the isolation test, a real row belonging to someone
+    else) rather than a random UUID that resolves to nothing.
     """
+    if surfaced_ids is not None and surfaced_rows is None:
+        surfaced_rows = len(surfaced_ids)
     patches = [
         patch("agents.query_agent.classify_query", return_value=classified_route),
         patch("agents.query_agent.query_invoice_chunks", return_value=[]),
@@ -128,7 +144,11 @@ def _run(db_session, llm, message, session_id, surfaced_rows=None, classified_ro
         patch("agents.query_agent._get_tenant_stats_summary", return_value=""),
     ]
     if surfaced_rows is not None:
-        ids = [str(uuid4()) for _ in range(surfaced_rows)]
+        ids = (
+            [str(i) for i in surfaced_ids]
+            if surfaced_ids is not None
+            else [str(uuid4()) for _ in range(surfaced_rows)]
+        )
 
         def _fake_execute(sql, tenant_id, db_sess, snapshot=None):
             if snapshot is not None:
@@ -878,6 +898,12 @@ def test_tax_term_block_is_injected_into_the_sql_prompt_when_detected(db_session
     _run(db_session, llm, "what is the GST on the Rajesh Steel invoice", uuid4())
     assert 'contains the tax-related term "GST"' in llm.prompts[0]
 
+    # Gap 310: the note still fires on the same detection, but it no longer
+    # asserts the (now false) claim that drove a decline. `Invoice.taxes` holds
+    # the itemized components and has since extraction started populating it.
+    assert "This schema has no breakdown by tax type" not in llm.prompts[0]
+    assert "`taxes` field" in llm.prompts[0]
+
     llm2 = _RecordingLLM([
         MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
@@ -886,6 +912,197 @@ def test_tax_term_block_is_injected_into_the_sql_prompt_when_detected(db_session
     # term" alone -- rule 6d's static guardrail text always contains that phrase
     # regardless of this question, so that substring is present either way.
     assert "NOTE: this question contains the tax-related term" not in llm2.prompts[0]
+
+
+# ── Gap 310: the identified invoice's whole row reaches the answering step ────
+
+
+def _seed_rajesh_steel(db_session):
+    """The Gaps 263/264 invoice, now carrying the `taxes` it always really had."""
+    return _seed_invoice(
+        db_session,
+        vendor_name="Rajesh Steel",
+        invoice_number="INDIA-20260722-003",
+        currency="INR",
+        subtotal=100000.0,
+        grand_total=118000.0,
+        tax_amount=18000.0,
+        taxes=[
+            {"tax_type": "CGST", "rate_percent": 9.0, "amount": 9000.0},
+            {"tax_type": "SGST", "rate_percent": 9.0, "amount": 9000.0},
+        ],
+        tax_ids=[{"type": "GSTIN", "value": "29ABCDE1234F1Z5"}],
+    )
+
+
+def test_full_record_block_gives_the_answer_step_the_real_cgst_sgst_breakdown(db_session):
+    """Gap 310, the case the gap was opened over.
+
+    "whats the CGST we paid to Rajesh Steel" was answerable from the data the
+    whole time -- `Invoice.taxes` carries one entry per component -- and was
+    declined anyway, because the SQL route's hand-typed schema block never
+    listed the column and its tax-term note said outright that no breakdown
+    existed. The answering step now receives the identified invoice's entire ORM
+    row, so the real INR 9,000.00 / INR 9,000.00 split is in front of the model
+    instead of being invisible to it.
+    """
+    invoice = _seed_rajesh_steel(db_session)
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT tax_amount, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    result = _run(
+        db_session,
+        llm,
+        "whats the CGST we paid to Rajesh Steel",
+        uuid4(),
+        surfaced_ids=[invoice.id],
+    )
+
+    summary_prompt = llm.summary_prompts[0]
+    assert "FULL INVOICE RECORD(S)" in summary_prompt
+    # The actual component figures, read off the row -- not derivable from the
+    # `tax_amount, currency` SELECT list the query used.
+    assert '"tax_type": "CGST"' in summary_prompt
+    assert '"tax_type": "SGST"' in summary_prompt
+    assert summary_prompt.count('"amount": 9000.0') == 2
+    # And the other columns the schema block never exposed either.
+    assert '"subtotal": 100000.0' in summary_prompt
+    assert "29ABCDE1234F1Z5" in summary_prompt
+    # Never a licence to invent: the block says so in as many words, because the
+    # original live failure (Gap 263) was a FABRICATED CGST/SGST split.
+    assert "never derive, split or estimate one" in summary_prompt
+    # Gap 304 half (2): the online quality judge has to be shown the same
+    # evidence the model was, or a correct CGST answer scores as unfaithful.
+    assert '"tax_type": "CGST"' in result["judge_evidence"]["context"]
+
+
+def test_full_record_block_is_generic_not_gated_on_a_tax_term(db_session):
+    """The correction that shaped this fix (2026-08-24): the mechanism is "the
+    model can see the whole record", not "the model gets extra data for tax
+    questions". A keyword gate is the exact failure mode this file already has
+    two named instances of (rule 6d's tax-component miss, Gap 264's fixed term
+    list) -- it works for the phrasing it was written against and silently does
+    nothing for the next one. So a question with no tax word anywhere in it gets
+    the same record."""
+    invoice = _seed_rajesh_steel(db_session)
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT invoice_number, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(
+        db_session,
+        llm,
+        "pull up the Rajesh Steel invoice",
+        uuid4(),
+        surfaced_ids=[invoice.id],
+    )
+
+    assert query_agent.detect_tax_component_term("pull up the Rajesh Steel invoice") is None
+    summary_prompt = llm.summary_prompts[0]
+    assert "FULL INVOICE RECORD(S)" in summary_prompt
+    assert '"tax_type": "CGST"' in summary_prompt
+    assert '"subtotal": 100000.0' in summary_prompt
+
+
+def test_full_record_block_cannot_fetch_another_tenants_invoice(db_session):
+    """Tenant isolation, checked at the block itself rather than only through the
+    route. The ids fed in normally come from a query `execute_generated_sql`'s
+    Safety Check 3 already forced to be tenant-scoped -- this is the second,
+    independent check, and it is `get_full_record`'s own: a row belonging to
+    another tenant comes back `not_found`, never as a distinguishable error, so
+    a caller cannot even learn that the id exists."""
+    other_tenant = uuid4()
+    mine = _seed_rajesh_steel(db_session)
+    theirs = _seed_invoice(
+        db_session,
+        tenant_id=other_tenant,
+        vendor_name="Someone Else Ltd",
+        invoice_number="OTHER-1",
+        grand_total=999999.0,
+        taxes=[{"tax_type": "CGST", "rate_percent": 9.0, "amount": 123456.0}],
+    )
+
+    # Directly: the other tenant's id yields nothing at all, not a partial record.
+    assert query_agent._full_record_block_for(
+        [str(theirs.id)], str(MOCK_TENANT_ID), db_session
+    ) == ""
+    # Mixed in with a legitimate one, only the caller's own row survives.
+    block = query_agent._full_record_block_for(
+        [str(mine.id), str(theirs.id)], str(MOCK_TENANT_ID), db_session
+    )
+    assert "29ABCDE1234F1Z5" in block
+    assert "Someone Else Ltd" not in block
+    assert "123456.0" not in block
+
+    # And through the whole route, with the turn's id snapshot poisoned with the
+    # other tenant's row: nothing of theirs reaches the prompt.
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "what is the CGST", uuid4(), surfaced_ids=[theirs.id])
+    assert "FULL INVOICE RECORD(S)" not in llm.summary_prompts[0]
+    assert "Someone Else Ltd" not in llm.summary_prompts[0]
+
+
+def test_full_record_block_fails_soft_when_the_fetch_raises(db_session):
+    """Same fail-soft posture as everything else on this route: a broken
+    enrichment must cost the turn its extra context, never the answer. The turn
+    still summarizes the results table it already had, exactly as it did before
+    this block existed."""
+    invoice = _seed_rajesh_steel(db_session)
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT tax_amount, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    with patch(
+        "agents.query_tools.get_full_record", side_effect=RuntimeError("boom")
+    ):
+        result = _run(
+            db_session,
+            llm,
+            "whats the CGST we paid to Rajesh Steel",
+            uuid4(),
+            surfaced_ids=[invoice.id],
+        )
+
+    assert "FULL INVOICE RECORD(S)" not in llm.summary_prompts[0]
+    assert "### Query Results" in result["content"]
+    assert result["content"].startswith("Formatted summary.")
+
+
+def test_full_record_block_is_bounded_to_a_few_identified_invoices(db_session):
+    """A turn that identified 40 rows is an aggregate or a listing, not a detail
+    question, and 40 complete records would be both useless and the single
+    largest thing in the prompt. `MAX_FULL_RECORD_INVOICES` is that bound, and
+    it is a policy recorded in code -- the same posture as
+    `query_tools.MAX_FULL_RECORD_CHUNK_CHARS`."""
+    invoices = [
+        _seed_rajesh_steel(db_session)
+        for _ in range(query_agent.MAX_FULL_RECORD_INVOICES + 1)
+    ]
+    assert query_agent._full_record_block_for(
+        [str(i.id) for i in invoices], str(MOCK_TENANT_ID), db_session
+    ) == ""
+    # One under the bound still gets the full treatment.
+    kept = query_agent._full_record_block_for(
+        [str(i.id) for i in invoices[: query_agent.MAX_FULL_RECORD_INVOICES]],
+        str(MOCK_TENANT_ID),
+        db_session,
+    )
+    assert kept.count("FULL INVOICE RECORD(S)") == 1
+    assert kept.count('"tax_type": "CGST"') == query_agent.MAX_FULL_RECORD_INVOICES
+
+
+def test_full_record_block_is_absent_when_no_invoice_was_identified(db_session):
+    """An aggregate ("total spend across every invoice") identifies no single
+    row worth dumping, and a turn that identified nothing must be byte-identical
+    to what it was before Gap 310 -- this is what keeps the enrichment off the
+    turns that would only pay for it."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT SUM(grand_total), currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' GROUP BY currency")
+    ])
+    _run(db_session, llm, "what did we spend in total", uuid4(), surfaced_rows=0)
+    assert "FULL INVOICE RECORD(S)" not in llm.summary_prompts[0]
+    assert query_agent._full_record_block_for([], str(MOCK_TENANT_ID), db_session) == ""
+    assert query_agent._full_record_block_for(None, str(MOCK_TENANT_ID), db_session) == ""
 
 
 # ── Live regressions found in the NovaTech 25-question live test, 2026-08-19 ──

@@ -58,7 +58,7 @@ image built from this repo, and this whole harness lives in `tests/`. A GitHub
 Actions pre-deploy gate works (the checkout has the full tree); a scheduled ACA
 job does not, and would fail on import. That is the same thing that made the
 deleted `caj-agent-eval-dev` nightly job unrunnable, re-confirmed against the
-file rather than assumed. See `feature_23_ai_control_tower.md`, "The cadence
+file rather than assumed. See `feature_20_23_24_ops_workbook.md`, "The cadence
 blocker", for the three ways out — the choice is a packaging decision and is not
 made here.
 

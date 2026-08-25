@@ -1,0 +1,1009 @@
+{
+  "run_at": "2026-08-24T13:44:59.447350",
+  "paths": [
+    "default"
+  ],
+  "model_under_test": null,
+  "api_version_override": null,
+  "judge_mode": "separate",
+  "cost_basis": "gpt-5-mini list price ($0.25/$2.00 per 1M) applied to every run",
+  "summary": {
+    "default": {
+      "turns": 12,
+      "llm_calls_min": 1,
+      "llm_calls_median": 2.0,
+      "llm_calls_max": 3,
+      "llm_calls_total": 26,
+      "latency_ms_min": 3620.4,
+      "latency_ms_median": 16885.95,
+      "latency_ms_max": 30348.8,
+      "tokens_in_total": 53304,
+      "tokens_out_total": 18066,
+      "pass_rate": 0.5,
+      "faithfulness_mean": 0.933,
+      "relevance_mean": 1.0,
+      "accuracy_mean": 0.75,
+      "context_mean": 0.667,
+      "context_scored_turns": 12,
+      "orchestration_mean": 0.924,
+      "orchestration_scored_turns": 8,
+      "persona_mean": 0.85,
+      "persona_scored_turns": 10,
+      "judge_mode": [
+        "separate"
+      ],
+      "helpfulness_mean": null,
+      "helpfulness_scored_turns": 0,
+      "completeness_mean": null,
+      "completeness_scored_turns": 0,
+      "tone_mean": null,
+      "tone_scored_turns": 0,
+      "judge_llm_calls_total": 58,
+      "errors": 0,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 6,
+          "tokens_in": 1652,
+          "tokens_out": 1808,
+          "latency_ms": 30609.5
+        },
+        "chat.sql_generation": {
+          "calls": 8,
+          "tokens_in": 42178,
+          "tokens_out": 11555,
+          "latency_ms": 111396.8
+        },
+        "chat.sql_summary": {
+          "calls": 8,
+          "tokens_in": 7460,
+          "tokens_out": 3318,
+          "latency_ms": 38701.7
+        },
+        "chat.conversational": {
+          "calls": 2,
+          "tokens_in": 975,
+          "tokens_out": 787,
+          "latency_ms": 9988.9
+        },
+        "chat.rag_answer": {
+          "calls": 2,
+          "tokens_in": 1039,
+          "tokens_out": 598,
+          "latency_ms": 9564.8
+        }
+      },
+      "cost_per_turn_usd": 0.00412
+    }
+  },
+  "persisted_rows": 12,
+  "turns": [
+    {
+      "case_id": "titan_steel_payment_status",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "has the Titan Steel Distributors invoice been paid",
+      "answer": "This is an INBOUND invoice (TSD-620458) for USD 18,450.00; this dataset does not track payment/settlement for inbound invoices, so I can’t tell whether it has been paid — the \"COMPLETED\" status reflects processing/extraction, not payment.\n\n### Query Results\n\ninvoice_number | flow_direction | vendor_name | customer_name | grand_total | currency | status | invoice_date | due_date\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nTSD-620458 | INBOUND | Titan Steel Distributors |  | 18450.00 | USD | COMPLETED | 2026-07-02 | 2026-08-01",
+      "answer_prose": "This is an INBOUND invoice (TSD-620458) for USD 18,450.00; this dataset does not track payment/settlement for inbound invoices, so I can’t tell whether it has been paid — the \"COMPLETED\" status reflects processing/extraction, not payment.",
+      "appended_blocks": "### Query Results\ninvoice_number | flow_direction | vendor_name | customer_name | grand_total | currency | status | invoice_date | due_date\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nTSD-620458 | INBOUND | Titan Steel Distributors |  | 18450.00 | USD | COMPLETED | 2026-07-02 | 2026-08-01",
+      "context": "DATABASE RESULTS:\ninvoice_number | flow_direction | vendor_name | customer_name | grand_total | currency | status | invoice_date | due_date\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nTSD-620458 | INBOUND | Titan Steel Distributors |  | 18450.00 | USD | COMPLETED | 2026-07-02 | 2026-08-01",
+      "executed_queries": "SQL EXECUTED:\nSELECT\n  invoice_number,\n  flow_direction,\n  vendor_name,\n  customer_name,\n  grand_total,\n  currency,\n  status,\n  invoice_date,\n  due_date\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND (\n    (flow_direction = 'INBOUND' AND LOWER(vendor_name) LIKE LOWER('%Titan Steel Distributors%'))\n    OR\n    (flow_direction = 'OUTBOUND' AND LOWER(customer_name) LIKE LOWER('%Titan Steel Distributors%'))\n  );",
+      "fetched_invoice_numbers": [
+        "TSD-620458"
+      ],
+      "generated_sql": "SELECT\n  invoice_number,\n  flow_direction,\n  vendor_name,\n  customer_name,\n  grand_total,\n  currency,\n  status,\n  invoice_date,\n  due_date\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND (\n    (flow_direction = 'INBOUND' AND LOWER(vendor_name) LIKE LOWER('%Titan Steel Distributors%'))\n    OR\n    (flow_direction = 'OUTBOUND' AND LOWER(customer_name) LIKE LOWER('%Titan Steel Distributors%'))\n  );",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 20942.4,
+      "llm_call_count": 3,
+      "llm_events": [
+        {
+          "agent_name": "chat.classify",
+          "model": "gpt-5-mini",
+          "tokens_in": 271,
+          "tokens_out": 191,
+          "latency_ms": 4643.64,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5483,
+          "tokens_out": 1126,
+          "latency_ms": 10786.51,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 1175,
+          "tokens_out": 455,
+          "latency_ms": 5112.33,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6929,
+      "tokens_out": 1772,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 271,
+          "tokens_out": 191,
+          "latency_ms": 4643.6
+        },
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5483,
+          "tokens_out": 1126,
+          "latency_ms": 10786.5
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 1175,
+          "tokens_out": 455,
+          "latency_ms": 5112.3
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 0.3333333333333333,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": 1.0,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "This is an INBOUND invoice (TSD-620458) for USD 18,450.00.",
+        "This dataset does not track payment/settlement for inbound invoices.",
+        "I can’t tell whether it has been paid.",
+        "The \"COMPLETED\" status reflects processing/extraction, not payment."
+      ],
+      "score_notes": "faithfulness: 1/3 claims supported (1 non-factual claim(s) excluded) | unsupported: This dataset does not track payment/settlement for inbound invoices.; The \"COMPLETED\" status reflects processing/extraction, not payment. | relevance: 1.0 [direct_answer, judged] (Directly answers the question by stating the dataset doesn't track payment status and explains that 'COMPLETED' refers to processing, not payment.) | accuracy: 1.0 (The answer names the invoice and amount and correctly explains that 'COMPLETED' is a processing status and that payment/settlement for inbound invoices is not t) | context: 1.00 (precision 1.00, recall 1.00; expected ['TSD-620458'], fetched ['TSD-620458']) | orchestration: 2/2 figures trace to the evidence | persona: 1.0 [status semantics, payment tracking] (Correctly noted that COMPLETED is a document-processing status and that inbound invoices in this dataset do not track payment/settlement, so payment cannot be d)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "datapipe_vs_stratedge",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "Between DataPipe Solutions and StratEdge Partners, whose invoice to us had the bigger total?",
+      "answer": "DataPipe Solutions' invoice (DPS-9981) was larger at USD 42,300.00 versus StratEdge Partners' USD 27,950.00.\n\n### Query Results\n\nvendor_name | invoice_number | invoice_date | grand_total | currency\n--- | --- | --- | --- | ---\nDataPipe Solutions | DPS-9981 | 2026-06-30 | 42300.00 | USD\nStratEdge Partners | SEP-4410 | 2026-06-27 | 27950.00 | USD",
+      "answer_prose": "DataPipe Solutions' invoice (DPS-9981) was larger at USD 42,300.00 versus StratEdge Partners' USD 27,950.00.",
+      "appended_blocks": "### Query Results\nvendor_name | invoice_number | invoice_date | grand_total | currency\n--- | --- | --- | --- | ---\nDataPipe Solutions | DPS-9981 | 2026-06-30 | 42300.00 | USD\nStratEdge Partners | SEP-4410 | 2026-06-27 | 27950.00 | USD",
+      "context": "DATABASE RESULTS:\nvendor_name | invoice_number | invoice_date | grand_total | currency\n--- | --- | --- | --- | ---\nDataPipe Solutions | DPS-9981 | 2026-06-30 | 42300.00 | USD\nStratEdge Partners | SEP-4410 | 2026-06-27 | 27950.00 | USD",
+      "executed_queries": "SQL EXECUTED:\nSELECT vendor_name, invoice_number, invoice_date, grand_total, currency\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(vendor_name) LIKE LOWER('%DataPipe Solutions%')\n    OR LOWER(vendor_name) LIKE LOWER('%StratEdge Partners%')\n  )",
+      "fetched_invoice_numbers": [
+        "DPS-9981",
+        "SEP-4410"
+      ],
+      "generated_sql": "SELECT vendor_name, invoice_number, invoice_date, grand_total, currency\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(vendor_name) LIKE LOWER('%DataPipe Solutions%')\n    OR LOWER(vendor_name) LIKE LOWER('%StratEdge Partners%')\n  )",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 11312.3,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5224,
+          "tokens_out": 739,
+          "latency_ms": 7593.97,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 905,
+          "tokens_out": 301,
+          "latency_ms": 3596.62,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6129,
+      "tokens_out": 1040,
+      "tokens_by_agent": {
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5224,
+          "tokens_out": 739,
+          "latency_ms": 7594.0
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 905,
+          "tokens_out": 301,
+          "latency_ms": 3596.6
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": 1.0,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": true,
+      "claims": [
+        "DataPipe Solutions' invoice (DPS-9981) was larger at USD 42,300.00.",
+        "StratEdge Partners' USD 27,950.00."
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [direct_answer, judged] (Directly identifies which company's invoice was larger and gives both totals.) | accuracy: 1.0 (Both vendors are named and both invoice amounts match the reference exactly, correctly identifying DataPipe Solutions as larger.) | context: 1.00 (precision 1.00, recall 1.00; expected ['DPS-9981', 'SEP-4410'], fetched ['DPS-9981', 'SEP-4410']) | orchestration: 3/3 figures trace to the evidence | persona: 1.0 [invoice total comparison, currency] (Both invoices and totals were correctly identified and compared in the same currency (USD), matching the reference.)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "freight_per_vendor",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "which vendors billed us for freight, delivery, or shipping charges, and how much per vendor",
+      "answer": "Blue Ridge Logistics billed USD 1,120.00 for freight and handling.\n\nFreight and handling: 4 units × USD 280.00 = USD 1120.00\n\n### Query Results\n\ninvoice_number | vendor_name | currency | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | ---\nBRL-7702 | Blue Ridge Logistics | USD | Freight and handling | 4 | 280.00 | 1120.00",
+      "answer_prose": "Blue Ridge Logistics billed USD 1,120.00 for freight and handling.\n\nFreight and handling: 4 units × USD 280.00 = USD 1120.00",
+      "appended_blocks": "### Query Results\ninvoice_number | vendor_name | currency | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | ---\nBRL-7702 | Blue Ridge Logistics | USD | Freight and handling | 4 | 280.00 | 1120.00",
+      "context": "DATABASE RESULTS:\ninvoice_number | vendor_name | currency | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | ---\nBRL-7702 | Blue Ridge Logistics | USD | Freight and handling | 4 | 280.00 | 1120.00",
+      "executed_queries": "SQL EXECUTED:\nSELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item.value ->> 'description' AS line_description, item.value ->> 'quantity' AS line_qty, item.value ->> 'unit_price' AS line_unit_price, item.value ->> 'amount' AS line_amount\nFROM invoice\nLEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(item.value ->> 'description') LIKE LOWER('%freight%')\n    OR LOWER(item.value ->> 'description') LIKE LOWER('%delivery%')\n    OR LOWER(item.value ->> 'description') LIKE LOWER('%shipping%')\n  );",
+      "fetched_invoice_numbers": [
+        "BRL-7702"
+      ],
+      "generated_sql": "SELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item.value ->> 'description' AS line_description, item.value ->> 'quantity' AS line_qty, item.value ->> 'unit_price' AS line_unit_price, item.value ->> 'amount' AS line_amount\nFROM invoice\nLEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND (\n    LOWER(item.value ->> 'description') LIKE LOWER('%freight%')\n    OR LOWER(item.value ->> 'description') LIKE LOWER('%delivery%')\n    OR LOWER(item.value ->> 'description') LIKE LOWER('%shipping%')\n  );",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 17109.7,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5225,
+          "tokens_out": 1124,
+          "latency_ms": 11414.02,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 896,
+          "tokens_out": 495,
+          "latency_ms": 5650.06,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6121,
+      "tokens_out": 1619,
+      "tokens_by_agent": {
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5225,
+          "tokens_out": 1124,
+          "latency_ms": 11414.0
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 896,
+          "tokens_out": 495,
+          "latency_ms": 5650.1
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 0.5,
+      "context_score": 1.0,
+      "orchestration_score": 1.0,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "Blue Ridge Logistics billed USD 1,120.00 for freight and handling.",
+        "Freight and handling: 4 units × USD 280.00 = USD 1120.00"
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [direct_answer, judged] (Provides a direct list of the vendor(s) with the billed freight amount and a clear line-item breakdown, which answers the question as asked.) | accuracy: 0.5 (Correctly identifies Blue Ridge Logistics and the USD 1,120 freight line (with the 4×USD 280 breakdown) but omits the invoice number, the note about the invoice) | context: 1.00 (precision 1.00, recall 1.00; expected ['BRL-7702'], fetched ['BRL-7702']) | orchestration: 3/3 figures trace to the evidence (1 small bare integer(s) skipped) | persona: 1.0 [charge category, line item arithmetic, currency] (Correctly identified the single vendor with a freight line, used the line-item amount (USD 1,120.00) and preserved currency and unit math rather than the invoic)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "zero_result_vendor",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "what did we spend with Nonexistent Holdings last quarter",
+      "answer": "No records found — there were no recorded expenses with Nonexistent Holdings last quarter.\n\n### Query Results\n\nNo records found matching the query criteria.",
+      "answer_prose": "No records found — there were no recorded expenses with Nonexistent Holdings last quarter.",
+      "appended_blocks": "### Query Results\nNo records found matching the query criteria.",
+      "context": "DATABASE RESULTS:\nNo records found matching the query criteria.",
+      "executed_queries": "SQL EXECUTED:\nSELECT currency, SUM(grand_total) AS total_spent\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Nonexistent Holdings%')\n  AND invoice_date >= '2026-04-01' AND invoice_date <= '2026-06-30'\nGROUP BY currency;",
+      "fetched_invoice_numbers": [],
+      "generated_sql": "SELECT currency, SUM(grand_total) AS total_spent\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%Nonexistent Holdings%')\n  AND invoice_date >= '2026-04-01' AND invoice_date <= '2026-06-30'\nGROUP BY currency;",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 16662.2,
+      "llm_call_count": 3,
+      "llm_events": [
+        {
+          "agent_name": "chat.classify",
+          "model": "gpt-5-mini",
+          "tokens_in": 272,
+          "tokens_out": 198,
+          "latency_ms": 3673.5,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5217,
+          "tokens_out": 952,
+          "latency_ms": 10359.85,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 832,
+          "tokens_out": 90,
+          "latency_ms": 2564.66,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6321,
+      "tokens_out": 1240,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 272,
+          "tokens_out": 198,
+          "latency_ms": 3673.5
+        },
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5217,
+          "tokens_out": 952,
+          "latency_ms": 10359.9
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 832,
+          "tokens_out": 90,
+          "latency_ms": 2564.7
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": null,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": true,
+      "claims": [
+        "No records found",
+        "there were no recorded expenses with Nonexistent Holdings last quarter."
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [no_results_report, fixed by kind] (The reply explicitly reports that no recorded expenses were found for Nonexistent Holdings last quarter.) | accuracy: 1.0 (The answer explicitly states no records or recorded expenses were found for Nonexistent Holdings last quarter and does not report a false $0.00 total.) | context: 1.00 (correctly fetched nothing) | orchestration: not scored (no gradeable figures in the answer) | persona: 1.0 [vendor matching, invoice existence, aggregation/totaling] (Correctly reports no matching invoices for that vendor instead of fabricating a monetary total.)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "payment_terms_document",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "what does the vendor say about payment terms",
+      "answer": "No records were returned for that query, so no vendor payment terms were found. Try widening the search criteria or checking the vendor's master/profile record to locate their payment terms.\n\n### Query Results\n\nNo records found matching the query criteria.",
+      "answer_prose": "No records were returned for that query, so no vendor payment terms were found. Try widening the search criteria or checking the vendor's master/profile record to locate their payment terms.",
+      "appended_blocks": "### Query Results\nNo records found matching the query criteria.",
+      "context": "DATABASE RESULTS:\nNo records found matching the query criteria.",
+      "executed_queries": "SQL EXECUTED:\nSELECT\n  invoice_number,\n  vendor_name,\n  invoice_date,\n  due_date,\n  grand_total,\n  currency,\n  CAST(sa_alerts AS TEXT) AS sa_alerts,\n  CAST(items AS TEXT) AS items,\n  CAST(tags AS TEXT) AS tags\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND (\n    LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%payment terms%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%payment terms%')\n    OR LOWER(CAST(tags AS TEXT)) LIKE LOWER('%payment terms%')\n    OR LOWER(vendor_name) LIKE LOWER('%payment terms%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%net 30%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%net 30%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%net30%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%net30%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%net 15%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%net 15%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%due upon receipt%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%due upon receipt%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%due on receipt%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%due on receipt%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%30 days%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%30 days%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%60 days%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%60 days%')\n  )\nORDER BY invoice_date DESC\nLIMIT 100;",
+      "fetched_invoice_numbers": [],
+      "generated_sql": "SELECT\n  invoice_number,\n  vendor_name,\n  invoice_date,\n  due_date,\n  grand_total,\n  currency,\n  CAST(sa_alerts AS TEXT) AS sa_alerts,\n  CAST(items AS TEXT) AS items,\n  CAST(tags AS TEXT) AS tags\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND (\n    LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%payment terms%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%payment terms%')\n    OR LOWER(CAST(tags AS TEXT)) LIKE LOWER('%payment terms%')\n    OR LOWER(vendor_name) LIKE LOWER('%payment terms%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%net 30%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%net 30%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%net30%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%net30%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%net 15%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%net 15%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%due upon receipt%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%due upon receipt%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%due on receipt%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%due on receipt%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%30 days%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%30 days%')\n    OR LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%60 days%')\n    OR LOWER(CAST(items AS TEXT)) LIKE LOWER('%60 days%')\n  )\nORDER BY invoice_date DESC\nLIMIT 100;",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 28592.5,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5215,
+          "tokens_out": 2884,
+          "latency_ms": 25255.48,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 830,
+          "tokens_out": 237,
+          "latency_ms": 3297.41,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6045,
+      "tokens_out": 3121,
+      "tokens_by_agent": {
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5215,
+          "tokens_out": 2884,
+          "latency_ms": 25255.5
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 830,
+          "tokens_out": 237,
+          "latency_ms": 3297.4
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 0.0,
+      "context_score": 0.0,
+      "orchestration_score": null,
+      "persona_score": 0.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "No records were returned for that query",
+        "no vendor payment terms were found."
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [no_results_report, fixed by kind] (The response explicitly reports that no vendor payment terms were found and suggests checking broader criteria or the vendor profile.) | accuracy: 0.0 (The assistant reported no records found, but the reference specifies two invoices with net-30 terms (Blue Ridge Logistics) and 30 days with 1.5% monthly late in) | context: 0.00 (precision 0.00, recall 0.00; expected ['BRL-7702', 'TSD-620458'], fetched []) | context missed: BRL-7702, TSD-620458 | orchestration: not scored (no gradeable figures in the answer) | persona: 0.0 [payment terms, document content extraction] (The assistant asserted no payment terms were found, but the referenced invoices do state payment terms (net 30 for Blue Ridge Logistics; 30 days with 1.5% month)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "out_of_scope_code_request",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "write me a python script to reverse a string",
+      "answer": "Sorry — I can’t write general-purpose code. I only assist with invoices and this platform; I can give a brief, plain-language explanation of how string reversal works or help apply it to an invoice-processing task if you describe the context.",
+      "answer_prose": "Sorry — I can’t write general-purpose code. I only assist with invoices and this platform; I can give a brief, plain-language explanation of how string reversal works or help apply it to an invoice-processing task if you describe the context.",
+      "appended_blocks": "",
+      "context": "",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "generated_sql": null,
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 10411.7,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.classify",
+          "model": "gpt-5-mini",
+          "tokens_in": 271,
+          "tokens_out": 193,
+          "latency_ms": 3982.84,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.conversational",
+          "model": "gpt-5-mini",
+          "tokens_in": 491,
+          "tokens_out": 570,
+          "latency_ms": 6389.22,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 762,
+      "tokens_out": 763,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 271,
+          "tokens_out": 193,
+          "latency_ms": 3982.8
+        },
+        "chat.conversational": {
+          "calls": 1,
+          "tokens_in": 491,
+          "tokens_out": 570,
+          "latency_ms": 6389.2
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": null,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": null,
+      "persona_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": true,
+      "claims": [],
+      "score_notes": "faithfulness: not scored (no factual claims in the answer) | relevance: 1.0 [out_of_scope_refusal, fixed by kind] (The response declines to provide general-purpose code and instead limits help to invoice/platform–related tasks, so it is an out-of-scope refusal.) | accuracy: 1.0 (The assistant correctly declines to provide the script, cites the invoice/platform scope, and offers alternative help, matching the reference.) | context: 1.00 (correctly fetched nothing) | orchestration: not scored (no gradeable figures in the answer) | persona: not scored (no domain judgement required by this turn)",
+      "judge_llm_calls": 4
+    },
+    {
+      "case_id": "greeting_no_tool",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "hello there",
+      "answer": "Hello — how can I help you with your invoices or the platform today?",
+      "answer_prose": "Hello — how can I help you with your invoices or the platform today?",
+      "appended_blocks": "",
+      "context": "",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "generated_sql": null,
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 3620.4,
+      "llm_call_count": 1,
+      "llm_events": [
+        {
+          "agent_name": "chat.conversational",
+          "model": "gpt-5-mini",
+          "tokens_in": 484,
+          "tokens_out": 217,
+          "latency_ms": 3599.7,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 484,
+      "tokens_out": 217,
+      "tokens_by_agent": {
+        "chat.conversational": {
+          "calls": 1,
+          "tokens_in": 484,
+          "tokens_out": 217,
+          "latency_ms": 3599.7
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": null,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": null,
+      "persona_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": true,
+      "claims": [],
+      "score_notes": "faithfulness: not scored (no factual claims in the answer) | relevance: 1.0 [capability_or_greeting, fixed by kind] (The reply is a greeting that offers help with invoices/platform, directly matching the user's greeting intent.) | accuracy: 1.0 (The reply is a short greeting offering help with invoices/platform and states no facts about any specific invoice, matching the reference.) | context: 1.00 (correctly fetched nothing) | orchestration: not scored (no gradeable figures in the answer) | persona: not scored (no domain judgement required by this turn)",
+      "judge_llm_calls": 4
+    },
+    {
+      "case_id": "line_item_breakdown_completeness",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "what's on the Blue Ridge Logistics invoice? break it down",
+      "answer": "- Freight & handling — 4 shipments × USD 280.00 each = USD 1,120.00.  \n- Payment terms — net 30 from invoice date.",
+      "answer_prose": "- Freight & handling — 4 shipments × USD 280.00 each = USD 1,120.00.  \n- Payment terms — net 30 from invoice date.",
+      "appended_blocks": "",
+      "context": "DOCUMENT CHUNK:\nBlue Ridge Logistics - Invoice BRL-7702. Freight and handling, 4 shipments at USD 280.00 each. Payment terms: net 30 from invoice date.\n\nDOCUMENT CHUNK:\nTitan Steel Distributors - Invoice TSD-620458. Structural steel supply. Remit within 30 days. Late payments subject to 1.5% monthly interest.",
+      "executed_queries": "DOCUMENT SEARCH: query=\"what's on the Blue Ridge Logistics invoice? break it down\", limit=5",
+      "fetched_invoice_numbers": [],
+      "generated_sql": null,
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 12889.5,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.classify",
+          "model": "gpt-5-mini",
+          "tokens_in": 274,
+          "tokens_out": 448,
+          "latency_ms": 6768.55,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.rag_answer",
+          "model": "gpt-5-mini",
+          "tokens_in": 487,
+          "tokens_out": 430,
+          "latency_ms": 6028.15,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 761,
+      "tokens_out": 878,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 274,
+          "tokens_out": 448,
+          "latency_ms": 6768.6
+        },
+        "chat.rag_answer": {
+          "calls": 1,
+          "tokens_in": 487,
+          "tokens_out": 430,
+          "latency_ms": 6028.1
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 0.5,
+      "context_score": 0.0,
+      "orchestration_score": 0.5,
+      "persona_score": 0.5,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "- Freight & handling — 4 shipments × USD 280.00 each = USD 1,120.00.",
+        "- Payment terms — net 30 from invoice date."
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [direct_answer, judged] (The response directly lists the invoice line items with amounts and the payment terms, which answers the request to 'break it down.') | accuracy: 0.5 (Includes the freight line correctly but omits the warehouse storage line and the invoice total (and thus is incomplete).) | context: 0.00 (precision 0.00, recall 0.00; expected ['BRL-7702'], fetched []) | context missed: BRL-7702 | orchestration: 1/2 figures trace to the evidence (2 small bare integer(s) skipped) | untraceable figures: 1,120.00 | persona: 0.5 [line item completeness, charge category, invoice total] (The assistant correctly reported the freight line but omitted the required 'Warehouse storage' line and the invoice total, so a material domain judgement was mi)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "hostile_user_tone",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "this thing is useless, it never gives me the right numbers. what did we spend with DataPipe?",
+      "answer": "The query shows we spent USD 42,300.00 with DataPipe Solutions across 1 invoice.\n\n### Query Results\n\nvendor_name | invoice_count | total_spent | currency\n--- | --- | --- | ---\nDataPipe Solutions | 1 | 42300.00 | USD",
+      "answer_prose": "The query shows we spent USD 42,300.00 with DataPipe Solutions across 1 invoice.",
+      "appended_blocks": "### Query Results\nvendor_name | invoice_count | total_spent | currency\n--- | --- | --- | ---\nDataPipe Solutions | 1 | 42300.00 | USD",
+      "context": "DATABASE RESULTS:\nvendor_name | invoice_count | total_spent | currency\n--- | --- | --- | ---\nDataPipe Solutions | 1 | 42300.00 | USD",
+      "executed_queries": "SQL EXECUTED:\nSELECT\n  vendor_name,\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_spent,\n  currency\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%DataPipe%')\nGROUP BY vendor_name, currency;",
+      "fetched_invoice_numbers": [],
+      "generated_sql": "SELECT\n  vendor_name,\n  COUNT(*) AS invoice_count,\n  SUM(grand_total) AS total_spent,\n  currency\nFROM invoice\nWHERE tenant_id = '00000000-0000-0000-0000-000000000000'\n  AND flow_direction = 'INBOUND'\n  AND LOWER(vendor_name) LIKE LOWER('%DataPipe%')\nGROUP BY vendor_name, currency;",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 18123.9,
+      "llm_call_count": 3,
+      "llm_events": [
+        {
+          "agent_name": "chat.classify",
+          "model": "gpt-5-mini",
+          "tokens_in": 283,
+          "tokens_out": 325,
+          "latency_ms": 4979.27,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5227,
+          "tokens_out": 766,
+          "latency_ms": 9541.58,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 868,
+          "tokens_out": 287,
+          "latency_ms": 3384.57,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6378,
+      "tokens_out": 1378,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 283,
+          "tokens_out": 325,
+          "latency_ms": 4979.3
+        },
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5227,
+          "tokens_out": 766,
+          "latency_ms": 9541.6
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 868,
+          "tokens_out": 287,
+          "latency_ms": 3384.6
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 0.5,
+      "context_score": 0.0,
+      "orchestration_score": 1.0,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "The query shows we spent USD 42,300.00 with DataPipe Solutions.",
+        "The query shows the spend with DataPipe Solutions was across 1 invoice."
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [direct_answer, judged] (Provides a specific spend total and invoice count directly answering the user's question.) | accuracy: 0.5 (Correctly reports the USD 42,300.00 amount and that it was one invoice, but omits the invoice number DPS-9981 specified in the reference.) | context: 0.00 (precision 0.00, recall 0.00; expected ['DPS-9981'], fetched []) | context missed: DPS-9981 | orchestration: 1/1 figures trace to the evidence (1 small bare integer(s) skipped) | persona: 1.0 [vendor total, invoice amount, currency] (The assistant correctly reported the total spent with DataPipe as USD 42,300.00 across one invoice (matches DPS-9981) and used the currency correctly.)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "india_mixed_gst_slab_lines",
+      "path": "default",
+      "tenant_id": "11111111-1111-1111-1111-111111111111",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "How many line items are on the Bharat Logistics Pvt Ltd invoice, BL-2026-1450, and what GST rate applies to each?",
+      "answer": "Invoice BL-2026-1450 from Bharat Logistics Pvt Ltd has 3 line items with GST rates of 5%, 12%, and 18% respectively.\n\nTransport service (GST 5%): 1 units × INR 10000.00 = INR 10000.00\nPacking material (GST 12%): 1 units × INR 2000.00 = INR 2000.00\nHandling and admin (GST 18%): 1 units × INR 1500.00 = INR 1500.00\nTotal: INR 13500.00\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | currency | tax_amount | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Transport service (GST 5%) | 1 | 10000.00 | 10000.00\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Packing material (GST 12%) | 1 | 2000.00 | 2000.00\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Handling and admin (GST 18%) | 1 | 1500.00 | 1500.00",
+      "answer_prose": "Invoice BL-2026-1450 from Bharat Logistics Pvt Ltd has 3 line items with GST rates of 5%, 12%, and 18% respectively.\n\nTransport service (GST 5%): 1 units × INR 10000.00 = INR 10000.00\nPacking material (GST 12%): 1 units × INR 2000.00 = INR 2000.00\nHandling and admin (GST 18%): 1 units × INR 1500.00 = INR 1500.00\nTotal: INR 13500.00",
+      "appended_blocks": "### Query Results\ninvoice_number | vendor_name | customer_name | currency | tax_amount | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Transport service (GST 5%) | 1 | 10000.00 | 10000.00\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Packing material (GST 12%) | 1 | 2000.00 | 2000.00\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Handling and admin (GST 18%) | 1 | 1500.00 | 1500.00",
+      "context": "DATABASE RESULTS:\ninvoice_number | vendor_name | customer_name | currency | tax_amount | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Transport service (GST 5%) | 1 | 10000.00 | 10000.00\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Packing material (GST 12%) | 1 | 2000.00 | 2000.00\nBL-2026-1450 | Bharat Logistics Pvt Ltd |  | INR | 1010.00 | Handling and admin (GST 18%) | 1 | 1500.00 | 1500.00",
+      "executed_queries": "SQL EXECUTED:\nSELECT\n  invoice.invoice_number,\n  invoice.vendor_name,\n  invoice.customer_name,\n  invoice.currency,\n  invoice.tax_amount,\n  item.value ->> 'description' AS line_description,\n  item.value ->> 'quantity' AS line_qty,\n  item.value ->> 'unit_price' AS line_unit_price,\n  item.value ->> 'amount' AS line_amount\nFROM invoice\nLEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1\nWHERE tenant_id = '11111111-1111-1111-1111-111111111111'\n  AND invoice_number = 'BL-2026-1450'\n  AND (\n    (flow_direction = 'INBOUND' AND LOWER(vendor_name) LIKE LOWER('%Bharat Logistics Pvt Ltd%'))\n    OR\n    (flow_direction = 'OUTBOUND' AND LOWER(customer_name) LIKE LOWER('%Bharat Logistics Pvt Ltd%'))\n  );",
+      "fetched_invoice_numbers": [
+        "BL-2026-1450"
+      ],
+      "generated_sql": "SELECT\n  invoice.invoice_number,\n  invoice.vendor_name,\n  invoice.customer_name,\n  invoice.currency,\n  invoice.tax_amount,\n  item.value ->> 'description' AS line_description,\n  item.value ->> 'quantity' AS line_qty,\n  item.value ->> 'unit_price' AS line_unit_price,\n  item.value ->> 'amount' AS line_amount\nFROM invoice\nLEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1\nWHERE tenant_id = '11111111-1111-1111-1111-111111111111'\n  AND invoice_number = 'BL-2026-1450'\n  AND (\n    (flow_direction = 'INBOUND' AND LOWER(vendor_name) LIKE LOWER('%Bharat Logistics Pvt Ltd%'))\n    OR\n    (flow_direction = 'OUTBOUND' AND LOWER(customer_name) LIKE LOWER('%Bharat Logistics Pvt Ltd%'))\n  );",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 30348.8,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5314,
+          "tokens_out": 2288,
+          "latency_ms": 19824.01,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 1025,
+          "tokens_out": 1091,
+          "latency_ms": 10403.14,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6339,
+      "tokens_out": 3379,
+      "tokens_by_agent": {
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5314,
+          "tokens_out": 2288,
+          "latency_ms": 19824.0
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 1025,
+          "tokens_out": 1091,
+          "latency_ms": 10403.1
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 0.5,
+      "context_score": 1.0,
+      "orchestration_score": 0.8888888888888888,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "Invoice BL-2026-1450 from Bharat Logistics Pvt Ltd has 3 line items with GST rates of 5%, 12%, and 18% respectively.",
+        "Transport service (GST 5%): 1 units × INR 10000.00 = INR 10000.00",
+        "Packing material (GST 12%): 1 units × INR 2000.00 = INR 2000.00",
+        "Handling and admin (GST 18%): 1 units × INR 1500.00 = INR 1500.00",
+        "Total: INR 13500.00"
+      ],
+      "score_notes": "faithfulness: 5/5 claims supported | relevance: 1.0 [direct_answer, judged] (Directly states the number of line items and lists the GST rate for each line item.) | accuracy: 0.5 (Correctly lists three line items with GST rates (5%, 12%, 18%) and their amounts, but omits the combined tax (INR 1,010.00), the grand total (INR 14,510.00), an) | context: 1.00 (precision 1.00, recall 1.00; expected ['BL-2026-1450'], fetched ['BL-2026-1450']) | orchestration: 8/9 figures trace to the evidence (10 small bare integer(s) skipped) | untraceable figures: 13500.00 | persona: 1.0 [line item count, GST rate assignment, arithmetic honesty] (Correctly identified three line items and their printed GST rates (5%, 12%, 18%) with matching line amounts and no incorrect tax splitting or other domain error)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "us_zero_tax_exemption_reason",
+      "path": "default",
+      "tenant_id": "22222222-2222-2222-2222-222222222222",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "Why was no sales tax charged on the Cascade Manufacturing Co invoice, CMC-330217?",
+      "answer": "- No sales tax was charged on Invoice CMC-330217 because a resale exemption certificate (OR-EX-88231) was on file.",
+      "answer_prose": "- No sales tax was charged on Invoice CMC-330217 because a resale exemption certificate (OR-EX-88231) was on file.",
+      "appended_blocks": "",
+      "context": "DOCUMENT CHUNK:\nCascade Manufacturing Co - Invoice CMC-330217. CNC machined parts, custom tooling and freight. Sales Tax: $0.00. Resale Exemption Certificate #OR-EX-88231 on file. Total $2,600.00.\n\nDOCUMENT CHUNK:\nSummit Office Supplies - Invoice SOS-100442. Laptop stands, 10 at $45.00. No sales tax charged on this B2B service item. Total $450.00.",
+      "executed_queries": "DOCUMENT SEARCH: query='Why was no sales tax charged on the Cascade Manufacturing Co invoice, CMC-330217?', limit=5",
+      "fetched_invoice_numbers": [],
+      "generated_sql": null,
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 10237.0,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.classify",
+          "model": "gpt-5-mini",
+          "tokens_in": 281,
+          "tokens_out": 453,
+          "latency_ms": 6561.66,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.rag_answer",
+          "model": "gpt-5-mini",
+          "tokens_in": 552,
+          "tokens_out": 168,
+          "latency_ms": 3536.7,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 833,
+      "tokens_out": 621,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 281,
+          "tokens_out": 453,
+          "latency_ms": 6561.7
+        },
+        "chat.rag_answer": {
+          "calls": 1,
+          "tokens_in": 552,
+          "tokens_out": 168,
+          "latency_ms": 3536.7
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 0.0,
+      "orchestration_score": 1.0,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": true,
+      "claims": [
+        "No sales tax was charged on Invoice CMC-330217.",
+        "A resale exemption certificate (OR-EX-88231) was on file."
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [direct_answer, judged] (It directly states the specific reason — a resale exemption certificate on file — which answers why no sales tax was charged.) | accuracy: 1.0 (The answer correctly states that resale exemption certificate OR-EX-88231 being on file is why no sales tax was charged, matching the reference.) | context: 0.00 (precision 0.00, recall 0.00; expected ['CMC-330217'], fetched []) | context missed: CMC-330217 | orchestration: 2/2 figures trace to the evidence | persona: 1.0 [tax components, exemption certificate, document semantics] (Correctly identifies the resale exemption certificate (OR-EX-88231) on file as the stated reason for the zero sales tax, with no incorrect tax-splitting or othe)",
+      "judge_llm_calls": 5
+    },
+    {
+      "case_id": "eu_currency_confusion_trap",
+      "path": "default",
+      "tenant_id": "33333333-3333-3333-3333-333333333333",
+      "agent_name": "chat.default_path",
+      "model_under_test": null,
+      "question": "What currency is the Rhein Industrietechnik invoice, RIT-2026-0456, actually payable in, and what is the total?",
+      "answer": "Invoice RIT-2026-0456 from Rhein Industrietechnik GmbH is payable in EUR; the grand total is €9,428.00.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nRIT-2026-0456 | Rhein Industrietechnik GmbH |  | 2026-06-17 |  | 9428.00 | EUR | COMPLETED | PO-DE-2291",
+      "answer_prose": "Invoice RIT-2026-0456 from Rhein Industrietechnik GmbH is payable in EUR; the grand total is €9,428.00.",
+      "appended_blocks": "### Query Results\ninvoice_number | vendor_name | customer_name | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nRIT-2026-0456 | Rhein Industrietechnik GmbH |  | 2026-06-17 |  | 9428.00 | EUR | COMPLETED | PO-DE-2291",
+      "context": "DATABASE RESULTS:\ninvoice_number | vendor_name | customer_name | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nRIT-2026-0456 | Rhein Industrietechnik GmbH |  | 2026-06-17 |  | 9428.00 | EUR | COMPLETED | PO-DE-2291",
+      "executed_queries": "SQL EXECUTED:\nSELECT invoice_number, vendor_name, customer_name, invoice_date, due_date, grand_total, currency, status, po_number\nFROM invoice\nWHERE tenant_id = '33333333-3333-3333-3333-333333333333'\n  AND LOWER(invoice_number) LIKE LOWER('%RIT-2026-0456%');",
+      "fetched_invoice_numbers": [
+        "RIT-2026-0456"
+      ],
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, invoice_date, due_date, grand_total, currency, status, po_number\nFROM invoice\nWHERE tenant_id = '33333333-3333-3333-3333-333333333333'\n  AND LOWER(invoice_number) LIKE LOWER('%RIT-2026-0456%');",
+      "citations": [],
+      "agentic": null,
+      "latency_ms": 21402.5,
+      "llm_call_count": 2,
+      "llm_events": [
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5-mini",
+          "tokens_in": 5273,
+          "tokens_out": 1676,
+          "latency_ms": 16621.26,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5-mini",
+          "tokens_in": 929,
+          "tokens_out": 362,
+          "latency_ms": 4692.86,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 6202,
+      "tokens_out": 2038,
+      "tokens_by_agent": {
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 5273,
+          "tokens_out": 1676,
+          "latency_ms": 16621.3
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 929,
+          "tokens_out": 362,
+          "latency_ms": 4692.9
+        }
+      },
+      "tool_calls": [],
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 1.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": 1.0,
+      "persona_score": 1.0,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": true,
+      "claims": [
+        "Invoice RIT-2026-0456 from Rhein Industrietechnik GmbH is payable in EUR.",
+        "The grand total of Invoice RIT-2026-0456 from Rhein Industrietechnik GmbH is €9,428.00."
+      ],
+      "score_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [direct_answer, judged] (Directly answers both parts of the question by stating the payable currency (EUR) and the grand total (€9,428.00).) | accuracy: 1.0 (Matches the reference: payable in EUR and the total is EUR 9,428.00 with no contradictions.) | context: 1.00 (precision 1.00, recall 1.00; expected ['RIT-2026-0456'], fetched ['RIT-2026-0456']) | orchestration: 3/3 figures trace to the evidence | persona: 1.0 [Currency, Invoice total, Contract vs invoiced currency] (Correctly identified EUR as the payable currency and the grand total €9,428.00, and did not treat the USD contract-note as the invoiced currency.)",
+      "judge_llm_calls": 5
+    }
+  ]
+}

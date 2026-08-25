@@ -620,8 +620,8 @@ class AgentEvalRun(SQLModel, table=True):
     Every consumer that trends the golden bank must filter on `run_source`, or it
     blends two populations that are not comparable — production rows can never
     have `accuracy_score`/`context_score` (both need a reference answer) and their
-    `pass` is decided on fewer dimensions. See
-    `services/ops_digest_collect.py::_eval_window_stats`.
+    `pass` is decided on fewer dimensions. `services/online_eval_signals.py`'s
+    golden-bank filter is the worked example.
     """
     __tablename__ = "agent_eval_run"
     __table_args__ = (

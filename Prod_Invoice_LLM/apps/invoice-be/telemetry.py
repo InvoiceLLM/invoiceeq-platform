@@ -568,9 +568,9 @@ def track_online_signal(
     healthy day on every chart built on this event.
 
     ``window_days`` is a **float**, not an int (changed with Gap 305's wiring).
-    `compute_online_signals()` has always taken a window *length* in days and
-    `services/ops_digest_collect.py` has always passed a fraction of one — a
-    6-hour digest window is 0.25 days — so the previous ``int()`` cast would have
+    `compute_online_signals()` has always taken a window *length* in days and the
+    scheduled caller has always passed a fraction of one — its 6-hour window is
+    0.25 days — so the previous ``int()`` cast would have
     emitted ``window_days=0`` for every event the scheduled caller produces,
     i.e. a zero-length window, which is worse than omitting the field. Whole
     numbers still compare equal (``7.0 == 7``), so nothing that read the old

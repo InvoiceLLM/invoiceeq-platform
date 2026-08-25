@@ -591,7 +591,7 @@ def detect_payment_status_question(message: str) -> str | None:
 #   3. select `currency` alongside the monetary columns (rule 7),
 #   4. filter on the un-nested item's own description, not the invoice's text blob.
 _LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is PostgreSQL -- use exactly the syntax below). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed, because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop. Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema tracks only one combined tax total, not a breakdown by tax type/name. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
+DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and jsonb_array_elements() raises on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true
@@ -608,7 +608,7 @@ SELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item->>'de
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
 _LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed, because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop. Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly and say plainly, in the explanation, that this schema tracks only one combined tax total, not a breakdown by tax type/name. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
+DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and json_each() raises "malformed JSON" on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1
@@ -1278,11 +1278,30 @@ def _tax_term_block_for(user_message: str) -> str:
     # grounds the prompt with the SPECIFIC term this question contains, rather
     # than relying on the model to recall and correctly apply rule 6d's general
     # "any tax-related term" guardrail from memory on every call.
+    #
+    # Gap 310 (2026-08-24) corrected what this note SAYS, not when it fires. It
+    # used to end "This schema has no breakdown by tax type; select tax_amount
+    # directly." -- true in August 2026 when Gap 263 wrote it, false ever since
+    # extraction started populating `Invoice.taxes` with the itemized components
+    # (`queue_worker/handlers.py`). A prompt that asserts a capability gap the
+    # product no longer has does not merely fail to help: it actively instructs
+    # the model to decline an answerable question, which is exactly the live
+    # behaviour this gap was opened over. The routing advice ("don't search item
+    # descriptions") is still right and is kept; the false claim is replaced with
+    # where the breakdown really lives.
+    #
+    # Note what did NOT change: nothing about the full-record mechanism is gated
+    # on this detector. `_full_record_block_for()` runs on every turn that
+    # identified an invoice, tax question or not.
     detected_tax_term = detect_tax_component_term(user_message)
     tax_term_block = (
         f"\nNOTE: this question contains the tax-related term \"{detected_tax_term}\" -- "
-        f"per rule 6d, do NOT search item descriptions for it. This schema has no "
-        f"breakdown by tax type; select tax_amount directly.\n"
+        f"per rule 6d, do NOT search item descriptions for it. Select tax_amount (and "
+        f"currency per rule 7) directly, together with the columns that identify the "
+        f"invoice. Do NOT decline for want of a per-component breakdown: the itemized "
+        f"components are held in the invoice's `taxes` field, which this schema block "
+        f"does not expose to you and does not need to -- the answering step is given "
+        f"the identified invoice's full record and reads them from there.\n"
         if detected_tax_term
         else ""
     )
@@ -1316,6 +1335,143 @@ def _payment_status_block_for(user_message: str) -> str:
         else ""
     )
     return payment_status_block
+
+
+# Gap 310. How many identified invoices' full ORM rows one turn will put in front
+# of the summary model.
+#
+# Three, not "all of them": this block exists to answer a DETAIL question about
+# the invoice(s) a turn is actually about, and a turn that identified 40 rows is
+# an aggregate or a listing, where 40 complete records would be both useless and
+# the single largest thing in the prompt. Same reasoning (and same "a bound is a
+# policy recorded in code" posture) as `query_tools.MAX_FULL_RECORD_CHUNK_CHARS`.
+MAX_FULL_RECORD_INVOICES = 3
+
+# Total characters of rendered record JSON one turn may add. `items` is unbounded
+# in principle (a consolidated invoice can carry hundreds of lines), so the block
+# is filled record-by-record until this budget is spent and whatever did not fit
+# is DISCLOSED in the block rather than silently dropped -- the same honesty rule
+# `get_full_record`'s `columns_omitted` / `pages_omitted` follow.
+MAX_FULL_RECORD_BLOCK_CHARS = 12_000
+
+
+def _full_record_block_for(
+    invoice_ids: list[str] | None, tenant_id: str, db_session
+) -> str:
+    """Every stored field of the invoice(s) this turn identified, for the summary prompt.
+
+    **Gap 310, and the reason this is deterministic rather than a tool the model
+    decides to call.** The SQL route's schema block (see
+    `build_sql_system_prompt`) is ~19 hand-typed columns and extraction long ago
+    grew past it: `taxes` (the itemized per-component tax rows -- CGST/SGST/VAT,
+    each with its own `rate_percent` and `amount`), `subtotal`, `tax_ids`,
+    `discounts`, `deductions`, `payment_instructions`, `references`,
+    `compliance_metadata` and `field_confidence` are all real, all populated by
+    `queue_worker/handlers.py`, and none of them were visible to this route at
+    all. Feature 21's `get_full_record` already solved that by reflecting the live
+    ORM row -- but only SAGE could reach it, and SAGE is off by default.
+
+    So the row is handed over here, on the default route, with no orchestrator:
+
+      * **Generic, never keyword-gated.** It fires for every turn that identified
+        at least one invoice, whatever the question was. Gating it on a detected
+        tax term was explicitly rejected (2026-08-24): a keyword gate is the same
+        failure mode this file already has two named instances of (rule 6d's
+        tax-component miss, Gap 264's fixed term list) -- it works for the
+        phrasing it was written against and silently does nothing for the next
+        one. "Which discounts were applied", "what's the vendor's GSTIN", "what's
+        the subtotal before tax" are the same gap wearing different words.
+      * **No extra LLM round-trip.** The alternative shape -- bind a
+        `get_invoice_full_record` tool to the summary model and let it decide --
+        costs a whole additional generation per turn to answer a question
+        (`db_session.get()` on a primary key) that costs microseconds to just
+        answer. The model's only real job here is reading a field it can already
+        see.
+      * **Bounded on both axes** (`MAX_FULL_RECORD_INVOICES`,
+        `MAX_FULL_RECORD_BLOCK_CHARS`), so it can never inherit SAGE's
+        unmeasured cost profile: no document pages are fetched
+        (`include_document_pages=False`), no Chroma call is made, and an
+        aggregate over hundreds of rows adds nothing at all.
+
+    Tenant isolation is `get_full_record`'s own, unchanged and not re-implemented
+    here: it compares `invoice.tenant_id` against the caller's tenant and returns
+    `not_found` -- never a distinguishable error -- for a row belonging to anyone
+    else. The ids fed in came from a query `execute_generated_sql`'s Safety Check
+    3 already forced to be tenant-scoped, so this is the second of two
+    independent checks, not the only one.
+
+    Fail-soft, like everything else on this route: any failure returns `""` and
+    the turn answers from the results table exactly as it did before.
+    """
+    if not invoice_ids:
+        return ""
+    unique_ids = list(dict.fromkeys(str(i) for i in invoice_ids if i))
+    if not unique_ids or len(unique_ids) > MAX_FULL_RECORD_INVOICES:
+        return ""
+
+    try:
+        # Deliberately a local import: `tests/test_agentic_sage.py::
+        # test_flag_off_never_imports_the_orchestrator_module` requires that
+        # `query_tools` never appear at this module's import scope, and
+        # `query_tools` itself imports from this module -- a module-level import
+        # here would be a cycle as well as a test failure.
+        from agents.query_tools import get_full_record
+
+        rendered: list[str] = []
+        used = 0
+        held_back = 0
+        for invoice_id in unique_ids:
+            result = get_full_record(
+                invoice_id, tenant_id, db_session, include_document_pages=False
+            )
+            if result.status != "ok" or not result.record:
+                continue
+            text_value = json.dumps(result.record, indent=2, default=str)
+            if used + len(text_value) > MAX_FULL_RECORD_BLOCK_CHARS and rendered:
+                held_back += 1
+                continue
+            rendered.append(text_value)
+            used += len(text_value)
+
+        if not rendered:
+            return ""
+
+        omission_note = (
+            f"\n({held_back} further identified invoice record(s) were held back for "
+            f"size and are NOT shown here -- do not describe this as every matching "
+            f"invoice's detail.)"
+            if held_back
+            else ""
+        )
+        return (
+            "\nFULL INVOICE RECORD(S) -- every field stored for the invoice(s) this query "
+            "identified, read straight off the database row rather than from the SELECT list "
+            "above. The results table shows only the columns the query happened to ask for; "
+            "this is the rest of the record, including fields the SQL schema description does "
+            "not list at all: `taxes` (the itemized tax components, each with its own tax_type, "
+            "rate_percent and amount -- this is where a CGST/SGST/VAT breakdown lives), "
+            "`subtotal`, `tax_ids`, `discounts`, `deductions`, `payment_instructions`, "
+            "`references`, `compliance_metadata`, and the full `items` line list.\n"
+            "Use it to answer detail the results table cannot, and quote figures from it "
+            "EXACTLY as stored -- never derive, split or estimate one (a tax total halved into "
+            "two invented components is the specific failure this block exists to stop). A "
+            "field that is null, absent or an empty list is genuinely not recorded on that "
+            "invoice: say so plainly instead of inferring it. This is background context, not "
+            "something to recite -- do not dump the record, do not print raw UUIDs, and do not "
+            "volunteer fields the user did not ask about."
+            f"{omission_note}\n"
+            + "\n".join(rendered)
+            + "\n"
+        )
+    except Exception as e:
+        # Never fatal. The turn still has its results table, which is exactly the
+        # answer it would have given before this block existed.
+        logger.warning("Full-record context fetch failed (non-fatal): %s", e)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return ""
 
 
 def build_sql_system_prompt(
@@ -1898,6 +2054,39 @@ def _run_query_agent(
                 turn.error_type = type(last_error).__name__ if last_error else "sql_no_result"
                 turn.stop_reason = "sql_attempts_exhausted"
             else:
+                # Feature 18 (Gap 231): an aggregate answer ("total spend across
+                # every invoice") selects no `id` at all, so nothing was harvested
+                # above. Rebuild the row set from the same predicates -- best
+                # effort, never fatal.
+                #
+                # Gap 310 moved this ABOVE the summary prompt (it used to sit
+                # between the prompt string and the model call). It is what
+                # decides which invoices this turn is about, and the full-record
+                # block below needs that answer before the prompt is built --
+                # running the harvest afterwards would have made the block
+                # permanently empty for exactly the single-invoice detail
+                # questions it exists for, since rules 6d/11 forbid selecting
+                # `id` in the first place.
+                if not result_invoice_ids and generated_sql:
+                    result_invoice_ids.extend(
+                        _harvest_invoice_ids_via_companion_query(generated_sql, tenant_id, db_session)
+                    )
+                # Gap 310: every stored field of the invoice(s) just identified --
+                # `taxes`, `subtotal`, `tax_ids`, `discounts`, `deductions` and the
+                # rest of the columns the hand-typed schema block never listed.
+                # Generic and unconditional (see `_full_record_block_for`), bounded,
+                # and empty for aggregate/listing turns.
+                full_record_block = _full_record_block_for(
+                    result_invoice_ids, tenant_id, db_session
+                )
+                if full_record_block:
+                    # Gap 304 half (2): the record is now part of what the answer
+                    # is allowed to be grounded in, so the online quality judge
+                    # has to see it too. Without this a correct CGST figure read
+                    # off `taxes` would be scored unfaithful for the sole reason
+                    # that the judge was shown a narrower evidence set than the
+                    # model was.
+                    judge_context_parts.append(full_record_block.strip())
                 # Formulate final output matching the raw numbers
                 summary_prompt = f"""Format a friendly summary explaining these database query results.
 {style_block}
@@ -1914,18 +2103,10 @@ EXCEPTION -- reconciliation/mismatch questions: the template above asserts an eq
 CRITICAL CURRENCY RULE: When referring to monetary amounts, you MUST use the correct currency symbol or code (e.g. ₹ or INR for Indian Rupees, € or EUR for Euros, $ or USD for US Dollars) matching the actual currency of the invoice(s) returned in the results. Never default to '$' if the results show a different currency or if the currency is specified.
 {payment_status_block}
 Results:
-{db_result}
+{db_result}{full_record_block}
 {rules_block}{chat_rules_block}
 User Query: {user_message}
 """
-                # Feature 18 (Gap 231): an aggregate answer ("total spend across
-                # every invoice") selects no `id` at all, so nothing was harvested
-                # above. Rebuild the row set from the same predicates -- best
-                # effort, never fatal.
-                if not result_invoice_ids and generated_sql:
-                    result_invoice_ids.extend(
-                        _harvest_invoice_ids_via_companion_query(generated_sql, tenant_id, db_session)
-                    )
 
                 try:
                     # Feature 23 Phase 1. Gap 305 (partial): `zero_result` rides

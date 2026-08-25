@@ -1162,16 +1162,33 @@ def test_ask_clarifying_question_result_is_immutable():
 # ── the flag boundary ───────────────────────────────────────────────────────
 
 
-def test_no_tool_is_wired_into_the_live_chat_pipeline():
-    """No tool is ever reached from the live pipeline directly.
+def test_no_orchestration_tool_is_wired_into_the_live_chat_pipeline():
+    """No *orchestration* tool is ever reached from the live pipeline directly.
 
     The orchestrator is the only caller of these tools, `run_query_agent()`
     reaches it through exactly one `ENABLE_AGENTIC_SAGE`-guarded branch (asserted
     in `test_agentic_sage.py::test_the_orchestrator_is_reachable_only_through_the_settings_flag`),
-    and with the flag off `query_agent` does not import `query_tools` or
-    `sage_orchestrator` at all. A tool called straight from the classify-and-fork
-    path would bypass the flag entirely -- which is the mistake the original
-    Feature 21's revert was about."""
+    and with the flag off `query_agent` never imports `query_tools` or
+    `sage_orchestrator` at module scope. A tool called straight from the
+    classify-and-fork path would bypass the flag entirely -- which is the mistake
+    the original Feature 21's revert was about.
+
+    **Narrowed 2026-08-24 for Gap 310, deliberately, and this is the whole of the
+    change.** `get_full_record` is now reachable from the default route on
+    purpose: it is the one tool here that makes no LLM call, generates no SQL and
+    takes no orchestration decision -- it is `db_session.get(Invoice, id)` plus a
+    tenant check plus `model_dump()`. The instruction behind Gap 310 was to give
+    the default route the invoice's whole row WITHOUT turning SAGE on for
+    everyone, and reusing this function rather than reimplementing the fetch
+    beside it was an explicit requirement (two copies of one tenant check is how
+    a bypass path gets built by accident). The property this test defends is
+    unchanged for the other five: nothing that plans, generates SQL, calls a
+    model or loops may be reached without the flag.
+
+    The module-scope import ban still holds for `query_tools` in full -- see
+    `test_agentic_sage.py::test_flag_off_never_imports_the_orchestrator_module`.
+    `query_agent` imports `get_full_record` inside the calling function, which is
+    also what keeps the two modules' mutual import from being a cycle."""
     import ast
     import inspect
 
@@ -1179,21 +1196,24 @@ def test_no_tool_is_wired_into_the_live_chat_pipeline():
 
     tree = ast.parse(inspect.getsource(query_agent))
 
-    imported = set()
+    module_level_imports = {
+        node.module for node in tree.body if isinstance(node, ast.ImportFrom) and node.module
+    } | {
+        alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names
+    }
     called = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            imported.add(node.module or "")
-        elif isinstance(node, ast.Call):
+        if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
                 called.add(func.id)
             elif isinstance(func, ast.Attribute):
                 called.add(func.attr)
 
-    assert not any("query_tools" in name for name in imported)
-    for tool in ("identify_invoices", "get_full_record", "search_invoices", "aggregate",
+    assert not any("query_tools" in name for name in module_level_imports)
+    for tool in ("identify_invoices", "search_invoices", "aggregate",
                  "ask_clarifying_question", "compute"):
         assert tool not in called, f"{tool} appears to be wired into the live pipeline already"
+    # And the one deliberate exception is really there, so this fails if the Gap
+    # 310 wiring is ever silently dropped as well as if the boundary ever spreads.
+    assert "get_full_record" in called

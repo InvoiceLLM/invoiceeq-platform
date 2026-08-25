@@ -96,29 +96,6 @@ param frontendMaxReplicas int = 2
 @description('Cron schedule (UTC) for the outbound overdue-webhook sweep. Daily at 02:00 UTC by default -- after any given business day has ended in the tenant time zones this product currently serves, so an invoice due "today" is not notified while today is still in progress somewhere.')
 param overdueSweepCron string = '0 2 * * *'
 
-// Feature 24 (Ops Digest Agent). Four runs a day, six hours apart, matching
-// `OPS_DIGEST_WINDOW_HOURS`'s default of 6 -- the window and the schedule are
-// the same number by construction, because a window shorter than the schedule
-// silently loses whatever happened in the gap and a longer one repeats items in
-// consecutive digests.
-//
-// 01:00 / 07:00 / 13:00 / 19:00 UTC = 06:30 / 12:30 / 18:30 / 00:30 IST. The
-// odd hours are deliberate: `caj-overdue-sweep-dev` is on `0 2 * * *`, so this
-// never starts a replica on the same minute as another job on the same
-// Container Apps environment. The 00:30 IST run is fine precisely *because*
-// this is the digest tier -- it is an email and a Teams message, not a page.
-@description('Cron schedule (UTC) for the Feature 24 ops digest agent. Every six hours by default; must stay consistent with OPS_DIGEST_WINDOW_HOURS.')
-param opsDigestCron string = '0 1,7,13,19 * * *'
-
-@description('Delivery mode for the ops digest: auto | teams | email | none. `auto` sends to every receiver on the critical action group, which is the intended production setting. `none` renders and records the digest without sending it -- useful for a first deploy.')
-@allowed([
-  'auto'
-  'teams'
-  'email'
-  'none'
-])
-param opsDigestDelivery string = 'auto'
-
 @description('vCPU allocation for scheduled jobs.')
 param scheduledJobCpu string = '0.5'
 
@@ -128,9 +105,11 @@ param scheduledJobMemory string = '1.0Gi'
 // Feature 23 (AI Control Tower), rescoped 2026-08-23. Runs both benchmark
 // tracks -- scripts/run_extraction_benchmark.py (Track 1) and
 // scripts/run_agent_eval.py (Track 2) -- nightly. 03:00 UTC: after
-// caj-overdue-sweep-dev's 02:00 and clear of caj-ops-digest-dev's
-// 01/07/13/19:00 slots, matching the old (deleted) caj-agent-eval-dev job's
-// schedule, which was never in conflict with anything.
+// caj-overdue-sweep-dev's 02:00, matching the old (deleted) caj-agent-eval-dev
+// job's schedule, which was never in conflict with anything. (It was also
+// chosen to stay clear of Feature 24's caj-ops-digest-dev 01/07/13/19:00
+// slots; that feature was superseded and deleted 2026-08-25, so 03:00 is now
+// only constrained by the overdue sweep.)
 @description('Cron schedule (UTC) for the nightly Feature 23 benchmark/eval job.')
 param benchmarkEvalCron string = '0 3 * * *'
 
@@ -401,93 +380,15 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
   }
 }
 
-// Feature 24: the Ops Digest Agent (`apps/invoice-be/services/ops_digest*.py`,
-// entrypoint `scripts/ops_digest_job.py`). Reuses scheduled-job.bicep exactly as
-// the overdue sweep does -- same module, same image, different command and cron,
-// which is what that module's header comment says it exists for.
-//
-// It needs four things the overdue sweep does not, all supplied through the
-// generic `extraEnv`/`extraSecrets` parameters rather than by growing this
-// module a fourth job-specific parameter set:
-//
-//   * AZURE_SUBSCRIPTION_ID / AZURE_COST_RESOURCE_GROUP -- the Resource Graph
-//     alert query and `services/azure_cost.py` both need a scope. These are the
-//     same two values `scripts/sweep_azure_cost.py` was documented as needing.
-//   * SENDGRID_API_KEY -- one of the two receivers on the critical action group
-//     is an email address, and the digest goes to *both*.
-//   * OPS_DIGEST_* -- window and delivery mode.
-//
-// Deliberately NOT wired here: OPS_DIGEST_TEAMS_WEBHOOK_URL. The webhook URL is
-// read at runtime off the deployed action group instead (see
-// `services/ops_digest_delivery.py`), so it exists in exactly one place and the
-// digest follows the alert channel automatically if it is ever changed. Putting
-// it here as well would create the drift this design exists to avoid -- and the
-// live URL carries a `sig=` bearer credential that has no business in a
-// template's plain env block.
-module opsDigestJob './modules/compute/scheduled-job.bicep' = {
-  name: 'ops-digest-job-deploy'
-  params: {
-    location: location
-    caeId: cae.id
-    jobName: 'caj-ops-digest-${environment}'
-    containerName: 'ops-digest'
-    userAssignedIdentityId: identity.id
-    userAssignedIdentityClientId: identity.properties.clientId
-    keyVaultName: keyVaultName
-    acrName: sharedAcrName
-    image: backendImage
-    command: [
-      'python'
-      'scripts/ops_digest_job.py'
-    ]
-    cronExpression: opsDigestCron
-    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
-    azureOpenAiEndpoint: openaiAccount.properties.endpoint
-    azureOpenAiDeploymentName: azureOpenAiDeploymentName
-    // Unlike the overdue sweep, this job emits telemetry (`ops_digest_run`) --
-    // the only durable evidence it ran at all, since the digest itself goes to
-    // Teams and an inbox, neither of which is queryable.
-    appInsightsConnectionString: appInsights.properties.ConnectionString
-    cpu: scheduledJobCpu
-    memory: scheduledJobMemory
-    // One LLM call plus a handful of ARM reads. 10 minutes is generous; the
-    // 30-minute default would let a stalled Cost Management retry chain run
-    // most of the way to the next scheduled execution.
-    replicaTimeout: 600
-    extraSecrets: [
-      {
-        name: 'sendgrid-key-secret'
-        secretName: 'SENDGRID-API-KEY'
-      }
-    ]
-    extraEnv: [
-      {
-        name: 'AZURE_SUBSCRIPTION_ID'
-        value: subscription().subscriptionId
-      }
-      {
-        name: 'AZURE_COST_RESOURCE_GROUP'
-        value: resourceGroup().name
-      }
-      {
-        name: 'SENDGRID_API_KEY'
-        secretRef: 'sendgrid-key-secret'
-      }
-      {
-        name: 'SENDGRID_SENDING_DOMAIN'
-        value: sendgridSendingDomain
-      }
-      {
-        name: 'OPS_DIGEST_WINDOW_HOURS'
-        value: '6'
-      }
-      {
-        name: 'OPS_DIGEST_DELIVERY'
-        value: opsDigestDelivery
-      }
-    ]
-  }
-}
+// Feature 24 (the Ops Digest Agent) declared a `caj-ops-digest-<env>` job here,
+// on `0 1,7,13,19 * * *` over the same scheduled-job.bicep module. It was never
+// deployed, and the feature was superseded as over-scoped on 2026-08-25; the
+// module block, its `opsDigestCron`/`opsDigestDelivery` params and the whole
+// backend implementation were deleted with it (Gap 311). The generic
+// `extraEnv`/`extraSecrets` parameters on scheduled-job.bicep were added for
+// that job and are kept -- they are job-agnostic and benchmarkEvalJob uses the
+// same module. Full history: `git log -- Prod_Invoice_LLM/infra/08-apps.bicep`,
+// commit `bce9e38`.
 
 // Feature 23's original nightly golden-bank eval job (caj-agent-eval-dev) was
 // deployed, then deleted 2026-08-23 along with the rest of that build

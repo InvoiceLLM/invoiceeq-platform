@@ -10,11 +10,12 @@ targetScope = 'resourceGroup'
 // other stage owns.
 //
 // Replaces 09-monitoring.bicep's `dashboard` module (Task 19.5's 6-panel
-// workbook, written 2026-08-19, never actually deployed) as the live
-// Feature 19/20 dashboard. That module and infra/modules/monitoring/
-// dashboard.bicep are left in place rather than deleted in this pass --
-// removing them is a separate, deliberate cleanup, not a side effect of
-// adding this one.
+// workbook, written 2026-08-19) as the live Feature 19/20 dashboard. That
+// module was unwired from 09-monitoring.bicep and its live Azure resource
+// deleted on 2026-08-24; the orphaned modules/monitoring/dashboard.bicep file
+// itself was deleted on 2026-08-25 (BE Gap 311) once confirmed unreferenced.
+// `git log -- Prod_Invoice_LLM/infra/modules/monitoring/dashboard.bicep` has it
+// if the old panel definitions are ever wanted.
 //
 // Every KQL query embedded in cost_health_workbook.json was run live
 // against law-invoicellm-dev / this subscription via `az monitor

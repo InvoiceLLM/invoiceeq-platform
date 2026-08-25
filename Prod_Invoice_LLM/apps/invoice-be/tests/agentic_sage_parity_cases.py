@@ -22,6 +22,28 @@ parity check stops proving anything:
 
     python tests/agentic_sage_parity_cases.py --write
 
+Regeneration log -- every entry states what changed and how it was checked
+--------------------------------------------------------------------------
+  * **2026-08-24, Gap 310.** The flag-off SQL route now hands the identified
+    invoice's whole ORM row to its answering step, and two pieces of prompt prose
+    that asserted the opposite were corrected: rule 6d's "the schema has NO
+    concept of tax-component breakdown at all -- it stores exactly one combined
+    `tax_amount` field per invoice, full stop", and `_tax_term_block_for()`'s
+    "This schema has no breakdown by tax type; select tax_amount directly". Both
+    were true when written and had been false since extraction started populating
+    `Invoice.taxes`.
+
+    Before rewriting, the old golden was diffed against the new run field by
+    field. Exactly two lines of `sql_prompts` differ across all eight cases (rule
+    6d's tax paragraph, and the tax-term NOTE on the one case whose question
+    contains "CGST"). **`result` and `summary_prompts` were byte-identical on
+    every case** -- the same answers, the same SQL, the same citations, the same
+    synthesis prompts -- which is what makes this a recorded prompt correction
+    rather than undetected pipeline drift. The new full-record block interpolates
+    directly after `{db_result}` with no separating newline precisely so that a
+    turn which identified no invoice (all eight of these do) renders a summary
+    prompt that is unchanged to the byte.
+
 Every case is a real historical phrasing from this repo's own tracker, matching
 the five Phase 1 used plus one per remaining route: rule 4a's Titan Steel
 Distributors question (Gap 270), the Rajesh Steel CGST question (Gaps 263/264), a

@@ -41,10 +41,29 @@ _ROWS = [
         invoice_number="RFG-2026-114", grand_total=7325.50, tax_amount=586.04, currency="USD",
         invoice_date="2026-06-18", due_date="2026-07-18", status="COMPLETED", items="[]",
     ),
-    # Gaps 263/264: the CGST question. One combined tax_amount, no breakdown.
+    # Gaps 263/264 and now Gap 310: the CGST question.
+    #
+    # `taxes` (and `subtotal`) added 2026-08-24. They were omitted because the
+    # case this row backs (`rajesh_steel_cgst`) asserted that no per-component
+    # breakdown existed anywhere -- which stopped being true once extraction
+    # began populating `Invoice.taxes` (`queue_worker/handlers.py`), while the
+    # default chat route's hand-typed schema block went on saying otherwise. The
+    # shape below is exactly what a real Indian GST extraction produces: one
+    # entry per component, each with its own `tax_type` / `rate_percent` /
+    # `amount`. 9% + 9% of the INR 100,000.00 subtotal sums to the INR 18,000.00
+    # already recorded in `tax_amount`, so the itemization AGREES with the
+    # combined figure rather than replacing it -- a fixture whose two tax
+    # representations disagreed would make the golden case ungradeable.
     dict(
         vendor_name="Rajesh Steel", customer_name=None, flow_direction="INBOUND",
-        invoice_number="INDIA-20260722-003", grand_total=118000.00, tax_amount=18000.00,
+        invoice_number="INDIA-20260722-003", subtotal=100000.00,
+        grand_total=118000.00, tax_amount=18000.00,
+        taxes=json.dumps(
+            [
+                {"tax_type": "CGST", "rate_percent": 9.0, "amount": 9000.0},
+                {"tax_type": "SGST", "rate_percent": 9.0, "amount": 9000.0},
+            ]
+        ),
         currency="INR", invoice_date="2026-07-22", due_date="2026-08-21", status="COMPLETED",
         items="[]",
     ),
@@ -116,6 +135,12 @@ _CHUNKS = [
 # `sa_alerts` (the audit trail a "which invoices are flagged" question reads).
 # Defaults, not a second INSERT statement: two insert paths for one table is the
 # drift this module was extracted to prevent.
+#
+# `taxes` joined the list 2026-08-24 (Gap 310): the default chat route now hands
+# the identified invoice's whole ORM row to its answering step, so a fixture that
+# never seeds `taxes` cannot exercise the one field that gap was opened over.
+# Defaulted to `"[]"`, i.e. "this invoice records no component breakdown", which
+# is a real and common state and keeps every other row exactly as it was.
 _ROW_DEFAULTS = {
     "customer_name": None,
     "flow_direction": "INBOUND",
@@ -126,6 +151,7 @@ _ROW_DEFAULTS = {
     "items": "[]",
     "tags": "[]",
     "sa_alerts": "[]",
+    "taxes": "[]",
 }
 
 
@@ -152,12 +178,12 @@ def _seed(session, rows=None, tenant_id: str = TENANT_ID) -> dict:
         session.execute(
             text(
                 "INSERT INTO invoice (id, tenant_id, file_path, vendor_name, customer_name, "
-                "flow_direction, invoice_number, subtotal, grand_total, tax_amount, currency, "
-                "invoice_date, due_date, po_number, status, items, tags, sa_alerts, created_at, "
-                "processing_attempts) "
+                "flow_direction, invoice_number, subtotal, grand_total, tax_amount, taxes, "
+                "currency, invoice_date, due_date, po_number, status, items, tags, sa_alerts, "
+                "created_at, processing_attempts) "
                 "VALUES (:id, :tenant_id, :file_path, :vendor_name, :customer_name, :flow_direction, "
-                ":invoice_number, :subtotal, :grand_total, :tax_amount, :currency, :invoice_date, "
-                ":due_date, :po_number, :status, :items, :tags, :sa_alerts, "
+                ":invoice_number, :subtotal, :grand_total, :tax_amount, :taxes, :currency, "
+                ":invoice_date, :due_date, :po_number, :status, :items, :tags, :sa_alerts, "
                 "'2026-07-22 00:00:00', 0)"
             ),
             {

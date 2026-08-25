@@ -744,19 +744,22 @@ def emit_online_signals(
     Postgres stays the durable record. This is fire-and-forget: it never raises,
     and a telemetry outage must not lose a computed window.
 
-    **Called on a schedule since 2026-08-24 (Gap 305).** The caller is
-    `scripts/ops_digest_job.py::main()` — Feature 24's digest job, which runs
-    every six hours (`0 1,7,13,19 * * *` UTC, `08-apps.bicep::opsDigestCron`) and
-    already reads these same signals through
-    `services/ops_digest_collect.py::_collect_online_signal_items()`. It emits
-    after its own `configure_telemetry()`, because these events reach
-    `customEvents` only once the Azure Monitor exporter is attached to the
-    `invoice_be_telemetry` logger. Before that wiring this function had zero
-    callers and the panel rendered empty forever, which reads as "nothing is
+    **This function has a caller (Gap 305).** It is
+    `scripts/emit_online_signals_job.py::main()`, whose default window is six
+    hours. That job emits after its own `configure_telemetry()`, because these
+    events reach `customEvents` only once the Azure Monitor exporter is attached
+    to the `invoice_be_telemetry` logger. Before that wiring this function had
+    zero callers and the panel rendered empty forever, which reads as "nothing is
     wrong" while actually meaning "nothing has run".
 
-    `window_days` is a float and is expected to be fractional here: the digest's
-    six-hour window is 0.25 days.
+    The caller was originally written inside Feature 24's ops-digest job on
+    2026-08-24; that feature was superseded and deleted on 2026-08-25 (Gap 311)
+    and the caller was extracted into the standalone script above. It still has
+    no `Microsoft.App/jobs` resource, so nothing runs it on a schedule in Azure
+    yet — which is why Gap 305 remains `[~]`.
+
+    `window_days` is a float and is expected to be fractional here: a six-hour
+    window is 0.25 days.
 
     Returns the number of signals emitted, so a caller/test can assert it did
     something.

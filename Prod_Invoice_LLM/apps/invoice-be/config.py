@@ -296,41 +296,10 @@ class Settings(BaseSettings):
     # no link to follow. For a local run that should not touch Azure at all.
     BENCHMARK_ARTIFACT_UPLOAD: bool = True
 
-    # Feature 24 (Ops Digest Agent) -- `services/ops_digest*.py`, run by
-    # `scripts/ops_digest_job.py` on a cron. Only deployment-varying values live
-    # here; the thresholds that are judgements *about the data* (what counts as
-    # a sharp quality drop, how many eval runs make a comparison meaningful) are
-    # module constants in `services/ops_digest_collect.py`, following the same
-    # split `services/online_eval_signals.py` already uses.
-    #
-    # How much history one run looks at. Must match the cron in
-    # `infra/08-apps.bicep` (`opsDigestCron`, every 6 hours) -- a window shorter
-    # than the schedule silently drops whatever happened in the gap.
-    OPS_DIGEST_WINDOW_HOURS: float = 6.0
-    # Which Azure Monitor action group defines "the channel critical alerts go
-    # to". Empty means try the names in
-    # `ops_digest_delivery.DEFAULT_ACTION_GROUP_NAMES` -- the bicep-declared
-    # `-critical` split first, then the (currently deployed) unsplit group.
-    OPS_DIGEST_ACTION_GROUP: str = ""
-    # Explicit delivery overrides. Both empty is the intended production state:
-    # the agent then reads the real receivers off the action group instead of
-    # holding a second copy of them that can drift. Set either one for a local
-    # run or a non-Azure environment.
-    OPS_DIGEST_TEAMS_WEBHOOK_URL: str = ""
-    OPS_DIGEST_EMAIL: str = ""
-    # auto | teams | email | none. `none` resolves the channel and sends
-    # nothing, which is how you confirm *where* a digest would land without
-    # posting into a live Teams channel.
-    OPS_DIGEST_DELIVERY: str = "auto"
-    # Day-over-day spend move (percent, absolute) that earns a cost item.
-    OPS_DIGEST_COST_SPIKE_PCT: float = 25.0
-    # Whether budget-breach items are emitted. **Default False because of Gap
-    # 295**: `budget-invoicellm-dev` is denominated in INR with an amount set as
-    # if it were USD, so it has been permanently breached (~10,935% of budget)
-    # for its whole existence. Turning this on today would put one guaranteed,
-    # meaningless line in every digest. Flip it once the budget amount/currency
-    # is corrected -- that is a founder decision, not a default to guess at.
-    OPS_DIGEST_BUDGET_ITEMS: bool = False
+    # Feature 24 (Ops Digest Agent) declared seven OPS_DIGEST_* settings here.
+    # The feature was superseded as over-scoped and deleted 2026-08-25 (Gap 311);
+    # `extra="ignore"` below means a stale OPS_DIGEST_* line left in someone's
+    # local `.env` is silently dropped rather than raising at startup.
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -273,6 +273,15 @@ def test_the_orchestrator_is_reachable_only_through_the_settings_flag():
     the single reference to the orchestrator sits inside an
     `if ...ENABLE_AGENTIC_SAGE:` branch, and nothing else from the agentic side
     is called anywhere in the module.
+
+    Gap 310 (2026-08-24) makes one deliberate, named exception:
+    `TOOL_GET_FULL_RECORD` is now called unguarded, because the default chat
+    route hands the identified invoice's whole ORM row to its answering step and
+    reuses that function to do it. It is the only tool here with no LLM call, no
+    SQL generation and no orchestration decision in it. Everything that plans,
+    generates or loops stays behind the flag, which is the property this test
+    actually exists to hold -- see
+    `test_query_tools.py::test_no_orchestration_tool_is_wired_into_the_live_chat_pipeline`.
     """
     tree = ast.parse(inspect.getsource(query_agent))
 
@@ -298,7 +307,6 @@ def test_the_orchestrator_is_reachable_only_through_the_settings_flag():
             name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
             if name in (
                 TOOL_IDENTIFY_INVOICES,
-                TOOL_GET_FULL_RECORD,
                 TOOL_SEARCH_INVOICES,
                 TOOL_AGGREGATE,
                 TOOL_COMPUTE,
@@ -306,6 +314,15 @@ def test_the_orchestrator_is_reachable_only_through_the_settings_flag():
             ):
                 unguarded.append(name)
     assert not unguarded, f"SAGE tools called directly from the live pipeline: {unguarded}"
+    # The Gap 310 exception, asserted rather than merely omitted from the list
+    # above: if the default route ever stops fetching the full record, that is a
+    # regression this test should report, not tolerate silently.
+    assert any(
+        (node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None))
+        == TOOL_GET_FULL_RECORD
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    ), "the default route no longer fetches the identified invoice's full record (Gap 310)"
 
 
 def test_flag_off_never_imports_the_orchestrator_module():

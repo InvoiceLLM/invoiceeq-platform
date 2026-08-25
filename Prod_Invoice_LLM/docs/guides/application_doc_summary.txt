@@ -21,7 +21,7 @@ Here's the reading order, grouped by what each phase builds toward:
 4. Feature-by-feature detail — backend first
 
 	7. apps/invoice-be/docs/be_features_tracker.md — status index and the single source of truth for open implementation items
-	8. Individual apps/invoice-be/docs/feature_*.md files, in numeric order — target design for each feature. The sequence is not clean: it runs 1..19 but there is no feature_5, and six decimal sub-feature docs sit alongside their parents (feature_1.1_rbac, 2.1_vendor_flow_ingestion, 3.1_fix_ftr2_3, 6.1_vendor_flow_chat, 7.1_vendor_flow_auditor, 8.1_vendor_flow_dashboard) — 24 files in total.
+	8. Individual apps/invoice-be/docs/feature_*.md files, in numeric order — target design for each feature. The sequence is not clean: it runs 1..24 but there is no feature_5 and no feature_22; six decimal sub-feature docs sit alongside their parents (feature_1.1_rbac, 2.1_vendor_flow_ingestion, 3.1_fix_ftr2_3, 6.1_vendor_flow_chat, 7.1_vendor_flow_auditor, 8.1_vendor_flow_dashboard); feature_21 has two docs (feature_21_architecture, feature_21_rag_faithfulness); and features 20, 23 and 24 share one consolidated doc, feature_20_23_24_ops_workbook.md (the ops workbooks + the per-field recommendation pass — it replaced feature_20_observability_monitoring_alerts.md, feature_23_ai_control_tower.md, feature_24_ops_digest_agent.md and feature_20_23_24_implementation_status.md on 2026-08-25) — 27 files in total.
 
 5. Frontend
 	9. apps/invoice-fe/docs/fe_features_tracker.md

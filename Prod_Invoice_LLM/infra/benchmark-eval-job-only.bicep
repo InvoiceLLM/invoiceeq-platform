@@ -23,7 +23,8 @@ targetScope = 'resourceGroup'
 // So this file does what the founder already did twice for this exact class of
 // problem (`infra/agent-eval-job-only.bicep`, deleted 2026-08-23 along with the
 // job it created when Feature 23 was rescoped; `infra/ops-digest-job-only.bicep`,
-// same day): deploy the one new resource, over the same shared
+// same day, itself deleted 2026-08-25 when Feature 24 was superseded): deploy
+// the one new resource, over the same shared
 // `modules/compute/scheduled-job.bicep`, with defaults that match what is
 // **actually deployed** rather than what `params.dev.json` claims.
 //
@@ -89,7 +90,7 @@ param image string = 'acrinvoicellmdev2.azurecr.io/invoice-be:latest'
 @description('Azure OpenAI deployment used by both tracks.')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
-@description('Cron (UTC). 03:00 -- after caj-overdue-sweep-dev\'s 02:00, clear of caj-ops-digest-dev\'s 01/07/13/19:00 slots. Kept identical to 08-apps.bicep\'s benchmarkEvalCron; the two must not drift.')
+@description('Cron (UTC). 03:00 -- after caj-overdue-sweep-dev\'s 02:00. (Originally also chosen to stay clear of Feature 24\'s caj-ops-digest-dev 01/07/13/19:00 slots; that job was superseded and deleted 2026-08-25.) Kept identical to 08-apps.bicep\'s benchmarkEvalCron; the two must not drift.')
 param benchmarkEvalCron string = '0 3 * * *'
 
 @description('Seconds before the execution is killed. See 08-apps.bicep\'s benchmarkEvalReplicaTimeout for the real measured/extrapolated runtime this is sized against.')

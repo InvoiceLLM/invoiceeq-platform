@@ -58,13 +58,31 @@ What is deliberately NOT here
     is empty. Rewriting them as self-contained questions was rejected: it would
     delete the only property they test.
   * **CGST/SGST split questions** (India's flag 4, PE-2026-0512's uneven
-    Rs 2,000.00 / Rs 3,700.00 split). The `invoice` table has one combined
+    Rs 2,000.00 / Rs 3,700.00 split). ~~The `invoice` table has one combined
     `tax_amount` and no tax-component column at all — the schema limitation is
     itself already the subject of the existing `rajesh_steel_cgst` case, and
     seeding a fake breakdown to make the question answerable would test a schema
-    this product does not have.
-  * **GSTIN / VAT-ID presence questions** (India Q7, EU Q7), for the same reason:
-    the tenant/vendor tax identifier is not a queryable column on `invoice`.
+    this product does not have.~~
+
+    **That rationale is obsolete as of Gap 310 (2026-08-24) and is struck through
+    rather than deleted, because it was wrong in an instructive way.** There was
+    never a schema limitation: `Invoice.taxes` is a JSONB column that extraction
+    has populated on every invoice for a long time (`queue_worker/handlers.py`),
+    carrying one entry per component with its own `tax_type`/`rate_percent`/
+    `amount`. What actually existed was a *prompt* limitation — the default chat
+    route's hand-typed ~19-column schema block never listed `taxes`, and its
+    tax-term note asserted outright that "this schema has no breakdown by tax
+    type". The route now hands the identified invoice's whole ORM row to its
+    answering step (`query_agent._full_record_block_for`), so a CGST/SGST split
+    question is answerable here too, and seeding PE-2026-0512's real uneven split
+    into `taxes` would be seeding ground truth, not a fake. Deliberately not done
+    in the Gap 310 pass to keep it scoped: `rajesh_steel_cgst` already exercises
+    the mechanism end to end. Adding a regional case is now a fixture edit
+    (`taxes=` on the row) plus a `GoldenCase`, with no product change behind it.
+  * **GSTIN / VAT-ID presence questions** (India Q7, EU Q7). Same shape of
+    caveat: `tax_ids` is likewise a real, populated, previously-invisible column
+    now included in the full record — the remaining reason these are absent is
+    only that no regional row here seeds one.
   * Questions whose incident is already covered by an existing case — US Q4
     (Apex Print's 5,000 x $0.08 = $420) is literally the same arithmetic as the
     base tenant's `bolts_reconciliation`, and US Q8/India Q9 are the same

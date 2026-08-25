@@ -417,8 +417,10 @@ resource storageEgressAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
 // QueueMessageCount on a QueueName dimension. Azure Storage's QueueMessageCount
 // metric has no dimensions (confirmed live via az rest on metric definitions),
 // so that rule could never fire. Replaced with a log-based scheduled query over
-// the same KQL the Feature 20 workbook already uses (dashboard.bicep panel:
-// ContainerAppConsoleLogs_CL | where Log_s has "POISON MESSAGE ISOLATED").
+// the same KQL the Feature 20 workbook already uses (the panel was
+// ContainerAppConsoleLogs_CL | where Log_s has "POISON MESSAGE ISOLATED", from
+// the since-deleted dashboard.bicep; the live workbook is
+// infra/monitoring/cost_health_workbook.json).
 // The worker emits that line in queue_worker/main_worker.py::_route_to_dead_letter_queue.
 // New resource name (scheduledQueryRules, not metricAlerts) so an already-deployed
 // metric alert of the old type/name is not a type-change conflict; delete

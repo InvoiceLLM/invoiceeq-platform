@@ -104,15 +104,19 @@ resource costManagementRoleAssignment 'Microsoft.Authorization/roleAssignments@2
   }
 }
 
-// RBAC for the Ops Digest Agent (Feature 24 — `apps/invoice-be/services/ops_digest*.py`)
+// Monitoring Reader — Azure-side read access for the monitoring jobs
 //
-// `caj-ops-digest-<env>` makes two ARM reads that no existing assignment covers:
+// Added 2026-08-23 for Feature 24's ops digest agent. That feature was
+// superseded as over-scoped on 2026-08-25 and its code deleted (BE Gap 311),
+// but this assignment is **deliberately kept**: it grants exactly the two ARM
+// reads any in-codebase job needs to see its own monitoring estate, and the
+// planned workbook-recommendation pass needs both.
 //
 //   1. Azure Resource Graph over `alertsmanagementresources` — which alerts
-//      fired in the last window.
+//      fired in a given window.
 //   2. `microsoft.insights/actionGroups/{name}/read` — where critical alerts are
-//      actually delivered, so the digest goes to the same Teams webhook + email
-//      rather than to a second copy of that configuration which can drift.
+//      actually delivered, so a job can follow the real alert channel rather
+//      than hold a second copy of that configuration which can drift.
 //
 // Monitoring Reader is the smallest built-in role covering both. Its actions on
 // this subscription are exactly `*/read`, `Microsoft.OperationalInsights/
@@ -125,10 +129,9 @@ resource costManagementRoleAssignment 'Microsoft.Authorization/roleAssignments@2
 // `resourceGroup: rg-invoice-llm-dev`, so an RG-scoped read *should* return
 // them — but Resource Graph's own access model is not something that can be
 // confirmed from the template, and this assignment has **not been deployed**
-// (Stage 7 has not been redeployed since Gap 297 either). If a live run of
-// `scripts/ops_digest_job.py` inside the container comes back with zero alerts
-// while the portal shows some, this scope is the first thing to widen to
-// subscription level — not the code.
+// (Stage 7 has not been redeployed since Gap 297 either). If a live in-container
+// run comes back with zero alerts while the portal shows some, this scope is the
+// first thing to widen to subscription level — not the code.
 resource monitoringReaderRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(identityPrincipalId, resourceGroup().id, monitoringReader)
   properties: {

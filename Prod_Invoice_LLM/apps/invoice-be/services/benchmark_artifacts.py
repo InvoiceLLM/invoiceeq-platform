@@ -173,8 +173,9 @@ def _enable_event_logger_level() -> None:
     ``lg.setLevel(logging.INFO)`` to do it — and its `finally` removes the
     handler but never restores the level. So Track 2 has been carried this whole
     time by a side effect of an unrelated measurement helper, on the first turn
-    of every run. `scripts/sweep_azure_cost.py` and `scripts/ops_digest_job.py`
-    are covered by a different accident: both call
+    of every run. `scripts/sweep_azure_cost.py` and
+    `scripts/emit_online_signals_job.py` are covered by a different accident:
+    both call
     `utils.logging_config.setup_structured_logging()`, which sets the **root**
     logger to INFO. `scripts/run_extraction_benchmark.py` does neither, and was
     the only one of the four with nothing holding the level up.

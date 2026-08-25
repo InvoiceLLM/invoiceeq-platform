@@ -772,7 +772,13 @@ class FullRecordResult:
         return asdict(self)
 
 
-def get_full_record(invoice_id: str, tenant_id: str, db_session) -> FullRecordResult:
+def get_full_record(
+    invoice_id: str,
+    tenant_id: str,
+    db_session,
+    *,
+    include_document_pages: bool = True,
+) -> FullRecordResult:
     """The complete invoice row plus every indexed page of its document.
 
     No LLM, no SQL generation, no column list: `Invoice.model_dump()` is the
@@ -796,6 +802,14 @@ def get_full_record(invoice_id: str, tenant_id: str, db_session) -> FullRecordRe
 
     Cross-tenant access is refused as `not_found`, never as a distinct error: a
     caller must not be able to learn that an id exists under another tenant.
+
+    `include_document_pages=False` (Gap 310) returns the structured row only and
+    skips the Chroma round-trip entirely. Added for the default (non-SAGE) chat
+    route, which calls this on every turn that identified an invoice: that route
+    already has its own document channel (the RAG branch) and its question is
+    always "what does the *record* hold", so paying for a page dump measured at
+    up to 16,010 tokens on an 11-page invoice would be a per-turn cost with no
+    consumer. SAGE keeps the default, so its behaviour is byte-identical.
     """
     from models import Invoice
 
@@ -842,7 +856,11 @@ def get_full_record(invoice_id: str, tenant_id: str, db_session) -> FullRecordRe
             "invoice_id": (chunk.get("metadata") or {}).get("invoice_id") or str(wanted),
             "matched_by": chunk.get("matched_by"),
         }
-        for chunk in get_all_invoice_chunks(str(wanted), str(tenant_id))
+        for chunk in (
+            get_all_invoice_chunks(str(wanted), str(tenant_id))
+            if include_document_pages
+            else []
+        )
     ]
     total_pages = len(chunks)
     chunks, pages_omitted = bound_document_pages(chunks)

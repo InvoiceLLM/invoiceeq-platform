@@ -10,10 +10,12 @@
 // considered and rejected, for a reason that is worth stating rather than
 // leaving as a preference:
 //
-//   * Feature 24's `scripts/ops_digest_job.py` runs every 6h. A 30-minute idle
-//     definition cannot ride it — a session that ends at 09:05 would first be
-//     noticed at 12:00, so "abandoned 30 minutes ago" would be a label applied
-//     up to six hours late. So piggybacking was genuinely not available.
+//   * The only candidate job to piggyback on ran every 6h (Feature 24's ops
+//     digest agent, since superseded and deleted — BE Gap 311). A 30-minute idle
+//     definition cannot ride a 6-hourly cadence — a session that ends at 09:05
+//     would first be noticed at 12:00, so "abandoned 30 minutes ago" would be a
+//     label applied up to six hours late. So piggybacking was genuinely not
+//     available, and is even less available now.
 //   * The alternative was a new `Microsoft.App/jobs` resource on a ~15-minute
 //     cron: its own bicep, its own image pull, its own deploy, and Gap 298's
 //     Stage 8 deployment blocker on top — all to compute something that is a
