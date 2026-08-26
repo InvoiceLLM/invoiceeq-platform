@@ -1,0 +1,14 @@
+# Gap 320 (Infra): Workbook panel for persisted recommendations
+
+- [x] Read context: Gap 318/319 tracker entries, `feature_20_23_24_ops_workbook.md`, `telemetry.py::track_ops_recommendation`, `services/ops_recommendation.py`
+- [x] Insert `ops-recommendations-header` (type 1) + `ops-recommendations` (type 3, plain grid) into `cost_health_workbook.json` after `alerts-table`, before `footer` (25 -> 27 items)
+- [x] Insert `section-h-header` (type 1) + `h1-ops-recommendations` (type 3, plain grid) into `ai_control_tower_workbook.json` after `g2-production-scores`, before `footer` (49 -> 51 items)
+- [x] Rung A: python json.load both files, assert item counts 27/51 (OK); `az bicep build` both workbook-*-only.bicep files (both 0 errors)
+- [x] Rung B: validate both JSONs against Microsoft's schema/workbook.json (0 errors both, fetched raw schema from GitHub)
+- [x] Rung C: extract query strings programmatically, sha256 hash-compare -> byte-identical (`1dbc6ccc...aa`); found and fixed a real KQL trap (`title` is a reserved word, `d.title` fails to parse, must use bracket notation `d["title"]`) before this rung passed; live query against `law-invoicellm-dev` (customerId `a0f26ce7-43d6-457d-9f7b-47e36af39a02`) returned `[]`, exit 0 (expected — 0 rows today); synthetic 4-row datatable test confirmed the "No recommendation yet" branch: `recommend` row shows real text, `worked`/`no_data`/`insufficient_data` rows all show literal "No recommendation yet"
+- [x] Rung D: `az deployment group what-if` both bicep files against `rg-invoice-llm-dev` -> both `~ Modify` (1 to modify, 53 to ignore), not `+ Create`, confirming GUIDs unchanged; `az deployment group create` both -> both `provisioningState: Succeeded`; pull-back via `az rest ...canFetchContent=true` deep-compared item-by-item against local files -> 27/27 and 51/51 items byte-identical (dict `==`), deployed `query` strings match local exactly on both
+- [x] Update `be_features_tracker.md` Gap 320 -> `[x]` with full evidence
+- [x] Update `feature_20_23_24_ops_workbook.md` item (c) -> `[x]`, item-count table, panel inventories, real-data-vs-empty table row
+- [x] Final status line in this file
+
+Final status: DONE. All 4 verification rungs passed (A/B/C/D). Both workbooks deployed to `rg-invoice-llm-dev` (`618c81c7-...` 25->27 items, `c1168d95-...` 49->51 items), pull-back deep-compare 27/27 and 51/51 exact match, query byte-identical across both files (sha256 `1dbc6ccc...`). One real KQL trap found and fixed mid-task: `title` is a reserved word in KQL, `d.title` fails to parse — fixed to `d["title"]` before any live run. Panel is plain-grid, no colouring, per founder decision (see tracker Gap 320 for the "not done here, on purpose" list). `ops_recommendation` returns 0 rows today as expected — no backend image carrying Gaps 318/319 has shipped yet.

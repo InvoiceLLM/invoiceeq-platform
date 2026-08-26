@@ -136,6 +136,11 @@ from services.benchmark_artifacts import (  # noqa: E402
     configure_run_telemetry,
     flush_run_telemetry,
     mirror_agent_eval_run,
+    read_track1_handoff,
+)
+from services.ops_recommendation import (  # noqa: E402
+    mirror_recommendation_pass,
+    run_recommendation_pass,
 )
 from utils.llm import SUPPORTED_LLM_PROVIDERS  # noqa: E402
 
@@ -912,6 +917,81 @@ def _agent_rollup(rows: list[dict]) -> dict:
     return rollup
 
 
+def recommendation_pass_step(
+    payload: dict, run_label: str, *, mirror: bool = True
+) -> Optional[Any]:
+    """Gap 318 — the Feature 20/23/24 recommendation pass, as a step in this job.
+
+    **Nightly only, and that is the whole trigger design.** The cadence decision
+    (`docs/feature_20_23_24_ops_workbook.md`, "Open decisions — closed
+    2026-08-25") is "event-triggered off the existing nightly benchmark-eval
+    job's completion, not a new independent schedule", so this hangs off
+    `--run-label nightly` rather than off a new `Microsoft.App/jobs` resource.
+    The other two labels are excluded for concrete reasons, not tidiness:
+    `predeploy` runs a 5-case subset — below the workbooks' n=20 minimum-sample
+    guard, so its AI-improvement verdict could only ever be
+    `insufficient_data` — and it runs on every push, which would turn a
+    once-a-day review into a per-commit one and put two live ARM reads
+    (Resource Graph + Azure Monitor metrics) in the deploy path. `adhoc` is a
+    developer's own run and has no business writing an ops verdict.
+
+    Runs **after** every piece of this job's real work: the graded turns, the
+    Postgres persist, the `--out` write and the telemetry/blob mirror have all
+    already happened by the time this is called. It also swallows everything it
+    can raise, for the reason Gaps 308/317 exist — a step bolted onto the end of
+    a job that has already succeeded must not be able to turn that execution red.
+
+    **Gap 319 (2026-08-25): the verdict is now mirrored, not just printed.**
+    `mirror_recommendation_pass()` emits one `ops_recommendation` custom event per
+    category — three a night — because stdout dies with the replica and an Azure
+    Monitor Workbook (Gap 320's panel) can read custom events but not Postgres.
+    Skipped under `--no-mirror`, which is exactly what that flag already means for
+    the `agent_eval_summary` mirror above: a local, offline run emits nothing.
+
+    The mirror sits *inside* this function's try/except and never raises on its
+    own account either, so persistence is fail-soft twice over for the same Gap
+    308/317 reason the pass itself is.
+
+    The exporter is re-attached (idempotently) and flushed here rather than being
+    left to the mirror block in `main()`: that block's `flush_run_telemetry()`
+    has already run by the time this step is reached, and the OTel batch exporter
+    ships on a timer — so without a second flush these three events would be lost
+    on process exit, which is the "the job ran and the workbook shows nothing"
+    symptom the mirror exists to prevent.
+
+    Returns the `RecommendationPass` (or None when skipped).
+    """
+    if run_label != RUN_LABEL_NIGHTLY:
+        return None
+    try:
+        # Track 1 ran as the previous process in this job's `&&` chain and left
+        # its summary in the temp directory; None here means it did not, and the
+        # pass says so rather than grading Track 2 alone in silence.
+        extraction_summary = read_track1_handoff(run_label=run_label)
+        result = run_recommendation_pass(
+            payload,
+            extraction_summary=extraction_summary,
+            run_label=run_label,
+        )
+        print(f"\nRecommendation pass [{run_label}] — {len(result.categories)} categories:")
+        print(result.describe())
+        if mirror:
+            exporter_attached = configure_run_telemetry()
+            mirrored = mirror_recommendation_pass(result)
+            print(
+                f"Recommendation mirror [{run_label}] -> "
+                f"{'Application Insights + stdout' if exporter_attached else 'stdout only'}: "
+                f"{mirrored.describe()}"
+            )
+            if exporter_attached:
+                flush_run_telemetry()
+        return result
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        print(f"\nRecommendation pass failed ({type(exc).__name__}: {exc}) — run itself is unaffected")
+        logger.warning("Recommendation pass failed", exc_info=True)
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1191,6 +1271,13 @@ def main() -> None:
         )
         if exporter_attached:
             flush_run_telemetry()
+
+    # Gap 318. Last, after every other piece of this job's work has completed —
+    # see `recommendation_pass_step()` for why it is nightly-only and why it
+    # cannot fail the run. Gap 319: it also mirrors its three category verdicts
+    # to `ops_recommendation` events, under the same `--no-mirror` rule as the
+    # `agent_eval_summary` mirror above.
+    recommendation_pass_step(payload, args.run_label, mirror=not args.no_mirror)
 
     print("\n" + json.dumps(summary, indent=2))
     print(f"\nWrote {len(turns)} turns to {args.out}")

@@ -26,6 +26,13 @@ discarded on exit. See `services/benchmark_artifacts.py`. Both halves are
 strictly non-fatal: a telemetry or storage failure prints a warning and changes
 neither the printed report nor the exit code.
 
+It also leaves its summary in the temp directory for the *next process* in the
+nightly job's `&&` chain — `scripts/run_agent_eval.py`, whose Gap 318
+recommendation pass grades alert recall and the clean false-positive rate
+alongside its own chat-quality numbers. See
+`services/benchmark_artifacts.track1_handoff_path()`; like the mirror, it can
+never fail this run.
+
 Exit code is 1 if any seeded case in a gradeable surface was missed, if any
 clean document raised an alert, or if any case errored — so this is usable as a
 pre-deploy gate as-is, which is one of the two cadences the feature doc names.
@@ -72,6 +79,7 @@ from services.benchmark_artifacts import (  # noqa: E402
     configure_run_telemetry,
     flush_run_telemetry,
     mirror_extraction_run,
+    write_track1_handoff,
 )
 
 #: A stable synthetic tenant, used only for telemetry attribution on live runs
@@ -188,6 +196,18 @@ def main() -> int:
         paths = write_run_artifacts(result)
         for name in paths:
             print(f"  wrote runs/{name}")
+
+    # Gap 318: hand this summary to Track 2, which runs as the *next process* in
+    # the nightly job's `&&` chain and whose recommendation pass grades alert
+    # recall and the clean false-positive rate alongside its own chat-quality
+    # numbers. Independent of `--no-write` on purpose: `--no-write` means "do not
+    # leave a run artifact in the repo's docs/ tree", and this is a ~2 KB
+    # inter-process handoff in the temp directory that the nightly job — the one
+    # invocation that passes `--no-write` — is precisely the caller that needs.
+    # Never fails the run; see `write_track1_handoff()`.
+    handoff = write_track1_handoff(summary, run_label=args.run_label)
+    if handoff:
+        print(f"  track 1 summary handed to the recommendation pass at {handoff}")
 
     # Deliberately before the gate verdict, and outside it: a failing gate run is
     # exactly the run whose numbers most need to reach the workbook, so the

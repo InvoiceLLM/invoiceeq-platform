@@ -13,6 +13,7 @@ because the stdout log record and the Application Insights customEvent are the
 same record — the exporter branches on the `microsoft.custom_event.name`
 attribute, which is asserted here directly.
 """
+import json
 import logging
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
@@ -1681,3 +1682,183 @@ def test_the_online_judge_runs_with_the_turns_correlation_ids_bound(caplog):
     # Released again — the pool is shared with queued chat jobs, so a leaked
     # tenant id would attribute one tenant's judge call to another's turn.
     assert tenant_id_ctx.get() == ""
+
+
+# ── Gap 319: the recommendation pass, as one custom event per category ────────
+
+
+def _recommendation_events(caplog):
+    return [
+        r for r in caplog.records if r.getMessage() == telemetry.OPS_RECOMMENDATION_EVENT_NAME
+    ]
+
+
+def _finding(field="ca-invoice-be-dev — CPU%", severity="red", **overrides):
+    finding = {
+        "field": field,
+        "value": 94.2,
+        "severity": severity,
+        "detail": "ca-invoice-be-dev CPU% is 94.2 (1h avg), at or above 90",
+        "recommendation": "review the scale rule's CPU threshold and the app's CPU limit.",
+    }
+    finding.update(overrides)
+    return finding
+
+
+def test_track_ops_recommendation_emits_the_columns_the_panel_renders(caplog):
+    """Gap 320's panel is a `Category | Status | Explanation | Recommendation`
+    grid, so those four have to be first-class fields on the row — not keys
+    inside a serialised blob a KQL query would have to parse before it could
+    filter or colour on them."""
+    with caplog.at_level(logging.INFO):
+        telemetry.track_ops_recommendation(
+            category="container_health",
+            title="Container health",
+            status="recommend",
+            explanation="1 field(s) outside their workbook band, 1 red: CPU% is 94.2",
+            recommendation="ca-invoice-be-dev CPU% is red: review the scale rule.",
+            worst_severity="red",
+            findings=[_finding(), _finding(severity="yellow", field="restarts (24h)")],
+            errors=["container health: metrics for ca-queue-worker-dev: HTTPError: 403"],
+            run_label="nightly",
+            generated_at="2026-08-25T03:47:00+00:00",
+        )
+
+    records = _recommendation_events(caplog)
+    assert len(records) == 1
+    event = records[0]
+    # The attribute the exporter branches on to route this to `customEvents`.
+    assert getattr(event, "microsoft.custom_event.name") == "ops_recommendation"
+    assert event.category == "container_health"
+    assert event.title == "Container health"
+    assert event.status == "recommend"
+    assert "94.2" in event.explanation
+    assert event.recommendation.startswith("ca-invoice-be-dev CPU%")
+    assert event.worst_severity == "red"
+    assert event.run_label == "nightly"
+    assert event.generated_at == "2026-08-25T03:47:00+00:00"
+    # Counts next to the blob, so "how many reds tonight" needs no parse step.
+    assert (event.finding_count, event.red_count, event.yellow_count) == (2, 1, 1)
+    assert event.error_count == 1
+    assert "403" in event.errors
+    assert json.loads(event.findings)[0]["field"] == "ca-invoice-be-dev — CPU%"
+    # Feature 19's StructuredJsonFormatter reads exactly this key.
+    assert event.extra_fields["category"] == "container_health"
+
+
+def test_no_tenant_or_request_id_rides_on_an_ops_verdict(caplog):
+    """Matching `agent_eval_summary`/`extraction_benchmark_run` (and the
+    `ops_digest_run` event deleted by Gap 314) rather than the per-turn events: a
+    scheduled ops pass has no request and no tenant in scope, and an always-empty
+    column invites a join that can never match."""
+    with caplog.at_level(logging.INFO):
+        telemetry.track_ops_recommendation(category="cost", status="worked")
+
+    event = _recommendation_events(caplog)[0]
+    assert not hasattr(event, "tenant_id")
+    assert not hasattr(event, "request_id")
+
+
+def test_a_category_with_nothing_wrong_says_so_rather_than_omitting_severity(caplog):
+    """`worst_severity` has three values and the third — "checked, nothing
+    outside its band" — is a real answer. An absent field means missing data
+    everywhere else in this module, so this one is emitted as ""."""
+    with caplog.at_level(logging.INFO):
+        telemetry.track_ops_recommendation(
+            category="cost",
+            title="Cost",
+            status="worked",
+            explanation="INR 4000.00 month-to-date = 20.0% of budget.",
+        )
+
+    event = _recommendation_events(caplog)[0]
+    assert event.worst_severity == ""
+    assert event.recommendation == ""
+    assert (event.finding_count, event.red_count, event.yellow_count) == (0, 0, 0)
+    assert event.findings == "[]"
+    assert event.findings_omitted == 0
+
+
+def test_a_pathological_findings_list_stays_valid_json_under_the_property_cap(caplog):
+    """The bound that matters is Application Insights' own 8,192-character
+    property cap: a blob over it is cut *by ingestion*, mid-object, and stops
+    being parseable JSON. So whole findings are dropped here instead, and what
+    was dropped is stated in-band — the `_truncate` marker principle applied to
+    an array."""
+    huge = [
+        _finding(field=f"app-{i}", detail="d" * 5000, recommendation="r" * 5000)
+        for i in range(400)
+    ]
+    with caplog.at_level(logging.INFO):
+        telemetry.track_ops_recommendation(
+            category="container_health", status="recommend", findings=huge
+        )
+
+    event = _recommendation_events(caplog)[0]
+    assert len(event.findings) <= telemetry.MAX_RECOMMENDATION_FINDINGS_CHARS
+    parsed = json.loads(event.findings)  # the whole point: it still parses
+    assert len(parsed) <= telemetry.MAX_RECOMMENDATION_FINDINGS + 1
+    # Per-finding text is cut with the same marker the chat_turn caps use.
+    assert "truncated at 400 chars" in parsed[0]["detail"]
+    # The count is never lost, even when the findings are.
+    assert event.finding_count == 400
+    assert event.findings_omitted == 400 - (len(parsed) - 1)
+    assert parsed[-1]["field"] == "(omitted)"
+    assert "further finding(s) omitted" in parsed[-1]["detail"]
+    assert event.red_count == 400
+
+
+def test_long_prose_is_truncated_with_a_marker_not_silently_cut(caplog):
+    """`explanation` is one sentence per finding joined together, so it grows
+    with the number of container apps."""
+    with caplog.at_level(logging.INFO):
+        telemetry.track_ops_recommendation(
+            category="ai_improvement",
+            status="recommend",
+            explanation="e" * 9000,
+            recommendation="r" * 9000,
+            errors=["x" * 9000],
+        )
+
+    event = _recommendation_events(caplog)[0]
+    for text in (event.explanation, event.recommendation, event.errors):
+        assert len(text) <= telemetry.MAX_RECOMMENDATION_TEXT_CHARS + 40
+        assert "truncated at 2000 chars" in text
+
+
+def test_a_non_serialisable_finding_value_does_not_lose_the_whole_event(caplog):
+    """`Finding.value` is `Any` — a date or a dataclass there must cost that one
+    value its type, not the event its existence."""
+    with caplog.at_level(logging.INFO):
+        telemetry.track_ops_recommendation(
+            category="cost",
+            status="recommend",
+            findings=[_finding(value=date(2026, 8, 25)), "not-a-dict"],
+        )
+
+    event = _recommendation_events(caplog)[0]
+    parsed = json.loads(event.findings)
+    # The non-dict entry is dropped rather than emitted as a ragged element.
+    assert len(parsed) == 1 and event.finding_count == 1
+    assert parsed[0]["value"] == "2026-08-25"
+
+
+def test_the_severity_vocabulary_is_still_the_recommendation_modules():
+    """These two strings are restated in `telemetry.py` rather than imported (no
+    `services/` import belongs behind every LLM call site). If they ever drift,
+    `red_count`/`yellow_count` silently become 0 on every event — so they are
+    pinned to their source here."""
+    from services import ops_recommendation
+
+    assert telemetry.RECOMMENDATION_SEVERITY_RED == ops_recommendation.SEVERITY_RED
+    assert telemetry.RECOMMENDATION_SEVERITY_YELLOW == ops_recommendation.SEVERITY_YELLOW
+
+
+def test_a_broken_ops_recommendation_emitter_never_breaks_the_nightly_job(caplog):
+    """Same never-raises contract as every other emitter, and the caller is a
+    step bolted onto the end of a job that has already succeeded (Gaps 308/317):
+    anything raised here would turn a green nightly run red."""
+    with patch.object(telemetry, "_emit_event", side_effect=RuntimeError("exporter down")):
+        with caplog.at_level(logging.DEBUG):
+            telemetry.track_ops_recommendation(category="cost", status="worked")  # must not raise
+    assert not _recommendation_events(caplog)

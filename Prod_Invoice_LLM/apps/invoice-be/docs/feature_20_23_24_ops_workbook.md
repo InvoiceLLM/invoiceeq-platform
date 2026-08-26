@@ -34,8 +34,8 @@ rubrics) is superseded — see "The digest build, superseded" below.
 
 | Workbook | Definition | Bicep | Live resource | Status |
 |---|---|---|---|---|
-| Cost + Health/Performance (F20) | `infra/monitoring/cost_health_workbook.json` — 25 items | `infra/workbook-cost-health-only.bicep` | `618c81c7-353d-498a-93be-becc2e3e84cf` | Deployed 2026-08-24, `serializedData` pulled back via `az rest ...canFetchContent=true` and checked |
-| AI Control Tower (F23) | `infra/monitoring/ai_control_tower_workbook.json` — 49 items, 40 KQL steps | `infra/workbook-ai-control-tower-only.bicep` | `c1168d95-73e2-49fb-8b56-5bff5cdb990a` | Deployed 2026-08-24, deployed JSON deep-compared to local: 49/49 items identical |
+| Cost + Health/Performance (F20) | `infra/monitoring/cost_health_workbook.json` — 25 → **27 items** (Gap 320, 2026-08-26) | `infra/workbook-cost-health-only.bicep` | `618c81c7-353d-498a-93be-becc2e3e84cf` | Deployed 2026-08-24; re-deployed 2026-08-26 for Gap 320's recommendation panel, `serializedData` pulled back via `az rest ...canFetchContent=true` and deep-compared: 27/27 items identical |
+| AI Control Tower (F23) | `infra/monitoring/ai_control_tower_workbook.json` — 49 → **51 items**, 41 KQL steps (Gap 320, 2026-08-26) | `infra/workbook-ai-control-tower-only.bicep` | `c1168d95-73e2-49fb-8b56-5bff5cdb990a` | Deployed 2026-08-24; re-deployed 2026-08-26 for Gap 320's recommendation panel (Section H), deployed JSON deep-compared to local: 51/51 items identical |
 
 Both are **flat, single-page, no tabs, no `conditionalVisibility`, no `customWidth`** — that shape was
 arrived at after tabs, the `tiles` big-number formatter and `customWidth` each caused a real rendering
@@ -45,19 +45,20 @@ coloring, `sourceId` = the raw `law-invoicellm-dev` workspace (so queries use
 `customEvents`/`name`/`customDimensions` aliases). Every KQL/ARG query in both files was executed live
 before being written in; both validate against Microsoft's published `schema/workbook.json` with 0 errors.
 
-**Panel inventory — Cost + Health (25 items):** `shared-parameters`, `cost-header`, `cost-trend-budget`,
+**Panel inventory — Cost + Health (27 items):** `shared-parameters`, `cost-header`, `cost-trend-budget`,
 `cost-by-service`, `health-header`, `container-status`, `container-replicas`, `container-scale-config`,
 `container-restarts`, `db-status-postgres`, `db-status-postgres-connections`,
 `db-status-postgres-connection-util`, `db-status-postgres-liveness`, `db-status-redis`,
 `db-status-redis-counts`, `db-status-redis-hit-ratio`, `db-status-redis-liveness`, `dlq-panel`,
 `api-perf-header`, `api-perf-by-area`, `api-perf-error-rate`, `alerts-header`, `alerts-trend`,
-`alerts-table`, `footer`.
+`alerts-table`, **`ops-recommendations-header`, `ops-recommendations`** (Gap 320), `footer`.
 
-**Panel inventory — AI Control Tower (49 items), 7 sections:**
+**Panel inventory — AI Control Tower (51 items), 8 sections:**
 A `a1`–`a6` (live model cost & latency), B `b1`–`b7` (chat-turn behaviour), C `c1`–`c4`
 (sessions/threads), D `d1`–`d6` (golden bank), E `e1`–`e3` (extraction benchmark), F `f1`–`f2`
-(online-eval signals), G `g1`–`g2` (production quality judge), plus `shared-parameters` (Subscription +
-free-text `SessionId` drill-down), 7 section headers and a footer.
+(online-eval signals), G `g1`–`g2` (production quality judge), **H `h1-ops-recommendations`
+(the recommendation-pass grid, Gap 320)**, plus `shared-parameters` (Subscription + free-text
+`SessionId` drill-down), 8 section headers (`section-a-header` … `section-h-header`) and a footer.
 
 The field-by-field content of both is enumerated in the sample table below — that table **is** the field
 inventory as well as the spec for the recommendation pass.
@@ -113,7 +114,12 @@ Confirmed against subscription `2ae37d8b-…` before any parsing code was writte
   days **-3 and -2, not -2 and -1** — the most recent usage day is always partial.
 - **The budget is INR.** `budget-invoicellm-dev` was ₹150 with USD-shaped thresholds and permanently
   breached; fixed 2026-08-23 to ₹20,000/month with 50/75/95%-actual notifications. Any cost panel must
-  read `currency` rather than assume USD.
+  read `currency` rather than assume USD. **Confirmed live 2026-08-26** by reading `budget-invoicellm-dev`
+  with `az`: ₹20,000/month, notifications at 50/75/95% of *actual*. This sentence was right and
+  `be_features_tracker.md`'s **Gap 295** was wrong — that gap sat at `[ ]` "not fixed here" until the
+  2026-08-26 doc-reconciliation pass closed it against this evidence. One thing neither doc claimed and
+  which is worth a founder decision rather than a silent edit: ₹20,000 is *below* the ~₹24,600 month-end
+  forecast recorded in Gap 295 itself, so the 50% and 75% thresholds will likely fire every month.
 - **Naming-prefix drift is real and load-bearing.** `params.dev.json` says `namingPrefix: "invoice-llm"`,
   but the environment was built with `invoicellm` (`kv-invoicellm-dev`, `id-invoicellm-dev`,
   `cae-invoicellm-dev`, `stinvoicellmdev2`). Names must be defaulted to the deployed value with an
@@ -122,7 +128,11 @@ Confirmed against subscription `2ae37d8b-…` before any parsing code was writte
   null) and renders literally, so guard with `iff(isnan(x), real(null), x)`; a bare `top 1 by … desc`
   returns **zero** rows over empty input, so "latest run" tiles use a `summarize`-based `arg_max` tuple,
   which emits exactly one (null-valued) row; `arg_max(timestamp, status)` mis-binds to the key column —
-  use the tuple form `(last_ts, last_status) = arg_max(TimeGenerated, status)`.
+  use the tuple form `(last_ts, last_status) = arg_max(TimeGenerated, status)`. **`title` is also a
+  reserved word** (Gap 320, 2026-08-26): `tostring(d.title)` fails with `SYN0002` (`could not be parsed
+  at 'title'`) even inside a dot-property accessor on a `dynamic` — confirmed with the minimal live
+  repro `print x = todynamic('{"title":"a"}').title`. Bracket notation sidesteps it:
+  `tostring(d["title"])` parses and executes cleanly.
 
 ### What is real data today vs. structurally empty
 
@@ -131,10 +141,11 @@ Confirmed against subscription `2ae37d8b-…` before any parsing code was writte
 | `llm_agent_call` (Section A) | Real production traffic |
 | `agent_eval_summary` (Section D) | Real, one `predeploy` row — the n=3-run guard correctly shows the sentinel with the real number in Detail |
 | `azure_cost_snapshot` / `azure_cost_slice` | Real, but from a sweep run predating the budget fix, and the sweep is **not scheduled** |
-| `chat_turn` (Sections B, C) | 0 rows — the live backend image predates the commit that added it |
-| `extraction_benchmark_run` (Section E) | 0 rows until the Gap 309 logging-level fix reaches a deployed image |
+| `chat_turn` (Sections B, C) | **Real data as of 2026-08-26.** ~~0 rows — the live backend image predates the commit that added it~~ — **Correction 2026-08-26 (live-Azure-verified):** that image refresh landed. The backend image was rebuilt **2026-08-25T14:41Z from commit `cb96d8f`**, and `AppEvents` in `law-invoicellm-dev` now returns real `chat_turn` rows, so Sections B and C render live production turn behaviour instead of empty panels. (`AppDependencies` gained its `GenAI`/`az.ai.openai` dependency rows and `AppRequests` gained rows from the real container in the same refresh — see the blockers table below.) |
+| `extraction_benchmark_run` (Section E) | **Real data as of 2026-08-26.** ~~0 rows until the Gap 309 logging-level fix reaches a deployed image~~ — **Correction 2026-08-26 (live-Azure-verified):** same refresh. `cb96d8f` carries Gap 309's logging-level fix *and* Gaps 308/317's nightly-crash fix, and `caj-benchmark-eval-dev`'s **2026-08-26T03:00 UTC run succeeded**, so Track 1's recall/false-positive figures now reach Section E from a real scheduled execution rather than a developer's laptop. |
 | `online_eval_signal` (Section F) | 0 rows on a schedule basis; `clarification_rate`/`budget_exhaustion_rate` are **permanently** degenerate as of Gap 316 (2026-08-25) — both read `stop_reason`/clarification state that only SAGE's deleted orchestrator ever produced, so they now measure nothing rather than measuring a flag that is off |
 | `agent_eval_run` where `run_source == "production"` (Section G) | 0 rows |
+| `ops_recommendation` (Gap 319, the recommendation pass; rendered by Gap 320's panel) | 0 rows, confirmed live 2026-08-26 via the deployed panel's own query against `law-invoicellm-dev`. It emits only from a `--run-label nightly` run, and the nightly job's image predates both Gap 318 and Gap 319 — same pending backend image refresh as the rows above. Nothing is wrong with the emitter or the panel; there has been no nightly execution carrying it yet. **Clarification 2026-08-26 (doc-reconciliation pass):** this row is **still correct and stays "structurally empty"** — but "same pending backend image refresh as the rows above" no longer parses now that those rows are corrected to *real data*, so state it directly: the 2026-08-25T14:41Z image (`cb96d8f`) carries Gaps 308/309/317 and therefore fixed `chat_turn` / `AppRequests` / GenAI spans / the nightly crash, but Gaps **318 and 319 are uncommitted** and no image contains them. `ops_recommendation` therefore needs a **further, distinct** image refresh — not the one that already landed. The 2026-08-26T03:00 nightly run succeeded without emitting any, which is the expected behaviour, not a regression |
 | SAGE per-tool cost (`a6`), stop reasons (`b6`) | Structurally empty while the SAGE flag is off — stated on the panel, not omitted |
 
 ### The digest build, superseded
@@ -157,12 +168,28 @@ has no `Microsoft.App/jobs` resource yet, so Gap 305 stays `[~]` for exactly the
 `Monitoring Reader` in `rbac-assignments.bicep` was also kept — it was added for the digest agent, but the
 recommendation pass needs the same two ARM reads.
 
+**Addendum 2026-08-26 (Gap 314) — the deletion list above is now complete.** Gap 311 left two artifacts
+behind, deliberately flagged rather than swept in: `telemetry.py::track_ops_digest_run()` and
+`OPS_DIGEST_EVENT_NAME` (the `ops_digest_run` custom event). Both were deleted on 2026-08-26 after a
+repo-wide grep confirmed zero callers and zero tests, and — relevant to *this* doc rather than just to the
+tracker — the same grep over `.json`/`.kql` confirmed **no workbook panel or saved query anywhere reads
+`ops_digest_run`**, so no panel on either workbook lost a data source. The event never carried a row in the
+first place: the job that would have emitted it (`caj-ops-digest-dev`) was never deployed, so
+`ops_digest_run` is absent from `law-invoicellm-dev` historically as well as going forward, and it belongs
+in neither the empty-panels table above nor any future one.
+
 ---
 
 ## Sample field-recommendation table
 
 This is the worked example of what the recommendation pass must output — one row per workbook field:
 value, explanation, recommendation-or-NA.
+
+**Read this as the judgement spec, not the output schema.** The coverage decision closed the same day
+(and built as Gap 318) is check-and-flag: a run emits three category verdicts, each naming only the
+fields that were actually outside their band. This table is what supplied the *reasoning* for each of
+those fields, plus the proof that every field on both workbooks can be reasoned about at all — it is
+not what one run prints.
 
 ## Workbook 1: Cost + Health/Performance (Feature 20)
 
@@ -248,10 +275,14 @@ value, explanation, recommendation-or-NA.
 ## Not yet built — the actual remaining scope
 
 The prerequisite is **done** (2026-08-25, Gaps 308 + 317 — code-level; the image refresh it needs is
-tracked as a deploy, in the blockers table below). Items (a)–(c) are **not started**: nothing today
-produces or stores a per-field recommendation, and the table above exists only as a one-off message.
-Design finalized 2026-08-25 (see "Open decisions" above); real Gap numbers are filed in
-`be_features_tracker.md` once each item starts — (a) = Gap 318, (b) = Gap 319, (c) = Gap 320.
+tracked as a deploy, in the blockers table below). **(a) is done** (2026-08-25, Gap 318 — code-level;
+it rides into Azure on the same pending image refresh, and its container-health half additionally needs
+the undeployed `Monitoring Reader` grant in the blockers table before it can read anything live).
+**(b) is done** (2026-08-25, Gap 319 — code-level; it rides into Azure on that same image refresh), so a
+run's three category verdicts now survive as `ops_recommendation` custom events. **(c) is done**
+(2026-08-26, Gap 320 — deployed): a plain-grid panel on both workbooks now renders the latest run,
+currently 0 rows for the same pending-image reason as (a)/(b). Design finalized 2026-08-25 (see "Open
+decisions" above); Gap numbers in `be_features_tracker.md` — (a) = Gap 318, (b) = Gap 319, (c) = Gap 320.
 
 - `[x]` ~~**(prerequisite) Fix the nightly job's crash.**~~ **Fixed in code — Gaps 308 + 317.** The
   `FileNotFoundError` after all real work (`.dockerignore` strips `tests/` from the production image) was
@@ -266,18 +297,127 @@ Design finalized 2026-08-25 (see "Open decisions" above); real Gap numbers are f
   UTC schedule keeps failing until a backend image refresh lands — the same pending refresh the blockers
   table below already carries for `chat_turn`/GenAI-span/`AppRequests`. The trigger is reliable in code;
   it becomes reliable in Azure with that deploy.
-- `[ ]` **(a) The recommendation pass.** A step appended to the nightly job's own script (not a new
-  scheduled resource): reads Track 1/2's just-produced eval results, queries current cost/health
-  (reusing `azure_cost.py`), and for each of the three categories (container health, cost, AI
-  improvement) either confirms "everything worked" or writes a recommendation.
-- `[ ]` **(b) Somewhere to persist a run's recommendations.** New. Nothing today survives past a one-off
-  message. A workbook can only read Log Analytics / App Insights / Resource Graph / ARM / ADX — **it
-  cannot query Postgres** — so persistence has to land somewhere a workbook can query (the established
-  pattern in this repo is a custom event mirror, i.e. one `AppEvents` row per category per run, the same
-  way `agent_eval_run` and `online_eval_signal` are mirrored).
-- `[ ]` **(c) A new Workbook panel that renders the persisted recommendations.** One panel, on both
-  workbooks or on one of them — a grid of `Category | Status | Explanation | Recommendation` filtered to
-  the latest run. Must obey the existing rules above: data only, minimum-sample guard, no customer content.
+
+  **Correction 2026-08-26 (doc-reconciliation pass, live-Azure-verified): that deploy landed, so the "one
+  thing still open" above is closed.** The backend image was rebuilt **2026-08-25T14:41Z from commit
+  `cb96d8f`**, which does contain `default_output_dir()`, and **`caj-benchmark-eval-dev`'s 2026-08-26T03:00
+  UTC execution succeeded**. The nightly job is therefore reliable in Azure and not only in code, which also
+  means the cadence decision that hangs the recommendation pass off this job's completion now has a working
+  trigger under it. The two blockers-table rows this bullet points at are struck through accordingly below.
+  **Still true, and the reason (a)/(b) are not live yet:** Gaps 318 and 319 are *uncommitted*, so `cb96d8f`
+  does not carry them — the recommendation pass and its `ops_recommendation` mirror need a **further** image
+  refresh, distinct from the one that just landed, before Gap 320's panel renders a single row.
+- `[x]` ~~**(a) The recommendation pass.**~~ **Built 2026-08-25 — Gap 318.**
+  **`services/ops_recommendation.py`** (new) + `recommendation_pass_step()` in
+  `scripts/run_agent_eval.py`, exactly as scoped: a step appended to the nightly job's own script,
+  no new scheduled resource. Its public surface is
+  `evaluate_container_health()` / `evaluate_cost()` / `evaluate_ai_improvement()` /
+  `collect_container_health()` / `parse_container_metrics()` / `run_recommendation_pass()`, returning
+  `RecommendationPass` → `CategoryRecommendation` → `Finding`. Four statuses, not two:
+  `worked`, `recommend`, `no_data` (the data could not be read — never a clean bill of health) and
+  `insufficient_data` (read, but below the workbooks' n=20 minimum-sample guard; the values are still
+  reported, which is the prose form of the `-1 → "n/a — see Detail"` sentinel).
+
+  **Every band is the tile's band.** The sample table below supplied the per-field *judgement*; the
+  numbers were read out of this repo's two workbook JSONs' `thresholdsGrid` blocks — `container-status`,
+  `container-scale-config`, `container-restarts`, `cost-trend-budget`, `d1`–`d4`, `e1-*`, `b1-error-rate`.
+  A test parses both JSONs at test time and fails if a constant ever drifts from the panel it mirrors.
+  Cost's two ratios are computed from the same two source fields as `cost-trend-budget`'s KQL
+  (`month_to_date_total` / `budget.amount`, and the budget's own `forecastSpend`), so the tile and the
+  recommendation cannot report different numbers. Three coloured-but-not-judged exceptions are
+  documented in the module: replica count, persona/median latency, and the "CPU persistently <20%" row,
+  the last because "persistently" is a multi-day trend and a 1h average cannot support it.
+
+  **Track 1 → Track 2 handoff, the one thing the design under-specified.** The nightly job is
+  `run_extraction_benchmark.py … && run_agent_eval.py …` — two *processes*, so Track 1's results were
+  never in Track 2's memory. `services/benchmark_artifacts.py` gained `track1_handoff_path()` /
+  `write_track1_handoff()` / `read_track1_handoff()` (+ the `BENCHMARK_TRACK1_HANDOFF` override): Track 1
+  drops its summary in the temp directory, Track 2 reads it. Written independently of `--no-write`
+  (the nightly job is the caller that passes that flag and the caller that needs the handoff), and
+  refused when stale (>6h) or from a different cadence, so last night's recall can never be graded as
+  tonight's. Missing handoff ⇒ the category says so on `errors` and grades Track 2 alone.
+
+  **Nightly-only, and fail-soft twice over.** `predeploy` is excluded because its 5-case subset is below
+  the n=20 guard and because it runs on every push — two live ARM reads in the deploy path is what the
+  nightly-completion trigger exists to avoid; `adhoc` is a developer's own run. Each category is
+  evaluated in its own try/except (an unauthorized Resource Graph must not delete the AI-quality verdict
+  from the same run), and the whole step is wrapped so it cannot turn an otherwise-successful job red —
+  the Gap 308/317 failure class this pass was built to watch for.
+
+  `run_recommendation_pass()` itself still persists nothing — it returns and prints, which is what keeps
+  computing a verdict separable from storing one. Item (b) below, closed the same day, is what mirrors
+  that return value to telemetry.
+- `[x]` ~~**(b) Somewhere to persist a run's recommendations.**~~ **Built 2026-08-25 — Gap 319.** A
+  custom-event mirror, exactly the pattern `agent_eval_run` / `online_eval_signal` use, because a
+  workbook can only read Log Analytics / App Insights / Resource Graph / ARM / ADX — **it cannot query
+  Postgres**.
+
+  **Event name: `ops_recommendation`** (`telemetry.OPS_RECOMMENDATION_EVENT_NAME`), emitted by
+  `telemetry.track_ops_recommendation()`. **One row per category per run — three rows a night, never one
+  row carrying a three-element array.** A workbook grid is a flat row set and item (c)'s columns are
+  `Category | Status | Explanation | Recommendation`, i.e. one row per category by construction; the
+  nested form would force every panel to `mv-expand` before it could filter or colour on `status`. Same
+  reasoning `online_eval_signal` used when it chose one row per signal over one row per window.
+
+  **Fields on the event** (all flat; `customDimensions` / `parse_json(Properties)`):
+  `run_label`, `category`, `title`, `status`, `explanation`, `recommendation`, `worst_severity`,
+  `finding_count`, `red_count`, `yellow_count`, `findings` (JSON array as a string),
+  `findings_omitted`, `error_count`, `errors` (the category's error list joined with ` | `),
+  `generated_at`. Four choices worth stating:
+
+  - **`generated_at` is the run key.** Set once by the pass and stamped identically on all three rows, so
+    "the latest run" is one `arg_max(generated_at, …)` and can never return two categories from one run
+    and one from another. `TimeGenerated` is ingestion time and is deliberately not that key.
+  - **The counts ride next to the blob.** `finding_count`/`red_count`/`yellow_count` exist so a panel can
+    count reds without `parse_json` + `mv-expand`, and so a trend over a *window* of runs is buildable —
+    the same reason `extraction_benchmark_run` carries raw confusion-matrix cells next to its ratios.
+  - **`findings` is bounded so that it stays valid JSON.** Application Insights caps a single property
+    value at 8,192 characters and would cut a longer one mid-object during ingestion, silently
+    de-serialising the array. So the cut is made here instead: at most
+    `MAX_RECOMMENDATION_FINDINGS` = 25 entries, each field truncated at 400 chars, whole entries dropped
+    from the end until the serialised text fits `MAX_RECOMMENDATION_FINDINGS_CHARS` = 8000, and one
+    same-shaped `{"field": "(omitted)", …}` marker entry appended saying how many went. `explanation` /
+    `recommendation` / `errors` use the module's existing `_truncate()` marker at 2,000 chars.
+  - **`metrics` is not mirrored**, the one deliberate departure from `to_dict()`. It is unbounded by
+    design (a dict per container app) and every number in it already has its own event and panel —
+    `azure_cost_snapshot` for spend, `agent_eval_summary` for the quality means, live Azure Monitor
+    metrics for CPU/memory. The event carries the verdict and the fields that produced it, which is what
+    nothing else can say. No `tenant_id`/`request_id` either, matching `agent_eval_summary` /
+    `extraction_benchmark_run` / `azure_cost_snapshot`: a scheduled ops pass has no request and no tenant
+    in scope, and an always-empty column invites a join that can never match.
+
+  **Wiring**: `services/ops_recommendation.py::mirror_recommendation_pass()` (returns a `MirrorResult`,
+  never raises, same contract as `mirror_extraction_run`/`mirror_agent_eval_run`), called from
+  `scripts/run_agent_eval.py::recommendation_pass_step()` immediately after the pass prints. Still
+  nightly-only — the gate is unchanged and now covers the emission too — and still inside the
+  swallow-everything wrapper, so persistence is fail-soft twice over. Skipped under `--no-mirror`, which
+  already means "emit no event, upload no artifact" for the `agent_eval_summary` mirror. The step
+  re-attaches the exporter (idempotent) and **flushes again**: `main()`'s own mirror block has already
+  flushed by the time this runs and the OTel exporter batches on a timer, so without a second flush these
+  three events would die with the process — the "the job ran and the workbook shows nothing" symptom the
+  mirror exists to prevent.
+- `[x]` ~~**(c) A new Workbook panel that renders the persisted recommendations.**~~ **Built and deployed
+  2026-08-26 — Gap 320.** One panel, on **both** workbooks — a plain grid of `Category | Status |
+  Explanation | Recommendation` (plus `Findings`/`Red`/`Yellow`/`Errors`/`Run`) filtered to the latest run.
+  `ops-recommendations-header` + `ops-recommendations` in `cost_health_workbook.json` (25 → 27 items);
+  `section-h-header` + `h1-ops-recommendations` in `ai_control_tower_workbook.json` (49 → 51 items,
+  Section H). The `query` string is byte-identical across both files (sha256-verified), only the panel
+  `title` differs. Source is `AppEvents | where Name == "ops_recommendation"` on the raw
+  `law-invoicellm-dev` workspace (not the App-Insights-classic `customEvents` alias), the per-run filter is
+  a `toscalar(... | summarize max(run_ts))` global max over the `generated_at` property (not `arg_max(...)
+  by category`, which can blend two runs' categories if a run ever emits fewer than 3 rows), and
+  `Recommendation` renders the event's own text when non-empty, else the literal `"No recommendation
+  yet"` — never inferred from data volume. **No colouring** (plain grid, no `visualization`/`tileSettings`/
+  `customWidth`/`conditionalVisibility`), deliberately: a row can carry a "bad" `worst_severity` while
+  `recommendation` is empty, and colouring that would visually contradict "No recommendation yet". Found a
+  new KQL trap doing this: `title` is a reserved word, `d.title` fails to parse — fixed with bracket
+  notation `d["title"]` (added to the traps list above). Verified live: compiles (both JSONs valid, both
+  bicep files build clean), schema-valid (0 errors against Microsoft's `schema/workbook.json`), the query
+  runs live against `law-invoicellm-dev` (0 rows, as expected today), a synthetic 4-row `datatable` proved
+  the "No recommendation yet" branch, both bicep `what-if`s showed `Modify` not `Create`, both
+  `az deployment group create` runs succeeded, and the pulled-back live `serializedData` deep-compares
+  27/27 and 51/51 items identical to the local files. Full evidence in `be_features_tracker.md`'s Gap 320
+  entry.
 
 ### Open decisions — closed 2026-08-25
 
@@ -296,18 +436,33 @@ Design finalized 2026-08-25 (see "Open decisions" above); real Gap numbers are f
 
 ## Known blockers carried forward
 
-Verified as of 2026-08-24, still open (last row added 2026-08-25 under Gap 317):
+Verified as of 2026-08-24, still open (last row added 2026-08-25 under Gap 317).
+
+**Correction 2026-08-26 (doc-reconciliation pass, live-Azure-verified architect audit):** three of these rows
+were stale — the alert-rule row, and the two "pending image refresh" rows. Each is struck through in place
+with the live evidence in its own Detail cell; the original wording is kept underneath it, not replaced
+(CONVENTIONS hard rule 4). **Four rows remain genuinely open** and are untouched: `Monitoring Reader` RBAC,
+SendGrid, the `-critical` action-group split, and Stage 8 (`08-apps.bicep`, tracker Gap 298). The CI
+`benchmark-gate` row was already correctly struck through. Net: this table is now 4 struck-through / 4 open,
+not "all still open". One thing the image refresh did **not** carry, so it is not marked resolved anywhere
+below: `ops_recommendation` is still 0 rows, because Gaps 318/319 are uncommitted and no image contains them.
+
+**Correction 2026-08-26 (Monitoring Reader / Cost Management Reader RBAC, deployed):** the `Monitoring
+Reader` row below is now also struck through — it and Gap 297's `Cost Management Reader` were both granted
+the same day via `infra/rbac-monitoring-cost-only.bicep`, not a Stage 7 redeploy (see `be_features_tracker.md`
+Gap 297's closure note for the full 4-rung verification). **Three rows remain genuinely open**: SendGrid, the
+`-critical` action-group split, and Stage 8.
 
 | Blocker | Detail |
 |---|---|
 | ~~CI `benchmark-gate` step is broken~~ — **removed, not fixed** | The `-c` argument bug (`az containerapp job start --command /bin/sh -c` → `unrecognized arguments: -c`) is moot: 2026-08-25, the entire `benchmark-gate` job was deleted from `deploy-dev.yml` per a standing instruction that the CI/CD deploy pipeline must never execute tests or benchmarks, not even indirectly via an Azure-side job execution. `deploy-backend`/`deploy-worker` now depend only on `changes`. No CLI fix needed or wanted — see Gap 312 in `be_features_tracker.md`. The direct-ARM `az rest` workaround noted in the prior version of this row was never applied and should not be revived for this purpose. |
-| `Monitoring Reader` RBAC not granted | Declared in `infra/modules/security/rbac-assignments.bicep`, never deployed. `id-invoicellm-dev` holds 5 roles, not this one (verified live). Without it, anything reading `alertsmanagementresources` returns zero alerts. A plain Stage 7 (`07-rbac.bicep`) redeploy fails first on the naming drift — its default prefix resolves to `stinvoicellmdev`, live is `stinvoicellmdev2`. Needs a `namingPrefix` override or a narrow-scoped standalone template. |
+| ~~`Monitoring Reader` RBAC not granted~~ — **granted 2026-08-26** | **Correction 2026-08-26 (live-Azure-verified):** deployed via the narrow standalone `infra/rbac-monitoring-cost-only.bicep` (not a Stage 7 redeploy — Stage 7's naming drift is unchanged, see the Stage 8 row below for the same class of problem on Stage 7's storage-account name). `az role assignment list --assignee b9e91856-... --all` now returns **7** roles including `Monitoring Reader` at `rg-invoice-llm-dev` scope. Closure test actually run as the managed identity via `az containerapp exec` into `ca-invoice-be-dev`: a live Resource Graph query for `microsoft.app/containerapps` and a `Microsoft.Insights/metrics` read both succeeded with no 403, using `services/azure_cost.py`'s `arm_request()` (the same function `ops_recommendation.py::collect_container_health()` calls). `ops_recommendation.py` is not yet in the deployed image, so Gap 318's `container_health` category still needs its own next-nightly-run confirmation — this closes the RBAC blocker only. Original (now superseded) wording, kept for history: Declared in `infra/modules/security/rbac-assignments.bicep`, never deployed. `id-invoicellm-dev` holds 5 roles, not this one (verified live). Without it, anything reading `alertsmanagementresources` returns zero alerts. A plain Stage 7 (`07-rbac.bicep`) redeploy fails first on the naming drift — its default prefix resolves to `stinvoicellmdev`, live is `stinvoicellmdev2`. Needs a `namingPrefix` override or a narrow-scoped standalone template. |
 | SendGrid not wired | `ca-invoice-be-dev` lists 11 secrets and `sendgrid-key-secret` is **not** among them, though `invoice-be.bicep` declares it. Any email path raises `SENDGRID_API_KEY is not configured` until a deploy seeds it. |
 | No Teams receiver on a `-critical` action group | `action-group.bicep` declares a `-critical` / `-info` split (Teams/Slack webhooks on `-critical` only, `-info` deliberately `webhookReceivers: []`). **That split is not deployed** — `ag-invoice-llm-dev-critical` 404s live. What exists is `ag-invoice-llm-dev` and `ag-invoicellm-dev`, both notifying the identical destinations: one email receiver (`application@infinevocloud.com`) and one webhook receiver `teams-alert-channel` pointing at a Power Automate flow with `useCommonAlertSchema: true`. Any future delivery/target decision must account for this — including that a Sev-based critical/info destination split does **not** exist today. |
 | Stage 8 (`08-apps.bicep`) is unrunnable against dev | `params.dev.json`'s `backendImage` points at `acrinvoicellmdev.azurecr.io` — **that registry does not exist**, the real one is `acrinvoicellmdev2` — and its `namingPrefix: "invoice-llm"` rewrites every Key Vault secret URI and the identity to names that do not exist. A Stage 8 deploy would also roll back the live CPU/memory scale rules. Anything new must deploy through a narrow standalone template, the pattern `workbook-cost-health-only.bicep` / `workbook-ai-control-tower-only.bicep` / `benchmark-eval-job-only.bicep` already use. |
-| Alert-rule fix pending deploy | `alert-rules.bicep`'s CPU/memory alerts gained a second `AllOf` criterion (`Replicas >= app.maxReplicas`) so they only fire once autoscale is genuinely maxed out. `az bicep build` clean, `what-if` Succeeded — **`az deployment group create` deliberately not run.** |
-| `chat_turn` / GenAI-span / `AppRequests` fixes pending deploy | All three are code-complete and locally verified but the live backend image predates them, so Sections B/C stay at 0 rows and `AppDependencies` has no `GenAI | az.ai.openai` rows until a backend deploy lands (no longer blocked by `benchmark-gate` — that gate is removed as of 2026-08-25, see the row above). |
-| Nightly eval job's `FileNotFoundError` fix pending the *same* deploy | Code-complete (Gap 308's `default_output_dir()`, 2026-08-24; re-verified and extended by Gap 317, 2026-08-25) and proven inside a real `Dockerfile.be` build — the literal nightly argv now exits 0 and writes `/tmp/agent_eval_output.json`. But `acrinvoicellmdev2.azurecr.io/invoice-be:latest` was built **2026-08-24T09:08:22Z**, ~4h before the fix commit, and reading `/app/scripts/run_agent_eval.py` inside it shows **no `default_output_dir` at all** — so `caj-benchmark-eval-dev` still fails at 03:00 UTC every night (all real work done, then the crash, recorded `Failed` under `retryLimit 0`) until an image refresh lands. Same deploy as the row above; nothing else is needed. |
+| ~~Alert-rule fix pending deploy~~ — **deployed and live, verified 2026-08-26** | **Correction 2026-08-26 (live-Azure-verified):** this row was stale and contradicted its own Gap entry. `be_features_tracker.md`'s **Gap 301** records the change as "fixed, deployed and verified live the same day," and **the tracker is the one that is right**: `alert-ca-invoice-be-dev-cpu-high` exists live carrying **both** criteria — `CpuPercentage` Avg > 90 **AND** `Replicas` Max >= 5 — read back with `az`, not inferred from the template. So the second `AllOf` criterion is in Azure, the alert only fires once autoscale is genuinely maxed out, and nothing is pending. Original (now superseded) wording, kept for history: `alert-rules.bicep`'s CPU/memory alerts gained a second `AllOf` criterion (`Replicas >= app.maxReplicas`) so they only fire once autoscale is genuinely maxed out. `az bicep build` clean, `what-if` Succeeded — **`az deployment group create` deliberately not run.** |
+| ~~`chat_turn` / GenAI-span / `AppRequests` fixes pending deploy~~ — **resolved and live as of the 2026-08-25 image, verified 2026-08-26** | **Correction 2026-08-26 (live-Azure-verified):** the deploy this row was waiting for **has happened**. The backend image was rebuilt **2026-08-25T14:41Z from commit `cb96d8f`**, which carries all three fixes. Confirmed live in `law-invoicellm-dev`, by query rather than by reasoning about the commit: `AppEvents` now has real `chat_turn` rows (so Sections B and C are no longer structurally empty), `AppDependencies` now has `GenAI \| az.ai.openai` rows (so the LLM-call dependency span is exporting), and `AppRequests` now has rows **from the real container** — not just the `invoice-be-local-f20-verify`-tagged rows Gap 292 produced from a local run. The "real data today vs. structurally empty" table above is corrected to match. **What this image does *not* carry**, and therefore what this row must not be read as closing: Gaps 318/319 are uncommitted, so `ops_recommendation` is still 0 rows and Gap 320's panel still renders empty — a *further* image refresh, not this one. Original (now superseded) wording, kept for history: All three are code-complete and locally verified but the live backend image predates them, so Sections B/C stay at 0 rows and `AppDependencies` has no `GenAI \| az.ai.openai` rows until a backend deploy lands (no longer blocked by `benchmark-gate` — that gate is removed as of 2026-08-25, see the row above). |
+| ~~Nightly eval job's `FileNotFoundError` fix pending the *same* deploy~~ — **resolved and live; the job succeeded 2026-08-26T03:00** | **Correction 2026-08-26 (live-Azure-verified):** same resolution as the row above — the 2026-08-25T14:41Z image built from commit `cb96d8f` carries Gap 308's `default_output_dir()` and Gap 317's caller-side half. The proof is not "the fix is in the image" but the run itself: **`caj-benchmark-eval-dev`'s 2026-08-26T03:00 UTC execution succeeded**, i.e. the schedule that had been failing every night under `retryLimit 0` after doing all its real work now completes. That also means the nightly trigger the recommendation pass hangs off (Gap 318's cadence decision) is real in Azure and not just in code. Original (now superseded) wording, kept for history: Code-complete (Gap 308's `default_output_dir()`, 2026-08-24; re-verified and extended by Gap 317, 2026-08-25) and proven inside a real `Dockerfile.be` build — the literal nightly argv now exits 0 and writes `/tmp/agent_eval_output.json`. But `acrinvoicellmdev2.azurecr.io/invoice-be:latest` was built **2026-08-24T09:08:22Z**, ~4h before the fix commit, and reading `/app/scripts/run_agent_eval.py` inside it shows **no `default_output_dir` at all** — so `caj-benchmark-eval-dev` still fails at 03:00 UTC every night (all real work done, then the crash, recorded `Failed` under `retryLimit 0`) until an image refresh lands. Same deploy as the row above; nothing else is needed. |
 
 ---
 
@@ -323,10 +478,37 @@ Verified as of 2026-08-24, still open (last row added 2026-08-25 under Gap 317):
 - `[x]` **Decide coverage** — closed 2026-08-25: check-and-flag across 3 categories (container health, cost, AI improvement), not an exhaustive per-field dump
 - `[x]` **(prerequisite)** Fix the nightly job's `FileNotFoundError` crash — done in code (Gap 308 fixed
       the default output dir 2026-08-24; Gap 317 re-verified it against a real image build and closed the
-      caller-supplied-`--out` half, 2026-08-25). Needs the pending backend image refresh to take effect live.
-- `[ ]` **(a)** Build the recommendation pass as a step in the nightly job's script — not started
-- `[ ]` **(b)** Persist each run's recommendations somewhere a workbook can query (not Postgres) — not started
-- `[ ]` **(c)** Add the Workbook panel that renders the latest run's recommendations — not started
+      caller-supplied-`--out` half, 2026-08-25). ~~Needs the pending backend image refresh to take effect live.~~
+      **Correction 2026-08-26 (live-verified): live now** — image rebuilt 2026-08-25T14:41Z from `cb96d8f`,
+      and `caj-benchmark-eval-dev`'s 2026-08-26T03:00 UTC run succeeded.
+- `[x]` **(a)** Build the recommendation pass as a step in the nightly job's script — done 2026-08-25
+      (Gap 318): `services/ops_recommendation.py` + a nightly-only `recommendation_pass_step()` in
+      `scripts/run_agent_eval.py`, 3 categories, every band lifted from a live workbook panel and
+      pinned to it by test, 68 new tests, no Azure call and nothing deployed
+- `[x]` **(b)** Persist each run's recommendations somewhere a workbook can query (not Postgres) — done
+      2026-08-25 (Gap 319): a new `ops_recommendation` custom event, one row per category per run
+      (`telemetry.track_ops_recommendation()` + `ops_recommendation.mirror_recommendation_pass()`,
+      wired into `recommendation_pass_step()`), bounded so `findings` stays valid JSON under Application
+      Insights' 8,192-char property cap, 21 new tests, nothing deployed
+- `[x]` **(c)** Add the Workbook panel that renders the latest run's recommendations — done 2026-08-26
+      (Gap 320): plain-grid panel on both workbooks (25→27, 49→51 items), byte-identical query, deployed
+      and pull-back-verified against `rg-invoice-llm-dev`; 0 rows today, correctly, until the pending
+      backend image refresh — which, as corrected 2026-08-26, means the **further** refresh carrying
+      Gaps 318/319 (last task below), not the 2026-08-25 one that already landed
 - `[x]` Unblock deploys: `benchmark-gate` removed from `deploy-dev.yml` entirely (2026-08-25, Gap 312) — not fixed, per standing rule that CI/CD must never execute tests/benchmarks
-- `[ ]` Grant `Monitoring Reader` to `id-invoicellm-dev` via a narrow template — not started
-- `[ ]` Deploy the pending backend image so Sections B/C and the GenAI dependency rows carry real data — not started
+- `[x]` ~~Grant `Monitoring Reader` to `id-invoicellm-dev` via a narrow template — not started~~
+      **Correction 2026-08-26 (live-Azure-verified): done.** `infra/rbac-monitoring-cost-only.bicep` deployed
+      (also grants Gap 297's `Cost Management Reader` in the same template); `id-invoicellm-dev` now holds
+      7 role assignments, verified via `az role assignment list`. Closure test run as the managed identity
+      via `az containerapp exec` into `ca-invoice-be-dev`: real Resource Graph + Insights/metrics reads
+      succeeded with no 403. Gap 318's `container_health` category is not yet re-evaluated live — that needs
+      `ops_recommendation.py` in a deployed image and a nightly run, which is separate follow-up work, not
+      this grant.
+- `[x]` ~~Deploy the pending backend image so Sections B/C and the GenAI dependency rows carry real data — not started~~
+      **Correction 2026-08-26 (doc-reconciliation pass, live-verified): done.** Image rebuilt
+      **2026-08-25T14:41Z from commit `cb96d8f`**; `AppEvents` now returns real `chat_turn` rows,
+      `AppDependencies` returns `GenAI`/`az.ai.openai` rows, and `AppRequests` returns rows from the real
+      container — so Sections B/C and the GenAI cross-check carry live data.
+- `[ ]` Deploy a **further** backend image carrying Gaps 318 + 319 so the recommendation pass runs and
+      Gap 320's panel renders rows — not started; those two gaps are uncommitted, so no image contains them
+      and `ops_recommendation` stays at 0 rows. Distinct from the refresh above, which is done.

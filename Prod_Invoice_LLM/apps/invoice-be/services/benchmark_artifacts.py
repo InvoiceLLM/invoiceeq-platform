@@ -81,8 +81,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from config import settings
@@ -615,6 +617,121 @@ def mirror_extraction_run(
 
 
 # ---------------------------------------------------------------------------
+# Track 1 → Track 2 handoff (Gap 318)
+# ---------------------------------------------------------------------------
+
+#: Override for where the handoff file lives. Exists for tests and for a local
+#: run of the two scripts in sequence; the job needs no setting at all.
+TRACK1_HANDOFF_ENV = "BENCHMARK_TRACK1_HANDOFF"
+TRACK1_HANDOFF_NAME = "extraction_benchmark_summary.json"
+
+#: How old a handoff may be and still be treated as *this* run's Track 1 result.
+#: The nightly job's two tracks are minutes apart inside one replica; six hours is
+#: far beyond that and far below the 24h cadence, so a leftover file from
+#: yesterday can never be read as today's numbers.
+TRACK1_HANDOFF_MAX_AGE_MINUTES = 360
+
+
+def track1_handoff_path() -> Path:
+    """Where Track 1 leaves its summary for Track 2's recommendation pass.
+
+    The nightly job is one shell command — ``python run_extraction_benchmark.py …
+    && python run_agent_eval.py …`` (`infra/benchmark-eval-job-only.bicep`) — so
+    the two tracks are two *processes* sharing one replica filesystem and nothing
+    else. Track 2 therefore cannot see Track 1's results in memory, and Gap 318's
+    AI-improvement category needs both. The blob artifact Track 1 uploads is the
+    durable copy but reading it back would add a Storage download, a listing and
+    an eventual-consistency question to get a number that was in this same
+    container ninety seconds ago.
+
+    `tempfile.gettempdir()` for the same reason `run_agent_eval.default_output_dir()`
+    falls back to it rather than a literal `/tmp`: this also runs on Windows.
+    """
+    override = (os.getenv(TRACK1_HANDOFF_ENV) or "").strip()
+    return Path(override) if override else Path(tempfile.gettempdir()) / TRACK1_HANDOFF_NAME
+
+
+def write_track1_handoff(
+    summary: dict[str, Any],
+    *,
+    run_label: str = RUN_LABEL_ADHOC,
+    generated_at: Optional[datetime] = None,
+) -> str:
+    """Leave this Track 1 run's summary for Track 2. Returns the path, or "".
+
+    Never raises, and never changes Track 1's exit code — like every other
+    function in this module, a failure here is instrumentation losing data, not a
+    benchmark failing.
+    """
+    generated_at = generated_at or datetime.now(timezone.utc)
+    try:
+        path = track1_handoff_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "run_label": run_label,
+                    "generated_at": generated_at.isoformat(),
+                    "summary": summary,
+                },
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        return str(path)
+    except Exception as exc:  # pragma: no cover - filesystem shape varies
+        logger.warning("Track 1 handoff could not be written: %s", exc)
+        return ""
+
+
+def read_track1_handoff(
+    *,
+    run_label: Optional[str] = None,
+    max_age_minutes: int = TRACK1_HANDOFF_MAX_AGE_MINUTES,
+    now: Optional[datetime] = None,
+) -> Optional[dict[str, Any]]:
+    """Track 1's summary for *this* run, or None.
+
+    None — never a stale dict — when the file is absent, unparseable, older than
+    `max_age_minutes`, or was written by a different cadence than the one asking.
+    The recommendation pass states "no Track 1 summary was handed over" out loud
+    in that case; silently grading yesterday's recall as today's would be the
+    worse failure by far.
+    """
+    try:
+        path = track1_handoff_path()
+        if not path.is_file():
+            return None
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover - unreadable/corrupt file
+        logger.warning("Track 1 handoff could not be read: %s", exc)
+        return None
+
+    if run_label and str(document.get("run_label") or "") != run_label:
+        logger.info(
+            "Track 1 handoff is labelled %r, not %r — ignored.",
+            document.get("run_label"),
+            run_label,
+        )
+        return None
+
+    try:
+        stamp = datetime.fromisoformat(str(document.get("generated_at")))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    age_cutoff = (now or datetime.now(timezone.utc)) - timedelta(minutes=max_age_minutes)
+    if stamp < age_cutoff:
+        logger.info("Track 1 handoff from %s is stale — ignored.", stamp.isoformat())
+        return None
+
+    summary = document.get("summary")
+    return summary if isinstance(summary, dict) else None
+
+
+# ---------------------------------------------------------------------------
 # Track 2 — SAGE chat quality
 # ---------------------------------------------------------------------------
 
@@ -724,6 +841,8 @@ __all__ = [
     "RUN_LABEL_ADHOC",
     "RUN_LABEL_NIGHTLY",
     "RUN_LABEL_PREDEPLOY",
+    "TRACK1_HANDOFF_ENV",
+    "TRACK1_HANDOFF_MAX_AGE_MINUTES",
     "TRACK_AGENT_EVAL",
     "TRACK_EXTRACTION",
     "artifact_blob_name",
@@ -732,5 +851,8 @@ __all__ = [
     "flush_run_telemetry",
     "mirror_agent_eval_run",
     "mirror_extraction_run",
+    "read_track1_handoff",
+    "track1_handoff_path",
     "upload_artifact",
+    "write_track1_handoff",
 ]

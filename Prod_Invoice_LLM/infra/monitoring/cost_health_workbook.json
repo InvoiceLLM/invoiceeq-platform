@@ -688,6 +688,25 @@
     {
       "type": 1,
       "content": {
+        "json": "## Ops Recommendations — *from `ops_recommendation` (`telemetry.track_ops_recommendation()`), one row per category per nightly run — container health, cost, AI improvement (Gaps 318/319). The grid below shows only the latest run, keyed on the event's own `generated_at` (never `TimeGenerated`, which is ingestion time). `Recommendation` shows the event's own text only when that category's `status` is `recommend`; every other status (`worked`, `no_data`, `insufficient_data`) renders the literal `No recommendation yet` — never inferred from data volume. Expect **0 rows today**: the emitter shipped in Gaps 318/319 but no backend image carrying them has been pushed or run yet, so `ops_recommendation` has never been written to this workspace.*"
+      },
+      "name": "ops-recommendations-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rows = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_run = toscalar(rows | summarize max(run_ts));\nrows\n| where run_ts == latest_run\n| project\n    Category       = tostring(d[\"title\"]),\n    Status         = tostring(d.status),\n    Explanation    = tostring(d.explanation),\n    Recommendation = iff(isempty(tostring(d.recommendation)), \"No recommendation yet\", tostring(d.recommendation)),\n    Findings       = toint(d.finding_count),\n    Red            = toint(d.red_count),\n    Yellow         = toint(d.yellow_count),\n    Errors         = tostring(d.errors),\n    Run            = strcat(tostring(d.run_label), \" @ \", tostring(d.generated_at))\n| order by Category asc",
+        "size": 0,
+        "title": "Latest recommendation pass, by category (container health / cost / AI improvement) — filtered to the most recent nightly run. No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\".",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "ops-recommendations"
+    },
+    {
+      "type": 1,
+      "content": {
         "json": "*Deploy: `az deployment group create -g rg-invoice-llm-dev -f infra/workbook-cost-health-only.bicep`. Single-page, deliberately — tabs caused repeated Workbooks bugs on Feature 23's build and this environment has no portal access to catch a repeat quickly.*"
       },
       "name": "footer"

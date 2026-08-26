@@ -40,10 +40,13 @@ byte-for-byte the one Azure runs.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -63,6 +66,7 @@ from scripts.run_agent_eval import (  # noqa: E402
     default_output_dir,
     default_output_path,
 )
+from services import ops_recommendation as rec  # noqa: E402
 from services.benchmark_artifacts import MirrorResult  # noqa: E402
 
 #: The exact args string both `infra/08-apps.bicep` (module `benchmarkEvalJob`)
@@ -91,16 +95,60 @@ def clean_run_source():
     telemetry.run_source_ctx.reset(token)
 
 
-def _run_nightly_main(monkeypatch, extra_argv=()):
+def _run_nightly_main(
+    monkeypatch,
+    extra_argv=(),
+    recommendation_pass=None,
+    track1_handoff=None,
+    exporter_attached=False,
+):
     """The real `main()` on the real nightly argv, with no turns and no I/O."""
+    _run_main(
+        monkeypatch,
+        [*_NIGHTLY_ARGV, *extra_argv],
+        recommendation_pass=recommendation_pass,
+        track1_handoff=track1_handoff,
+        exporter_attached=exporter_attached,
+    )
+
+
+def _run_main(
+    monkeypatch, argv, recommendation_pass=None, track1_handoff=None, exporter_attached=False
+):
+    """`main()` with a caller-chosen argv, no turns, no out-of-process I/O.
+
+    The recommendation pass (Gap 318) is stubbed here rather than left live for
+    the same reason `persist` and the mirror are: it makes two ARM calls. The
+    tests that care whether it *fires* pass their own `recommendation_pass`.
+
+    Its telemetry mirror (Gap 319) is **not** stubbed — it emits log records and
+    makes no network call of its own, so leaving it live is what lets the tests
+    below assert on the events a nightly run really produces.
+    """
     monkeypatch.setattr(script, "CASES", [])
     monkeypatch.setattr(script, "persist", lambda *a, **k: 0)
-    monkeypatch.setattr(script, "configure_run_telemetry", lambda: False)
+    monkeypatch.setattr(script, "configure_run_telemetry", lambda: exporter_attached)
     monkeypatch.setattr(script, "mirror_agent_eval_run", lambda *a, **k: MirrorResult())
     monkeypatch.setattr(
-        sys, "argv", ["run_agent_eval.py", *_NIGHTLY_ARGV, *extra_argv]
+        script,
+        "run_recommendation_pass",
+        recommendation_pass or (lambda *a, **k: _StubPass()),
     )
+    monkeypatch.setattr(script, "read_track1_handoff", lambda **k: track1_handoff)
+    monkeypatch.setattr(sys, "argv", ["run_agent_eval.py", *argv])
     script.main()
+
+
+class _StubPass:
+    """What `recommendation_pass_step()` reads: the two attributes it prints
+    from, plus the two the Gap 319 mirror stamps onto every event."""
+
+    categories: list = []
+    run_label = "nightly"
+    generated_at = datetime(2026, 8, 25, 3, 47, tzinfo=timezone.utc)
+
+    def describe(self):
+        return "  [worked] stub"
 
 
 # ---------------------------------------------------------------------------
@@ -256,3 +304,213 @@ def test_the_nightly_default_needs_no_directory_creation_at_all(
     _run_nightly_main(monkeypatch)
 
     assert (written_to / OUTPUT_NAME).is_file()
+
+
+# ---------------------------------------------------------------------------
+# Gap 318 — the recommendation pass is a step in *this* job, nightly only
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def temp_output(monkeypatch, tmp_path):
+    """Keep every run in this section out of the repo's `tests/` directory."""
+    written_to = tmp_path / "out"
+    written_to.mkdir()
+    monkeypatch.setattr(script, "_CHECKOUT_OUTPUT_DIR", tmp_path / "no-such-dir")
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(written_to))
+    return written_to
+
+
+def _recording_pass():
+    """`(calls, callable)` — the callable records and returns the stub."""
+    calls = []
+
+    def _recorder(payload, **kwargs):
+        calls.append((payload, kwargs))
+        return _StubPass()
+
+    return calls, _recorder
+
+
+def test_the_nightly_run_fires_the_recommendation_pass_with_its_own_results(
+    monkeypatch, temp_output, clean_run_source, capsys
+):
+    """Gap 318's trigger: a step appended to the nightly job's own script, fed
+    the payload that run just produced — not a new scheduled resource."""
+    calls, recorder = _recording_pass()
+
+    _run_nightly_main(
+        monkeypatch, recommendation_pass=recorder, track1_handoff={"mode": "live"}
+    )
+
+    assert len(calls) == 1
+    payload, kwargs = calls[0]
+    assert payload["paths"] == ["default"]
+    assert "summary" in payload
+    assert kwargs["run_label"] == "nightly"
+    # Track 1 ran as the previous process in the job's `&&` chain.
+    assert kwargs["extraction_summary"] == {"mode": "live"}
+    assert "Recommendation pass [nightly]" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("run_label", ["predeploy", "adhoc"])
+def test_no_other_cadence_fires_the_recommendation_pass(
+    monkeypatch, temp_output, clean_run_source, run_label
+):
+    """`predeploy` runs a 5-case subset — below the n=20 sample guard — and runs
+    on every push; putting two live ARM reads in the deploy path is exactly what
+    the nightly-completion trigger design exists to avoid. `adhoc` is a
+    developer's own run."""
+    calls, recorder = _recording_pass()
+
+    _run_main(
+        monkeypatch,
+        ["--paths", "default", "--run-label", run_label],
+        recommendation_pass=recorder,
+    )
+
+    assert calls == []
+
+
+def test_a_failing_recommendation_pass_cannot_fail_the_nightly_run(
+    monkeypatch, temp_output, clean_run_source, capsys
+):
+    """It is bolted onto the end of a job that has already done all of its real
+    work — the Gap 308/317 failure class, and it must not be reintroduced by the
+    step that was added to watch for it."""
+
+    def _explode(*a, **k):
+        raise RuntimeError("Resource Graph 403")
+
+    _run_nightly_main(monkeypatch, recommendation_pass=_explode)
+
+    output = capsys.readouterr().out
+    assert "Recommendation pass failed (RuntimeError: Resource Graph 403)" in output
+    # The run still completed and still wrote its results.
+    assert (temp_output / OUTPUT_NAME).is_file()
+    assert "Wrote 0 turns to" in output
+
+
+# ---------------------------------------------------------------------------
+# Gap 319 — the pass's verdict has to survive the replica
+# ---------------------------------------------------------------------------
+
+
+def _recommendation_events(caplog):
+    return [
+        r for r in caplog.records if r.getMessage() == telemetry.OPS_RECOMMENDATION_EVENT_NAME
+    ]
+
+
+def _three_categories():
+    """A `RecommendationPass` shaped like the real one, built directly: what
+    these tests are about is the wiring, not the judgement (which
+    `tests/test_ops_recommendation.py` covers against real pass results)."""
+    return rec.RecommendationPass(
+        run_label="nightly",
+        generated_at=datetime(2026, 8, 25, 3, 47, tzinfo=timezone.utc),
+        categories=[
+            rec.CategoryRecommendation(
+                category=category, status=rec.STATUS_WORKED, explanation="everything worked"
+            )
+            for category in rec.CATEGORY_ORDER
+        ],
+    )
+
+
+def test_the_nightly_run_mirrors_every_category_as_its_own_event(
+    monkeypatch, temp_output, clean_run_source, capsys, caplog
+):
+    """Before this, a verdict lived exactly as long as the job replica did. A
+    Workbook cannot query Postgres, so a custom event is the only place Gap 320's
+    panel can read it from."""
+    with caplog.at_level(logging.INFO):
+        _run_nightly_main(monkeypatch, recommendation_pass=lambda *a, **k: _three_categories())
+
+    events = _recommendation_events(caplog)
+    assert len(events) == 3
+    assert [e.category for e in events] == list(rec.CATEGORY_ORDER)
+    assert {e.run_label for e in events} == {"nightly"}
+    assert {e.generated_at for e in events} == {"2026-08-25T03:47:00+00:00"}
+    out = capsys.readouterr().out
+    assert "Recommendation mirror [nightly] -> stdout only: 3 telemetry event(s)" in out
+    # The run itself still finished and still wrote its results.
+    assert (temp_output / OUTPUT_NAME).is_file()
+
+
+@pytest.mark.parametrize("run_label", ["predeploy", "adhoc"])
+def test_no_other_cadence_persists_a_recommendation(
+    monkeypatch, temp_output, clean_run_source, run_label, caplog
+):
+    """The nightly-only gate covers the emission too — a 5-case gate run's
+    verdict joining the nightly trend would make the panel unreadable, for the
+    same reason `run_label` exists on every other benchmark event."""
+    with caplog.at_level(logging.INFO):
+        _run_main(
+            monkeypatch,
+            ["--paths", "default", "--run-label", run_label],
+            recommendation_pass=lambda *a, **k: _three_categories(),
+        )
+
+    assert _recommendation_events(caplog) == []
+
+
+def test_no_mirror_keeps_the_verdict_local(
+    monkeypatch, temp_output, clean_run_source, capsys, caplog
+):
+    """`--no-mirror` already means "emit no event and upload no artifact (local
+    run, offline)" for `agent_eval_summary`; it means the same here rather than
+    a second flag."""
+    with caplog.at_level(logging.INFO):
+        _run_nightly_main(
+            monkeypatch,
+            extra_argv=["--no-mirror"],
+            recommendation_pass=lambda *a, **k: _three_categories(),
+        )
+
+    assert _recommendation_events(caplog) == []
+    out = capsys.readouterr().out
+    # The pass still ran and still printed — only the persistence is skipped.
+    assert "Recommendation pass [nightly]" in out
+    assert "Recommendation mirror" not in out
+
+
+def test_the_recommendation_events_are_flushed_before_the_process_exits(
+    monkeypatch, temp_output, clean_run_source
+):
+    """`main()`'s own mirror block has already flushed by the time this step
+    runs, and the OTel exporter batches on a timer — so without a second flush
+    these three events die with the process. That is precisely the "the job ran
+    and the workbook shows nothing" symptom the mirror exists to prevent."""
+    flushes = []
+    monkeypatch.setattr(script, "flush_run_telemetry", lambda: flushes.append(len(flushes)))
+
+    _run_nightly_main(
+        monkeypatch,
+        recommendation_pass=lambda *a, **k: _three_categories(),
+        exporter_attached=True,
+    )
+
+    # Once for the `agent_eval_summary` mirror, once after the recommendation
+    # events that are emitted *after* it.
+    assert len(flushes) == 2
+
+
+def test_a_broken_exporter_cannot_fail_the_nightly_run(
+    monkeypatch, temp_output, clean_run_source, capsys
+):
+    """Fail-soft at the wiring level, not just inside the emitter: this is bolted
+    onto the end of a job that has already graded every turn and committed every
+    row (the Gap 308/317 failure class)."""
+    monkeypatch.setattr(
+        telemetry,
+        "track_ops_recommendation",
+        MagicMock(side_effect=RuntimeError("exporter down")),
+    )
+
+    _run_nightly_main(monkeypatch, recommendation_pass=lambda *a, **k: _three_categories())
+
+    out = capsys.readouterr().out
+    assert "0 telemetry event(s)" in out and "exporter down" in out
+    assert (temp_output / OUTPUT_NAME).is_file()
+    assert "Wrote 0 turns to" in out

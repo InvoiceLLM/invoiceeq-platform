@@ -51,12 +51,13 @@ by adding an OpenAI auto-instrumentation package.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import urlparse
 
 from utils.logging_config import request_id_ctx, tenant_id_ctx, trace_id_ctx
@@ -141,16 +142,82 @@ AZURE_COST_SLICE_EVENT_NAME = "azure_cost_slice"
 EXTRACTION_BENCHMARK_EVENT_NAME = "extraction_benchmark_run"
 AGENT_EVAL_SUMMARY_EVENT_NAME = "agent_eval_summary"
 
-# Feature 24 (Ops Digest Agent). One event per scheduled digest run.
+# Feature 24 (Ops Digest Agent) declared an `OPS_DIGEST_EVENT_NAME` here and a
+# `track_ops_digest_run()` emitter below. The feature was deleted on 2026-08-25
+# (Gap 311) and these two were the only artifacts the deletion missed; Gap 314
+# removed them on 2026-08-26 after a repo-wide grep found zero callers. No
+# `ops_digest_run` row was ever emitted from a deployed replica -- the job that
+# would have called it (`caj-ops-digest-dev`) was never deployed -- so nothing
+# queries this event name and no workbook panel loses a source. Full text in git
+# history; closing record is `docs/be_features_tracker.md`, Feature 24/Gap 314.
+
+# ---------------------------------------------------------------------------
+# Gap 319 — the nightly recommendation pass, persisted
+# ---------------------------------------------------------------------------
+# Feature 20/23/24's recommendation pass (`services/ops_recommendation.py`,
+# Gap 318) produces three category verdicts per nightly run and, until this
+# event existed, printed them to the job's stdout and nothing else — so a
+# verdict survived exactly as long as the replica did.
 #
-# This one is not a mirror of anything -- unlike the four above, there is no
-# durable Postgres row behind it. The digest itself is delivered to a Teams
-# channel and an inbox, neither of which can be queried, so this event is the
-# only way to answer "did the digest job actually run, and what did it find?"
-# after the fact. Without it a dead scheduler and a quiet week look identical,
-# which is the exact failure the feature's own `audit_job_failed` exception
-# exists to catch for Feature 23's eval job.
-OPS_DIGEST_EVENT_NAME = "ops_digest_run"
+# It has to be a custom event for the same reason `agent_eval_run` and
+# `online_eval_signal` are: the panel that renders it (Gap 320) is an Azure
+# Monitor Workbook, and a workbook can query Log Analytics / Application
+# Insights / Resource Graph / ARM / ADX — **not Postgres**. Nothing else in this
+# system can hold a row a workbook can read.
+#
+# **One row per category per run, not one per run.** Three rows a night, the
+# same choice `online_eval_signal` makes (one row per signal, not one row with
+# five signals packed into it): a workbook grid is a flat row set, and
+# `Category | Status | Explanation | Recommendation` is one row per category by
+# construction. Packing the three into one event would force every panel to
+# `mv-expand` a nested array before it could filter or colour on `status`.
+#
+# The three rows of one run share one `generated_at` — set once by the pass, not
+# per emission — so "the latest run" is `arg_max(generated_at, ...)` over this
+# stream and can never return two categories from one run and one from another.
+# `TimeGenerated` is ingestion time and deliberately not used for that.
+#
+# `metrics` from `CategoryRecommendation` is **not** mirrored. It is unbounded
+# by design (the health category carries a dict per container app) and every
+# number in it already has its own event and its own panel —
+# `azure_cost_snapshot` for spend, `agent_eval_summary` for the quality means,
+# the live Azure Monitor metrics for CPU/memory. This event carries the verdict
+# and the fields that produced it, which is what no other event can say.
+OPS_RECOMMENDATION_EVENT_NAME = "ops_recommendation"
+
+# How much of a category's prose and findings ride on the event.
+#
+# The binding limit is Application Insights' own: a single custom-property value
+# is capped at 8,192 characters, so a `findings` blob larger than that would be
+# cut *by the ingestion pipeline*, mid-string, producing a value that no longer
+# parses as JSON — the silent-corruption version of the truncation this module
+# already does explicitly for `chat_turn` (see `MAX_TURN_SQL_CHARS` /
+# `MAX_TURN_TOOL_OUTPUT_CHARS` above). So the cut is made here, under that limit,
+# and made in a way that keeps the value valid JSON: whole findings are dropped
+# from the end and replaced by one marker entry of the same shape, never a
+# string cut through the middle of an object.
+#
+# The prose fields are truncated with the same `_truncate()` marker every other
+# event here uses, because `explanation` is a join of one sentence per finding
+# and can grow with the number of container apps.
+MAX_RECOMMENDATION_TEXT_CHARS = 2000
+MAX_RECOMMENDATION_FINDING_TEXT_CHARS = 400
+#: A category with more findings than this has stopped being a recommendation
+#: and become the per-field dump the check-and-flag design exists to avoid; the
+#: count of what was dropped still travels, as `findings_omitted`.
+MAX_RECOMMENDATION_FINDINGS = 25
+#: Under Application Insights' 8,192-character property cap, with headroom for
+#: the marker entry appended when anything is dropped.
+MAX_RECOMMENDATION_FINDINGS_CHARS = 8000
+
+#: The two severities `services/ops_recommendation.py` grades with, restated as
+#: literals here rather than imported: nothing in `telemetry.py` imports from
+#: `services/`, and reversing that for two three-letter strings would put a
+#: `config`-reading module import behind every LLM call site. Pinned equal to
+#: their source by `tests/test_telemetry.py`, so a drift fails a test instead of
+#: silently zeroing `red_count` on every event.
+RECOMMENDATION_SEVERITY_RED = "red"
+RECOMMENDATION_SEVERITY_YELLOW = "yellow"
 
 # ---------------------------------------------------------------------------
 # Gap 302/303 — the Trace: one event per whole chat turn
@@ -1183,58 +1250,155 @@ def track_chat_turn(
         logger.debug("track_chat_turn failed for route %s", route, exc_info=True)
 
 
-def track_ops_digest_run(
+# `track_ops_digest_run()` stood here until Gap 314 (2026-08-26) — see the note
+# where `OPS_DIGEST_EVENT_NAME` was declared, above.
+
+
+def _finding_entry(finding: Dict[str, Any]) -> Dict[str, Any]:
+    """One `ops_recommendation.Finding` dict, bounded and JSON-safe.
+
+    The five keys are fixed rather than copied from the input, so the array a
+    workbook `mv-expand`s is homogeneous whatever a future `Finding` gains, and
+    a `value` that is not a JSON scalar (a datetime, a dataclass) becomes its
+    `str()` here instead of failing the whole `json.dumps` below.
+    """
+    value = finding.get("value")
+    if not isinstance(value, (int, float, bool, str)) and value is not None:
+        value = str(value)
+    if isinstance(value, str):
+        value = _truncate(value, MAX_RECOMMENDATION_FINDING_TEXT_CHARS)
+    return {
+        "field": _truncate(finding.get("field"), MAX_RECOMMENDATION_FINDING_TEXT_CHARS),
+        "value": value,
+        "severity": str(finding.get("severity") or ""),
+        "detail": _truncate(finding.get("detail"), MAX_RECOMMENDATION_FINDING_TEXT_CHARS),
+        "recommendation": _truncate(
+            finding.get("recommendation"), MAX_RECOMMENDATION_FINDING_TEXT_CHARS
+        ),
+    }
+
+
+def _omitted_marker(count: int) -> Dict[str, Any]:
+    """The in-band "there were more than these" entry — same five keys.
+
+    Same principle as `_truncate`'s marker: what was cut is stated *in the
+    value*, so a reader of a `findings` array can tell a category with three
+    findings from a category with three hundred.
+    """
+    return {
+        "field": "(omitted)",
+        "value": count,
+        "severity": "",
+        "detail": f"{count} further finding(s) omitted — this event caps `findings`",
+        "recommendation": "",
+    }
+
+
+def _bounded_findings(findings: Optional[List[Dict[str, Any]]]) -> "tuple[str, int]":
+    """``(json_text, omitted_count)`` — valid JSON, always under the cap.
+
+    Drops **whole findings** from the end and re-serialises until it fits, rather
+    than cutting the serialised string: an Application Insights property that has
+    been cut mid-object is not JSON, and Gap 320's panel parses this.
+    """
+    entries = [f for f in (findings or []) if isinstance(f, dict)]
+    kept = [_finding_entry(f) for f in entries[:MAX_RECOMMENDATION_FINDINGS]]
+    omitted = len(entries) - len(kept)
+    while True:
+        payload = kept + ([_omitted_marker(omitted)] if omitted else [])
+        text = json.dumps(payload, default=str)
+        if len(text) <= MAX_RECOMMENDATION_FINDINGS_CHARS or not kept:
+            return text, omitted
+        kept.pop()
+        omitted += 1
+
+
+def track_ops_recommendation(
     *,
-    window_hours: float,
-    items_collected: int,
-    critical_count: int,
-    needs_decision_count: int,
-    self_resolved_count: int,
-    collection_errors: int,
-    llm_calls: int = 0,
-    synthesis_error: str = "",
-    delivered_to: str = "",
-    delivery_errors: int = 0,
+    category: str,
+    title: str = "",
+    status: str,
+    explanation: str = "",
+    recommendation: str = "",
+    worst_severity: str = "",
+    findings: Optional[List[Dict[str, Any]]] = None,
+    errors: Optional[List[str]] = None,
+    run_label: str = "",
+    generated_at: str = "",
     **extra_attributes: Any,
 ) -> None:
-    """Emit one ``ops_digest_run`` event — Feature 24's own run record.
+    """Emit one ``ops_recommendation`` event — one category of one nightly pass.
 
-    One row per scheduled run, and the *only* durable evidence that this agent
-    ran at all: a digest goes to Teams/email, neither of which is queryable, so
-    without this event "the digest job has been silently dead for a week" and
-    "nothing happened for a week" are the same observation. That is precisely
-    the failure mode the feature's own ``audit_job_failed`` exception exists to
-    catch for the *eval* job, and it would be careless to build this agent with
-    the same blind spot it was written to close.
+    Three of these per nightly run, never one carrying three: see
+    ``OPS_RECOMMENDATION_EVENT_NAME`` for why the row, not the run, is the unit.
 
-    ``delivered_to`` carries channel labels only (``webhook:https://…`` truncated
-    at the query string, ``email:2``) — never a full webhook URL, which is a
-    replayable credential.
+    The counts (``finding_count``/``red_count``/``yellow_count``) travel next to
+    the serialised ``findings`` for the same reason ``track_extraction_benchmark_run``
+    carries its raw confusion-matrix cells next to the derived percentages: a
+    panel that only had the JSON blob would have to ``parse_json`` and
+    ``mv-expand`` before it could so much as count reds, and a trend over a
+    *window* of runs would be unbuildable.
 
-    Never raises, same contract as every other emitter here.
+    ``worst_severity`` is emitted as ``""`` rather than omitted when a category
+    has no findings. It is a three-value vocabulary (``red``/``yellow``/none) and
+    the third value is a real, common, meaningful answer — "checked, nothing
+    outside its band" — not missing data, which is what an absent field means
+    everywhere else in this module.
+
+    ``errors`` is joined into one string rather than serialised as JSON: it is a
+    list of human-readable failure sentences ("container health: metrics for
+    ca-invoice-be-dev: HTTPError: 403"), the panel renders it as text, and
+    nothing needs to iterate it.
+
+    No ``tenant_id`` and no ``request_id``, matching ``agent_eval_summary`` /
+    ``extraction_benchmark_run`` / ``azure_cost_snapshot`` (and the deleted
+    ``ops_digest_run``) rather than ``agent_eval_run`` / ``online_eval_signal``:
+    this is a system-wide ops verdict produced by a scheduled job with no request
+    and no tenant in scope, and an always-empty ``tenant_id`` column invites a
+    join that can never match.
+
+    Never raises, same contract as every other emitter here — and it matters as
+    much as anywhere in this module, because the caller is a step bolted onto the
+    end of an already-successful nightly job (Gaps 308/317).
     """
     try:
+        entries = [f for f in (findings or []) if isinstance(f, dict)]
+        findings_json, omitted = _bounded_findings(entries)
+        problems = [str(e) for e in (errors or []) if e]
         attributes: Dict[str, Any] = {
-            "window_hours": round(float(window_hours or 0.0), 2),
-            "items_collected": int(items_collected or 0),
-            "critical_count": int(critical_count or 0),
-            "needs_decision_count": int(needs_decision_count or 0),
-            "self_resolved_count": int(self_resolved_count or 0),
-            "collection_errors": int(collection_errors or 0),
-            "llm_calls": int(llm_calls or 0),
-            "synthesis_error": synthesis_error or "",
-            "delivered_to": delivered_to or "",
-            "delivery_errors": int(delivery_errors or 0),
-            "status": _STATUS_ERROR if (synthesis_error or delivery_errors) else _STATUS_SUCCESS,
+            "run_label": run_label or "adhoc",
+            "category": category or "unknown",
+            "title": title or category or "unknown",
+            "status": status or "unknown",
+            "explanation": _truncate(explanation, MAX_RECOMMENDATION_TEXT_CHARS),
+            "recommendation": _truncate(recommendation, MAX_RECOMMENDATION_TEXT_CHARS),
+            "worst_severity": str(worst_severity or ""),
+            "finding_count": len(entries),
+            "red_count": sum(
+                1 for f in entries if f.get("severity") == RECOMMENDATION_SEVERITY_RED
+            ),
+            "yellow_count": sum(
+                1 for f in entries if f.get("severity") == RECOMMENDATION_SEVERITY_YELLOW
+            ),
+            "findings": findings_json,
+            "findings_omitted": omitted,
+            "error_count": len(problems),
+            "errors": _truncate(" | ".join(problems), MAX_RECOMMENDATION_TEXT_CHARS),
         }
+        # The join key across one run's three rows, and the "latest run" filter
+        # Gap 320's panel sorts on. Emitted only when the caller has one, never
+        # defaulted to now(): a fabricated stamp would let two runs' rows
+        # interleave under a single `arg_max`.
+        if generated_at:
+            attributes["generated_at"] = str(generated_at)
         for key, value in extra_attributes.items():
             if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
                 continue
             attributes[key] = value
 
-        _emit_event(OPS_DIGEST_EVENT_NAME, attributes)
+        _emit_event(OPS_RECOMMENDATION_EVENT_NAME, attributes)
     except Exception:  # pragma: no cover - telemetry must never break a run
-        logger.debug("track_ops_digest_run failed", exc_info=True)
+        logger.debug("track_ops_recommendation failed for %s", category, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

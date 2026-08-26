@@ -26,7 +26,10 @@ text SAGE's two SQL-writing tools were assembled from. Those have zero callers
 and zero tests, and nothing in Feature 6 asks a model to write an aggregate from
 a reflected schema block, so keeping them is a bet on a future non-agentic use,
 exactly as Gap 316 recorded. Flagged rather than deleted, the same way Gap 314
-flagged the orphaned ops-digest telemetry.
+first flagged the orphaned ops-digest telemetry -- note that Gap 314 then went on
+to delete that telemetry on 2026-08-26, because it had zero callers *and* zero
+plausible future use; these five have zero callers but an open founder question
+behind them, which is why they stay.
 
 The doc these blocks were transcribed from (`feature_21_sage.md`) was deleted
 with the code; the closing record is `docs/be_features_tracker.md`, Feature 21
