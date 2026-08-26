@@ -28,27 +28,64 @@ Signal                       Confidence     Why
 `thumbs_down_clustering`     measured       `ChatFeedback.vote` is the fact
 `slow_turn_rate`             proxy          Row-timestamp delta, not an
                                             instrumented timer (see below)
-`budget_exhaustion_rate`     offline-only   `stop_reason` is not persisted for
-                                            any live turn — only for eval runs
+`budget_exhaustion_rate`     offline-only   Dead as of Gap 316 — nothing writes
+                                            a `stop_reason` any more (see below)
 `clarification_rate`         heuristic      Live clarifications leave no marker
                                             in the DB at all
 ===========================  =============  ==================================
 
+Gap 316 (2026-08-25) killed one of these outright — read before trusting the panel
+---------------------------------------------------------------------------------
+The SAGE orchestrator was deleted after a live head-to-head measured it slower and
+dearer than the default path with no correctness benefit. That gap's tracker entry
+names two signals here as casualties. **Only one of them actually died**, and the
+difference decides whether a number on the panel is worth reading:
+
+* **`budget_exhaustion_rate` is dead, permanently, and is not fixable from any
+  surviving source.** Its numerator *and* its denominator come only from
+  `stop_reason=` fragments in `AgentEvalRun.notes`, and `scripts/run_agent_eval.py`
+  stopped writing those when the path they described was deleted (its `notes`
+  assembly carries a comment saying exactly that). The measured *concept* is gone
+  too, not merely unwritten: `MAX_TOOL_CALLS` and `tool_call_budget_exhausted`
+  belonged to the deleted planner loop, and neither name appears in live code
+  anywhere now. So the denominator is 0 on every window from here on, `value` is
+  `None` and `breached` is `False` forever. Retiring the signal is a **product
+  decision, not a bug fix** — it is left in place, computing honestly, until the
+  founder rules on whether the five-signal set becomes four.
+* **`clarification_rate` did NOT die**, despite being listed alongside it. Its
+  headline `value`/`numerator`/`denominator` are computed by
+  `looks_like_clarification()` over `chat_message` assistant rows and never
+  touched SAGE at all. What died is the *offline exact* cross-check inside its
+  `detail` (`offline_exact_clarification_turns` and its two siblings), which reads
+  the same dead notes. The headline rate still measures real traffic, and the
+  population is real rather than theoretical: Feature 23 Track 2's judge runs
+  caught the **default** route answering with a clarifying question of its own
+  accord — one that leaked raw SQL into it (Gap 294, recorded at
+  `agents/query_agent.py`'s SQL-leak scrubber).
+
+Where "a turn stopped abnormally" *is* readable today, since it is the first thing
+anyone asks after the above: the `chat_turn` telemetry event carries a real
+`stop_reason` on every live turn (`sql_attempts_exhausted`, `sql_declined`,
+`sql_summary_failed`, `rag_answer_failed`, `chat_answer_failed`,
+`route_override_followup`), set by `agents/query_agent.py` and by the queue
+handler. That lives in Log Analytics, not Postgres, so it is deliberately out of
+this module's reach — it is a workbook query, and the workbook already has a tile
+bound to it.
+
 The two real gaps, stated rather than papered over
 --------------------------------------------------
-1. **`stop_reason` never reaches the database on a live turn.**
-   `agents/sage_orchestrator.py` computes `tool_call_budget_exhausted` /
-   `clarification_requested` / `planner_step_budget_exhausted` and returns them
-   in `run_agentic_sage()`'s metadata, but `ChatMessage` has no column for them
-   and nothing writes them anywhere durable. The only persisted copy in this
-   repo is the free text `AgentEvalRun.notes` written by
-   `scripts/run_agent_eval.py`, which covers *eval* turns only. So
-   `budget_exhaustion_rate` is real but measures the offline harness, not
-   production, and it is parsed out of prose rather than read from a column.
-   Closing this needs either a `stop_reason` column on `ChatMessage` or the
-   Trace-level telemetry capture the doc scopes under "Observability
-   primitives" — **not done here**, because `agent_eval_run`'s schema belongs to
-   concurrent Feature 21 work and inventing a column for it would collide.
+1. **`stop_reason` never reaches the database on a live turn — and since Gap 316
+   it reaches it on no turn at all.** Until 2026-08-25 the deleted
+   `agents/sage_orchestrator.py` computed `tool_call_budget_exhausted` /
+   `clarification_requested` / `planner_step_budget_exhausted` and returned them
+   in `run_agentic_sage()`'s metadata, but `ChatMessage` never had a column for
+   them and nothing wrote them anywhere durable; the only persisted copy was the
+   free text `AgentEvalRun.notes` written by `scripts/run_agent_eval.py`, which
+   covered *eval* turns only. With SAGE deleted, that writer is gone as well, so
+   `budget_exhaustion_rate` no longer measures even the offline harness. Closing
+   this on the Postgres side would need a `stop_reason` column on `ChatMessage`
+   plus a migration — new design work, and a founder call, not something this
+   module gets to take.
 2. **Turn latency is not recorded anywhere.** `ChatMessage` has `created_at` and
    nothing else time-related. The proxy below (assistant row timestamp minus its
    own user row timestamp) is genuinely end-to-end — under Gap 280's queue
@@ -120,8 +157,13 @@ MIN_SAMPLE_FOR_ALERT = 20
 #: zeroing this signal.
 NO_RECORDS_FOUND = "No records found matching the query criteria."
 
-#: Written into `AgentEvalRun.notes` by `scripts/run_agent_eval.py` as
-#: `stop_reason=<value>`. Parsed, not queried, because there is no column.
+#: Was written into `AgentEvalRun.notes` by `scripts/run_agent_eval.py` as
+#: `stop_reason=<value>`. Parsed, not queried, because there is no column — and
+#: **no longer written by anything as of Gap 316** (2026-08-25), which deleted both
+#: the SAGE path that produced these values and the note fragment that recorded
+#: them. Kept so the two signals below still read *historical* rows correctly
+#: rather than silently reporting a different number for the same past window;
+#: no new row can ever match.
 STOP_REASON_BUDGET_EXHAUSTED = "stop_reason=tool_call_budget_exhausted"
 STOP_REASON_CLARIFICATION = "stop_reason=clarification_requested"
 _STOP_REASON_ANY = re.compile(r"stop_reason=([A-Za-z_]+)")
@@ -133,10 +175,12 @@ _RESULTS_TABLE_MARKER = "### Query Results"
 #: A confident zero — Gap 224's shape. Matches "USD 0.00", "$0", "INR 0,00".
 _ZERO_TOTAL_RE = re.compile(r"(?:USD|EUR|INR|GBP|AUD|CAD|Rs\.?|\$|₹|€|£)\s?0(?:[.,]0{1,2})?(?!\d)")
 
-#: Clarifying-question phrasings. `ask_clarifying_question()` returns the
-#: question text verbatim as the turn's answer with no marker of any kind
-#: (`agents/sage_orchestrator.py::_clarify_node`), so there is nothing to match
-#: on but the language itself. This is a heuristic and is labelled as one.
+#: Clarifying-question phrasings. There has never been a marker to match on: the
+#: deleted orchestrator's `ask_clarifying_question()` returned the question text
+#: verbatim as the turn's answer (`_clarify_node`), and the default route that
+#: replaced it has no clarification step at all — when it asks a question it is the
+#: model choosing to, which leaves even less behind. So the language is all there
+#: is. This is a heuristic and is labelled as one.
 _CLARIFICATION_PATTERNS = (
     re.compile(r"\bdid you mean\b", re.IGNORECASE),
     re.compile(r"\bwhich (?:one|of|invoice|vendor|customer)\b", re.IGNORECASE),
@@ -268,8 +312,15 @@ def _eval_run_notes(
     """Free-text notes off `agent_eval_run`, existing columns only.
 
     Imported lazily and defensively: `AgentEvalRun` is Feature 23 Phase 3's
-    table and is under concurrent Feature 21 work, so this module reads what is
-    there and degrades to "no data" rather than assuming a shape.
+    table, so this module reads what is there and degrades to "no data" rather
+    than assuming a shape. (It used to say "and is under concurrent Feature 21
+    work" — Feature 21 was deleted by Gap 316 on 2026-08-25.)
+
+    **Returns only historical matches for the stop-reason signals since Gap 316.**
+    `scripts/run_agent_eval.py` no longer emits a `stop_reason=` fragment into
+    `notes`, so rows written from 2026-08-25 onward carry none. This function is
+    unchanged and still correct — its two callers simply have nothing left to
+    match. See the module docstring's Gap 316 section.
 
     **Golden-bank rows only** (Gap 304 half (2), 2026-08-24), for the same reason
     as `services/ops_digest_collect.py::_eval_window_stats`. Checked rather than
@@ -356,8 +407,16 @@ def budget_exhaustion_rate(
 
     A budget-exhausted turn still answers, from whatever it had managed to fetch
     — which is precisely how a confident-but-under-evidenced answer gets
-    produced. It is invisible outside a debugger today (the doc says so), and
-    this function is honest about only being able to see the eval harness.
+    produced.
+
+    **Dead as of Gap 316 (2026-08-25); returns a permanently empty denominator.**
+    `MAX_TOOL_CALLS` was the deleted SAGE planner's budget, nothing in the product
+    has a tool-call budget any more, and `scripts/run_agent_eval.py` no longer
+    writes the `stop_reason=` note this parses. It is left computing rather than
+    deleted because dropping a signal from the five is the founder's call (Gap
+    305); against historical rows it still returns the right past number, and
+    against every window from here on it returns `value=None`, which is the module's
+    own way of saying "not measured" rather than "measured, nothing found".
     """
     notes = _eval_run_notes(session, window_start, window_end, tenant_id)
     with_stop_reason = [note for note in notes if _STOP_REASON_ANY.search(note or "")]
@@ -374,11 +433,16 @@ def budget_exhaustion_rate(
         threshold=BUDGET_EXHAUSTION_ALERT_RATE,
         breached=_breached(value, BUDGET_EXHAUSTION_ALERT_RATE, len(with_stop_reason)),
         caveat=(
-            "Covers offline eval runs only. No live turn persists a stop_reason "
-            "anywhere: run_agentic_sage() returns it in metadata and ChatMessage "
-            "has no column for it. Parsed out of prose, not read from a column. "
-            "GAP: needs a stop_reason column or Trace-level capture to become a "
-            "production signal."
+            "DEAD as of Gap 316 (2026-08-25) — the denominator is permanently 0 "
+            "and a null value here means 'this can never be measured', not 'a "
+            "quiet window'. It read stop_reason= out of agent_eval_run.notes; the "
+            "SAGE path that produced those values and the note fragment that "
+            "recorded them were both deleted, and no tool-call budget exists in "
+            "the product any more. Not fixable from any surviving Postgres "
+            "source. Abnormal turn stops ARE readable live, but from the chat_turn "
+            "telemetry event's own stop_reason field in Log Analytics, which this "
+            "module cannot query. Retiring this signal is a founder decision "
+            "(Gap 305), not a code fix."
         ),
         detail={
             "stop_reasons_seen": _count_stop_reasons(with_stop_reason),
@@ -435,6 +499,14 @@ def clarification_rate(
     Two independent readings, because they measure different populations and
     neither alone is the answer: the offline one is exact but covers only eval
     runs, the live one covers real traffic but is a language heuristic.
+
+    **Only the offline reading died with Gap 316 — the headline rate did not.**
+    Gap 316's entry lists this signal next to `budget_exhaustion_rate` as
+    "permanently degenerate"; that is true of the three `offline_*` keys in
+    `detail` (same dead `stop_reason=` notes) and false of `value`/`numerator`/
+    `denominator`, which come from `chat_message` assistant rows via
+    `looks_like_clarification()` and never had a SAGE dependency. Read the
+    headline number; ignore the `offline_*` keys, which are 0 forever.
     """
     messages = _chat_messages(session, window_start, window_end, tenant_id)
     assistants = [m for m in messages if m.role == "assistant"]
@@ -455,12 +527,17 @@ def clarification_rate(
         threshold=CLARIFICATION_ALERT_RATE,
         breached=_breached(value, CLARIFICATION_ALERT_RATE, len(assistants)),
         caveat=(
-            "Heuristic. ask_clarifying_question() returns the question verbatim "
-            "as the turn's answer with no marker (sage_orchestrator._clarify_node), "
-            "so there is nothing in the row to match on but the wording. "
-            "Additionally, the SAGE path that produces most clarifications is "
-            "behind ENABLE_AGENTIC_SAGE, which is off — a near-zero live rate is "
-            "expected today and is a configuration fact, not a quality result."
+            "Heuristic. Nothing in the row marks a clarification, so there is "
+            "nothing to match on but the wording. CORRECTED 2026-08-26 (Gap 305): "
+            "this caveat used to say a near-zero rate was expected because the "
+            "SAGE path behind ENABLE_AGENTIC_SAGE was off, i.e. that a low number "
+            "was a configuration fact rather than a quality result. Gap 316 "
+            "deleted SAGE and that flag outright, so that reading no longer "
+            "applies and must not be used to wave this number away: the default "
+            "route has no clarification step, so any turn counted here is the "
+            "model choosing to ask rather than answer, and a rise is a real "
+            "quality signal. The offline_* keys in detail are dead (Gap 316) and "
+            "stay 0 regardless of what the headline rate does."
         ),
         detail={
             "offline_exact_clarification_turns": len(offline_clarifications),

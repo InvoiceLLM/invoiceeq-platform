@@ -172,6 +172,20 @@ that call. Three things about it are worth stating rather than discovering:
    the default is a decision to make on measured evidence (run both over the
    same cases, compare), not a default to flip silently mid-series.
 
+Context drift (added 2026-08-26, Gap 307)
+------------------------------------------
+`score_context_drift()` is a fourth deterministic component, scored only on the
+multi-turn tier (`benchmarks/agent_eval_multiturn.py`) and `None` everywhere
+else. It is **not** a judge: see the block comment above the function for why a
+pinned expectation beats asking a model "did this drift?", and for the two
+already-observed failure shapes (Gaps 237 and 276) that define what drift means
+in this repo. Like the other component scores it is recorded and trended and
+does not feed `decide_pass()`.
+
+Only the **offline** half exists. A live judge watching production `chat_turn`
+events is a separate, later gap — the deferral is deliberate and is recorded in
+`be_features_tracker.md`.
+
 Cost
 ----
 Judging is itself billable — three to four extra model round-trips per graded
@@ -411,9 +425,10 @@ class EvalScores:
         three, and the only three `decide_pass()` looks at. Their floors are the
         pass policy and their trend is comparable across the whole history of
         this table.
-      * **Component-level** (`context`, `orchestration`, `persona`) — Feature
-        23's "which part of the pipeline is broken" decomposition. Added
-        2026-08-21, additive and inert: they are recorded and trended, they do
+      * **Component-level** (`context`, `orchestration`, `persona`,
+        `context_drift`) — Feature 23's "which part of the pipeline is broken"
+        decomposition. Added 2026-08-21 (and `context_drift` 2026-08-26, Gap
+        307), additive and inert: they are recorded and trended, they do
         **not** feed `passed`. Folding them in would silently redefine what a
         pass means halfway through the series, which is the one thing a trend
         must not do.
@@ -426,6 +441,11 @@ class EvalScores:
     context_score: Optional[float] = None
     orchestration_score: Optional[float] = None
     persona_score: Optional[float] = None
+    #: Gap 307's multi-turn tier. `None` on every single-turn case — which is
+    #: all 35 of the original golden bank — because a turn with no predecessor
+    #: has nothing to have drifted from. Scored only where the case pins a
+    #: `DriftExpectation`.
+    context_drift_score: Optional[float] = None
     # Soft-metric, added 2026-08-23 by the combined judge. Also not in `passed`
     # — see the floors block at the top of this module. `None` in separate-call
     # mode, which does not score them at all.
@@ -1064,6 +1084,225 @@ def score_orchestration(
     return score, notes
 
 
+# --- Context drift: did turn N still know which subject it was on? ----------
+#
+# Gap 307, 2026-08-26. The offline half only — this grades a *golden-bank*
+# multi-turn script, never live traffic (the online judge over production
+# `chat_turn` events is deliberately a separate, later gap).
+#
+# What "context drift" means here is not invented: `feature_20_23_24_ops_workbook.md`
+# and the tracker's Gaps 303/307 define it by its two already-observed failure
+# shapes, both of them closed bugs cited as the *class*, never as a detector:
+#
+#   Gap 237  a narrowing follow-up ("explain the 3 USD ones") silently dropping a
+#            branch of the previous turn's predicate — context that SHOULD still
+#            apply and did not.
+#   Gap 276  the previous turn's SQL reused after a topic change — context that
+#            should NOT still apply and did.
+#
+# Both are, at bottom, questions about *which entities* turn N is operating on
+# given turns 1..N-1, and both are answerable without a judge: the golden script
+# pins the entities that must and must not appear. So this is a deterministic
+# component score like `score_context`/`score_orchestration`, not a fourth judge
+# call. Two reasons that is the right call rather than a cheap one: a judge asked
+# "did this drift?" has no way to know what the *earlier* turns established
+# except by being shown them (more prompt, more variance, more cost per turn),
+# and this repo has four documented instances of a free-floating judged number
+# systematically under-scoring correct answers. A pinned expectation cannot drift
+# with the judge's mood.
+
+
+@dataclass(frozen=True)
+class DriftExpectation:
+    """What turn N of a multi-turn script must, and must not, still be talking about.
+
+    Every field is a *pinned* expectation authored against the seeded fixture —
+    `feature_20_23_24_ops_workbook.md`'s own recommendation for this tier is
+    "fixed 2-3 turn scripts with pinned expectations", explicitly in preference
+    to a general detector.
+
+    Every term is an **entity string** — a vendor name, an invoice number, an ISO
+    date that is stored as text — matched case-insensitively as a substring.
+    Deliberately never a money figure: the same amount renders as `6,120.00`,
+    `6120.0` or `USD 6,120` depending on the route and the model, so a numeric
+    term would mostly fail to match, and a missed forbidden match reads as "no
+    drift". Row-level presence is covered by `forbidden_invoice_numbers`, which
+    is compared against what the tools actually fetched rather than against prose.
+
+    **Three surfaces, because they are not interchangeable.** This distinction is
+    what keeps the check from punishing correct answers:
+
+      * `forbidden_sql_terms` — the generated SQL only. This is Gap 276's exact
+        shape (the previous turn's predicate surviving a topic change) and it is
+        unambiguous: a WHERE clause naming the *old* vendor after the user named
+        a new one is drift, full stop.
+      * `forbidden_terms` — answer prose *and* SQL. Reserved for strings a
+        correct answer has no business containing at all: a stale invoice number,
+        a stale due date, the vendor of a row that should not be in scope.
+        Deliberately not used for a bare vendor name where a chatty-but-correct
+        answer might legitimately reference the subject it just moved off.
+      * `required_entities` — answer prose only, and an **alias group per
+        entity**, not a flat term list. Used under one rule: *naming the entity
+        is the answer*. "Which of those is oldest" must name a vendor; "show me
+        DataPipe's invoices" must name DataPipe. A term that a correct answer
+        could reasonably omit does not belong here.
+
+        The alias grouping is not generality for its own sake — it was added
+        after the first live dry run (2026-08-26) marked a **correct** answer as
+        drifted. `drift_ambiguous_previous_invoice` turn 2 answered "Do you mean
+        the invoice dated 2026-06-27 (SEP-4410) or 2026-06-30 (DPS-9981)?",
+        which is exactly the clarifying question that case exists to reward, and
+        its SQL filtered on both vendors — but the check demanded the *vendor
+        names* and the answer used the *invoice numbers*. One entity has several
+        stable surface forms; requiring one particular form is the
+        under-scoring-correct-answers trap this module already has four
+        documented instances of. Each group is one check, satisfied by any of
+        its aliases.
+
+    `forbidden_invoice_numbers` is the retrieval half and is the complement of
+    `GoldenCase.expected_invoice_numbers`, not a duplicate of it: a follow-up can
+    legitimately have several correct retrieval sets ("re-run the filter" or
+    "narrow to the one row") while still having exactly one set of rows it must
+    never touch. Where that is the case the golden case declares no expected set
+    at all — `context_score` stays unscored — and the drift check carries the
+    whole expectation.
+    """
+
+    #: Entity strings that must NOT appear in turn N's answer prose or its
+    #: generated SQL. Stale subject = drift.
+    forbidden_terms: tuple[str, ...] = ()
+    #: Entity strings that must NOT appear in turn N's generated SQL. The
+    #: predicate-survived-a-topic-change check; says nothing about the prose.
+    forbidden_sql_terms: tuple[str, ...] = ()
+    #: One tuple of aliases per entity that MUST be named in turn N's answer
+    #: prose. Lost subject = drift. One check per *group*, satisfied by any
+    #: alias in it — `(("DataPipe", "DPS-9981"),)` is one check, not two.
+    required_entities: tuple[tuple[str, ...], ...] = ()
+    #: Invoice numbers turn N's tools must NOT have fetched.
+    forbidden_invoice_numbers: tuple[str, ...] = ()
+    #: Why this turn is a drift test at all, in one sentence, for the run
+    #: artifact's reader. Not scored.
+    note: str = ""
+
+    def check_count(self) -> int:
+        return (
+            len(self.forbidden_terms)
+            + len(self.forbidden_sql_terms)
+            + len(self.required_entities)
+            + len(self.forbidden_invoice_numbers)
+        )
+
+
+#: How many leaked/lost entities a note names before it stops listing them.
+MAX_DRIFT_NOTE_ITEMS = 5
+
+
+def score_context_drift(
+    answer: str,
+    drift: Optional[DriftExpectation],
+    *,
+    generated_sql: Optional[str] = None,
+    fetched_invoice_ids: Any = None,
+) -> tuple[Optional[float], list[str]]:
+    """Did this turn stay on the subject its script says it should be on?
+
+    Deterministic, no judge. The score is simply *checks passed / checks pinned*,
+    so it degrades gracefully: a turn that leaks one of three forbidden entities
+    scores 0.67, not a flat fail, and the note names which one — which is the
+    difference between "quality dropped" and "turn 3 answered about Titan Steel
+    after the conversation moved to Blue Ridge".
+
+    Which surface each kind of term is checked against, and why the three are
+    not interchangeable, is in `DriftExpectation`'s docstring.
+
+    **The error this metric can make, stated rather than left to be discovered**
+    (same disclosure `score_orchestration()` makes about its own bias): it is
+    biased toward **false passes**. A turn that answers nothing at all, or that
+    asks a clarifying question, trivially satisfies every `forbidden_*` check and
+    can score 1.00 on a script whose expectations are all forbidden-shaped. That
+    is deliberate. The alternative — requiring a term a correct answer could
+    reasonably omit — under-scores correct answers, which is the failure mode
+    this module already has four documented instances of, and a degenerate answer
+    is exactly what faithfulness/relevance/accuracy already catch. This dimension
+    exists to say *which subject* the turn was on, not whether it answered well.
+
+    Returns `(score, notes)`. `None` means this turn declares no drift
+    expectation — every single-turn case in the golden bank, and the first turn
+    of most scripts (a turn with no predecessor cannot have drifted from one).
+    """
+    if drift is None:
+        return None, []
+    if not drift.check_count():
+        # A DriftExpectation that pins nothing is an authoring mistake, not a
+        # perfect score. Say so instead of reporting 1.00 for having asked
+        # nothing -- the tests assert no such case exists, and this is the
+        # runtime half of that.
+        return None, ["context drift: not scored (expectation pins no check)"]
+
+    surface = " \n ".join(part for part in (answer or "", generated_sql or "") if part).lower()
+    prose = (answer or "").lower()
+    sql = (generated_sql or "").lower()
+    fetched = {str(v).strip().upper() for v in (fetched_invoice_ids or []) if str(v).strip()}
+
+    passed = 0
+    leaked: list[str] = []
+    stale_predicates: list[str] = []
+    lost: list[str] = []
+    stale_rows: list[str] = []
+
+    for term in drift.forbidden_terms:
+        if term.lower() in surface:
+            leaked.append(term)
+        else:
+            passed += 1
+
+    for term in drift.forbidden_sql_terms:
+        if term.lower() in sql:
+            stale_predicates.append(term)
+        else:
+            passed += 1
+
+    for aliases in drift.required_entities:
+        if any(alias.lower() in prose for alias in aliases):
+            passed += 1
+        else:
+            # Named by every alias it was looked for under, so the note says
+            # what was missing rather than just that something was.
+            lost.append("/".join(aliases))
+
+    for number in drift.forbidden_invoice_numbers:
+        if number.strip().upper() in fetched:
+            stale_rows.append(number)
+        else:
+            passed += 1
+
+    total = drift.check_count()
+    score = passed / total
+    notes = [f"context drift: {passed}/{total} checks held"]
+    if leaked:
+        notes.append(
+            "drift — stale subject in the answer/SQL: "
+            + ", ".join(leaked[:MAX_DRIFT_NOTE_ITEMS])
+        )
+    if stale_predicates:
+        notes.append(
+            "drift — the previous turn's predicate survived a topic change: "
+            + ", ".join(stale_predicates[:MAX_DRIFT_NOTE_ITEMS])
+        )
+    if lost:
+        notes.append(
+            "drift — the subject under discussion went missing: "
+            + ", ".join(lost[:MAX_DRIFT_NOTE_ITEMS])
+        )
+    if stale_rows:
+        notes.append(
+            "drift — stale rows fetched: " + ", ".join(stale_rows[:MAX_DRIFT_NOTE_ITEMS])
+        )
+    if drift.note and score < 1.0:
+        notes.append(f"drift case: {drift.note}")
+    return score, notes
+
+
 # --- Persona: domain expertise, the one component that needs a judge --------
 
 
@@ -1510,6 +1749,8 @@ def score_answer(
     fetched_invoice_ids: Any = None,
     score_persona_component: bool = True,
     combined_judge: bool = False,
+    drift: Optional[DriftExpectation] = None,
+    generated_sql: Optional[str] = None,
 ) -> EvalScores:
     """Every metric for one answer, plus the pass/fail decision.
 
@@ -1536,6 +1777,12 @@ def score_answer(
     instead of three, and is the only way to get the last three at all. Default
     is False so the existing metric series is not silently redefined; see the
     module docstring for why the two modes are not assumed comparable.
+
+    `drift`/`generated_sql` (Gap 307, 2026-08-26) drive `context_drift_score`
+    and are supplied only by the multi-turn tier. Both default to None, so every
+    existing caller — the 35 single-turn golden cases, the production judge —
+    is unchanged and leaves that dimension unscored rather than at zero. Costs no
+    judge call in either mode.
     """
     if llm is None:
         from utils.llm import get_llm
@@ -1587,6 +1834,19 @@ def score_answer(
 
     orchestration, notes = score_orchestration(answer, context, executed_queries)
     scores.orchestration_score = orchestration
+    scores.notes.extend(notes)
+
+    # Gap 307. Third deterministic component, and the only one that needs to know
+    # anything about the turns *before* this one -- which it does not learn by
+    # being shown them, but by the golden script having pinned what this turn
+    # must and must not still be about.
+    context_drift, notes = score_context_drift(
+        answer,
+        drift,
+        generated_sql=generated_sql,
+        fetched_invoice_ids=fetched_invoice_ids,
+    )
+    scores.context_drift_score = context_drift
     scores.notes.extend(notes)
 
     if score_persona_component:

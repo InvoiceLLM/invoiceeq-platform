@@ -82,7 +82,11 @@ Data sources — reused, not rebuilt
   crash.
 * **AI improvement**: Track 2's own just-computed payload (the dict
   `scripts/run_agent_eval.py` writes to `--out`), plus Track 1's summary handed
-  over through `benchmark_artifacts.read_track1_handoff()`.
+  over through `benchmark_artifacts.read_track1_handoff()`. Since 2026-08-26
+  (Gap 307) that payload also carries a second summary bucket,
+  `default-multiturn`, holding the multi-turn context-drift tier — read here by
+  its own key and graded as its own finding, never averaged into the single-turn
+  numbers (see `_multi_turn_stats()` and `CONTEXT_DRIFT_BAND_KEY`).
 
 Fail-soft is a requirement here, not politeness
 -----------------------------------------------
@@ -114,7 +118,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import settings
-from services.benchmark_artifacts import RUN_LABEL_NIGHTLY, MirrorResult
+from services.benchmark_artifacts import MULTI_TURN_PATH, RUN_LABEL_NIGHTLY, MirrorResult
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +180,25 @@ SCORE_BANDS: Dict[str, Tuple[float, float]] = {
     "orchestration": (0.60, 0.80),
 }
 
+#: Gap 307's `context_drift`, graded on **`d3-context`'s band** rather than on a
+#: new pair of numbers. Two reasons, and the second is the one that matters:
+#:
+#:  1. Drift *is* a retrieval failure — "turn N is operating on the wrong rows
+#:     given turns 1..N-1" is the same class of statement `context_score` makes
+#:     about a single turn, so grading it on a different scale would be asserting
+#:     a calibration nobody has measured.
+#:  2. Every constant in this module is a live workbook panel's, and a test
+#:     (`test_each_band_is_still_the_live_panels_band`) parses both workbook JSONs
+#:     and fails if one drifts from the tile it mirrors. Inventing
+#:     `CONTEXT_DRIFT_RED = 0.5` would be the first band here with no tile behind
+#:     it. There is no drift tile today and adding one is a workbook deploy,
+#:     which is deliberately outside Gap 307's scope.
+#:
+#: Deliberately NOT a new key in `SCORE_BANDS`: that dict is iterated to read
+#: `stats["<key>_mean"]` out of the **`default`** bucket, and this dimension is
+#: only ever scored in the `default-multiturn` one.
+CONTEXT_DRIFT_BAND_KEY = "context"
+
 #: `d4-cost-per-turn`, USD.
 COST_PER_TURN_RED_USD = 0.02
 COST_PER_TURN_YELLOW_USD = 0.01
@@ -206,6 +229,14 @@ COMPONENT_HINTS = {
     "context": "retrieval — which invoice records the tools fetched (deterministic, no judge)",
     "orchestration": "the tool-call chain and its arithmetic (deterministic, no judge)",
     "pass_rate": "the soft-metric map below — pass_rate is a roll-up, not a cause",
+    # Gap 307. The hint names the two functions a drift finding is actually
+    # actionable in, because "the conversation lost track" is not a place anyone
+    # can go and look.
+    "context_drift": (
+        "multi-turn context — `get_chat_history()` / `get_prior_turn_sql()` in "
+        "agents/query_agent.py, and the failing script's turn in the run artifact "
+        "(the drift note names the leaked or lost entity)"
+    ),
 }
 
 
@@ -817,14 +848,38 @@ def _agent_eval_stats(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     Gap 316 deleted SAGE, but a multi-path payload is still a legal shape, so the
     path is *chosen* (preferring `default`) and named in the output rather than
     averaged away.
+
+    Gap 307: `MULTI_TURN_PATH` is excluded from that choice outright. It is a
+    bucket in the same dict but not a candidate for "the path this run measured"
+    — a run that produced only the drift tier (`--cases <script id>`) would
+    otherwise have its 12 harder turns graded against every `SCORE_BANDS`
+    threshold as though they were the 35-case baseline.
     """
     summary = payload.get("summary") or {}
     if not isinstance(summary, dict) or not summary:
         return "", {}
     if "default" in summary:
         return "default", summary.get("default") or {}
-    path = sorted(summary.keys())[0]
+    candidates = sorted(key for key in summary if key != MULTI_TURN_PATH)
+    if not candidates:
+        return "", {}
+    path = candidates[0]
     return str(path), summary.get(path) or {}
+
+
+def _multi_turn_stats(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Gap 307's drift bucket out of the same payload, or `{}` if the tier did not run.
+
+    Read by its own key rather than through `_agent_eval_stats()` on purpose:
+    that function *chooses* one path and would return the drift bucket on a run
+    where the single-turn tier was skipped, which would then be graded against
+    `SCORE_BANDS` as if it were the baseline. These are two populations and the
+    module never averages them.
+    """
+    summary = payload.get("summary") or {}
+    if not isinstance(summary, dict):
+        return {}
+    return summary.get(MULTI_TURN_PATH) or {}
 
 
 def evaluate_ai_improvement(
@@ -836,6 +891,14 @@ def evaluate_ai_improvement(
     Track 1 is optional and its absence is stated, not silently treated as a
     pass: the two tracks are separate processes in the nightly job's `&&` chain,
     so Track 2 only has Track 1's numbers if the handoff file was written.
+
+    Gap 307's multi-turn context-drift tier is graded here too, from the same
+    payload's `default-multiturn` bucket, and is **not** folded into the
+    single-turn numbers: it is a smaller and deliberately harder population, so
+    its mean rides its own finding while every existing band keeps reading the
+    `default` bucket it always read. A run where the tier did not run (or was
+    skipped with `--no-multi-turn`) records that on `errors` and grades
+    everything else, the same way a missing Track 1 handoff does.
     """
     errors: List[str] = []
     payload = agent_eval_payload or {}
@@ -920,6 +983,52 @@ def evaluate_ai_improvement(
             "ai improvement: no Track 1 (extraction benchmark) summary was handed over; "
             "recall / false-positive rate were not judged this run"
         )
+
+    # --- Gap 307, multi-turn context drift ---------------------------------
+    # Graded before the Track 2 guards below, deliberately: a run whose
+    # single-turn summary is missing still has a drift verdict worth keeping,
+    # and both early returns carry `findings` through.
+    drift_stats = _multi_turn_stats(payload)
+    drift_turns = int(_as_float(drift_stats.get("context_drift_scored_turns")) or 0)
+    drift_mean = _as_float(drift_stats.get("context_drift_mean"))
+    metrics["context_drift_turns"] = drift_turns
+    metrics["context_drift_mean"] = drift_mean
+    if not drift_stats:
+        errors.append(
+            "ai improvement: the multi-turn context-drift tier did not run "
+            f"(no {MULTI_TURN_PATH!r} bucket in this run's summary); drift was not judged"
+        )
+    elif drift_mean is None or not drift_turns:
+        errors.append(
+            "ai improvement: the multi-turn tier ran but scored no drift turn — "
+            "every script's expectations were skipped or unscoreable"
+        )
+    else:
+        # No n=20 guard on this one, and that is not an oversight. The guard
+        # exists because a *rate* over a small sample is noise; this is a fixed,
+        # exhaustive, deterministic script set — the same handful of pinned
+        # checks every night, with no sampling error to guard against. A drop
+        # here means one named check failed, and the note says which.
+        red_below, yellow_below = SCORE_BANDS[CONTEXT_DRIFT_BAND_KEY]
+        severity = _severity_for_lower_bound(drift_mean, red_below, yellow_below)
+        if severity:
+            crossed = red_below if severity == SEVERITY_RED else yellow_below
+            findings.append(
+                Finding(
+                    field="context_drift",
+                    value=round(drift_mean, 4),
+                    severity=severity,
+                    detail=(
+                        f"context drift is {drift_mean:.3f} over {drift_turns} scored "
+                        f"multi-turn turn(s), below {crossed:.2f} "
+                        f"(graded on `d3-context`'s band — see CONTEXT_DRIFT_BAND_KEY)"
+                    ),
+                    recommendation=(
+                        "A multi-turn script lost or kept the wrong subject — look at "
+                        f"{COMPONENT_HINTS['context_drift']}."
+                    ),
+                )
+            )
 
     # --- Track 2, chat quality --------------------------------------------
     if not stats:
@@ -1014,6 +1123,10 @@ def evaluate_ai_improvement(
         f"{turns} graded turn(s) on path {path!r}: pass rate {stats.get('pass_rate')}, "
         "every scored dimension inside its workbook band"
     )
+    if drift_mean is not None and drift_turns:
+        worked += (
+            f"; context drift {drift_mean:.3f} over {drift_turns} multi-turn turn(s)"
+        )
     if extraction_summary:
         worked += (
             f"; extraction recall {metrics.get('alert_recall_pct')}%, "

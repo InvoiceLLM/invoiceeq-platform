@@ -103,6 +103,22 @@ RUN_LABEL_NIGHTLY = "nightly"
 RUN_LABEL_PREDEPLOY = "predeploy"
 RUN_LABEL_ADHOC = "adhoc"
 
+#: Gap 307 (2026-08-26): the summary bucket the multi-turn context-drift tier
+#: reports under, kept out of `default` on purpose. `summarise()` keys its output
+#: by *path*, and `evaluate_ai_improvement()` reads `summary["default"]` — so if
+#: the drift scripts' turns joined that bucket, the nightly pass rate and every
+#: quality mean would silently start being computed over a different, larger and
+#: deliberately harder population than every historical figure in the docs. A
+#: trend must not be redefined halfway through, which is the same reasoning that
+#: keeps the component scores out of `decide_pass()`.
+#:
+#: It lives here, next to the run labels, because it is shared *vocabulary*: the
+#: producer is `scripts/run_agent_eval.py` and the consumer is
+#: `services/ops_recommendation.py`, and neither may import the other (one is a
+#: script, the other is imported by the API). This module is already the place
+#: both of them get their run-cadence names from.
+MULTI_TURN_PATH = "default-multiturn"
+
 #: `write_run_artifacts()` names local run files with exactly this stamp format,
 #: so a run that also wrote locally is trivially matched to its blob.
 _STAMP_FORMAT = "%Y%m%dT%H%M%SZ"

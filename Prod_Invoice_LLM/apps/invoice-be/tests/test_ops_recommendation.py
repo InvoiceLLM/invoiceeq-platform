@@ -103,8 +103,23 @@ class _Snapshot:
             self.errors = []
 
 
-def _eval_payload(turns: int = 35, **stats: Any) -> dict:
-    """A `run_agent_eval.py` payload whose every scored dimension is green."""
+def _eval_payload(
+    turns: int = 35,
+    *,
+    drift_mean: Optional[float] = 1.0,
+    drift_turns: int = 7,
+    multi_turn: bool = True,
+    **stats: Any,
+) -> dict:
+    """A `run_agent_eval.py` payload whose every scored dimension is green.
+
+    Gap 307 (2026-08-26): a real nightly payload now carries **two** summary
+    buckets — the 35-case single-turn tier under `default` and the multi-turn
+    context-drift tier under `default-multiturn` — so the default builder does
+    too. `multi_turn=False` reproduces a run where the tier was skipped
+    (`--no-multi-turn`) or did not exist, which is a real state this module has
+    to report on rather than pass over.
+    """
     summary = {
         "turns": turns,
         "errors": 0,
@@ -119,10 +134,19 @@ def _eval_payload(turns: int = 35, **stats: Any) -> dict:
         "cost_per_turn_usd": 0.004,
     }
     summary.update(stats)
+    buckets: dict[str, Any] = {"default": summary}
+    if multi_turn:
+        buckets[benchmark_artifacts.MULTI_TURN_PATH] = {
+            "turns": 12,
+            "errors": 0,
+            "pass_rate": 0.83,
+            "context_drift_mean": drift_mean,
+            "context_drift_scored_turns": drift_turns,
+        }
     return {
         "judge_mode": "separate",
         "model_under_test": None,
-        "summary": {"default": summary},
+        "summary": buckets,
         "turns": [],
     }
 
@@ -556,6 +580,111 @@ def test_an_empty_eval_payload_is_no_data():
     result = rec.evaluate_ai_improvement({})
 
     assert result.status == rec.STATUS_NO_DATA
+
+
+# ---------------------------------------------------------------------------
+# Gap 307 — the multi-turn context-drift tier, inside category 3
+# ---------------------------------------------------------------------------
+
+
+def test_a_clean_drift_tier_is_reported_in_the_worked_explanation():
+    result = rec.evaluate_ai_improvement(_eval_payload())
+
+    assert result.status == rec.STATUS_WORKED
+    assert result.metrics["context_drift_mean"] == 1.0
+    assert result.metrics["context_drift_turns"] == 7
+    assert "context drift 1.000" in result.explanation
+
+
+@pytest.mark.parametrize(
+    "drift_mean, expected",
+    [
+        # `d3-context`'s grid is (0.50 red, 0.70 yellow) and is `< x`, so the
+        # threshold value itself is inside the better band.
+        (0.70, None),
+        (0.69, rec.SEVERITY_YELLOW),
+        (0.50, rec.SEVERITY_YELLOW),
+        (0.49, rec.SEVERITY_RED),
+    ],
+)
+def test_context_drift_is_graded_on_the_context_tiles_band_not_a_new_one(drift_mean, expected):
+    """Deliberately not a new pair of numbers: every band in this module is a
+    live workbook tile's, and there is no drift tile. Drift is a retrieval
+    failure, so it borrows `d3-context`'s band — which means the pinning test
+    below already covers it."""
+    result = rec.evaluate_ai_improvement(_eval_payload(drift_mean=drift_mean))
+
+    if expected is None:
+        assert result.status == rec.STATUS_WORKED
+    else:
+        assert [f.field for f in result.findings] == ["context_drift"]
+        assert result.findings[0].severity == expected
+        assert result.findings[0].value == drift_mean
+
+
+def test_the_drift_band_is_literally_the_context_band():
+    assert rec.SCORE_BANDS[rec.CONTEXT_DRIFT_BAND_KEY] == rec.SCORE_BANDS["context"]
+    # And it is NOT its own SCORE_BANDS key: that dict is iterated against the
+    # `default` bucket, where this dimension is never scored.
+    assert "context_drift" not in rec.SCORE_BANDS
+
+
+def test_a_drift_finding_names_where_to_look():
+    result = rec.evaluate_ai_improvement(_eval_payload(drift_mean=0.4))
+
+    assert "get_chat_history" in result.recommendation
+    assert "get_prior_turn_sql" in result.recommendation
+
+
+def test_the_drift_tier_is_not_subject_to_the_n_20_sample_guard():
+    """7 scored turns, every night, deterministically — there is no sampling
+    error to guard against, and an n=20 guard would disable the tier forever."""
+    result = rec.evaluate_ai_improvement(_eval_payload(drift_mean=0.4, drift_turns=7))
+
+    assert result.status == rec.STATUS_RECOMMEND
+    assert [f.field for f in result.findings] == ["context_drift"]
+
+
+def test_a_skipped_drift_tier_is_stated_never_treated_as_a_pass():
+    """Same rule as a missing Track 1 handoff: the absence is on `errors`, the
+    dimension is not silently green."""
+    result = rec.evaluate_ai_improvement(_eval_payload(multi_turn=False))
+
+    assert result.metrics["context_drift_mean"] is None
+    assert result.findings == []
+    assert any("context-drift tier did not run" in problem for problem in result.errors)
+    assert "context drift" not in result.explanation
+
+
+def test_a_drift_tier_that_scored_nothing_is_also_stated():
+    result = rec.evaluate_ai_improvement(_eval_payload(drift_mean=None, drift_turns=0))
+
+    assert any("scored no drift turn" in problem for problem in result.errors)
+    assert result.findings == []
+
+
+def test_the_drift_bucket_is_never_averaged_into_the_single_turn_numbers():
+    """The two populations are different sizes and different difficulties. A
+    drift mean of 0.0 must not move `context_mean`, and a single-turn tier
+    below its band must not be blamed on drift."""
+    clean_single_turn = rec.evaluate_ai_improvement(_eval_payload(drift_mean=0.0))
+
+    assert [f.field for f in clean_single_turn.findings] == ["context_drift"]
+    assert clean_single_turn.metrics["context"] == 0.85
+    assert clean_single_turn.metrics["turns"] == 35
+
+
+def test_the_drift_bucket_is_never_mistaken_for_the_baseline_bucket():
+    """`_agent_eval_stats()` *chooses* a path and would return the drift bucket
+    on a payload that has only that one — which would then be graded against
+    every `SCORE_BANDS` key it does not have."""
+    payload = _eval_payload()
+    payload["summary"].pop("default")
+
+    result = rec.evaluate_ai_improvement(payload)
+
+    assert result.status == rec.STATUS_NO_DATA
+    assert result.metrics["context_drift_mean"] == 1.0
 
 
 # ---------------------------------------------------------------------------

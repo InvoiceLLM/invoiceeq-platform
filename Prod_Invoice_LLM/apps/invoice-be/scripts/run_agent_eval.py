@@ -46,9 +46,19 @@ cases the judge grades against the first 12,000 only and marks correct claims
 drawn from later pages unsupported. Faithfulness on `large_invoice_full_detail`
 is therefore not comparable to faithfulness on the small cases.
 
+Gap 307 (2026-08-26) added a second tier to the same run: `benchmarks/
+agent_eval_multiturn.py`'s five multi-turn context-drift scripts. They go through
+this same script, this same `run_turn()` and this same judge, differing in three
+things only -- one shared `session_id` per script, a `ChatMessage` write-back
+between turns (`record_turn_messages()`, because `run_query_agent()` persists
+nothing and drift lives in the rows it reads), and their own summary bucket
+`MULTI_TURN_PATH` so the single-turn trend keeps its population. `--no-multi-turn`
+skips them.
+
 Run:
     python scripts/run_agent_eval.py --paths default
     python scripts/run_agent_eval.py --paths default --cases greeting_no_tool
+    python scripts/run_agent_eval.py --paths default --cases drift_subject_switch_vendor
     python scripts/run_agent_eval.py --paths default --persist-url postgresql://...
     python scripts/run_agent_eval.py --paths default --provider azure --model gpt-4o
     python scripts/run_agent_eval.py --paths default --provider ollama --model llama3.2:latest
@@ -125,10 +135,15 @@ from benchmarks.agent_eval_golden_sample import (  # noqa: E402
     chunks_for_tenant,
     stats_for_tenant,
 )
+from benchmarks.agent_eval_multiturn import (  # noqa: E402
+    MULTI_TURN_CASES,
+    cases_for as multi_turn_scripts_for,
+)
 from benchmarks.large_invoice_fixture import LARGE, SMALL  # noqa: E402
 from benchmarks.region_seed_fixtures import CHUNK_INVOICE_NUMBERS  # noqa: E402
 from benchmarks.sage_seed_fixtures import _seed  # noqa: E402
 from services.benchmark_artifacts import (  # noqa: E402
+    MULTI_TURN_PATH,
     RUN_LABEL_ADHOC,
     RUN_LABEL_NIGHTLY,
     RUN_LABEL_PREDEPLOY,
@@ -568,6 +583,8 @@ def run_turn(
     chunks: list[dict],
     invoice_chunks: Optional[dict] = None,
     model_under_test: Optional[str] = None,
+    session_id: Optional[str] = None,
+    turn_index: int = 1,
 ) -> dict:
     """One real turn through one path, measured. Never raises — a failure is data.
 
@@ -575,11 +592,18 @@ def run_turn(
     `_candidate_model()` block the caller is already inside. Carrying it on the
     turn means the output JSON says which model produced each answer instead of
     that being knowable only from the command line that was typed.
+
+    `session_id`/`turn_index` (Gap 307) are what make the multi-turn tier a
+    conversation rather than N independent questions. Default to a fresh session
+    and turn 1, which is exactly what every single-turn case wants and is what
+    this function did unconditionally before: a golden case is standalone, and
+    giving two of them one session would let one case's history contaminate the
+    next.
     """
     from agents.query_agent import run_query_agent
 
     recorder = _ToolOutputRecorder()
-    session_id = str(uuid4())
+    session_id = session_id or str(uuid4())
 
     started = time.perf_counter()
     error: Optional[str] = None
@@ -606,6 +630,11 @@ def run_turn(
         # saved output file (and every persisted row) says so, rather than that
         # being knowable only by looking the case up in the golden sample.
         "tenant_id": case.tenant_id,
+        # Gap 307. 1 and a unique session on every single-turn case; a shared
+        # session and 1..N on a multi-turn script, so the artifact can be read
+        # as a conversation without consulting this file.
+        "session_id": session_id,
+        "turn_index": turn_index,
         "agent_name": AGENT_DEFAULT_PATH,
         # None means "the application's own configured model", not "unknown".
         "model_under_test": model_under_test,
@@ -655,6 +684,12 @@ def score_turn(turn: dict, case: GoldenCase, judge_llm, combined_judge: bool = F
         expected_invoice_ids=case.expected_invoice_numbers,
         fetched_invoice_ids=turn.get("fetched_invoice_numbers"),
         combined_judge=combined_judge,
+        # Gap 307. None on all 35 single-turn cases, so this dimension stays
+        # unscored there rather than being invented -- and it costs no judge
+        # call in either mode, being a deterministic component like
+        # `context_score`.
+        drift=getattr(case, "drift", None),
+        generated_sql=turn.get("generated_sql"),
     )
     turn.update(
         {
@@ -665,6 +700,7 @@ def score_turn(turn: dict, case: GoldenCase, judge_llm, combined_judge: bool = F
             "context_score": scores.context_score,
             "orchestration_score": scores.orchestration_score,
             "persona_score": scores.persona_score,
+            "context_drift_score": scores.context_drift_score,
             # None in separate mode, which does not score them at all.
             "helpfulness_score": scores.helpfulness_score,
             "completeness_score": scores.completeness_score,
@@ -676,6 +712,107 @@ def score_turn(turn: dict, case: GoldenCase, judge_llm, combined_judge: bool = F
         }
     )
     return turn
+
+
+# ---------------------------------------------------------------------------
+# Gap 307 — the multi-turn context-drift tier
+# ---------------------------------------------------------------------------
+
+
+def record_turn_messages(session, session_id: str, question: str, turn: dict, started_at) -> None:
+    """Write the user/assistant `ChatMessage` pair this turn would have produced.
+
+    **Why the harness has to do this at all.** `run_query_agent()` persists
+    nothing — `routers/chat.py::post_chat_message` and
+    `queue_worker/handlers.py::handle_process_chat_job` are what write the rows,
+    and neither is in this harness's path. But the two functions drift actually
+    happens in read exactly those rows: `get_chat_history()` (the last 50
+    messages of the session, trimmed to 3,000 tokens) and `get_prior_turn_sql()`
+    (Gap 237's fix — the most recent assistant row whose `generated_sql` is not
+    null). Without this write-back a "conversation" would be N independent first
+    turns and every drift check would pass vacuously.
+
+    Mirrors the synchronous path's row shape, not a simplified one:
+    `generated_sql`, `citations` and `result_invoice_ids` are all carried,
+    because `get_prior_turn_sql()` filters on the first of them being non-null.
+
+    `created_at` is stamped explicitly — the user row at the moment the turn
+    started, the assistant row at the moment it finished — rather than left to
+    `datetime.utcnow()`'s default. Both orderings that matter (user before
+    assistant within a turn, turn N before turn N+1) then hold by construction
+    instead of by microsecond luck, and both timestamps are real measured
+    instants, so `_session_turn_position()`'s `seconds_since_prev_turn` stays
+    meaningful.
+    """
+    from models import ChatMessage
+
+    session.add(
+        ChatMessage(
+            id=uuid4(),
+            session_id=UUID(session_id),
+            role="user",
+            content=question,
+            status="completed",
+            created_at=started_at,
+        )
+    )
+    session.add(
+        ChatMessage(
+            id=uuid4(),
+            session_id=UUID(session_id),
+            role="assistant",
+            content=turn.get("answer") or "",
+            generated_sql=turn.get("generated_sql"),
+            citations=turn.get("citations") or [],
+            result_invoice_ids=[],
+            status="completed",
+            created_at=datetime.utcnow(),
+        )
+    )
+    session.commit()
+
+
+def run_multi_turn_script(
+    script,
+    path: str,
+    session,
+    stats: str,
+    chunks: list[dict],
+    invoice_chunks: Optional[dict] = None,
+    model_under_test: Optional[str] = None,
+) -> list[dict]:
+    """Run one scripted conversation in order, on one shared session id.
+
+    Returns the turns in order. Each is measured exactly the way a single-turn
+    case is — same `run_turn()`, same recorder, same counter — the only
+    differences being the shared `session_id`, the 1-based `turn_index`, and the
+    `ChatMessage` write-back between turns.
+
+    The turns are *not* scored here. Scoring is the caller's job for the same
+    reason it is on the single-turn loop: the judge is billable and `--no-score`
+    has to be able to skip it while the measurement still happens.
+    """
+    session_id = str(uuid4())
+    turns: list[dict] = []
+    for index, case in enumerate(script.turns, start=1):
+        started_at = datetime.utcnow()
+        turn = run_turn(
+            case,
+            path,
+            session,
+            stats,
+            chunks,
+            invoice_chunks,
+            model_under_test=model_under_test,
+            session_id=session_id,
+            turn_index=index,
+        )
+        turn["script_id"] = script.script_id
+        turns.append(turn)
+        # After the turn, before the next one: the next turn's prompt is built
+        # from these rows.
+        record_turn_messages(session, session_id, case.question, turn, started_at)
+    return turns
 
 
 def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: str) -> int:
@@ -710,6 +847,22 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                         else None
                     ),
                     f"sql={'yes' if turn.get('generated_sql') else 'no'}",
+                    # Gap 307. `AgentEvalRun` has no `context_drift_score`
+                    # column and none is added: the three component columns
+                    # came with a migration each, and this dimension is scored
+                    # on 8 of 47 turns. It rides in `notes` the same way
+                    # `judge_mode` does, and lands first-class on the telemetry
+                    # event below, which is what the workbook reads anyway.
+                    (
+                        f"turn={turn['script_id']}#{turn.get('turn_index')}"
+                        if turn.get("script_id")
+                        else None
+                    ),
+                    (
+                        f"context_drift={turn['context_drift_score']}"
+                        if turn.get("context_drift_score") is not None
+                        else None
+                    ),
                     # `tools=` / `stop_reason=` were emitted here for the deleted
                     # SAGE path (Gap 316). `services/online_eval_signals.py` still
                     # parses them off historical `AgentEvalRun.notes` rows, which
@@ -766,6 +919,20 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                         ("helpfulness_score", turn.get("helpfulness_score")),
                         ("completeness_score", turn.get("completeness_score")),
                         ("tone_score", turn.get("tone_score")),
+                        # Gap 307, same mechanism and the same absent-stays-absent
+                        # rule: a single-turn case emits no field here at all,
+                        # rather than a 0.0 that would read as total drift on
+                        # every greeting in the bank.
+                        ("context_drift_score", turn.get("context_drift_score")),
+                        ("script_id", turn.get("script_id")),
+                        # Guarded on `script_id`, not on itself: every
+                        # single-turn case is turn 1, and emitting a constant
+                        # `turn_index=1` on all 35 of them would change the
+                        # baseline event's shape to say nothing.
+                        (
+                            "turn_index",
+                            turn.get("turn_index") if turn.get("script_id") else None,
+                        ),
                     )
                     if value is not None
                 },
@@ -873,6 +1040,12 @@ def summarise(turns: list[dict]) -> dict:
             "orchestration_scored_turns": len(scored("orchestration_score")),
             "persona_mean": mean(scored("persona_score")),
             "persona_scored_turns": len(scored("persona_score")),
+            # Gap 307. Reported with its denominator for the same reason
+            # `persona_mean` is, and more so: this is scored on the drift turns
+            # of the multi-turn tier only, so on the `default` bucket both of
+            # these are None/0 by construction rather than by accident.
+            "context_drift_mean": mean(scored("context_drift_score")),
+            "context_drift_scored_turns": len(scored("context_drift_score")),
             # Feature 23 Track 2 (2026-08-23). None on a separate-judge run,
             # which does not score these at all -- absent, not zero.
             "judge_mode": sorted({t.get("judge_mode") for t in rows if t.get("judge_mode")}),
@@ -999,7 +1172,14 @@ def main() -> None:
         default="default",
         help="comma list; `default` is the only path since Gap 316 deleted SAGE",
     )
-    parser.add_argument("--cases", default=None, help="comma list of case ids (default: all)")
+    parser.add_argument(
+        "--cases",
+        default=None,
+        help=(
+            "comma list of case ids (default: all). A multi-turn script id, or any "
+            "case id belonging to one, selects that whole script -- see --no-multi-turn"
+        ),
+    )
     parser.add_argument("--persist-url", default=None, help="SQLAlchemy URL for agent_eval_run rows")
     parser.add_argument("--no-persist", action="store_true")
     parser.add_argument("--no-score", action="store_true", help="measure only; skip the judge")
@@ -1053,15 +1233,28 @@ def main() -> None:
         help=(
             "which cadence produced this run, carried on the agent_eval_summary "
             "telemetry event and in the artifact blob name. The nightly job runs all "
-            "35 cases (20 base tenant + Wave 3's 15 India/US/EU cases); the pre-deploy "
-            "gate runs a 5-case subset -- mixing the two into one unlabelled trend "
-            "would show every push as a quality cliff."
+            "35 single-turn cases (20 base tenant + Wave 3's 15 India/US/EU cases) "
+            "plus Gap 307's 5 multi-turn drift scripts (12 turns, own bucket); the "
+            "pre-deploy gate runs a 5-case subset -- mixing the two into one "
+            "unlabelled trend would show every push as a quality cliff."
         ),
     )
     parser.add_argument(
         "--no-mirror",
         action="store_true",
         help="emit no agent_eval_summary event and upload no artifact (local run, offline)",
+    )
+    parser.add_argument(
+        "--no-multi-turn",
+        action="store_true",
+        help=(
+            "skip Gap 307's multi-turn context-drift tier "
+            "(benchmarks/agent_eval_multiturn.py). It runs by default, the way every "
+            f"other golden-bank tier does, and reports under the {MULTI_TURN_PATH!r} "
+            "summary bucket rather than under `default` -- so the single-turn trend is "
+            "the same series it always was. This flag exists for a developer's own run: "
+            "the tier is 12 extra graded turns."
+        ),
     )
     parser.add_argument(
         "--persist-candidate",
@@ -1097,8 +1290,14 @@ def main() -> None:
     )
 
     paths = [p.strip() for p in args.paths.split(",") if p.strip()]
-    selected = [c for c in CASES if not args.cases or c.case_id in args.cases.split(",")]
+    requested = {c.strip() for c in args.cases.split(",")} if args.cases else set()
+    selected = [c for c in CASES if not requested or c.case_id in requested]
+    # Gap 307. Selected by script, never by individual turn -- running turn 2
+    # without turn 1 is not running turn 2, it is running a different and much
+    # easier question. See `benchmarks/agent_eval_multiturn.cases_for()`.
+    scripts = [] if args.no_multi_turn else multi_turn_scripts_for(requested)
     case_by_id = {c.case_id: c for c in selected}
+    case_by_id.update({c.case_id: c for c in MULTI_TURN_CASES})
 
     from utils.llm import get_llm
 
@@ -1114,7 +1313,11 @@ def main() -> None:
         print(f"Model under test (chat paths only, this run only): {model_under_test}")
         if args.api_version:
             print(f"  api_version override: {args.api_version}")
-    print(f"Cases: {len(selected)}  Paths: {paths}")
+    print(
+        f"Cases: {len(selected)}  Paths: {paths}  "
+        f"Multi-turn scripts: {len(scripts)} "
+        f"({sum(len(s.turns) for s in scripts)} turn(s), bucket {MULTI_TURN_PATH!r})"
+    )
 
     engine = create_engine(
         "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -1191,6 +1394,60 @@ def main() -> None:
                                 f"completeness={turn['completeness_score']} "
                                 f"(judge calls={turn['judge_llm_calls']})"
                             )
+                    turns.append(turn)
+
+            # Gap 307's multi-turn tier, after the single-turn bank and inside
+            # the same candidate-model block. It reports under its own path
+            # bucket (`MULTI_TURN_PATH`), so `summarise()` keeps the `default`
+            # series over exactly the same population it has always covered --
+            # see that constant's own comment for why that matters more than
+            # tidiness.
+            for script in scripts:
+                print(
+                    f"\n=== script {script.script_id} "
+                    f"({len(script.turns)} turns) [{MULTI_TURN_PATH}] ==="
+                )
+                script_turns = run_multi_turn_script(
+                    script,
+                    MULTI_TURN_PATH,
+                    session,
+                    stats_for_tenant(script.tenant_id),
+                    chunks_for_tenant(script.tenant_id),
+                    invoice_chunks,
+                    model_under_test=model_under_test,
+                )
+                for turn in script_turns:
+                    print(
+                        f"  turn {turn['turn_index']} {turn['case_id']}: "
+                        f"llm_calls={turn['llm_call_count']}  "
+                        f"latency={turn['latency_ms']:.0f}ms  "
+                        f"sql={'yes' if turn['generated_sql'] else 'no'}  err={turn['error']}"
+                    )
+                    if not args.no_score:
+                        case = case_by_id[turn["case_id"]]
+                        turn = score_turn(
+                            turn, case, judge_llm, combined_judge=args.judge == "combined"
+                        )
+                        print(
+                            f"    faithfulness={turn['faithfulness_score']} "
+                            f"relevance={turn['relevance_score']} "
+                            f"accuracy={turn['accuracy_score']} pass={turn['passed']}"
+                        )
+                        print(
+                            f"    context={turn['context_score']} "
+                            f"orchestration={turn['orchestration_score']} "
+                            f"context_drift={turn['context_drift_score']}"
+                        )
+                        if turn.get("context_drift_score") is not None and (
+                            turn["context_drift_score"] < 1.0
+                        ):
+                            # The drift note names the leaked/lost entity. Printed
+                            # at the point of failure because "which subject did
+                            # it wander onto" is the whole diagnostic value here,
+                            # and stdout is what a nightly job's reader sees first.
+                            for note in turn.get("score_notes", "").split(" | "):
+                                if note.startswith("drift"):
+                                    print(f"    !! {note}")
                     turns.append(turn)
 
     summary = summarise(turns)

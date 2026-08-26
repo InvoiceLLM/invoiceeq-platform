@@ -440,14 +440,33 @@ def test_track_1_event_has_no_blob_field_when_the_upload_failed(monkeypatch, cap
 # ---------------------------------------------------------------------------
 
 
-def test_track_2_event_carries_all_nine_scored_dimensions_with_their_denominators(caplog):
+def test_track_2_event_carries_every_scored_dimension_with_its_denominators(caplog):
+    """Every dimension the run actually *scored* reaches the event.
+
+    Iterated over the payload's own keys rather than over the whole of
+    `EVAL_SCORE_DIMENSIONS` since Gap 307 (2026-08-26): `context_drift` is
+    scored only in the multi-turn bucket, so it is legitimately absent from a
+    `default`-bucket event and asserting otherwise would demand a 0.0 for a
+    dimension that was never measured. The "nothing silently dropped" guard the
+    original name promised is still here — it is just anchored to what was
+    scored, and the drift half of it is the test below.
+    """
+    payload = _agent_eval_payload()
     with caplog.at_level(logging.INFO):
-        result = mirror_agent_eval_run(_agent_eval_payload(), run_label=RUN_LABEL_NIGHTLY)
+        result = mirror_agent_eval_run(payload, run_label=RUN_LABEL_NIGHTLY)
 
     assert result.events == 1
     record = _events(caplog, telemetry.AGENT_EVAL_SUMMARY_EVENT_NAME)[0]
-    for dimension in telemetry.EVAL_SCORE_DIMENSIONS:
+    scored = [
+        dimension
+        for dimension in telemetry.EVAL_SCORE_DIMENSIONS
+        if payload["summary"]["default"].get(f"{dimension}_mean") is not None
+    ]
+    assert len(scored) == len(telemetry.EVAL_SCORE_DIMENSIONS) - 1
+    assert "context_drift" not in scored
+    for dimension in scored:
         assert hasattr(record, f"{dimension}_mean"), dimension
+    assert not hasattr(record, "context_drift_mean")
     assert record.faithfulness_mean == 0.806
     assert record.tone_mean == 0.99
     # `persona_score` is NULL on most turns by design — its mean is over 3 of
@@ -483,6 +502,35 @@ def test_track_2_soft_metrics_are_absent_on_a_separate_judge_run(caplog):
     # The six the separate judge does score are still all there.
     for dimension in ("faithfulness", "relevance", "accuracy", "context", "orchestration", "persona"):
         assert hasattr(record, f"{dimension}_mean")
+
+
+def test_the_multi_turn_bucket_is_mirrored_as_its_own_event_carrying_drift(caplog):
+    """Gap 307. The tier rides the existing per-path mechanism — a second
+    `agent_eval_summary` event with `path="default-multiturn"`, not a new event
+    type — and `context_drift_mean` appears there and only there."""
+    payload = _agent_eval_payload()
+    payload["summary"][benchmark_artifacts.MULTI_TURN_PATH] = {
+        "turns": 12,
+        "errors": 0,
+        "pass_rate": 0.75,
+        "faithfulness_mean": 0.88,
+        "judge_mode": ["combined"],
+        "context_drift_mean": 0.93,
+        "context_drift_scored_turns": 7,
+    }
+
+    with caplog.at_level(logging.INFO):
+        result = mirror_agent_eval_run(payload)
+
+    records = {r.path: r for r in _events(caplog, telemetry.AGENT_EVAL_SUMMARY_EVENT_NAME)}
+    assert result.events == 2
+    drift_event = records[benchmark_artifacts.MULTI_TURN_PATH]
+    assert drift_event.context_drift_mean == 0.93
+    assert drift_event.context_drift_scored_turns == 7
+    assert drift_event.turns == 12
+    # And the baseline event is unchanged by the tier's existence.
+    assert not hasattr(records["default"], "context_drift_mean")
+    assert records["default"].turns == 20
 
 
 def test_track_2_emits_one_event_per_path_not_one_per_run(caplog):

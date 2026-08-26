@@ -124,8 +124,15 @@ def _run_main(
     Its telemetry mirror (Gap 319) is **not** stubbed — it emits log records and
     makes no network call of its own, so leaving it live is what lets the tests
     below assert on the events a nightly run really produces.
+
+    Gap 307's multi-turn tier is emptied for exactly the same reason `CASES` is:
+    it runs by default (that is the point of it being a tier and not a flag), so
+    without this a CLI test would make twelve real Azure OpenAI calls. Emptied
+    via the selector rather than the list, because that is the seam `main()`
+    actually calls.
     """
     monkeypatch.setattr(script, "CASES", [])
+    monkeypatch.setattr(script, "multi_turn_scripts_for", lambda *a, **k: [])
     monkeypatch.setattr(script, "persist", lambda *a, **k: 0)
     monkeypatch.setattr(script, "configure_run_telemetry", lambda: exporter_attached)
     monkeypatch.setattr(script, "mirror_agent_eval_run", lambda *a, **k: MirrorResult())

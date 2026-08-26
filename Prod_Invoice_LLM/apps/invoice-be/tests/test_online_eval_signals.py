@@ -158,11 +158,20 @@ def test_budget_exhaustion_is_read_out_of_the_eval_notes(db):
 
 def test_budget_exhaustion_declares_itself_offline_only_and_names_the_gap(db):
     """The doc calls budget exhaustion a trace-level property "currently
-    invisible outside a debugger". This module must not pretend otherwise."""
+    invisible outside a debugger". This module must not pretend otherwise.
+
+    Updated 2026-08-26 (Gap 305): the caveat used to end with a "GAP: needs a
+    stop_reason column or Trace-level capture to become a production signal"
+    to-do. Gap 316 overtook that — there is no live path left to promote it
+    from — so the assertion moved to the stronger claim the caveat now makes.
+    The intent of the test is unchanged: this signal may never present itself
+    as a measurement of production.
+    """
     signal = budget_exhaustion_rate(db, **WINDOW)
     assert signal.confidence == CONFIDENCE_OFFLINE_ONLY
-    assert "GAP:" in signal.caveat
     assert "stop_reason" in signal.caveat
+    assert "DEAD as of Gap 316" in signal.caveat
+    assert "founder decision" in signal.caveat
 
 
 def test_production_judged_rows_are_not_counted_as_eval_rows(db):
@@ -639,3 +648,113 @@ def test_a_broken_emitter_never_loses_a_computed_window(db, monkeypatch):
 
     monkeypatch.setattr(telemetry, "_emit_event", _explode)
     assert emit_online_signals(compute_online_signals(db, now=NOW)) == 5
+
+
+# ---------------------------------------------------------------------------
+# Gap 305 / Gap 316 — which signals SAGE's deletion actually killed
+#
+# Gap 316's tracker entry calls both `budget_exhaustion_rate` and
+# `clarification_rate` "permanently degenerate". That is true of the first and
+# only half true of the second, and the difference decides whether a number on
+# the workbook is worth reading — so it is pinned here rather than left to prose.
+# ---------------------------------------------------------------------------
+
+
+#: The `notes` string `scripts/run_agent_eval.py::persist()` builds *today*,
+#: reproduced field-for-field from its own join rather than paraphrased. Gap 316
+#: removed the `tools=`/`stop_reason=` fragments that used to sit between `sql=`
+#: and `error=`; this constant is what makes the two tests below a real check on
+#: the writer's current output instead of a restatement of the reader's code.
+POST_GAP_316_EVAL_NOTES = (
+    "case=spend_by_vendor_q1; source=golden; judge_mode=separate; sql=yes; "
+    "faithfulness 0.90; relevance 0.95"
+)
+
+
+def test_budget_exhaustion_is_dead_against_notes_written_after_gap_316(db):
+    """The signal has no denominator left, and says so as None rather than 0.0.
+
+    `run_agent_eval.py` stopped writing `stop_reason=` when Gap 316 deleted the
+    SAGE path that produced one, so no row written from 2026-08-25 onward can
+    match. The distinction this asserts is the whole reason `SignalResult.value`
+    is Optional: a `0.0` here would render as a healthy green "0% of turns
+    exhausted their budget" on a signal that is in fact measuring nothing.
+    """
+    for _ in range(5):
+        add_eval_run(db, POST_GAP_316_EVAL_NOTES)
+
+    signal = budget_exhaustion_rate(db, **WINDOW)
+
+    assert signal.denominator == 0
+    assert signal.numerator == 0
+    assert signal.value is None
+    assert signal.breached is False
+    # The rows exist and are being read — the signal is dead, not the query.
+    assert signal.detail["eval_rows_in_window"] == 5
+    assert signal.detail["stop_reasons_seen"] == {}
+    assert "DEAD as of Gap 316" in signal.caveat
+
+
+def test_a_historical_stop_reason_row_still_reads_correctly(db):
+    """Gap 316 is a stop in the writer, not a break in the reader.
+
+    Pinned because the two are easy to conflate: if someone "cleans up" the
+    `STOP_REASON_*` constants as dead code, every past window silently changes
+    its answer. This also fails the moment a writer starts emitting
+    `stop_reason=` again, which is the signal to re-read the module docstring.
+    """
+    add_eval_run(db, "case=old; stop_reason=tool_call_budget_exhausted")
+    add_eval_run(db, "case=old; stop_reason=clarification_requested")
+    add_eval_run(db, POST_GAP_316_EVAL_NOTES)
+
+    signal = budget_exhaustion_rate(db, **WINDOW)
+
+    assert (signal.numerator, signal.denominator) == (1, 2)
+    assert signal.value == 0.5
+    assert signal.detail["eval_rows_in_window"] == 3
+
+
+def test_clarification_rate_still_measures_live_traffic_after_gap_316(db):
+    """The half of this signal that Gap 316 did NOT kill.
+
+    Its headline rate comes from `chat_message` assistant rows and never had a
+    SAGE dependency, so it keeps working with zero eval rows in the window and
+    no `stop_reason` anywhere. Guards against the whole signal being deleted on
+    the strength of Gap 316's "permanently degenerate" wording.
+    """
+    session_id = make_session(db, TENANT_A)
+    add_turn(db, session_id, answer="Did you mean Acme Corp or Acme Holdings?")
+    add_turn(db, session_id, answer="You spent USD 1,000.00 in Q1.")
+    add_turn(db, session_id, answer="You spent USD 2,500.00 in Q2.")
+    add_turn(db, session_id, answer="You spent USD 900.00 in Q3.")
+
+    signal = clarification_rate(db, tenant_id=TENANT_A, **WINDOW)
+
+    assert (signal.numerator, signal.denominator) == (1, 4)
+    assert signal.value == 0.25
+    # ...while the offline cross-check is the part that is gone.
+    assert signal.detail["offline_turns_with_a_stop_reason"] == 0
+    assert signal.detail["offline_exact_clarification_turns"] == 0
+    assert signal.detail["offline_exact_rate"] is None
+
+
+def test_the_clarification_caveat_no_longer_blames_a_deleted_feature_flag(db):
+    """The caveat is the thing a reader uses to decide whether to believe the rate.
+
+    Before this fix it said a near-zero rate was expected because
+    `ENABLE_AGENTIC_SAGE` was off — i.e. that a low number was a configuration
+    artefact. Gap 316 deleted that flag and the path behind it, so leaving the
+    text in place would have taught a reader to dismiss a real rising
+    clarification rate as a config fact. Asserted on the emitted text because
+    that string is what reaches the panel, not the docstring.
+
+    The flag's *name* is deliberately still allowed to appear — the corrected
+    text quotes it in order to retract it, which is the additive-correction
+    pattern this repo uses. What must be gone is the dismissive claim itself.
+    """
+    signal = clarification_rate(db, **WINDOW)
+
+    assert "is expected today and is a configuration fact" not in signal.caveat
+    assert "sage_orchestrator" not in signal.caveat
+    assert "CORRECTED 2026-08-26 (Gap 305)" in signal.caveat
+    assert "a rise is a real quality signal" in signal.caveat

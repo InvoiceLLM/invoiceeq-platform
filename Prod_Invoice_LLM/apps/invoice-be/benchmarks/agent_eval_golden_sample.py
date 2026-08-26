@@ -47,7 +47,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 os.environ.setdefault("MOCK_EMBEDDINGS", "true")
 
@@ -111,6 +111,16 @@ class GoldenCase:
     #: docstring for why merging those rows into one tenant would have falsified
     #: several of the reference answers above rather than extended the set.
     tenant_id: str = TENANT_ID
+    #: Gap 307 (2026-08-26): a `services.agent_eval.DriftExpectation`, or None.
+    #: None on every case in this file and that is not an oversight — a
+    #: standalone question has no earlier turn to have drifted from, so the
+    #: dimension stays unscored rather than being invented at 1.0. It is typed
+    #: `Optional[Any]` rather than imported so this module keeps its property of
+    #: importing nothing from `services/`: it is pure fixture data, and the
+    #: multi-turn tier that does set this field
+    #: (`benchmarks/agent_eval_multiturn.py`) imports *this* module, not the
+    #: other way round.
+    drift: Optional[Any] = None
 
 
 CASES: list[GoldenCase] = [

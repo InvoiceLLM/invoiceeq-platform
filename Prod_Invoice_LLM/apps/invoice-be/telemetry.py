@@ -873,12 +873,18 @@ def track_extraction_benchmark_run(
         logger.debug("track_extraction_benchmark_run failed for %s", mode, exc_info=True)
 
 
-#: The nine scored dimensions of ``services.agent_eval.EvalScores``, in the
+#: The ten scored dimensions of ``services.agent_eval.EvalScores``, in the
 #: three groups that class's docstring keeps deliberately apart: answer-level
 #: (the only three ``decide_pass()`` reads), component-level (the "which part of
 #: the pipeline broke" decomposition), and soft-metric (combined judge only).
 #: Named here so the event and the workbook agree on one vocabulary and a
 #: dimension cannot be silently dropped from the mirror by a typo.
+#:
+#: ``context_drift`` joined the component group 2026-08-26 (Gap 307). It is
+#: scored only on the multi-turn tier, and ``track_agent_eval_summary()`` skips
+#: any dimension whose mean is None -- so the ``default`` bucket's event is
+#: byte-for-byte what it was before this line existed, and only the
+#: ``default-multiturn`` bucket carries the new attribute. No new event.
 EVAL_SCORE_DIMENSIONS = (
     "faithfulness",
     "relevance",
@@ -886,6 +892,7 @@ EVAL_SCORE_DIMENSIONS = (
     "context",
     "orchestration",
     "persona",
+    "context_drift",
     "helpfulness",
     "completeness",
     "tone",

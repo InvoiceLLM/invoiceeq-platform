@@ -29,6 +29,9 @@
     "deployAcr": {
       "value": true
     },
+    "sharedAcrName": {
+      "value": "acrinvoicellmdev2"
+    },
     "dbAdminLogin": {
       "value": "dbadmin"
     },
