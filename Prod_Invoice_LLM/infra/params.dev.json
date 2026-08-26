@@ -57,7 +57,9 @@
       "value": "sbanerji@admsofttech.com"
     },
     "monthlyBudgetAmount": {
-      "value": 150
+      // Live budget is ₹20,000/month (fixed 2026-08-23, Gap 295).
+      // Was 150 here (stale from initial scaffold) — corrected 2026-08-26.
+      "value": 20000
     },
     "backendImage": {
       "value": "acrinvoicellmdev.azurecr.io/invoice-be:latest"
@@ -78,7 +80,27 @@
       "value": "3MVG9.Houp75EVdbyeD7jb1ifYDKsbA13wj01m3m.S52wgdrGqf8yFPguY7jkx299zTSsAjlGIO_o1WcSK48g"
     },
     "sendgridSendingDomain": {
-      "value": ""
+      "value": "admsofttech.com"
+    },
+    "sendgridFromEmail": {
+      "value": "invoices@outbound.invoicellm.admsofttech.com"
+    },
+    "sendgridFromName": {
+      "value": "InvoiceLLM Platform"
+    },
+    "emailAppDomain": {
+      "value": "inbound.invoicellm.admsofttech.com"
+    },
+    "emailAppAddress": {
+      "value": "invoices@outbound.invoicellm.admsofttech.com"
+    },
+    "supportNotifyEmail": {
+      "value": "sbanerji@admsofttech.com"
+    },
+    "enableProductionQualityJudge": {
+      // true on the live dev container as of 2026-08-26. Gap 304 half 2.
+      // Adds 2 LLM calls/chat turn — confirm cost impact before setting true in prod.
+      "value": true
     },
     "clerkJwtIssuer": {
       "value": "https://great-baboon-11.clerk.accounts.dev"
