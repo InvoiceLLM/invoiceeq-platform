@@ -532,6 +532,13 @@ pull-back byte-comparison, live query proof against real Log Analytics, backend 
 is in `be_features_tracker.md`'s Gap 322 entry. The fix list and tier structure below are marked
 `[x] implemented` inline, per-item, rather than rewritten.
 
+**Update 2026-08-26 (infra-devops, Gap 325) — a new third workbook, plus both existing ones converted from
+tile-cards to grid tables.** The 30/55 counts above are themselves now stale: `cost_health_workbook.json` is
+**34 items** (4 new markdown subheaders, additive), `ai_control_tower_workbook.json` stays **55 items**
+(rename-only). A new standalone `ops_summary_workbook.json` (**4 items**) also exists as of this date. See
+"Ops Summary workbook + tile→table conversion (Gap 325, 2026-08-26)" below for the full design and
+`be_features_tracker.md`'s Gap 325 entry for full verification evidence.
+
 **Ownership boundary.** This section is written by senior-dev as a spec; the implementation is
 infra-devops's — the two workbook JSONs (`infra/monitoring/cost_health_workbook.json`,
 `infra/monitoring/ai_control_tower_workbook.json`) and their two narrow bicep templates
@@ -947,6 +954,79 @@ Listed so it cannot be silently expanded. Each of these is real work; none of it
 - **Any new production code change.** This redesign is workbook JSON + bicep only. The single exception
   that would force code — Fix 11's `SCORE_BANDS` constants — is called out above precisely so it gets its
   own gap rather than riding in unnoticed.
+
+## Ops Summary workbook + tile→table conversion (Gap 325, 2026-08-26)
+
+**Status: implemented and deployed live to `rg-invoice-llm-dev`.** Founder-approved, fully-hashed-out design
+session on 2026-08-26, the culmination of the Gap 322 redesign work above. This section is **additive**
+(hard rule 4) — nothing above it is rewritten. Full verification evidence is in `be_features_tracker.md`'s
+Gap 325 entry; this section records the design and the taxonomy.
+
+### A new resource: the Ops Summary workbook
+
+One table, one query, 4 rows, no scrolling — `infra/monitoring/ops_summary_workbook.json` +
+`infra/workbook-ops-summary-only.bicep`, pinned GUID `7107048d-2102-4882-ae14-f1e51c8bc21d`, deployed as a
+narrow standalone template matching `workbook-cost-health-only.bicep`'s pattern exactly. Columns:
+**Category | Status | Key metric | What's flagged | Recommendation | Recent Activity | Go to detail.**
+
+| Row | Status/Flagged/Recommendation source | Key metric source | Recent Activity source |
+|---|---|---|---|
+| Cost Control | latest `ops_recommendation`, `category=="cost"` | `azure_cost_snapshot.budget_percent_used` (independent path — real even when the `ops_recommendation` cost category itself is `no_data`) | `azure_cost_snapshot.day_over_day_change_pct`, only rendered when `abs(pct) > 10` |
+| Infrastructure | latest `ops_recommendation`, `category=="container_health"` | `red_count + yellow_count` from the same event, `"not measured"` (not a false-safe "0 issues") when `no_data`/`insufficient_data` | live `ContainerAppSystemLogs_CL`, filtered to 5 real event types, plain-English translated |
+| API Health | **live-computed, not `ops_recommendation`** — that category does not exist in `services/ops_recommendation.py`, deliberately not added | `AppRequests`, last 24h, overall error rate; `healthy`<5%, `degraded`>=5%, `no data`=0 requests | worst hourly-binned per-area spike, `Requests >= 5` floor to suppress noise |
+| AI Health | latest `ops_recommendation`, `category=="ai_improvement"` | extracted from the event's own `findings[].field=="pass_rate"` (the event does not mirror raw `metrics`); falls back to "n/a — see AI Control Tower Section D" when pass_rate was in-band this run | the single highest-severity `Finding.detail` (red ranked above yellow) |
+
+Status is normalized to a 5-value vocabulary (`healthy`/`warning`/`critical`/`degraded`/`no data`) so one
+`gridSettings.thresholdsGrid` colors every row correctly regardless of source category. "What's flagged" is
+shown whenever a row's status isn't `worked`/`healthy` (not only on `recommend`) — a `no_data` row's
+`explanation` is genuinely useful context, not just a recommendation.
+
+**Real live 4-row output, 2026-08-26** (see `be_features_tracker.md`'s Gap 325 entry for the full table) —
+Cost Control read `106.5% of budget` with a real `"Spend down 12.0% vs. yesterday"` comment; Infrastructure
+correctly showed `not measured` (Monitoring Reader RBAC still not deployed, a known open blocker) alongside a
+real translated container event; API Health read `healthy` with an honestly blank Recent Activity (no spike
+≥5% that day — never fabricated); AI Health read `critical`, `25.7% pass rate`, with a real most-severe
+finding as its comment.
+
+### Both detail workbooks: tile-cards → grid tables
+
+Every panel using `"visualization": "tiles"` + `tileSettings` converted to a plain grid — `visualization`/
+`tileSettings` removed, coloring preserved via a new `gridSettings.formatters` array using
+`"formatter": 18` (Workbooks' grid-column Thresholds formatter — distinct from tiles' `"formatter": 8`
+Big-Number formatter; the same `thresholdsOptions`/`thresholdsGrid` payload just relocated). 17 panels
+converted in `cost_health_workbook.json`, 32 in `ai_control_tower_workbook.json`.
+
+**3 named exceptions stay as line charts** (trend visibility is the point): `d5-trend-over-runs`,
+`e3-trend` (AI Control Tower), `alerts-trend` (Cost + Health) — all 3 explicitly given
+`"visualization": "linechart"` (they previously had no `visualization` key at all, i.e. were already
+rendering as the default grid the exception is meant to avoid).
+
+**"Recent Activity" added to `cost_health_workbook.json`'s Infrastructure panels**, real per-app/per-panel
+comments, never fabricated:
+- `container-status` — rewritten from a doubled app+metric-name row shape into one row per app
+  (`App | CPU% | Memory% | Recent Activity`), a genuine table-shape improvement over the tile-era layout.
+- `container-restarts` — same per-app `ContainerAppSystemLogs_CL` join added.
+- `db-status-postgres-liveness` — reuses its own already-computed liveness-blip count as a sentence (a
+  managed Postgres resource does not appear in `ContainerAppSystemLogs_CL`, so the container-app source does
+  not apply here).
+- `db-status-redis` — rewritten to pivot serverLoad/usedmemorypercentage into columns, plus a new
+  high-load-sample (`Average >= 90`) count as its Recent Activity.
+- `db-status-redis-liveness` deliberately got **no** Recent Activity column — no comparable live signal
+  exists for it, and fabricating one would violate the "never fabricate a comment" rule.
+
+### Taxonomy — section header renames (text only, panels unmoved)
+
+- `cost_health_workbook.json`: 4 new explicit markdown subheaders under Reliability — "Containers",
+  "Database", "Cache", "Message Queue" (the 5th, "Alerts", already existed as `## Recent Alerts`).
+- `ai_control_tower_workbook.json`: Section D → "Nightly Test Quality (Golden bank)", Section E →
+  "Extraction Quality (Extraction benchmark)", Section G → "Real Usage (Production quality judge)".
+
+### Explicitly OUT of scope for Gap 325
+
+- No `services/ops_recommendation.py` or any Python change — API Health is live-KQL-only.
+- No new Azure resource beyond the one Ops Summary workbook + its bicep template.
+- Gap 305's online-signals question untouched (Section F unchanged).
+- Gap 322's tier structure not re-litigated — this is a visualization-format conversion on top of it.
 
 ---
 

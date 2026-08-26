@@ -104,6 +104,12 @@ param appInsightsConnectionString string = ''
 @description('Score every real production chat turn with the online quality judge (Gap 304), writing an agent_eval_run row tagged run_source=production. Default false -- opt in per environment.')
 param enableProductionQualityJudge bool = false
 
+@description('Subscription ID services/azure_cost.py and ops_recommendation.py read Cost Management / Resource Graph from. Declared in config.py but never wired here until now -- without it, the cost sweep and the nightly recommendation pass cost/container_health categories both fail with "not configured".')
+param azureSubscriptionId string = subscription().subscriptionId
+
+@description('Resource group the cost/container-health reads are scoped to.')
+param azureCostResourceGroup string = resourceGroup().name
+
 @description('vCPU allocation, e.g. \'1.0\'. Passed to json() below since Container Apps requires cpu as a decimal, not a string.')
 param cpu string = '1.0'
 
@@ -333,6 +339,14 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'INBOUND_PARSE_SHARED_SECRET'
               secretRef: 'sendgrid-inbound-secret'
+            }
+            {
+              name: 'AZURE_SUBSCRIPTION_ID'
+              value: azureSubscriptionId
+            }
+            {
+              name: 'AZURE_COST_RESOURCE_GROUP'
+              value: azureCostResourceGroup
             }
             {
               name: 'SENDGRID_SENDING_DOMAIN'

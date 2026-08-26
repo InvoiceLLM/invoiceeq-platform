@@ -5,6 +5,12 @@
     "environment": {
       "value": "dev"
     },
+    "azureSubscriptionId": {
+      "value": "2ae37d8b-3189-474c-9508-4b3d7ceec4dd"
+    },
+    "azureCostResourceGroup": {
+      "value": "rg-invoice-llm-dev"
+    },
     "location": {
       "value": "eastus2"
     },

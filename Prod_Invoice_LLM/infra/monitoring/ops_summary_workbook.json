@@ -1,0 +1,109 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "subscription",
+            "version": "KqlParameterItem/1.0",
+            "name": "Subscription",
+            "label": "Subscription",
+            "type": 6,
+            "isRequired": true,
+            "value": "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "includeAll": false
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "shared-parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Ops Summary — one table, 4 rows, no scrolling. *Cost Control / Infrastructure / API Health / AI Health, one row each. Cost/Infrastructure/AI Health read the latest `ops_recommendation` run; API Health is live-computed straight from `AppRequests`. `Recent Activity` is a real per-category comment, never fabricated — blank when nothing notable happened. Detail lives on the Cost + Health and AI Control Tower workbooks; this page is the one-glance summary, not a replacement.*"
+      },
+      "name": "ops-summary-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let ops = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_ops_run = toscalar(ops | summarize max(run_ts));\nlet latest_ops = ops | where run_ts == latest_ops_run;\n//\nlet latest_cost_snapshot =\n    AppEvents\n    | where Name == \"azure_cost_snapshot\"\n    | extend cd = parse_json(Properties)\n    | summarize arg_max(TimeGenerated, budget_pct = todouble(cd.budget_percent_used), dod_pct = todouble(cd.day_over_day_change_pct));\nlet cost_budget_pct = toscalar(latest_cost_snapshot | project budget_pct);\nlet cost_dod_pct = toscalar(latest_cost_snapshot | project dod_pct);\n//\nlet cost_row = latest_ops\n    | where tostring(d.category) == \"cost\"\n    | extend status_raw = tostring(d.status), worst = tostring(d.worst_severity),\n             explanation = tostring(d.explanation), recommendation = tostring(d.recommendation)\n    | extend Status = case(status_raw == \"worked\", \"healthy\",\n                            status_raw == \"recommend\" and worst == \"red\", \"critical\",\n                            status_raw == \"recommend\", \"warning\",\n                            \"no data\")\n    | extend KeyMetric = iff(isnull(cost_budget_pct), \"n/a — see Cost + Health\", strcat(tostring(round(cost_budget_pct, 1)), \"% of budget\"))\n    | extend Flagged = iff(status_raw != \"worked\", explanation, \"\")\n    | extend Recommendation = iff(isempty(recommendation), \"\", recommendation)\n    | extend RecentActivity = iff(isnotnull(cost_dod_pct) and abs(cost_dod_pct) > 10,\n                                   strcat(\"Spend \", iff(cost_dod_pct > 0, \"up \", \"down \"), tostring(round(abs(cost_dod_pct), 0)), \"% vs. yesterday\"), \"\")\n    | project Category = \"Cost Control\", Status, KeyMetric, Flagged, Recommendation, RecentActivity, GoToDetail = \"Cost + Health -> Budget & Forecast\";\n//\nlet allowed_reasons = dynamic([\"SuccessfulRescale\",\"TriggeredScaleUp\",\"ReplicaUnhealthy\",\"ContainerCrashing\",\"RevisionUpdate\"]);\nlet reason_text = datatable(Reason_s: string, PlainEnglish: string)\n[\n    \"SuccessfulRescale\", \"scaled up/down\",\n    \"TriggeredScaleUp\", \"scaled up due to load\",\n    \"ReplicaUnhealthy\", \"a replica became unhealthy\",\n    \"ContainerCrashing\", \"a container crashed and restarted\",\n    \"RevisionUpdate\", \"a new version was deployed\"\n];\nlet latest_infra_event =\n    ContainerAppSystemLogs_CL\n    | where TimeGenerated > ago(7d)\n    | where Reason_s in (allowed_reasons)\n    | top 1 by TimeGenerated desc\n    | lookup kind=leftouter reason_text on Reason_s\n    | extend AgeMinutes = round((now() - TimeGenerated) / 1m, 0)\n    | extend RelativeTime = iff(AgeMinutes < 60, strcat(tostring(AgeMinutes), \"m ago\"), strcat(tostring(round(AgeMinutes / 60.0, 1)), \"h ago\"))\n    | extend Sentence = strcat(ContainerAppName_s, \" \", PlainEnglish, \", \", RelativeTime)\n    | project Sentence;\nlet infra_activity = toscalar(latest_infra_event | project Sentence);\n//\nlet infra_row = latest_ops\n    | where tostring(d.category) == \"container_health\"\n    | extend status_raw = tostring(d.status), worst = tostring(d.worst_severity),\n             explanation = tostring(d.explanation), recommendation = tostring(d.recommendation),\n             red_count = toint(d.red_count), yellow_count = toint(d.yellow_count)\n    | extend Status = case(status_raw == \"worked\", \"healthy\",\n                            status_raw == \"recommend\" and worst == \"red\", \"critical\",\n                            status_raw == \"recommend\", \"warning\",\n                            \"no data\")\n    | extend KeyMetric = iff(status_raw in (\"no_data\", \"insufficient_data\"), \"not measured\",\n                              strcat(tostring(coalesce(red_count, 0) + coalesce(yellow_count, 0)), \" app(s) with an issue\"))\n    | extend Flagged = iff(status_raw != \"worked\", explanation, \"\")\n    | extend Recommendation = iff(isempty(recommendation), \"\", recommendation)\n    | extend RecentActivity = iff(isnull(infra_activity), \"\", infra_activity)\n    | project Category = \"Infrastructure\", Status, KeyMetric, Flagged, Recommendation, RecentActivity, GoToDetail = \"Cost + Health -> Containers\";\n//\nlet api_requests = AppRequests\n    | where TimeGenerated > ago(24h)\n    | where AppRoleName != \"invoice-be-local-f20-verify\";\nlet api_total = toscalar(api_requests | count | project Count);\nlet api_errors = toscalar(api_requests | where Success == false | count | project Count);\nlet api_error_pct = iff(api_total > 0, round(100.0 * api_errors / api_total, 2), real(null));\nlet area_bucket = (T:(TimeGenerated:datetime, Name:string, Success:bool)) {\n    T\n    | extend Area = case(\n        Name has \"/invoices\" or Name has \"/email-ingestion\", \"Ingestion & Extraction\",\n        Name has \"/chat\",                                    \"Chat\",\n        Name has \"/audit\",                                   \"Review & Correction\",\n        Name has \"/autopilot\" or Name has \"/connectors\",     \"Autopilot & Connectors\",\n        Name has \"/dashboard\",                               \"Dashboard & Reporting\",\n        Name has \"/trainer\",                                 \"Trainer\",\n        Name has \"/billing\" or Name has \"/admin\",            \"Billing & Admin\",\n        Name has \"/settings/security\" or Name has \"/auth\",   \"Auth\",\n        \"Other\")\n};\nlet area_rates = area_bucket(api_requests)\n    | summarize Requests = count(), Errors = countif(Success == false) by Area\n    | extend ErrorPct = iff(Requests > 0, round(100.0 * Errors / Requests, 2), real(null))\n    | order by ErrorPct desc;\nlet worst_area = toscalar(area_rates | take 1 | project Area);\nlet worst_area_pct = toscalar(area_rates | take 1 | project ErrorPct);\nlet hourly_area_rates = area_bucket(api_requests)\n    | summarize Requests = count(), Errors = countif(Success == false) by Area, Hour = bin(TimeGenerated, 1h)\n    | extend ErrorPct = iff(Requests > 0, round(100.0 * Errors / Requests, 1), real(null))\n    | where Requests >= 5\n    | order by ErrorPct desc;\nlet worst_spike_area = toscalar(hourly_area_rates | take 1 | project Area);\nlet worst_spike_pct = toscalar(hourly_area_rates | take 1 | project ErrorPct);\nlet worst_spike_time = toscalar(hourly_area_rates | take 1 | project format_datetime(Hour, 'HH:mm'));\n//\nlet api_row = print x = 1\n    | extend Status = case(api_total == 0, \"no data\", api_error_pct >= 5.0, \"degraded\", \"healthy\")\n    | extend KeyMetric = iff(api_total == 0, \"no requests in last 24h\",\n                              strcat(tostring(api_error_pct), \"% error rate -- worst: \", worst_area))\n    | extend Flagged = iff(api_error_pct >= 5.0,\n                            strcat(worst_area, \" is the worst-performing area at \", tostring(worst_area_pct), \"% error rate\"), \"\")\n    | extend Recommendation = iff(api_error_pct >= 5.0,\n                                   strcat(\"Investigate the \", worst_area, \" endpoints -- error rate crossed 5%.\"), \"\")\n    | extend RecentActivity = iff(isnotnull(worst_spike_pct) and worst_spike_pct >= 5.0,\n                                   strcat(worst_spike_area, \" error rate spiked to \", tostring(worst_spike_pct), \"% at \", worst_spike_time), \"\")\n    | project Category = \"API Health\", Status, KeyMetric, Flagged, Recommendation, RecentActivity, GoToDetail = \"Cost + Health -> By Feature Area\";\n//\nlet ai_base = latest_ops\n    | where tostring(d.category) == \"ai_improvement\"\n    | extend status_raw = tostring(d.status), worst = tostring(d.worst_severity),\n             explanation = tostring(d.explanation), recommendation = tostring(d.recommendation),\n             findings_json = tostring(d.findings);\nlet ai_findings = ai_base\n    | project findings_json\n    | mv-expand finding = parse_json(findings_json)\n    | extend field = tostring(finding.field), value = todouble(finding.value),\n             severity = tostring(finding.severity), detail = tostring(finding.detail)\n    | extend sev_rank = case(severity == \"red\", 2, severity == \"yellow\", 1, 0)\n    | order by sev_rank desc;\nlet ai_pass_rate = toscalar(ai_findings | where field == \"pass_rate\" | take 1 | project value);\nlet ai_worst_detail = toscalar(ai_findings | take 1 | project detail);\nlet ai_row = ai_base\n    | extend Status = case(status_raw == \"worked\", \"healthy\",\n                            status_raw == \"recommend\" and worst == \"red\", \"critical\",\n                            status_raw == \"recommend\", \"warning\",\n                            \"no data\")\n    | extend KeyMetric = iff(isnotnull(ai_pass_rate), strcat(tostring(round(ai_pass_rate * 100, 1)), \"% pass rate\"), \"n/a -- see AI Control Tower Section D\")\n    | extend Flagged = iff(status_raw != \"worked\", explanation, \"\")\n    | extend Recommendation = iff(isempty(recommendation), \"\", recommendation)\n    | extend RecentActivity = iff(isnotempty(ai_worst_detail), ai_worst_detail, \"\")\n    | project Category = \"AI Health\", Status, KeyMetric, Flagged, Recommendation, RecentActivity, GoToDetail = \"AI Control Tower -> Nightly Test Quality\";\n//\nunion cost_row, infra_row, api_row, ai_row\n| extend SortOrder = case(Category == \"Cost Control\", 1, Category == \"Infrastructure\", 2, Category == \"API Health\", 3, 4)\n| order by SortOrder asc\n| project Category, Status, [\"Key metric\"] = KeyMetric, [\"What's flagged\"] = Flagged, Recommendation, [\"Recent Activity\"] = RecentActivity, [\"Go to detail\"] = GoToDetail",
+        "size": 0,
+        "title": "Ops Summary — Cost Control / Infrastructure / API Health / AI Health, latest state (Gap 325)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Status",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "healthy",
+                    "representation": "green",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "warning",
+                    "representation": "yellow",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "critical",
+                    "representation": "red",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "degraded",
+                    "representation": "red",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "no data",
+                    "representation": "blue",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "Default",
+                    "thresholdValue": null,
+                    "representation": "blue",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "ops-summary-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "*`Status` is colour-coded (green=healthy, yellow=warning, red=critical/degraded, blue=no data) — a category with no data never renders green. `Recent Activity` is left blank rather than fabricated when a category's source has nothing notable to say this run.*"
+      },
+      "name": "footer"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/2ae37d8b-3189-474c-9508-4b3d7ceec4dd/resourceGroups/rg-invoice-llm-dev/providers/microsoft.operationalinsights/workspaces/law-invoicellm-dev"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

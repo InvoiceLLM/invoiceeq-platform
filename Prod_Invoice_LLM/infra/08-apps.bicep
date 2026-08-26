@@ -56,6 +56,12 @@ param payuMode string = 'test'
 @description('Score every real production chat turn with the online quality judge (Gap 304). Default false -- see invoice-be.bicep for the cost/latency tradeoff this opts into. Set true only where wanted, per environment (params.dev.json/params.prod.json).')
 param enableProductionQualityJudge bool = false
 
+@description('Subscription ID for services/azure_cost.py and ops_recommendation.py -- see invoice-be.bicep for why this was missing.')
+param azureSubscriptionId string = subscription().subscriptionId
+
+@description('Resource group the cost/container-health reads are scoped to.')
+param azureCostResourceGroup string = resourceGroup().name
+
 @description('Number of Document Intelligence resources deployed (must match Stage 4/5). Threaded into queue-worker.bicep so it only wires up the docintel-2/-3 Key Vault secretRefs that Stage 5 actually seeded.')
 @minValue(1)
 @maxValue(3)
@@ -255,6 +261,8 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     minReplicas: backendMinReplicas
     maxReplicas: backendMaxReplicas
     enableProductionQualityJudge: enableProductionQualityJudge
+    azureSubscriptionId: azureSubscriptionId
+    azureCostResourceGroup: azureCostResourceGroup
   }
 }
 
