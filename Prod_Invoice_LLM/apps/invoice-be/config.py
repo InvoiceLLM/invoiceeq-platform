@@ -166,6 +166,14 @@ class Settings(BaseSettings):
     # tests (no GoDaddy domain auth required); domain auth improves deliverability.
     SENDGRID_API_KEY: str = ""
     SENDGRID_SENDING_DOMAIN: str = ""
+    # Outbound sender address & display name. SENDGRID_FROM_EMAIL takes priority
+    # over EMAIL_APP_ADDRESS in outbound_email.py::from_address() so the
+    # inbound mailbox (AI receive) and outbound sender (customer notifications)
+    # are cleanly separated. Injected from bicep params sendgridFromEmail /
+    # sendgridFromName -- must be declared here or Pydantic extra='ignore'
+    # silently drops the Container App env vars.
+    SENDGRID_FROM_EMAIL: str = ""
+    SENDGRID_FROM_NAME: str = "InvoiceLLM"
     # Gap 124 item 5: the shared secret POST /email/mailintegration requires.
     # The name matches the container env var already wired in
     # infra/modules/compute/invoice-be.bicep, which maps it to the Key Vault

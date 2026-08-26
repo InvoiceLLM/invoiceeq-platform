@@ -15,13 +15,33 @@ SENDGRID_MAIL_URL = "https://api.sendgrid.com/v3/mail/send"
 
 
 def from_address() -> str:
-    """Technical From for outbound mail (Single Sender or authenticated domain)."""
+    """Technical From for outbound mail.
+
+    Priority order:
+    1. SENDGRID_FROM_EMAIL  — dedicated outbound address (e.g. invoice@notify.invoicellm...)
+    2. EMAIL_APP_ADDRESS    — platform mailbox fallback (inbound address, avoid if possible)
+    3. invoices@<SENDGRID_SENDING_DOMAIN or EMAIL_APP_DOMAIN or invoiceeq.app>
+
+    SENDGRID_FROM_EMAIL is declared separately from EMAIL_APP_ADDRESS so the
+    inbound AI-receive mailbox and the outbound sender are cleanly decoupled.
+    """
     settings = get_settings()
+    # 1. Dedicated outbound sender
+    from_email = (settings.SENDGRID_FROM_EMAIL or "").strip()
+    if from_email:
+        return from_email
+    # 2. Mailbox address fallback
     addr = (settings.EMAIL_APP_ADDRESS or "").strip()
     if addr:
         return addr
+    # 3. Construct from domain
     domain = (settings.SENDGRID_SENDING_DOMAIN or settings.EMAIL_APP_DOMAIN or "invoiceeq.app").strip()
     return f"invoices@{domain}"
+
+
+def from_display_name() -> str:
+    """Display name shown to email recipients (e.g. 'InvoiceLLM')."""
+    return (get_settings().SENDGRID_FROM_NAME or "InvoiceLLM").strip()
 
 
 def sendgrid_configured() -> bool:
@@ -62,7 +82,7 @@ def send_email(
 
     payload: dict = {
         "personalizations": personalizations,
-        "from": {"email": from_address()},
+        "from": {"email": from_address(), "name": from_display_name()},
         "subject": subject,
         "content": content,
     }

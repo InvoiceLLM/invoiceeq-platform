@@ -78,19 +78,19 @@
       "value": "3MVG9.Houp75EVdbyeD7jb1ifYDKsbA13wj01m3m.S52wgdrGqf8yFPguY7jkx299zTSsAjlGIO_o1WcSK48g"
     },
     "sendgridSendingDomain": {
-      "value": "admsofttech.com"
+      "value": "notify.invoicellm.admsofttech.com"
     },
     "sendgridFromEmail": {
-      "value": "invoices@outbound.invoicellm.admsofttech.com"
+      "value": "invoice@notify.invoicellm.admsofttech.com"
     },
     "sendgridFromName": {
-      "value": "InvoiceLLM Platform"
+      "value": "InvoiceLLM"
     },
     "emailAppDomain": {
-      "value": "inbound.invoicellm.admsofttech.com"
+      "value": "receive.invoicellm.admsofttech.com"
     },
     "emailAppAddress": {
-      "value": "invoices@outbound.invoicellm.admsofttech.com"
+      "value": "invoice@receive.invoicellm.admsofttech.com"
     },
     "supportNotifyEmail": {
       "value": "sbanerji@admsofttech.com"
