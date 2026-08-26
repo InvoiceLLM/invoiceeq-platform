@@ -2,15 +2,25 @@
 
 Shared rules for every persona under `.claude/agents/`. Each persona file references this instead of restating it — if a rule needs to change, change it here once.
 
+## Hard rules — these override everything else in this file
+
+1. **Founder gate.** No implementation (code, docs, infra) begins without explicit founder approval of the stated scope, in this conversation. Architect proposals are never self-executing. Default mode for any task is investigation-only unless the approved scope says implement.
+2. **Postgres is the only test evidence.** A fix may not be claimed working on SQLite-only runs — the SQLite/Postgres fidelity gap has been the root cause of 4+ incidents. Any "verified" claim must cite a run against real Postgres.
+3. **Deterministic over prompt for correctness.** Any check that decides correctness (math, reconciliation, sign handling, validation) must be deterministic code. Prompt rules alone are not a control — Gaps 220–225/253 all share this failure mode. LLMs explain exceptions; they do not adjudicate them.
+4. **Never delete, never rewrite approved specs.** Existing files carry institutional history behind prior fixes. New design goes in new `feature_N.x` sub-files; approved spec bodies get additive updates only.
+5. **Check in-flight work first.** Before starting, list `.claude/tasklists/` files modified in the last 7 days and read `active-work.md` (workspace root). If your task overlaps their files or contradicts the current direction, stop and surface the conflict — do not proceed in parallel.
+
 ## Repo layout
 
-This persona folder lives at the true workspace root (`c:\Users\S Banerjee\Desktop\Invoice_LLM`, moved here from `Prod_Invoice_LLM/.claude/` on 2026-08-01 so discovery works and so architect's scope covers the whole workspace, not just the app subtree). All paths below are relative to this root:
+This persona folder lives at the true workspace root (the directory containing this `.claude/` folder; moved here from `Prod_Invoice_LLM/.claude/` on 2026-08-01 so discovery works and so architect's scope covers the whole workspace, not just the app subtree). All paths below are relative to this root:
 - `Prod_Invoice_LLM/` — the actual product: `apps/` (invoice-be, invoice-fe, invoice-website), `infra/` (bicep/ps1), `reports/`, `docs/`.
 - `files_logs/` and `myenv/` — true root-level, **outside** `Prod_Invoice_LLM/`. `files_logs/` is a pre-rebuild (2026-07-03) draft of bicep monitoring/logging/scheduler resources, superseded by `Prod_Invoice_LLM/infra/`'s 2026-07-22 rebuild but never deleted — nothing in the repo references it (confirmed by repo-wide grep, 2026-08-01). Architect should treat both root-level folders as in-scope when auditing for redundancy, not assume everything relevant sits under `Prod_Invoice_LLM/`.
 
-## Priority order
+## Priority order and current state
 
-This repo's current priority, in order: **1) finish coding, 2) functional testing, 3) dev/prod environment split, 4) load testing, 5) security testing.** Default to this order when proposing what to work on next unless explicitly told otherwise. As of 2026-08-01, Phase 1 of step 3 is done: `Prod_Invoice_LLM/infra/`'s stage/module bicep is now parameterized on a `networkIsolation` bool (dev=false/no VNet, prod=true/full private networking incl. Redis/Postgres/Storage/OpenAI/DocIntel private endpoints), `params.prod.json`/`params.prod.secrets.json.example` exist, and `.github/workflows/deploy-prod.yml` exists gated on a `production` GitHub Environment. This is templates/params/workflow only — no `az deployment group create` has been run against a prod resource group, and `params.prod.json` still has `REPLACE_WITH_...` placeholders for prod Clerk/Google/Salesforce OAuth values that need real values before an actual prod deploy. ACR is shared between dev and prod (one registry, owned by dev's RG); prod's own resource group (`invoice-llm-prod`) does not exist yet.
+Long-term priority order: **1) finish coding, 2) functional testing, 3) dev/prod environment split, 4) load testing, 5) security testing.** Default to this order when proposing what to work on next unless explicitly told otherwise.
+
+**Current direction, in-flight work, and frozen paths live in `active-work.md` at the workspace root — read it, don't rely on the snapshot below.** The snapshot below is dated 2026-08-01; if `active-work.md` is missing or contradicts it, trust `active-work.md` and flag the discrepancy. As of 2026-08-01, Phase 1 of step 3 is done: `Prod_Invoice_LLM/infra/`'s stage/module bicep is now parameterized on a `networkIsolation` bool (dev=false/no VNet, prod=true/full private networking incl. Redis/Postgres/Storage/OpenAI/DocIntel private endpoints), `params.prod.json`/`params.prod.secrets.json.example` exist, and `.github/workflows/deploy-prod.yml` exists gated on a `production` GitHub Environment. This is templates/params/workflow only — no `az deployment group create` has been run against a prod resource group, and `params.prod.json` still has `REPLACE_WITH_...` placeholders for prod Clerk/Google/Salesforce OAuth values that need real values before an actual prod deploy. ACR is shared between dev and prod (one registry, owned by dev's RG); prod's own resource group (`invoice-llm-prod`) does not exist yet.
 
 ## Document types — do not mix these
 
@@ -43,8 +53,8 @@ Leave the file in place once the task completes, with every item checked and a o
 ## Agent roles
 
 - **architect** — reads the task + relevant folders, proposes scope per specialist, presents for user approval. Never writes code or docs.
-- **senior-dev** — implements. Writes application code, updates the relevant spec doc + tracker per the rules above.
-- **functional-tester** — extends the one canonical automated-test directory per app (`Prod_Invoice_LLM/apps/invoice-be/tests/`, `Prod_Invoice_LLM/apps/invoice-fe/e2e/`, `Prod_Invoice_LLM/apps/invoice-website`'s equivalent once it exists), maintains `test_coverage_map.md` + `test_evidence/`.
+- **senior-dev** — implements. Writes application code, updates the relevant spec doc + tracker per the rules above. Correctness-critical logic is deterministic code, never prompt-only (Hard rule 3).
+- **functional-tester** — extends the one canonical automated-test directory per app; every "verified" claim cites a Postgres run, not SQLite (Hard rule 2) (`Prod_Invoice_LLM/apps/invoice-be/tests/`, `Prod_Invoice_LLM/apps/invoice-fe/e2e/`, `Prod_Invoice_LLM/apps/invoice-website`'s equivalent once it exists), maintains `test_coverage_map.md` + `test_evidence/`.
 - **load-tester** — reports to `Prod_Invoice_LLM/reports/load/`.
 - **security-tester** — reports to `Prod_Invoice_LLM/reports/security/`.
 - **infra-devops** — changes `Prod_Invoice_LLM/infra/`, reports in chat (not `reports/infra/`, unless explicitly asked).
