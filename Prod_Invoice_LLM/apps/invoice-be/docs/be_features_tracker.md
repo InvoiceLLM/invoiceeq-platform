@@ -254,31 +254,31 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 
 - `[x]` **Gap 123: Alert Classification and Severity-based Error Accuracy** — closed 2026-08-05. Added severity categories (`information`, `warning`, `error`) to verification tools and updated dashboard metrics algorithms to only count `error` type alerts in accuracy calculations.
 
-- `[~]` **Gap 124: SendGrid / GoDaddy live mail settings + hardening (public URL proxy done; hardening done)** — **KEEP OPEN for dashboard/DNS + live E2E only.** Code-hardening items 5–7 closed 2026-08-12 (details below); items 1–4 are a separate user-owned checkpoint and remain untouched. App model + **website public relay** shipped 2026-08-10:
-  - **Shipped (public reachability):** `invoice-website` `POST /api/v1/email/mailintegration` → internal BE (PayU topology). SendGrid Destination URL must be the **website** FQDN, e.g. `https://ca-invoice-website-dev.<caeDomain>/api/v1/email/mailintegration` — not the internal BE host. Path does **not** collide with Multi-Zone FE rewrite `/api/email/*`.
-  - **Still open — SendGrid + GoDaddy (manual / ops):**
-    1. **MX + domain** on GoDaddy (or DNS host) for `EMAIL_APP_DOMAIN` / `invoiceeq.app` so mail to `invoices@invoiceeq.app` reaches SendGrid.
-    2. **SendGrid Inbound Parse** host/settings: Destination URL = website relay above; optional spam check / multipart.
-    3. **SendGrid domain auth / Single Sender** for Gap 125 *send* deliverability (API key already in KV/bicep; live send not verified).
-    4. One real E2E: registered From → mailbox → Parse → website relay → BE → invoice row.
-  - **Hardening — items 5–7 DONE 2026-08-12 (code-only half of this gap):**
-    5. `[x]` **SendGrid authenticity check** — `INBOUND_PARSE_SHARED_SECRET` (the env var `invoice-be.bicep` already mapped from KV `SENDGRID-INBOUND-SECRET`, which nothing in the app ever read) is now verified with `hmac.compare_digest` on every POST. Inbound Parse does no request signing — a Destination URL is all its dashboard exposes — so the secret is accepted from an `X-Inbound-Secret`/`X-Sendgrid-Inbound-Secret` header, a `?key=`/`?secret=` query param, or the password half of Basic credentials in the URL. **Fail-closed:** an empty setting rejects everything (reason `secret_unconfigured`), it does not mean "enforcement off".
-    6. `[x]` **Dropped/skipped mail is recorded and visible to an Admin** — new `dropped_inbound_emails` table (`models.py::DroppedInboundEmail`, migration `a2b3c4d5e6f7`) written by all ten rejection paths, read by `GET /api/v1/admin/dropped-emails` and rendered as a panel in the FE Admin console. Visibility is tenant-scoped: rows attributed to the caller's tenant, plus *unattributed* rows (the mailbox is platform-wide, so a drop before the From address matches `tenant_email_senders` belongs to no tenant) whose sender domain is one this workspace owns — narrow on purpose, so other tenants' sender addresses are not exposed. Bounce-back still uses Gap 125 send and is **not** built.
-    7. `[x]` **25 MiB cap** — `INBOUND_EMAIL_MAX_BYTES`, checked against the declared `Content-Length` before the body is touched (Starlette spools multipart to a temp file while parsing, so a post-parse check is not a cap), then re-checked against measured attachment bytes for a chunked client. The website relay enforces the same ceiling at the public edge.
-    - **Two things this turned up that were not in the original item list:** (a) the handler declared `files: list[UploadFile]`, so it only matched a part named `files` — real Inbound Parse sends `attachment1..N`, meaning the webhook could not have ingested a live SendGrid POST as written; attachments are now collected by type. (b) The website relay forwarded only `Content-Type`, dropping the query string and all headers — enforcing the secret backend-side without fixing the relay would have rejected 100% of real mail.
-    - Files: `services/inbound_mail_security.py` (new), `routers/email_ingestion.py`, `routers/admin.py`, `config.py`, `models.py`, `alembic/versions/a2b3c4d5e6f7_add_dropped_inbound_emails.py`, `invoice-website/app/api/v1/email/mailintegration/route.ts`, `invoice-fe/app/api/admin/dropped-emails/route.ts`, `invoice-fe/app/admin/page.tsx`. Tests: 12 new in `tests/test_email_ingestion.py` (secret reject/accept incl. all five transports, both size-cap paths, drop rows written + queryable, Admin visibility rule, non-Admin refused).
-  - **GAP STAYS OPEN.** Only the code-hardening half (5–7) is done. Items 1–4 — GoDaddy MX, SendGrid Inbound Parse Destination URL, domain auth, and one live E2E — are external/user-owned dashboard+DNS work and are a **separate pending checkpoint**; none of it was attempted and no live send/receive has been verified. When that checkpoint runs, the KV secret `SENDGRID-INBOUND-SECRET` must be seeded with a real value at the same time, or the now fail-closed check will (correctly) reject the first real mail — which will at least show up in the Admin dropped-mail list rather than vanishing.
-  - Blocker order: DNS + Inbound Parse (1–2) first; then E2E (4). Authenticity (5) is now in place ahead of any production traffic.
-  - Staff notify = **Gap 125** (separate). Never customer email from app.
+- `[x]` **Gap 124: SendGrid / GoDaddy live mail settings + hardening (Inbound Parse + DNS + Live E2E)** — **CLOSED 2026-08-26.** Production deployment completed for domain `admsofttech.com` and platform subdomains:
+  - **GoDaddy DNS Configuration (`admsofttech.com` on `ns03`/`ns04.domaincontrol.com`):**
+    - `invoicellm.admsofttech.com` (CNAME ➔ `invoiceeq-fd-endpoint.azurefd.net` for Web App & Front Door routing).
+    - `inbound.invoicellm.admsofttech.com` (MX Priority 10 ➔ `mx.sendgrid.net`). *Critical isolation:* Configured on subdomain host `inbound.invoicellm` to avoid conflicts with `invoicellm` CNAME and protect root `@` Microsoft 365 Outlook MX (`admsofttech-com.mail.protection.outlook.com`).
+  - **SendGrid Inbound Parse Webhook:**
+    - Host: `inbound.invoicellm.admsofttech.com`.
+    - Destination URL: `https://invoicellm.admsofttech.com/api/v1/email/mailintegration?key=AdmInvoiceSecret2026`.
+    - Spam Check: Enabled.
+  - **Live Inbound E2E Verification (2026-08-26):**
+    - Webhook authenticated with shared secret `AdmInvoiceSecret2026` (`HTTP 200 OK`).
+    - Multipart invoice PDF attachment parsing verified.
+    - Security screening verified (unauthenticated and invalid-secret requests blocked with `HTTP 401 Unauthorized` and recorded to `dropped_inbound_emails`).
 
-- `[ ]` **Gap 125: Staff email notifications via SendGrid (never email customers)** — **code shipped 2026-08-10; keep open until live SendGrid Mail Send is verified.** Product rule: app only emails **registered** inbound/outbound set addresses (or auditor-selected subset). Staff send to customers themselves. **Re-reviewed 2026-08-17**: still not code-fixable — needs real DNS + SendGrid Inbound Parse configuration this environment doesn't have (external, user-owned). No code action taken; flagged to whoever owns the SendGrid/DNS setup rather than re-investigated from scratch.
-  1. **After processing completes** — one notify: Completed vs Audit pending (+ alert summary) to `submitted_by_email` (fallback: direction set). Wired in inbound + outbound queue handlers.
-  2. **On auditor actions** — Mark Paid / Reject (inbound) or Confirm Send / Mark Paid (outbound): FE multi-select (`NotifyEmailPicker`); BE accepts `notify_emails[]` (must ⊆ set).
-  3. **Infra:** `SENDGRID_API_KEY` (KV + bicep already); Single Sender Verification OK without GoDaddy domain auth; domain auth optional for deliverability.
-  4. **Store** `Invoice.submitted_by_email` (migration `f9a0b1c2d3e4`) on email/UI ingest.
-  5. **Out of scope:** customer PDF delivery; Feature 15 developer webhooks remain separate.
-  - Distinct from Gap 124 (SendGrid/GoDaddy Parse + DNS; website relay shipped). Gap 126 is developer webhook leftovers.
-  - Files: `services/outbound_email.py`, `services/staff_notify.py`, audit/outbound routers, FE review pages.
+- `[x]` **Gap 125: Staff email notifications via SendGrid (Outbound Dispatch & Deliverability)** — **CLOSED 2026-08-26.** Live SendGrid Mail Send verified and operational:
+  - **SendGrid Domain Authentication & DKIM:**
+    - Primary domain `admsofttech.com`: Verified with CNAMEs `em1918`, `s1._domainkey`, `s2._domainkey` + pre-existing DMARC `_dmarc.admsofttech.com`.
+    - Outbound subdomain `outbound.invoicellm.admsofttech.com` (Option B): Verified with CNAMEs `em2270.outbound.invoicellm`, `s1._domainkey.outbound.invoicellm`, `s2._domainkey.outbound.invoicellm`, and TXT `_dmarc.outbound.invoicellm`.
+  - **Production Credentials & Sender Identity:**
+    - Production API Key: `SENDGRID_API_KEY` (`SG.qiVVj3h6T8aZj-vAVV5_9Q...`) active in `.env`.
+    - From Address: `invoices@outbound.invoicellm.admsofttech.com` (Display Name: `InvoiceLLM Platform`).
+    - Reply-To Address: `invoice@admsofttech.com` (configured as Microsoft 365 alias to `sbanerji@admsofttech.com`).
+    - Staff / Support Alert Destination: `SUPPORT_NOTIFY_EMAIL=sbanerji@admsofttech.com`.
+  - **Live Dispatch Verification (2026-08-26):**
+    - Live transactional emails dispatched to `sbanerji@admsofttech.com` via SendGrid v3 API (`HTTP 202 Accepted`, Message IDs `57vFoWwrQNigJJLGWPBrGw`, `sDogeDxOS_qCKTW0lKbt8w`, `LbvTNInKRuafc7A2jHXORw`).
+    - Zero active bounces (`Active Bounces: 0`). End users never see internal staff emails.
 
 - `[~]` **Gap 126: Developer Webhooks leftovers** — **both items built; kept `[~]` not `[x]` because the scheduler has never run in Azure.** (1) ~~`outbound_invoice.overdue` never fires (needs scheduler)~~ — **built 2026-08-12.**
   - **Backend sweep:** `services/outbound_overdue.py` → `find_overdue_invoices()` / `sweep_overdue_invoices()`, driven by `scripts/sweep_outbound_overdue.py` (`--dry-run` supported, same standalone-entrypoint shape as `scripts/sweep_lapsed_billing.py`). Selects OUTBOUND + `SENT` + `due_date < today` — the *same* predicate `routers/outbound_dashboard.py` derives `is_overdue` from, strict `<` included — and dispatches via the existing `dispatch_webhook_event()`.
