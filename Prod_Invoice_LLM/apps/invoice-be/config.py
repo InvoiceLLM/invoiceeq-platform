@@ -199,7 +199,7 @@ class Settings(BaseSettings):
     # chatbot escalations, and direct app tickets). Defaults to the platform's
     # primary support address; override via env var in Key Vault for alternate
     # environments. NEVER set to empty — that would silently swallow every ticket.
-    SUPPORT_NOTIFY_EMAIL: str = "Application@infinevocloud.com"
+    SUPPORT_NOTIFY_EMAIL: str = "sbanerji@admsofttech.com"
 
     # Gap 249: the Front Door profile's `frontDoorId` GUID, used only to decide
     # whether the `X-Azure-ClientIP` header on an inbound request can be

@@ -57,7 +57,7 @@
       "value": "sbanerji@admsofttech.com"
     },
     "monthlyBudgetAmount": {
-      "value": 150
+      "value": 20000
     },
     "backendImage": {
       "value": "acrinvoicellmdev.azurecr.io/invoice-be:latest"
@@ -78,7 +78,25 @@
       "value": "3MVG9.Houp75EVdbyeD7jb1ifYDKsbA13wj01m3m.S52wgdrGqf8yFPguY7jkx299zTSsAjlGIO_o1WcSK48g"
     },
     "sendgridSendingDomain": {
-      "value": ""
+      "value": "admsofttech.com"
+    },
+    "sendgridFromEmail": {
+      "value": "invoices@outbound.invoicellm.admsofttech.com"
+    },
+    "sendgridFromName": {
+      "value": "InvoiceLLM Platform"
+    },
+    "emailAppDomain": {
+      "value": "inbound.invoicellm.admsofttech.com"
+    },
+    "emailAppAddress": {
+      "value": "invoices@outbound.invoicellm.admsofttech.com"
+    },
+    "supportNotifyEmail": {
+      "value": "sbanerji@admsofttech.com"
+    },
+    "enableProductionQualityJudge": {
+      "value": true
     },
     "clerkJwtIssuer": {
       "value": "https://great-baboon-11.clerk.accounts.dev"
@@ -88,9 +106,6 @@
     },
     "payuMode": {
       "value": "test"
-    },
-    "enableProductionQualityJudge": {
-      "value": true
     },
     "backendCpu": {
       "value": "2.0"

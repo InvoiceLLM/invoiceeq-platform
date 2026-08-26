@@ -52,8 +52,23 @@ param salesforceRedirectUri string = ''
 // feature_9_connectors.md. The sending domain name itself isn't sensitive
 // (same treatment as the OAuth redirect URIs above); the API key and inbound
 // webhook shared secret are, so those come from Key Vault below instead.
-@description('SendGrid-authenticated domain used as the technical From for outbound mail (Gap 125) -- e.g. mail.invoice-ai.com')
+@description('SendGrid-authenticated domain used as the technical From for outbound mail (Gap 125) -- e.g. admsofttech.com')
 param sendgridSendingDomain string = ''
+
+@description('Full From address for outbound emails -- e.g. invoices@outbound.invoicellm.admsofttech.com')
+param sendgridFromEmail string = ''
+
+@description('Display name for outbound emails -- e.g. InvoiceLLM Platform')
+param sendgridFromName string = 'InvoiceLLM Platform'
+
+@description('Inbound mail domain (MX target for SendGrid Inbound Parse) -- e.g. inbound.invoicellm.admsofttech.com')
+param emailAppDomain string = ''
+
+@description('Platform-wide mailbox address tenants send invoices to -- e.g. invoices@outbound.invoicellm.admsofttech.com')
+param emailAppAddress string = ''
+
+@description('Support / ops alert destination inbox -- never set to empty, that would silently swallow every ticket')
+param supportNotifyEmail string = ''
 
 @description('Public browser origin for full-page redirects after connector OAuth (settings/connectors). Must be the invoice-website FQDN under Multi-Zone — FE is internal-only and returns Azure\'s "stopped or does not exist" page if the browser is sent there.')
 param frontendUrl string = ''
@@ -180,13 +195,16 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVaultUrl}/secrets/SALESFORCE-CLIENT-SECRET'
           identity: userAssignedIdentityId
         }
+        // Secret name kept as 'sendgrid-key-secret' (not 'sendgrid-api-key-secret') to
+        // match the name already wired live on 2026-08-26 via `az containerapp secret set`.
+        // Renaming would require a live delete+recreate of the secret reference.
         {
-          name: 'sendgrid-api-key-secret'
+          name: 'sendgrid-key-secret'
           keyVaultUrl: '${keyVaultUrl}/secrets/SENDGRID-API-KEY'
           identity: userAssignedIdentityId
         }
         {
-          name: 'sendgrid-inbound-secret-secret'
+          name: 'sendgrid-inbound-secret'
           keyVaultUrl: '${keyVaultUrl}/secrets/SENDGRID-INBOUND-SECRET'
           identity: userAssignedIdentityId
         }
@@ -310,15 +328,35 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'SENDGRID_API_KEY'
-              secretRef: 'sendgrid-api-key-secret'
+              secretRef: 'sendgrid-key-secret'
             }
             {
               name: 'INBOUND_PARSE_SHARED_SECRET'
-              secretRef: 'sendgrid-inbound-secret-secret'
+              secretRef: 'sendgrid-inbound-secret'
             }
             {
               name: 'SENDGRID_SENDING_DOMAIN'
               value: sendgridSendingDomain
+            }
+            {
+              name: 'SENDGRID_FROM_EMAIL'
+              value: sendgridFromEmail
+            }
+            {
+              name: 'SENDGRID_FROM_NAME'
+              value: sendgridFromName
+            }
+            {
+              name: 'EMAIL_APP_DOMAIN'
+              value: emailAppDomain
+            }
+            {
+              name: 'EMAIL_APP_ADDRESS'
+              value: emailAppAddress
+            }
+            {
+              name: 'SUPPORT_NOTIFY_EMAIL'
+              value: supportNotifyEmail
             }
             {
               name: 'PAYU_MERCHANT_KEY'
@@ -349,8 +387,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: appInsightsConnectionString
             }
             {
+              // Gap 304 half 2: two extra LLM calls per chat turn when on --
+              // opt in per environment, never on by default.
               name: 'ENABLE_PRODUCTION_QUALITY_JUDGE'
-              value: string(enableProductionQualityJudge)
+              value: enableProductionQualityJudge ? 'true' : 'false'
             }
           ]
           probes: [

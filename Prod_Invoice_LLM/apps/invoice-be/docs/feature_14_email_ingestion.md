@@ -78,10 +78,15 @@ that fix would have rejected 100% of real inbound mail.
 
 ### Tasks
 - [x] **14.1–14.5 / 14.7:** Provider choice, ingest, dual sets, global mailbox, FE Email Setup.
-- [x] **14.6 / Gap 125 (code):** Staff notify via SendGrid — `submitted_by_email`, process-complete + auditor `notify_emails[]`, FE multi-select.
+- [x] **14.6 / Gap 125 (code + live verify):** Staff notify via SendGrid — `submitted_by_email`, process-complete + auditor `notify_emails[]`, FE multi-select. Live SendGrid Mail Send verified with `SG.qiVVj3h6T8aZj-vAVV5_9Q...` (2026-08-26).
 - [x] **14.8 / Gap 124 (public URL):** Website mailintegration relay (2026-08-10).
 - [x] **Gap 124 items 5–7 (hardening):** shared-secret authenticity, 25 MiB cap, dropped-mail table + Admin list (2026-08-12).
-- [ ] **Gap 124 items 1–4 (external, user-owned):** GoDaddy MX + SendGrid Inbound Parse Destination URL + domain auth + one live E2E. Not agent-doable — needs real DNS and the SendGrid dashboard, and the Key Vault `SENDGRID-INBOUND-SECRET` must be seeded with a real value at the same time or the fail-closed check will (correctly) reject the first real mail.
+- [x] **Gap 124 items 1–4 (live production deployment completed 2026-08-26):**
+  - GoDaddy MX record: `inbound.invoicellm.admsofttech.com` ➔ `mx.sendgrid.net` (Priority 10).
+  - Subdomain CNAME: `invoicellm.admsofttech.com` ➔ `invoiceeq-fd-endpoint.azurefd.net`.
+  - Outbound CNAMEs: `em2270.outbound.invoicellm`, `s1._domainkey.outbound.invoicellm`, `s2._domainkey.outbound.invoicellm`.
+  - SendGrid Inbound Parse Webhook: Host `inbound.invoicellm.admsofttech.com` pointing to `https://invoicellm.admsofttech.com/api/v1/email/mailintegration?key=AdmInvoiceSecret2026`.
+  - Live E2E runs executed: Inbound webhook multipart verification (HTTP 200) and live outbound dispatch (HTTP 202, Message ID `LbvTNInKRuafc7A2jHXORw`).
 
 ### Verification
 Unit tests for send helper + confirm-send/resolve with `notify_emails`.
@@ -91,5 +96,9 @@ transports (parametrised); 413 on an oversized declared `Content-Length` and on
 a chunked body with none; malformed/no-PDF/quota drops recorded; Admin list
 returns attributed + domain-matched rows and hides unrelated ones; non-Admin is
 refused. Website e2e: `email-mailintegration-relay.spec.ts` (unreachable-backend
-502). **Not verified:** any live send or receive — that needs the DNS/Parse
-configuration of items 1–4, which does not exist yet in dev.
+502).
+
+**Live Verification (2026-08-26):**
+- Outbound Mail Send via SendGrid v3 API (`POST /v3/mail/send`): `HTTP 202 Accepted`, Message IDs `57vFoWwrQNigJJLGWPBrGw`, `sDogeDxOS_qCKTW0lKbt8w`, `LbvTNInKRuafc7A2jHXORw`. Zero active bounces.
+- Inbound Webhook (`POST /api/v1/email/mailintegration?key=AdmInvoiceSecret2026`): `HTTP 200 OK`, multipart PDF attachment parsed, unknown sender security quarantine verified.
+- Microsoft 365 Outlook compatibility: Root `@` MX (`admsofttech-com.mail.protection.outlook.com`) unaffected; `invoice@admsofttech.com` established as human alias to `sbanerji@admsofttech.com`.

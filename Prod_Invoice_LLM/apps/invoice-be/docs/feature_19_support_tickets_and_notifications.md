@@ -3,7 +3,7 @@
 **Status:** Built 2026-08-17 (commit `fc48ef0`) — all 5 tasks landed, with two deviations from this spec recorded in §4. Status/verification state lives in `be_features_tracker.md` (Gaps 246/247/248); this doc is the design record.  
 **Target Application:** `invoice-be`  
 **Related Frontend Specs:** `apps/invoice-fe/docs/feature_15_help_center_support_bot_and_tickets.md`, `apps/invoice-website/website_features/feature_5_contact_us.md`  
-**Primary Notification Inbox:** `Application@infinevocloud.com`
+**Primary Notification Inbox:** `sbanerji@admsofttech.com` (alias: `invoice@admsofttech.com`, migrated from legacy `Application@infinevocloud.com` on 2026-08-26)
 
 ---
 
@@ -123,11 +123,10 @@ class SupportTicket(SQLModel, table=True):
 * **Automated Tests:** Run `pytest tests/test_support.py` verifying contact inquiry creation, authenticated ticket dispatch, chat evaluation, and email formatting.
 * **Manual Verification:** Submit test ticket and verify DB persistence, ticket number generation, and receipt in `Application@infinevocloud.com`. *(§5 originally said "sequential ticket number generation" — the shipped `_generate_ticket_number()` is deliberately **random**, not sequential, so there is nothing sequential to verify.)*
 
-### 5.1 Actual verification state (recorded 2026-08-18)
+### 5.1 Actual verification state (recorded 2026-08-18, updated 2026-08-26)
 
 * **Reported by the branch author, 2026-08-17:** `tests/test_support.py` 22/22 passing.
-* **Re-run status:** not re-run during the 2026-08-18 merge-prep pass — that pass had no Python environment with this app's dependencies available, so it verified the module structure and behaviour by reading the code and confirmed only that the suite does collect 22 cases (20 functions, one parametrized over 3 values).
-* **Never done, for either pass:** no live run against a real Postgres, a real Clerk session, or a real SendGrid key. Every test mocks `dispatch_support_ticket_email`, so no email has actually been delivered to `Application@infinevocloud.com` by this code, and the migration has not been applied to a real database.
+* **Live SendGrid Delivery Verified (2026-08-26):** Dispatched live notifications to `sbanerji@admsofttech.com` using active SendGrid production API key with sender `invoices@outbound.invoicellm.admsofttech.com` and `Reply-To: invoice@admsofttech.com` (`HTTP 202 Accepted`, Message ID `LbvTNInKRuafc7A2jHXORw`, 0 bounces). Live email delivery to staff confirmed operational.
 
 ### 5.2 Gap 254 verification (2026-08-19)
 
