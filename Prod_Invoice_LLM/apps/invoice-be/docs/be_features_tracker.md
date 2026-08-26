@@ -254,31 +254,37 @@ Gaps below are grouped by the feature file whose target design (in `Technical_Ar
 
 - `[x]` **Gap 123: Alert Classification and Severity-based Error Accuracy** — closed 2026-08-05. Added severity categories (`information`, `warning`, `error`) to verification tools and updated dashboard metrics algorithms to only count `error` type alerts in accuracy calculations.
 
-- `[x]` **Gap 124: SendGrid / GoDaddy live mail settings + hardening (Inbound Parse + DNS + Live E2E)** — **CLOSED 2026-08-26.** Production deployment completed for domain `admsofttech.com` and platform subdomains:
-  - **GoDaddy DNS Configuration (`admsofttech.com` on `ns03`/`ns04.domaincontrol.com`):**
-    - `invoicellm.admsofttech.com` (CNAME ➔ `invoiceeq-fd-endpoint.azurefd.net` for Web App & Front Door routing).
-    - `inbound.invoicellm.admsofttech.com` (MX Priority 10 ➔ `mx.sendgrid.net`). *Critical isolation:* Configured on subdomain host `inbound.invoicellm` to avoid conflicts with `invoicellm` CNAME and protect root `@` Microsoft 365 Outlook MX (`admsofttech-com.mail.protection.outlook.com`).
-  - **SendGrid Inbound Parse Webhook:**
-    - Host: `inbound.invoicellm.admsofttech.com`.
-    - Destination URL: `https://invoicellm.admsofttech.com/api/v1/email/mailintegration?key=AdmInvoiceSecret2026`.
-    - Spam Check: Enabled.
-  - **Live Inbound E2E Verification (2026-08-26):**
-    - Webhook authenticated with shared secret `AdmInvoiceSecret2026` (`HTTP 200 OK`).
-    - Multipart invoice PDF attachment parsing verified.
-    - Security screening verified (unauthenticated and invalid-secret requests blocked with `HTTP 401 Unauthorized` and recorded to `dropped_inbound_emails`).
+- `[x]` **Gap 124: SendGrid / GoDaddy live mail settings + hardening (Inbound Parse + DNS + Live E2E)** — **CLOSED 2026-08-26; UPDATED 2026-08-26 (email architecture migration).** Full 4-tier email architecture implemented and live-verified:
+  - **GoDaddy DNS Configuration (`admsofttech.com`):**
+    - `inbound.invoicellm.admsofttech.com` (MX Priority 10 ➔ `mx.sendgrid.net`). Original inbound webhook domain — still active.
+    - `receive.invoicellm.admsofttech.com` (MX Priority 10 ➔ `mx.sendgrid.net`). **NEW 2026-08-26** — dedicated AI invoice receive subdomain.
+    - `em8057.notify.invoicellm`, `s1._domainkey.notify.invoicellm`, `s2._domainkey.notify.invoicellm` CNAMEs — **NEW 2026-08-26** — for outbound notify subdomain DKIM/domain auth.
+  - **SendGrid Inbound Parse Webhooks (live):**
+    - `inbound.invoicellm.admsofttech.com` ➔ `https://ca-invoice-website-dev.thankfulmeadow-4281ea23.eastus2.azurecontainerapps.io/api/v1/email/mailintegration?key=AdmInvoiceSecret2026`
+    - `receive.invoicellm.admsofttech.com` ➔ same backend URL. **NEW 2026-08-26**.
+  - **SendGrid Domain Authentications (all VERIFIED):**
+    - `admsofttech.com` (`em1918`) — ✅ valid (mail_cname, dkim1, dkim2).
+    - `outbound.invoicellm.admsofttech.com` (`em2270`) — ✅ valid.
+    - `notify.invoicellm.admsofttech.com` (`em8057`) — ✅ valid. **NEW 2026-08-26** — dedicated outbound sender domain.
+  - **Live Inbound E2E Verification (2026-08-26):** Webhook authenticated with shared secret; multipart PDF parsing verified; security screening verified.
 
-- `[x]` **Gap 125: Staff email notifications via SendGrid (Outbound Dispatch & Deliverability)** — **CLOSED 2026-08-26.** Live SendGrid Mail Send verified and operational:
-  - **SendGrid Domain Authentication & DKIM:**
-    - Primary domain `admsofttech.com`: Verified with CNAMEs `em1918`, `s1._domainkey`, `s2._domainkey` + pre-existing DMARC `_dmarc.admsofttech.com`.
-    - Outbound subdomain `outbound.invoicellm.admsofttech.com` (Option B): Verified with CNAMEs `em2270.outbound.invoicellm`, `s1._domainkey.outbound.invoicellm`, `s2._domainkey.outbound.invoicellm`, and TXT `_dmarc.outbound.invoicellm`.
-  - **Production Credentials & Sender Identity:**
-    - Production API Key: `SENDGRID_API_KEY` (`SG.qiVVj3h6T8aZj-vAVV5_9Q...`) active in `.env`.
-    - From Address: `invoices@outbound.invoicellm.admsofttech.com` (Display Name: `InvoiceLLM Platform`).
-    - Reply-To Address: `invoice@admsofttech.com` (configured as Microsoft 365 alias to `sbanerji@admsofttech.com`).
-    - Staff / Support Alert Destination: `SUPPORT_NOTIFY_EMAIL=sbanerji@admsofttech.com`.
-  - **Live Dispatch Verification (2026-08-26):**
-    - Live transactional emails dispatched to `sbanerji@admsofttech.com` via SendGrid v3 API (`HTTP 202 Accepted`, Message IDs `57vFoWwrQNigJJLGWPBrGw`, `sDogeDxOS_qCKTW0lKbt8w`, `LbvTNInKRuafc7A2jHXORw`).
-    - Zero active bounces (`Active Bounces: 0`). End users never see internal staff emails.
+- `[x]` **Gap 125: Staff email notifications via SendGrid (Outbound Dispatch & Deliverability)** — **CLOSED 2026-08-26; UPDATED 2026-08-26 (email address separation & config.py fix).** Full inbound/outbound address decoupling implemented and live-verified:
+  - **Root Cause Fixed (2026-08-26):** `config.py` was missing `SENDGRID_FROM_EMAIL` and `SENDGRID_FROM_NAME` field declarations. Pydantic `extra='ignore'` was silently dropping these env vars injected from the Container App / bicep params — meaning outbound emails were incorrectly sent from `EMAIL_APP_ADDRESS` (the AI receive mailbox) instead of the dedicated outbound sender.
+  - **Code Changes (branch `feature/email-inbound-outbound-separation`, commit `70843f8`):**
+    - `config.py`: Added `SENDGRID_FROM_EMAIL: str = ""` and `SENDGRID_FROM_NAME: str = "InvoiceLLM"` fields.
+    - `services/outbound_email.py`: Updated `from_address()` priority — `SENDGRID_FROM_EMAIL` (outbound) checked first, then `EMAIL_APP_ADDRESS` (inbound fallback). Added `from_display_name()` helper. Included `name` field in SendGrid `from` payload — customer inbox now shows `InvoiceLLM` not raw email.
+  - **4-Tier Email Architecture (Live as of 2026-08-26):**
+    - 📥 Inbound AI Receive: `invoice@receive.invoicellm.admsofttech.com` → SendGrid Inbound Parse → Backend AI extraction.
+    - 📤 Outbound Notifications: `invoice@notify.invoicellm.admsofttech.com` (`InvoiceLLM`) → Customer inbox.
+    - ↩️ Reply-To: `invoice@admsofttech.com` → Customer replies land in Sanjib Banerji's Outlook.
+    - 🔒 Internal Alerts: `sbanerji@admsofttech.com` — backend error/alert notifications.
+  - **Azure Container App `ca-invoice-be-dev` (Revision `0000093`):**
+    - `SENDGRID_FROM_EMAIL=invoice@notify.invoicellm.admsofttech.com`
+    - `SENDGRID_SENDING_DOMAIN=notify.invoicellm.admsofttech.com`
+    - `SENDGRID_FROM_NAME=InvoiceLLM`
+    - `EMAIL_APP_DOMAIN=receive.invoicellm.admsofttech.com`
+    - `EMAIL_APP_ADDRESS=invoice@receive.invoicellm.admsofttech.com`
+  - **Live Dispatch Verification (2026-08-26):** `invoice@notify.invoicellm.admsofttech.com` → `sbanerji@admsofttech.com` → `HTTP 202 Accepted` ✅. SendGrid domain `notify.invoicellm.admsofttech.com` validated (`valid: true`, all 3 checks passing).
 
 - `[~]` **Gap 126: Developer Webhooks leftovers** — **both items built; kept `[~]` not `[x]` because the scheduler has never run in Azure.** (1) ~~`outbound_invoice.overdue` never fires (needs scheduler)~~ — **built 2026-08-12.**
   - **Backend sweep:** `services/outbound_overdue.py` → `find_overdue_invoices()` / `sweep_overdue_invoices()`, driven by `scripts/sweep_outbound_overdue.py` (`--dry-run` supported, same standalone-entrypoint shape as `scripts/sweep_lapsed_billing.py`). Selects OUTBOUND + `SENT` + `due_date < today` — the *same* predicate `routers/outbound_dashboard.py` derives `is_overdue` from, strict `<` included — and dispatches via the existing `dispatch_webhook_event()`.
