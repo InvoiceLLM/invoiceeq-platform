@@ -184,8 +184,8 @@ of the same class as Gap 304 half 2, not a wiring change.
 | `chat_turn` (Sections B, C) | **Real data as of 2026-08-26.** ~~0 rows — the live backend image predates the commit that added it~~ — **Correction 2026-08-26 (live-Azure-verified):** that image refresh landed. The backend image was rebuilt **2026-08-25T14:41Z from commit `cb96d8f`**, and `AppEvents` in `law-invoicellm-dev` now returns real `chat_turn` rows, so Sections B and C render live production turn behaviour instead of empty panels. (`AppDependencies` gained its `GenAI`/`az.ai.openai` dependency rows and `AppRequests` gained rows from the real container in the same refresh — see the blockers table below.) |
 | `extraction_benchmark_run` (Section E) | **Real data as of 2026-08-26.** ~~0 rows until the Gap 309 logging-level fix reaches a deployed image~~ — **Correction 2026-08-26 (live-Azure-verified):** same refresh. `cb96d8f` carries Gap 309's logging-level fix *and* Gaps 308/317's nightly-crash fix, and `caj-benchmark-eval-dev`'s **2026-08-26T03:00 UTC run succeeded**, so Track 1's recall/false-positive figures now reach Section E from a real scheduled execution rather than a developer's laptop. |
 | `online_eval_signal` (Section F) | 0 rows on a schedule basis; `clarification_rate`/`budget_exhaustion_rate` are **permanently** degenerate as of Gap 316 (2026-08-25) — both read `stop_reason`/clarification state that only SAGE's deleted orchestrator ever produced, so they now measure nothing rather than measuring a flag that is off. **Correction 2026-08-26 (Gap 305 investigation, code-verified):** that is right for `budget_exhaustion_rate` and **wrong for `clarification_rate`** — only the latter's three `offline_*` `detail` keys read the dead notes; its headline `value`/`numerator`/`denominator` come from `looks_like_clarification()` over `chat_message` assistant rows and never had a SAGE dependency, so it still measures real traffic and must not be dropped on the strength of the sentence above. `budget_exhaustion_rate` is genuinely unfixable (its numerator *and* denominator are `stop_reason=` fragments `scripts/run_agent_eval.py` no longer writes, and `MAX_TOOL_CALLS`/`tool_call_budget_exhausted` exist in zero live code files) — retiring it is a founder decision, tracked on Gap 305 |
-| `agent_eval_run` where `run_source == "production"` (Section G) | 0 rows |
-| `ops_recommendation` (Gap 319, the recommendation pass; rendered by Gap 320's panel) | 0 rows, confirmed live 2026-08-26 via the deployed panel's own query against `law-invoicellm-dev`. It emits only from a `--run-label nightly` run, and the nightly job's image predates both Gap 318 and Gap 319 — same pending backend image refresh as the rows above. Nothing is wrong with the emitter or the panel; there has been no nightly execution carrying it yet. **Clarification 2026-08-26 (doc-reconciliation pass):** this row is **still correct and stays "structurally empty"** — but "same pending backend image refresh as the rows above" no longer parses now that those rows are corrected to *real data*, so state it directly: the 2026-08-25T14:41Z image (`cb96d8f`) carries Gaps 308/309/317 and therefore fixed `chat_turn` / `AppRequests` / GenAI spans / the nightly crash, but Gaps **318 and 319 are uncommitted** and no image contains them. `ops_recommendation` therefore needs a **further, distinct** image refresh — not the one that already landed. The 2026-08-26T03:00 nightly run succeeded without emitting any, which is the expected behaviour, not a regression |
+| `agent_eval_run` where `run_source == "production"` (Section G) | 0 rows. **Update 2026-08-26:** the reason moves from "flag off" to "flag now on, no real turn scored yet" — `ENABLE_PRODUCTION_QUALITY_JUDGE` was `False` in `config.py` with no bicep/env-var override anywhere, confirmed by a repo-wide grep of `Prod_Invoice_LLM/infra/`. Set live on `ca-invoice-be-dev` (`az containerapp update --set-env-vars ENABLE_PRODUCTION_QUALITY_JUDGE=true`, new revision `ca-invoice-be-dev--0000087`, confirmed `Healthy`/`Running`), and also declared through `08-apps.bicep` → `invoice-be.bicep` (default `false`) with `params.dev.json` overriding to `true` for dev only, so a future full Stage 8 deploy stays consistent instead of silently reverting the live CLI change. `az containerapp show` confirms the env var is present with value `true`. No real production `agent_eval_run` row has landed yet as of this edit — that requires a real authenticated chat turn against `ca-invoice-be-dev`, which this agent cannot generate itself (backend ingress is internal-only; a real Clerk-authenticated session is needed) — founder follow-up to generate one turn and re-check this row. See Gap 304 in `be_features_tracker.md` for the full mechanism note. |
+| `ops_recommendation` (Gap 319, the recommendation pass; rendered by Gap 320's panel) | 0 rows, confirmed live 2026-08-26 via the deployed panel's own query against `law-invoicellm-dev`. It emits only from a `--run-label nightly` run, and the nightly job's image predates both Gap 318 and Gap 319 — same pending backend image refresh as the rows above. Nothing is wrong with the emitter or the panel; there has been no nightly execution carrying it yet. **Clarification 2026-08-26 (doc-reconciliation pass):** this row is **still correct and stays "structurally empty"** — but "same pending backend image refresh as the rows above" no longer parses now that those rows are corrected to *real data*, so state it directly: the 2026-08-25T14:41Z image (`cb96d8f`) carries Gaps 308/309/317 and therefore fixed `chat_turn` / `AppRequests` / GenAI spans / the nightly crash, but Gaps **318 and 319 are uncommitted** and no image contains them. `ops_recommendation` therefore needs a **further, distinct** image refresh — not the one that already landed. The 2026-08-26T03:00 nightly run succeeded without emitting any, which is the expected behaviour, not a regression. **Correction 2026-08-26 (redesign session, later the same day): this row is now closed — it no longer belongs under "structurally empty".** Gaps 318/319/320 are committed (`f9aa0c5`) and deployed, and the nightly run has produced **real `ops_recommendation` rows**, so both recommendation panels render live data. The commit state is verified in this repo; the "real rows landed" half is the founder's own observation from the 2026-08-26 design session and is recorded on that basis, not on a query run by this agent |
 | SAGE per-tool cost (`a6`), stop reasons (`b6`) | Structurally empty while the SAGE flag is off — stated on the panel, not omitted. **Correction 2026-08-26 (Gap 305 investigation): this is now wrong for `b6` and its own panel text is wrong live.** There is no SAGE flag — Gap 316 deleted `ENABLE_AGENTIC_SAGE` outright — and `b6-stop-reasons` queries `chat_turn`'s `stop_reason`, which `agents/query_agent.py` populates on the **default** route (`sql_attempts_exhausted`, `sql_declined`, `sql_summary_failed`, `rag_answer_failed`, `chat_answer_failed`, `route_override_followup`), plus `agent_raised` from `routers/chat.py` and `queue_handler_raised` from `queue_worker/handlers.py`. `chat_turn` has carried real production rows since the 2026-08-25T14:41Z image, so `b6` is **real data**, not structurally empty — while the deployed tile still hard-codes `Detail = "SAGE-only field — structurally empty while ENABLE_AGENTIC_SAGE=false"`, i.e. it tells a reader that live data is empty. `a6` is untouched by this and remains genuinely dead (per-tool cost of tools that no longer exist). Not changed here — the workbook JSON is infra scope; raised on Gap 305 for a founder/infra call |
 
 **One further deployed-panel finding from the same pass, also not changed (infra scope, Gap 305):** `f1-breached-signals` computes `Status = iff(latest_breached == "1", "breached", "ok")`. It keys off the event's `breached` flag alone and never inspects `value`, so a signal whose denominator is permanently 0 — which is exactly `budget_exhaustion_rate`'s state after Gap 316 — renders a **green "ok"** tile forever. That is the precise failure mode `services/online_eval_signals.py::SignalResult`'s docstring exists to prevent ("'Nothing happened' and 'nothing went wrong' are different facts and a dashboard that conflated them would show a healthy green on the day ingestion stopped"). The emitter honours the contract by sending `value=None`; the tile reads the wrong field. Whether this is fixed by retiring the signal, by adding an explicit unmeasurable state to the event, or by teaching F1 to render a null `value` as "not measured" is a founder call — all three are live options and none was taken unilaterally.
@@ -489,6 +489,9 @@ SendGrid, the `-critical` action-group split, and Stage 8 (`08-apps.bicep`, trac
 `benchmark-gate` row was already correctly struck through. Net: this table is now 4 struck-through / 4 open,
 not "all still open". One thing the image refresh did **not** carry, so it is not marked resolved anywhere
 below: `ops_recommendation` is still 0 rows, because Gaps 318/319 are uncommitted and no image contains them.
+**Superseded 2026-08-26 (redesign session, later the same day):** that sentence is no longer true — Gaps 318/319/320 are
+committed (`f9aa0c5`) and deployed and the nightly run has produced real `ops_recommendation` rows. Kept above rather than
+rewritten, per hard rule 4. See Fix 9 in "Workbook redesign — priority-ranked information architecture (2026-08-26)".
 
 **Correction 2026-08-26 (Monitoring Reader / Cost Management Reader RBAC, deployed):** the `Monitoring
 Reader` row below is now also struck through — it and Gap 297's `Cost Management Reader` were both granted
@@ -507,6 +510,443 @@ Gap 297's closure note for the full 4-rung verification). **Three rows remain ge
 | ~~Alert-rule fix pending deploy~~ — **deployed and live, verified 2026-08-26** | **Correction 2026-08-26 (live-Azure-verified):** this row was stale and contradicted its own Gap entry. `be_features_tracker.md`'s **Gap 301** records the change as "fixed, deployed and verified live the same day," and **the tracker is the one that is right**: `alert-ca-invoice-be-dev-cpu-high` exists live carrying **both** criteria — `CpuPercentage` Avg > 90 **AND** `Replicas` Max >= 5 — read back with `az`, not inferred from the template. So the second `AllOf` criterion is in Azure, the alert only fires once autoscale is genuinely maxed out, and nothing is pending. Original (now superseded) wording, kept for history: `alert-rules.bicep`'s CPU/memory alerts gained a second `AllOf` criterion (`Replicas >= app.maxReplicas`) so they only fire once autoscale is genuinely maxed out. `az bicep build` clean, `what-if` Succeeded — **`az deployment group create` deliberately not run.** |
 | ~~`chat_turn` / GenAI-span / `AppRequests` fixes pending deploy~~ — **resolved and live as of the 2026-08-25 image, verified 2026-08-26** | **Correction 2026-08-26 (live-Azure-verified):** the deploy this row was waiting for **has happened**. The backend image was rebuilt **2026-08-25T14:41Z from commit `cb96d8f`**, which carries all three fixes. Confirmed live in `law-invoicellm-dev`, by query rather than by reasoning about the commit: `AppEvents` now has real `chat_turn` rows (so Sections B and C are no longer structurally empty), `AppDependencies` now has `GenAI \| az.ai.openai` rows (so the LLM-call dependency span is exporting), and `AppRequests` now has rows **from the real container** — not just the `invoice-be-local-f20-verify`-tagged rows Gap 292 produced from a local run. The "real data today vs. structurally empty" table above is corrected to match. **What this image does *not* carry**, and therefore what this row must not be read as closing: Gaps 318/319 are uncommitted, so `ops_recommendation` is still 0 rows and Gap 320's panel still renders empty — a *further* image refresh, not this one. Original (now superseded) wording, kept for history: All three are code-complete and locally verified but the live backend image predates them, so Sections B/C stay at 0 rows and `AppDependencies` has no `GenAI \| az.ai.openai` rows until a backend deploy lands (no longer blocked by `benchmark-gate` — that gate is removed as of 2026-08-25, see the row above). |
 | ~~Nightly eval job's `FileNotFoundError` fix pending the *same* deploy~~ — **resolved and live; the job succeeded 2026-08-26T03:00** | **Correction 2026-08-26 (live-Azure-verified):** same resolution as the row above — the 2026-08-25T14:41Z image built from commit `cb96d8f` carries Gap 308's `default_output_dir()` and Gap 317's caller-side half. The proof is not "the fix is in the image" but the run itself: **`caj-benchmark-eval-dev`'s 2026-08-26T03:00 UTC execution succeeded**, i.e. the schedule that had been failing every night under `retryLimit 0` after doing all its real work now completes. That also means the nightly trigger the recommendation pass hangs off (Gap 318's cadence decision) is real in Azure and not just in code. Original (now superseded) wording, kept for history: Code-complete (Gap 308's `default_output_dir()`, 2026-08-24; re-verified and extended by Gap 317, 2026-08-25) and proven inside a real `Dockerfile.be` build — the literal nightly argv now exits 0 and writes `/tmp/agent_eval_output.json`. But `acrinvoicellmdev2.azurecr.io/invoice-be:latest` was built **2026-08-24T09:08:22Z**, ~4h before the fix commit, and reading `/app/scripts/run_agent_eval.py` inside it shows **no `default_output_dir` at all** — so `caj-benchmark-eval-dev` still fails at 03:00 UTC every night (all real work done, then the crash, recorded `Failed` under `retryLimit 0`) until an image refresh lands. Same deploy as the row above; nothing else is needed. |
+
+---
+
+## Workbook redesign — priority-ranked information architecture (2026-08-26)
+
+**Status: design approved by the founder, not implemented.** Decided directly with the founder across an
+extended design session on 2026-08-26. This section is **additive** (CONVENTIONS hard rule 4) — nothing
+above it is rewritten or withdrawn. Everything above remains the record of *what is deployed today*: the
+27-item / 51-item panel inventories, the sample field-recommendation table, the KQL traps list, the ARG
+quirks and the blockers table are all still true and still load-bearing. This section is the **target
+shape**, plus the audit evidence that produced it.
+
+**Update 2026-08-26 (infra-devops, Gap 322) — implemented and deployed live to `rg-invoice-llm-dev`.**
+Both workbooks restructured onto the 3-tier layout below; all 11 fixes applied; the new Dashboard Insights
+latency panel added; recommendation cards moved inline. Panel-inventory counts above (27/51) are now
+**stale for the live workbooks** — the current live counts are `cost_health_workbook.json` **30 items**,
+`ai_control_tower_workbook.json` **55 items** — kept as written above per hard rule 4 (they were true at
+the time), corrected here rather than edited in place. Full verification (bicep build, what-if, deploy,
+pull-back byte-comparison, live query proof against real Log Analytics, backend test XPASS confirmation)
+is in `be_features_tracker.md`'s Gap 322 entry. The fix list and tier structure below are marked
+`[x] implemented` inline, per-item, rather than rewritten.
+
+**Ownership boundary.** This section is written by senior-dev as a spec; the implementation is
+infra-devops's — the two workbook JSONs (`infra/monitoring/cost_health_workbook.json`,
+`infra/monitoring/ai_control_tower_workbook.json`) and their two narrow bicep templates
+(`infra/workbook-cost-health-only.bicep`, `infra/workbook-ai-control-tower-only.bicep`). No production
+code change is in scope here; the one place where a workbook change *forces* a code change is called out
+explicitly under "Fix 11" below, and it needs its own gap number rather than being folded in.
+
+### The organizing principle — the founder's priority order
+
+Three tiers, in this order, in the founder's own words:
+
+1. **Cost & Reliability** — top priority. *"Be aware of running cost, reduce cost, improve UX quality —
+   system running fast, nothing breaking."*
+2. **Extraction & Chat Quality** — second priority. Both are already good; this tier exists to catch
+   **regressions** and to keep improving them, not to prove they work.
+3. **Cost Reduction** — explicitly **last / lowest** priority.
+
+The inversion is the point. Cost *reduction* — where spend concentrates, by service, by component — is
+the most built-out area of the current Cost + Health workbook (it is the first thing on the page,
+`cost-header` → `cost-trend-budget` → `cost-by-service`), and it is the founder's lowest priority.
+Today's layout orders panels by how much was built, not by what has to be looked at first. The redesign
+reorders on priority.
+
+### The 3-tier structure — both workbooks share it
+
+Both workbooks adopt the same three tiers in the same order. They differ only in which fields each has
+data for; a tier with no fields on a given workbook is simply absent there rather than rendered empty.
+
+| Tier | Sub-section | Fields in the sub-section | Where the data is today |
+|---|---|---|---|
+| **1 — Cost & Reliability** | Cost awareness | MTD spend vs. budget; month-end forecast vs. budget | `cost-trend-budget` (Cost+Health) — see Fix 1, it is reading a stale snapshot |
+| | Reliability | Container CPU / memory; restarts (24h); database health; cache health; failed message queue (DLQ) | `container-status`, `container-restarts`, `db-status-postgres*`, `db-status-redis*`, `dlq-panel` — see Fixes 2 and 3 |
+| | Speed | Major API latency by feature area **vs. industry standard**; API error rate by area | `api-perf-by-area`, `api-perf-error-rate` — the "vs. industry standard" comparison is new, see the latency table below |
+| **2 — Extraction & Chat Quality** | Extraction quality | Alert recall; clean-doc false-positive rate; field accuracy trend | `e1-alert-recall`, `e1-fp-rate`, `e3-trend` (AI Tower) |
+| | Chat quality — nightly test | Pass rate; **all six** soft scores (faithfulness, relevance, accuracy, context, orchestration, persona); cost per turn; response time (P95) | `d1`–`d4` (AI Tower) — see Fix 11, `d1`/`d2-accuracy` bands are miscalibrated |
+| | Chat quality — real usage | Production judge scores, once real traffic exists | `g1`/`g2` (AI Tower) — 0 rows today, see the "real data vs. structurally empty" table above |
+| **3 — Cost Reduction** | Where cost concentrates | Spend by Azure service; spend by component (chat vs. extraction vs. judging); test vs. real spend | `cost-by-service` (Cost+Health); `a1`/`a2` (AI Tower) — the chat/extraction/judging split is **new**, see the extraction-cost finding below |
+
+**Tier 1's "Speed" sub-section is the one place a comparison, not just a number, is required.** A P95 in
+milliseconds means nothing to a reader who does not already know what good looks like for that feature
+area. Each Speed row carries its industry-standard reference in `Detail` (see the latency table below for
+the reference values), so a reader can tell "10.5s" apart from "10.5s, which is normal for this".
+
+### Recommendation cards move inline — this is a requirement, not a preference
+
+Gap 320 put the recommendation grid at the **bottom** of both workbooks (`ops-recommendations-header` +
+`ops-recommendations` as items 24/25 of 27; `section-h-header` + `h1-ops-recommendations` as items 48/49
+of 51). The founder was explicit that burying the recommendations at the end is a **real usability
+problem**: the reader sees the number at the top of the page and the explanation of that number several
+screens below it, so in practice the explanation is never read.
+
+**Required shape:** the recommendation cards render **inline within each tier, next to the data they
+explain**, not as one separate section at the bottom. There is no separate recommendations section any
+more; the bottom-of-page grid is removed once its content is distributed.
+
+The `ops_recommendation` event already supports this without any emitter change — it carries `category`,
+one row per category per run (Gap 319), and the three categories map cleanly onto the tiers:
+
+| `ops_recommendation.category` | Renders inside |
+|---|---|
+| `container_health` | Tier 1 → Reliability |
+| `cost` | Tier 1 → Cost awareness (the *awareness* verdict), and Tier 3 → Where cost concentrates (the *reduction* verdict), if the founder wants it in both |
+| `ai_improvement` | Tier 2 (spans both the extraction and chat sub-sections) |
+
+**Two implementation constraints on the split**, both inherited from Gap 320's verification and neither
+optional:
+
+- **The "latest run" scalar must still be a global max computed before the category filter.** Gap 320's
+  query computes `let latest_run = toscalar(rows | summarize max(run_ts));` over *all* rows and only then
+  filters. If a per-tier panel narrows to one category first and *then* takes the max, two tiers can
+  render two different runs' verdicts side by side on the same page. Keep the `toscalar` global max, add
+  the `| where tostring(d.category) == "<category>"` predicate **after** it.
+- **`title` is still a reserved word** — the `Category` column must stay `tostring(d["title"])` in bracket
+  notation in every copy of the query. See the traps list above.
+
+The rest of Gap 320's query contract carries over unchanged to each inline copy: run key is
+`generated_at` and never `TimeGenerated`; `Recommendation` renders the literal `"No recommendation yet"`
+when `d.recommendation` is empty and is never inferred from data volume; plain grid, no colouring (a row
+can carry a bad `worst_severity` while `recommendation` is empty, and colouring that would visually
+contradict "No recommendation yet").
+
+### Field-level findings from the 2026-08-26 audit — the rationale for the above
+
+**1. Extraction genuinely has its own real cost, and it is invisible today.** Tonight's run:
+**$0.145 of $0.25 total — 58%**, i.e. more than chat and judging combined. Nothing on either workbook
+shows this. `a1-cost-by-agent` splits by `agent_name` and `a2-spend-by-run-source` splits by
+`run_source`, but neither answers "how much of the bill is extraction vs. chat vs. judging?" — which is
+the question Tier 3's "spend by component" row exists to answer, and the reason that row is specified as
+new rather than as a re-label of `a1`.
+
+**2. `d1-latest-pass-rate` and `d2-accuracy` are coloured against current mediocre performance, not
+against what "good" means.** Read live out of `ai_control_tower_workbook.json`:
+
+| Panel | Current `thresholdsGrid` | Tonight's real value | Renders as |
+|---|---|---|---|
+| `d1-latest-pass-rate` | red `< 0.20`, yellow `< 0.30`, default green | **25.7%** | yellow-at-best, and green under the `-1` sentinel path |
+| `d2-accuracy` | red `< 0.40`, yellow `< 0.55`, default green | **60%** | **green** |
+
+A 25.7% pass rate and 60% accuracy are not green. The bands were set to whatever the system was doing at
+the time, so the tile can no longer report a bad number as bad — which is the entire job of a coloured
+tile. Recalibration is infra-devops's, with the code coupling in Fix 11.
+
+**Update 2026-08-26 — the code half of this is done (Gap 323).** `SCORE_BANDS["pass_rate"]` is now
+`(0.60, 0.75)` and `SCORE_BANDS["accuracy"]` is now `(0.75, 0.90)`, so both of tonight's real numbers
+grade **red** in the recommendation pass. The two tiles still carry the old grids; the exact values to
+mirror, the reasoning behind them, and the three handover notes are in **Fix 11** below.
+
+**3. The n=3-run guard on the golden bank is wrong on its own terms.** Both `d1` and `d2-accuracy` carry
+`iff(total < 3, -1.0, …)` — the `-1 → "n/a — see Detail"` sentinel — waiting for three runs before they
+will colour. But the golden bank is a **fixed, deterministic, exhaustive 35-case script set run
+identically every night**. There is no sampling error for a "wait for more runs" guard to protect
+against; a second and third identical run add no statistical information, they only delay the colouring.
+
+This is not a new argument — it is the **same argument this repo already accepted one level down**.
+`services/ops_recommendation.py` exempts `context_drift` from its own n=20 guard in a comment that reads,
+verbatim:
+
+> the guard exists because a *rate* over a small sample is noise; this is a fixed, exhaustive,
+> deterministic script set — the same handful of pinned checks every night, with no sampling error to
+> guard against.
+
+The redesign applies that identical reasoning one level up, to Section D's own bands. Note this is
+narrower than "remove all minimum-sample guards": the **n=20 turn/call guard on live-traffic rates stays**
+— those *are* rates over a variable sample and the guard is correct there. Only the n=3-**run** guard on
+the deterministic golden bank is wrong.
+
+**4. Real API latency vs. industry standard.** Live-queried over the last 7 days, per feature area. These
+are the reference values Tier 1's Speed sub-section renders in `Detail`:
+
+| Feature area | Measured (last 7d) | Industry standard | Read |
+|---|---|---|---|
+| Auth | P50 268 ms / P95 544 ms | sub-second | **Good** |
+| Ingestion & Extraction | P50 353 ms / P95 705 ms | sub-second | **Good** |
+| Chat | P50 10.5 s / P95 28.6 s | 2–10 s for agentic RAG | **Normal for an LLM-backed response**, though P95 is on the high side and worth watching |
+| Dashboard & Reporting (Insights) | P95 23.1 s | — | **Root-caused, not noise** — see finding 5 |
+| Review & Correction | **zero traffic in 7 days** | — | Unknown — worth checking whether that is real (nobody used it) or an instrumentation gap |
+| Billing & Admin | **zero traffic in 7 days** | — | Same |
+
+The two zero-traffic areas are recorded as a **question, not a defect**. `api-perf-by-area`'s `case()`
+maps `/audit` → "Review & Correction" and `/billing` or `/admin` → "Billing & Admin"; whether those
+prefixes still match the live routers was not checked in this pass and should not be assumed either way.
+
+**5. Dashboard Insights' latency is a real finding that is already root-caused in the code itself.**
+`routers/dashboard.py::get_dashboard_insights` — its own docstring (Gap 30, Gap 279) says it: the handler
+calls Azure OpenAI **synchronously** to generate the dashboard's AI recommendations, **measured live at
+13–19.5 s on a cache miss** and sub-second on a hit (`INSIGHTS_CACHE_TTL_SECONDS = 3600`). Tonight's live
+data confirms the bimodality directly: of 6 real calls, **4 took 13–23 s and 2 were under 1 second**.
+
+A worse version of this bug was already fixed. Under **Gap 279** the handler was declared `async def`
+while its body was entirely blocking I/O, so Starlette ran it on the uvicorn event loop and that 13–19 s
+call **froze the whole worker** — the docstring cites `2026-08-19T07:20:30Z`, where `/dashboard/insights`
+(16781 ms) and four unrelated concurrent requests (16750/16945/16956/16937 ms) all completed within
+200 ms of each other and `/invoices` went straight back to 282 ms one second later. That is fixed (the
+handler is deliberately `def`, not `async def`, and the docstring says so in capitals). **The remaining
+latency is the inherent cost of a live LLM call on a cache miss** and affects only the caller.
+
+**What the redesign does about it: adds observability, nothing else.** A panel that shows the cache-miss
+vs. cache-hit split for `/dashboard/insights` so the bimodality is visible rather than being averaged
+into one meaningless P95. **Actually fixing the latency — pre-warming the cache, or moving generation to
+a background job — is explicitly OUT of scope** and is a separate future gap.
+
+### The fix list — panel-level defects found in the 2026-08-26 audit
+
+This is infra-devops's fix list and is meant to be implementable from this document alone. Every "current
+state" line below was read out of the committed workbook JSON during this pass, not paraphrased from
+memory. **senior-dev did not fix any of these** — they are workbook JSON, which is infra scope.
+
+**1. `cost-trend-budget` / `cost-by-service` (Cost + Health) — reading a stale cost snapshot.**
+Current state: both read `AppEvents | where Name == "azure_cost_snapshot"` / `"azure_cost_slice"`, and
+the newest snapshot in the workspace predates the budget fix — it carries the old **₹150** budget, not
+the **₹20,000** that is actually deployed (`budget-invoicellm-dev`, confirmed live 2026-08-26, see the
+"verified facts" list above). Root cause is that `scripts/sweep_azure_cost.py` **was never scheduled**,
+so no fresh snapshot has ever been written. Required change: show the live-corrected number if that is
+achievable from the workbook alone, **or** clearly flag the panel as stale (e.g. surface the snapshot's
+own age in `Detail`) if it is not. **Scheduling the sweep is OUT of scope here** — that is a separate
+infra job-creation task. What is not acceptable is the current state, where a stale number renders as if
+it were live.
+
+**Implemented (Gap 322, 2026-08-26):** converted from `top 1 by TimeGenerated desc` to the
+`toscalar`/equality pattern (folding in the same-shaped `top 1` trap noted at the end of Fix 8 below);
+stale-snapshot age (`snapshot_age_hours`) now surfaced in `Detail`. Deployed and pull-back-verified live;
+live query today returns `budget_amount=150` (the known-stale ₹150 figure) and `snapshot_age_hours=74.1`.
+
+**2. `db-status-redis-liveness` (Cost + Health) — permanent false red.**
+Current state: `AzureMetrics | … | where MetricName == "geoReplicationHealthy" | summarize Value =
+avg(Average) | extend Status = iff(Value >= 1, "Healthy", "Unhealthy")`, coloured green on `== "Healthy"`
+and **red by default**. Dev's Redis has **no geo-replication configured**, so the metric never arrives,
+`avg()` over the empty set is null, `null >= 1` is false, and the panel falls through to a permanent
+false `"Unhealthy"` red. Required change: render **"N/A — not configured in this tier"** (blue, the same
+role the `-1` sentinel plays elsewhere) when the metric is absent, and reserve red for a real
+`geoReplicationHealthy == 0`. Absence of a metric and a failing metric are different facts.
+
+**Implemented (Gap 322, 2026-08-26):** absent metric now renders `"N/A — not configured in this tier"`
+(blue) instead of a false red `"Unhealthy"`; a real `geoReplicationHealthy == 0` still renders red. Deployed
+and live; live query today actually returns `Healthy` (the metric is currently present, not absent) — the
+null-guard path is verified structurally, not exercised by today's data.
+
+**3. `db-status-postgres-liveness` (Cost + Health) — a 6-hour average of a liveness signal.**
+Current state: `where TimeGenerated > ago(6h) | where MetricName == "is_db_alive" | summarize Value =
+avg(Average) | extend Status = iff(Value >= 1, "Alive", "Down")`. Because it averages over 6h and demands
+`>= 1`, a **single blip** drags the average below 1 and the tile reads `"Down"` — and keeps reading
+`"Down"` for six hours *after* the database has recovered. Required change: read a shorter / real-time
+window (latest sample, or a few minutes) so the tile reports current liveness. If a historical blip is
+worth surfacing at all, it belongs in `Detail` as "N blips in 6h", not in the headline status.
+
+**Implemented (Gap 322, 2026-08-26):** converted to a real-time read — latest sample in the last 15 min —
+with a 6h blip count carried in `Detail`. Deployed and live; live query today returns `Alive`, `0 sub-1
+samples in last 6h`.
+
+**4. `alerts-trend` (Cost + Health) — titled "per day", has no daily binning.**
+Current state: title is `"Alerts fired per day, by severity — last 14 days"`, query is
+`… | where fired > ago(14d) | summarize Value = count() by Metric = sev`. There is **no `bin()` and no
+division by 14** anywhere — it is a 14-day **cumulative** count presented as a daily rate, so every
+number on the tile is ~14× what the title claims, and the red band at `>= 5` fires on a 14-day total of
+5. Required change: either bin by day (`by bin(fired, 1d), sev`) or retitle to "last 14 days, total" and
+re-band accordingly. Whichever is chosen, the title and the arithmetic must agree.
+
+**Implemented (Gap 322, 2026-08-26):** converted to real `bin(fired, 1d)` daily binning (Resource Graph
+`bin()`, rendered as a plain grid rather than tiles, matching the multi-row-per-metric shape). Deployed and
+live; `az graph query` today returns 11 distinct day/severity rows across the last 14 days, not one 14-day
+cumulative count.
+
+**5. `a5-genai-dependency-duration` (AI Tower) — never filters `run_source`.**
+Current state: `AppDependencies | where DependencyType startswith "GenAI" | … | summarize … by
+agent_name`. There is no `run_source` predicate anywhere in it. This panel exists as a **production
+cross-check against `a3-latency-by-agent`**, but it silently blends golden-bank/eval traffic and
+production traffic into one number, so the cross-check compares a mixed population against a filtered
+one. Required change: add the same `run_source` filter the rest of the workbook uses —
+`extend run_source = iff(isempty(run_source), "production", run_source) | where run_source ==
+"production"` — matching the pattern already in `b6-stop-reasons`. See the "`run_source` filtering" rule
+in the "Rules the workbooks already enforce" list above: this panel is the one that violates it.
+
+**Implemented (Gap 322, 2026-08-26):** `run_source == "production"` filter added, matching the
+`b6-stop-reasons` pattern exactly. Deployed and live; live query returns 6 production-only agents including
+`dashboard.insights` (p50/p95 ≈ 17.7s), confirming both the fix and finding 5's Dashboard Insights
+root-cause in the same data.
+
+**6. `a6-sage-per-tool-cost` (AI Tower) — delete this panel.**
+Current state: `… | where agent_name startswith "sage."` with `Detail` hard-coding `"structurally empty
+while ENABLE_AGENTIC_SAGE=false"`. SAGE was **deleted in Gap 316**; no code emits an `agent_name`
+beginning `sage.` any more, so the predicate can **structurally never match again** — this is not a
+dormant panel waiting for a flag, it is dead. Required change: **delete the panel** (Section A drops from
+`a1`–`a6` to `a1`–`a5`; item count 51 → 50).
+
+**Implemented (Gap 322, 2026-08-26):** panel deleted outright. `section-a-header` updated additively to
+drop the stale SAGE reference and note the deletion. Deployed and pull-back-verified live (`a6-sage-per-tool-cost`
+does not appear in the live workbook).
+
+**7. `b6-stop-reasons` (AI Tower) — the label is actively wrong, not merely stale.**
+Current state: title is `"Stop reasons — SAGE-only field, structurally empty while
+ENABLE_AGENTIC_SAGE=false"` and every row's `Detail` hard-codes the same sentence. Both halves are false:
+`ENABLE_AGENTIC_SAGE` **no longer exists** (deleted in Gap 316), and `stop_reason` **is populated on the
+live default route** — `agents/query_agent.py` writes `sql_attempts_exhausted`, `sql_declined`,
+`sql_summary_failed`, `rag_answer_failed`, `chat_answer_failed`, `route_override_followup`, plus
+`agent_raised` from `routers/chat.py` and `queue_handler_raised` from `queue_worker/handlers.py`. Since
+`chat_turn` started carrying real production rows (the 2026-08-25T14:41Z image), this panel shows **real
+data while telling the reader it is empty**. Required change: retitle to describe what it actually is
+("Stop reasons — default chat route, 30d") and replace the hard-coded `Detail` with something derived
+from the row (e.g. share of turns). Note this panel already filters `run_source == "production"`
+correctly — that part is right and should not be disturbed. Contrast with Fix 6: `a6` is genuinely dead,
+`b6` is genuinely live; they are not the same problem despite carrying the same stale sentence.
+
+**Implemented (Gap 322, 2026-08-26):** retitled to "Stop reasons — default chat route, 30d, production only";
+hardcoded `Detail` replaced with a real derived share-of-turns string. Deployed and live; live query executes
+cleanly and today's real data shows 0 of 32 production `chat_turn` rows (last 30d) have a populated
+`stop_reason` — an honest empty result, not the mislabeling this fix targeted (which was a false claim, not
+a broken query).
+
+**8. `e2-confusion-cells` (AI Tower) — the `top 1` trap the spec claims was fixed everywhere.**
+Current state: `AppEvents | where Name == "extraction_benchmark_run" | … | top 1 by TimeGenerated desc |
+project …`. The traps list above states plainly that "a bare `top 1 by … desc` returns **zero** rows over
+empty input, so 'latest run' tiles use a `summarize`-based `arg_max` tuple, which emits exactly one
+(null-valued) row" — and this panel never got converted. Over empty input it renders **nothing at all**
+rather than an honest "n/a", which reads as "no problems" instead of "no data". Required change: convert
+to the `summarize (…) = arg_max(TimeGenerated, …)` tuple form, matching `d1-latest-pass-rate`.
+
+*Also found in this pass, and offered as a founder call rather than assumed into the fix:*
+`cost-trend-budget` (Fix 1) **has the same `top 1 by TimeGenerated desc` trap**. Fixing it is the same
+one-line conversion and is arguably part of Fix 1 anyway, but it was not in the founder's stated list, so
+it is recorded here rather than silently bundled.
+
+**Implemented (Gap 322, 2026-08-26):** `e2-confusion-cells` converted to the `toscalar`/equality pattern.
+`cost-trend-budget`'s same-shaped trap (noted above) was also converted, per the founder's confirmation
+that it should be included. Both deployed and live; `e2-confusion-cells`' live query returns real
+confusion-matrix counts (`true_positive=5`, `false_negative=0`, `false_positive=1`, `true_negative=3`,
+`not_applicable=8`).
+
+**9. `h1-ops-recommendations` (AI Tower) / `ops-recommendations` (Cost + Health) — RESOLVED, record as
+fixed.** These rendered 0 rows because Gaps 318 and 319 were uncommitted and therefore in no image. **That
+is no longer true as of 2026-08-26**: both are committed (`f9aa0c5`) and deployed, and tonight's nightly
+run produced **real rows**. This supersedes the "0 rows / needs a further image refresh" wording in the
+"real data today vs. structurally empty" table, the blockers table, and the last unchecked item in the
+Tasks list below — all three are updated in place. **Do not carry this forward as an open item.** The only
+change these two panels need from the redesign is relocation, per "Recommendation cards move inline".
+
+**Confirmed (Gap 322, 2026-08-26):** relocated inline exactly as predicted — no query change was needed.
+`cost_health_workbook.json` carries `tier1-cost-recommendation` / `tier1-container-health-recommendation`;
+`ai_control_tower_workbook.json` carries `tier2-ai-improvement-recommendation` only (the `container_health`/
+`cost` categories are not duplicated onto AI Tower, which has no underlying panels for them to sit next to
+— a design decision made during implementation, see the tracker's Gap 322 entry). All three deployed and
+live; live queries return real `no_data` (`container_health`/`cost`) and a real `recommend` row with live
+explanatory text (`ai_improvement`).
+
+**10. `f1-breached-signals` (AI Tower) — colours off `breached` alone and never reads `value`.**
+Current state: `summarize (latest_ts, latest_breached) = arg_max(TimeGenerated, breached) by signal_name |
+extend Status = iff(latest_breached == "1", "breached", "ok")`. `value` is not projected and not read
+anywhere in the query. A signal whose denominator is permanently 0 — exactly `budget_exhaustion_rate`'s
+state since Gap 316 — therefore renders a **false green `"ok"` forever**. This is the precise failure mode
+`services/online_eval_signals.py::SignalResult`'s docstring exists to prevent ("'Nothing happened' and
+'nothing went wrong' are different facts"); the emitter honours the contract by sending `value=None`, and
+the tile reads the wrong field. Required change: **read `value` as well as `breached`** and render a null
+`value` as a distinct "not measured" state (blue), not as green. **This half is fixable independently and
+should be done now.** What is *not* unblocked: whether the dead `budget_exhaustion_rate` signal is retired
+altogether is **the founder's still-open Gap 305 decision** — leave that alone. Fixing the colouring bug
+does not pre-empt it, and is correct regardless of which way Gap 305 goes.
+
+**Implemented (Gap 322, 2026-08-26):** now reads `value` as well as `breached`; a null `value` renders
+`"not measured"` (blue) rather than a false green `"ok"`. Gap 305's dead-signal decision left untouched, as
+required. Deployed and live; live query executes cleanly (`online_eval_signal` has 0 rows total today — the
+emitter is not yet scheduled, a known, unrelated, documented gap — so the fix's logic is verified
+structurally rather than exercised against a real breached/null case today).
+
+**11. `d1-latest-pass-rate` / `d2-accuracy` band recalibration — has a code coupling, needs its own gap.**
+The recalibration itself (finding 2 above) is a workbook-JSON change. But `d1`'s grid is **pinned by an
+automated test**: `tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band` parses
+`ai_control_tower_workbook.json` at test time and asserts `d1-latest-pass-rate`'s red/yellow thresholds
+equal `services/ops_recommendation.py::SCORE_BANDS["pass_rate"]` (currently `(0.20, 0.30)`). **Changing
+the JSON alone turns the backend suite red.** The constant must move with it — which is a production-code
+change and therefore needs its own tracker Gap entry (repo rule: no code change without a matching Gap).
+
+`d2-accuracy` is a trap of the opposite kind: it is **not** in that test's parametrize list (only
+`d2-faithfulness` is), yet `SCORE_BANDS["accuracy"] = (0.40, 0.55)` mirrors it exactly. Retuning
+`d2-accuracy` in the JSON would therefore **silently** diverge from the constant with no test failure at
+all. Whoever recalibrates it must update `SCORE_BANDS["accuracy"]` in the same change, and should add
+`d2-accuracy` to the parametrize list so the next person cannot repeat the mistake.
+
+**Update 2026-08-26 — Fix 11's code half is DONE (Gap 323). These are the exact numbers to mirror into the
+JSON.** senior-dev has changed the two constants in `services/ops_recommendation.py::SCORE_BANDS`; the
+workbook JSON is untouched and is still infra-devops's to change. The mirror direction is reversed for
+these two fields only — everywhere else in this feature the tile is the source and the constant copies it,
+but here the tile was the thing that was wrong, so **the constant is now the decision and the grid copies
+it**:
+
+| Panel | `thresholdsGrid` today | **Mirror it to** | Constant it must equal |
+|---|---|---|---|
+| `d1-latest-pass-rate` | red `< 0.20`, yellow `< 0.30` | **red `< 0.60`, yellow `< 0.75`** | `SCORE_BANDS["pass_rate"] = (0.60, 0.75)` |
+| `d2-accuracy` | red `< 0.40`, yellow `< 0.55` | **red `< 0.75`, yellow `< 0.90`** | `SCORE_BANDS["accuracy"] = (0.75, 0.90)` |
+
+Both grids keep their `== -1 → blue "n/a — see Detail"` row and their `Default → green` row unchanged;
+only the two `<` rows' `thresholdValue`s move. Under the new bands tonight's real numbers grade the way
+they should — verified by running the module, not by reading it: a 35-turn payload with `pass_rate=0.257`
+and `accuracy_mean=0.600` now yields `pass_rate 0.257 red (below 0.60)` and `accuracy 0.600 red (below
+0.75)`, where both were previously green.
+
+*Why these numbers.* **accuracy (0.75, 0.90)** — accuracy is the only dimension graded against a
+known-correct reference answer, so its bar is held above reference-free faithfulness's `(0.70, 0.85)`. The
+red bound is anchored rather than picked: `services/agent_eval.py::decide_pass()` already requires
+`accuracy >= ACCURACY_FLOOR = 0.70` on every single turn, so a run whose *mean* is under that floor means
+the average turn is failing the gate outright — red starts just above it at 0.75. Yellow 0.90 is the
+working target (about nine right answers in ten, with room for judge noise), deliberately short of
+relevance's near-free 0.95. **pass_rate (0.60, 0.75)** — `decide_pass()` makes this the only *conjunctive*
+number on the system: a turn passes only if faithfulness ≥ 0.80 **and** relevance ≥ 0.70 **and**
+accuracy ≥ 0.70. That compounding is why its bar is not simply the highest here — three dimensions each
+clearing their floor on ~90% of turns still lands the joint rate well under 0.90 with no regression at
+all, so an 0.85-style bar would flag a healthy system nightly and be tuned out within a week. Green ≥ 0.75
+means three turns in four are clean on all three checks; red < 0.60 means more than two in five fail a
+required check. `pass_rate` therefore carries the **lowest yellow** in the band table but *not* the lowest
+red.
+
+*Three things infra-devops needs to know before touching the JSON:*
+
+1. **The pin test is currently `xfail(strict=True)` on exactly these two params**, because the constant and
+   the JSON genuinely disagree during the handover window. The moment the grid is mirrored those two
+   XPASS, which pytest reports as a **failure** — that is intentional. The fix at that point is to delete
+   the two `_AWAITING_JSON_MIRROR` markers and the transitional
+   `test_the_two_recalibrated_bands_still_await_their_json_mirror` in `tests/test_ops_recommendation.py`;
+   the ordinary pin then holds both bands going forward. Nothing else in that file should need to move.
+2. **`d2-accuracy` is now in the parametrize list**, so from the next change onward it can no longer drift
+   silently — the gap this doc flagged above is closed.
+3. **There is a second, unpinned copy of these numbers**: `infra/alert-ai-eval-critical-only.bicep`
+   (Gap 299) carries them as parameter defaults — `passRateRedBelow = '0.20'` and
+   `accuracyRedBelow = '0.40'`, plus the same values written into the alert's `description` string and its
+   header comment block. **No test pins that file**, so nothing goes red if it is forgotten; it would just
+   keep paging on the old, far more permissive red bands while the tile says something else. It should be
+   mirrored to `'0.60'` / `'0.75'` in the same infra pass. senior-dev deliberately did not touch it — it is
+   bicep, and it needs a real deploy, which is infra scope.
+
+**Implemented (Gap 322, 2026-08-26):** all three handover items closed. Both `thresholdsGrid`s mirrored to
+the exact table above; `alert-ai-eval-critical-only.bicep`'s `passRateRedBelow`/`accuracyRedBelow` (plus the
+`description` string and header comment) mirrored to `'0.60'`/`'0.75'` and redeployed — `az monitor
+scheduled-query show` confirms the live query now reads `pass_rate < 0.60` / `accuracy < 0.75`. `d1`'s
+n=3-run guard removed (the only panel the founder's top-level task named for guard removal — `d2-accuracy`/
+`d3`/`d4`'s guards were deliberately left untouched, a narrower reading than this section's finding 3
+argument for the whole of Section D). Backend suite re-run: the two `xfail(strict=True)` params XPASSed as
+predicted, both markers and the transitional `test_the_two_recalibrated_bands_still_await_their_json_mirror`
+removed, `pytest tests/test_ops_recommendation.py` → 84 passed, 0 xfailed. Live query proof against real
+`law-invoicellm-dev` data: `d1` returns `pass_rate=0.167` (red under both old and new bands — this run
+doesn't demonstrate the fix mattering); `d2-accuracy` returns `accuracy=0.625` — **red** under the new
+`<0.75` band where it was **green** under the old `(0.40, 0.55)` band, which is the live proof the
+recalibration changes real coloring, not just the constant.
+
+### Explicitly OUT of scope for this redesign
+
+Listed so it cannot be silently expanded. Each of these is real work; none of it is this task:
+
+- **Scheduling `scripts/sweep_azure_cost.py` as a real Azure job.** Separate infra task. Fix 1 makes the
+  staleness *visible*; it does not make the data fresh.
+- **Scheduling Gap 305's online-signals job** (`scripts/emit_online_signals_job.py`, which still has no
+  `Microsoft.App/jobs` resource). Blocked on the founder's still-open decision about the dead
+  `budget_exhaustion_rate` signal. Fix 10's colouring change is *not* blocked on it and proceeds.
+- **Actually fixing Dashboard Insights' latency** — pre-warming the cache, or moving generation to a
+  background job. This redesign adds **observability only**; the fix is a separate future gap.
+- **Any new production code change.** This redesign is workbook JSON + bicep only. The single exception
+  that would force code — Fix 11's `SCORE_BANDS` constants — is called out above precisely so it gets its
+  own gap rather than riding in unnoticed.
 
 ---
 
@@ -553,6 +993,22 @@ Gap 297's closure note for the full 4-rung verification). **Three rows remain ge
       **2026-08-25T14:41Z from commit `cb96d8f`**; `AppEvents` now returns real `chat_turn` rows,
       `AppDependencies` returns `GenAI`/`az.ai.openai` rows, and `AppRequests` returns rows from the real
       container — so Sections B/C and the GenAI cross-check carry live data.
-- `[ ]` Deploy a **further** backend image carrying Gaps 318 + 319 so the recommendation pass runs and
-      Gap 320's panel renders rows — not started; those two gaps are uncommitted, so no image contains them
-      and `ops_recommendation` stays at 0 rows. Distinct from the refresh above, which is done.
+- `[x]` ~~Deploy a **further** backend image carrying Gaps 318 + 319 so the recommendation pass runs and
+      Gap 320’s panel renders rows — not started; those two gaps are uncommitted, so no image contains them
+      and `ops_recommendation` stays at 0 rows.~~ **Correction 2026-08-26 (redesign session): done.** Gaps 318/319/320
+      are committed (`f9aa0c5`) and deployed, and the nightly run has produced real `ops_recommendation` rows, so both
+      recommendation panels render live data. Commit state verified in-repo; the "real rows landed" half is the founder’s
+      own 2026-08-26 observation, not a query run by this agent. See Fix 9 in the redesign section above.
+- `[x]` **Workbook redesign — priority-ranked information architecture (2026-08-26)** — design approved by the founder,
+      **implemented and deployed live 2026-08-26 (Gap 322)**. 3 tiers (Cost & Reliability → Extraction & Chat Quality → Cost Reduction) on both workbooks,
+      recommendation cards moved inline per tier, plus the full 11-item panel fix list, all applied. Full spec in the section above;
+      implemented by infra-devops (workbook JSON + bicep). Gap number assigned: **322**.
+      Fix 11's code half was its own separate gap (**323**) because recalibrating `d1`/`d2-accuracy` forced a change to
+      `services/ops_recommendation.py::SCORE_BANDS`, production code; both gaps are now closed.
+- `[x]` **Fix 11 — `d1`/`d2-accuracy` band recalibration (Gap 323 code + Gap 322 JSON/bicep)** — **fully done**
+      2026-08-26: `SCORE_BANDS["pass_rate"] = (0.60, 0.75)`, `SCORE_BANDS["accuracy"] = (0.75, 0.90)`,
+      `d2-accuracy` in the pin test's parametrize list. Both `thresholdsGrid`s mirrored to the same values,
+      `alert-ai-eval-critical-only.bicep`'s copy mirrored and redeployed. Backend suite: the two
+      `xfail(strict=True)` params XPASSed as predicted, markers and the transitional test removed,
+      `pytest tests/test_ops_recommendation.py` → 84 passed, 0 xfailed. See the Fix 11 update above for full
+      live-query evidence that the new bands actually colour real data red.

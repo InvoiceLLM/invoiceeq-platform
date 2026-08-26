@@ -29,55 +29,24 @@
     {
       "type": 1,
       "content": {
-        "json": "## Area 1 — Cost — *from `azure_cost_snapshot`/`azure_cost_slice`, mirrored by `scripts/sweep_azure_cost.py`, not on a schedule yet*"
+        "json": "## Tier 1 — Cost & Reliability (top priority) — *\"Be aware of running cost, reduce cost, improve UX quality — system running fast, nothing breaking.\" 2026-08-26 redesign, Gap 322.*"
       },
-      "name": "cost-header"
+      "name": "tier1-header"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Cost awareness — *from `azure_cost_snapshot`/`azure_cost_slice`, mirrored by `scripts/sweep_azure_cost.py`, not on a schedule yet — see the STALE flag in the tile's own Detail text (Fix 1).*"
+      },
+      "name": "cost-awareness-subheader"
     },
     {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where Name == \"azure_cost_snapshot\"\n| extend d = parse_json(Properties)\n| top 1 by TimeGenerated desc\n| project month_to_date_spend = todouble(d.month_to_date_total),\n          budget_amount = todouble(d.budget_amount),\n          month_end_forecast = todouble(d.budget_forecast_spend),\n          currency = tostring(d.currency)\n| extend spend_pct = iff(budget_amount > 0, round(100.0 * month_to_date_spend / budget_amount, 1), real(null)),\n         forecast_pct = iff(budget_amount > 0, round(100.0 * month_end_forecast / budget_amount, 1), real(null))\n| project Metrics = pack_array(\n    pack(\"Metric\", \"Month-to-date spend\", \"Value\", spend_pct, \"Detail\", strcat(currency, \" \", tostring(round(month_to_date_spend, 1)), \" of \", currency, \" \", tostring(round(budget_amount, 1)), \" budget\")),\n    pack(\"Metric\", \"Budget\", \"Value\", -1.0, \"Detail\", strcat(currency, \" \", tostring(round(budget_amount, 1)))),\n    pack(\"Metric\", \"Month-end forecast\", \"Value\", forecast_pct, \"Detail\", strcat(currency, \" \", tostring(round(month_end_forecast, 1)), \" projected vs. \", currency, \" \", tostring(round(budget_amount, 1)), \" budget\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
+        "query": "let rows = AppEvents\n    | where Name == \"azure_cost_snapshot\"\n    | extend d = parse_json(Properties);\nlet latest_ts = toscalar(rows | summarize max(TimeGenerated));\nrows\n| where TimeGenerated == latest_ts\n| project month_to_date_spend = todouble(d.month_to_date_total),\n          budget_amount = todouble(d.budget_amount),\n          month_end_forecast = todouble(d.budget_forecast_spend),\n          currency = tostring(d.currency),\n          snapshot_age_hours = round((now() - latest_ts) / 1h, 1)\n| extend spend_pct = iff(budget_amount > 0, round(100.0 * month_to_date_spend / budget_amount, 1), real(null)),\n         forecast_pct = iff(budget_amount > 0, round(100.0 * month_end_forecast / budget_amount, 1), real(null))\n| project Metrics = pack_array(\n    pack(\"Metric\", \"Month-to-date spend\", \"Value\", spend_pct, \"Detail\", strcat(currency, \" \", tostring(round(month_to_date_spend, 1)), \" of \", currency, \" \", tostring(round(budget_amount, 1)), \" budget -- snapshot \", tostring(snapshot_age_hours), \"h old, STALE pending scheduled sweep (Fix 1, Gap 322)\")),\n    pack(\"Metric\", \"Budget\", \"Value\", -1.0, \"Detail\", strcat(currency, \" \", tostring(round(budget_amount, 1)))),\n    pack(\"Metric\", \"Month-end forecast\", \"Value\", forecast_pct, \"Detail\", strcat(currency, \" \", tostring(round(month_end_forecast, 1)), \" projected vs. \", currency, \" \", tostring(round(budget_amount, 1)), \" budget -- snapshot \", tostring(snapshot_age_hours), \"h old, STALE pending scheduled sweep\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
         "size": 0,
-        "title": "Month-to-date spend vs. budget vs. forecast (INR) — Value is % of budget, actual amounts in Detail",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                { "operator": "==", "thresholdValue": "-1", "representation": "blue", "text": "n/a — see Detail" },
-                { "operator": ">=", "thresholdValue": "100", "representation": "red", "text": "{0}% of budget" },
-                { "operator": ">=", "thresholdValue": "80", "representation": "yellow", "text": "{0}% of budget" },
-                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}% of budget" }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "cost-trend-budget"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where Name == \"azure_cost_slice\"\n| extend d = parse_json(Properties)\n| where tostring(d.dimension) == \"ServiceName\"\n| summarize arg_max(TimeGenerated, amount = todouble(d.amount)) by service = tostring(d.dimension_value)\n| project Metric = service, Value = strcat(\"INR \", tostring(round(amount, 1)))\n| order by Metric asc",
-        "size": 0,
-        "title": "Spend by Azure service (latest snapshot)",
+        "title": "Month-to-date spend vs. budget vs. forecast (INR) -- Value is % of budget, actual amounts in Detail. STALE FLAG (Fix 1, Gap 322): reads the last azure_cost_snapshot write; scripts/sweep_azure_cost.py is not yet scheduled, so this figure's real age is surfaced in Detail rather than presented as live.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "tiles",
@@ -95,24 +64,58 @@
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
                 {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "100",
+                  "representation": "red",
+                  "text": "{0}% of budget"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "80",
+                  "representation": "yellow",
+                  "text": "{0}% of budget"
+                },
+                {
                   "operator": "Default",
                   "thresholdValue": null,
-                  "representation": "blue",
-                  "text": "{0}"
+                  "representation": "green",
+                  "text": "{0}% of budget"
                 }
               ]
             }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
           }
         }
       },
-      "name": "cost-by-service"
+      "name": "cost-trend-budget"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rows = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_run = toscalar(rows | summarize max(run_ts));\nrows\n| where run_ts == latest_run\n| where tostring(d[\"category\"]) == \"cost\"\n| project\n    Category       = tostring(d[\"title\"]),\n    Status         = tostring(d.status),\n    Explanation    = tostring(d.explanation),\n    Recommendation = iff(isempty(tostring(d.recommendation)), \"No recommendation yet\", tostring(d.recommendation)),\n    Findings       = toint(d.finding_count),\n    Red            = toint(d.red_count),\n    Yellow         = toint(d.yellow_count),\n    Errors         = tostring(d.errors),\n    Run            = strcat(tostring(d.run_label), \" @ \", tostring(d.generated_at))\n| order by Category asc",
+        "size": 0,
+        "title": "Latest recommendation — cost (from `ops_recommendation`, Gaps 318/319/322). No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\". Cost-awareness verdict for Tier 1; the same category's cost-reduction context lives in Tier 3 below.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "tier1-cost-recommendation"
     },
     {
       "type": 1,
       "content": {
-        "json": "## Area 2 — Health / Performance"
+        "json": "### Reliability — container CPU/memory, restarts (24h), database health, cache health, failed message queue (DLQ), recent alerts"
       },
-      "name": "health-header"
+      "name": "reliability-subheader"
     },
     {
       "type": 3,
@@ -137,9 +140,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
-                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+                {
+                  "operator": ">=",
+                  "thresholdValue": "90",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "70",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
               ]
             }
           }
@@ -209,8 +227,18 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": "==", "thresholdValue": "Running", "representation": "green", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "red", "text": "{0}" }
+                {
+                  "operator": "==",
+                  "thresholdValue": "Running",
+                  "representation": "green",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "red",
+                  "text": "{0}"
+                }
               ]
             }
           }
@@ -253,9 +281,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
-                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+                {
+                  "operator": ">=",
+                  "thresholdValue": "90",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "70",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
               ]
             }
           },
@@ -330,9 +373,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
-                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+                {
+                  "operator": ">=",
+                  "thresholdValue": "90",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "70",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
               ]
             }
           }
@@ -344,9 +402,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"PSQL-INVOICELLM-DEV\"\n| where MetricName == \"is_db_alive\"\n| summarize Value = avg(Average)\n| extend Metric = \"is_db_alive\", Status = iff(Value >= 1, \"Alive\", \"Down\")\n| project Metric, Status",
+        "query": "let recent = AzureMetrics\n    | where TimeGenerated > ago(15m)\n    | where ResourceId has \"PSQL-INVOICELLM-DEV\"\n    | where MetricName == \"is_db_alive\"\n    | summarize (latest_ts, latest_value) = arg_max(TimeGenerated, Average);\nlet blips6h = toscalar(\n    AzureMetrics\n    | where TimeGenerated > ago(6h)\n    | where ResourceId has \"PSQL-INVOICELLM-DEV\"\n    | where MetricName == \"is_db_alive\"\n    | where Average < 1\n    | count\n    | project Count);\nrecent\n| extend Metric = \"is_db_alive\", Status = iff(latest_value >= 1, \"Alive\", \"Down\"), Detail = strcat(blips6h, \" sub-1 samples in last 6h\")\n| project Metric, Status, Detail",
         "size": 0,
-        "title": "PostgreSQL — liveness, last 6h average",
+        "title": "PostgreSQL -- liveness, real-time (Fix 3, Gap 322: latest sample in the last 15 min, not a 6h average that could stay Down for 6h after a single blip has recovered). 6h blip count carried in Detail.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "tiles",
@@ -363,10 +421,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": "==", "thresholdValue": "Alive", "representation": "green", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "red", "text": "{0}" }
+                {
+                  "operator": "==",
+                  "thresholdValue": "Alive",
+                  "representation": "green",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "red",
+                  "text": "{0}"
+                }
               ]
             }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
           }
         }
       },
@@ -395,9 +467,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": ">=", "thresholdValue": "90", "representation": "red", "text": "{0}" },
-                { "operator": ">=", "thresholdValue": "70", "representation": "yellow", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+                {
+                  "operator": ">=",
+                  "thresholdValue": "90",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "70",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
               ]
             }
           },
@@ -472,9 +559,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": "<", "thresholdValue": "50", "representation": "red", "text": "{0}" },
-                { "operator": "<", "thresholdValue": "80", "representation": "yellow", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+                {
+                  "operator": "<",
+                  "thresholdValue": "50",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "80",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
               ]
             }
           }
@@ -486,9 +588,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName == \"geoReplicationHealthy\"\n| summarize Value = avg(Average)\n| extend Metric = \"geoReplicationHealthy\", Status = iff(Value >= 1, \"Healthy\", \"Unhealthy\")\n| project Metric, Status",
+        "query": "AzureMetrics\n| where TimeGenerated > ago(6h)\n| where ResourceId has \"REDIS-INVOICELLM-DEV\"\n| where MetricName == \"geoReplicationHealthy\"\n| summarize Value = avg(Average)\n| extend Metric = \"geoReplicationHealthy\", Status = case(isnull(Value), \"N/A -- not configured in this tier\", Value >= 1, \"Healthy\", \"Unhealthy\")\n| project Metric, Status",
         "size": 0,
-        "title": "Redis — geo-replication health, last 6h average",
+        "title": "Redis -- geo-replication health, last 6h average. Fix 2 (Gap 322): dev Redis has no geo-replication configured, so the metric never arrives -- absence now renders N/A (blue), not a false Unhealthy (red).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "tiles",
@@ -505,8 +607,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": "==", "thresholdValue": "Healthy", "representation": "green", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "red", "text": "{0}" }
+                {
+                  "operator": "==",
+                  "thresholdValue": "N/A -- not configured in this tier",
+                  "representation": "blue",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "==",
+                  "thresholdValue": "Healthy",
+                  "representation": "green",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "red",
+                  "text": "{0}"
+                }
               ]
             }
           }
@@ -529,9 +647,94 @@
     {
       "type": 1,
       "content": {
-        "json": "## API Performance by Feature Area — *real traffic is 0 rows until Gap 292's fix deploys to `ca-invoice-be-dev`, not a broken query*"
+        "json": "## Recent Alerts — *covers all of Feature 20's alert rules (`alert-rules.bicep`); nothing here creates or edits one*"
       },
-      "name": "api-perf-header"
+      "name": "alerts-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity)\n| where fired > ago(14d)\n| summarize Value = count() by Day = bin(fired, 1d), Severity = sev\n| order by Day desc, Severity asc",
+        "size": 0,
+        "title": "Alerts fired per day, by severity -- last 14 days (Fix 4, Gap 322: real bin(fired, 1d) daily binning, no longer a 14-day cumulative count mislabeled as a daily rate)",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "{Subscription}"
+        ]
+      },
+      "name": "alerts-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime)\n| where fired > ago(24h)\n| summarize Value = count()\n| extend Metric = \"Alerts fired, last 24h\"\n| project Metric, Value",
+        "size": 0,
+        "title": "Alerts fired, last 24h",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "{Subscription}"
+        ],
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "0",
+                  "representation": "green",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "5",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "yellow",
+                  "text": "{0}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "name": "alerts-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rows = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_run = toscalar(rows | summarize max(run_ts));\nrows\n| where run_ts == latest_run\n| where tostring(d[\"category\"]) == \"container_health\"\n| project\n    Category       = tostring(d[\"title\"]),\n    Status         = tostring(d.status),\n    Explanation    = tostring(d.explanation),\n    Recommendation = iff(isempty(tostring(d.recommendation)), \"No recommendation yet\", tostring(d.recommendation)),\n    Findings       = toint(d.finding_count),\n    Red            = toint(d.red_count),\n    Yellow         = toint(d.yellow_count),\n    Errors         = tostring(d.errors),\n    Run            = strcat(tostring(d.run_label), \" @ \", tostring(d.generated_at))\n| order by Category asc",
+        "size": 0,
+        "title": "Latest recommendation — container_health (from `ops_recommendation`, Gaps 318/319/322). No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\".",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "tier1-container-health-recommendation"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Speed — major API latency by feature area vs. industry standard, API error rate by area. *Reference values (2026-08-26 audit, last 7d): Auth/Ingestion sub-second is good; Chat 2–10s P50 is normal for agentic RAG; Dashboard Insights is bimodal (13–23s cache-miss vs. sub-second cache-hit — see the new panel below, root-caused, observability-only fix).*"
+      },
+      "name": "speed-subheader"
     },
     {
       "type": 3,
@@ -596,9 +799,24 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
-                { "operator": ">=", "thresholdValue": "10", "representation": "red", "text": "{0}" },
-                { "operator": ">=", "thresholdValue": "5", "representation": "yellow", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "green", "text": "{0}" }
+                {
+                  "operator": ">=",
+                  "thresholdValue": "10",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "5",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
               ]
             }
           }
@@ -607,102 +825,87 @@
       "name": "api-perf-error-rate"
     },
     {
-      "type": 1,
-      "content": {
-        "json": "## Recent Alerts — *covers all of Feature 20's alert rules (`alert-rules.bicep`); nothing here creates or edits one*"
-      },
-      "name": "alerts-header"
-    },
-    {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime),\n         sev = tostring(properties.essentials.severity)\n| where fired > ago(14d)\n| summarize Value = count() by Metric = sev\n| order by Metric asc",
+        "query": "AppRequests\n| where TimeGenerated > ago(30d)\n| where AppRoleName != \"invoice-be-local-f20-verify\"\n| where Name has \"/dashboard/insights\"\n| extend Bucket = iff(DurationMs < 2000, \"cache-hit-like (<2s)\", \"cache-miss-like (>=2s)\")\n| summarize Requests = count(), P50ms = round(percentile(DurationMs, 50), 1), P95ms = round(percentile(DurationMs, 95), 1) by Bucket\n| project Metrics = pack_array(\n    pack(\"Metric\", strcat(Bucket, \" -- Requests\"), \"Value\", tostring(Requests), \"Detail\", \"Total requests, last 30 days, bucketed by duration (AppRequests carries no explicit cache-hit flag)\"),\n    pack(\"Metric\", strcat(Bucket, \" -- P50/P95 (ms)\"), \"Value\", strcat(tostring(P50ms), \" / \", tostring(P95ms)), \"Detail\", \"duration percentiles within this bucket\")\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = tostring(Metrics.Value), Detail = tostring(Metrics.Detail)\n| order by Metric asc",
         "size": 0,
-        "title": "Alerts fired per day, by severity — last 14 days",
-        "queryType": 1,
-        "visualization": "tiles",
-        "resourceType": "microsoft.resourcegraph/resources",
-        "crossComponentResources": [
-          "{Subscription}"
-        ],
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                { "operator": "==", "thresholdValue": "0", "representation": "green", "text": "{0}" },
-                { "operator": ">=", "thresholdValue": "5", "representation": "red", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "yellow", "text": "{0}" }
-              ]
-            }
-          }
-        }
-      },
-      "name": "alerts-trend"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "alertsmanagementresources\n| where type =~ \"microsoft.alertsmanagement/alerts\"\n| extend fired = todatetime(properties.essentials.startDateTime)\n| where fired > ago(24h)\n| summarize Value = count()\n| extend Metric = \"Alerts fired, last 24h\"\n| project Metric, Value",
-        "size": 0,
-        "title": "Alerts fired, last 24h",
-        "queryType": 1,
-        "resourceType": "microsoft.resourcegraph/resources",
-        "crossComponentResources": [
-          "{Subscription}"
-        ],
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                { "operator": "==", "thresholdValue": "0", "representation": "green", "text": "{0}" },
-                { "operator": ">=", "thresholdValue": "5", "representation": "red", "text": "{0}" },
-                { "operator": "Default", "thresholdValue": null, "representation": "yellow", "text": "{0}" }
-              ]
-            }
-          }
-        }
-      },
-      "name": "alerts-table"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Ops Recommendations — *from `ops_recommendation` (`telemetry.track_ops_recommendation()`), one row per category per nightly run — container health, cost, AI improvement (Gaps 318/319). The grid below shows only the latest run, keyed on the event's own `generated_at` (never `TimeGenerated`, which is ingestion time). `Recommendation` shows the event's own text only when that category's `status` is `recommend`; every other status (`worked`, `no_data`, `insufficient_data`) renders the literal `No recommendation yet` — never inferred from data volume. Expect **0 rows today**: the emitter shipped in Gaps 318/319 but no backend image carrying them has been pushed or run yet, so `ops_recommendation` has never been written to this workspace.*"
-      },
-      "name": "ops-recommendations-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let rows = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_run = toscalar(rows | summarize max(run_ts));\nrows\n| where run_ts == latest_run\n| project\n    Category       = tostring(d[\"title\"]),\n    Status         = tostring(d.status),\n    Explanation    = tostring(d.explanation),\n    Recommendation = iff(isempty(tostring(d.recommendation)), \"No recommendation yet\", tostring(d.recommendation)),\n    Findings       = toint(d.finding_count),\n    Red            = toint(d.red_count),\n    Yellow         = toint(d.yellow_count),\n    Errors         = tostring(d.errors),\n    Run            = strcat(tostring(d.run_label), \" @ \", tostring(d.generated_at))\n| order by Category asc",
-        "size": 0,
-        "title": "Latest recommendation pass, by category (container health / cost / AI improvement) — filtered to the most recent nightly run. No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\".",
+        "title": "Dashboard Insights latency -- cache-hit vs. cache-miss bimodal split (new, Gap 322). GET /api/v1/dashboard/insights measured 13-23s on a cache miss, sub-second on a cache hit (routers/dashboard.py::get_dashboard_insights docstring, Gap 30/279). Observability only -- actually fixing the latency (pre-warming the cache or a background job) is explicitly out of scope.",
         "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
       },
-      "name": "ops-recommendations"
+      "name": "dashboard-insights-latency"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Tier 3 — Cost Reduction (lowest priority, deliberately smallest section) — *where spend concentrates. See `ai_control_tower_workbook.json`'s Tier 3 for the LLM-call cost split (`a1`/`a2`); a genuine chat-vs-extraction-vs-judging split is a known future enhancement (2026-08-26 audit finding 1: tonight's extraction cost was 58% of total spend and nothing on either workbook shows that split today), not built in this pass.*"
+      },
+      "name": "tier3-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where Name == \"azure_cost_slice\"\n| extend d = parse_json(Properties)\n| where tostring(d.dimension) == \"ServiceName\"\n| summarize arg_max(TimeGenerated, amount = todouble(d.amount)) by service = tostring(d.dimension_value)\n| project Metric = service, Value = strcat(\"INR \", tostring(round(amount, 1)))\n| order by Metric asc",
+        "size": 0,
+        "title": "Spend by Azure service (latest snapshot)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "name": "cost-by-service"
     },
     {
       "type": 1,

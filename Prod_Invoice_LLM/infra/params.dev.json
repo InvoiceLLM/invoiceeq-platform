@@ -89,6 +89,9 @@
     "payuMode": {
       "value": "test"
     },
+    "enableProductionQualityJudge": {
+      "value": true
+    },
     "backendCpu": {
       "value": "2.0"
     },

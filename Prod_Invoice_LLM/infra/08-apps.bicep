@@ -53,6 +53,9 @@ param sendgridSendingDomain string = ''
 @description('PayU mode for invoice-be (Feature 11). test|live. Merchant key/salt are seeded in Stage 5 Key Vault, not here.')
 param payuMode string = 'test'
 
+@description('Score every real production chat turn with the online quality judge (Gap 304). Default false -- see invoice-be.bicep for the cost/latency tradeoff this opts into. Set true only where wanted, per environment (params.dev.json/params.prod.json).')
+param enableProductionQualityJudge bool = false
+
 @description('Number of Document Intelligence resources deployed (must match Stage 4/5). Threaded into queue-worker.bicep so it only wires up the docintel-2/-3 Key Vault secretRefs that Stage 5 actually seeded.')
 @minValue(1)
 @maxValue(3)
@@ -251,6 +254,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     memory: backendMemory
     minReplicas: backendMinReplicas
     maxReplicas: backendMaxReplicas
+    enableProductionQualityJudge: enableProductionQualityJudge
   }
 }
 

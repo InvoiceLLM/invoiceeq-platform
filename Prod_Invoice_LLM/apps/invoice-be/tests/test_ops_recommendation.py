@@ -7,7 +7,12 @@ Three things are pinned here, in this order:
    `thresholdsGrid`, so the tests use the exact boundary values from those grids
    (70/90 CPU%, 80/100 budget%, 0.70/0.85 faithfulness, 80% alert recall, …) —
    a band that silently drifts one point away from the tile it mirrors is the
-   defect this file exists to catch, and only boundary values find it.
+   defect this file exists to catch, and only boundary values find it. Gap 323
+   added the one exception: `pass_rate` and `accuracy` were recalibrated in code
+   first and the tiles mirror *them* — infra-devops mirrored `ai_control_tower_
+   workbook.json`'s `d1-latest-pass-rate`/`d2-accuracy` grids to the new values
+   in Gap 322 (2026-08-26), so this is an ordinary pin again, not a transitional
+   `xfail`.
 2. **Nightly-only wiring.** The trigger design is "a step appended to the
    existing nightly job's script", so `predeploy`/`adhoc` must not fire it —
    both because a 5-case gate run is below the n=20 sample guard and because two
@@ -119,6 +124,12 @@ def _eval_payload(
     too. `multi_turn=False` reproduces a run where the tier was skipped
     (`--no-multi-turn`) or did not exist, which is a real state this module has
     to report on rather than pass over.
+
+    Gap 323: `accuracy_mean` moved 0.86 → 0.95 here. Not cosmetic — 0.86 is
+    *yellow* under the recalibrated accuracy band (red <0.75, yellow <0.90), so
+    leaving it would have made this builder's "every dimension is green" contract
+    quietly false and every `STATUS_WORKED` assertion in the file fail. `pass_rate`
+    needed no change: 0.87 clears the new 0.75 yellow bound on its own.
     """
     summary = {
         "turns": turns,
@@ -126,7 +137,7 @@ def _eval_payload(
         "pass_rate": 0.87,
         "faithfulness_mean": 0.91,
         "relevance_mean": 0.98,
-        "accuracy_mean": 0.86,
+        "accuracy_mean": 0.95,
         "context_mean": 0.85,
         "orchestration_mean": 0.90,
         "persona_mean": 0.80,
@@ -853,6 +864,17 @@ def _band(grid: list[dict], representation: str) -> float:
             "d2-faithfulness",
             rec.SCORE_BANDS["faithfulness"][0],
             rec.SCORE_BANDS["faithfulness"][1],
+        ),
+        # Gap 323 added this entry. `SCORE_BANDS["accuracy"]` mirrored
+        # `d2-accuracy` exactly and was pinned by nothing, so retuning either side
+        # would have diverged in silence — the failure mode this whole test exists
+        # to prevent, sitting inside the test itself. Gap 322 (2026-08-26) mirrored
+        # the new numbers into the JSON, so this is an ordinary pin now.
+        (
+            "ai_control_tower_workbook.json",
+            "d2-accuracy",
+            rec.SCORE_BANDS["accuracy"][0],
+            rec.SCORE_BANDS["accuracy"][1],
         ),
         (
             "ai_control_tower_workbook.json",

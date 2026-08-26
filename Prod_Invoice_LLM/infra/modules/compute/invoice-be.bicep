@@ -75,6 +75,20 @@ param image string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 @description('Application Insights Connection String for OpenTelemetry APM tracing')
 param appInsightsConnectionString string = ''
 
+// Feature 23 / Gap 304 half (2), enabled live on dev 2026-08-26: gates
+// services/online_quality_judge.py::submit_turn_judgement(), called from
+// routers/chat.py after every real chat response. Off is a complete no-op
+// (config.py's own comment: the submit helper checks this flag before
+// handing anything to the background thread pool, so nothing runs at all
+// with it false). On, it adds two billable LLM calls per real chat turn
+// (combined soft judge + persona judge) and occupies one of the chat
+// background pool's 8 workers for the duration -- a real per-tenant cost
+// and, under heavy load, a background-work-delay tradeoff, which is why
+// this defaults false here and is opted in per environment via
+// params.dev.json / params.prod.json rather than arriving on by default.
+@description('Score every real production chat turn with the online quality judge (Gap 304), writing an agent_eval_run row tagged run_source=production. Default false -- opt in per environment.')
+param enableProductionQualityJudge bool = false
+
 @description('vCPU allocation, e.g. \'1.0\'. Passed to json() below since Container Apps requires cpu as a decimal, not a string.')
 param cpu string = '1.0'
 
@@ -333,6 +347,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
               value: appInsightsConnectionString
+            }
+            {
+              name: 'ENABLE_PRODUCTION_QUALITY_JUDGE'
+              value: string(enableProductionQualityJudge)
             }
           ]
           probes: [

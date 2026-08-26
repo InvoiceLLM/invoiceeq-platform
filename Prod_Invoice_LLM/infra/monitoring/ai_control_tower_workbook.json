@@ -39,9 +39,880 @@
     {
       "type": 1,
       "content": {
-        "json": "## Section A — Live model cost & latency — *from `llm_agent_call` / `AppDependencies` (`DependencyType startswith \"GenAI\"`). Real production traffic as of 2026-08-24 (46 `llm_agent_call` rows, 30d window). SAGE per-tool split (A6) is structurally empty while `ENABLE_AGENTIC_SAGE=false` — that is the flag, not missing instrumentation.*"
+        "json": "## Tier 2 — Extraction & Chat Quality (second priority) — *both are already good; this tier exists to catch regressions and keep improving them, not to prove they work. 2026-08-26 redesign, Gap 322.*"
       },
-      "name": "section-a-header"
+      "name": "tier2-header"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Chat quality — nightly test (golden bank) — *pass rate, all six soft scores (faithfulness, relevance, accuracy, context, orchestration, persona), cost per turn, response time. Bands recalibrated Gap 322/323 (Fix 11); see Section D header below for the full reasoning.*"
+      },
+      "name": "chat-nightly-subheader"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Section D — Golden bank — *from `agent_eval_summary`, `run_label in (\"nightly\", \"predeploy\")`. Gap 322/323 (2026-08-26): `d1-latest-pass-rate` and `d2-accuracy` recalibrated to red<0.60/yellow<0.75 and red<0.75/yellow<0.90 respectively (mirrors `services/ops_recommendation.py::SCORE_BANDS`) -- the old bands were tuned to what the system happened to score, not to what \"good\" means, and let tonight's real 25.7% pass rate / 60% accuracy render green. `d1`'s n=3-run guard is also removed: the golden bank is a fixed, deterministic, exhaustive 35-case script set with no sampling error for a \"wait for more runs\" guard to protect against. `d2`-`d4`'s guards are unchanged -- only `d1` was named for guard removal.*"
+      },
+      "name": "section-d-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), pass_rate = todouble(d.pass_rate)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, latest_label, pass_rate) = arg_max(TimeGenerated, run_label, pass_rate)\n| extend total = run_count\n| project\n    Metric = \"golden bank — latest pass rate\",\n    Value = iff(isnull(pass_rate), real(null), round(pass_rate, 4)),\n    Detail = strcat(total, \" runs (nightly/predeploy), latest \", iff(isnull(pass_rate), \"n/a\", tostring(round(pass_rate,4))), \" (\", latest_label, \") — n=3-run guard removed (Fix 11, Gap 322): a fixed, deterministic, exhaustive 35-case script has no sampling error for that guard to protect against\")",
+        "size": 0,
+        "title": "Latest pass rate (Fix 11, Gap 322: bands recalibrated red<0.60/yellow<0.75, n=3-run guard removed)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.60",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.75",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d1-latest-pass-rate"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), faithfulness_mean = todouble(d.faithfulness_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, faithfulness_mean) = arg_max(TimeGenerated, faithfulness_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — faithfulness (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(faithfulness_mean), real(null), round(faithfulness_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, faithfulness=\", iff(isnull(faithfulness_mean), \"n/a\", tostring(round(faithfulness_mean,4)))), strcat(total, \" runs, faithfulness=\", round(faithfulness_mean,4)))",
+        "size": 0,
+        "title": "Faithfulness (latest run mean)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.70",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.85",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d2-faithfulness"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), relevance_mean = todouble(d.relevance_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, relevance_mean) = arg_max(TimeGenerated, relevance_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — relevance (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(relevance_mean), real(null), round(relevance_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, relevance=\", iff(isnull(relevance_mean), \"n/a\", tostring(round(relevance_mean,4)))), strcat(total, \" runs, relevance=\", round(relevance_mean,4)))",
+        "size": 0,
+        "title": "Relevance (latest run mean)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.85",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.95",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d2-relevance"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), accuracy_mean = todouble(d.accuracy_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, accuracy_mean) = arg_max(TimeGenerated, accuracy_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — accuracy (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(accuracy_mean), real(null), round(accuracy_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, accuracy=\", iff(isnull(accuracy_mean), \"n/a\", tostring(round(accuracy_mean,4)))), strcat(total, \" runs, accuracy=\", round(accuracy_mean,4)))",
+        "size": 0,
+        "title": "Accuracy (latest run mean) -- Fix 11, Gap 322: bands recalibrated red<0.75/yellow<0.90 (SCORE_BANDS[\"accuracy\"], Gap 323)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.75",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.90",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d2-accuracy"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), context_mean = todouble(d.context_mean), context_scored_turns = toint(d.context_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, context_mean, context_scored_turns) = arg_max(TimeGenerated, context_mean, context_scored_turns)\n| extend total = run_count\n| project\n    Metric = \"golden bank — context (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(context_mean), real(null), round(context_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, context=\", iff(isnull(context_mean), \"n/a\", tostring(round(context_mean,4))), \" over \", context_scored_turns, \" scored turns\"), strcat(total, \" runs, \", context_scored_turns, \" scored turns\"))",
+        "size": 0,
+        "title": "Context score (latest run mean)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.50",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.70",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d3-context"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), orchestration_mean = todouble(d.orchestration_mean), orchestration_scored_turns = toint(d.orchestration_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, orchestration_mean, orchestration_scored_turns) = arg_max(TimeGenerated, orchestration_mean, orchestration_scored_turns)\n| extend total = run_count\n| project\n    Metric = \"golden bank — orchestration (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(orchestration_mean), real(null), round(orchestration_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, orchestration=\", iff(isnull(orchestration_mean), \"n/a\", tostring(round(orchestration_mean,4))), \" over \", orchestration_scored_turns, \" scored turns\"), strcat(total, \" runs, \", orchestration_scored_turns, \" scored turns\"))",
+        "size": 0,
+        "title": "Orchestration score (latest run mean)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.60",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.80",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d3-orchestration"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), persona_mean = todouble(d.persona_mean), persona_scored_turns = toint(d.persona_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nruns\n| summarize (latest_ts, persona_mean, persona_scored_turns) = arg_max(TimeGenerated, persona_mean, persona_scored_turns)\n| project\n    Metric = \"golden bank — persona (latest, uncolored)\",\n    Value = iff(isnull(persona_mean), real(null), round(persona_mean, 4)),\n    Detail = strcat(\"not applicable on most turns — \", persona_scored_turns, \" scored turns this run; no color threshold, general sample not a domain golden set\")",
+        "size": 0,
+        "title": "Persona score (latest run mean) — uncolored, not applicable on most turns",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d3-persona"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), cost_per_turn_usd = todouble(d.cost_per_turn_usd)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, cost_per_turn_usd) = arg_max(TimeGenerated, cost_per_turn_usd)\n| extend total = run_count\n| project\n    Metric = \"golden bank — cost per turn (USD, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(cost_per_turn_usd), real(null), round(cost_per_turn_usd, 6))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, cost/turn=USD \", iff(isnull(cost_per_turn_usd), \"n/a\", tostring(round(cost_per_turn_usd,6)))), strcat(total, \" runs, USD \", round(cost_per_turn_usd,6), \"/turn\"))",
+        "size": 0,
+        "title": "Cost per turn (USD, latest run)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "0.02",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "0.01",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d4-cost-per-turn"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), latency_ms_median = todouble(d.latency_ms_median), turns = toint(d.turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nruns\n| summarize (latest_ts, latency_ms_median, turns) = arg_max(TimeGenerated, latency_ms_median, turns)\n| project\n    Metric = \"golden bank — median turn latency (ms, latest, uncolored)\",\n    Value = iff(isnull(latency_ms_median), real(null), round(latency_ms_median, 1)),\n    Detail = strcat(turns, \" turns this run\")",
+        "size": 0,
+        "title": "Median turn latency (ms, latest run) — uncolored",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "d4-median-latency"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"agent_eval_summary\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    pass_rate = todouble(d.pass_rate),\n    faithfulness_mean = todouble(d.faithfulness_mean),\n    relevance_mean = todouble(d.relevance_mean),\n    accuracy_mean = todouble(d.accuracy_mean)\n| where run_label in (\"nightly\", \"predeploy\")\n| project TimeGenerated, run_label, pass_rate, faithfulness_mean, relevance_mean, accuracy_mean\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Trend over runs — pass_rate / faithfulness / relevance / accuracy, chronological (90d)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "d5-trend-over-runs"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"agent_eval_summary\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    path = tostring(d.path),\n    judge_mode = tostring(d.judge_mode),\n    turns = toint(d.turns),\n    errors = toint(d.errors),\n    pass_rate = todouble(d.pass_rate),\n    model_under_test = tostring(d.model_under_test),\n    artifact_blob = tostring(d.artifact_blob),\n    generated_at = tostring(d.generated_at)\n| where run_label in (\"nightly\", \"predeploy\")\n| project TimeGenerated, run_label, path, judge_mode, turns, errors, pass_rate, model_under_test, artifact_blob\n| order by TimeGenerated desc\n| take 20",
+        "size": 0,
+        "title": "Run provenance — most recent 20 nightly/predeploy runs, links to artifact_blob",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "d6-run-provenance"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Chat quality — real usage (production judge) — *from `agent_eval_run` where `run_source == \"production\"`. Separate pass rate from the golden bank's D1, never averaged together — they answer different questions (a fixed question set vs. real live traffic).*"
+      },
+      "name": "chat-real-subheader"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Section G — Production quality judge — *from `agent_eval_run` where `run_source == \"production\"`, `judge_mode=combined`. 0 rows today — the production online judge has not scored a live turn yet. G1's pass rate is a **separate** tile from D1's golden-bank pass rate, same color bands, never averaged together — they answer different questions (a fixed question set vs. real live traffic). G2's `accuracy`/`context` rows are expected to stay at 0 scored turns by construction: `judge_mode=combined` never scores those two dimensions, and `pass` on a production row is faithfulness+relevance only.*"
+      },
+      "name": "section-g-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count()\n| project Metric = \"production judge — turns judged (30d)\", Value = toreal(total), Detail = \"raw count, no color\"",
+        "size": 0,
+        "title": "Turns judged — production judge, 30d",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "g1-turns-judged"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend run_source = tostring(d.run_source), passed = toint(d.pass)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count(), passed = sum(passed)\n| extend Rate = iff(total > 0, round(1.0 * passed / total, 4), real(null))\n| project\n    Metric = \"production judge — pass rate (separate from golden-bank D1, never averaged)\",\n    Value = iff(total < 20, -1.0, Rate),\n    Detail = iff(total < 20, strcat(\"only \", total, \" turns — below minimum n=20, \", passed, \"/\", total, \" passed\"), strcat(passed, \"/\", total, \" passed\"))",
+        "size": 0,
+        "title": "Production pass rate — separate from D1, never averaged together",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.20",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "0.30",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "g1-pass-rate"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend\n        run_source = tostring(d.run_source),\n        faithfulness_score = todouble(d.faithfulness_score),\n        relevance_score = todouble(d.relevance_score),\n        accuracy_score = todouble(d.accuracy_score),\n        context_score = todouble(d.context_score),\n        helpfulness_score = todouble(d.helpfulness_score),\n        completeness_score = todouble(d.completeness_score),\n        tone_score = todouble(d.tone_score)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize\n    turns = count(),\n    faithfulness = avg(faithfulness_score), faithfulness_n = countif(isnotnull(faithfulness_score)),\n    relevance = avg(relevance_score), relevance_n = countif(isnotnull(relevance_score)),\n    accuracy = avg(accuracy_score), accuracy_n = countif(isnotnull(accuracy_score)),\n    context = avg(context_score), context_n = countif(isnotnull(context_score)),\n    helpfulness = avg(helpfulness_score), helpfulness_n = countif(isnotnull(helpfulness_score)),\n    completeness = avg(completeness_score), completeness_n = countif(isnotnull(completeness_score)),\n    tone = avg(tone_score), tone_n = countif(isnotnull(tone_score))\n| extend\n    faithfulness = iff(isnan(faithfulness), real(null), faithfulness),\n    relevance = iff(isnan(relevance), real(null), relevance),\n    accuracy = iff(isnan(accuracy), real(null), accuracy),\n    context = iff(isnan(context), real(null), context),\n    helpfulness = iff(isnan(helpfulness), real(null), helpfulness),\n    completeness = iff(isnan(completeness), real(null), completeness),\n    tone = iff(isnan(tone), real(null), tone)\n| project Metrics = pack_array(\n    pack(\"Metric\", \"production — faithfulness\", \"Value\", faithfulness, \"Detail\", strcat(faithfulness_n, \"/\", turns, \" scored — pass = faithfulness+relevance only\")),\n    pack(\"Metric\", \"production — relevance\", \"Value\", relevance, \"Detail\", strcat(relevance_n, \"/\", turns, \" scored — pass = faithfulness+relevance only\")),\n    pack(\"Metric\", \"production — accuracy (NULL by construction)\", \"Value\", accuracy, \"Detail\", strcat(accuracy_n, \"/\", turns, \" scored — expected 0, judge_mode=combined does not score this\")),\n    pack(\"Metric\", \"production — context (NULL by construction)\", \"Value\", context, \"Detail\", strcat(context_n, \"/\", turns, \" scored — expected 0, judge_mode=combined does not score this\")),\n    pack(\"Metric\", \"production — helpfulness (combined judge only)\", \"Value\", helpfulness, \"Detail\", strcat(helpfulness_n, \"/\", turns, \" scored\")),\n    pack(\"Metric\", \"production — completeness (combined judge only)\", \"Value\", completeness, \"Detail\", strcat(completeness_n, \"/\", turns, \" scored\")),\n    pack(\"Metric\", \"production — tone (combined judge only)\", \"Value\", tone, \"Detail\", strcat(tone_n, \"/\", turns, \" scored\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
+        "size": 0,
+        "title": "Production scores — faithfulness/relevance/helpfulness/completeness/tone; accuracy/context NULL by construction (judge_mode=combined)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "g2-production-scores"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rows = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_run = toscalar(rows | summarize max(run_ts));\nrows\n| where run_ts == latest_run\n| where tostring(d[\"category\"]) == \"ai_improvement\"\n| project\n    Category       = tostring(d[\"title\"]),\n    Status         = tostring(d.status),\n    Explanation    = tostring(d.explanation),\n    Recommendation = iff(isempty(tostring(d.recommendation)), \"No recommendation yet\", tostring(d.recommendation)),\n    Findings       = toint(d.finding_count),\n    Red            = toint(d.red_count),\n    Yellow         = toint(d.yellow_count),\n    Errors         = tostring(d.errors),\n    Run            = strcat(tostring(d.run_label), \" @ \", tostring(d.generated_at))\n| order by Category asc",
+        "size": 0,
+        "title": "Latest recommendation — ai_improvement (from `ops_recommendation`, Gaps 318/319/322). No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\". Spans both the nightly golden-bank and extraction-quality sub-sections above.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "tier2-ai-improvement-recommendation"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Extraction quality — *alert recall, clean-doc false-positive rate, field accuracy trend, from `extraction_benchmark_run` (Track 1).*"
+      },
+      "name": "extraction-quality-subheader"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Section E — Extraction benchmark — *from `extraction_benchmark_run` (Track 1). Structurally empty today: Gap 309 (the logging-level bug that silently dropped every `extraction_benchmark_run` event before it reached the exporter) was fixed in code 2026-08-24 but has not yet reached a deployed image — this is a deploy-pending state, verified live, not a broken query. When it lands, do **not** let 80% recall read green: it is documented real model-drift evidence, and the red<80/yellow<100 bands below deliberately put 80% itself in yellow, never green.*"
+      },
+      "name": "section-e-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend alert_recall_pct = todouble(d.alert_recall_pct);\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, alert_recall_pct) = arg_max(TimeGenerated, alert_recall_pct)\n| extend total = run_count\n| project\n    Metric = \"extraction bench — alert recall (%, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(alert_recall_pct), real(null), round(alert_recall_pct, 2))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, recall=\", iff(isnull(alert_recall_pct), \"n/a\", tostring(round(alert_recall_pct,2))), \"% — real drift evidence, 80% is not green\"), strcat(total, \" runs, recall=\", round(alert_recall_pct,2), \"%\"))",
+        "size": 0,
+        "title": "Alert recall (%, latest run) — 80% is real drift evidence, never reads green",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "80",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "<",
+                  "thresholdValue": "100",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "e1-alert-recall"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend clean_false_positive_rate_pct = todouble(d.clean_false_positive_rate_pct);\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, clean_false_positive_rate_pct) = arg_max(TimeGenerated, clean_false_positive_rate_pct)\n| extend total = run_count\n| project\n    Metric = \"extraction bench — clean false-positive rate (%, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(clean_false_positive_rate_pct), real(null), round(clean_false_positive_rate_pct, 2))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, FP rate=\", iff(isnull(clean_false_positive_rate_pct), \"n/a\", tostring(round(clean_false_positive_rate_pct,2))), \"%\"), strcat(total, \" runs, FP rate=\", round(clean_false_positive_rate_pct,2), \"%\"))",
+        "size": 0,
+        "title": "Clean false-positive rate (%, latest run)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "-1",
+                  "representation": "blue",
+                  "text": "n/a — see Detail"
+                },
+                {
+                  "operator": ">=",
+                  "thresholdValue": "20",
+                  "representation": "red",
+                  "text": "{0}"
+                },
+                {
+                  "operator": ">",
+                  "thresholdValue": "0",
+                  "representation": "yellow",
+                  "text": "{0}"
+                },
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "green",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "e1-fp-rate"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rows = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend\n        run_label = tostring(d.run_label),\n        true_positive = toint(d.true_positive),\n        false_negative = toint(d.false_negative),\n        false_positive = toint(d.false_positive),\n        true_negative = toint(d.true_negative),\n        not_applicable = toint(d.not_applicable);\nlet latest_ts = toscalar(rows | summarize max(TimeGenerated));\nrows\n| where TimeGenerated == latest_ts\n| project Metrics = pack_array(\n    pack(\"Metric\", \"confusion — true_positive\", \"Value\", toreal(true_positive), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — false_negative\", \"Value\", toreal(false_negative), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — false_positive\", \"Value\", toreal(false_positive), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — true_negative\", \"Value\", toreal(true_negative), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — not_applicable\", \"Value\", toreal(not_applicable), \"Detail\", \"raw count, latest run\")\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
+        "size": 0,
+        "title": "Confusion matrix cells (latest run) -- raw counts (Fix 8, Gap 322: converted from a bare `top 1 by TimeGenerated desc`, which returns 0 rows -- not an honest n/a row -- over empty input, to the toscalar/equality-filter pattern used elsewhere in this file)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "size": "auto",
+          "showBorder": true,
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 8,
+            "formatOptions": {
+              "thresholdsOptions": "colors",
+              "thresholdsGrid": [
+                {
+                  "operator": "Default",
+                  "thresholdValue": null,
+                  "representation": "blue",
+                  "text": "{0}"
+                }
+              ]
+            }
+          },
+          "subtitleContent": {
+            "columnMatch": "Detail",
+            "formatter": 1
+          }
+        }
+      },
+      "name": "e2-confusion-cells"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"extraction_benchmark_run\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    mode = tostring(d.mode),\n    alert_recall_pct = todouble(d.alert_recall_pct),\n    clean_false_positive_rate_pct = todouble(d.clean_false_positive_rate_pct)\n| project TimeGenerated, run_label, mode, alert_recall_pct, clean_false_positive_rate_pct\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Recall / FP-rate trend over runs, chronological (90d)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "e3-trend"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Tier 3 — Cost Reduction (lowest priority, deliberately smallest section) — *spend by Azure service is on the Cost + Health workbook's Tier 3; here: spend by agent (`a1`) and test-vs-real spend by run_source (`a2`). A genuine chat-vs-extraction-vs-judging split is a known future enhancement (2026-08-26 audit finding 1: tonight's extraction cost was 58% of total spend and nothing on either workbook shows that split today), not built in this pass.*"
+      },
+      "name": "tier3-header"
     },
     {
       "type": 3,
@@ -122,6 +993,20 @@
         }
       },
       "name": "a2-spend-by-run-source"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Supplementary operational detail — *not part of the 3-tier priority ranking above; kept for diagnostic depth. LLM call latency/error-rate by agent (Section A), chat-turn behaviour (Section B), sessions/threads (Section C), online-eval signals (Section F).*"
+      },
+      "name": "appendix-header"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Section A — Live model cost & latency (supplementary detail; `a1`/`a2` cost-by-agent panels are promoted to Tier 3 above) — *from `llm_agent_call` / `AppDependencies` (`DependencyType startswith \"GenAI\"`). Real production traffic as of 2026-08-24. `a6-sage-per-tool-cost` deleted 2026-08-26 (Gap 322, Fix 6) — SAGE was removed in Gap 316, so `agent_name startswith \"sage.\"` could structurally never match again; this was not a dormant panel waiting on a flag, it was dead.*"
+      },
+      "name": "section-a-header"
     },
     {
       "type": 3,
@@ -243,9 +1128,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppDependencies\n| where TimeGenerated > ago(30d)\n| where DependencyType startswith \"GenAI\"\n| extend d = parse_json(Properties)\n| extend agent_name = tostring(d.agent_name)\n| summarize calls = count(), p50 = percentile(DurationMs, 50), p95 = percentile(DurationMs, 95), avg_ms = avg(DurationMs) by agent_name\n| project\n    Metric = strcat(agent_name, \" — GenAI dependency p50/p95 (ms)\"),\n    Value = strcat(round(p50, 1), \" / \", round(p95, 1)),\n    Detail = strcat(calls, \" spans, avg \", round(avg_ms, 1), \"ms\")\n| order by Metric asc",
+        "query": "AppDependencies\n| where TimeGenerated > ago(30d)\n| where DependencyType startswith \"GenAI\"\n| extend d = parse_json(Properties)\n| extend agent_name = tostring(d.agent_name), run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| summarize calls = count(), p50 = percentile(DurationMs, 50), p95 = percentile(DurationMs, 95), avg_ms = avg(DurationMs) by agent_name\n| project\n    Metric = strcat(agent_name, \" — GenAI dependency p50/p95 (ms)\"),\n    Value = strcat(round(p50, 1), \" / \", round(p95, 1)),\n    Detail = strcat(calls, \" spans, avg \", round(avg_ms, 1), \"ms, production only\")\n| order by Metric asc",
         "size": 0,
-        "title": "LLM dependency duration (AppDependencies, GenAI spans) — 30d, p50/p95 ms",
+        "title": "LLM dependency duration (AppDependencies, GenAI spans) -- 30d, p50/p95 ms, production only (Fix 5, Gap 322: now filters run_source == production so this cross-check against a3-latency-by-agent no longer silently blends golden-bank/eval traffic into a production-only comparison)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "tiles",
@@ -280,49 +1165,9 @@
       "name": "a5-genai-dependency-duration"
     },
     {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(30d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    agent_name = tostring(d.agent_name),\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where agent_name startswith \"sage.\"\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by agent_name, run_source\n| project\n    Metric = strcat(agent_name, \" (\", run_source, \")\"),\n    Value = round(cost_usd, 4),\n    Detail = strcat(calls, \" calls — structurally empty while ENABLE_AGENTIC_SAGE=false, see llm_cost_by_tool.kql\")\n| order by Metric asc",
-        "size": 0,
-        "title": "SAGE per-tool cost breakdown — structurally empty while ENABLE_AGENTIC_SAGE=false",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "blue",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "a6-sage-per-tool-cost"
-    },
-    {
       "type": 1,
       "content": {
-        "json": "## Section B — Chat turn behaviour — *from `chat_turn` (Gap 302/303), added in commit `ed6f8c1` on 2026-08-24 and **not yet deployed** to `ca-invoice-be-dev` as of this build — every panel below is verified live at 0 rows, which is the deploy status, not a broken query. Boolean fields (`sql_generated`/`zero_result`/`zero_result_fallback_recovered`) are real Python bools on the emitter side; parsed defensively here with `tolower(tostring(x)) == \"true\"` rather than `tobool()` — both were proved live to parse both `\"True\"`/`\"False\"` (Python str repr) and `true`/`false` (JSON bool) correctly, but against synthetic values only, since no real `chat_turn` event exists yet. Re-verify against a real event once deployed.*"
+        "json": "## Section B — Chat turn behaviour (supplementary operational detail) — *from `chat_turn` (Gap 302/303, commit `ed6f8c1`). Live in production as of the 2026-08-25T14:41Z image (commit `cb96d8f`) — real rows exist; this is no longer a 0-row deploy-pending panel. Boolean fields (`sql_generated`/`zero_result`/`zero_result_fallback_recovered`) are real Python bools on the emitter side, parsed defensively with `tolower(tostring(x)) == \"true\"`.*"
       },
       "name": "section-b-header"
     },
@@ -682,9 +1527,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend stop_reason = tostring(d.stop_reason), run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where isnotempty(stop_reason);\nturns\n| summarize turns = count() by stop_reason\n| project\n    Metric = strcat(\"stop_reason — \", stop_reason),\n    Value = toreal(turns),\n    Detail = \"SAGE-only field — structurally empty while ENABLE_AGENTIC_SAGE=false\"\n| order by Metric asc",
+        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend stop_reason = tostring(d.stop_reason), run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where isnotempty(stop_reason);\nlet total = toscalar(turns | count | project Count);\nturns\n| summarize turns = count() by stop_reason\n| project\n    Metric = strcat(\"stop_reason — \", stop_reason),\n    Value = toreal(turns),\n    Detail = strcat(turns, \"/\", total, \" turns with a stop_reason (\", round(100.0*turns/total,1), \"%) — default chat route, live production data\")\n| order by Metric asc",
         "size": 0,
-        "title": "Stop reasons — SAGE-only field, structurally empty while ENABLE_AGENTIC_SAGE=false",
+        "title": "Stop reasons -- default chat route, 30d, production only (Fix 7, Gap 322: retitled -- ENABLE_AGENTIC_SAGE no longer exists, deleted with SAGE in Gap 316, and stop_reason IS populated on the live default route; this panel was showing real data while telling the reader it was empty)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "tiles",
@@ -761,7 +1606,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Section C — Sessions / threads — *adapted from `chat_thread_sessions.kql`'s 30-minute idle-cutoff `row_window_session` logic, translated to the `AppEvents` schema. Drill-down (C4) is **metadata only** — route, status, timing, retry counts, `message_id`, `trace_id`, `turn_id`, `sql_attempts`, `tool_output_chars` — never `generated_sql` or the real tool output text, even though `chat_turn` carries both. Translating this file surfaced two real KQL bugs never caught before because the source `.kql` file was never executed live: `last_status = arg_max(timestamp, status)` mis-binds to the timestamp column and must use tuple syntax `(ts, status) = arg_max(...)`, and a bare `top 1 by ... desc` returns 0 rows (not a guaranteed row) when the input is empty, unlike `summarize` with no `by` clause.*"
+        "json": "## Section C — Sessions / threads (supplementary operational detail) — *adapted from `chat_thread_sessions.kql`'s 30-minute idle-cutoff `row_window_session` logic, translated to the `AppEvents` schema. Drill-down (C4) is **metadata only** — route, status, timing, retry counts, `message_id`, `trace_id`, `turn_id`, `sql_attempts`, `tool_output_chars` — never `generated_sql` or the real tool output text, even though `chat_turn` carries both. Translating this file surfaced two real KQL bugs never caught before because the source `.kql` file was never executed live: `last_status = arg_max(timestamp, status)` mis-binds to the timestamp column and must use tuple syntax `(ts, status) = arg_max(...)`, and a bare `top 1 by ... desc` returns 0 rows (not a guaranteed row) when the input is empty, unlike `summarize` with no `by` clause.*"
       },
       "name": "section-c-header"
     },
@@ -902,699 +1747,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Section D — Golden bank — *from `agent_eval_summary`, `run_label in (\"nightly\", \"predeploy\")` (not just `==\"nightly\"`, so the one live predeploy event proves the panel binds). One real row is live as of 2026-08-24T12:31:23Z (`predeploy`, `judge_mode=separate`, 5 turns) — every guarded tile below correctly shows the n=3-run sentinel while surfacing that real number in its Detail text, which is the intended behaviour of a 1-run sample, not a bug.*"
-      },
-      "name": "section-d-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), pass_rate = todouble(d.pass_rate)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, latest_label, pass_rate) = arg_max(TimeGenerated, run_label, pass_rate)\n| extend total = run_count\n| project\n    Metric = \"golden bank — latest pass rate\",\n    Value = iff(total < 3, -1.0, iff(isnull(pass_rate), real(null), round(pass_rate, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, latest=\", iff(isnull(pass_rate), \"n/a\", tostring(round(pass_rate,4))), \" (\", latest_label, \")\"), strcat(total, \" runs, latest \", round(pass_rate,4), \" (\", latest_label, \")\"))",
-        "size": 0,
-        "title": "Latest pass rate",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.20",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.30",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d1-latest-pass-rate"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), faithfulness_mean = todouble(d.faithfulness_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, faithfulness_mean) = arg_max(TimeGenerated, faithfulness_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — faithfulness (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(faithfulness_mean), real(null), round(faithfulness_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, faithfulness=\", iff(isnull(faithfulness_mean), \"n/a\", tostring(round(faithfulness_mean,4)))), strcat(total, \" runs, faithfulness=\", round(faithfulness_mean,4)))",
-        "size": 0,
-        "title": "Faithfulness (latest run mean)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.70",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.85",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d2-faithfulness"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), relevance_mean = todouble(d.relevance_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, relevance_mean) = arg_max(TimeGenerated, relevance_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — relevance (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(relevance_mean), real(null), round(relevance_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, relevance=\", iff(isnull(relevance_mean), \"n/a\", tostring(round(relevance_mean,4)))), strcat(total, \" runs, relevance=\", round(relevance_mean,4)))",
-        "size": 0,
-        "title": "Relevance (latest run mean)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.85",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.95",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d2-relevance"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), accuracy_mean = todouble(d.accuracy_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, accuracy_mean) = arg_max(TimeGenerated, accuracy_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — accuracy (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(accuracy_mean), real(null), round(accuracy_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, accuracy=\", iff(isnull(accuracy_mean), \"n/a\", tostring(round(accuracy_mean,4)))), strcat(total, \" runs, accuracy=\", round(accuracy_mean,4)))",
-        "size": 0,
-        "title": "Accuracy (latest run mean)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.40",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.55",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d2-accuracy"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), context_mean = todouble(d.context_mean), context_scored_turns = toint(d.context_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, context_mean, context_scored_turns) = arg_max(TimeGenerated, context_mean, context_scored_turns)\n| extend total = run_count\n| project\n    Metric = \"golden bank — context (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(context_mean), real(null), round(context_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, context=\", iff(isnull(context_mean), \"n/a\", tostring(round(context_mean,4))), \" over \", context_scored_turns, \" scored turns\"), strcat(total, \" runs, \", context_scored_turns, \" scored turns\"))",
-        "size": 0,
-        "title": "Context score (latest run mean)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.50",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.70",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d3-context"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), orchestration_mean = todouble(d.orchestration_mean), orchestration_scored_turns = toint(d.orchestration_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, orchestration_mean, orchestration_scored_turns) = arg_max(TimeGenerated, orchestration_mean, orchestration_scored_turns)\n| extend total = run_count\n| project\n    Metric = \"golden bank — orchestration (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(orchestration_mean), real(null), round(orchestration_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, orchestration=\", iff(isnull(orchestration_mean), \"n/a\", tostring(round(orchestration_mean,4))), \" over \", orchestration_scored_turns, \" scored turns\"), strcat(total, \" runs, \", orchestration_scored_turns, \" scored turns\"))",
-        "size": 0,
-        "title": "Orchestration score (latest run mean)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.60",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.80",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d3-orchestration"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), persona_mean = todouble(d.persona_mean), persona_scored_turns = toint(d.persona_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nruns\n| summarize (latest_ts, persona_mean, persona_scored_turns) = arg_max(TimeGenerated, persona_mean, persona_scored_turns)\n| project\n    Metric = \"golden bank — persona (latest, uncolored)\",\n    Value = iff(isnull(persona_mean), real(null), round(persona_mean, 4)),\n    Detail = strcat(\"not applicable on most turns — \", persona_scored_turns, \" scored turns this run; no color threshold, general sample not a domain golden set\")",
-        "size": 0,
-        "title": "Persona score (latest run mean) — uncolored, not applicable on most turns",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "blue",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d3-persona"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), cost_per_turn_usd = todouble(d.cost_per_turn_usd)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, cost_per_turn_usd) = arg_max(TimeGenerated, cost_per_turn_usd)\n| extend total = run_count\n| project\n    Metric = \"golden bank — cost per turn (USD, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(cost_per_turn_usd), real(null), round(cost_per_turn_usd, 6))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, cost/turn=USD \", iff(isnull(cost_per_turn_usd), \"n/a\", tostring(round(cost_per_turn_usd,6)))), strcat(total, \" runs, USD \", round(cost_per_turn_usd,6), \"/turn\"))",
-        "size": 0,
-        "title": "Cost per turn (USD, latest run)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": ">=",
-                  "thresholdValue": "0.02",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": ">=",
-                  "thresholdValue": "0.01",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d4-cost-per-turn"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), latency_ms_median = todouble(d.latency_ms_median), turns = toint(d.turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nruns\n| summarize (latest_ts, latency_ms_median, turns) = arg_max(TimeGenerated, latency_ms_median, turns)\n| project\n    Metric = \"golden bank — median turn latency (ms, latest, uncolored)\",\n    Value = iff(isnull(latency_ms_median), real(null), round(latency_ms_median, 1)),\n    Detail = strcat(turns, \" turns this run\")",
-        "size": 0,
-        "title": "Median turn latency (ms, latest run) — uncolored",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "blue",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "d4-median-latency"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"agent_eval_summary\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    pass_rate = todouble(d.pass_rate),\n    faithfulness_mean = todouble(d.faithfulness_mean),\n    relevance_mean = todouble(d.relevance_mean),\n    accuracy_mean = todouble(d.accuracy_mean)\n| where run_label in (\"nightly\", \"predeploy\")\n| project TimeGenerated, run_label, pass_rate, faithfulness_mean, relevance_mean, accuracy_mean\n| order by TimeGenerated asc",
-        "size": 0,
-        "title": "Trend over runs — pass_rate / faithfulness / relevance / accuracy, chronological (90d)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "d5-trend-over-runs"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"agent_eval_summary\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    path = tostring(d.path),\n    judge_mode = tostring(d.judge_mode),\n    turns = toint(d.turns),\n    errors = toint(d.errors),\n    pass_rate = todouble(d.pass_rate),\n    model_under_test = tostring(d.model_under_test),\n    artifact_blob = tostring(d.artifact_blob),\n    generated_at = tostring(d.generated_at)\n| where run_label in (\"nightly\", \"predeploy\")\n| project TimeGenerated, run_label, path, judge_mode, turns, errors, pass_rate, model_under_test, artifact_blob\n| order by TimeGenerated desc\n| take 20",
-        "size": 0,
-        "title": "Run provenance — most recent 20 nightly/predeploy runs, links to artifact_blob",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "d6-run-provenance"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Section E — Extraction benchmark — *from `extraction_benchmark_run` (Track 1). Structurally empty today: Gap 309 (the logging-level bug that silently dropped every `extraction_benchmark_run` event before it reached the exporter) was fixed in code 2026-08-24 but has not yet reached a deployed image — this is a deploy-pending state, verified live, not a broken query. When it lands, do **not** let 80% recall read green: it is documented real model-drift evidence, and the red<80/yellow<100 bands below deliberately put 80% itself in yellow, never green.*"
-      },
-      "name": "section-e-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend alert_recall_pct = todouble(d.alert_recall_pct);\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, alert_recall_pct) = arg_max(TimeGenerated, alert_recall_pct)\n| extend total = run_count\n| project\n    Metric = \"extraction bench — alert recall (%, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(alert_recall_pct), real(null), round(alert_recall_pct, 2))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, recall=\", iff(isnull(alert_recall_pct), \"n/a\", tostring(round(alert_recall_pct,2))), \"% — real drift evidence, 80% is not green\"), strcat(total, \" runs, recall=\", round(alert_recall_pct,2), \"%\"))",
-        "size": 0,
-        "title": "Alert recall (%, latest run) — 80% is real drift evidence, never reads green",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "80",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "100",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "e1-alert-recall"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend clean_false_positive_rate_pct = todouble(d.clean_false_positive_rate_pct);\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, clean_false_positive_rate_pct) = arg_max(TimeGenerated, clean_false_positive_rate_pct)\n| extend total = run_count\n| project\n    Metric = \"extraction bench — clean false-positive rate (%, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(clean_false_positive_rate_pct), real(null), round(clean_false_positive_rate_pct, 2))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, FP rate=\", iff(isnull(clean_false_positive_rate_pct), \"n/a\", tostring(round(clean_false_positive_rate_pct,2))), \"%\"), strcat(total, \" runs, FP rate=\", round(clean_false_positive_rate_pct,2), \"%\"))",
-        "size": 0,
-        "title": "Clean false-positive rate (%, latest run)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": ">=",
-                  "thresholdValue": "20",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": ">",
-                  "thresholdValue": "0",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "e1-fp-rate"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"extraction_benchmark_run\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    true_positive = toint(d.true_positive),\n    false_negative = toint(d.false_negative),\n    false_positive = toint(d.false_positive),\n    true_negative = toint(d.true_negative),\n    not_applicable = toint(d.not_applicable)\n| top 1 by TimeGenerated desc\n| project Metrics = pack_array(\n    pack(\"Metric\", \"confusion — true_positive\", \"Value\", toreal(true_positive), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — false_negative\", \"Value\", toreal(false_negative), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — false_positive\", \"Value\", toreal(false_positive), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — true_negative\", \"Value\", toreal(true_negative), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — not_applicable\", \"Value\", toreal(not_applicable), \"Detail\", \"raw count, latest run\")\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
-        "size": 0,
-        "title": "Confusion matrix cells (latest run) — raw counts",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "blue",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "e2-confusion-cells"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"extraction_benchmark_run\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    mode = tostring(d.mode),\n    alert_recall_pct = todouble(d.alert_recall_pct),\n    clean_false_positive_rate_pct = todouble(d.clean_false_positive_rate_pct)\n| project TimeGenerated, run_label, mode, alert_recall_pct, clean_false_positive_rate_pct\n| order by TimeGenerated asc",
-        "size": 0,
-        "title": "Recall / FP-rate trend over runs, chronological (90d)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "e3-trend"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Section F — Online-eval signals — *from `online_eval_signal`. Structurally empty today: nothing calls `emit_online_signals()` on a schedule yet — this is a scheduling gap, not a query defect. Colored by the event's **own** `threshold` field (F1's `Status` is computed from the emitter's `breached` flag, never an invented static band). `clarification_rate` and `budget_exhaustion_rate` are known-degenerate today — SAGE is off and `stop_reason` never reaches `ChatMessage` on the default path — that is a configuration fact about this deployment, not a quality result.*"
+        "json": "## Section F — Online-eval signals (supplementary operational detail) — *from `online_eval_signal`. Structurally empty today: nothing calls `emit_online_signals()` on a schedule yet — this is a scheduling gap, not a query defect. Colored by the event's **own** `threshold` field (F1's `Status` is computed from the emitter's `breached` flag, never an invented static band). `clarification_rate` and `budget_exhaustion_rate` are known-degenerate today — SAGE is off and `stop_reason` never reaches `ChatMessage` on the default path — that is a configuration fact about this deployment, not a quality result.*"
       },
       "name": "section-f-header"
     },
@@ -1602,9 +1755,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where TimeGenerated > ago(14d)\n| where Name == \"online_eval_signal\"\n| extend d = parse_json(Properties)\n| extend\n    signal_name = tostring(d.signal_name),\n    breached    = tostring(d.breached),\n    tenant_id   = tostring(d.tenant_id)\n| summarize (latest_ts, latest_breached) = arg_max(TimeGenerated, breached) by signal_name\n| extend Status = iff(latest_breached == \"1\", \"breached\", \"ok\")\n| project Metric = signal_name, Status\n| order by Metric asc",
+        "query": "AppEvents\n| where TimeGenerated > ago(14d)\n| where Name == \"online_eval_signal\"\n| extend d = parse_json(Properties)\n| extend\n    signal_name = tostring(d.signal_name),\n    breached    = tostring(d.breached),\n    value       = todouble(d.value)\n| summarize (latest_ts, latest_breached, latest_value) = arg_max(TimeGenerated, breached, value) by signal_name\n| extend Status = case(isnull(latest_value), \"not measured\", latest_breached == \"1\", \"breached\", \"ok\")\n| project Metric = signal_name, Status\n| order by Metric asc",
         "size": 0,
-        "title": "Breached signals (latest value per signal, 14d)",
+        "title": "Breached signals (latest value per signal, 14d) -- Fix 10, Gap 322: now also reads `value`, not just `breached` -- a signal with a permanently-null value (e.g. budget_exhaustion_rate's 0-denominator state since Gap 316) renders 'not measured' (blue), not a false green 'ok' forever. Does not retire any signal -- that is Gap 305's still-open founder decision.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "tiles",
@@ -1621,6 +1774,12 @@
             "formatOptions": {
               "thresholdsOptions": "colors",
               "thresholdsGrid": [
+                {
+                  "operator": "==",
+                  "thresholdValue": "not measured",
+                  "representation": "blue",
+                  "text": "{0}"
+                },
                 {
                   "operator": "==",
                   "thresholdValue": "ok",
@@ -1651,170 +1810,6 @@
         "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "f2-signal-detail"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Section G — Production quality judge — *from `agent_eval_run` where `run_source == \"production\"`, `judge_mode=combined`. 0 rows today — the production online judge has not scored a live turn yet. G1's pass rate is a **separate** tile from D1's golden-bank pass rate, same color bands, never averaged together — they answer different questions (a fixed question set vs. real live traffic). G2's `accuracy`/`context` rows are expected to stay at 0 scored turns by construction: `judge_mode=combined` never scores those two dimensions, and `pass` on a production row is faithfulness+relevance only.*"
-      },
-      "name": "section-g-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count()\n| project Metric = \"production judge — turns judged (30d)\", Value = toreal(total), Detail = \"raw count, no color\"",
-        "size": 0,
-        "title": "Turns judged — production judge, 30d",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "blue",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "g1-turns-judged"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend run_source = tostring(d.run_source), passed = toint(d.pass)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count(), passed = sum(passed)\n| extend Rate = iff(total > 0, round(1.0 * passed / total, 4), real(null))\n| project\n    Metric = \"production judge — pass rate (separate from golden-bank D1, never averaged)\",\n    Value = iff(total < 20, -1.0, Rate),\n    Detail = iff(total < 20, strcat(\"only \", total, \" turns — below minimum n=20, \", passed, \"/\", total, \" passed\"), strcat(passed, \"/\", total, \" passed\"))",
-        "size": 0,
-        "title": "Production pass rate — separate from D1, never averaged together",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "==",
-                  "thresholdValue": "-1",
-                  "representation": "blue",
-                  "text": "n/a — see Detail"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.20",
-                  "representation": "red",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "<",
-                  "thresholdValue": "0.30",
-                  "representation": "yellow",
-                  "text": "{0}"
-                },
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "green",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "g1-pass-rate"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend\n        run_source = tostring(d.run_source),\n        faithfulness_score = todouble(d.faithfulness_score),\n        relevance_score = todouble(d.relevance_score),\n        accuracy_score = todouble(d.accuracy_score),\n        context_score = todouble(d.context_score),\n        helpfulness_score = todouble(d.helpfulness_score),\n        completeness_score = todouble(d.completeness_score),\n        tone_score = todouble(d.tone_score)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize\n    turns = count(),\n    faithfulness = avg(faithfulness_score), faithfulness_n = countif(isnotnull(faithfulness_score)),\n    relevance = avg(relevance_score), relevance_n = countif(isnotnull(relevance_score)),\n    accuracy = avg(accuracy_score), accuracy_n = countif(isnotnull(accuracy_score)),\n    context = avg(context_score), context_n = countif(isnotnull(context_score)),\n    helpfulness = avg(helpfulness_score), helpfulness_n = countif(isnotnull(helpfulness_score)),\n    completeness = avg(completeness_score), completeness_n = countif(isnotnull(completeness_score)),\n    tone = avg(tone_score), tone_n = countif(isnotnull(tone_score))\n| extend\n    faithfulness = iff(isnan(faithfulness), real(null), faithfulness),\n    relevance = iff(isnan(relevance), real(null), relevance),\n    accuracy = iff(isnan(accuracy), real(null), accuracy),\n    context = iff(isnan(context), real(null), context),\n    helpfulness = iff(isnan(helpfulness), real(null), helpfulness),\n    completeness = iff(isnan(completeness), real(null), completeness),\n    tone = iff(isnan(tone), real(null), tone)\n| project Metrics = pack_array(\n    pack(\"Metric\", \"production — faithfulness\", \"Value\", faithfulness, \"Detail\", strcat(faithfulness_n, \"/\", turns, \" scored — pass = faithfulness+relevance only\")),\n    pack(\"Metric\", \"production — relevance\", \"Value\", relevance, \"Detail\", strcat(relevance_n, \"/\", turns, \" scored — pass = faithfulness+relevance only\")),\n    pack(\"Metric\", \"production — accuracy (NULL by construction)\", \"Value\", accuracy, \"Detail\", strcat(accuracy_n, \"/\", turns, \" scored — expected 0, judge_mode=combined does not score this\")),\n    pack(\"Metric\", \"production — context (NULL by construction)\", \"Value\", context, \"Detail\", strcat(context_n, \"/\", turns, \" scored — expected 0, judge_mode=combined does not score this\")),\n    pack(\"Metric\", \"production — helpfulness (combined judge only)\", \"Value\", helpfulness, \"Detail\", strcat(helpfulness_n, \"/\", turns, \" scored\")),\n    pack(\"Metric\", \"production — completeness (combined judge only)\", \"Value\", completeness, \"Detail\", strcat(completeness_n, \"/\", turns, \" scored\")),\n    pack(\"Metric\", \"production — tone (combined judge only)\", \"Value\", tone, \"Detail\", strcat(tone_n, \"/\", turns, \" scored\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
-        "size": 0,
-        "title": "Production scores — faithfulness/relevance/helpfulness/completeness/tone; accuracy/context NULL by construction (judge_mode=combined)",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "tiles",
-        "tileSettings": {
-          "size": "auto",
-          "showBorder": true,
-          "titleContent": {
-            "columnMatch": "Metric",
-            "formatter": 1
-          },
-          "leftContent": {
-            "columnMatch": "Value",
-            "formatter": 8,
-            "formatOptions": {
-              "thresholdsOptions": "colors",
-              "thresholdsGrid": [
-                {
-                  "operator": "Default",
-                  "thresholdValue": null,
-                  "representation": "blue",
-                  "text": "{0}"
-                }
-              ]
-            }
-          },
-          "subtitleContent": {
-            "columnMatch": "Detail",
-            "formatter": 1
-          }
-        }
-      },
-      "name": "g2-production-scores"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Section H — Ops Recommendations — *from `ops_recommendation` (`telemetry.track_ops_recommendation()`), one row per category per nightly run — container health, cost, AI improvement (Gaps 318/319). The grid below shows only the latest run, keyed on the event's own `generated_at` (never `TimeGenerated`, which is ingestion time). `Recommendation` shows the event's own text only when that category's `status` is `recommend`; every other status (`worked`, `no_data`, `insufficient_data`) renders the literal `No recommendation yet` — never inferred from data volume. Expect **0 rows today**: the emitter shipped in Gaps 318/319 but no backend image carrying them has been pushed or run yet, so `ops_recommendation` has never been written to this workspace.*"
-      },
-      "name": "section-h-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let rows = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_run = toscalar(rows | summarize max(run_ts));\nrows\n| where run_ts == latest_run\n| project\n    Category       = tostring(d[\"title\"]),\n    Status         = tostring(d.status),\n    Explanation    = tostring(d.explanation),\n    Recommendation = iff(isempty(tostring(d.recommendation)), \"No recommendation yet\", tostring(d.recommendation)),\n    Findings       = toint(d.finding_count),\n    Red            = toint(d.red_count),\n    Yellow         = toint(d.yellow_count),\n    Errors         = tostring(d.errors),\n    Run            = strcat(tostring(d.run_label), \" @ \", tostring(d.generated_at))\n| order by Category asc",
-        "size": 0,
-        "title": "Section H — latest recommendation pass, by category (container health / cost / AI improvement) — filtered to the most recent nightly run. No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\".",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "h1-ops-recommendations"
     },
     {
       "type": 1,

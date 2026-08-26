@@ -26,15 +26,24 @@ targetScope = 'resourceGroup'
 // the same numbers Gap 318's recommendation-pass panel and the AI Control Tower
 // workbook's D1-D3 tiles already use) -- so the alert and the live panels can never
 // disagree about what "critical" means:
-//   pass_rate     red < 0.20   (SCORE_BANDS["pass_rate"])
+//   pass_rate     red < 0.60   (SCORE_BANDS["pass_rate"])
 //   faithfulness  red < 0.70   (SCORE_BANDS["faithfulness"])
 //   relevance     red < 0.85   (SCORE_BANDS["relevance"])
-//   accuracy      red < 0.40   (SCORE_BANDS["accuracy"])
+//   accuracy      red < 0.75   (SCORE_BANDS["accuracy"])
 //   context       red < 0.50   (SCORE_BANDS["context"])
 //   orchestration red < 0.60   (SCORE_BANDS["orchestration"])
 //   minimum sample: 20 graded turns (MIN_GRADED_TURNS) -- below this, ops_recommendation.py
 //   itself reports `insufficient_data`, not a graded verdict, so this alert applies the
 //   same guard rather than judging a too-small sample.
+//
+// Gap 322/323 update (2026-08-26): `pass_rate` and `accuracy` recalibrated from
+// 0.20/0.40 to 0.60/0.75 -- the old bands were tuned to what the system happened to
+// score, not to what "good" means, and let a 25.7% pass rate / 60% accuracy pass
+// silently. This file previously carried its own unpinned copy of the stale numbers
+// (no test protects this bicep file, unlike the workbook JSON's
+// `test_each_band_is_still_the_live_panels_band`) -- mirrored here in the same pass
+// that mirrored the two workbook `thresholdsGrid`s, so the alert cannot keep paging
+// on the old, more permissive red bands while the tiles show the new ones.
 //
 // Event / field names -- verified against telemetry.py, not guessed
 // ----------------------------------------------------------------------------
@@ -99,8 +108,8 @@ param alertSeverity int = 1
 @description('Minimum graded turns in the lookback window before a verdict is judged at all. Copied from services/ops_recommendation.py::MIN_GRADED_TURNS -- below this, the run is insufficient-data, not a graded pass/fail, and must not fire.')
 param minGradedTurns int = 20
 
-@description('Red-band lower bound for pass_rate. Copied from ops_recommendation.py SCORE_BANDS["pass_rate"][0].')
-param passRateRedBelow string = '0.20'
+@description('Red-band lower bound for pass_rate. Copied from ops_recommendation.py SCORE_BANDS["pass_rate"][0]. Gap 322/323 (2026-08-26): recalibrated 0.20 -> 0.60.')
+param passRateRedBelow string = '0.60'
 
 @description('Red-band lower bound for faithfulness. Copied from ops_recommendation.py SCORE_BANDS["faithfulness"][0].')
 param faithfulnessRedBelow string = '0.70'
@@ -108,8 +117,8 @@ param faithfulnessRedBelow string = '0.70'
 @description('Red-band lower bound for relevance. Copied from ops_recommendation.py SCORE_BANDS["relevance"][0].')
 param relevanceRedBelow string = '0.85'
 
-@description('Red-band lower bound for accuracy. Copied from ops_recommendation.py SCORE_BANDS["accuracy"][0].')
-param accuracyRedBelow string = '0.40'
+@description('Red-band lower bound for accuracy. Copied from ops_recommendation.py SCORE_BANDS["accuracy"][0]. Gap 322/323 (2026-08-26): recalibrated 0.40 -> 0.75.')
+param accuracyRedBelow string = '0.75'
 
 @description('Red-band lower bound for context. Copied from ops_recommendation.py SCORE_BANDS["context"][0].')
 param contextRedBelow string = '0.50'
@@ -136,7 +145,7 @@ resource aiEvalCriticalAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-
   kind: 'LogAlert'
   properties: {
     displayName: 'Gap 299: AI-eval nightly run crossed a red-band quality threshold'
-    description: 'Fires when the nightly/ad-hoc golden-bank agent_eval_run batch (run_source=="golden", n>=20 graded turns) has any of pass_rate<0.20, faithfulness<0.70, relevance<0.85, accuracy<0.40, context<0.50, orchestration<0.60 -- the exact red bands services/ops_recommendation.py::SCORE_BANDS already uses for the AI Control Tower workbook. Closes tracker Gap 299: until this alert, a critical AI-eval finding paged nobody.'
+    description: 'Fires when the nightly/ad-hoc golden-bank agent_eval_run batch (run_source=="golden", n>=20 graded turns) has any of pass_rate<0.60, faithfulness<0.70, relevance<0.85, accuracy<0.75, context<0.50, orchestration<0.60 -- the exact red bands services/ops_recommendation.py::SCORE_BANDS already uses for the AI Control Tower workbook (pass_rate/accuracy recalibrated Gap 322/323, 2026-08-26). Closes tracker Gap 299: until this alert, a critical AI-eval finding paged nobody.'
     severity: alertSeverity
     enabled: true
     scopes: [

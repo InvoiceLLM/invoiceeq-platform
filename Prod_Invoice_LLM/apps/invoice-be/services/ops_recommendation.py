@@ -23,7 +23,10 @@ Where every threshold in this module comes from
 Nothing here invents a second definition of "bad". Every band below is lifted
 from the `formatter: 8` `thresholdsGrid` of the panel that already renders that
 field on one of the two live workbooks, so a category that flags red here is
-looking at a tile that is red there:
+looking at a tile that is red there. **Two rows are the exception as of Gap 323**
+— golden-bank pass rate and accuracy, where the tile was the thing that was wrong
+and this constant is now the source the tile mirrors; see "The two recalibrated
+bands" below:
 
 ===============================  ======================================  ==========================
 Field                            Panel (workbook JSON)                   Bands
@@ -33,10 +36,10 @@ Running status                   `container-scale-config` (cost_health)  != "Run
 Restarts, 24h                    `container-restarts` (cost_health)      >0 is the panel's filter
 MTD spend % of budget            `cost-trend-budget` (cost_health)       >=100 red, >=80 yellow
 Month-end forecast % of budget   `cost-trend-budget` (cost_health)       >=100 red, >=80 yellow
-Golden-bank pass rate            `d1-latest-pass-rate` (control_tower)   <0.20 red, <0.30 yellow
+Golden-bank pass rate            `d1-latest-pass-rate` (control_tower)   <0.60 red, <0.75 yellow (Gap 323)
 Faithfulness                     `d2-faithfulness`                       <0.70 red, <0.85 yellow
 Relevance                        `d2-relevance`                          <0.85 red, <0.95 yellow
-Accuracy                         `d2-accuracy`                           <0.40 red, <0.55 yellow
+Accuracy                         `d2-accuracy`                           <0.75 red, <0.90 yellow (Gap 323)
 Context                          `d3-context`                            <0.50 red, <0.70 yellow
 Orchestration                    `d3-orchestration`                      <0.60 red, <0.80 yellow
 Cost per turn (USD)              `d4-cost-per-turn`                      >=0.02 red, >=0.01 yellow
@@ -44,6 +47,56 @@ Alert recall %                   `e1-alert-recall`                       <80 red
 Clean false-positive rate %      `e1-fp-rate`                            >=20 red, >0 yellow
 Turn error rate %                `b1-error-rate`                         >=5 red, >=2 yellow
 ===============================  ======================================  ==========================
+
+The two recalibrated bands (Gap 323, 2026-08-26)
+------------------------------------------------
+`pass_rate` and `accuracy` used to read `(0.20, 0.30)` and `(0.40, 0.55)`, copied
+from `d1-latest-pass-rate` and `d2-accuracy`. Those two tiles had been calibrated
+to *what the system was scoring at the time*, not to what "good" means, so the
+2026-08-26 nightly run's real **25.7% pass rate** rendered yellow-at-best and its
+real **0.600 accuracy** rendered **green** — a tile that cannot report a bad
+number as bad, which is the entire job of a coloured tile. The founder's design
+review (`docs/feature_20_23_24_ops_workbook.md`, "Workbook redesign", finding 2 /
+Fix 11) approved recalibrating both. The direction of the mirror reverses for
+these two only: this constant is the decision, and infra-devops mirrors it into
+the two `thresholdsGrid`s. Everything else in the table above is still the tile's.
+
+*accuracy — red <0.75, yellow <0.90.* Accuracy is the only dimension graded
+against a **known-correct reference answer**; faithfulness and relevance are
+reference-free judge scores, where some spread is the judge's, not the product's.
+A wrong answer against a known-correct one is a defect, so the bar is held above
+faithfulness's `(0.70, 0.85)`. The red bound is anchored, not picked: `decide_pass()`
+already requires `accuracy >= ACCURACY_FLOOR = 0.70` on *every* turn, so a run
+whose *mean* accuracy is under that floor means the average turn is failing the
+gate outright — red starts just above it, at 0.75, so the mean has to clear the
+per-turn floor with a margin rather than sit on it. Yellow at 0.90 is the working
+target: roughly nine right answers in ten, with room left for judge noise, which
+is a demanding-but-reachable bar rather than relevance's near-free 0.95. Today's
+0.600 is red, which is the honest reading of 60%-correct-against-a-known-answer.
+
+*pass_rate — red <0.60, yellow <0.75.* This is the strictest number the system
+produces and the only conjunctive one: `agent_eval.decide_pass()` passes a turn
+only if faithfulness >= 0.80 **and** relevance >= 0.70 **and** accuracy >= 0.70,
+all on the same turn. That compounding is why its band is not simply the highest
+one here — three dimensions each clearing their floor on ~90% of turns lands the
+joint rate well under 0.90 even with no regression at all, so a 0.85-style bar
+would flag a genuinely healthy system every night and be tuned out within a week.
+Green at >=0.75 says three turns in four are clean on *all three* checks; yellow
+0.60-0.75 says a majority pass but roughly one turn in three fails something, which
+is worth a look and not an emergency; red <0.60 says more than two turns in five
+fail a required check, which is not a shippable product. Note the shape against
+the rest of the table: `pass_rate` carries the **lowest yellow** of any band here
+(0.75), because it is the only conjunction, but *not* the lowest red — a red pass
+rate is the loudest single statement this module can make. Today's 0.257 is red.
+
+No minimum-run guard is needed for either of these to be honest, and this module
+already makes the argument one level down: see the `context_drift` comment in
+`evaluate_ai_improvement()` — the golden bank is a fixed, exhaustive, deterministic
+script set run identically every night, so there is no sampling error for a "wait
+for more runs" guard to protect against. (The workbook-side n=3-*run* guard on
+`d1`/`d2` is JSON, and its removal is infra-devops's, not this module's. The n=20
+guard below is a different thing and stays: that one is about how many turns were
+graded in the run, which really can be small.)
 
 Two fields the workbooks colour and this module deliberately does not judge:
 **replica count** (`container-replicas` is blue by design — its own title says it
@@ -171,11 +224,14 @@ BUDGET_RED_PCT = 100.0
 BUDGET_YELLOW_PCT = 80.0
 
 # `d1`/`d2`/`d3`/`d4` — (red_below, yellow_below) on a 0-1 scale.
+#: `pass_rate` and `accuracy` are the two entries that are **not** a copy of a
+#: tile — Gap 323 recalibrated them and the tiles mirror *these*. See "The two
+#: recalibrated bands" in the module docstring for the derivation.
 SCORE_BANDS: Dict[str, Tuple[float, float]] = {
-    "pass_rate": (0.20, 0.30),
+    "pass_rate": (0.60, 0.75),
     "faithfulness": (0.70, 0.85),
     "relevance": (0.85, 0.95),
-    "accuracy": (0.40, 0.55),
+    "accuracy": (0.75, 0.90),
     "context": (0.50, 0.70),
     "orchestration": (0.60, 0.80),
 }
