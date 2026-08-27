@@ -66,7 +66,6 @@ interface InvoiceDetail {
   // field the auditor has to correct.
   sa_alerts: { type: string; message: string; field?: string }[];
   items: LineItem[] | null;
-  coordinates?: { x: number; y: number; width: number; height: number; label?: string }[];
   field_confidence?: Record<string, number>;
   flow_direction?: string;
 }
@@ -715,7 +714,6 @@ export default function AuditorReviewPage() {
             invoiceId={invoice.id}
             title={`Invoice ${invoice.invoice_number ?? invoice.id}`}
             status={invoice.status}
-            coordinates={invoice.coordinates ?? []}
           />
 
           {/* COLUMN 2 (30% width) — Extracted Fields & Metadata */}

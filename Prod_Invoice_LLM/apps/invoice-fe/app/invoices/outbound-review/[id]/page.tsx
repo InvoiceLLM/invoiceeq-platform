@@ -27,7 +27,6 @@ interface OutboundInvoiceDetail {
   currency?: string | null;
   sa_alerts: { type: string; message: string; field?: string }[];
   items: { description: string; quantity?: number; unit_price?: number; amount: number }[] | null;
-  coordinates?: { x: number; y: number; width: number; height: number; label?: string }[];
 }
 
 const CORRECTABLE_FIELDS: { key: keyof OutboundInvoiceDetail; label: string; type: "text" | "date" | "number" }[] = [
@@ -418,7 +417,6 @@ export default function OutboundAuditorReviewPage() {
           invoiceId={invoice.id}
           title={`Invoice ${invoice.invoice_number ?? invoice.id}`}
           status={invoice.status}
-          coordinates={invoice.coordinates ?? []}
         />
 
         {/* COLUMN 2 (30% width) — Extracted Fields */}

@@ -5,12 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   FileText,
-  MoreHorizontal,
   AlertCircle,
   CheckCircle,
   Loader2,
   Eye,
-  FileDown,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -84,9 +82,7 @@ export default function RecentInvoicesTable({
   onPageChange,
   isFullPage = false,
 }: RecentInvoicesTableProps) {
-  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [markingPaidId, setMarkingPaidId] = useState<string | null>(null);
   const router = useRouter();
 
   // FE Gap 29: `invoices` is now a single real server-paginated page (already
@@ -94,31 +90,8 @@ export default function RecentInvoicesTable({
   // not a client-fetched batch that gets re-sliced/re-filtered here.
   const pageInvoices = invoices;
 
-  const handleMarkPaid = async (inv: InvoiceRecord, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setActiveMenuId(null);
-    const label = inv.invoice_number || inv.id;
-    if (!window.confirm(`Mark invoice ${label} as paid? This records payment and updates the status to PAID.`)) {
-      return;
-    }
-    setMarkingPaidId(inv.id);
-    try {
-      await apiClient.put(`/audit/resolve/${inv.id}`, {
-        status: "PAID",
-        dismissed_alerts: [],
-      });
-      onStatusChange?.(inv.id, "PAID");
-    } catch (err) {
-      console.error("Failed to mark invoice as paid", err);
-      window.alert("Failed to mark invoice as paid. Please try again.");
-    } finally {
-      setMarkingPaidId(null);
-    }
-  };
-
   const handleDelete = async (inv: InvoiceRecord, e: React.MouseEvent) => {
     e.stopPropagation();
-    setActiveMenuId(null);
     const label = inv.invoice_number || inv.id;
     if (!window.confirm(`Delete invoice ${label}? This permanently removes the PDF, extracted data, and indexed chat content.`)) {
       return;
@@ -195,24 +168,6 @@ export default function RecentInvoicesTable({
     }
   };
 
-  const toggleMenu = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setActiveMenuId(activeMenuId === id ? null : id);
-  };
-
-  // Close menus on click outside
-  React.useEffect(() => {
-    const closeMenus = () => setActiveMenuId(null);
-    if (typeof window !== "undefined") {
-      window.addEventListener("click", closeMenus);
-    }
-    return () => {
-      if (typeof window !== "undefined") {
-        window.removeEventListener("click", closeMenus);
-      }
-    };
-  }, []);
-
   return (
     <div className="glass-panel rounded-xl overflow-hidden flex flex-col h-full border border-[#222D3D]">
       {/* Table Header Section */}
@@ -287,7 +242,7 @@ export default function RecentInvoicesTable({
                   key={inv.id}
                   // Gap 206: entire row is clickable — navigates to the Auditor Review Console
                   onClick={() => router.push(`/invoices/review/${inv.id}`)}
-                  className={`hover:bg-slate-900/30 transition-colors duration-150 group cursor-pointer ${activeMenuId === inv.id ? "relative z-30" : ""}`}
+                  className="hover:bg-slate-900/30 transition-colors duration-150 group cursor-pointer"
                 >
                   {/* Invoice # */}
                   <td className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 font-mono font-medium text-white group-hover:text-[#3B82F6] transition-colors`}>
@@ -338,78 +293,41 @@ export default function RecentInvoicesTable({
                     {getStatusBadge(inv.status)}
                   </td>
                   
-                  {/* Actions Dropdown — Gap 153: dropdown opens upward only on the last rows;
-                      for row 1 (first row visible), we switch to open downward using a
-                      data-driven position class so the menu never clips against the sticky header. */}
+                  {/* FE Gap 318: inline View/Delete icons, matching OutboundInvoicesTable's
+                      pattern exactly — replaces the dropdown menu (Gap 153), which
+                      rendered awkwardly (offset from its trigger, an ad-hoc
+                      first-2-rows open-up/open-down heuristic). Mark as Paid and
+                      Download Original PDF are still reachable from inside the
+                      Auditor Review Console itself; only the list-row quick actions
+                      are simplified here, matching outbound's own list-row scope. */}
                   <td
-                    className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 text-right relative`}
-                    // prevent row click when interacting with actions
+                    className={`${isFullPage ? "px-3 lg:px-4" : "px-6"} py-4 text-right`}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button
-                      onClick={(e) => toggleMenu(inv.id, e)}
-                      className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                    >
-                      <MoreHorizontal className="w-4 h-4" />
-                    </button>
-                    
-                    {activeMenuId === inv.id && (
-                      <div 
-                        className="absolute right-6 w-44 bg-[#0F172A] border border-[#222D3D] rounded-lg shadow-2xl py-1 z-50 animate-in fade-in duration-150 text-left"
-                        style={{
-                          // Gap 153: calculate whether there is room to open upward.
-                          // If the row is one of the first 2 visible rows, open downward (top-full)
-                          // to avoid clipping against the sticky header.
-                          top: pageInvoices.indexOf(inv) < 2 ? "100%" : "auto",
-                          bottom: pageInvoices.indexOf(inv) < 2 ? "auto" : "100%",
-                          marginTop: pageInvoices.indexOf(inv) < 2 ? "4px" : undefined,
-                          marginBottom: pageInvoices.indexOf(inv) < 2 ? undefined : "4px",
-                        }}
-                        onClick={(e) => e.stopPropagation()}
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <Link
+                        href={`/invoices/review/${inv.id}`}
+                        title="Open Auditor Review Console"
+                        aria-label={`Review invoice ${inv.invoice_number || inv.id}`}
+                        className="inline-flex items-center gap-1 rounded-lg p-1.5 text-xs font-semibold text-[#3B82F6] transition-colors hover:bg-slate-800 hover:text-[#3B82F6]/80"
                       >
-                        <Link
-                          href={`/invoices/review/${inv.id}`}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300 hover:bg-[#1E293B] hover:text-white transition-colors"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-[#3B82F6]" />
-                          Auditor Review Console
-                        </Link>
-                        
-                        <a
-                          href={`/api/invoices/${inv.id}/pdf`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300 hover:bg-[#1E293B] hover:text-white transition-colors"
-                        >
-                          <FileDown className="w-3.5 h-3.5 text-slate-400" />
-                          Download Original PDF
-                        </a>
-
-                        {inv.status?.toUpperCase() !== "PAID" && inv.status?.toUpperCase() !== "REJECTED" && (
-                          <button
-                            type="button"
-                            disabled={markingPaidId === inv.id}
-                            onClick={(e) => handleMarkPaid(inv, e)}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 transition-colors disabled:opacity-50 disabled:cursor-wait"
-                          >
-                            <CheckCircle className="w-3.5 h-3.5" />
-                            {markingPaidId === inv.id ? "Marking Paid..." : "Mark as Paid"}
-                          </button>
-                        )}
-
-                        <div className="h-px bg-[#222D3D] my-1" />
-
-                        <button
-                          type="button"
-                          disabled={deletingId === inv.id}
-                          onClick={(e) => handleDelete(inv, e)}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-colors disabled:opacity-50 disabled:cursor-wait"
-                        >
+                        <Eye className="w-3.5 h-3.5" />
+                      </Link>
+                      <button
+                        type="button"
+                        disabled={deletingId === inv.id}
+                        onClick={(e) => handleDelete(inv, e)}
+                        title="Delete invoice"
+                        aria-label={`Delete invoice ${inv.invoice_number || inv.id}`}
+                        className="inline-flex items-center rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/10 hover:text-rose-300 disabled:cursor-wait disabled:opacity-50"
+                      >
+                        {deletingId === inv.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
                           <Trash2 className="w-3.5 h-3.5" />
-                          {deletingId === inv.id ? "Deleting..." : "Delete Invoice"}
-                        </button>
-                      </div>
-                    )}
+                        )}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

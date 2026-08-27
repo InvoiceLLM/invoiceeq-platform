@@ -3,26 +3,16 @@
 import { ZoomIn, ZoomOut, RotateCw, Maximize2, X } from "lucide-react";
 import { useState } from "react";
 
-interface Coordinate {
-  x: number;       // percentage-based left offset (0-100)
-  y: number;       // percentage-based top offset (0-100)
-  width: number;   // percentage-based width (0-100)
-  height: number;  // percentage-based height (0-100)
-  label?: string;
-}
-
 interface PdfViewerCanvasProps {
   invoiceId: string;
   title?: string;
   status?: string;
-  coordinates?: Coordinate[];
 }
 
 export default function PdfViewerCanvas({
   invoiceId,
   title,
   status,
-  coordinates = [],
 }: PdfViewerCanvasProps) {
   const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
@@ -151,21 +141,6 @@ export default function PdfViewerCanvas({
               PDF expanded in modal view
             </div>
           )}
-
-          {/* Bounding Box Overlays */}
-          {coordinates.map((coord, idx) => (
-            <div
-              key={idx}
-              className="pointer-events-none absolute rounded-sm border-2 border-emerald-400 bg-emerald-400/20 shadow-[0_0_12px_rgba(16,185,129,0.5)]"
-              style={{
-                left: `${coord.x}%`,
-                top: `${coord.y}%`,
-                width: `${coord.width}%`,
-                height: `${coord.height}%`,
-              }}
-              title={coord.label}
-            />
-          ))}
         </div>
       </div>
 
