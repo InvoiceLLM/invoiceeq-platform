@@ -222,13 +222,18 @@ class InvoiceSpec:
             "currency": self.currency,
             "items": items,
         }
+        # Gap 293: discount_amount/round_off are now on both extraction schemas
+        # (previously OUTBOUND had neither field at all, which is what made
+        # `outbound_trade_discount` a permanent false positive). po_number
+        # stays INBOUND-only -- OutboundInvoiceExtractionSchema genuinely has
+        # no such field.
+        truth["round_off"] = self.round_off
+        truth["discount_amount"] = self.discount_amount
         if self.flow_direction == "OUTBOUND":
             truth["customer_name"] = self.party_name
         else:
             truth["vendor_name"] = self.party_name
             truth["po_number"] = self.po_number
-            truth["round_off"] = self.round_off
-            truth["discount_amount"] = self.discount_amount
         return truth
 
     def initial_extraction(self) -> dict[str, Any]:
@@ -258,8 +263,8 @@ class InvoiceSpec:
             {"tax_type": t.tax_type, "rate_percent": t.rate_percent, "amount": t.amount}
             for t in self.taxes
         ]
-        if self.flow_direction == "INBOUND":
-            data["discount_percent"] = self.discount_percent
+        # Gap 293: discount_percent now exists on both extraction schemas too.
+        data["discount_percent"] = self.discount_percent
         return data
 
 

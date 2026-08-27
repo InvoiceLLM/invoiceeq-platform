@@ -108,37 +108,27 @@ def test_clean_documents_are_arithmetically_consistent(spec):
         assert sum(t.amount for t in spec.taxes) == pytest.approx(spec.tax_amount, abs=0.01)
 
 
-def test_clean_inbound_documents_raise_no_alert_through_the_real_verify_node():
+def test_clean_documents_raise_no_alert_through_the_real_verify_node():
     """The false-positive measurement, asserted as a floor.
 
-    Scoped to INBOUND: `outbound_trade_discount` is a known, deliberately-kept
-    false positive (`OutboundInvoiceExtractionSchema` carries no discount field,
-    so a discounted outbound invoice cannot pass `verify_totals_math`) and has
-    its own test below. Pinning it here would either hide the defect or force
-    this test to be edited when it is fixed.
+    Covers both directions. Used to be scoped to INBOUND only because
+    `outbound_trade_discount` was a known, permanent false positive
+    (`OutboundInvoiceExtractionSchema` carried no discount field at all, so a
+    discounted outbound invoice could never pass `verify_totals_math`) — see
+    Gap 293 (`docs/be_features_tracker.md`), closed 2026-08-27 by adding
+    discount_amount/discount_percent/round_off to the outbound schema. The
+    corpus has no other known clean-document false positive, so this now runs
+    unscoped.
     """
     for spec in CLEAN_DOCUMENTS:
-        if spec.flow_direction != "INBOUND":
-            continue
         run = run_clean_case(spec, MODE_VERIFY)
         assert run.error is None
         assert run.fired_types == [], f"{spec.doc_id} raised {run.fired_types}"
-        assert run.status == "COMPLETED"
-
-
-def test_known_outbound_discount_false_positive_is_still_present():
-    """Pins the defect the first benchmark run found, so a fix is visible.
-
-    If this starts failing, `OutboundInvoiceExtractionSchema` has gained a
-    discount field (or `verify_totals_math` learned to infer one) — update the
-    README's 'What the first run found' section and delete this test rather than
-    editing it to match.
-    """
-    spec = CLEAN_BY_ID["outbound_trade_discount"]
-    run = run_clean_case(spec, MODE_VERIFY)
-    assert run.fired_types == ["tax_mismatch"]
-    assert spec.discount_amount is not None
-    assert "discount_amount" not in spec.initial_extraction()
+        # Terminal status naming genuinely differs by flow direction --
+        # "COMPLETED" (inbound) vs "VERIFIED" (outbound), both meaning "no
+        # alerts raised" -- see test_extraction.py / test_outbound_extraction.py.
+        expected_status = "COMPLETED" if spec.flow_direction == "INBOUND" else "VERIFIED"
+        assert run.status == expected_status
 
 
 # ---------------------------------------------------------------------------
@@ -409,11 +399,11 @@ def test_full_verify_run_detects_every_seeded_issue():
     assert matrix["false_negative"] == 0
     assert matrix["recall"] == 1.0
     assert matrix["true_positive"] == len(SEEDED)
-    # The one known false positive, pinned by name so a regression that adds a
-    # second one fails here rather than passing a >= assertion.
-    assert [e["case_id"] for e in summary["false_positive_documents"]] == [
-        "outbound_trade_discount__clean"
-    ]
+    # Gap 293 closed 2026-08-27: `outbound_trade_discount__clean` was the one
+    # known false positive here, pinned by name so a regression that adds a
+    # false positive fails here rather than passing a >= assertion. The corpus
+    # should now be false-positive-free.
+    assert summary["false_positive_documents"] == []
     assert summary["errors"] == []
 
 

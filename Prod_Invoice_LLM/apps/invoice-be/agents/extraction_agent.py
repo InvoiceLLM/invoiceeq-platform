@@ -162,6 +162,16 @@ class OutboundInvoiceExtractionSchema(BaseModel):
     grand_total: Optional[float] = Field(default=None, description="Grand total amount. Transcribe the printed figure exactly as it appears.")
     tax_amount: Optional[float] = Field(default=None, description="Tax amount. Transcribe printed figure verbatim. On invoices with a CGST + SGST (or IGST) split, sum them into this single field AND list each component separately in `taxes`.")
     currency: Optional[str] = Field(default=None, description="ISO 4217 currency code (e.g. INR, EUR, USD)")
+    # Gap 293: without these, a correct outbound invoice with a printed trade
+    # discount or "Round Off" line always fails verify_totals_math (below) and
+    # lands on NEEDS_REVIEW, because the shared verification node passes
+    # data.get("discount_amount")/data.get("round_off") straight through and
+    # those keys never existed on this schema. Same top-level scalar fields
+    # InvoiceExtractionSchema already carries (lines ~120, 125-126) — mirrored
+    # here, not the per-line-item discount fields.
+    round_off: Optional[float] = Field(default=None, description="Small rounding adjustment line (e.g. 'Round Off'), positive or negative, common on Indian GST invoices. Leave null if the invoice has no such line.")
+    discount_percent: Optional[float] = Field(default=None, description="Top-level discount percentage")
+    discount_amount: Optional[float] = Field(default=None, description="Top-level discount amount")
     items: List[OutboundInvoiceLineItem] = Field(default=[], description="List of line items in the invoice")
     # Post-Gap-283 correction: Gap 283 added the "sum CGST + SGST into
     # tax_amount" instruction above without giving the model anywhere to put the
@@ -327,11 +337,14 @@ def _build_outbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[s
     COMPLEX classification and the dynamic-QA findings through here, which the
     old 2-node outbound graph had no way to produce. Deliberately does NOT ask
     for `discounts[]`/`deductions[]`/`compliance_metadata[]` the way the inbound
-    COMPLEX prompt does — `OutboundInvoiceExtractionSchema` has no such fields,
-    so asking for them would invite the model to invent a place to put them.
-    `taxes[]` is the exception, and does get asked for: the schema carries it
-    (post-Gap-283 correction) precisely so the summed `tax_amount` on a split-tax
-    invoice has verifiable components to fall back on."""
+    COMPLEX prompt does — `OutboundInvoiceExtractionSchema` has no such LIST
+    fields, so asking for them would invite the model to invent a place to put
+    them. `taxes[]` is the exception, and does get asked for: the schema carries
+    it (post-Gap-283 correction) precisely so the summed `tax_amount` on a
+    split-tax invoice has verifiable components to fall back on. The schema does
+    carry top-level scalar `discount_percent`/`discount_amount`/`round_off`
+    (Gap 293) — no extra prompt text needed for those, same as inbound, since
+    the schema field descriptions alone drive structured-output extraction."""
     prompt = (
         "This is the tenant's own outbound invoice, being sent to a customer. "
         "Extract structured details from the following OCR text:\n\n"

@@ -106,12 +106,9 @@ def main() -> int:
         default="",
         help=(
             "comma list of clean-document case ids allowed to false-positive without "
-            "failing the gate. For a known, deliberately-not-fixed defect only -- e.g. "
-            "Gap 293 (outbound_trade_discount__clean: OutboundInvoiceExtractionSchema has "
-            "no discount_amount/discount_percent/round_off field, so verify_totals_math "
-            "always mismatches a correct extraction of a discounted/rounded outbound "
-            "invoice). The case stays IN the corpus either way -- see "
-            "docs/feature_23_ai_control_tower.md, 'The defect the first run found' -- so "
+            "failing the gate. For a known, deliberately-not-fixed defect only (there is "
+            "none in the corpus as of Gap 293's fix, 2026-08-27 -- see "
+            "docs/be_features_tracker.md). The case stays IN the corpus either way, so "
             "the false-positive rate this run reports is unaffected; only the gate's "
             "pass/fail decision is. Any other clean-document false positive still fails."
         ),

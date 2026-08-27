@@ -113,6 +113,11 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 invoice.grand_total = extracted_data.get("grand_total")
                 invoice.tax_amount = extracted_data.get("tax_amount")
                 invoice.currency = extracted_data.get("currency")
+                # Gap 293: same shared Invoice.discount_percent/discount_amount
+                # columns inbound already writes (handlers.py) — round_off has
+                # no DB column even for inbound, it's verify_totals_math-only.
+                invoice.discount_percent = extracted_data.get("discount_percent")
+                invoice.discount_amount = extracted_data.get("discount_amount")
                 invoice.coordinates = coordinates
                 invoice.field_confidence = field_confidence
                 invoice.source_document_json = source_document_json

@@ -251,6 +251,44 @@ def test_token_limit_exceeded_short_circuits():
     assert result["extracted_data"] is None
 
 
+def test_outbound_discount_and_round_off_reconciles_without_needs_review():
+    """Gap 293: before this, `OutboundInvoiceExtractionSchema` had no
+    discount_amount/discount_percent/round_off fields, so an outbound invoice
+    with a real trade discount or Round Off line always failed
+    verify_totals_math (those keys always came back None) and landed on
+    NEEDS_REVIEW even though the printed numbers reconcile perfectly:
+    1000 (subtotal) - 100 (discount) + 90 (tax) + 0.20 (round off) = 990.20."""
+    ocr_text = (
+        "TAX INVOICE\nBill To: Vertex Industries\nInvoice #: OUT-4001\n"
+        "Line 1   1   1000.00   1000.00\n"
+        "Subtotal: 1000.00\nTrade Discount: 100.00\nTax: 90.00\n"
+        "Round Off: 0.20\nTotal: 990.20"
+    )
+    schema = OutboundInvoiceExtractionSchema(
+        customer_name="Vertex Industries",
+        invoice_number="OUT-4001",
+        subtotal=1000.00,
+        tax_amount=90.00,
+        grand_total=990.20,
+        discount_amount=100.00,
+        round_off=0.20,
+        currency="INR",
+        items=[OutboundInvoiceLineItem(description="Line 1", quantity=1.0, unit_price=1000.00, amount=1000.00)],
+    )
+
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
+        result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
+
+    assert not any(
+        "does not match Grand Total" in a.get("message", "")
+        for a in result["alerts"]
+        if isinstance(a, dict)
+    ), f"discount+round_off invoice wrongly flagged as a totals mismatch: {result['alerts']}"
+    assert result["extracted_data"]["discount_amount"] == 100.00
+    assert result["extracted_data"]["round_off"] == 0.20
+
+
 def test_outbound_invoice_math_mismatch_flags_needs_review():
     ocr_text = (
         "INVOICE\nBill To: Vertex Industries\nInvoice #: OUT-1001\n"

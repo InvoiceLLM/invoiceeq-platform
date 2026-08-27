@@ -250,6 +250,16 @@ produce and what `queue_worker/outbound_handlers.py` and
 `routers/outbound_audit.py` consume, which is a product change, not a test
 change.
 
+**Closed 2026-08-27.** `OutboundInvoiceExtractionSchema` now carries
+`discount_amount`/`discount_percent`/`round_off`, mirroring the inbound
+schema, and `queue_worker/outbound_handlers.py` persists the two DB-backed
+fields the same way `queue_worker/handlers.py` already does for inbound.
+`outbound_trade_discount` reconciles cleanly through the real `verify_node`
+now (`tests/test_outbound_extraction.py::test_outbound_discount_and_round_off_reconciles_without_needs_review`).
+`test_known_outbound_discount_false_positive_is_still_present` was deleted per
+its own instruction above, not edited; the corpus's clean-document
+false-positive rate is now 0%.
+
 ## Limits — read before trusting a number from here
 
 1. **Text only.** `extract_node` takes the multimodal branch only when

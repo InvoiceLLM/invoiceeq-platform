@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-25T12:45:43+00:00",
+  "generated_at": "2026-08-27T11:38:36+00:00",
   "generator": "tests/extraction_benchmark/{documents,mutations}.py",
   "determinism": "No RNG. Regenerating from an unchanged tree reproduces this file byte for byte.",
   "mutation_policy": {
@@ -43,10 +43,10 @@
             "amount": 1161.0
           }
         ],
-        "vendor_name": "Cascade Industrial Supply LLC",
-        "po_number": "PO-58213",
         "round_off": null,
-        "discount_amount": null
+        "discount_amount": null,
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213"
       }
     },
     {
@@ -84,10 +84,10 @@
             "amount": 4300.0
           }
         ],
-        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
-        "po_number": null,
         "round_off": 0.0,
-        "discount_amount": null
+        "discount_amount": null,
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null
       }
     },
     {
@@ -119,10 +119,10 @@
             "amount": 4250.0
           }
         ],
-        "vendor_name": "Nordlicht Datentechnik GmbH",
-        "po_number": "PO-EU-3391",
         "round_off": null,
-        "discount_amount": null
+        "discount_amount": null,
+        "vendor_name": "Nordlicht Datentechnik GmbH",
+        "po_number": "PO-EU-3391"
       }
     },
     {
@@ -154,6 +154,8 @@
             "amount": 1800.0
           }
         ],
+        "round_off": null,
+        "discount_amount": 570.0,
         "customer_name": "Ridgeway Components Corp."
       }
     }
@@ -208,10 +210,10 @@
             "tax_percent": null
           }
         ],
-        "vendor_name": "Cascade Industrial Supply LLC",
-        "po_number": "PO-58213",
         "round_off": null,
         "discount_amount": null,
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
         "taxes": [
           {
             "tax_type": "Sales Tax",
@@ -271,10 +273,10 @@
             "tax_percent": 18
           }
         ],
-        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
-        "po_number": null,
         "round_off": 0.0,
         "discount_amount": null,
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
         "taxes": [
           {
             "tax_type": "CGST",
@@ -332,10 +334,10 @@
             "tax_percent": 0
           }
         ],
-        "vendor_name": "Nordlicht Datentechnik GmbH",
-        "po_number": "PO-EU-3391",
         "round_off": null,
         "discount_amount": null,
+        "vendor_name": "Nordlicht Datentechnik GmbH",
+        "po_number": "PO-EU-3391",
         "taxes": [
           {
             "tax_type": "VAT",
@@ -397,10 +399,10 @@
             "tax_percent": null
           }
         ],
-        "vendor_name": "Cascade Industrial Supply LLC",
-        "po_number": "PO-58213",
         "round_off": null,
         "discount_amount": null,
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
         "taxes": [
           {
             "tax_type": "Sales Tax",
@@ -452,6 +454,8 @@
             "tax_percent": null
           }
         ],
+        "round_off": null,
+        "discount_amount": 570.0,
         "customer_name": null,
         "taxes": [
           {
@@ -459,7 +463,8 @@
             "rate_percent": 7.0,
             "amount": 758.1
           }
-        ]
+        ],
+        "discount_percent": 5.0
       }
     },
     {
@@ -511,10 +516,10 @@
             "tax_percent": 18
           }
         ],
-        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
-        "po_number": null,
         "round_off": 0.0,
         "discount_amount": null,
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
         "taxes": [
           {
             "tax_type": "CGST",
@@ -579,10 +584,10 @@
             "tax_percent": null
           }
         ],
-        "vendor_name": "Cascade Industrial Supply LLC",
-        "po_number": "PO-58213",
         "round_off": null,
         "discount_amount": null,
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
         "taxes": [
           {
             "tax_type": "Sales Tax",
@@ -642,10 +647,10 @@
             "tax_percent": 18
           }
         ],
-        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
-        "po_number": null,
         "round_off": 0.0,
         "discount_amount": null,
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
         "taxes": [
           {
             "tax_type": "CGST",
@@ -703,10 +708,10 @@
             "tax_percent": 0
           }
         ],
-        "vendor_name": "Nordlicht Datentechnik GmbH",
-        "po_number": "PO-EU-3391",
         "round_off": null,
         "discount_amount": null,
+        "vendor_name": "Nordlicht Datentechnik GmbH",
+        "po_number": "PO-EU-3391",
         "taxes": [
           {
             "tax_type": "VAT",
@@ -766,10 +771,10 @@
             "tax_percent": 18
           }
         ],
-        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
-        "po_number": null,
         "round_off": 0.0,
         "discount_amount": null,
+        "vendor_name": "Rajesh Steel Traders Pvt Ltd",
+        "po_number": null,
         "taxes": [
           {
             "tax_type": "CGST",
@@ -836,10 +841,10 @@
             "tax_percent": null
           }
         ],
-        "vendor_name": "Cascade Industrial Supply LLC",
-        "po_number": "PO-58213",
         "round_off": null,
         "discount_amount": null,
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
         "taxes": [
           {
             "tax_type": "Sales Tax",
@@ -891,6 +896,8 @@
             "tax_percent": null
           }
         ],
+        "round_off": null,
+        "discount_amount": 570.0,
         "customer_name": null,
         "taxes": [
           {
@@ -898,7 +905,8 @@
             "rate_percent": 7.0,
             "amount": 758.1
           }
-        ]
+        ],
+        "discount_percent": 5.0
       }
     },
     {
@@ -948,10 +956,10 @@
             "tax_percent": null
           }
         ],
-        "vendor_name": "Cascade Industrial Supply LLC",
-        "po_number": "PO-58213",
         "round_off": null,
         "discount_amount": null,
+        "vendor_name": "Cascade Industrial Supply LLC",
+        "po_number": "PO-58213",
         "taxes": [
           {
             "tax_type": "Sales Tax",
