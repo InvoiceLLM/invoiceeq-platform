@@ -308,3 +308,89 @@ def test_fuzzy_verbatim_verification():
     assert verify_grand_total_in_source_text(31500.0, "Invoice 3 1500.00") is not None
 
 
+def test_run_ocr_normalizes_coordinates_to_percentage():
+    """
+    Gap 330: Document Intelligence returns bounding_regions.polygon in the
+    page's own physical unit (inches), never a 0-100 percentage -- but
+    PdfViewerCanvas.tsx has always positioned overlay boxes with
+    `left: ${x}%`. Storing the raw inch value produced a box a fraction of a
+    percent wide, pinned in the page's top-left corner regardless of the
+    field's real position -- confirmed live via screenshot (tiny green dots
+    clustered top-left instead of boxes over the actual fields).
+
+    This exercises the real _run_ocr() Azure code path (not a mocked
+    black box, unlike the other tests in this file) against a fake
+    AnalyzeResult shaped like the real SDK response, and asserts the stored
+    coordinates are genuine percentages of the page.
+    """
+    from types import SimpleNamespace
+    from queue_worker.handlers import _run_ocr
+
+    # 8.5in x 11in page (US Letter) -- Document Intelligence reports pages[]
+    # width/height in the same unit as bounding_regions.polygon, so this is
+    # the ground truth to normalize every polygon point against.
+    fake_page = SimpleNamespace(page_number=1, width=8.5, height=11.0)
+
+    # A field positioned 1.0-3.0in horizontally, 1.0-1.5in vertically.
+    fake_region = SimpleNamespace(page_number=1, polygon=[1.0, 1.0, 3.0, 1.0, 3.0, 1.5, 1.0, 1.5])
+    fake_field = SimpleNamespace(confidence=0.91, bounding_regions=[fake_region], content="ACME Corp")
+    fake_doc = SimpleNamespace(fields={"VendorName": fake_field})
+    fake_result = SimpleNamespace(content="OCR text", documents=[fake_doc], pages=[fake_page])
+
+    fake_poller = SimpleNamespace(result=lambda: fake_result)
+    fake_client = SimpleNamespace(begin_analyze_document=lambda **kwargs: fake_poller)
+    fake_pool = SimpleNamespace(next_endpoint_key=lambda: ("https://fake.endpoint", "fake-key"))
+
+    settings = SimpleNamespace(LLM_PROVIDER="azure")
+
+    with patch("queue_worker.handlers.download_pdf_from_storage", return_value=b"%PDF-fake%"), \
+         patch("utils.doc_intel_client.get_doc_intel_pool", return_value=fake_pool), \
+         patch("azure.ai.documentintelligence.DocumentIntelligenceClient", return_value=fake_client):
+        ocr_result = _run_ocr("mock/path/invoice.pdf", settings)
+
+    assert ocr_result["coordinates"], "expected at least one normalized coordinate entry"
+    coord = ocr_result["coordinates"][0]
+
+    # (1.0in / 8.5in) * 100, (1.0in / 11.0in) * 100, etc. -- real percentages,
+    # not the raw inch values the pre-fix code stored.
+    assert coord["field"] == "VendorName"
+    assert coord["page"] == 1
+    assert coord["x"] == pytest.approx(11.765, abs=0.01)
+    assert coord["y"] == pytest.approx(9.091, abs=0.01)
+    assert coord["width"] == pytest.approx(23.529, abs=0.01)
+    assert coord["height"] == pytest.approx(4.545, abs=0.01)
+
+    # Every value must be a plausible 0-100 percentage -- the class of bug
+    # this closes is exactly a raw inch value (e.g. 1.0) surviving unchanged
+    # and being mistaken for "1% from the edge".
+    for key in ("x", "y", "width", "height"):
+        assert 0 <= coord[key] <= 100
+
+
+def test_run_ocr_skips_coordinate_when_page_dimensions_missing():
+    """A field whose page_number has no matching pages[] entry (dimensions
+    unknown) must be dropped, not stored in the wrong unit -- silently
+    misrendering is worse than omitting one field's overlay box."""
+    from types import SimpleNamespace
+    from queue_worker.handlers import _run_ocr
+
+    fake_region = SimpleNamespace(page_number=2, polygon=[1.0, 1.0, 3.0, 1.0, 3.0, 1.5, 1.0, 1.5])
+    fake_field = SimpleNamespace(confidence=0.9, bounding_regions=[fake_region], content="x")
+    fake_doc = SimpleNamespace(fields={"SomeField": fake_field})
+    # Only page 1's dimensions are known; the field is on page 2.
+    fake_page = SimpleNamespace(page_number=1, width=8.5, height=11.0)
+    fake_result = SimpleNamespace(content="OCR text", documents=[fake_doc], pages=[fake_page])
+
+    fake_poller = SimpleNamespace(result=lambda: fake_result)
+    fake_client = SimpleNamespace(begin_analyze_document=lambda **kwargs: fake_poller)
+    fake_pool = SimpleNamespace(next_endpoint_key=lambda: ("https://fake.endpoint", "fake-key"))
+    settings = SimpleNamespace(LLM_PROVIDER="azure")
+
+    with patch("queue_worker.handlers.download_pdf_from_storage", return_value=b"%PDF-fake%"), \
+         patch("utils.doc_intel_client.get_doc_intel_pool", return_value=fake_pool), \
+         patch("azure.ai.documentintelligence.DocumentIntelligenceClient", return_value=fake_client):
+        ocr_result = _run_ocr("mock/path/invoice.pdf", settings)
+
+    assert ocr_result["coordinates"] == []
+
+

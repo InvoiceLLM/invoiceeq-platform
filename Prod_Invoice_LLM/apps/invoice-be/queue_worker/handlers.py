@@ -238,6 +238,23 @@ def _run_ocr(file_path: str, settings: Settings):
     tax_details_sum = None
     source_document_json = None
 
+    # Gap 330: Document Intelligence returns bounding_regions.polygon in the
+    # page's own physical unit (inches for prebuilt-invoice, per
+    # pages[].unit) -- never a 0-100 percentage. This was stored raw and
+    # rendered by the FE's PdfViewerCanvas as `left: ${x}%`, so a real value
+    # like x=0.6in on an 8.5in-wide page rendered as "0.6% from the left" --
+    # every overlay box collapsed to a sliver pinned in the top-left corner,
+    # regardless of the field's real position. Normalizing against each
+    # page's own width/height here is what makes the stored coordinates
+    # genuinely 0-100 percentages, matching what the FE has always assumed.
+    # Shared by both inbound (this function) and outbound
+    # (outbound_handlers.py calls this same _run_ocr), so one fix covers both.
+    page_dims = {}
+    if hasattr(result, "pages") and result.pages:
+        for page in result.pages:
+            if page.width and page.height:
+                page_dims[page.page_number or 1] = (page.width, page.height)
+
     if hasattr(result, "documents") and result.documents:
         doc = result.documents[0]
         if hasattr(doc, "fields") and doc.fields:
@@ -251,17 +268,24 @@ def _run_ocr(file_path: str, settings: Settings):
                         if hasattr(region, "polygon") and region.polygon:
                             poly = region.polygon
                             if len(poly) >= 8:
+                                page_number = region.page_number or 1
+                                page_w, page_h = page_dims.get(page_number, (None, None))
+                                if not page_w or not page_h:
+                                    # No page dimensions to normalize against --
+                                    # skip rather than store a coordinate in the
+                                    # wrong unit that would silently misrender.
+                                    continue
                                 xs = [poly[i] for i in range(0, len(poly), 2)]
                                 ys = [poly[i] for i in range(1, len(poly), 2)]
                                 x_min, x_max = min(xs), max(xs)
                                 y_min, y_max = min(ys), max(ys)
                                 coordinates_list.append({
                                     "field": field_name,
-                                    "x": x_min,
-                                    "y": y_min,
-                                    "width": x_max - x_min,
-                                    "height": y_max - y_min,
-                                    "page": region.page_number or 1
+                                    "x": round((x_min / page_w) * 100, 3),
+                                    "y": round((y_min / page_h) * 100, 3),
+                                    "width": round(((x_max - x_min) / page_w) * 100, 3),
+                                    "height": round(((y_max - y_min) / page_h) * 100, 3),
+                                    "page": page_number
                                 })
 
             # Doc Intelligence anchor: TaxDetails is a per-tax-line breakdown (e.g.
