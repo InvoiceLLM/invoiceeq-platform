@@ -47,6 +47,32 @@ param googleClientId string = ''
 @description('Our company Salesforce Connected App Consumer Key (connectors)')
 param salesforceClientId string = ''
 
+// Gap 124/125 (email notifications) never reached this file -- the worker is
+// what actually calls services/staff_notify.py's notify_processing_complete()/
+// notify_auditor_action(), but with none of these params or the SendGrid
+// API key, sendgrid_configured() returns false and every notification
+// silently no-ops (soft-skip by design, no error). Params mirror
+// invoice-be.bicep exactly; INBOUND_PARSE_SHARED_SECRET is deliberately not
+// mirrored here -- only the API validates the inbound webhook, the worker
+// never receives that request.
+@description('SendGrid-authenticated domain used as the technical From for outbound mail -- see invoice-be.bicep')
+param sendgridSendingDomain string = ''
+
+@description('Full From address for outbound emails -- see invoice-be.bicep')
+param sendgridFromEmail string = ''
+
+@description('Display name for outbound emails -- see invoice-be.bicep')
+param sendgridFromName string = 'InvoiceLLM'
+
+@description('Inbound mail domain (MX target for SendGrid Inbound Parse) -- see invoice-be.bicep')
+param emailAppDomain string = ''
+
+@description('Platform-wide mailbox address tenants send invoices to -- see invoice-be.bicep')
+param emailAppAddress string = ''
+
+@description('Support / ops alert destination inbox -- see invoice-be.bicep')
+param supportNotifyEmail string = ''
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 var baseSecrets = [
@@ -93,6 +119,13 @@ var baseSecrets = [
   {
     name: 'salesforce-client-secret-secret'
     keyVaultUrl: '${keyVaultUrl}/secrets/SALESFORCE-CLIENT-SECRET'
+    identity: userAssignedIdentityId
+  }
+  // Secret name kept as 'sendgrid-key-secret' to match invoice-be.bicep's
+  // existing reference to the same live Key Vault secret.
+  {
+    name: 'sendgrid-key-secret'
+    keyVaultUrl: '${keyVaultUrl}/secrets/SENDGRID-API-KEY'
     identity: userAssignedIdentityId
   }
 ]
@@ -260,6 +293,34 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'SALESFORCE_CLIENT_SECRET'
               secretRef: 'salesforce-client-secret-secret'
+            }
+            {
+              name: 'SENDGRID_API_KEY'
+              secretRef: 'sendgrid-key-secret'
+            }
+            {
+              name: 'SENDGRID_SENDING_DOMAIN'
+              value: sendgridSendingDomain
+            }
+            {
+              name: 'SENDGRID_FROM_EMAIL'
+              value: sendgridFromEmail
+            }
+            {
+              name: 'SENDGRID_FROM_NAME'
+              value: sendgridFromName
+            }
+            {
+              name: 'EMAIL_APP_DOMAIN'
+              value: emailAppDomain
+            }
+            {
+              name: 'EMAIL_APP_ADDRESS'
+              value: emailAppAddress
+            }
+            {
+              name: 'SUPPORT_NOTIFY_EMAIL'
+              value: supportNotifyEmail
             }
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'

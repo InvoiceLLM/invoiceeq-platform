@@ -50,6 +50,32 @@ param salesforceClientId string = ''
 @description('SendGrid-authenticated sending domain for outbound mail (Gap 125) -- public value, see invoice-be.bicep and feature_9_connectors.md. The API key/inbound webhook secret are seeded separately in Stage 5 (05-secrets.bicep), not threaded through this file.')
 param sendgridSendingDomain string = ''
 
+// Gap 124/125's remaining 5 SendGrid/email params were never threaded through
+// this orchestration file -- invoice-be.bicep declares them, but nothing here
+// passed real values into that module call, so the live-correct values on
+// ca-invoice-be-dev exist only because someone set them directly via
+// `az containerapp update --set-env-vars`, bypassing bicep entirely. The next
+// full bicep deploy would have silently reset them to blank defaults. Also
+// newly threaded into queue-worker.bicep (queueWorker module below), which
+// never received any of these 6 at all -- the real bug this closes: the
+// worker is what actually runs notify_processing_complete()/
+// notify_auditor_action(), and with no SENDGRID_API_KEY it silently
+// no-ops on every invoice, worker-wide, regardless of status.
+@description('Full From address for outbound emails -- public value, see invoice-be.bicep')
+param sendgridFromEmail string = ''
+
+@description('Display name for outbound emails -- public value, see invoice-be.bicep')
+param sendgridFromName string = 'InvoiceLLM'
+
+@description('Inbound mail domain (MX target for SendGrid Inbound Parse) -- public value, see invoice-be.bicep')
+param emailAppDomain string = ''
+
+@description('Platform-wide mailbox address tenants send invoices to -- public value, see invoice-be.bicep')
+param emailAppAddress string = ''
+
+@description('Support / ops alert destination inbox -- public value, see invoice-be.bicep')
+param supportNotifyEmail string = ''
+
 @description('PayU mode for invoice-be (Feature 11). test|live. Merchant key/salt are seeded in Stage 5 Key Vault, not here.')
 param payuMode string = 'test'
 
@@ -248,6 +274,11 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     salesforceClientId: salesforceClientId
     salesforceRedirectUri: salesforceRedirectUri
     sendgridSendingDomain: sendgridSendingDomain
+    sendgridFromEmail: sendgridFromEmail
+    sendgridFromName: sendgridFromName
+    emailAppDomain: emailAppDomain
+    emailAppAddress: emailAppAddress
+    supportNotifyEmail: supportNotifyEmail
     payuMode: payuMode
     backendPublicUrl: 'https://${publicOrigin}'
     publicAppUrl: 'https://${publicOrigin}'
@@ -303,6 +334,17 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     // download Drive/Salesforce files and refresh tokens during import.
     googleClientId: googleClientId
     salesforceClientId: salesforceClientId
+    // Newly wired: the worker runs notify_processing_complete()/
+    // notify_auditor_action() (services/staff_notify.py, called from
+    // queue_worker/handlers.py) but never had SendGrid config at all -- every
+    // completion/audit notification silently no-op'd, worker-wide, with no
+    // error (sendgrid_configured() soft-skip). See queue-worker.bicep.
+    sendgridSendingDomain: sendgridSendingDomain
+    sendgridFromEmail: sendgridFromEmail
+    sendgridFromName: sendgridFromName
+    emailAppDomain: emailAppDomain
+    emailAppAddress: emailAppAddress
+    supportNotifyEmail: supportNotifyEmail
     cpu: workerCpu
     memory: workerMemory
     minReplicas: workerMinReplicas
