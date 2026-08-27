@@ -68,9 +68,20 @@ export default function DashboardPage() {
     tag: "",
     status: "",
   });
+  // Gap 316: independent from `filters` above -- inbound's vendor_name/
+  // PAID/REJECTED/AUDIT_REQUIRED vocabulary would silently mis-filter or
+  // zero out the outbound half if shared. See the outbound FilterBar below
+  // and its own fetch effect.
+  const [outboundFilters, setOutboundFilters] = useState<FilterState>({
+    vendorName: "",
+    dateRange: "all",
+    tag: "",
+    status: "",
+  });
 
   const [metrics, setMetrics] = useState<DashboardMetrics>(defaultMetrics);
   const [allInvoices, setAllInvoices] = useState([]); // Kept to dynamically extract vendors/tags for FilterBar
+  const [allOutboundInvoices, setAllOutboundInvoices] = useState([]); // Same, for the outbound FilterBar's customer/tag dropdowns
   const [isMetricsLoading, setIsMetricsLoading] = useState(true);
 
   // Feature 2.1 (Task 2.1.2): Service Flow gating. Defaults match the Tenant
@@ -137,6 +148,24 @@ export default function DashboardPage() {
     fetchAllData();
   }, [authLoading, receiveEnabled]);
 
+  // 1b. Gap 316: same as above, for the outbound FilterBar's customer/tag
+  // dropdown options -- inbound's `allInvoices` has no customer_name on it.
+  useEffect(() => {
+    if (authLoading || !sendEnabled) return;
+
+    const fetchAllOutboundData = async () => {
+      try {
+        const res = await apiClient.get("/outbound-dashboard/invoices", {
+          params: { limit: 100 },
+        });
+        setAllOutboundInvoices(res.data || []);
+      } catch (err) {
+        console.error("Error fetching outbound filter source data", err);
+      }
+    };
+    fetchAllOutboundData();
+  }, [authLoading, sendEnabled]);
+
   // 2. Fetch inbound dashboard metrics whenever filters change.
   useEffect(() => {
     if (authLoading || !receiveEnabled) return;
@@ -166,20 +195,27 @@ export default function DashboardPage() {
   }, [filters, authLoading, receiveEnabled]);
 
   // 3. Fetch outbound (AR) metrics -- only when Send is actually enabled, so a
-  // receive-only tenant makes no extra request at all. Only the date range is
-  // shared with the inbound half: FilterBar's vendor/status/tag values are
-  // inbound vocabulary (vendor_name, PAID/REJECTED/AUDIT_REQUIRED) and would
-  // silently mis-filter or zero out the outbound aggregates.
+  // receive-only tenant makes no extra request at all.
+  //
+  // Gap 316: now sends customer_name/status from its own `outboundFilters`
+  // state, not the inbound `filters` state -- GET /dashboard/outbound-metrics
+  // already accepted customer_name/status server-side
+  // (routers/outbound_dashboard.py), the frontend just never sent them.
   useEffect(() => {
     if (authLoading || !sendEnabled) return;
 
     const fetchOutboundMetrics = async () => {
       setIsOutboundMetricsLoading(true);
-      const { startDate, endDate } = getDatesForRange(filters.dateRange);
+      const { startDate, endDate } = getDatesForRange(outboundFilters.dateRange);
 
       try {
         const res = await apiClient.get("/dashboard/outbound-metrics", {
-          params: { start_date: startDate, end_date: endDate },
+          params: {
+            start_date: startDate,
+            end_date: endDate,
+            customer_name: outboundFilters.vendorName || undefined,
+            status: outboundFilters.status || undefined,
+          },
         });
         setOutboundMetrics(res.data || defaultOutboundMetrics);
       } catch (err) {
@@ -190,10 +226,14 @@ export default function DashboardPage() {
     };
 
     fetchOutboundMetrics();
-  }, [filters.dateRange, authLoading, sendEnabled]);
+  }, [outboundFilters, authLoading, sendEnabled]);
 
   const handleFilterChange = (newFilters: FilterState) => {
     setFilters(newFilters);
+  };
+
+  const handleOutboundFilterChange = (newFilters: FilterState) => {
+    setOutboundFilters(newFilters);
   };
 
   // Build unique lists of client/vendor names and tags from real tenant invoice data (Gap 141)
@@ -208,6 +248,22 @@ export default function DashboardPage() {
     .filter((t): t is string => typeof t === "string" && t.trim() !== "");
 
   const uniqueTags = Array.from(new Set(realTags));
+
+  // Gap 316: same, for the outbound FilterBar. GET /outbound-dashboard/invoices
+  // doesn't return a `tags` field today, so uniqueOutboundTags is expected to
+  // stay empty (an "All Tags"-only dropdown) until that endpoint gains one --
+  // a known, separate, smaller gap, not silently claimed fixed here.
+  const realOutboundCustomers = allOutboundInvoices
+    .map((inv: any) => inv.customer_name)
+    .filter((name): name is string => typeof name === "string" && name.trim() !== "");
+
+  const uniqueOutboundCustomers = Array.from(new Set(realOutboundCustomers));
+
+  const realOutboundTags = allOutboundInvoices
+    .flatMap((inv: any) => inv.tags || [])
+    .filter((t): t is string => typeof t === "string" && t.trim() !== "");
+
+  const uniqueOutboundTags = Array.from(new Set(realOutboundTags));
 
   const dynamicTabs = [
     ...(receiveEnabled ? [{ id: "vendors", label: "Top Vendors & Clients" } as const] : []),
@@ -239,25 +295,16 @@ export default function DashboardPage() {
   return (
     <div className="space-y-4">
       {/* FE Gap 110: the title moved out of the page body into Shell's one
-          shared header (declared above via usePageHeader). The filter row is
-          deliberately NOT portalled up there with it: FilterBar's compact
-          variant is still four selects plus a Save button (~660px of minimum
-          widths), which cannot share a 64px header row with the title and the
-          profile block at 1024-1280px without pushing controls off-screen --
-          the exact failure Gap 85 exists to prevent. It keeps the row the
-          title used to occupy, so no vertical space is lost either way.
+          shared header (declared above via usePageHeader).
 
-          Filters are inbound-only vocabulary (vendor_name,
-          PAID/REJECTED/AUDIT_REQUIRED), so hidden entirely for a send-only
-          tenant rather than silently mis-filtering/zeroing the outbound half. */}
-      {receiveEnabled && (
-        <FilterBar
-          compact
-          onFilterChange={handleFilterChange}
-          availableVendors={uniqueVendors}
-          availableTags={uniqueTags}
-        />
-      )}
+          Gap 316: previously one FilterBar sat here, gated on receiveEnabled
+          only, using inbound vocabulary (vendor_name,
+          PAID/REJECTED/AUDIT_REQUIRED) even when both flows were on -- it
+          silently never filtered the outbound half, and a send-only tenant
+          got no filter bar at all. Each FilterBar now renders scoped to, and
+          physically positioned above, the metrics half it actually controls
+          -- a filter sitting above the panel it filters needs no label
+          explaining scope, there's nothing else to assume it does. */}
 
       {/* Metrics half. One undivided grid when only one service is active;
           two side-by-side halves when both are. No combined/net figure in
@@ -271,6 +318,13 @@ export default function DashboardPage() {
             >
               Receiving
             </h2>
+            <FilterBar
+              compact
+              direction="inbound"
+              onFilterChange={handleFilterChange}
+              availableVendors={uniqueVendors}
+              availableTags={uniqueTags}
+            />
             <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />
           </section>
 
@@ -281,14 +335,41 @@ export default function DashboardPage() {
             >
               Sending
             </h2>
+            <FilterBar
+              compact
+              direction="outbound"
+              onFilterChange={handleOutboundFilterChange}
+              availableVendors={uniqueOutboundCustomers}
+              availableTags={uniqueOutboundTags}
+            />
             <OutboundMetricsGrid metrics={outboundMetrics} isLoading={isOutboundMetricsLoading} />
           </section>
         </div>
       ) : (
         <>
-          {showInboundMetrics && <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />}
+          {showInboundMetrics && (
+            <>
+              <FilterBar
+                compact
+                direction="inbound"
+                onFilterChange={handleFilterChange}
+                availableVendors={uniqueVendors}
+                availableTags={uniqueTags}
+              />
+              <MetricsGrid metrics={metrics} isLoading={isMetricsLoading} />
+            </>
+          )}
           {showOutboundMetrics && !showInboundMetrics && (
-            <OutboundMetricsGrid metrics={outboundMetrics} isLoading={isOutboundMetricsLoading} />
+            <>
+              <FilterBar
+                compact
+                direction="outbound"
+                onFilterChange={handleOutboundFilterChange}
+                availableVendors={uniqueOutboundCustomers}
+                availableTags={uniqueOutboundTags}
+              />
+              <OutboundMetricsGrid metrics={outboundMetrics} isLoading={isOutboundMetricsLoading} />
+            </>
           )}
         </>
       )}

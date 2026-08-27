@@ -749,6 +749,16 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     except Exception as ne:
                         logger.error("Staff process-complete notify failed for %s: %s", invoice.id, ne)
 
+                    # Gap 317: this invoice just moved total_invoice_count/
+                    # audit_rate_percent/top_vendors_by_spend -- the aggregates
+                    # Actionable Insights is grounded in -- so its cached
+                    # recommendation may now be stale.
+                    try:
+                        from routers.dashboard import invalidate_insights_cache
+                        invalidate_insights_cache(invoice.tenant_id)
+                    except Exception as ie:
+                        logger.error("Insights cache invalidation failed for %s: %s", invoice.id, ie)
+
 
 
             # Run page-level RAG indexing. Gap 240: this used to be gated on

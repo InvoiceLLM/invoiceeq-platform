@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import date, timedelta
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import func, case
@@ -33,6 +33,43 @@ def _insights_cache_key(tenant_id) -> str:
     return f"dashboard_insights:{tenant_id}"
 
 
+def _insights_dismissed_key(tenant_id) -> str:
+    return f"dashboard_insights_dismissed:{tenant_id}"
+
+
+# Gap 317: real cache invalidation. Called from the state-changing events that
+# actually move the aggregates get_dashboard_insights() grounds its prompt in
+# (queue worker completion, audit finalize) so a fixed problem stops repeating
+# the same stale recommendation instead of waiting out the full TTL. Clears
+# the dismiss set together with the cache on purpose -- a dismiss should only
+# suppress the *current* instance of a concern, not silence every future
+# occurrence of the same category forever.
+def invalidate_insights_cache(tenant_id) -> None:
+    try:
+        client = _get_redis_client()
+        client.delete(_insights_cache_key(tenant_id))
+        client.delete(_insights_dismissed_key(tenant_id))
+    except Exception as e:
+        logger.warning("Dashboard insights cache invalidation failed for tenant %s: %s", tenant_id, e)
+
+
+def _filter_dismissed_insights(result: dict, tenant_id) -> dict:
+    """Drops any insight whose `kind` the tenant has dismissed this cache
+    generation. Applied to both the cache-hit and fresh-generation paths so
+    dismiss state never needs baking into the cached blob itself."""
+    insights = result.get("insights") or []
+    if not insights:
+        return result
+    try:
+        dismissed = _get_redis_client().smembers(_insights_dismissed_key(tenant_id))
+    except Exception as e:
+        logger.warning("Dashboard insights dismissed-set lookup failed for tenant %s: %s", tenant_id, e)
+        return result
+    if not dismissed:
+        return result
+    return {**result, "insights": [i for i in insights if i.get("kind") not in dismissed]}
+
+
 # FE Gap 183: Invoice.currency is nullable and historically unset, so every
 # aggregate below groups on this normalized expression instead of the raw
 # column. COALESCE at *query* time only -- nothing is ever written back onto
@@ -43,11 +80,27 @@ def _currency_expr():
     return func.upper(func.coalesce(func.nullif(func.trim(Invoice.currency), ""), "USD"))
 
 
+INSIGHT_KIND = Literal[
+    "spend_concentration", "at_risk_amount", "audit_rate", "vendor_rules_gap", "other"
+]
+
+
 class DashboardInsight(BaseModel):
     model_config = {"extra": "forbid"}
     title: str = Field(description="Short headline (8 words or fewer) for this recommendation")
     detail: str = Field(description="1-2 sentence explanation, grounded in the numbers provided")
     severity: str = Field(description="One of 'info', 'warning', or 'critical' based on financial/operational impact")
+    # Gap 317: stable category, distinct from the free-text title/detail the
+    # LLM rewords every regeneration. Required so a dismiss can survive the
+    # model phrasing the same underlying concern differently next time.
+    kind: INSIGHT_KIND = Field(
+        description=(
+            "Which data group this recommendation is grounded in: 'spend_concentration' for "
+            "top_vendors_by_spend, 'at_risk_amount' for totals_by_currency's at_risk figure, "
+            "'audit_rate' for audit_rate_percent, 'vendor_rules_gap' for vendors_needing_rules, "
+            "or 'other' if it doesn't map cleanly to one of those."
+        )
+    )
 
 
 class DashboardInsightsSchema(BaseModel):
@@ -90,7 +143,19 @@ async def get_dashboard_metrics(
     is performed anywhere -- amounts in different currencies are never added.
     """
     # 1. Shared filter conditions, scoped to the current tenant
-    conditions = [Invoice.tenant_id == context.tenant_id, invoice_not_deleted()]
+    # Gap 329: flow_direction was missing entirely, so every aggregate below
+    # (totals, status breakdown, top vendors, spend-over-time) silently blended
+    # in OUTBOUND invoices too. OUTBOUND rows have vendor_name=NULL by design
+    # (they carry customer_name instead), so they coalesced into a phantom
+    # "Unknown Vendor" bucket in top_vendors and inflated every dollar total --
+    # not a deleted-vendor artifact, real outbound spend leaking into the
+    # inbound dashboard. outbound_dashboard.py already scopes its own queries
+    # to flow_direction == "OUTBOUND"; this mirrors that on the inbound side.
+    conditions = [
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "INBOUND",
+        invoice_not_deleted(),
+    ]
     if start_date:
         conditions.append(func.date(Invoice.created_at) >= start_date)
     if end_date:
@@ -439,7 +504,7 @@ def get_dashboard_insights(
     try:
         cached = _get_redis_client().get(cache_key)
         if cached:
-            return json.loads(cached)
+            return _filter_dismissed_insights(json.loads(cached), context.tenant_id)
     except Exception as e:
         logger.warning("Dashboard insights cache lookup failed, proceeding without cache: %s", e)
 
@@ -529,7 +594,10 @@ def get_dashboard_insights(
         "currency. Never add, subtract, average or otherwise combine amounts in different currencies, and "
         "never state a single overall total across currencies -- no exchange rate is available to you. "
         "Always name the currency alongside any amount you quote. "
-        "If the data shows nothing concerning, say so briefly rather than manufacturing a concern.\n\n"
+        "If the data shows nothing concerning, say so briefly rather than manufacturing a concern. "
+        "Tag each recommendation with the one 'kind' it is most grounded in: 'spend_concentration' for "
+        "top_vendors_by_spend, 'at_risk_amount' for totals_by_currency's at_risk figure, 'audit_rate' for "
+        "audit_rate_percent, 'vendor_rules_gap' for vendors_needing_rules, or 'other' otherwise.\n\n"
         f"Data:\n{json.dumps(context_blob, indent=2)}"
     )
 
@@ -558,4 +626,28 @@ def get_dashboard_insights(
     except Exception as e:
         logger.warning("Dashboard insights cache write failed: %s", e)
 
-    return result
+    return _filter_dismissed_insights(result, context.tenant_id)
+
+
+class DismissInsightRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    kind: INSIGHT_KIND
+
+
+@router.post("/insights/dismiss")
+def dismiss_dashboard_insight(
+    payload: DismissInsightRequest,
+    context: TenantContext = Depends(get_tenant_context),
+):
+    """Gap 317: suppresses one insight `kind` until the next real
+    regeneration (invalidate_insights_cache clears this set together with the
+    insights cache itself) -- a dismiss acknowledges the *current* instance of
+    a concern, it does not silence every future occurrence of that category."""
+    try:
+        client = _get_redis_client()
+        key = _insights_dismissed_key(context.tenant_id)
+        client.sadd(key, payload.kind)
+        client.expire(key, INSIGHTS_CACHE_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("Dashboard insight dismiss failed for tenant %s: %s", context.tenant_id, e)
+    return {"dismissed": payload.kind}

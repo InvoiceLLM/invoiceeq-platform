@@ -472,6 +472,18 @@ async def resolve_audit_invoice(
     # 5. Commit transaction
     db_session.commit()
 
+    # Gap 317: a finalize action (Mark Paid/Reject/Reopen) moves
+    # audit_rate_percent, the aggregate Actionable Insights grounds its
+    # "audit rate" recommendation in. Gated on target_status actually being
+    # set, same condition the status assignment itself used above -- a plain
+    # alert-dismiss/correction with no target_status doesn't move it.
+    if target_status is not None:
+        try:
+            from routers.dashboard import invalidate_insights_cache
+            invalidate_insights_cache(invoice.tenant_id)
+        except Exception as ie:
+            logger.error("Insights cache invalidation failed for %s: %s", invoice.id, ie)
+
     # Gap 240 backstop: make sure a resolved invoice is in the RAG index, for
     # any row that predates the ingestion-side fix (or whose ingestion-time
     # indexing failed). Deliberately keyed on **the resolution happening at

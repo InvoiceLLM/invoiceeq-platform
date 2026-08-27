@@ -330,7 +330,10 @@ def test_dashboard_insights_grounded(db_session):
     from routers.dashboard import DashboardInsightsSchema, DashboardInsight
 
     mock_schema = DashboardInsightsSchema(insights=[
-        DashboardInsight(title="Concentration risk", detail="ACME accounts for most spend.", severity="warning")
+        DashboardInsight(
+            title="Concentration risk", detail="ACME accounts for most spend.",
+            severity="warning", kind="spend_concentration",
+        )
     ])
 
     captured_prompt = {}
@@ -350,7 +353,10 @@ def test_dashboard_insights_grounded(db_session):
         assert response.status_code == 200
         data = response.json()
         assert data == {"insights": [
-            {"title": "Concentration risk", "detail": "ACME accounts for most spend.", "severity": "warning"}
+            {
+                "title": "Concentration risk", "detail": "ACME accounts for most spend.",
+                "severity": "warning", "kind": "spend_concentration",
+            }
         ]}
 
     # ACME's real combined spend (1000 + 250 = 1250) must actually be in what

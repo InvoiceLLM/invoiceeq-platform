@@ -22,6 +22,16 @@ interface FilterBarProps {
    * is set to. Disable it in that case instead of leaving it looking live.
    */
   statusFilterDisabled?: boolean;
+  /**
+   * Gap 316: which flow this instance filters. Swaps the party-field label
+   * ("Clients/Vendors" vs "Customers") and the status option list to that
+   * direction's real vocabulary -- inbound's PAID/REJECTED/AUDIT_REQUIRED
+   * set is meaningless for outbound's UPLOADED/VERIFIED/NEEDS_REVIEW/SENT
+   * lifecycle, and vice versa. Also namespaces the saved-filter localStorage
+   * key so an inbound and outbound bar rendered side by side (a tenant with
+   * both flows on) don't clobber each other's saved state.
+   */
+  direction?: "inbound" | "outbound";
 }
 
 const LOCAL_STORAGE_KEY = "invoice_dashboard_filters";
@@ -33,7 +43,7 @@ const DATE_RANGES = [
   { value: "last_90_days", label: "Last 90 Days" },
 ];
 
-const STATUSES = [
+const INBOUND_STATUSES = [
   { value: "", label: "All Statuses" },
   { value: "PROCESSING", label: "Processing" },
   { value: "COMPLETED", label: "Completed" },
@@ -44,13 +54,30 @@ const STATUSES = [
   { value: "FAILED", label: "Failed" },
 ];
 
+// Gap 316: outbound's real status lifecycle (routers/outbound_invoices.py,
+// outbound_handlers.py) -- distinct from inbound's, never PAID/REJECTED-only.
+const OUTBOUND_STATUSES = [
+  { value: "", label: "All Statuses" },
+  { value: "UPLOADED", label: "Uploaded" },
+  { value: "VERIFIED", label: "Verified" },
+  { value: "NEEDS_REVIEW", label: "Needs Review" },
+  { value: "SENT", label: "Sent" },
+  { value: "PAID", label: "Paid" },
+];
+
 export default function FilterBar({
   onFilterChange,
   availableVendors = [],
   availableTags = [],
   compact = false,
   statusFilterDisabled = false,
+  direction = "inbound",
 }: FilterBarProps) {
+  const isOutbound = direction === "outbound";
+  const statusOptions = isOutbound ? OUTBOUND_STATUSES : INBOUND_STATUSES;
+  const partyLabel = isOutbound ? "All Customers" : "All Clients/Vendors";
+  const storageKey = `${LOCAL_STORAGE_KEY}_${direction}`;
+
   const [filters, setFilters] = useState<FilterState>({
     vendorName: "",
     dateRange: "all",
@@ -61,7 +88,7 @@ export default function FilterBar({
 
   // Load saved filters on component mount
   useEffect(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as FilterState;
@@ -81,7 +108,7 @@ export default function FilterBar({
   };
 
   const handleSaveFilters = () => {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(filters));
+    localStorage.setItem(storageKey, JSON.stringify(filters));
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2000);
   };
@@ -114,7 +141,7 @@ export default function FilterBar({
             onChange={(e) => handleChange("vendorName", e.target.value)}
             className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
           >
-            <option value="">All Clients/Vendors</option>
+            <option value="">{partyLabel}</option>
             {availableVendors.map((vendor) => (
               <option key={vendor} value={vendor}>
                 {vendor}
@@ -163,7 +190,7 @@ export default function FilterBar({
             title={statusFilterDisabled ? "Status is already set by the selected tab above" : undefined}
             className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#222D3D]"
           >
-            {STATUSES.map((status) => (
+            {statusOptions.map((status) => (
               <option key={status.value} value={status.value}>
                 {status.label}
               </option>
