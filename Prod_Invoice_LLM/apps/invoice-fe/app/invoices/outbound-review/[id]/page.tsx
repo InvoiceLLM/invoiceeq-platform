@@ -506,19 +506,16 @@ export default function OutboundAuditorReviewPage() {
               className="flex items-center justify-between gap-3 px-4 py-2.5 bg-yellow-950/20 hover:bg-yellow-950/30 transition-colors text-left"
             >
               <div className="flex items-center gap-3">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                  Discrepancy Warnings
-                  <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-0.5 font-mono text-[10px] font-semibold normal-case tracking-normal text-[#10B981]">
-                    SENTINEL
-                  </span>
-                </p>
+                <span className="rounded-full border border-[#10B981]/30 bg-[#10B981]/10 px-2.5 py-0.5 font-mono text-xs font-semibold tracking-wider text-[#10B981]">
+                  SENTINEL
+                </span>
                 {alerts.length > 0 ? (
                   <span className="shrink-0 rounded-md border border-yellow-700/50 bg-yellow-950/40 px-2 py-0.5 text-[11px] font-medium text-yellow-300">
                     {alerts.length} open alert{alerts.length === 1 ? "" : "s"}
                   </span>
                 ) : (
                   <span className="shrink-0 rounded-md border border-emerald-700/50 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
-                    No open alerts
+                    No alerts
                   </span>
                 )}
               </div>

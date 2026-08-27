@@ -738,13 +738,20 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
     - Pinned unsaved corrections action footer at the bottom of Column 2 outside all scroll containers.
   - **Verification**: `npx tsc --noEmit` clean (0 errors), interactive HTML mockup verified (`mockup_preview.html`), and walkthrough recorded.
 
+- `[x]` **Gap 314 (FE): Auditor Review Console Header — Replace "Discrepancy Warnings [SENTINEL]" text with "SENTINEL" pill & "No alerts" / "# open alert(s)"** — opened and closed 2026-08-27.
+  - **Problem**: Inbound and Outbound Auditor Review Consoles (`app/invoices/review/[id]/page.tsx` and `app/invoices/outbound-review/[id]/page.tsx`) rendered a redundant double title `"Discrepancy Warnings SENTINEL"` alongside `"No open alerts"`.
+  - **Fix**:
+    - Removed the explicit `"Discrepancy Warnings"` text label from both audit review page headers.
+    - Promoted `"SENTINEL"` to a clean standalone pill badge.
+    - Updated zero-state badge text from `"No open alerts"` to `"No alerts"`, and empty console state message to `"No active alerts."` across [`AlertConsole.tsx`](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/audit/AlertConsole.tsx) and [`OutboundAlertConsole.tsx`](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/audit/OutboundAlertConsole.tsx).
+  - **Verification**: `npx tsc --noEmit` clean (0 errors).
+
 - `[~]` **Gap 306 (FE): Auditor Review Console — 3-section layout (PDF reduced, Line Items broken out to its own row), `NotifyEmailPicker` compacted** — opened 2026-08-24, Inbound done, Outbound pending.
   - **Problem**: Gap 282's 2-column layout (PDF | Fields+LineItems stacked in one column) still gave the PDF viewer more width than needed (`1.15fr`) and left Line Items sharing a narrow column with the correctable-fields form, cramping the table. `NotifyEmailPicker` also rendered as a 2-3 line block (heading + description + empty-state line) taking more vertical space than the control warrants.
   - **Fix (Inbound, `app/invoices/review/[id]/page.tsx`)**:
     - Split into 3 sections: Row 1 is PDF Viewer (`minmax(0, 0.8fr)`, reduced from `1.15fr`) | Extracted Fields (`minmax(0, 1.2fr)`, `data-testid="fields-panel"`); Row 2 is Line Items (`data-testid="line-items-panel"`), now a full-width row of its own instead of sharing Column 2 with the fields form, so its table gets the horizontal room a 5-column grid needs.
     - `components/audit/NotifyEmailPicker.tsx`: collapsed the heading + description + empty-state block into a single `text-[10px]` line ("Notify registered emails — staff only, uncheck to skip", appending "(no {emailSet} addresses set)" inline when the sender list is empty instead of a separate paragraph).
   - **Not yet done**: `app/invoices/outbound-review/[id]/page.tsx` still has Gap 282's original 2-column layout — per this repo's own history (Gap 71/83 hit the identical "fix applied to inbound only" failure mode for this exact pair of screens), the 3-section restructure needs to be ported there separately, it will not inherit automatically. `NotifyEmailPicker` is shared, so its compaction already applies to both screens.
-  - **Verification**: `npx tsc --noEmit` clean, 0 errors (run 2026-08-24, post-edit). No rendered/browser check yet — this environment has no interactive preview.
 
 
 

@@ -101,7 +101,7 @@ export default function AlertConsole({
         <span className="text-sm font-medium">
           {isAuditRequired
             ? "No active discrepancies — previously dismissed, awaiting finalization."
-            : "No active discrepancy warnings."}
+            : "No active alerts."}
         </span>
       </div>
     );

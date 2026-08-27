@@ -78,7 +78,7 @@ export default function OutboundAlertConsole({
         <span className="text-sm font-medium">
           {isNeedsReview
             ? "No active discrepancies — previously dismissed, awaiting finalization."
-            : "No active discrepancy warnings."}
+            : "No active alerts."}
         </span>
       </div>
     );
