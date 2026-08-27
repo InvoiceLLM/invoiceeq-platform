@@ -39,6 +39,13 @@
     {
       "type": 1,
       "content": {
+        "json": "*Tier 1 — Cost & Reliability lives on the Cost + Health workbook, not here.*"
+      },
+      "name": "tier1-pointer"
+    },
+    {
+      "type": 1,
+      "content": {
         "json": "## Tier 2 — Extraction & Chat Quality (second priority) — *both are already good; this tier exists to catch regressions and keep improving them, not to prove they work.*"
       },
       "name": "tier2-header"
@@ -63,7 +70,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), pass_rate = todouble(d.pass_rate)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, latest_label, pass_rate) = arg_max(TimeGenerated, run_label, pass_rate)\n| extend total = run_count\n| project\n    Metric = \"golden bank — latest pass rate\",\n    Value = iff(isnull(pass_rate), real(null), round(pass_rate, 4)),\n    Detail = strcat(total, \" runs (nightly/predeploy), latest \", iff(isnull(pass_rate), \"n/a\", tostring(round(pass_rate,4))), \" (\", latest_label, \") — n=3-run guard removed (Fix 11, Gap 322): a fixed, deterministic, exhaustive 35-case script has no sampling error for that guard to protect against\")",
         "size": 0,
-        "title": "Latest pass rate (Fix 11, Gap 322: bands recalibrated red<0.60/yellow<0.75, n=3-run guard removed). Converted tiles->table, Gap 325.",
+        "title": "Latest pass rate (bands recalibrated red<0.60/yellow<0.75, n=3-run guard removed).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -106,7 +113,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), faithfulness_mean = todouble(d.faithfulness_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, faithfulness_mean) = arg_max(TimeGenerated, faithfulness_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — faithfulness (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(faithfulness_mean), real(null), round(faithfulness_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, faithfulness=\", iff(isnull(faithfulness_mean), \"n/a\", tostring(round(faithfulness_mean,4)))), strcat(total, \" runs, faithfulness=\", round(faithfulness_mean,4)))",
         "size": 0,
-        "title": "Faithfulness (latest run mean). Converted tiles->table, Gap 325.",
+        "title": "Faithfulness (latest run mean).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -155,7 +162,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), relevance_mean = todouble(d.relevance_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, relevance_mean) = arg_max(TimeGenerated, relevance_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — relevance (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(relevance_mean), real(null), round(relevance_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, relevance=\", iff(isnull(relevance_mean), \"n/a\", tostring(round(relevance_mean,4)))), strcat(total, \" runs, relevance=\", round(relevance_mean,4)))",
         "size": 0,
-        "title": "Relevance (latest run mean). Converted tiles->table, Gap 325.",
+        "title": "Relevance (latest run mean).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -204,7 +211,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), accuracy_mean = todouble(d.accuracy_mean)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, accuracy_mean) = arg_max(TimeGenerated, accuracy_mean)\n| extend total = run_count\n| project\n    Metric = \"golden bank — accuracy (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(accuracy_mean), real(null), round(accuracy_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs (nightly/predeploy) — below minimum n=3, accuracy=\", iff(isnull(accuracy_mean), \"n/a\", tostring(round(accuracy_mean,4)))), strcat(total, \" runs, accuracy=\", round(accuracy_mean,4)))",
         "size": 0,
-        "title": "Accuracy (latest run mean) -- Fix 11, Gap 322: bands recalibrated red<0.75/yellow<0.90 (SCORE_BANDS[\"accuracy\"], Gap 323). Converted tiles->table, Gap 325.",
+        "title": "Accuracy (latest run mean) — bands recalibrated red<0.75/yellow<0.90 (SCORE_BANDS[\"accuracy\"]).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -253,7 +260,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), context_mean = todouble(d.context_mean), context_scored_turns = toint(d.context_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, context_mean, context_scored_turns) = arg_max(TimeGenerated, context_mean, context_scored_turns)\n| extend total = run_count\n| project\n    Metric = \"golden bank — context (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(context_mean), real(null), round(context_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, context=\", iff(isnull(context_mean), \"n/a\", tostring(round(context_mean,4))), \" over \", context_scored_turns, \" scored turns\"), strcat(total, \" runs, \", context_scored_turns, \" scored turns\"))",
         "size": 0,
-        "title": "Context score (latest run mean). Converted tiles->table, Gap 325.",
+        "title": "Context score (latest run mean).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -302,7 +309,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), orchestration_mean = todouble(d.orchestration_mean), orchestration_scored_turns = toint(d.orchestration_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, orchestration_mean, orchestration_scored_turns) = arg_max(TimeGenerated, orchestration_mean, orchestration_scored_turns)\n| extend total = run_count\n| project\n    Metric = \"golden bank — orchestration (latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(orchestration_mean), real(null), round(orchestration_mean, 4))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, orchestration=\", iff(isnull(orchestration_mean), \"n/a\", tostring(round(orchestration_mean,4))), \" over \", orchestration_scored_turns, \" scored turns\"), strcat(total, \" runs, \", orchestration_scored_turns, \" scored turns\"))",
         "size": 0,
-        "title": "Orchestration score (latest run mean). Converted tiles->table, Gap 325.",
+        "title": "Orchestration score (latest run mean).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -351,7 +358,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), persona_mean = todouble(d.persona_mean), persona_scored_turns = toint(d.persona_scored_turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nruns\n| summarize (latest_ts, persona_mean, persona_scored_turns) = arg_max(TimeGenerated, persona_mean, persona_scored_turns)\n| project\n    Metric = \"golden bank — persona (latest, uncolored)\",\n    Value = iff(isnull(persona_mean), real(null), round(persona_mean, 4)),\n    Detail = strcat(\"not applicable on most turns — \", persona_scored_turns, \" scored turns this run; no color threshold, general sample not a domain golden set\")",
         "size": 0,
-        "title": "Persona score (latest run mean) — uncolored, not applicable on most turns. Converted tiles->table, Gap 325.",
+        "title": "Persona score (latest run mean) — uncolored, not applicable on most turns.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -382,7 +389,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), cost_per_turn_usd = todouble(d.cost_per_turn_usd)\n    | where run_label in (\"nightly\", \"predeploy\");\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, cost_per_turn_usd) = arg_max(TimeGenerated, cost_per_turn_usd)\n| extend total = run_count\n| project\n    Metric = \"golden bank — cost per turn (USD, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(cost_per_turn_usd), real(null), round(cost_per_turn_usd, 6))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, cost/turn=USD \", iff(isnull(cost_per_turn_usd), \"n/a\", tostring(round(cost_per_turn_usd,6)))), strcat(total, \" runs, USD \", round(cost_per_turn_usd,6), \"/turn\"))",
         "size": 0,
-        "title": "Cost per turn (USD, latest run). Converted tiles->table, Gap 325.",
+        "title": "Cost per turn (USD, latest run).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -431,7 +438,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"agent_eval_summary\"\n    | extend d = parse_json(Properties)\n    | extend run_label = tostring(d.run_label), latency_ms_median = todouble(d.latency_ms_median), turns = toint(d.turns)\n    | where run_label in (\"nightly\", \"predeploy\");\nruns\n| summarize (latest_ts, latency_ms_median, turns) = arg_max(TimeGenerated, latency_ms_median, turns)\n| project\n    Metric = \"golden bank — median turn latency (ms, latest, uncolored)\",\n    Value = iff(isnull(latency_ms_median), real(null), round(latency_ms_median, 1)),\n    Detail = strcat(turns, \" turns this run\")",
         "size": 0,
-        "title": "Median turn latency (ms, latest run) — uncolored. Converted tiles->table, Gap 325.",
+        "title": "Median turn latency (ms, latest run) — uncolored.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -462,7 +469,7 @@
         "version": "KqlItem/1.0",
         "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"agent_eval_summary\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    pass_rate = todouble(d.pass_rate),\n    faithfulness_mean = todouble(d.faithfulness_mean),\n    relevance_mean = todouble(d.relevance_mean),\n    accuracy_mean = todouble(d.accuracy_mean)\n| where run_label in (\"nightly\", \"predeploy\")\n| project TimeGenerated, run_label, pass_rate, faithfulness_mean, relevance_mean, accuracy_mean\n| order by TimeGenerated asc",
         "size": 0,
-        "title": "Trend over runs — pass_rate / faithfulness / relevance / accuracy, chronological (90d). Kept as a line chart, Gap 325 (founder-approved exception -- trend visibility is the point, not a table).",
+        "title": "Trend over runs — pass_rate / faithfulness / relevance / accuracy, chronological (90d). Kept as a line chart — trend visibility is the point, not a table.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "linechart"
@@ -501,7 +508,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count()\n| project Metric = \"production judge — turns judged (30d)\", Value = toreal(total), Detail = \"raw count, no color\"",
         "size": 0,
-        "title": "Turns judged — production judge, 30d. Converted tiles->table, Gap 325.",
+        "title": "Turns judged — production judge, 30d.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -532,7 +539,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend run_source = tostring(d.run_source), passed = toint(d.pass)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count(), passed = sum(passed)\n| extend Rate = iff(total > 0, round(1.0 * passed / total, 4), real(null))\n| project\n    Metric = \"production judge — pass rate (separate from golden-bank D1, never averaged)\",\n    Value = iff(total < 20, -1.0, Rate),\n    Detail = iff(total < 20, strcat(\"only \", total, \" turns — below minimum n=20, \", passed, \"/\", total, \" passed\"), strcat(passed, \"/\", total, \" passed\"))",
         "size": 0,
-        "title": "Production pass rate — separate from D1, never averaged together. Converted tiles->table, Gap 325. Thresholds unchanged (0.20/0.30) -- Gap 323's recalibration was explicitly scoped to D1's golden-bank pass rate only; G1 is a separate live-traffic metric and its own recalibration is not part of this pass.",
+        "title": "Production pass rate — separate from D1, never averaged together. Thresholds unchanged (0.20/0.30) — that recalibration was explicitly scoped to D1's golden-bank pass rate only; G1 is a separate live-traffic metric.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -581,7 +588,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"agent_eval_run\"\n    | extend d = parse_json(Properties)\n    | extend\n        run_source = tostring(d.run_source),\n        faithfulness_score = todouble(d.faithfulness_score),\n        relevance_score = todouble(d.relevance_score),\n        accuracy_score = todouble(d.accuracy_score),\n        context_score = todouble(d.context_score),\n        helpfulness_score = todouble(d.helpfulness_score),\n        completeness_score = todouble(d.completeness_score),\n        tone_score = todouble(d.tone_score)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize\n    turns = count(),\n    faithfulness = avg(faithfulness_score), faithfulness_n = countif(isnotnull(faithfulness_score)),\n    relevance = avg(relevance_score), relevance_n = countif(isnotnull(relevance_score)),\n    accuracy = avg(accuracy_score), accuracy_n = countif(isnotnull(accuracy_score)),\n    context = avg(context_score), context_n = countif(isnotnull(context_score)),\n    helpfulness = avg(helpfulness_score), helpfulness_n = countif(isnotnull(helpfulness_score)),\n    completeness = avg(completeness_score), completeness_n = countif(isnotnull(completeness_score)),\n    tone = avg(tone_score), tone_n = countif(isnotnull(tone_score))\n| extend\n    faithfulness = iff(isnan(faithfulness), real(null), faithfulness),\n    relevance = iff(isnan(relevance), real(null), relevance),\n    accuracy = iff(isnan(accuracy), real(null), accuracy),\n    context = iff(isnan(context), real(null), context),\n    helpfulness = iff(isnan(helpfulness), real(null), helpfulness),\n    completeness = iff(isnan(completeness), real(null), completeness),\n    tone = iff(isnan(tone), real(null), tone)\n| project Metrics = pack_array(\n    pack(\"Metric\", \"production — faithfulness\", \"Value\", faithfulness, \"Detail\", strcat(faithfulness_n, \"/\", turns, \" scored — pass = faithfulness+relevance only\")),\n    pack(\"Metric\", \"production — relevance\", \"Value\", relevance, \"Detail\", strcat(relevance_n, \"/\", turns, \" scored — pass = faithfulness+relevance only\")),\n    pack(\"Metric\", \"production — accuracy (NULL by construction)\", \"Value\", accuracy, \"Detail\", strcat(accuracy_n, \"/\", turns, \" scored — expected 0, judge_mode=combined does not score this\")),\n    pack(\"Metric\", \"production — context (NULL by construction)\", \"Value\", context, \"Detail\", strcat(context_n, \"/\", turns, \" scored — expected 0, judge_mode=combined does not score this\")),\n    pack(\"Metric\", \"production — helpfulness (combined judge only)\", \"Value\", helpfulness, \"Detail\", strcat(helpfulness_n, \"/\", turns, \" scored\")),\n    pack(\"Metric\", \"production — completeness (combined judge only)\", \"Value\", completeness, \"Detail\", strcat(completeness_n, \"/\", turns, \" scored\")),\n    pack(\"Metric\", \"production — tone (combined judge only)\", \"Value\", tone, \"Detail\", strcat(tone_n, \"/\", turns, \" scored\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
         "size": 0,
-        "title": "Production scores — faithfulness/relevance/helpfulness/completeness/tone; accuracy/context NULL by construction (judge_mode=combined). Converted tiles->table, Gap 325.",
+        "title": "Production scores — faithfulness/relevance/helpfulness/completeness/tone; accuracy/context NULL by construction (judge_mode=combined).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -612,7 +619,7 @@
         "version": "KqlItem/1.0",
         "query": "let rows = AppEvents\n    | where TimeGenerated > ago(7d)\n    | where Name == \"ops_recommendation\"\n    | extend d = parse_json(Properties)\n    | extend run_ts = todatetime(tostring(d.generated_at));\nlet latest_run = toscalar(rows | summarize max(run_ts));\nrows\n| where run_ts == latest_run\n| where tostring(d[\"category\"]) == \"ai_improvement\"\n| project\n    Category       = tostring(d[\"title\"]),\n    Status         = tostring(d.status),\n    Explanation    = tostring(d.explanation),\n    Recommendation = iff(isempty(tostring(d.recommendation)), \"No recommendation yet\", tostring(d.recommendation)),\n    Findings       = toint(d.finding_count),\n    Red            = toint(d.red_count),\n    Yellow         = toint(d.yellow_count),\n    Errors         = tostring(d.errors),\n    Run            = strcat(tostring(d.run_label), \" @ \", tostring(d.generated_at))\n| order by Category asc",
         "size": 0,
-        "title": "Latest recommendation — ai_improvement (from `ops_recommendation`, Gaps 318/319/322). No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\". Spans both the nightly golden-bank and extraction-quality sub-sections above.",
+        "title": "Latest recommendation — ai_improvement (from `ops_recommendation`). No colouring on purpose: worst_severity can be red while recommendation is empty (status != recommend), and colouring that would visually contradict \"No recommendation yet\". Spans both the nightly golden-bank and extraction-quality sub-sections above.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces"
       },
@@ -638,7 +645,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend alert_recall_pct = todouble(d.alert_recall_pct);\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, alert_recall_pct) = arg_max(TimeGenerated, alert_recall_pct)\n| extend total = run_count\n| project\n    Metric = \"extraction bench — alert recall (%, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(alert_recall_pct), real(null), round(alert_recall_pct, 2))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, recall=\", iff(isnull(alert_recall_pct), \"n/a\", tostring(round(alert_recall_pct,2))), \"% — real drift evidence, 80% is not green\"), strcat(total, \" runs, recall=\", round(alert_recall_pct,2), \"%\"))",
         "size": 0,
-        "title": "Alert recall (%, latest run) — 80% is real drift evidence, never reads green. Converted tiles->table, Gap 325.",
+        "title": "Alert recall (%, latest run) — 80% is real drift evidence, never reads green.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -687,7 +694,7 @@
         "version": "KqlItem/1.0",
         "query": "let runs = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend clean_false_positive_rate_pct = todouble(d.clean_false_positive_rate_pct);\nlet run_count = toscalar(runs | count | project Count);\nruns\n| summarize (latest_ts, clean_false_positive_rate_pct) = arg_max(TimeGenerated, clean_false_positive_rate_pct)\n| extend total = run_count\n| project\n    Metric = \"extraction bench — clean false-positive rate (%, latest)\",\n    Value = iff(total < 3, -1.0, iff(isnull(clean_false_positive_rate_pct), real(null), round(clean_false_positive_rate_pct, 2))),\n    Detail = iff(total < 3, strcat(\"only \", total, \" runs — below minimum n=3, FP rate=\", iff(isnull(clean_false_positive_rate_pct), \"n/a\", tostring(round(clean_false_positive_rate_pct,2))), \"%\"), strcat(total, \" runs, FP rate=\", round(clean_false_positive_rate_pct,2), \"%\"))",
         "size": 0,
-        "title": "Clean false-positive rate (%, latest run). Converted tiles->table, Gap 325.",
+        "title": "Clean false-positive rate (%, latest run).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -736,7 +743,7 @@
         "version": "KqlItem/1.0",
         "query": "let rows = AppEvents\n    | where TimeGenerated > ago(90d)\n    | where Name == \"extraction_benchmark_run\"\n    | extend d = parse_json(Properties)\n    | extend\n        run_label = tostring(d.run_label),\n        true_positive = toint(d.true_positive),\n        false_negative = toint(d.false_negative),\n        false_positive = toint(d.false_positive),\n        true_negative = toint(d.true_negative),\n        not_applicable = toint(d.not_applicable);\nlet latest_ts = toscalar(rows | summarize max(TimeGenerated));\nrows\n| where TimeGenerated == latest_ts\n| project Metrics = pack_array(\n    pack(\"Metric\", \"confusion — true_positive\", \"Value\", toreal(true_positive), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — false_negative\", \"Value\", toreal(false_negative), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — false_positive\", \"Value\", toreal(false_positive), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — true_negative\", \"Value\", toreal(true_negative), \"Detail\", \"raw count, latest run\"),\n    pack(\"Metric\", \"confusion — not_applicable\", \"Value\", toreal(not_applicable), \"Detail\", \"raw count, latest run\")\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
         "size": 0,
-        "title": "Confusion matrix cells (latest run) -- raw counts (Fix 8, Gap 322: converted from a bare `top 1 by TimeGenerated desc`, which returns 0 rows -- not an honest n/a row -- over empty input, to the toscalar/equality-filter pattern used elsewhere in this file). Converted tiles->table, Gap 325.",
+        "title": "Confusion matrix cells (latest run) — raw counts (uses the toscalar/equality-filter pattern applied elsewhere in this file, not a bare `top 1 by TimeGenerated desc`, which returns 0 rows — not an honest n/a row — over empty input).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -767,7 +774,7 @@
         "version": "KqlItem/1.0",
         "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"extraction_benchmark_run\"\n| extend d = parse_json(Properties)\n| extend\n    run_label = tostring(d.run_label),\n    mode = tostring(d.mode),\n    alert_recall_pct = todouble(d.alert_recall_pct),\n    clean_false_positive_rate_pct = todouble(d.clean_false_positive_rate_pct)\n| project TimeGenerated, run_label, mode, alert_recall_pct, clean_false_positive_rate_pct\n| order by TimeGenerated asc",
         "size": 0,
-        "title": "Recall / FP-rate trend over runs, chronological (90d). Kept as a line chart, Gap 325 (founder-approved exception -- trend visibility is the point, not a table).",
+        "title": "Recall / FP-rate trend over runs, chronological (90d). Kept as a line chart — trend visibility is the point, not a table.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "linechart"
@@ -787,7 +794,7 @@
         "version": "KqlItem/1.0",
         "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nlet calls = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"llm_agent_call\"\n    | extend d = parse_json(Properties)\n    | extend\n        agent_name = tostring(d.agent_name),\n        model      = tostring(d.model),\n        status     = tostring(d.status),\n        tokens_in  = toint(d.tokens_in),\n        tokens_out = toint(d.tokens_out),\n        run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | lookup kind=leftouter rates on model\n    | extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0);\nlet cost7d = calls\n    | where TimeGenerated > ago(7d)\n    | summarize calls = count(), cost_usd = sum(cost_usd) by agent_name\n    | project Metric = strcat(agent_name, \" — cost (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\");\nlet cost30d = calls\n    | summarize calls = count(), cost_usd = sum(cost_usd) by agent_name\n    | project Metric = strcat(agent_name, \" — cost (30d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\");\ncost7d\n| union cost30d\n| order by Metric asc",
         "size": 0,
-        "title": "Cost by agent — 7d vs 30d (USD, production only). Converted tiles->table, Gap 325.",
+        "title": "Cost by agent — 7d vs 30d (USD, production only).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -818,7 +825,7 @@
         "version": "KqlItem/1.0",
         "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
         "size": 0,
-        "title": "Spend by run_source — 7d (USD). Converted tiles->table, Gap 325.",
+        "title": "Spend by run_source — 7d (USD).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -863,7 +870,7 @@
         "version": "KqlItem/1.0",
         "query": "AppEvents\n| where TimeGenerated > ago(30d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    agent_name = tostring(d.agent_name),\n    latency_ms = todouble(d.latency_ms),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| summarize calls = count(), p50 = percentile(latency_ms, 50), p95 = percentile(latency_ms, 95) by agent_name\n| extend\n    P50Metric = strcat(agent_name, \" — p50 latency (ms)\"),\n    P95Metric = strcat(agent_name, \" — p95 latency (ms)\")\n| project Metrics = pack_array(\n    pack(\"Metric\", P50Metric, \"Value\", iff(calls < 20, -1.0, round(p50, 1)), \"Detail\", iff(calls < 20, strcat(\"only \", calls, \" calls — below minimum n=20, p50=\", round(p50,1), \"ms\"), strcat(calls, \" calls\"))),\n    pack(\"Metric\", P95Metric, \"Value\", iff(calls < 20, -1.0, round(p95, 1)), \"Detail\", iff(calls < 20, strcat(\"only \", calls, \" calls — below minimum n=20, p95=\", round(p95,1), \"ms\"), strcat(calls, \" calls\")))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)\n| order by Metric asc",
         "size": 0,
-        "title": "Latency p50/p95 by agent — 30d (ms), production only. Converted tiles->table, Gap 325.",
+        "title": "Latency p50/p95 by agent — 30d (ms), production only.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -912,7 +919,7 @@
         "version": "KqlItem/1.0",
         "query": "AppEvents\n| where TimeGenerated > ago(30d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    agent_name = tostring(d.agent_name),\n    status     = tostring(d.status),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| summarize calls = count(), errors = countif(status == \"error\") by agent_name\n| extend ErrorRatePct = round(100.0 * errors / calls, 1)\n| project\n    Metric = strcat(agent_name, \" — error rate (%)\"),\n    Value = iff(calls < 20, -1.0, ErrorRatePct),\n    Detail = iff(calls < 20, strcat(\"only \", calls, \" calls — below minimum n=20, \", errors, \"/\", calls, \" errored\"), strcat(errors, \"/\", calls, \" errored\"))\n| order by Metric asc",
         "size": 0,
-        "title": "Error rate by agent — 30d (%), production only. Converted tiles->table, Gap 325.",
+        "title": "Error rate by agent — 30d (%), production only.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -961,7 +968,7 @@
         "version": "KqlItem/1.0",
         "query": "AppDependencies\n| where TimeGenerated > ago(30d)\n| where DependencyType startswith \"GenAI\"\n| extend d = parse_json(Properties)\n| extend agent_name = tostring(d.agent_name), run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| summarize calls = count(), p50 = percentile(DurationMs, 50), p95 = percentile(DurationMs, 95), avg_ms = avg(DurationMs) by agent_name\n| project\n    Metric = strcat(agent_name, \" — GenAI dependency p50/p95 (ms)\"),\n    Value = strcat(round(p50, 1), \" / \", round(p95, 1)),\n    Detail = strcat(calls, \" spans, avg \", round(avg_ms, 1), \"ms, production only\")\n| order by Metric asc",
         "size": 0,
-        "title": "LLM dependency duration (AppDependencies, GenAI spans) -- 30d, p50/p95 ms, production only (Fix 5, Gap 322: now filters run_source == production so this cross-check against a3-latency-by-agent no longer silently blends golden-bank/eval traffic into a production-only comparison). Converted tiles->table, Gap 325.",
+        "title": "LLM dependency duration (AppDependencies, GenAI spans) — 30d, p50/p95 ms, production only (filters run_source == production so this cross-check against a3-latency-by-agent does not blend golden-bank/eval traffic into a production-only comparison).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -999,7 +1006,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend status = tostring(d.status), run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nlet total = toscalar(turns | count | project Count);\nturns\n| summarize turns = count() by status\n| extend Pct = round(100.0 * turns / total, 1)\n| project Metric = strcat(\"outcome — \", status), Value = Pct, Detail = strcat(turns, \"/\", total, \" turns (last 30d)\")\n| order by Metric asc",
         "size": 0,
-        "title": "Outcome mix — success/declined/error/cache_hit, % of turns (30d). Converted tiles->table, Gap 325.",
+        "title": "Outcome mix — success/declined/error/cache_hit, % of turns (30d).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1030,7 +1037,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend status = tostring(d.status), run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count(), errors = countif(status == \"error\")\n| extend Pct = iff(total > 0, round(100.0 * errors / total, 1), real(null))\n| extend Metric = \"chat_turn — error rate (%)\"\n| project\n    Metric,\n    Value = iff(total < 20, -1.0, Pct),\n    Detail = iff(total < 20, strcat(\"only \", total, \" turns — below minimum n=20, \", errors, \"/\", total, \" errored\"), strcat(errors, \"/\", total, \" errored\"))",
         "size": 0,
-        "title": "chat_turn error rate (%) — 30d, production only. Converted tiles->table, Gap 325.",
+        "title": "chat_turn error rate (%) — 30d, production only.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1079,7 +1086,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        zero_result = tolower(tostring(d.zero_result)) == \"true\",\n        run_source  = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize total = count(), zero = countif(zero_result)\n| extend Pct = iff(total > 0, round(100.0 * zero / total, 1), real(null))\n| project\n    Metric = \"chat_turn — zero-result rate (%)\",\n    Value = iff(total < 20, -1.0, Pct),\n    Detail = iff(total < 20, strcat(\"only \", total, \" turns — below minimum n=20, \", zero, \"/\", total, \" zero-result\"), strcat(zero, \"/\", total, \" zero-result\"))",
         "size": 0,
-        "title": "Zero-result rate (%) — 30d, production only. Converted tiles->table, Gap 325.",
+        "title": "Zero-result rate (%) — 30d, production only.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1128,7 +1135,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend route = tostring(d.route), run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nlet total = toscalar(turns | count | project Count);\nturns\n| summarize turns = count() by route\n| extend Pct = round(100.0 * turns / total, 1)\n| project Metric = strcat(\"route — \", route), Value = Pct, Detail = strcat(turns, \"/\", total, \" turns (last 30d)\")\n| order by Metric asc",
         "size": 0,
-        "title": "Route mix — RAG/SQL/CHAT, % of turns (30d). Converted tiles->table, Gap 325.",
+        "title": "Route mix — RAG/SQL/CHAT, % of turns (30d).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1159,7 +1166,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        latency_ms = todouble(d.latency_ms),\n        status     = tostring(d.status),\n        run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where status != \"cache_hit\";\nturns\n| summarize total = count(), p50 = percentile(latency_ms, 50)\n| project\n    Metric = \"chat_turn — p50 latency (ms)\",\n    Value = iff(total < 20, -1.0, round(p50, 1)),\n    Detail = iff(total < 20, strcat(\"only \", total, \" turns — below minimum n=20, p50=\", round(p50,1), \"ms\"), strcat(total, \" turns\"))",
         "size": 0,
-        "title": "Turn latency p50 (ms) — 30d, excludes cache_hit. Converted tiles->table, Gap 325.",
+        "title": "Turn latency p50 (ms) — 30d, excludes cache_hit.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1208,7 +1215,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        latency_ms = todouble(d.latency_ms),\n        status     = tostring(d.status),\n        run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where status != \"cache_hit\";\nturns\n| summarize total = count(), p95 = percentile(latency_ms, 95)\n| project\n    Metric = \"chat_turn — p95 latency (ms)\",\n    Value = iff(total < 20, -1.0, round(p95, 1)),\n    Detail = iff(total < 20, strcat(\"only \", total, \" turns — below minimum n=20, p95=\", round(p95,1), \"ms\"), strcat(total, \" turns\"))",
         "size": 0,
-        "title": "Turn latency p95 (ms) — 30d, excludes cache_hit. Converted tiles->table, Gap 325.",
+        "title": "Turn latency p95 (ms) — 30d, excludes cache_hit.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1257,7 +1264,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        sql_attempts  = toint(d.sql_attempts),\n        sql_generated = tolower(tostring(d.sql_generated)) == \"true\",\n        run_source    = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where sql_generated;\nturns\n| summarize turns = count(), avg_attempts = avg(sql_attempts), max_attempts = max(sql_attempts), repaired = countif(sql_attempts > 1)\n| extend avg_attempts = iff(isnan(avg_attempts), real(null), avg_attempts)\n| project Metrics = pack_array(\n    pack(\"Metric\", \"sql_attempts — avg\", \"Value\", iff(isnull(avg_attempts), real(null), round(avg_attempts, 2)), \"Detail\", strcat(turns, \" SQL turns (last 30d)\")),\n    pack(\"Metric\", \"sql_attempts — max\", \"Value\", toreal(max_attempts), \"Detail\", strcat(turns, \" SQL turns (last 30d)\")),\n    pack(\"Metric\", \"sql_attempts — repair-loop rate (%)\", \"Value\", iff(turns > 0, round(100.0 * repaired / turns, 1), real(null)), \"Detail\", strcat(repaired, \"/\", turns, \" needed >1 attempt\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
         "size": 0,
-        "title": "SQL repair loop — sql_attempts distribution, 30d. Converted tiles->table, Gap 325.",
+        "title": "SQL repair loop — sql_attempts distribution, 30d.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1288,7 +1295,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend stop_reason = tostring(d.stop_reason), run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where isnotempty(stop_reason);\nlet total = toscalar(turns | count | project Count);\nturns\n| summarize turns = count() by stop_reason\n| project\n    Metric = strcat(\"stop_reason — \", stop_reason),\n    Value = toreal(turns),\n    Detail = strcat(turns, \"/\", total, \" turns with a stop_reason (\", round(100.0*turns/total,1), \"%) — default chat route, live production data\")\n| order by Metric asc",
         "size": 0,
-        "title": "Stop reasons -- default chat route, 30d, production only (Fix 7, Gap 322: retitled -- ENABLE_AGENTIC_SAGE no longer exists, deleted with SAGE in Gap 316, and stop_reason IS populated on the live default route; this panel was showing real data while telling the reader it was empty). Converted tiles->table, Gap 325.",
+        "title": "Stop reasons — default chat route, 30d, production only (stop_reason IS populated on the live default route).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1319,7 +1326,7 @@
         "version": "KqlItem/1.0",
         "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        citation_count        = toint(d.citation_count),\n        result_invoice_count  = toint(d.result_invoice_count),\n        tool_output_chars     = toint(d.tool_output_chars),\n        run_source            = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nturns\n| summarize\n    turns = count(),\n    avg_citation = avg(citation_count),\n    avg_result_invoices = avg(result_invoice_count),\n    p50_tool_output_chars = percentile(tool_output_chars, 50)\n| extend\n    avg_citation = iff(isnan(avg_citation), real(null), avg_citation),\n    avg_result_invoices = iff(isnan(avg_result_invoices), real(null), avg_result_invoices)\n| project Metrics = pack_array(\n    pack(\"Metric\", \"answer shape — avg citation_count\", \"Value\", iff(isnull(avg_citation), real(null), round(avg_citation, 2)), \"Detail\", strcat(turns, \" turns (last 30d)\")),\n    pack(\"Metric\", \"answer shape — avg result_invoice_count\", \"Value\", iff(isnull(avg_result_invoices), real(null), round(avg_result_invoices, 2)), \"Detail\", strcat(turns, \" turns (last 30d)\")),\n    pack(\"Metric\", \"answer shape — p50 tool_output_chars\", \"Value\", toreal(p50_tool_output_chars), \"Detail\", strcat(turns, \" turns (last 30d) — chars, not tool output text itself\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
         "size": 0,
-        "title": "Answer shape — citation_count / result_invoice_count / tool_output_chars (metadata only, never the tool output text). Converted tiles->table, Gap 325.",
+        "title": "Answer shape — citation_count / result_invoice_count / tool_output_chars (metadata only, never the tool output text).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1357,7 +1364,7 @@
         "version": "KqlItem/1.0",
         "query": "let lookback = 14d;\nlet idle_cutoff = 30m;\nlet max_session_span = 1d;\nlet turns =\n    AppEvents\n    | where TimeGenerated > ago(lookback)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        session_id = tostring(d.session_id),\n        tenant_id  = tostring(d.tenant_id),\n        run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where isnotempty(session_id);\nlet sittings =\n    turns\n    | order by session_id asc, TimeGenerated asc\n    | extend sitting_start = row_window_session(TimeGenerated, max_session_span, idle_cutoff, session_id != prev(session_id));\nlet completed =\n    sittings\n    | summarize turns = count(), last_turn = max(TimeGenerated) by session_id, sitting_start, tenant_id\n    | where last_turn < ago(idle_cutoff);\ncompleted\n| summarize\n    sessions = count(),\n    single_turn_pct = iff(count() > 0, round(100.0 * countif(turns == 1) / count(), 1), real(null)),\n    p50_turns = percentile(turns, 50),\n    p90_turns = percentile(turns, 90)\n| project Metrics = pack_array(\n    pack(\"Metric\", \"sessions — completed sittings (14d)\", \"Value\", toreal(sessions), \"Detail\", \"count of ended sittings, 30-min idle cutoff\"),\n    pack(\"Metric\", \"sessions — single-turn share (%)\", \"Value\", single_turn_pct, \"Detail\", strcat(sessions, \" sittings\")),\n    pack(\"Metric\", \"sessions — p50 turns/sitting\", \"Value\", toreal(p50_turns), \"Detail\", strcat(sessions, \" sittings\")),\n    pack(\"Metric\", \"sessions — p90 turns/sitting\", \"Value\", toreal(p90_turns), \"Detail\", strcat(sessions, \" sittings\"))\n  )\n| mv-expand Metrics\n| project Metric = tostring(Metrics.Metric), Value = todouble(Metrics.Value), Detail = tostring(Metrics.Detail)",
         "size": 0,
-        "title": "Sessions summary — completed sittings, single-turn share, p50/p90 turns/sitting (14d). Converted tiles->table, Gap 325.",
+        "title": "Sessions summary — completed sittings, single-turn share, p50/p90 turns/sitting (14d).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1388,7 +1395,7 @@
         "version": "KqlItem/1.0",
         "query": "let lookback = 14d;\nlet idle_cutoff = 30m;\nlet max_session_span = 1d;\nlet turns =\n    AppEvents\n    | where TimeGenerated > ago(lookback)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        session_id  = tostring(d.session_id),\n        tenant_id   = tostring(d.tenant_id),\n        status      = tostring(d.status),\n        stop_reason = tostring(d.stop_reason),\n        zero_result = tolower(tostring(d.zero_result)) == \"true\",\n        run_source  = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | where isnotempty(session_id);\nlet sittings =\n    turns\n    | order by session_id asc, TimeGenerated asc\n    | extend sitting_start = row_window_session(TimeGenerated, max_session_span, idle_cutoff, session_id != prev(session_id));\nlet completed =\n    sittings\n    | summarize\n        turns = count(), last_turn = max(TimeGenerated), zero_result_turns = countif(zero_result),\n        (last_turn_ts, last_status) = arg_max(TimeGenerated, status),\n        last_stop_reason = anyif(stop_reason, isnotempty(stop_reason))\n      by session_id, sitting_start, tenant_id\n    | where last_turn < ago(idle_cutoff)\n    | extend abandoned = last_status in (\"declined\", \"error\") or (zero_result_turns > 0 and turns == 1)\n    | extend reason_bucket = case(not(abandoned), \"not abandoned\", isnotempty(last_stop_reason), last_stop_reason, last_status);\ncompleted\n| summarize sessions = count(), abandoned = countif(abandoned)\n| extend Pct = iff(sessions > 0, round(100.0 * abandoned / sessions, 1), real(null))\n| project\n    Metric = \"sessions — abandonment rate (%)\",\n    Value = iff(sessions < 20, -1.0, Pct),\n    Detail = iff(sessions < 20, strcat(\"only \", sessions, \" sittings — below minimum n=20, \", abandoned, \"/\", sessions, \" abandoned\"), strcat(abandoned, \"/\", sessions, \" abandoned\"))",
         "size": 0,
-        "title": "Abandonment rate (%) — completed sittings, 14d. Converted tiles->table, Gap 325.",
+        "title": "Abandonment rate (%) — completed sittings, 14d.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -1480,7 +1487,7 @@
         "version": "KqlItem/1.0",
         "query": "AppEvents\n| where TimeGenerated > ago(14d)\n| where Name == \"online_eval_signal\"\n| extend d = parse_json(Properties)\n| extend\n    signal_name = tostring(d.signal_name),\n    breached    = tostring(d.breached),\n    value       = todouble(d.value)\n| summarize (latest_ts, latest_breached, latest_value) = arg_max(TimeGenerated, breached, value) by signal_name\n| extend Status = case(isnull(latest_value), \"not measured\", latest_breached == \"1\", \"breached\", \"ok\")\n| project Metric = signal_name, Status\n| order by Metric asc",
         "size": 0,
-        "title": "Breached signals (latest value per signal, 14d) -- Fix 10, Gap 322: now also reads `value`, not just `breached` -- a signal with a permanently-null value (e.g. budget_exhaustion_rate's 0-denominator state since Gap 316) renders 'not measured' (blue), not a false green 'ok' forever. Does not retire any signal -- that is Gap 305's still-open founder decision. Converted tiles->table, Gap 325.",
+        "title": "Breached signals (latest value per signal, 14d) — reads both `value` and `breached`; a signal with a permanently-null value (e.g. budget_exhaustion_rate's 0-denominator state) renders 'not measured' (blue), not a false green 'ok' forever.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
