@@ -240,7 +240,7 @@ test.describe("Dashboard — receive-only tenant", () => {
     // No split, and nothing outbound anywhere
     await expect(splitContainer(page)).toHaveCount(0);
     await expect(outboundTotalCard(page)).toHaveCount(0);
-    await expect(panel(page, "Receivables Trend")).toHaveCount(0);
+    await expect(panel(page, "Invoice Receivables Trend")).toHaveCount(0);
     await expect(page.getByText("Avg Days to Payment", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Sending" })).toHaveCount(0);
     await expect(panel(page, "Top Customers")).toHaveCount(0);
@@ -286,7 +286,7 @@ test.describe("Dashboard — both services enabled", () => {
 
     // Each half's own distinctive panels
     await expect(panel(page, "Invoice Spend Trend")).toBeVisible();
-    await expect(panel(page, "Receivables Trend")).toBeVisible();
+    await expect(panel(page, "Invoice Receivables Trend")).toBeVisible();
     await expect(panel(page, "AI Score")).toHaveCount(2);
     await expect(page.getByText("Avg Days to Payment", { exact: true })).toBeVisible();
 
@@ -352,7 +352,7 @@ test.describe("Dashboard — both services enabled", () => {
     await expect(split).toBeVisible();
 
     const inboundBox = await panel(page, "Invoice Spend Trend").boundingBox();
-    const outboundBox = await panel(page, "Receivables Trend").boundingBox();
+    const outboundBox = await panel(page, "Invoice Receivables Trend").boundingBox();
 
     expect(inboundBox).not.toBeNull();
     expect(outboundBox).not.toBeNull();
@@ -371,7 +371,7 @@ test.describe("Dashboard — send-only tenant", () => {
     await page.goto("/dashboard");
 
     await expect(outboundTotalCard(page)).toBeVisible();
-    await expect(panel(page, "Receivables Trend")).toBeVisible();
+    await expect(panel(page, "Invoice Receivables Trend")).toBeVisible();
     await page.getByRole("button", { name: "Top Customers" }).click();
     await expect(panel(page, "Top Customers")).toBeVisible();
 

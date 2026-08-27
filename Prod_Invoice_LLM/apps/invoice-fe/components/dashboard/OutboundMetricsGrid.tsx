@@ -144,9 +144,9 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
   // SVG chart dimensions -- same geometry as MetricsGrid's spend trend so the
   // two halves line up visually when rendered side by side.
   const svgWidth = 600;
-  const svgHeight = 160;
+  const svgHeight = 100;
   const paddingX = 20;
-  const paddingY = 20;
+  const paddingY = 14;
 
   // FE Gap 183: one polyline per currency, each on its own y scale. A shared
   // scale drew a ₹40,000 day as an order-of-magnitude spike next to a $500
@@ -229,16 +229,11 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
       </div>
 
       {/* Revenue Trend Panel */}
-      <div className="glass-panel p-6 rounded-xl flex flex-col gap-4 relative overflow-hidden w-full">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-white tracking-wide">
-              Receivables Trend
-            </h3>
-            <p className="text-xs text-slate-400">
-              Daily invoiced-out billing trends mapped over time.
-            </p>
-          </div>
+      <div className="glass-panel p-4 rounded-xl flex flex-col gap-2 relative overflow-hidden w-full">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold text-white tracking-wide shrink-0">
+            Invoice Receivables Trend
+          </h3>
 
           <div className="flex items-center gap-2 min-w-0 relative h-8">
             {/* FE Gap 183: legend -- each currency is its own line on its own
@@ -269,7 +264,7 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
           </div>
         </div>
 
-        <div className="w-full relative h-[160px] select-none">
+        <div className="w-full relative h-[100px] select-none">
           {isLoading || !hasTrendData ? (
             <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-xs">
               {isLoading
@@ -438,15 +433,15 @@ export default function OutboundMetricsGrid({ metrics, isLoading }: OutboundMetr
             </div>
           </div>
 
-          <div className="flex items-center gap-4 justify-center md:justify-start pl-0 md:pl-6 border-t md:border-t-0 md:border-l border-[#222D3D] pt-3 md:pt-0">
-            <div className="p-3 rounded-lg bg-[#10B981]/10 border border-[#10B981]/20 text-accent-green shrink-0">
-              <CalendarClock className="w-5 h-5" />
+          <div className="flex items-center gap-3 justify-center md:justify-start pl-0 md:pl-6 border-t md:border-t-0 md:border-l border-[#222D3D] pt-3 md:pt-0">
+            <div className="p-2 rounded-lg bg-[#10B981]/10 border border-[#10B981]/20 text-accent-green shrink-0">
+              <CalendarClock className="w-4 h-4" />
             </div>
             <div className="flex flex-col">
               <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
                 Avg Days to Payment
               </span>
-              <span className="text-xl font-bold text-white mt-0.5">
+              <span className="text-base font-bold text-white leading-tight">
                 {isLoading ? "0.0d" : `${avgDaysToPayment.toFixed(1)}d`}
               </span>
             </div>

@@ -753,5 +753,15 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
     - `components/audit/NotifyEmailPicker.tsx`: collapsed the heading + description + empty-state block into a single `text-[10px]` line ("Notify registered emails — staff only, uncheck to skip", appending "(no {emailSet} addresses set)" inline when the sender list is empty instead of a separate paragraph).
   - **Not yet done**: `app/invoices/outbound-review/[id]/page.tsx` still has Gap 282's original 2-column layout — per this repo's own history (Gap 71/83 hit the identical "fix applied to inbound only" failure mode for this exact pair of screens), the 3-section restructure needs to be ported there separately, it will not inherit automatically. `NotifyEmailPicker` is shared, so its compaction already applies to both screens.
 
+- `[x]` **Gap 315 (FE): Outbound Dashboard — Align "Invoice Receivables Trend" Card Geometry, AI Score & Page Height** — opened and closed 2026-08-27.
+  - **Problem**: Outbound `OutboundMetricsGrid.tsx` rendered `"Receivables Trend"` with legacy uncompacted dimensions (`svgHeight=160`, `h-[160px]`, `p-6 gap-4`, plus a 24px subtitle `<p>` tag), making it ~80px taller than `MetricsGrid.tsx`'s `"Invoice Spend Trend"`. This caused AI Score cards to misalign horizontally in the 2-column split view and pushed bottom widgets down.
+  - **Fix**:
+    - Aligned `OutboundMetricsGrid.tsx` trend panel to match `MetricsGrid.tsx` (`svgHeight=100`, `h-[100px]`, `paddingY=14`, `p-4 gap-2`).
+    - Renamed header title to `"Invoice Receivables Trend"` (`text-xs font-semibold text-white tracking-wide shrink-0`) and removed subtitle paragraph.
+    - Aligned AI Score bottom card padding (`p-2`, `w-4 h-4` icon, `text-base`), enabling AI Score cards on Receiving and Sending columns to align on the exact same horizontal line and pulling bottom dashboard sections up.
+    - Updated Playwright test suite (`e2e/dashboard-outbound-split.spec.ts`).
+  - **Verification**: `npx tsc --noEmit` clean (0 errors).
+
+
 
 
