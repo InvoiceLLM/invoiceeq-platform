@@ -10,16 +10,19 @@ What this is
     shape), turns exceeding a latency threshold (Gap 278's shape), thumbs-down
     clustering.
 
-Those five, computed against the tables that actually exist today: `ChatMessage`
-(+ `ChatSession` for tenant scoping), `ChatFeedback`, and the existing columns of
-`AgentEvalRun`. No schema change, no new table, no dependency on Application
-Insights being wired up.
+Of those five, four are computed against the tables that actually exist today:
+`ChatMessage` (+ `ChatSession` for tenant scoping), `ChatFeedback`, and the
+existing columns of `AgentEvalRun`. No schema change, no new table, no
+dependency on Application Insights being wired up. **`budget_exhaustion_rate`
+is retired from `compute_online_signals()` as of Gap 305 (2026-08-28)** — see
+below for why; it is still defined and directly callable for anyone who wants
+it, just not part of the default online set any more.
 
 Every signal states its own confidence
 --------------------------------------
-This is the point of the module, not a disclaimer. Three of the five are direct
-measurements; two are not, and a dashboard that presented all five as equally
-solid would be worse than no dashboard:
+This is the point of the module, not a disclaimer. Two of the four live ones are
+direct measurements; two are not, and a dashboard that presented all four as
+equally solid would be worse than no dashboard:
 
 ===========================  =============  ==================================
 Signal                       Confidence     Why
@@ -28,11 +31,12 @@ Signal                       Confidence     Why
 `thumbs_down_clustering`     measured       `ChatFeedback.vote` is the fact
 `slow_turn_rate`             proxy          Row-timestamp delta, not an
                                             instrumented timer (see below)
-`budget_exhaustion_rate`     offline-only   Dead as of Gap 316 — nothing writes
-                                            a `stop_reason` any more (see below)
 `clarification_rate`         heuristic      Live clarifications leave no marker
                                             in the DB at all
 ===========================  =============  ==================================
+
+`budget_exhaustion_rate` — retired from the online set, still defined, offline-only
+confidence, dead as of Gap 316 (see below).
 
 Gap 316 (2026-08-25) killed one of these outright — read before trusting the panel
 ---------------------------------------------------------------------------------
@@ -49,9 +53,11 @@ difference decides whether a number on the panel is worth reading:
   too, not merely unwritten: `MAX_TOOL_CALLS` and `tool_call_budget_exhausted`
   belonged to the deleted planner loop, and neither name appears in live code
   anywhere now. So the denominator is 0 on every window from here on, `value` is
-  `None` and `breached` is `False` forever. Retiring the signal is a **product
-  decision, not a bug fix** — it is left in place, computing honestly, until the
-  founder rules on whether the five-signal set becomes four.
+  `None` and `breached` is `False` forever. **Retired from `compute_online_signals()`
+  2026-08-28 (Gap 305)** — the founder ruled the five-signal set becomes four,
+  since the replacement (`chat_turn.stop_reason`, live on every real turn) was
+  already deployed and readable. The function itself is unchanged and still
+  directly callable/tested; only the default online computation drops it.
 * **`clarification_rate` did NOT die**, despite being listed alongside it. Its
   headline `value`/`numerator`/`denominator` are computed by
   `looks_like_clarification()` over `chat_message` assistant rows and never
@@ -777,7 +783,15 @@ def compute_online_signals(
     now: Optional[datetime] = None,
     slow_turn_threshold_seconds: float = SLOW_TURN_THRESHOLD_SECONDS,
 ) -> OnlineEvalSignals:
-    """All five signals over one window.
+    """All four live signals over one window.
+
+    Gap 305 (2026-08-28): the founder ruled on the five-vs-four question this
+    module's docstring left open — `budget_exhaustion_rate` is dropped from the
+    computed/emitted set. It is permanently dead (see the module docstring) and
+    its replacement, `chat_turn.stop_reason`, is already live on the workbook's
+    `b6-stop-reasons` tile. `budget_exhaustion_rate()` itself is left defined,
+    still directly callable and still tested — this only removes it from the
+    default online computation.
 
     `now` is injectable so a caller (or a test) can compute a historical window
     without monkeypatching the clock. `tenant_id=None` computes across all
@@ -793,7 +807,6 @@ def compute_online_signals(
     }
 
     signals = [
-        budget_exhaustion_rate(session, **common),
         clarification_rate(session, **common),
         zero_result_rate(session, **common),
         slow_turn_rate(session, threshold_seconds=slow_turn_threshold_seconds, **common),

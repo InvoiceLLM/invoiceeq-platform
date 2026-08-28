@@ -117,8 +117,10 @@ def test_the_job_emits_an_online_eval_signal_event_for_every_signal(
     db_session, monkeypatch, caplog
 ):
     """Gap 305's closing condition. Before a caller existed, `emit_online_signals()`
-    had zero callers anywhere in production code, so all five signals rendered
-    empty forever no matter how much real traffic existed."""
+    had zero callers anywhere in production code, so all signals rendered
+    empty forever no matter how much real traffic existed. Four, not five, as
+    of the same-day founder decision to retire `budget_exhaustion_rate` from
+    the default online set (permanently dead, see `online_eval_signals.py`)."""
     _seed_live_traffic(db_session, turns=3, down_votes=3)
 
     with caplog.at_level(logging.INFO):
@@ -127,7 +129,6 @@ def test_the_job_emits_an_online_eval_signal_event_for_every_signal(
     assert exit_code == 0
     records = _signal_records(caplog)
     assert {r.signal_name for r in records} == {
-        "budget_exhaustion_rate",
         "clarification_rate",
         "zero_result_rate",
         "slow_turn_rate",

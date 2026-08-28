@@ -512,7 +512,10 @@ def test_the_alert_fires_once_there_is_enough_evidence(db):
     assert signal.breached is True
 
 
-def test_compute_online_signals_returns_all_five_named_by_the_doc(db):
+def test_compute_online_signals_returns_the_four_live_signals(db):
+    """Gap 305 (2026-08-28): `budget_exhaustion_rate` is retired from the
+    default online set (permanently dead, see the module docstring) -- this
+    used to assert five names, now asserts four and that it is NOT among them."""
     session_id = make_session(db)
     add_turn(db, session_id)
     add_vote(db, session_id, "down", reason="wrong_data")
@@ -520,7 +523,6 @@ def test_compute_online_signals_returns_all_five_named_by_the_doc(db):
 
     result = compute_online_signals(db, now=NOW)
     assert [signal.name for signal in result.signals] == [
-        "budget_exhaustion_rate",
         "clarification_rate",
         "zero_result_rate",
         "slow_turn_rate",
@@ -567,9 +569,10 @@ def test_empty_database_produces_absent_values_not_zeroes(db):
 
 def test_emit_online_signals_mirrors_every_signal_with_its_confidence(db, caplog):
     """A workbook cannot query Postgres, so the online panel reads these events.
-    `confidence` has to travel on the event: three of the five signals are a
-    proxy/heuristic/offline-only measurement, and a panel that rendered all five
-    as equally solid would be worse than no panel."""
+    `confidence` has to travel on the event: two of the four signals are a
+    proxy/heuristic measurement, and a panel that rendered all four as equally
+    solid would be worse than no panel. Gap 305 (2026-08-28): five became four,
+    `budget_exhaustion_rate` retired from the default online set."""
     import logging
 
     import telemetry
@@ -582,12 +585,11 @@ def test_emit_online_signals_mirrors_every_signal_with_its_confidence(db, caplog
     with caplog.at_level(logging.INFO):
         emitted = emit_online_signals(signals, window_days=7)
 
-    assert emitted == 5
+    assert emitted == 4
     records = [
         r for r in caplog.records if r.getMessage() == telemetry.ONLINE_SIGNAL_EVENT_NAME
     ]
     assert {r.signal_name for r in records} == {
-        "budget_exhaustion_rate",
         "clarification_rate",
         "zero_result_rate",
         "slow_turn_rate",
@@ -597,7 +599,6 @@ def test_emit_online_signals_mirrors_every_signal_with_its_confidence(db, caplog
     assert by_name["zero_result_rate"].confidence == CONFIDENCE_MEASURED
     assert by_name["zero_result_rate"].value == 1.0
     assert by_name["slow_turn_rate"].confidence == CONFIDENCE_PROXY
-    assert by_name["budget_exhaustion_rate"].confidence == CONFIDENCE_OFFLINE_ONLY
     assert by_name["clarification_rate"].confidence == CONFIDENCE_HEURISTIC
     assert all(r.window_days == 7 for r in records)
 
@@ -615,7 +616,7 @@ def test_an_unmeasured_signal_emits_no_value_rather_than_a_zero(db, caplog):
     records = [
         r for r in caplog.records if r.getMessage() == telemetry.ONLINE_SIGNAL_EVENT_NAME
     ]
-    assert len(records) == 5
+    assert len(records) == 4
     assert all(not hasattr(r, "value") for r in records)
     assert all(r.denominator == 0 for r in records)
 
@@ -636,7 +637,7 @@ def test_a_sub_day_window_survives_onto_the_event_instead_of_truncating_to_zero(
     records = [
         r for r in caplog.records if r.getMessage() == telemetry.ONLINE_SIGNAL_EVENT_NAME
     ]
-    assert len(records) == 5
+    assert len(records) == 4
     assert all(r.window_days == 0.25 for r in records)
 
 
@@ -647,7 +648,7 @@ def test_a_broken_emitter_never_loses_a_computed_window(db, monkeypatch):
         raise RuntimeError("Application Insights is down")
 
     monkeypatch.setattr(telemetry, "_emit_event", _explode)
-    assert emit_online_signals(compute_online_signals(db, now=NOW)) == 5
+    assert emit_online_signals(compute_online_signals(db, now=NOW)) == 4
 
 
 # ---------------------------------------------------------------------------
