@@ -10,6 +10,7 @@ import telemetry
 from telemetry import tracked_llm_call
 from utils.llm import get_llm
 from utils.rule_schema import normalize_constraints
+from services.turn_drift import detect_turn_drift
 from chroma_client import query_invoice_chunks
 # Gap 313: the persona is imported, never re-typed. `agents/sage_prompts.py` is
 # pure text plus a `models.Invoice` reflection -- no langgraph, no tool module --
@@ -2702,6 +2703,42 @@ def _session_turn_position(session_id: str, db_session) -> tuple[Optional[int], 
         return None, None
 
 
+def _previous_assistant_sql(session_id: str, db_session) -> Optional[str]:
+    """Gap 324: the last assistant turn's `generated_sql` in this session, for
+    the online drift heuristic to compare this turn's SQL against.
+
+    Only ever reads already-committed rows -- this turn's own message rows are
+    written by the caller after `run_query_agent()` returns, so there is no
+    risk of a turn comparing itself against itself. Empty string (not raised)
+    on any failure or on a genuine first turn, same convention as
+    `_session_turn_position()`.
+    """
+    try:
+        from uuid import UUID as _UUID
+
+        from sqlmodel import select
+
+        from models import ChatMessage
+
+        row = db_session.exec(
+            select(ChatMessage.generated_sql)
+            .where(
+                ChatMessage.session_id == _UUID(str(session_id)),
+                ChatMessage.role == "assistant",
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        ).first()
+        return str(row or "") if row else ""
+    except Exception as e:
+        try:
+            db_session.rollback()
+        except Exception:  # pragma: no cover - nothing left to salvage
+            pass
+        logger.debug("Could not resolve previous turn SQL for session %s: %s", session_id, e)
+        return ""
+
+
 def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_session) -> dict:
     """
     RAG Query Agent routing natural language inputs to semantic context indexers,
@@ -2726,7 +2763,15 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
         turn.turn_index, turn.seconds_since_prev_turn = _session_turn_position(
             session_id, db_session
         )
+        prev_sql = _previous_assistant_sql(session_id, db_session)
         result = _run_query_agent(session_id, user_message, tenant_id, db_session, turn)
+        # Gap 324: computed after the turn resolves (every path sets
+        # turn.generated_sql before returning, including the cache-hit and
+        # SAGE-decline shortcuts), against the SQL fetched above -- a row
+        # this turn has not written yet, so there is no self-comparison risk.
+        turn.drift_flags = detect_turn_drift(
+            prev_sql=prev_sql, curr_sql=turn.generated_sql, curr_question=user_message
+        )
         # Attached here rather than inside, so no early return can skip it and
         # so it lands after `set_cached_answer()` for the same reason
         # `judge_evidence` does: the Redis payload keeps exactly the shape it had.

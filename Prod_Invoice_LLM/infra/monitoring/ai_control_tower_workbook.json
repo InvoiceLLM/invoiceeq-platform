@@ -823,9 +823,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
         "size": 0,
-        "title": "Spend by run_source — 7d (USD).",
+        "title": "Spend — production only — 7d (USD). Gap 324 split: real user chat traffic, was mixed with job runs in one table below.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "gridSettings": {
@@ -848,7 +848,38 @@
           ]
         }
       },
-      "name": "a2-spend-by-run-source"
+      "name": "a2a-spend-production"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source in (\"golden\", \"predeploy\")\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
+        "size": 0,
+        "title": "Spend — job runs only — 7d (USD). golden = nightly/adhoc benchmark, predeploy = CI pre-deploy gate. Gap 324 split from the production table above.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Value",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "Default",
+                    "thresholdValue": null,
+                    "representation": "blue",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "a2b-spend-by-job"
     },
     {
       "type": 1,
@@ -1350,6 +1381,30 @@
         }
       },
       "name": "b7-answer-shape"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let turns = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"chat_turn\"\n    | extend d = parse_json(Properties)\n    | extend\n        drift_flags = tostring(d.drift_flags),\n        run_source  = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\";\nlet total = toscalar(turns | count | project Count);\nturns\n| where isnotempty(drift_flags)\n| mv-expand flag = split(drift_flags, \",\")\n| summarize turns = count() by flag = tostring(flag)\n| extend Pct = round(100.0 * turns / total, 1)\n| project Metric = strcat(\"drift — \", flag), Value = Pct, Detail = strcat(turns, \"/\", total, \" turns (last 30d)\")\n| order by Metric asc",
+        "size": 0,
+        "title": "Drift-flagged turns by type (%) — 30d, production only. Gap 324: services/turn_drift.py's deterministic heuristic (dropped_filter / stale_entity) — a candidate for human review, not a hard verdict. Empty grid means no flags fired, not that the check did not run.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "b8-drift-flags"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated > ago(30d)\n| where Name == \"chat_turn\"\n| extend d = parse_json(Properties)\n| extend\n    session_id  = tostring(d.session_id),\n    drift_flags = tostring(d.drift_flags),\n    route       = tostring(d.route),\n    status      = tostring(d.status),\n    turn_index  = toint(d.turn_index),\n    run_source  = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| where isnotempty(drift_flags)\n| order by TimeGenerated desc\n| project TimeGenerated, session_id, turn_index, route, status, drift_flags\n| take 25",
+        "size": 0,
+        "title": "Recent drift-flagged turns — 30d, no generated_sql/tool_output (same convention as the per-session drill-down below). Paste session_id into the SessionId parameter above to see the full turn sequence.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "b9-drift-flagged-turns"
     },
     {
       "type": 1,

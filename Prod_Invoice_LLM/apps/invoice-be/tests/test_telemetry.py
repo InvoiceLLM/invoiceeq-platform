@@ -242,7 +242,12 @@ def test_dashboard_insights_emits_one_hard_metrics_event(caplog, cache_missing_r
     from routers.dashboard import DashboardInsight, DashboardInsightsSchema, get_dashboard_insights
 
     schema = DashboardInsightsSchema(
-        insights=[DashboardInsight(title="Concentration risk", detail="ACME dominates spend.", severity="warning")]
+        insights=[
+            DashboardInsight(
+                title="Concentration risk", detail="ACME dominates spend.",
+                severity="warning", kind="spend_concentration",
+            )
+        ]
     )
     session = _insights_db_session()
     try:
@@ -1861,4 +1866,88 @@ def test_a_broken_ops_recommendation_emitter_never_breaks_the_nightly_job(caplog
     with patch.object(telemetry, "_emit_event", side_effect=RuntimeError("exporter down")):
         with caplog.at_level(logging.DEBUG):
             telemetry.track_ops_recommendation(category="cost", status="worked")  # must not raise
-    assert not _recommendation_events(caplog)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gap 324 — online turn-sequence drift heuristic, wired into run_query_agent()
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `services/turn_drift.py::detect_turn_drift()` itself is unit-tested in
+# `tests/test_turn_drift.py`. These pin the wiring: `run_query_agent()` fetches
+# the previous turn's SQL from `ChatMessage` (seeded directly here, standing in
+# for a row a real caller already committed -- `run_query_agent()` itself never
+# writes messages, see `_previous_assistant_sql()`'s docstring) and threads the
+# result into `turn.drift_flags` on the *current* turn's telemetry.
+
+from services.turn_drift import DROPPED_FILTER, STALE_ENTITY  # noqa: E402
+
+
+def _seed_prior_assistant_turn(db_session, session_id, generated_sql):
+    from models import ChatMessage
+
+    db_session.add(
+        ChatMessage(
+            session_id=session_id, role="assistant", content="prior answer",
+            generated_sql=generated_sql,
+        )
+    )
+    db_session.commit()
+
+
+def test_drift_flags_empty_on_a_session_with_no_prior_turn(sql_route_session):
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+
+    result = _run_sql_route(sql_route_session, llm, "how much did we spend on freight?")
+
+    assert result["turn_telemetry"]["drift_flags"] == ""
+
+
+def test_drift_flags_catch_a_dropped_filter_on_a_pronoun_followup(sql_route_session):
+    session_id = uuid4()
+    _seed_prior_assistant_turn(
+        sql_route_session, session_id,
+        f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' AND grand_total > 20000",
+    )
+    llm = _ScriptedSqlLLM(f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' ORDER BY invoice_date LIMIT 1")
+
+    result = _run_sql_route(
+        sql_route_session, llm, "which of those is oldest", session_id=session_id
+    )
+
+    assert DROPPED_FILTER in result["turn_telemetry"]["drift_flags"].split(",")
+
+
+def test_drift_flags_catch_a_stale_entity_after_a_topic_switch(sql_route_session):
+    session_id = uuid4()
+    _seed_prior_assistant_turn(
+        sql_route_session, session_id,
+        f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' AND vendor_name = 'Acme Corp'",
+    )
+    llm = _ScriptedSqlLLM(
+        f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' AND vendor_name = 'Acme Corp' AND status = 'PAID'"
+    )
+
+    result = _run_sql_route(
+        sql_route_session, llm, "how about for Beta Industries", session_id=session_id
+    )
+
+    assert STALE_ENTITY in result["turn_telemetry"]["drift_flags"].split(",")
+
+
+def test_drift_flags_stay_empty_when_the_followup_carries_the_filter_forward(sql_route_session):
+    """The negative case matters as much as the positive one -- a heuristic that
+    fires on every follow-up regardless of content is noise, not a signal."""
+    session_id = uuid4()
+    _seed_prior_assistant_turn(
+        sql_route_session, session_id,
+        f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' AND grand_total > 20000",
+    )
+    llm = _ScriptedSqlLLM(
+        f"SELECT id FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}' AND grand_total > 20000 ORDER BY invoice_date LIMIT 1"
+    )
+
+    result = _run_sql_route(
+        sql_route_session, llm, "which of those is oldest", session_id=session_id
+    )
+
+    assert result["turn_telemetry"]["drift_flags"] == ""

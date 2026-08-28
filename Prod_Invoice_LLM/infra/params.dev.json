@@ -15,7 +15,7 @@
       "value": "eastus2"
     },
     "namingPrefix": {
-      "value": "invoice-llm"
+      "value": "invoicellm"
     },
     "networkIsolation": {
       "value": false
@@ -66,16 +66,16 @@
       "value": 20000
     },
     "backendImage": {
-      "value": "acrinvoicellmdev.azurecr.io/invoice-be:latest"
+      "value": "acrinvoicellmdev2.azurecr.io/invoice-be:latest"
     },
     "queueWorkerImage": {
-      "value": "acrinvoicellmdev.azurecr.io/queue-worker:latest"
+      "value": "acrinvoicellmdev2.azurecr.io/queue-worker:latest"
     },
     "frontendImage": {
-      "value": "acrinvoicellmdev.azurecr.io/invoice-fe:latest"
+      "value": "acrinvoicellmdev2.azurecr.io/invoice-fe:latest"
     },
     "websiteImage": {
-      "value": "acrinvoicellmdev.azurecr.io/invoice-website:latest"
+      "value": "acrinvoicellmdev2.azurecr.io/invoice-website:latest"
     },
     "googleClientId": {
       "value": "147555722752-0mcfrfdrlhqdir5jeume0kqo04j5t4ee.apps.googleusercontent.com"

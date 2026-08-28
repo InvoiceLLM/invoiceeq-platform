@@ -1035,6 +1035,7 @@ class ChatTurn:
         "agents_called", "generated_sql", "sql_attempts", "zero_result",
         "zero_result_fallback_recovered", "citation_count", "result_invoice_count",
         "tool_output", "turn_index", "seconds_since_prev_turn", "error_type",
+        "drift_flags",
     )
 
     def __init__(self, *, session_id: str = "", tenant_id: str = "") -> None:
@@ -1064,6 +1065,10 @@ class ChatTurn:
         self.turn_index: Optional[int] = None
         self.seconds_since_prev_turn: Optional[float] = None
         self.error_type = ""
+        # Gap 324: online drift heuristic flags for this turn (empty = none
+        # detected), set by `agents/query_agent.py::run_query_agent()` after
+        # the turn resolves. See `services/turn_drift.py`.
+        self.drift_flags: list = []
 
     def record_llm_call(self, agent_name: str, tokens_in: int, tokens_out: int) -> None:
         """One `tracked_llm_call()` finished inside this turn."""
@@ -1104,6 +1109,7 @@ class ChatTurn:
             "turn_index": self.turn_index,
             "seconds_since_prev_turn": self.seconds_since_prev_turn,
             "error_type": self.error_type,
+            "drift_flags": ",".join(self.drift_flags),
         }
 
 
@@ -1182,6 +1188,7 @@ def track_chat_turn(
     seconds_since_prev_turn: Optional[float] = None,
     error_type: str = "",
     tenant_id: str = "",
+    drift_flags: str = "",
     **extra_attributes: Any,
 ) -> None:
     """Emit one ``chat_turn`` custom event — the Trace (Gap 302) for one turn.
@@ -1238,6 +1245,10 @@ def track_chat_turn(
             # result was 11,998 chars" are distinguishable in a query.
             "tool_output_chars": len(str(tool_output or "")),
             "error_type": str(error_type or ""),
+            # Gap 324: comma-joined flag names from services/turn_drift.py's
+            # heuristic, "" when none fired. Never None -- a rate query needs
+            # every turn present in the denominator, not just flagged ones.
+            "drift_flags": str(drift_flags or ""),
             "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
             "request_id": str(request_id_ctx.get() or ""),
             "trace_id": str(trace_id_ctx.get() or ""),
