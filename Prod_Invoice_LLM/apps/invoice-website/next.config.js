@@ -53,7 +53,7 @@ const nextConfig = {
     // Fixing that needs a per-path rule, not a prefix, so it is left alone.
     // invoice-website's own app/api/contact/ is local for the same reason.
     // Comment-only update -- the feApiPrefixes array itself is unchanged.
-    const feApiPrefixes = ["admin", "audit", "auth", "chat", "connectors", "dashboard", "docs", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
+    const feApiPrefixes = ["admin", "audit", "auth", "autopilot", "chat", "connectors", "dashboard", "docs", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
 
     const pageRewrites = [
       ...fePages.flatMap((p) => [
