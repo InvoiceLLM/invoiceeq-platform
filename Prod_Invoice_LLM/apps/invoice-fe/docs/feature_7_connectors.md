@@ -1,5 +1,16 @@
 # Feature 7: Third-Party Connectors & Explorer View
 
+> **⚠️ Salesforce — removed 2026-08-28, see Gap 334 (BE) / Gap 322 (FE).** Google Drive is now
+> the only connector. Salesforce references below are struck through and kept as historical
+> record, not deleted. Two independent causes: (1) the OAuth app is a Salesforce **External
+> Client App** with **Distribution State = Local**, which structurally blocks cross-org OAuth
+> — confirmed live against `ca-invoice-be-dev` with Salesforce's own
+> `OAUTH_AUTHORIZATION_BLOCKED — Cross-org OAuth flows are not supported for this external
+> client app`, and unfixable by any setting (new classic Connected Apps were also blocked as of
+> Spring '26); (2) wrong data model — the connector browsed Salesforce **Libraries**
+> (`ContentWorkspace`), but real invoices live on **Account/Opportunity** records.
+
+
 Build integration connection toggles, folder navigation trees, and bulk file import controls.
 
 **Corrected 2026-07-30**: this doc previously claimed Tasks 7.1/7.2 and all their files were "not yet created" — that was stale. All three files already existed on master (landed in an earlier commit, `7cc9186`) and are now functionally correct end-to-end after two real fixes (see Task 7.1 below and Gap 98 in `fe_features_tracker.md`).
@@ -22,7 +33,7 @@ The **admin connects once** under **Settings → Connectors** (`IntegrationCard.
 * Backend endpoints: `get_connectors_status()`, `get_auth_url()`, `oauth_callback()`, `list_connector_files()`, `trigger_file_import()` — Google Drive does real OAuth + real file listing/download as of 2026-07-30, see `docs/feature_9_connectors.md`.
 
 ### Tasks
-- `[x]` **Task 7.1: Build Integration Cards Grid** — done, plus one real bug found and fixed 2026-07-30: `handleConnect()` never redirected the browser to the real OAuth consent screen — it faked the authorization code client-side (`mock_code_for_${provider}`) and called the callback directly. Harmless while the backend was also fully mocked; would have actively broken the moment the backend started doing real token exchange (Feature 9, Gap 98), since Google/Salesforce would reject a fabricated code. Fixed: `handleConnect` now does `window.location.href = auth_url`; a confirmation banner reads `?connected=` after the round trip.
+- `[x]` **Task 7.1: Build Integration Cards Grid** — done, plus one real bug found and fixed 2026-07-30: `handleConnect()` never redirected the browser to the real OAuth consent screen — it faked the authorization code client-side (`mock_code_for_${provider}`) and called the callback directly. Harmless while the backend was also fully mocked; would have actively broken the moment the backend started doing real token exchange (Feature 9, Gap 98), since Google ~~/Salesforce~~ would reject a fabricated code. Fixed: `handleConnect` now does `window.location.href = auth_url`; a confirmation banner reads `?connected=` after the round trip.
 - `[x]` **Task 7.2: Code Directory Folder Explorer** — done; already correctly wired to the real endpoints, no bug found here. Now also mounted from the Ingestion tab (`ConnectorBrowseBar`), not just Settings.
 - `[x]` **Task 7.3: Implement Bulk Import Trigger** — done (`FolderTreeExplorer`'s "Import Selected Files" button). **Fixed 2026-08-06 (Gap 166):** the loop ignored the response entirely — only a network-level throw was caught — so a rejected import still ended on the green "Import request queued!" banner. It now does `if (!res.ok) throw` per file with the backend's `detail`/`error` as the message (the `EmailSendersList.tsx` pattern), aborts on the first failure, and renders the error in the footer via new `importError` state.
 

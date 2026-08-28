@@ -56,20 +56,20 @@ export const AUTOPILOT_HELP_SECTIONS: HelpSection[] = [
     body: (
       <>
         <P>
-          <strong>Tenant Autopilot</strong> automates the ingestion of supplier invoices from your cloud folders (e.g. Google Drive or Salesforce) directly into your extraction pipeline.
+          <strong>Tenant Autopilot</strong> automates the ingestion of supplier invoices from your Google Drive folders directly into your extraction pipeline.
         </P>
         
         <Shot
           src="/help/autopilot/01-autopilot-setup.png"
           alt="Autopilot settings configuration view"
-          caption="Configure target directories and sync intervals for Google Drive and Salesforce sources."
+          caption="Configure target directories and sync intervals for your Google Drive source."
         />
 
         <div className="space-y-2 mt-4">
           <h4 className="text-xs font-semibold text-white uppercase tracking-wider">How It Works</h4>
           <ol className="space-y-1.5 text-xs text-slate-300 list-decimal pl-5">
             <li>
-              <strong>Connect Folder Source:</strong> Go to <strong>Settings → Connectors</strong> to authorize access to your Google Drive or Salesforce account via OAuth.
+              <strong>Connect Folder Source:</strong> Go to <strong>Settings → Connectors</strong> to authorize access to your Google Drive account via OAuth.
             </li>
             <li>
               <strong>Configure Target Folder:</strong> Use the folder browser browser component inside the Autopilot dashboard to select the specific directory to sweep.

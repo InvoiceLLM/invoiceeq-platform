@@ -3,8 +3,14 @@
 /**
  * Feature 7 — IntegrationCard.tsx
  *
- * Connection toggle (OAuth flow) for a connector provider (Google Drive /
- * Salesforce), plus the saved default browse folder per direction.
+ * Connection toggle (OAuth flow) for a connector provider (Google Drive),
+ * plus the saved default browse folder per direction.
+ *
+ * FE Gap 322 (2026-08-28): Salesforce removed. The `provider` prop's union is
+ * now single-valued and the per-provider subtitle ternary it fed has been
+ * replaced by the Drive copy directly. The prop itself is kept rather than
+ * dropped — it still names which provider the card represents, and keeping it
+ * means a second provider does not have to reintroduce the parameter.
  *
  * FE Gap 165: this card used to be headed "Folder Mappings" and promised
  * folders that "automatically import"/"export" — none of that exists. There is
@@ -28,7 +34,7 @@ import {
 } from "lucide-react";
 
 interface IntegrationCardProps {
-  provider: "google_drive" | "salesforce";
+  provider: "google_drive";
   label: string;
   status: "Active" | "Inactive" | "Not Configured";
   icon: React.ComponentType<any>;
@@ -70,7 +76,7 @@ export default function IntegrationCard({
             <div>
               <h3 className="font-semibold text-sm text-white">{label}</h3>
               <p className="text-[11px] text-slate-400">
-                {provider === "google_drive" ? "Google workspace document library" : "Salesforce PO & accounts files"}
+                Google workspace document library
               </p>
             </div>
           </div>

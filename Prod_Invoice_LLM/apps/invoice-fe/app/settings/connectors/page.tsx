@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { HardDrive, Cpu, Loader2, CheckCircle } from "lucide-react";
+import { HardDrive, Loader2, CheckCircle } from "lucide-react";
 import IntegrationCard from "@/components/connectors/IntegrationCard";
 import FolderTreeExplorer from "@/components/connectors/FolderTreeExplorer";
 import { useAuth } from "@/hooks/useAuth";
@@ -33,14 +33,13 @@ import {
 
 interface ConnectionStatuses {
   google_drive: "Active" | "Inactive" | "Not Configured";
-  salesforce: "Active" | "Inactive" | "Not Configured";
 }
 
 export default function ConnectorsPage() {
   // FE Gap 110: own h-16 header bar replaced by the shared one.
   usePageHeader({
     title: "Third-Party Connectors",
-    subtitle: "Map Google Drive and Salesforce documents to service pipelines",
+    subtitle: "Map Google Drive documents to service pipelines",
     backHref: "/settings",
   });
 
@@ -60,7 +59,6 @@ export default function ConnectorsPage() {
   type ShortcutMap = Record<ConnectorProvider, Record<ConnectorDirection, FolderShortcut | null>>;
   const [shortcuts, setShortcuts] = useState<ShortcutMap>({
     google_drive: { inbound: null, outbound: null },
-    salesforce: { inbound: null, outbound: null },
   });
 
   // Active explorer state
@@ -77,7 +75,6 @@ export default function ConnectorsPage() {
       const data = await res.json();
       setStatuses({
         google_drive: data.google_drive || "Not Configured",
-        salesforce: data.salesforce || "Not Configured",
       });
     } catch (err) {
       console.error("Failed to load connector status", err);
@@ -95,10 +92,6 @@ export default function ConnectorsPage() {
         inbound: readFolderShortcut("google_drive", "inbound"),
         outbound: readFolderShortcut("google_drive", "outbound"),
       },
-      salesforce: {
-        inbound: readFolderShortcut("salesforce", "inbound"),
-        outbound: readFolderShortcut("salesforce", "outbound"),
-      },
     });
 
     // Strip ?connected= from the URL after reading it, so a refresh doesn't
@@ -108,7 +101,7 @@ export default function ConnectorsPage() {
     }
 
     // This page is also what renders inside the OAuth popup itself once
-    // Google/Salesforce redirects back (see handleConnect below) -- if we're
+    // Google redirects back (see handleConnect below) -- if we're
     // running inside a popup (window.opener set) and just connected
     // successfully, show the banner briefly then close automatically so the
     // user lands back on the main app window without an extra manual step.
@@ -121,7 +114,7 @@ export default function ConnectorsPage() {
   // --- OAuth trigger: opens the provider's real consent screen in a popup
   // instead of navigating the main window away, so the user never loses
   // their place in the app. A true <iframe> embed isn't possible here --
-  // Google/Salesforce both block being framed (X-Frame-Options/CSP) to
+  // Google blocks being framed (X-Frame-Options/CSP) to
   // prevent clickjacking on their login pages -- a popup is the closest
   // equivalent that still keeps the main window in place. ---
   const handleConnect = async (provider: string) => {
@@ -242,20 +235,6 @@ export default function ConnectorsPage() {
           onBrowse={(dir) => setExplorer({ provider: "google_drive", direction: dir })}
         />
 
-        {/* Salesforce Card */}
-        <IntegrationCard
-          provider="salesforce"
-          label="Salesforce Files"
-          status={statuses.salesforce}
-          icon={Cpu}
-          isAdmin={isAdmin}
-          inboundFolder={shortcuts.salesforce.inbound?.name || null}
-          outboundFolder={shortcuts.salesforce.outbound?.name || null}
-          onConnect={() => handleConnect("salesforce")}
-          onDisconnect={() => handleDisconnect("salesforce")}
-          isConnecting={isConnecting["salesforce"] || false}
-          onBrowse={(dir) => setExplorer({ provider: "salesforce", direction: dir })}
-        />
 
         {/* Dynamic Explorer Drawer / Section */}
         {explorer && (

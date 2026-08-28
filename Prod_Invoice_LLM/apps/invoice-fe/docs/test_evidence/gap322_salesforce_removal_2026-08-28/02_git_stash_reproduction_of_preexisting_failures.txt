@@ -1,0 +1,29 @@
+To determine whether the 3 stably-failing tests below are regressions from the
+Salesforce removal or pre-existing/environmental, the whole invoice-fe diff for
+this session was stashed out (git stash push -u -- Prod_Invoice_LLM/apps/invoice-fe)
+and each failing test re-run against clean HEAD (commit 91a41cd, "fix(be): Gap 333 -
+Autopilot Google Drive sync gdrive/google_drive mismatch"):
+
+1) e2e/group-a-layout-overflow.spec.ts:201 "toggle is absent for a receive-only
+   tenant (unchanged behavior)" -- FAILS IDENTICALLY on clean HEAD.
+   Expected: 0 "Receiving" buttons. Received: 1. Same assertion, same failure,
+   with or without the Salesforce removal changes applied.
+
+2) e2e/gaps-282-284-286.spec.ts:152 "the metadata panel is reachable by scrolling
+   the fields column, not clipped below it" -- FAILS IDENTICALLY on clean HEAD.
+   "viewport ratio 0" on the same locator.
+
+3) e2e/gaps-282-284-286.spec.ts:199 "the correctable fields keep a usable share of
+   the column and stay scrollable" -- FAILS IDENTICALLY on clean HEAD.
+   "Expected: > 1322, Received: 1322" -- scroll height exactly equals client height,
+   i.e. no overflow measured, same on both trees.
+
+All three are pixel/geometry assertions (viewport ratio, scrollHeight vs
+clientHeight) unrelated to any connectors/autopilot/Salesforce code path, and none
+of the files these 3 tests exercise (group-a-layout-overflow.spec.ts itself,
+app/dashboard, app/ingestion's PageHeader tabs, the invoice review metadata panel)
+appear in this session's diff at all except app/ingestion/page.tsx -- and that
+file's diff is confined to the Autopilot Cloud Source modal at the bottom of the
+page, nowhere near the PageHeader Receiving/Sending toggle Gap 86 tests.
+
+git stash pop afterwards restored all Salesforce-removal changes.

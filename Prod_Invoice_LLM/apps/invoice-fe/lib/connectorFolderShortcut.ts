@@ -25,7 +25,12 @@
  * before this change still resolves (as a name-only shortcut, see `read`).
  */
 
-export type ConnectorProvider = "google_drive" | "salesforce";
+/**
+ * FE Gap 322 (2026-08-28): Salesforce removed, so this union has a single
+ * member. Kept as a named union rather than inlined to `"google_drive"`
+ * everywhere, so adding a second provider stays a one-line change here.
+ */
+export type ConnectorProvider = "google_drive";
 export type ConnectorDirection = "inbound" | "outbound";
 
 export interface FolderShortcut {
@@ -37,7 +42,6 @@ export interface FolderShortcut {
 
 const STORAGE_KEYS: Record<ConnectorProvider, Record<ConnectorDirection, string>> = {
   google_drive: { inbound: "map_gdrive_in", outbound: "map_gdrive_out" },
-  salesforce: { inbound: "map_sf_in", outbound: "map_sf_out" },
 };
 
 export function readFolderShortcut(

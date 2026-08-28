@@ -378,7 +378,7 @@ test.describe("Gap 284 — outbound ingestion opens exactly one live log box", (
   }) => {
     await stubCommon(page, { receive_invoices_enabled: true, send_invoices_enabled: true });
     await page.route("**/api/connectors/status", (route) =>
-      route.fulfill(json({ google_drive: "Inactive", salesforce: "Inactive" }))
+      route.fulfill(json({ google_drive: "Inactive" }))
     );
     await page.route("**/api/outbound-invoices/upload", (route) =>
       route.fulfill(json({ invoice_id: UPLOADED_INVOICE, batch_id: OUTBOUND_BATCH }))

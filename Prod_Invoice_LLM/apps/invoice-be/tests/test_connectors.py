@@ -1,7 +1,6 @@
 import pytest
 from uuid import uuid4, UUID
 from datetime import datetime, timedelta
-from urllib.parse import urlparse, parse_qs
 from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
@@ -39,19 +38,6 @@ def override_db_session(db_session):
     app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def real_salesforce_credentials(monkeypatch):
-    """Forces has_real_credentials("salesforce", ...) to True so a test can
-    exercise the real PKCE branch of get_auth_url()/oauth_callback() instead
-    of the mock fallback. Without this, whether these tests pass depends on
-    ambient .env state (whether SALESFORCE_CLIENT_ID happens to be a real,
-    non-"placeholder" value on whatever machine runs them) rather than being
-    deterministic -- exactly the isolation gap that made these tests only
-    ever pass by accident on some machines and not others."""
-    from config import get_settings
-    monkeypatch.setattr(get_settings(), "SALESFORCE_CLIENT_ID", "real_test_salesforce_client_id")
-    monkeypatch.setattr(get_settings(), "SALESFORCE_CLIENT_SECRET", "real_test_salesforce_client_secret")
-
 def test_encryption_decryption():
     """Verify that credentials can be successfully encrypted and decrypted."""
     plain_token = "my-super-secret-oauth-refresh-token-12345"
@@ -67,7 +53,8 @@ def test_connectors_status_not_configured(db_session):
     assert response.status_code == 200
     data = response.json()
     assert data["google_drive"] == "Not Configured"
-    assert data["salesforce"] == "Not Configured"
+    # Gap 334: google_drive is now the only key in the status map.
+    assert "salesforce" not in data
 
 def test_connectors_status_active(db_session):
     """Verify status updates to 'Active' when active credentials exist."""
@@ -88,7 +75,7 @@ def test_connectors_status_active(db_session):
     assert response.status_code == 200
     data = response.json()
     assert data["google_drive"] == "Active"
-    assert data["salesforce"] == "Not Configured"
+    assert "salesforce" not in data  # Gap 334
 
 def test_get_auth_url():
     """Verify auth redirect URL generation endpoint is working."""
@@ -97,96 +84,52 @@ def test_get_auth_url():
     assert "auth_url" in response.json()
     assert "google" in response.json()["auth_url"]
 
-def test_salesforce_pkce_flow(db_session, real_salesforce_credentials):
-    """Some Salesforce Connected Apps require PKCE on the authorization flow
-    (real-world error hit: 'invalid_request: missing required code challenge').
-    get_auth_url() must attach a code_challenge/state and stash the matching
-    code_verifier server-side; oauth_callback() must retrieve it by state and
-    include it in the token exchange payload.
-
-    Real PKCE branch only runs when has_real_credentials() sees a non-
-    placeholder SALESFORCE_CLIENT_ID (utils/connector_oauth.py) -- forced
-    deterministically via the real_salesforce_credentials fixture rather than
-    left to whatever happens to be in the ambient .env.
-    """
-    response = client.get("/api/v1/connectors/auth-url/salesforce")
-    assert response.status_code == 200
-    auth_url = response.json()["auth_url"]
-    assert "code_challenge=" in auth_url
-    assert "code_challenge_method=S256" in auth_url
-    assert "state=" in auth_url
-
-    query = parse_qs(urlparse(auth_url).query)
-    state = query["state"][0]
-
-    captured_payload = {}
-
-    class FakeTokenResponse:
-        status_code = 200
-        def json(self):
-            return {
-                "access_token": "sf_real_token",
-                "refresh_token": "sf_real_refresh",
-                "instance_url": "https://example.my.salesforce.com",
-            }
-
-    async def fake_post(self, url, data=None, **kwargs):
-        captured_payload.update(data or {})
-        return FakeTokenResponse()
-
-    with patch("httpx.AsyncClient.post", new=fake_post), \
-         patch("routers.connectors.verify_salesforce_instance"):
-        response = client.get(
-            f"/api/v1/connectors/callback/salesforce?code=real_code_123&state={state}",
-            follow_redirects=False,
-        )
-
-    assert response.status_code in (302, 307)
-    assert "code_verifier" in captured_payload
-    assert len(captured_payload["code_verifier"]) >= 43  # RFC 7636 minimum length
-
 def test_oauth_callback(db_session):
     """Verify code redirect callback performs token encryption, updates table,
-    and redirects the browser back into the FE (Google/Salesforce land the
-    browser here as a full-page navigation, not a fetch call -- see
+    and redirects the browser back into the FE (the provider lands the browser
+    here as a full-page navigation, not a fetch call -- see
     routers/connectors.py::oauth_callback).
 
-    Forces the mock path via patching rather than relying on salesforce
-    lacking real credentials -- both providers may have real creds configured
-    in this environment's .env now, so ambient state can't be assumed.
+    Gap 334: this test used provider="salesforce" purely as a vehicle for
+    exercising the generic mock-exchange callback path -- nothing about it is
+    Salesforce-specific. Re-pointed to google_drive rather than deleted, so
+    the coverage survives the connector's removal. The mock path is still
+    forced via patching rather than by relying on the provider lacking real
+    credentials, since this environment's .env may configure real ones.
     """
     with patch("routers.connectors._has_real_credentials", return_value=False):
         response = client.get(
-            "/api/v1/connectors/callback/salesforce?code=auth_code_9928",
+            "/api/v1/connectors/callback/google_drive?code=auth_code_9928",
             follow_redirects=False,
         )
     assert response.status_code in (302, 307)
-    assert "connected=salesforce" in response.headers["location"]
+    assert "connected=google_drive" in response.headers["location"]
 
     # Verify db entry
     statement = select(TenantConnection).where(
         TenantConnection.tenant_id == MOCK_TENANT_ID,
-        TenantConnection.provider == "salesforce"
+        TenantConnection.provider == "google_drive"
     )
     conn = db_session.exec(statement).first()
     assert conn is not None
     assert conn.status == "active"
     # Verify tokens are encrypted
-    assert conn.encrypted_access_token != "mock_access_token_salesforce"
-    assert decrypt_token(conn.encrypted_access_token).startswith("mock_access_token_salesforce")
+    assert conn.encrypted_access_token != "mock_access_token_google_drive"
+    assert decrypt_token(conn.encrypted_access_token).startswith("mock_access_token_google_drive")
 
 def test_list_files(db_session):
     """Verify explorer routes list files and handle decryption verification.
 
-    Forces the mock path via patching -- both providers may have real
-    credentials configured in this environment's .env now, so this can't
-    rely on either one being the "safe" mocked provider by default.
+    Gap 334: previously used provider="salesforce" as the vehicle for the
+    generic mock-listing path; re-pointed to google_drive rather than deleted.
+    The mock path is forced via patching, since real credentials may be
+    configured in this environment's .env.
     """
     conn = TenantConnection(
         id=uuid4(),
         tenant_id=MOCK_TENANT_ID,
-        provider="salesforce",
-        encrypted_access_token=encrypt_token("sf_secret"),
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("gd_secret"),
         token_expiry=datetime.utcnow() + timedelta(hours=1),
         status="active"
     )
@@ -194,11 +137,11 @@ def test_list_files(db_session):
     db_session.commit()
 
     with patch("routers.connectors._has_real_credentials", return_value=False):
-        response = client.get("/api/v1/connectors/files/salesforce")
+        response = client.get("/api/v1/connectors/files/google_drive")
     assert response.status_code == 200
     files = response.json()["files"]
     assert len(files) > 0
-    assert files[0]["name"] == "Attachment_ACME_PO_99.pdf"
+    assert files[0]["name"] == "invoice_acme_hardware.pdf"
 
 def test_list_files_real_google_drive(db_session):
     """Gap 98: once a provider has a real Client ID configured (google_drive,
@@ -355,13 +298,19 @@ def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc, db_ses
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
 def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc, db_session):
-    """handle_import_connector_file stores to outbound prefix, no extraction queued."""
+    """handle_import_connector_file stores to outbound prefix, no extraction queued.
+
+    Gap 334: previously passed provider="salesforce" purely as a vehicle for
+    the generic no-active-connection stub path; re-pointed to google_drive
+    rather than deleted. This tenant has no active connection in this test, so
+    the handler still takes the stub-bytes branch, which is what is under test.
+    """
     mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
     mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
     from queue_worker.handlers import handle_import_connector_file
     result = handle_import_connector_file(
-        provider="salesforce",
-        file_id="sf_doc_888",
+        provider="google_drive",
+        file_id="gd_doc_888",
         tenant_id=str(MOCK_TENANT_ID),
         direction="outbound",
         db_session=db_session,
@@ -463,44 +412,75 @@ def test_handle_import_connector_file_refreshes_expired_token(mock_download, moc
     assert conn.token_expiry > datetime.utcnow()
 
 
-def test_oauth_callback_salesforce_verification_failure(db_session, real_salesforce_credentials):
-    """Verify that when Salesforce verification fails during OAuth connect,
-    the callback returns a 502 Bad Gateway and does not save the connection."""
-    import httpx
+# ===========================================================================
+# BE Gap 334 Postgres checkpoint (functional-tester)
+#
+# Everything above runs against the in-memory SQLite fixture (autouse
+# `override_db_session`). Per CONVENTIONS.md hard rule 2, that is not
+# sufficient evidence on its own -- this mirrors the repo's existing
+# `*_on_postgres` pattern (test_auth.py::
+# test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres,
+# test_chat_sql_quality.py::test_taught_line_item_sql_runs_on_postgres):
+# skip cleanly if Postgres isn't reachable, otherwise point the app's real
+# dependency at a session bound to the real Docker Postgres engine and hit
+# the actual HTTP endpoints.
+# ===========================================================================
 
-    # Simulate get_auth_url PKCE state stashing
-    response = client.get("/api/v1/connectors/auth-url/salesforce")
-    auth_url = response.json()["auth_url"]
-    query = parse_qs(urlparse(auth_url).query)
-    state = query["state"][0]
+def test_connectors_status_google_drive_only_on_postgres():
+    """BE Gap 334 Postgres checkpoint: /connectors/status returns only the
+    google_drive key -- salesforce is gone -- against the real Postgres
+    engine, not just the SQLite fixture (test_connectors_status_not_configured
+    / test_connectors_status_active above)."""
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
 
-    class FakeTokenResponse:
-        status_code = 200
-        def json(self):
-            return {
-                "access_token": "sf_real_token",
-                "refresh_token": "sf_real_refresh",
-                "instance_url": "https://example.my.salesforce.com",
-            }
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
 
-    async def fake_post(self, url, data=None, **kwargs):
-        return FakeTokenResponse()
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
 
-    # Mock token request post and make verify_salesforce_instance raise an error
-    with patch("httpx.AsyncClient.post", new=fake_post), \
-         patch("routers.connectors.verify_salesforce_instance", side_effect=httpx.HTTPError("Connection refused")):
-        response = client.get(
-            f"/api/v1/connectors/callback/salesforce?code=real_code_123&state={state}",
-            follow_redirects=False,
-        )
+    conn = None
+    with Session(pg_engine) as pg_session:
+        def get_db_session_override():
+            yield pg_session
 
-    assert response.status_code == 502
-    assert "Failed to verify Salesforce connection" in response.json()["detail"]
+        app.dependency_overrides[get_db_session] = get_db_session_override
+        try:
+            response = client.get("/api/v1/connectors/status")
+            assert response.status_code == 200
+            data = response.json()
+            assert "google_drive" in data
+            assert "salesforce" not in data
 
-    # Verify no connection is active in the database
-    statement = select(TenantConnection).where(
-        TenantConnection.tenant_id == MOCK_TENANT_ID,
-        TenantConnection.provider == "salesforce"
-    )
-    conn = db_session.exec(statement).first()
-    assert conn is None or conn.status != "active"
+            # Insert a real, uniquely-tagged active connection row and confirm
+            # the status flips to Active while salesforce still never appears.
+            conn = TenantConnection(
+                id=uuid4(),
+                tenant_id=MOCK_TENANT_ID,
+                provider="google_drive",
+                encrypted_access_token=encrypt_token("pg_checkpoint_access_token"),
+                encrypted_refresh_token=encrypt_token("pg_checkpoint_refresh_token"),
+                token_expiry=datetime.utcnow() + timedelta(hours=2),
+                status="active",
+            )
+            pg_session.add(conn)
+            pg_session.commit()
+
+            response2 = client.get("/api/v1/connectors/status")
+            assert response2.status_code == 200
+            data2 = response2.json()
+            assert data2["google_drive"] == "Active"
+            assert "salesforce" not in data2
+        finally:
+            app.dependency_overrides.clear()
+            if conn is not None:
+                existing = pg_session.get(TenantConnection, conn.id)
+                if existing:
+                    pg_session.delete(existing)
+                    pg_session.commit()

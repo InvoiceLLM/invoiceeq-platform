@@ -81,7 +81,6 @@ export default function IngestionPage() {
   const [autopilotSourceRefName, setAutopilotSourceRefName] = useState("");
   const [autopilotConnectorStatus, setAutopilotConnectorStatus] = useState<{
     google_drive: string;
-    salesforce: string;
   } | null>(null);
   const [autopilotConnectorChecking, setAutopilotConnectorChecking] = useState(true);
   const [autopilotBrowsing, setAutopilotBrowsing] = useState(false);
@@ -129,10 +128,12 @@ export default function IngestionPage() {
     };
   }, []);
 
-  const autopilotConnectorProvider =
-    autopilotConfig.source_type === "gdrive" ? "google_drive" : "salesforce";
+  // FE Gap 322: Autopilot's source_type vocabulary ('gdrive') still differs
+  // from Connectors' provider vocabulary ('google_drive'), so the translation
+  // stays -- it is just no longer a ternary now that Salesforce is gone.
+  const autopilotConnectorProvider = "google_drive" as const;
   const autopilotConnectorActive =
-    autopilotConnectorStatus?.[autopilotConnectorProvider as "google_drive" | "salesforce"] === "Active";
+    autopilotConnectorStatus?.[autopilotConnectorProvider] === "Active";
 
   // Gap 288: shared by Save and Sync Now so a folder picked in the browser
   // (which only ever touches local `autopilotConfig` state -- see
@@ -766,30 +767,17 @@ export default function IngestionPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {/* Source type */}
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">Cloud Source</label>
-                    <div className="flex gap-3">
-                      {(["gdrive", "salesforce"] as const).map((src) => (
-                        <button
-                          key={src}
-                          onClick={() => setAutopilotConfig((c) => ({ ...c, source_type: src }))}
-                          className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${
-                            autopilotConfig.source_type === src
-                              ? "bg-violet-600/20 border-violet-500/40 text-violet-300"
-                              : "bg-slate-900/40 border-[#222D3D] text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          {src === "gdrive" ? "Google Drive" : "Salesforce"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {/* Source type — FE Gap 322: the "Cloud Source" toggle was a
+                      2-entry Drive/Salesforce picker. With Salesforce removed it
+                      would render a single button that is always already
+                      selected and does nothing, so the whole block is gone.
+                      source_type stays pinned to its 'gdrive' default (see the
+                      autopilotConfig initial state and loadAutopilotConfig). */}
 
                   {/* Source folder — FE Gap 219 */}
                   <div className="space-y-1.5">
                     <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">
-                      {autopilotConfig.source_type === "gdrive" ? "Google Drive Folder" : "Salesforce Directory"}
+                      Google Drive Folder
                     </label>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 min-w-0 rounded-lg border border-[#222D3D] bg-[#0B0F19] px-3 py-2 text-xs text-slate-200 truncate">
@@ -931,7 +919,7 @@ export default function IngestionPage() {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
               <div className="w-full max-w-lg">
                 <FolderTreeExplorer
-                  provider={autopilotConnectorProvider as "google_drive" | "salesforce"}
+                  provider={autopilotConnectorProvider}
                   direction="inbound"
                   selectionMode="folder"
                   onFolderSelected={(folder) => {

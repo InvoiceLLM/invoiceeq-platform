@@ -7,7 +7,7 @@ This is the shared entrypoint called by BOTH:
 
 Sync flow per tenant:
   1. Load TenantAutopilotConfig from DB
-  2. Resolve a valid OAuth token for the configured provider (Drive / Salesforce)
+  2. Resolve a valid OAuth token for the configured provider (Google Drive)
   3. List files from the cloud folder (incremental: since last successful run)
   4. For each file — two-layer deduplication:
        Layer 1: source_file_id in tenant_autopilot_logs → skip if seen
@@ -36,9 +36,7 @@ from models import (
 from services.storage import upload_pdf_to_blob_storage
 from utils.connector_files import (
     download_google_drive_file,
-    download_salesforce_file,
     list_google_drive_files,
-    list_salesforce_files,
 )
 from utils.connector_oauth import get_valid_access_token
 
@@ -49,26 +47,26 @@ logger = logging.getLogger(__name__)
 # BE Gap 288: Autopilot and Connectors name the same provider differently, and
 # the two vocabularies must be translated -- never compared directly.
 #
-#   TenantAutopilotConfig.source_type  -> 'gdrive'      | 'salesforce'
-#   TenantConnection.provider          -> 'google_drive'| 'salesforce'
+#   TenantAutopilotConfig.source_type  -> 'gdrive'
+#   TenantConnection.provider          -> 'google_drive'
 #
 # routers/connectors.py validates every OAuth callback against
-# ["google_drive", "salesforce"] and stores that value, so a real Drive
-# connection is always persisted as 'google_drive'. run_sync() below used to
-# filter `TenantConnection.provider == config.source_type` directly, which for
-# Drive compared 'gdrive' against 'google_drive' and therefore matched
-# nothing: every Google Drive sync failed with "No active gdrive connection
-# for tenant ..." while the Connectors screen simultaneously showed the
-# account as connected (it queries by the 'google_drive' name).
+# ["google_drive"] and stores that value, so a real Drive connection is always
+# persisted as 'google_drive'. run_sync() below used to filter
+# `TenantConnection.provider == config.source_type` directly, which for Drive
+# compared 'gdrive' against 'google_drive' and therefore matched nothing:
+# every Google Drive sync failed with "No active gdrive connection for tenant
+# ..." while the Connectors screen simultaneously showed the account as
+# connected (it queries by the 'google_drive' name).
 #
-# Salesforce is spelled identically in both vocabularies, which is precisely
-# why this presented as a Google-Drive-only failure. The frontend already
-# performs this exact mapping when it checks connector status
-# (app/ingestion/page.tsx: source_type === "gdrive" ? "google_drive" :
-# "salesforce"); this is the same translation, on the side that acts on it.
+# Gap 334 (2026-08-28) removed Salesforce, which was the one provider spelled
+# identically in both vocabularies -- which is precisely why the original bug
+# presented as Google-Drive-only. The mapping is deliberately KEPT rather than
+# inlined now that it has a single entry: the two vocabularies are still
+# genuinely independent, and an unrecognised source_type must still fail
+# loudly instead of silently matching zero connections.
 SOURCE_TYPE_TO_PROVIDER = {
     "gdrive": "google_drive",
-    "salesforce": "salesforce",
 }
 
 
@@ -154,9 +152,6 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
         # list_google_drive_files returns dicts with 'id', 'name', 'type', 'size_bytes'
         # filter to actual files (not folders)
         remote_files = [f for f in remote_files if f.get("type") != "folder"]
-    elif config.source_type == "salesforce":
-        instance_url = connection.instance_url or ""
-        remote_files = list_salesforce_files(access_token, instance_url)
     else:
         raise ValueError(f"Unsupported source_type: {config.source_type}")
 
@@ -193,12 +188,12 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                 continue
 
             # --- Download file bytes ---
-            if config.source_type == "gdrive":
-                file_bytes = download_google_drive_file(access_token, file_id)
-            else:
-                file_bytes = download_salesforce_file(
-                    access_token, connection.instance_url or "", file_id
-                )
+            # Unconditional: the listing step above already raised for any
+            # source_type other than 'gdrive', so by this line Drive is the
+            # only possibility. Gap 334 collapsed what used to be an
+            # if-gdrive/else-salesforce pair -- deleting only the else arm
+            # would have left a conditional with no fallback.
+            file_bytes = download_google_drive_file(access_token, file_id)
 
             # --- Dedup Layer 2: Check content hash ---
             content_hash = hashlib.sha256(file_bytes).hexdigest()

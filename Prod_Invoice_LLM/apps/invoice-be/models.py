@@ -165,16 +165,19 @@ class Invoice(SQLModel, table=True):
 class TenantConnection(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(index=True)
-    provider: str  # e.g., 'google_drive', 'salesforce'
+    provider: str  # 'google_drive' (Gap 334 removed 'salesforce')
     encrypted_access_token: str
     encrypted_refresh_token: str | None = Field(default=None)
     token_expiry: datetime
     status: str = Field(default="active")
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    # Salesforce's REST API base is per-org (unlike Google Drive's fixed
-    # www.googleapis.com) -- Salesforce returns this in every token response
-    # (initial exchange and refresh alike), so it must be stored per-connection
-    # to make any later API call. Unused by google_drive.
+    # DEAD COLUMN, deliberately retained (Gap 334, 2026-08-28). This existed
+    # only for Salesforce, whose REST API base is per-org (unlike Google
+    # Drive's fixed www.googleapis.com), so it had to be stored per-connection.
+    # Nothing writes or reads it now. It is NOT dropped because its migration
+    # (a7b8c9d0e1f2) sits mid-chain -- removing either the column or the
+    # migration would break `alembic upgrade` for any database that already
+    # ran it. Harmless nullable column; leave it alone.
     instance_url: str | None = Field(default=None)
 
 class ChatSession(SQLModel, table=True):
@@ -516,8 +519,9 @@ class WebhookDeliveryLog(SQLModel, table=True):
 
 # Feature 13: Tenant Autopilot — Ingestion & Scheduled Sync
 # Stores per-tenant cloud folder sync configuration. One config row per tenant
-# (enforced via UNIQUE on tenant_id). Supports Google Drive and Salesforce as
-# source types. trigger_mode is 'interval' (minutes) or 'cron' (cron expression).
+# (enforced via UNIQUE on tenant_id). Google Drive is the only supported
+# source type (Gap 334 removed Salesforce).
+# trigger_mode is 'interval' (minutes) or 'cron' (cron expression).
 # flow_direction mirrors Invoice.flow_direction: INBOUND (AP) or OUTBOUND (AR).
 class TenantAutopilotConfig(SQLModel, table=True):
     __tablename__ = "tenant_autopilot_configs"
@@ -527,9 +531,9 @@ class TenantAutopilotConfig(SQLModel, table=True):
     )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(foreign_key="tenant.id")
-    # 'gdrive' | 'salesforce'
+    # 'gdrive' (Gap 334 removed 'salesforce')
     source_type: str = Field(max_length=50)
-    # Google Drive Folder ID or Salesforce Directory ID
+    # Google Drive Folder ID
     source_ref: str = Field(max_length=1024)
     # 'INBOUND' (AP — invoices coming in) | 'OUTBOUND' (AR — invoices going out)
     flow_direction: str = Field(default="INBOUND", max_length=10)
@@ -561,9 +565,10 @@ class TenantAutopilotLog(SQLModel, table=True):
     )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
-    # 'gdrive' | 'salesforce' | 'manual' (for manually triggered syncs)
+    # 'gdrive' | 'manual' (for manually triggered syncs).
+    # Gap 334 removed 'salesforce'; historical rows may still carry it.
     source_type: str = Field(max_length=50)
-    # Google Drive fileId or Salesforce record ID
+    # Google Drive fileId
     source_file_id: str = Field(max_length=255)
     # SHA-256 hash of raw document bytes — reuses email attachment dedup logic
     content_hash: str = Field(max_length=64)

@@ -48,7 +48,7 @@ const INTEGRATIONS: IntegrationTile[] = [
   {
     id: "connectors",
     title: "Connectors",
-    desc: "Google Drive & Salesforce folder mapping",
+    desc: "Google Drive folder mapping",
     href: "/settings/connectors",
     icon: FolderSync,
     iconBg: "bg-cyan-500/10 border-cyan-500/20",

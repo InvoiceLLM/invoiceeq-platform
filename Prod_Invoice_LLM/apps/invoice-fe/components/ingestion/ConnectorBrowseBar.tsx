@@ -2,7 +2,7 @@
 
 /**
  * Ingestion tab entry point for connector-sourced files: once an admin has
- * connected Google Drive/Salesforce in Settings (a tenant-wide connection,
+ * connected Google Drive in Settings (a tenant-wide connection,
  * not per-user -- see TenantConnection), any user browses/imports through
  * this bar instead of going back to Settings. Reuses FolderTreeExplorer
  * as-is; this component's only job is showing which providers are live and
@@ -11,14 +11,19 @@
  * FE Gap 113 item 4: this bar used to `return null` whenever no provider was
  * Active, so the entire "Load from:" row vanished and the capability was
  * undiscoverable -- a user had no way to learn from this screen that files can
- * come from Drive/Salesforce at all. It now always renders every provider:
- * Active ones as a live "Browse ->" button, everything else greyed out behind
- * a lock with a direct link to /settings/connectors.
+ * come from Drive at all. It now always renders every provider: Active ones as
+ * a live "Browse ->" button, everything else greyed out behind a lock with a
+ * direct link to /settings/connectors.
+ *
+ * FE Gap 322 (2026-08-28): Salesforce removed, so PROVIDER_META has a single
+ * entry and the ALL_PROVIDERS loop renders one chip. The map/loop shape is
+ * kept deliberately -- the Gap 113 behaviour above (always render every
+ * provider, Active or locked) is still what this renders, just at N=1.
  */
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { HardDrive, Cpu, Lock } from "lucide-react";
+import { HardDrive, Lock } from "lucide-react";
 import FolderTreeExplorer from "@/components/connectors/FolderTreeExplorer";
 import {
   FolderShortcut,
@@ -26,17 +31,15 @@ import {
   writeFolderShortcut,
 } from "@/lib/connectorFolderShortcut";
 
-type Provider = "google_drive" | "salesforce";
+type Provider = "google_drive";
 type Direction = "inbound" | "outbound";
 
 interface ConnectionStatuses {
   google_drive: "Active" | "Inactive" | "Not Configured";
-  salesforce: "Active" | "Inactive" | "Not Configured";
 }
 
 const PROVIDER_META: Record<Provider, { label: string; icon: React.ComponentType<any> }> = {
   google_drive: { label: "Google Drive", icon: HardDrive },
-  salesforce: { label: "Salesforce", icon: Cpu },
 };
 
 const ALL_PROVIDERS = Object.keys(PROVIDER_META) as Provider[];

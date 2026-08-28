@@ -1,0 +1,21 @@
+$ docker exec invoice-postgres-local psql -U postgres -d invoice_db -c "SELECT count(*) FROM tenantconnection WHERE provider NOT IN ('google_drive');"
+ count
+-------
+     0
+(1 row)
+
+$ docker exec invoice-postgres-local psql -U postgres -d invoice_db -c "SELECT id, name FROM tenant WHERE name = 'PG Checkpoint Tenant';"
+ id | name
+----+------
+(0 rows)
+
+$ docker exec invoice-postgres-local psql -U postgres -d invoice_db -c "SELECT count(*) FROM tenantconnection;"
+ count
+-------
+     0
+(1 row)
+
+Confirms the two new *_on_postgres tests (test_connectors.py::test_connectors_status_google_drive_only_on_postgres,
+test_autopilot.py::test_run_sync_google_drive_translation_and_unsupported_source_type_on_postgres) wrote to and
+cleaned up after themselves on the real Docker Postgres instance (invoice-postgres-local, localhost:5433) -- no
+orphaned TenantConnection or Tenant rows left behind.

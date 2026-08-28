@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     # Where oauth_callback() redirects the browser back to after a connector
-    # OAuth flow completes -- Google/Salesforce hit this backend directly
+    # OAuth flow completes -- Google hits this backend directly
     # (see GOOGLE_REDIRECT_URI), so the backend itself must send the user
     # back into the app rather than leaving them on a bare JSON response.
     # This one targets an *invoice-fe* route (/settings/connectors), so in
@@ -112,12 +112,14 @@ class Settings(BaseSettings):
     AZURE_DOC_INTEL_KEY_3: str = ""
 
     # OAuth Credentials
+    # Salesforce (SALESFORCE_CLIENT_ID/SECRET/REDIRECT_URI) removed 2026-08-28,
+    # Gap 334. The corresponding infra wiring (Key Vault secret, Container App
+    # env vars, params files) is deliberately left in place -- separately
+    # scoped, and an unused env var is harmless where a deleted Key Vault
+    # secret is not trivially reversible.
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = ""
-    SALESFORCE_CLIENT_ID: str = ""
-    SALESFORCE_CLIENT_SECRET: str = ""
-    SALESFORCE_REDIRECT_URI: str = ""
 
     # Feature 11: PayU Billing
     PAYU_MERCHANT_KEY: str = ""

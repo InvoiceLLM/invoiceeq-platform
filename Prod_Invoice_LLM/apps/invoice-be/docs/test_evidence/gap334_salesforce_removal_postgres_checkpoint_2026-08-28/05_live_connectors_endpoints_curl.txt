@@ -1,0 +1,26 @@
+Backend started against real Postgres (localhost:5433, invoice_db) with real .env
+GOOGLE_CLIENT_ID/SECRET, no SQLite override in play (this is the raw uvicorn process,
+not the pytest fixture that overrides get_db_session):
+
+$ uv run uvicorn main:app --port 8000
+
+$ curl -s http://localhost:8000/health
+{"status":"ok"}
+
+$ curl -s http://localhost:8000/api/v1/connectors/status
+{"google_drive":"Not Configured"}
+
+$ curl -s http://localhost:8000/api/v1/connectors/auth-url/google_drive
+{"auth_url":"https://accounts.google.com/o/oauth2/v2/auth?client_id=462421932899-l4l5oesadqrmfrbm2i6er3a6gpfmsm3m.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fapi%2Fv1%2Fconnectors%2Fcallback%2Fgoogle_drive&response_type=code&access_type=offline&prompt=consent&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.readonly"}
+
+$ curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:8000/api/v1/connectors/auth-url/salesforce
+HTTP 400
+
+$ curl -s http://localhost:8000/api/v1/connectors/auth-url/salesforce
+{"detail":"Invalid connector provider 'salesforce'."}
+
+Confirms live, end-to-end (real Postgres + real backend process + real Google OAuth
+client credentials from .env): the connectors status endpoint carries only the
+google_drive key, auth-url generation for google_drive produces a genuine
+accounts.google.com consent URL with the correct client_id/redirect_uri/scope, and
+the removed salesforce provider is now rejected with 400 rather than silently routed.

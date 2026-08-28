@@ -173,7 +173,7 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Connection identifier. |
 | `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL` | Tenant owner. |
-| `provider` | `VARCHAR(50)` | `NOT NULL` | The integration provider (e.g. `'google_drive'`, `'salesforce'`). |
+| `provider` | `VARCHAR(50)` | `NOT NULL` | The integration provider: `'google_drive'`. ~~`'salesforce'`~~ removed 2026-08-28 (Gap 334); historical rows may still carry it. |
 | `encrypted_access_token` | `TEXT` | `NOT NULL` | Access token encrypted at rest via AES-256 Fernet. |
 | `encrypted_refresh_token` | `TEXT` | `NULL` | Refresh token encrypted at rest via AES-256 Fernet. |
 | `token_expiry` | `TIMESTAMPTZ` | `NOT NULL` | Access token expiration timestamp. |
@@ -190,8 +190,8 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Autopilot config identifier. |
 | `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL`, indexed | Tenant owner (single active configuration per tenant). |
-| `source_type` | `VARCHAR(50)` | `NOT NULL` | The source integration type: `'gdrive'`, `'salesforce'`, `'email'`. |
-| `source_ref` | `VARCHAR(1024)` | `NOT NULL` | The folder reference or library path (e.g. Google Drive Folder ID or Salesforce Directory ID). |
+| `source_type` | `VARCHAR(50)` | `NOT NULL` | The source integration type: `'gdrive'`, `'email'`. ~~`'salesforce'`~~ removed 2026-08-28 (Gap 334). |
+| `source_ref` | `VARCHAR(1024)` | `NOT NULL` | The folder reference (Google Drive Folder ID). ~~Or Salesforce Directory ID~~ — removed 2026-08-28 (Gap 334). |
 | `flow_direction` | `VARCHAR(10)` | `NOT NULL`, Default: `'INBOUND'` | Flow direction: `'INBOUND'` (AP flow, extraction queued) or `'OUTBOUND'` (AR flow, record-keeping). |
 | `trigger_mode` | `VARCHAR(20)` | `NOT NULL` | Scheduling trigger mode: `'interval'` (minutes) or `'cron'` (cron expression). |
 | `trigger_value` | `VARCHAR(100)` | `NOT NULL` | The schedule value (e.g., `'60'` for hourly interval, or `'0 * * * *'` for cron). |
@@ -209,8 +209,8 @@ This document defines the storage layers for the **Invoice AI SaaS Platform**. T
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | `PRIMARY KEY`, Default: `gen_random_uuid()` | Autopilot run log entry identifier. |
 | `tenant_id` | `UUID` | `FOREIGN KEY` references `tenants(id)`, `NOT NULL`, indexed | Tenant owner. |
-| `source_type` | `VARCHAR(50)` | `NOT NULL` | Ingestion source: `'gdrive'`, `'salesforce'`, `'email'`, `'manual'`. |
-| `source_file_id` | `VARCHAR(255)` | `NOT NULL`, indexed | Cloud source identifier (e.g., Google Drive `fileId` or Salesforce record ID). |
+| `source_type` | `VARCHAR(50)` | `NOT NULL` | Ingestion source: `'gdrive'`, `'email'`, `'manual'`. ~~`'salesforce'`~~ removed 2026-08-28 (Gap 334); historical log rows may still carry it. |
+| `source_file_id` | `VARCHAR(255)` | `NOT NULL`, indexed | Cloud source identifier (Google Drive `fileId`). ~~Or Salesforce record ID~~ — removed 2026-08-28 (Gap 334). |
 | `content_hash` | `VARCHAR(64)` | `NOT NULL`, indexed | SHA-256 hash of the document content to catch duplicates uploaded under different file IDs. |
 | `ingested_at` | `TIMESTAMPTZ` | `NOT NULL`, Default: `NOW()` | Ingestion timestamp. |
 | `status` | `VARCHAR(50)` | `NOT NULL` | Status outcome of the ingestion run: `'SUCCESS'`, `'SKIPPED_DUPLICATE'`, or `'FAILED'`. |

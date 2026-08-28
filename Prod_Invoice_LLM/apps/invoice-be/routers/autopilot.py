@@ -32,8 +32,8 @@ router = APIRouter(prefix="/autopilot", tags=["Autopilot"])
 
 class AutopilotConfigPayload(BaseModel):
     """Request body for PUT /autopilot/config"""
-    source_type: str          # 'gdrive' | 'salesforce'
-    source_ref: str           # folder ID / directory ID
+    source_type: str          # 'gdrive' (Gap 334 removed 'salesforce')
+    source_ref: str           # Google Drive folder ID
     flow_direction: str = "INBOUND"   # 'INBOUND' | 'OUTBOUND'
     trigger_mode: str         # 'interval' | 'cron'
     trigger_value: str        # e.g. '60' (minutes) or '0 * * * *' (cron)
@@ -133,7 +133,7 @@ def upsert_autopilot_config(
     Only one config is allowed per tenant (upsert on tenant_id).
     """
     # Validate source_type
-    valid_sources = {"gdrive", "salesforce"}
+    valid_sources = {"gdrive"}  # Gap 334 removed "salesforce"
     if payload.source_type not in valid_sources:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

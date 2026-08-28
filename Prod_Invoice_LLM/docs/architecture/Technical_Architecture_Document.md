@@ -208,7 +208,7 @@ Autopilot Trigger (Scheduled or Manual)
        ▼
 Shared Sync Processor
        │
-       ├── 1. Scan files in source folder (Google Drive / Salesforce) modified since last sync
+       ├── 1. Scan files in source folder (Google Drive) modified since last sync   [Salesforce removed 2026-08-28, Gap 334]
        ├── 2. Deduplicate files:
        │       ├── Match cloud source file ID in tenant_autopilot_logs → Match? Skip.
        │       └── Match file content hash in tenant_autopilot_logs → Match? Skip.
@@ -657,7 +657,7 @@ CREATE TABLE chat_qa_shortcuts (
 CREATE TABLE tenant_connections (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id                UUID NOT NULL REFERENCES tenants(id),
-    provider                 VARCHAR NOT NULL,   -- 'google_drive', 'salesforce'
+    provider                 VARCHAR NOT NULL,   -- 'google_drive' ('salesforce' removed 2026-08-28, Gap 334)
     encrypted_access_token   TEXT NOT NULL,
     encrypted_refresh_token  TEXT,
     token_expiry             TIMESTAMPTZ NOT NULL,
@@ -736,7 +736,7 @@ This allows the Query Agent to **filter by `tenant_id` and `vendor_name`** befor
 | `GET`  | `/api/v1/chat/sessions/{session_id}`   | Message history for a session                            | `ChatMessage[]`                 |
 | `POST` | `/api/v1/chat/sessions/{session_id}/message` | Post a message, runs the RAG/SQL/CHAT router agent  | `{ content, generated_sql, citations[] }` |
 | `GET`  | `/api/v1/dashboard/metrics`            | Aggregated data filtered by `tenant_id` and `status`   | `{ total_invoiced, paid_amount, outstanding_amount, at_risk_amount, spend_over_time[], top_vendors[], ... }` |
-| `GET`  | `/api/v1/connectors/status`            | Google Drive / Salesforce connection status               | `{ google_drive, salesforce }` |
+| `GET`  | `/api/v1/connectors/status`            | Google Drive connection status (Salesforce removed 2026-08-28, Gap 334) | `{ google_drive }` |
 | `GET`  | `/api/v1/connectors/auth-url/{provider}` | OAuth consent URL                                      | `{ auth_url }`                  |
 | `GET`  | `/api/v1/connectors/callback/{provider}` | OAuth token exchange                                   | `{ success }`                   |
 | `GET`  | `/api/v1/connectors/files/{provider}`  | Browse remote files                                       | `{ files[] }`                   |

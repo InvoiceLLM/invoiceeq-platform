@@ -413,7 +413,7 @@ def handle_import_connector_file(
     import os
     from services.storage import LOCAL_STORAGE_DIR
     from utils.connector_oauth import has_real_credentials, get_valid_access_token
-    from utils.connector_files import download_google_drive_file, download_salesforce_file
+    from utils.connector_files import download_google_drive_file
 
     settings = get_settings()
     batch_id = str(uuid4())
@@ -439,14 +439,16 @@ def handle_import_connector_file(
             if not has_real_credentials(provider, settings):
                 raise RuntimeError(
                     f"Connector '{provider}' is active but platform OAuth credentials "
-                    "are not configured on this worker (GOOGLE_CLIENT_ID / "
-                    "SALESFORCE_CLIENT_ID). Cannot download the real file."
+                    "are not configured on this worker (GOOGLE_CLIENT_ID). Cannot "
+                    "download the real file."
                 )
             access_token = get_valid_access_token(connection, settings, db_session)
+            # Google Drive is the only connector (Gap 334 removed Salesforce).
+            # The provider guard is deliberately kept: an active connection for
+            # an unrecognised provider must fail loudly below rather than fall
+            # through to the stub PDF, which is Gap 180's whole point.
             if provider == "google_drive":
                 file_bytes = download_google_drive_file(access_token, file_id)
-            elif provider == "salesforce" and connection.instance_url:
-                file_bytes = download_salesforce_file(access_token, connection.instance_url, file_id)
             if not file_bytes:
                 raise RuntimeError(
                     f"Download from '{provider}' returned empty content for file_id={file_id}."

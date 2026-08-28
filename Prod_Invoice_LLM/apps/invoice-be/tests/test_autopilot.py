@@ -632,3 +632,84 @@ def test_T19_autopilot_sends_notify_email_after_import(db_session):
     _, kwargs = m_send.call_args
     assert kwargs["to_addresses"] == ["ops@example.com"]
     assert "/invoices/review/" in kwargs["plain_body"]
+
+
+# ===========================================================================
+# BE Gap 334 Postgres checkpoint (functional-tester)
+#
+# T01-T19 above all run against the in-memory SQLite fixture (autouse
+# `override_db_session`). Per CONVENTIONS.md hard rule 2 that alone is not
+# sufficient evidence. Mirrors the repo's existing `*_on_postgres` pattern
+# (test_auth.py, test_chat_sql_quality.py): skip cleanly if Postgres isn't
+# reachable, else bind a session to the real Docker Postgres engine (this
+# also genuinely exercises the TenantConnection -> Tenant foreign key, which
+# SQLite does not enforce by default and the fixture above never triggers).
+# ===========================================================================
+
+def test_run_sync_google_drive_translation_and_unsupported_source_type_on_postgres():
+    """BE Gap 334 / Gap 288 Postgres checkpoint: SOURCE_TYPE_TO_PROVIDER still
+    correctly translates config source_type='gdrive' to a provider='google_drive'
+    connection row (T12b's real-engine counterpart), and an unsupported
+    source_type still fails loudly with 'Unsupported Autopilot source_type'
+    rather than silently matching (T12c's real-engine counterpart) -- both
+    against the real Postgres engine, not the SQLite fixture."""
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
+
+    tenant_id = uuid4()
+    with Session(pg_engine) as pg_session:
+        pg_session.add(
+            Tenant(id=tenant_id, name="PG Checkpoint Tenant", domain=f"pgcheck-{tenant_id.hex[:8]}.com")
+        )
+        pg_session.commit()
+
+        try:
+            _make_config(pg_session, tenant_id=tenant_id)
+            _make_connection(pg_session, tenant_id=tenant_id, provider="google_drive")
+
+            with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+                 patch("services.autopilot_sync.list_google_drive_files", return_value=[]):
+                summary = run_sync(tenant_id, pg_session)
+            assert summary == {"processed": 0, "skipped": 0, "failed": 0}
+
+            # Flip the config to an unsupported source_type and re-verify the
+            # loud-failure path on the real engine too.
+            config = pg_session.exec(
+                select(TenantAutopilotConfig).where(TenantAutopilotConfig.tenant_id == tenant_id)
+            ).first()
+            config.source_type = "dropbox"
+            pg_session.add(config)
+            pg_session.commit()
+
+            with pytest.raises(ValueError, match="Unsupported Autopilot source_type"):
+                run_sync(tenant_id, pg_session)
+        finally:
+            # Clean up everything this test wrote, leave the rest of the dev DB alone.
+            for log in pg_session.exec(
+                select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == tenant_id)
+            ).all():
+                pg_session.delete(log)
+            for conn in pg_session.exec(
+                select(TenantConnection).where(TenantConnection.tenant_id == tenant_id)
+            ).all():
+                pg_session.delete(conn)
+            for cfg in pg_session.exec(
+                select(TenantAutopilotConfig).where(TenantAutopilotConfig.tenant_id == tenant_id)
+            ).all():
+                pg_session.delete(cfg)
+            pg_session.commit()
+            tenant_row = pg_session.get(Tenant, tenant_id)
+            if tenant_row:
+                pg_session.delete(tenant_row)
+                pg_session.commit()

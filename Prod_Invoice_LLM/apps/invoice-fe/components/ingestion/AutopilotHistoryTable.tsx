@@ -65,12 +65,10 @@ function StatusBadge({ status }: { status: AutopilotLogEntry["status"] }) {
 }
 
 function SourceLabel({ sourceType }: { sourceType: string }) {
-  const label =
-    sourceType === "gdrive"
-      ? "Google Drive"
-      : sourceType === "salesforce"
-      ? "Salesforce"
-      : "Manual";
+  // FE Gap 322 removed the "salesforce" arm. Historical log rows may still
+  // carry that source_type; they now fall through to "Manual" rather than
+  // being labelled with a connector that no longer exists.
+  const label = sourceType === "gdrive" ? "Google Drive" : "Manual";
 
   return (
     <span className="text-slate-400 text-xs font-medium">{label}</span>

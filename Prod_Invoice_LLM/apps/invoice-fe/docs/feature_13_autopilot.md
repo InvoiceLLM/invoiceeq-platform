@@ -1,14 +1,25 @@
 # Feature 13: Tenant Autopilot — upgrade Ingest & Scheduled Sync
 
-**Extends Feature 3** (`feature_3_ingestion.md`). Autopilot is a unified portal combining manual invoice upload, scheduled sync configurations (Google Drive or Salesforce), and automated deduplication.
+> **⚠️ Salesforce — removed 2026-08-28, see Gap 334 (BE) / Gap 322 (FE).** Google Drive is now
+> the only connector. Salesforce references below are struck through or annotated and kept as
+> historical record, not deleted. Two independent causes: (1) the OAuth app is a Salesforce
+> **External Client App** with **Distribution State = Local**, which structurally blocks cross-org
+> OAuth — confirmed live against `ca-invoice-be-dev` with Salesforce's own
+> `OAUTH_AUTHORIZATION_BLOCKED — Cross-org OAuth flows are not supported for this external client
+> app`, unfixable by any setting (new classic Connected Apps were also blocked as of Spring '26);
+> (2) wrong data model — the connector browsed Salesforce **Libraries** (`ContentWorkspace`), but
+> real invoices live on **Account/Opportunity** records.
+
+
+**Extends Feature 3** (`feature_3_ingestion.md`). Autopilot is a unified portal combining manual invoice upload, scheduled sync configurations (Google Drive), and automated deduplication.
 
 ## Product & Technical Scope
 
 ### 1. Settings & Sync Interface (Single Page)
 Autopilot is implemented on the Ingestion screen (`/ingestion`) and provides:
 - **Option A (Manual File Upload):** A drag-and-drop zone to upload local invoice PDFs manually.
-- **Option B (Bulk Sync from Cloud):** A folder selection field with a **"Browse"** button (to select custom Drive folders or Salesforce directories) and a **"Sync Now"** button for immediate trigger.
-- **Automation Configuration Form:** Select and set a single sync source (Google Drive or Salesforce — not both simultaneously), flow direction (Inbound AP vs Outbound AR), scheduling cron/interval, notification emails, and manual audit approval link options.
+- **Option B (Bulk Sync from Cloud):** A folder selection field with a **"Browse"** button (to select custom Drive folders) and a **"Sync Now"** button for immediate trigger.
+- **Automation Configuration Form:** ~~Select and set a single sync source (Google Drive or Salesforce — not both simultaneously)~~ **— the "Cloud Source" toggle was removed 2026-08-28 (FE Gap 322): with Salesforce gone it would render one always-selected button that does nothing. `source_type` stays pinned to `'gdrive'`.** Set flow direction (Inbound AP vs Outbound AR), scheduling cron/interval, notification emails, and manual audit approval link options.
 - **Recent Runs & Sync History Table:** A unified log list showing execution runs (Manual / Scheduled), source type, files processed, skipped duplicate count, and success/failed status outcomes.
 
 ---
@@ -21,8 +32,8 @@ Stores folder synchronization and automation settings per tenant workspace.
 CREATE TABLE tenant_autopilot_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) UNIQUE,
-    source_type VARCHAR(50) NOT NULL, -- 'gdrive' | 'salesforce' | 'email'
-    source_ref VARCHAR(1024) NOT NULL, -- Drive Folder ID / Salesforce Directory ID
+    source_type VARCHAR(50) NOT NULL, -- 'gdrive' | 'email'  ('salesforce' removed 2026-08-28, Gap 334)
+    source_ref VARCHAR(1024) NOT NULL, -- Drive Folder ID
     flow_direction VARCHAR(10) NOT NULL DEFAULT 'INBOUND', -- 'INBOUND' | 'OUTBOUND'
     trigger_mode VARCHAR(20) NOT NULL, -- 'interval' | 'cron'
     trigger_value VARCHAR(100) NOT NULL, -- cron expression (e.g. '0 * * * *') or interval in minutes
@@ -40,8 +51,8 @@ Deduplication ledger tracking all processed files to prevent duplicate ingestion
 CREATE TABLE tenant_autopilot_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id),
-    source_type VARCHAR(50) NOT NULL, -- 'gdrive' | 'salesforce' | 'email' | 'manual'
-    source_file_id VARCHAR(255) NOT NULL, -- Google Drive fileId or Salesforce record ID
+    source_type VARCHAR(50) NOT NULL, -- 'gdrive' | 'email' | 'manual'  ('salesforce' removed 2026-08-28, Gap 334)
+    source_file_id VARCHAR(255) NOT NULL, -- Google Drive fileId
     content_hash VARCHAR(64) NOT NULL, -- SHA-256 hash of document content
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(50) NOT NULL -- 'SUCCESS' | 'SKIPPED_DUPLICATE' | 'FAILED'

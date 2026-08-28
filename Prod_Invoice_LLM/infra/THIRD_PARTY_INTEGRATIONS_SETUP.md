@@ -1,4 +1,20 @@
-# Third-Party Integrations & Credentials Setup Guide (PayU, Clerk, Google, Salesforce, SendGrid)
+# Third-Party Integrations & Credentials Setup Guide (PayU, Clerk, Google, ~~Salesforce~~, SendGrid)
+
+> **⚠️ Salesforce — removed 2026-08-28, see Gap 334 (BE) / Gap 322 (FE). Do not perform the
+> Salesforce setup steps in this guide.** They are struck through below and kept only as
+> historical record. Two independent causes: (1) the OAuth app is a Salesforce **External Client
+> App** with **Distribution State = Local**, which structurally blocks cross-org OAuth — confirmed
+> live against `ca-invoice-be-dev` with Salesforce's own `OAUTH_AUTHORIZATION_BLOCKED — Cross-org
+> OAuth flows are not supported for this external client app`. No setting fixes this, and
+> Salesforce also stopped allowing new classic Connected Apps as of **Spring '26** without a
+> support exception. (2) Wrong data model — the connector browsed Salesforce **Libraries**
+> (`ContentWorkspace`), but real invoices live on **Account/Opportunity** records.
+>
+> **The `infra/` side was deliberately NOT cleaned up** (out of Gap 334's scope): the
+> `SALESFORCE-CLIENT-SECRET` Key Vault secret, the `salesforceClientSecret` params entry, and the
+> `SALESFORCE_*` container env vars still exist in bicep and still deploy. They are inert — no
+> backend code reads them any more. Removing them is a separate, founder-gated change; an unused
+> env var is harmless, a deleted Key Vault secret is not trivially reversible.
 
 This document describes how to configure the official company credentials for all third-party integrations (Authentication, Billing, Storage Connectors, and Email) in your production Azure deployments using the Bicep infrastructure configuration.
 
@@ -53,9 +69,10 @@ PayU manages plans (Free, Pro, and Combined Pro), invoice quotas, and customer c
 
 ---
 
-## 3. Google Drive & Salesforce Connectors Setup
+## 3. Google Drive ~~& Salesforce~~ Connectors Setup
 
-Connectors allow tenants to import/export documents to their workspace Google Drive or Salesforce files.
+Connectors allow tenants to import/export documents to their workspace Google Drive files.
+(~~or Salesforce~~ — removed 2026-08-28, Gap 334.)
 
 ### Google Drive Setup:
 1. Open the [Google Cloud Console](https://console.cloud.google.com/).
@@ -65,15 +82,18 @@ Connectors allow tenants to import/export documents to their workspace Google Dr
    `https://<frontend-domain>/api/connectors/callback/google_drive`
 5. Copy the **Client ID** and **Client Secret**.
 
-### Salesforce Connected App Setup:
-1. Log in to your Salesforce Org, go to **Setup** > **App Manager** > **New Connected App**.
-2. Check **Enable OAuth Settings**.
-3. Set Callback URL to:
-   `https://<frontend-domain>/api/connectors/callback/salesforce`
-4. Under Selected OAuth Scopes, add:
-   * `Access and manage your data (api)`
-   * `Perform requests at any time (refresh_token, offline_access)`
-5. Save and copy the **Consumer Key** (Client ID) and **Consumer Secret** (Client Secret).
+### ~~Salesforce Connected App Setup:~~ — REMOVED 2026-08-28 (Gap 334), DO NOT PERFORM
+
+> These steps cannot succeed and must not be followed. Creating a new classic Connected App has
+> been blocked by Salesforce since Spring '26 without a support exception, and the existing
+> External Client App structurally refuses cross-org OAuth. Kept struck through as the historical
+> record of what was configured.
+
+1. ~~Log in to your Salesforce Org, go to **Setup** > **App Manager** > **New Connected App**.~~
+2. ~~Check **Enable OAuth Settings**.~~
+3. ~~Set Callback URL to `https://<frontend-domain>/api/connectors/callback/salesforce`~~
+4. ~~Under Selected OAuth Scopes, add `Access and manage your data (api)` and `Perform requests at any time (refresh_token, offline_access)`.~~
+5. ~~Save and copy the **Consumer Key** (Client ID) and **Consumer Secret** (Client Secret).~~
 
 ---
 
@@ -128,10 +148,10 @@ The current Clerk instance is a **test** instance (`pk_test`/`sk_test`). A real 
 2. Clerk generates its own required DNS records (typically `accounts.<domain>`, `clerk.<domain>`, and DKIM CNAMEs for its email sending) — add all of them at GoDaddy. These are separate from and additive to the Azure verification records in Step 2.
 3. Once Clerk confirms the domain, copy the **production** Publishable Key and Secret Key, and update `nextPublicClerkPublishableKey`/`clerk-secret-secret` (Key Vault) for this environment, replacing the test keys. Re-deploy so the new build-arg-injected publishable key reaches the client bundle (see section 1's Container Apps deployment note above — this still applies).
 
-### Step 4: Google Drive / Salesforce — update redirect URIs
-Bicep already switches `GOOGLE_REDIRECT_URI`/`SALESFORCE_REDIRECT_URI` to the custom domain automatically once `customDomainName` is set (see `feature_6_custom_domain_integration.md`). The third-party dashboards still need a manual matching update, same as Gap 131's original setup:
+### Step 4: Google Drive ~~/ Salesforce~~ — update redirect URIs
+Bicep already switches `GOOGLE_REDIRECT_URI` (~~and `SALESFORCE_REDIRECT_URI`, now inert~~) to the custom domain automatically once `customDomainName` is set (see `feature_6_custom_domain_integration.md`). The third-party dashboard still needs a manual matching update, same as Gap 131's original setup:
 1. Google Cloud Console → your OAuth client → Authorized redirect URIs → add `https://<domain>/api/connectors/callback/google_drive`.
-2. Salesforce → Connected App → Callback URL → add `https://<domain>/api/connectors/callback/salesforce`.
+2. ~~Salesforce → Connected App → Callback URL → add `https://<domain>/api/connectors/callback/salesforce`.~~ **— struck 2026-08-28 (Gap 334): no Salesforce Connected App exists to update. This is no longer a pending cutover task.**
 3. Leave the old CAE-FQDN redirect URIs registered too until you've confirmed the new domain works end-to-end, then remove them.
 
 ### Live check
@@ -157,7 +177,7 @@ Add the credentials directly to your local, Git-ignored `infra/params.<env>.secr
     "payuMerchantKey": { "value": "..." },
     "payuMerchantSalt": { "value": "..." },
     "googleClientSecret": { "value": "..." },
-    "salesforceClientSecret": { "value": "..." },
+    "salesforceClientSecret": { "value": "..." },   // inert since Gap 334 (2026-08-28); still required by bicep, read by nothing
     "sendgridApiKey": { "value": "..." },
     "sendgridInboundSecret": { "value": "..." }
   }

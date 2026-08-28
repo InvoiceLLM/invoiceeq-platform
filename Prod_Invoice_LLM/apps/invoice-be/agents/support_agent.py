@@ -105,14 +105,14 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
     {
         "id": "connectors_webhooks",
         "keywords": [
-            "webhook", "connector", "salesforce", "google drive", "api key",
+            "webhook", "connector", "google drive", "api key",
             "integration", "event", "hmac", "secret", "erp"
         ],
         "category": "TECHNICAL_SUPPORT",
         "title": "Connectors & Webhooks",
         "guidance": (
             "### Connectors & Webhook Integration\n\n"
-            "1. **Cloud Folders**: Connect Google Drive or Salesforce in `/settings/connectors` for automated folder polling.\n"
+            "1. **Cloud Folders**: Connect Google Drive in `/settings/connectors` for automated folder polling.\n"
             "2. **Webhook Subscriptions**: Register webhook URLs in `/settings/webhooks` to receive real-time notifications for `invoice.completed`, `invoice.audit_required`, and `invoice.rejected`.\n"
             "3. **HMAC Verification**: All payloads are signed with SHA256 in the `X-InvoiceAI-Signature` header."
         ),
@@ -254,7 +254,7 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
         "guidance": (
             "### Tenant Autopilot & Scheduled Ingestion\n\n"
             "Autopilot automates the bulk ingestion of invoices from cloud folders:\n\n"
-            "1. **Folder Connection**: Connect your Google Drive or Salesforce folder in `/settings/connectors`.\n"
+            "1. **Folder Connection**: Connect your Google Drive folder in `/settings/connectors`.\n"
             "2. **Scheduled Syncs**: The background sweep runs automatically on a scheduled cron interval (Azure Container Apps Jobs) to fetch newly added files.\n"
             "3. **Deduplication Ledger**: To prevent duplicate processing and charges, Autopilot performs two-layer validation matching both **file IDs** and **SHA-256 content hashes** in `tenant_autopilot_logs`.\n"
             "4. **Manual Sync**: Click **Sync Now** inside the dashboard to trigger an immediate folder sweep.\n"

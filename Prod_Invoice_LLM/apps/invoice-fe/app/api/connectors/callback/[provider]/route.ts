@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/connectors/callback/[provider] → BE GET /connectors/callback/{provider}
  *
- * Google/Salesforce land the browser on this route as a full-page navigation
+ * Google lands the browser on this route as a full-page navigation
  * (not a fetch call), and the backend responds with a redirect back into the
  * app rather than JSON -- so this can't use proxyJson, which follows
  * redirects server-side and would relay the final page's HTML with a 200

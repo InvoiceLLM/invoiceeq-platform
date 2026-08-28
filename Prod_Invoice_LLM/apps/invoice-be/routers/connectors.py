@@ -15,13 +15,10 @@ from utils.encryption import encrypt_token, decrypt_token
 from utils.connector_oauth import (
     has_real_credentials as _has_real_credentials,
     get_valid_access_token,
-    generate_pkce_pair,
     GOOGLE_TOKEN_URL,
-    SALESFORCE_TOKEN_URL,
 )
-from utils.connector_files import list_google_drive_files, list_salesforce_files, verify_salesforce_instance
+from utils.connector_files import list_google_drive_files
 import json
-import redis
 from azure.storage.queue import QueueClient
 from config import get_settings
 
@@ -29,11 +26,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/connectors", tags=["Connectors"])
 
-# PKCE code_verifiers are short-lived, single-use, and irrelevant to any
-# other feature -- Redis with a TTL is a better fit than a DB table (no
-# migration, auto-expires if a user abandons the flow mid-login).
-PKCE_REDIS_PREFIX = "oauth_pkce:"
-PKCE_TTL_SECONDS = 600  # 10 minutes to complete the Salesforce login screen
+# Gap 334 (2026-08-28): Salesforce removed, so Google Drive is the only
+# provider. The PKCE plumbing that used to live here (PKCE_REDIS_PREFIX,
+# PKCE_TTL_SECONDS, the `state` query param, and the `import redis` that
+# backed them) existed solely for Salesforce Connected Apps and went with it
+# -- Google's flow never required PKCE. The per-provider validation lists and
+# branches below are deliberately kept in their existing shape rather than
+# collapsed away, since they still serve Drive and still have to reject an
+# unrecognised provider.
 
 class ImportPayload(BaseModel):
     file_id: str
@@ -45,14 +45,13 @@ async def get_connectors_status(
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Returns connection statuses (Active / Inactive) for Google Drive and Salesforce.
+    Returns connection statuses (Active / Inactive) for Google Drive.
     """
     statement = select(TenantConnection).where(TenantConnection.tenant_id == context.tenant_id)
     connections = db_session.exec(statement).all()
 
     status_map = {
-        "google_drive": "Not Configured",
-        "salesforce": "Not Configured"
+        "google_drive": "Not Configured"
     }
 
     for conn in connections:
@@ -70,10 +69,10 @@ async def get_auth_url(
     context: TenantContext = Depends(get_tenant_context)
 ):
     """
-    Generates OAuth consent screen redirect URL for Google Drive or Salesforce.
+    Generates OAuth consent screen redirect URL for Google Drive.
     """
     prov = provider.lower()
-    if prov not in ["google_drive", "salesforce"]:
+    if prov not in ["google_drive"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid connector provider '{provider}'."
@@ -95,36 +94,11 @@ async def get_auth_url(
                 "scope": "https://www.googleapis.com/auth/drive.readonly",
             }
             return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
-        else:  # salesforce
-            # Some Salesforce orgs require PKCE on the Connected App's
-            # authorization flow -- generate a verifier/challenge pair and
-            # stash the verifier server-side (keyed by a one-time `state`)
-            # so oauth_callback() can attach it to the token exchange.
-            code_verifier, code_challenge = generate_pkce_pair()
-            state = uuid4().hex
-            redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-            redis_client.setex(f"{PKCE_REDIS_PREFIX}{state}", PKCE_TTL_SECONDS, code_verifier)
-
-            params = {
-                "client_id": settings.SALESFORCE_CLIENT_ID,
-                "redirect_uri": settings.SALESFORCE_REDIRECT_URI,
-                "response_type": "code",
-                "code_challenge": code_challenge,
-                "code_challenge_method": "S256",
-                "state": state,
-                # Gap 261: force the Salesforce login screen every time so the
-                # user can choose which org/account to connect. Without this,
-                # an active browser session silently auto-logs in as whatever
-                # account was last used (e.g. application@infinevoclouds.com).
-                "prompt": "login consent",
-            }
-            return {"auth_url": f"https://login.salesforce.com/services/oauth2/authorize?{urlencode(params)}"}
 
     # No real credentials configured yet for this provider -- fall back to a
     # mock consent URL so local/dev testing still works end-to-end.
     mock_auth_urls = {
         "google_drive": "https://accounts.google.com/o/oauth2/v2/auth?client_id=mock_google_id&response_type=code&scope=https://www.googleapis.com/auth/drive.readonly",
-        "salesforce": "https://login.salesforce.com/services/oauth2/authorize?client_id=mock_salesforce_id&response_type=code"
     }
     return {"auth_url": mock_auth_urls[prov]}
 
@@ -132,7 +106,6 @@ async def get_auth_url(
 async def oauth_callback(
     provider: str,
     code: str = Query(..., description="Authorization code from OAuth redirection flow"),
-    state: Optional[str] = Query(None, description="PKCE state, present when auth-url attached a code_challenge (Salesforce)"),
     context: TenantContext = Depends(get_tenant_context),
     db_session: Session = Depends(get_db_session)
 ):
@@ -140,7 +113,7 @@ async def oauth_callback(
     OAuth Callback handler: swaps code for credentials, encrypts them, and saves to database.
     """
     prov = provider.lower()
-    if prov not in ["google_drive", "salesforce"]:
+    if prov not in ["google_drive"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid connector provider '{provider}'."
@@ -151,41 +124,14 @@ async def oauth_callback(
     refresh_token: Optional[str]
 
     if _has_real_credentials(prov, settings):
-        if prov == "google_drive":
-            token_url = GOOGLE_TOKEN_URL
-            token_payload = {
-                "code": code,
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
-                "grant_type": "authorization_code",
-            }
-        else:  # salesforce
-            token_url = SALESFORCE_TOKEN_URL
-            token_payload = {
-                "code": code,
-                "client_id": settings.SALESFORCE_CLIENT_ID,
-                "client_secret": settings.SALESFORCE_CLIENT_SECRET,
-                "redirect_uri": settings.SALESFORCE_REDIRECT_URI,
-                "grant_type": "authorization_code",
-            }
-            # Retrieve the PKCE code_verifier stashed by get_auth_url(), if
-            # this org's Connected App required PKCE (see generate_pkce_pair).
-            # One-time use: deleted immediately so a replayed callback can't
-            # reuse it.
-            if state:
-                redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
-                pkce_key = f"{PKCE_REDIS_PREFIX}{state}"
-                code_verifier = redis_client.get(pkce_key)
-                if code_verifier:
-                    token_payload["code_verifier"] = code_verifier
-                    redis_client.delete(pkce_key)
-                else:
-                    logger.warning(
-                        "No stored PKCE code_verifier found for state=%s (expired or already used); "
-                        "token exchange will fail if this org's Connected App requires PKCE.",
-                        state,
-                    )
+        token_url = GOOGLE_TOKEN_URL
+        token_payload = {
+            "code": code,
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "client_secret": settings.GOOGLE_CLIENT_SECRET,
+            "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+        }
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as http_client:
@@ -210,28 +156,9 @@ async def oauth_callback(
         token_data = token_response.json()
         access_token = token_data["access_token"]
         # Google only returns a refresh_token on fresh consent (see
-        # access_type=offline/prompt=consent above); Salesforce always
-        # returns one for the web-server OAuth flow used here.
+        # access_type=offline/prompt=consent above).
         refresh_token = token_data.get("refresh_token")
         expiry_time = datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 3600))
-        # Salesforce's API base is per-org and comes back as instance_url on
-        # every token response; Google never returns this key.
-        instance_url = token_data.get("instance_url")
-
-        if prov == "salesforce":
-            if not instance_url:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Salesforce OAuth response is missing instance_url."
-                )
-            try:
-                verify_salesforce_instance(access_token, instance_url)
-            except httpx.HTTPError as e:
-                logger.error("Salesforce instance verification failed during OAuth connect: %s", e)
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"Failed to verify Salesforce connection with the instance URL: {e}"
-                )
     else:
         # No real credentials configured yet for this provider -- keep the
         # simulated exchange so local/dev testing without a registered OAuth
@@ -239,7 +166,6 @@ async def oauth_callback(
         access_token = f"mock_access_token_{prov}_{uuid4().hex[:6]}"
         refresh_token = f"mock_refresh_token_{prov}_{uuid4().hex[:6]}"
         expiry_time = datetime.utcnow() + timedelta(hours=1)
-        instance_url = None
 
     # Encrypt the tokens using AES-256 Fernet helper
     enc_access = encrypt_token(access_token)
@@ -262,22 +188,19 @@ async def oauth_callback(
             token_expiry=expiry_time,
             status="active",
             created_at=datetime.utcnow(),
-            instance_url=instance_url,
         )
     else:
         connection.encrypted_access_token = enc_access
         connection.encrypted_refresh_token = enc_refresh
         connection.token_expiry = expiry_time
         connection.status = "active"
-        if instance_url:
-            connection.instance_url = instance_url
 
     db_session.add(connection)
     db_session.commit()
 
-    # Google/Salesforce redirect the browser here directly (a full-page
-    # navigation, not a fetch call) -- so this endpoint must send the user
-    # back into the app rather than leaving them on a bare JSON response.
+    # Google redirects the browser here directly (a full-page navigation, not
+    # a fetch call) -- so this endpoint must send the user back into the app
+    # rather than leaving them on a bare JSON response.
     frontend_url = settings.FRONTEND_URL.rstrip("/")
     return RedirectResponse(url=f"{frontend_url}/settings/connectors?connected={prov}")
 
@@ -290,11 +213,11 @@ async def list_connector_files(
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Browse directories and list files in Google Drive or Salesforce.
+    Browse directories and list files in Google Drive.
     direction: 'inbound' (AP supplier PDFs) or 'outbound' (AR verified exports).
     """
     prov = provider.lower()
-    if prov not in ["google_drive", "salesforce"]:
+    if prov not in ["google_drive"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid connector provider '{provider}'."
@@ -322,31 +245,14 @@ async def list_connector_files(
 
     if _has_real_credentials(prov, settings):
         # Real listing (Gap 98): stays inert for a provider until that
-        # provider's real Client ID is configured (Google today; Salesforce
-        # once a real Connected App exists to test against).
+        # provider's real Client ID is configured.
         try:
             access_token = get_valid_access_token(connection, settings, db_session)
         except RuntimeError as e:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
         try:
-            if prov == "google_drive":
-                files = list_google_drive_files(access_token, folder_id)
-            else:  # salesforce
-                if not connection.instance_url:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Salesforce connection is missing instance_url; reconnect this integration."
-                    )
-                # Gap 262: if no folder_id given, return Salesforce Libraries
-                # as folder nodes so FolderTreeExplorer has something to
-                # navigate in folder-selection mode (Autopilot config).
-                # If folder_id is given, list files inside that library.
-                from utils.connector_files import list_salesforce_libraries
-                if folder_id:
-                    files = list_salesforce_files(access_token, connection.instance_url, folder_id)
-                else:
-                    files = list_salesforce_libraries(access_token, connection.instance_url)
+            files = list_google_drive_files(access_token, folder_id)
         except httpx.HTTPError as e:
             logger.error("Real %s file listing failed: %s", prov, e)
             raise HTTPException(
@@ -365,17 +271,11 @@ async def list_connector_files(
             detail="Failed to decrypt API credentials credentials."
         )
 
-    if prov == "google_drive":
-        mock_files = [
-            {"id": "gdrive_file_101", "name": "invoice_acme_hardware.pdf", "type": "file", "size_bytes": 104857},
-            {"id": "gdrive_file_102", "name": "globex_services_statement.pdf", "type": "file", "size_bytes": 45829},
-            {"id": "gdrive_folder_abc", "name": "Ingested_Invoices", "type": "folder", "size_bytes": 0}
-        ]
-    else: # salesforce
-        mock_files = [
-            {"id": "sf_doc_881", "name": "Attachment_ACME_PO_99.pdf", "type": "file", "size_bytes": 88120},
-            {"id": "sf_doc_882", "name": "Bill_Services_Globex_PO_200.pdf", "type": "file", "size_bytes": 112040}
-        ]
+    mock_files = [
+        {"id": "gdrive_file_101", "name": "invoice_acme_hardware.pdf", "type": "file", "size_bytes": 104857},
+        {"id": "gdrive_file_102", "name": "globex_services_statement.pdf", "type": "file", "size_bytes": 45829},
+        {"id": "gdrive_folder_abc", "name": "Ingested_Invoices", "type": "folder", "size_bytes": 0}
+    ]
 
     return {"files": mock_files}
 
@@ -393,7 +293,7 @@ async def trigger_file_import(
                'outbound' stores the file for AR record-keeping only.
     """
     prov = provider.lower()
-    if prov not in ["google_drive", "salesforce"]:
+    if prov not in ["google_drive"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid connector provider '{provider}'."
@@ -496,7 +396,7 @@ async def disconnect_connector(
     effectively revoking access from the platform.
     """
     prov = provider.lower()
-    if prov not in ["google_drive", "salesforce"]:
+    if prov not in ["google_drive"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid connector provider '{provider}'."

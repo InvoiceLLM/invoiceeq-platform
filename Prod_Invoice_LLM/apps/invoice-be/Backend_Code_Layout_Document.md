@@ -145,7 +145,15 @@ This document maps each system API to its sequential file and function execution
 
 ---
 
-## Flow 7: Ingest from Integrations (Google Drive/Salesforce)
+## Flow 7: Ingest from Integrations (Google Drive)
+
+> **Salesforce removed 2026-08-28 — see Gap 334.** Google Drive is the only connector. The
+> `list_salesforce_libraries`/`list_salesforce_files`/`verify_salesforce_instance`/
+> `download_salesforce_file` functions and every Salesforce branch in `routers/connectors.py`,
+> `queue_worker/handlers.py`, and `services/autopilot_sync.py` no longer exist. Root causes:
+> cross-org OAuth structurally blocked (External Client App, Distribution State = Local) and a
+> wrong data model (browsed Libraries/`ContentWorkspace`; real invoices live on
+> Account/Opportunity records).
 * **API Endpoints**: `GET /api/v1/connectors/status`, `GET /api/v1/connectors/auth-url/{provider}`, `GET /api/v1/connectors/callback/{provider}`, `GET /api/v1/connectors/files/{provider}`, `POST /api/v1/connectors/import/{provider}`
 
 ```
@@ -153,14 +161,14 @@ This document maps each system API to its sequential file and function execution
    └─ File: routers/connectors.py -> Function: get_connectors_status()
 2. Initiating Integration Auth
    └─ File: routers/connectors.py -> Function: get_auth_url()
-      - Returns a hardcoded mock OAuth consent URL. No real Google/Salesforce client integration yet.
+      - Returns a hardcoded mock OAuth consent URL. No real Google client integration yet. *(Stale: Gap 98 added the real exchange; Salesforce removed by Gap 334.)*
 3. OAuth Callback Handler
    └─ File: routers/connectors.py -> Function: oauth_callback()
    └─ Encryption: utils/encryption.py -> Function: encrypt_token()
    └─ Database Write: adds/updates a TenantConnection record
 4. Remote Folder Browsing
    └─ File: routers/connectors.py -> Function: list_connector_files()
-      - Returns a hardcoded mock file list. No real Drive/Salesforce API calls yet.
+      - Returns a hardcoded mock file list. No real Drive API calls yet. *(Stale: Gap 98 added real Drive listing; Salesforce removed by Gap 334.)*
    └─ Decryption: utils/encryption.py -> Function: decrypt_token()
 5. Async Import Task Trigger
    └─ File: routers/connectors.py -> Function: trigger_file_import()

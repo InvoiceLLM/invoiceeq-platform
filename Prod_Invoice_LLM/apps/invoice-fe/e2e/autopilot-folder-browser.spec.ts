@@ -38,7 +38,7 @@ test.describe("Autopilot folder browser (FE Gap 219)", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ google_drive: "Active", salesforce: "Inactive" }),
+        body: JSON.stringify({ google_drive: "Active" }),
       });
     });
 
