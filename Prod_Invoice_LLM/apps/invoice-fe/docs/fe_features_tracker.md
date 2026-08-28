@@ -814,4 +814,6 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
   - **Known small leftover, not chased further**: `RecentInvoicesTable`'s `onStatusChange` prop is now unused inside this component (only `handleMarkPaid` ever called it) but is still declared in the props interface and still passed by the parent page — harmless (optional prop, no type error), left in place rather than pulling that thread through `app/invoices/page.tsx` for a change that wasn't asked for.
   - **Verification**: `npx tsc --noEmit` clean across all 4 touched files.
 
+- `[x]` **Gap 321 (FE): Missing Next.js API Route Handlers for Autopilot caused HTTP 404 on Save Config / Sync / History** — closed 2026-08-28. `app/ingestion/page.tsx` routes requests through `apiClient` (`/api/autopilot/*`), but Next.js proxy route handlers under `app/api/autopilot/` were missing, causing `PUT /api/autopilot/config` to fail with `Save failed: unexpected server error (HTTP 404)`. Created `app/api/autopilot/config/route.ts` (GET & PUT), `app/api/autopilot/sync/route.ts` (POST), and `app/api/autopilot/history/route.ts` (GET) using `proxyJson()`. Verified with `npx tsc --noEmit` (clean), Playwright E2E (`e2e/autopilot-folder-browser.spec.ts` 1/1 passed), and backend Pytest (`tests/test_autopilot.py` 19/19 passed).
+
 
