@@ -10,10 +10,18 @@ Covers the three claims in feature_1.1_rbac.md's Verification Plan:
 
 Test identity: conftest.py enables ALLOW_MOCK_AUTH suite-wide. A request with
 no Authorization header resolves to the mock **Admin** (all three permissions
-True via resolve_permissions). A `Bearer test_viewer` token resolves to role
-"Viewer", whose permissions come off the User row — which defaults to all
-False. That pair is what makes both sides of the gate testable without a real
-Clerk token.
+True via resolve_permissions). A `Bearer test_viewer` token resolves to
+`RoleMapper.NO_ROLE`, whose permissions come off the User row — which defaults
+to all False. That pair is what makes both sides of the gate testable without a
+real Clerk token.
+
+Gap 337 note: the role that token resolves to used to be the literal "Viewer".
+"Viewer" is retired from the user-facing vocabulary (the three assignable roles
+are Admin / Auditor / Trainer) and the zero-permission fallback now has its own
+never-assignable name, `RoleMapper.NO_ROLE`. The *token spelling* `test_viewer`
+is deliberately kept — it is fixture vocabulary used across the whole suite, and
+churning it would touch six unrelated test files for no behavioural gain — but
+every assertion on the resolved role now names NO_ROLE.
 """
 import io
 from uuid import uuid4
@@ -25,7 +33,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from dependencies import MOCK_USER_ID, resolve_permissions
 from main import app
-from models import User
+from models import RoleMapper, User
 
 sqlite_url = "sqlite:///:memory:"
 engine = create_engine(
@@ -61,7 +69,7 @@ client = TestClient(app)
 
 
 def _viewer_row(db_session) -> User:
-    """The User row the mock Viewer identity resolves to (provisioned on first call)."""
+    """The User row the mock permission-less identity resolves to (provisioned on first call)."""
     client.get("/auth/me", headers=VIEWER)
     user = db_session.exec(select(User).where(User.clerk_user_id == MOCK_USER_ID)).first()
     assert user is not None
@@ -91,10 +99,43 @@ def test_resolve_permissions_admin_implies_all():
 
 def test_resolve_permissions_reads_the_user_row_for_non_admins():
     user = User(
-        email="v@example.com", role="Viewer", clerk_user_id="user_v",
+        email="v@example.com", role=RoleMapper.NO_ROLE, clerk_user_id="user_v",
         can_train=True, can_audit=False, can_load=True,
     )
-    assert resolve_permissions("Viewer", user) == (True, False, True)
+    assert resolve_permissions(RoleMapper.NO_ROLE, user) == (True, False, True)
+
+
+# --- Feature 25 (Gap 337): the retired "Viewer" name ------------------------
+
+
+def test_user_facing_roles_are_admin_auditor_trainer():
+    """The founder's role vocabulary, asserted so a fourth role cannot be
+    reintroduced silently. NO_ROLE is deliberately NOT in this set: it is an
+    internal fallback, never something an Admin can hand out."""
+    assert RoleMapper.USER_FACING_ROLES == ("Admin", "Auditor", "Trainer")
+    assert RoleMapper.NO_ROLE not in RoleMapper.USER_FACING_ROLES
+    assert "Viewer" not in RoleMapper.USER_FACING_ROLES
+    assert "Viewer" not in RoleMapper.ROLE_PERMISSION_DEFAULTS
+
+
+@pytest.mark.parametrize(
+    "raw_role",
+    [None, "", "viewer", "Viewer", "member", "org:member", "some_unmapped_idp_role"],
+)
+def test_zero_permission_fallback_never_grants_anything(raw_role):
+    """The point of Gap 337. The fallback slot must not be one of the three
+    real roles -- if it were Trainer, every unknown IDP role string and every
+    org-mismatched session would silently acquire can_train."""
+    role = RoleMapper.normalize_role(raw_role)
+    assert role != "Trainer"
+    assert RoleMapper.resolve_permissions(role, None) == (False, False, False)
+
+
+def test_legacy_viewer_rows_still_resolve_to_no_permissions():
+    """A `users` row written before this gap's data migration (or by an
+    un-migrated database) still carries the literal 'Viewer'. It must resolve to
+    zero permissions via the unmapped-role fallback, not raise a KeyError."""
+    assert RoleMapper.resolve_permissions("Viewer", None) == (False, False, False)
 
 
 def test_auth_me_exposes_permissions_for_admin():
@@ -108,7 +149,7 @@ def test_auth_me_exposes_permissions_for_admin():
 def test_auth_me_exposes_permissions_for_unpermissioned_user():
     """Default for a new non-Admin user: nothing beyond the 3 universal screens."""
     data = client.get("/auth/me", headers=VIEWER).json()
-    assert data["role"] == "Viewer"
+    assert data["role"] == RoleMapper.NO_ROLE
     assert data["can_train"] is False
     assert data["can_audit"] is False
     assert data["can_load"] is False
@@ -186,8 +227,8 @@ def test_outbound_upload_requires_can_load():
 
 def test_universal_surfaces_reachable_without_any_permission():
     """
-    A user with all three permissions off is the design's "Viewer": they must
-    still reach Dashboard, Chat and the invoice list. None of these may 403.
+    A user with all three permissions off must still reach Dashboard, Chat and
+    the invoice list. None of these may 403.
     """
     for method, path in [
         ("get", "/auth/me"),
@@ -291,7 +332,9 @@ def test_admin_pre_provisions_a_brand_new_clerk_user(db_session):
         },
     )
     assert response.status_code == 200
-    assert response.json()["role"] == "Viewer"
+    # Gap 337: pre-provisioned rows get the zero-permission fallback, never one
+    # of the three assignable roles.
+    assert response.json()["role"] == RoleMapper.NO_ROLE
     stored = db_session.exec(
         select(User).where(User.clerk_user_id == "user_freshly_created")
     ).first()
@@ -312,7 +355,7 @@ def test_admin_cannot_touch_another_tenants_user(db_session):
     other = User(
         tenant_id=uuid4(),
         email="other-tenant@example.com",
-        role="Viewer",
+        role=RoleMapper.NO_ROLE,
         clerk_user_id="user_other_tenant",
     )
     db_session.add(other)
@@ -324,3 +367,157 @@ def test_admin_cannot_touch_another_tenants_user(db_session):
         json={"can_train": True, "can_audit": True, "can_load": True},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Feature 25 (Gap 335) — dual-credential auth + two-tier API key action scope
+#
+# These sit in this file rather than test_api_keys.py because what they assert
+# is a PERMISSION GATE, and the guarantee that matters most is that Gap 335 did
+# not weaken any of the human gates above while widening the routes to keys.
+# ---------------------------------------------------------------------------
+
+def _tenant_with_key(db_session, scope):
+    """Give the mock tenant a real API key at `scope`, and return the raw key."""
+    from dependencies import MOCK_TENANT_ID
+    from models import Tenant
+    from services.api_keys import generate_api_key, generate_salt, hash_api_key, key_prefix
+
+    tenant = db_session.get(Tenant, MOCK_TENANT_ID)
+    if tenant is None:
+        tenant = Tenant(
+            id=MOCK_TENANT_ID,
+            name="Test Workspace",
+            domain=f"rbac-{uuid4().hex[:8]}.example.com",
+            billing_plan="pro",
+        )
+    raw = generate_api_key()
+    salt = generate_salt()
+    tenant.api_key_hash = hash_api_key(raw, salt)
+    tenant.api_key_salt = salt
+    tenant.api_key_prefix = key_prefix(raw)
+    tenant.api_key_scope = scope
+    db_session.add(tenant)
+    db_session.commit()
+    return raw
+
+
+def test_readonly_key_is_refused_the_audit_resolve_action(db_session):
+    """Strict Review: the key stays read/upload-only, a human finalizes."""
+    from dependencies import KEY_SCOPE_READONLY
+
+    raw = _tenant_with_key(db_session, KEY_SCOPE_READONLY)
+    response = client.put(
+        f"/api/v1/audit/resolve/{uuid4()}",
+        headers={"X-API-Key": raw},
+        json={"status": "PAID"},
+    )
+    assert response.status_code == 403
+    # The message must tell an integrator what to change, not just say no.
+    assert "read-only" in response.json()["detail"].lower()
+
+
+def test_actions_key_passes_the_audit_gate(db_session):
+    """Full Automation: the key gets to call approve/reject/verify/send/mark-paid.
+
+    404 (not 403) is the pass condition -- the gate let it through and the
+    handler then failed to find a random invoice id, which is exactly right.
+    """
+    from dependencies import KEY_SCOPE_ACTIONS
+
+    raw = _tenant_with_key(db_session, KEY_SCOPE_ACTIONS)
+    response = client.put(
+        f"/api/v1/audit/resolve/{uuid4()}",
+        headers={"X-API-Key": raw},
+        json={"status": "PAID"},
+    )
+    assert response.status_code != 403
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("path", ["confirm-send", "mark-paid"])
+def test_readonly_key_is_refused_outbound_finalization(db_session, path):
+    from dependencies import KEY_SCOPE_READONLY
+
+    raw = _tenant_with_key(db_session, KEY_SCOPE_READONLY)
+    response = client.put(
+        f"/api/v1/outbound-invoices/{uuid4()}/{path}",
+        headers={"X-API-Key": raw},
+        json={},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("path", ["confirm-send", "mark-paid"])
+def test_outbound_finalization_now_requires_can_audit_for_humans(path):
+    """Gap 335's incidental security fix.
+
+    Before this, confirm-send and mark-paid depended on bare get_tenant_context
+    with NO permission gate: any authenticated user -- including this
+    permission-less user -- could mark a tenant's outbound invoice SENT or
+    PAID, fire the outbound webhook and trigger the staff notification email.
+    """
+    response = client.put(
+        f"/api/v1/outbound-invoices/{uuid4()}/{path}",
+        headers=VIEWER,
+        json={},
+    )
+    assert response.status_code == 403
+    assert "audit queue" in response.json()["detail"].lower()
+
+
+def test_readonly_key_can_still_upload_and_read(db_session):
+    """Upload is ingestion, not one of the five actions -- Strict Review allows it."""
+    from dependencies import KEY_SCOPE_READONLY
+
+    raw = _tenant_with_key(db_session, KEY_SCOPE_READONLY)
+
+    # Reads: reachable at readonly scope.
+    assert client.get("/api/v1/invoices", headers={"X-API-Key": raw}).status_code == 200
+
+    # Upload: must not 403 on the permission gate. can_load is False for a
+    # readonly key, so this is the case require_permission_or_api_key exists for.
+    response = client.post(
+        "/api/v1/invoices/upload",
+        headers={"X-API-Key": raw},
+        files={"files": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
+    )
+    assert response.status_code != 403
+
+
+def test_dual_credential_routes_still_401_without_any_credential(mock_auth_disabled):
+    """Widening to two credential types must not open a third, anonymous one."""
+    for method, path in [
+        ("get", "/api/v1/invoices"),
+        ("get", "/api/v1/chat/sessions"),
+    ]:
+        response = getattr(client, method)(path)
+        assert response.status_code == 401, f"{path} did not 401 unauthenticated"
+
+    bad = client.get("/api/v1/invoices", headers={"X-API-Key": "inv_live_not_a_real_key"})
+    assert bad.status_code == 401
+
+
+def test_api_key_never_reaches_tenant_administration(db_session):
+    """An actions key finishes invoices; it does not manage the workspace."""
+    from dependencies import KEY_SCOPE_ACTIONS
+
+    raw = _tenant_with_key(db_session, KEY_SCOPE_ACTIONS)
+    # require_admin resolves through the Clerk-only dependency, so an
+    # `inv_live_` bearer is not a verifiable JWT -> 401. Either way it must not
+    # be 200.
+    response = client.get("/api/v1/admin/users", headers={"Authorization": f"Bearer {raw}"})
+    assert response.status_code in (401, 403)
+
+
+def test_service_user_is_hidden_from_the_admin_user_list(db_session):
+    """It satisfies an FK; it is not a person and must not look like one."""
+    from dependencies import KEY_SCOPE_ACTIONS, resolve_api_key_context
+
+    _viewer_row(db_session)
+    raw = _tenant_with_key(db_session, KEY_SCOPE_ACTIONS)
+    context = resolve_api_key_context(raw, db_session)
+    assert context.db_user_id is not None  # the row really was created
+
+    listed = client.get("/api/v1/admin/users").json()
+    assert all("api-key-service" not in u["email"] for u in listed), listed

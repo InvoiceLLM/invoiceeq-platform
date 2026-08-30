@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { useSignUp } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { Header } from "@/components/marketing/Header";
+import { clearStoredSandboxKey, readStoredSandboxKey } from "@/lib/sandboxKey";
 
 // Gap 7: the backend is called through this app's own server-side route handler
 // at /api/auth/provision, not directly from the browser. The backend Container
@@ -121,7 +122,18 @@ function isTerminalProvisionFailure(err: unknown): boolean {
   return err instanceof ProvisionError && err.status === 409;
 }
 
-async function provisionTenant(payload: ProvisionPayload): Promise<void> {
+/**
+ * Gap 342: POST /auth/provision now also mints a production API key for a
+ * brand-new tenant and returns it once in the response body -- this was
+ * previously discarded entirely (the caller only checked `response.ok`), so
+ * the key was minted server-side but never actually reached the user. Parsed
+ * and returned here so the signup flow can show it before routing away.
+ */
+interface ProvisionResult {
+  api_key: string | null;
+}
+
+async function provisionTenant(payload: ProvisionPayload): Promise<ProvisionResult> {
   let token: string | null = null;
   try {
     // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
@@ -139,12 +151,132 @@ async function provisionTenant(payload: ProvisionPayload): Promise<void> {
     body: JSON.stringify(payload),
   });
 
+  const data = await response.json().catch(() => ({} as { detail?: string; api_key?: string }));
+
   if (!response.ok) {
-    const data = await response.json().catch(() => ({} as { detail?: string }));
     throw new ProvisionError(
-      data?.detail || `provisioning failed with HTTP ${response.status}`,
+      (data as { detail?: string })?.detail || `provisioning failed with HTTP ${response.status}`,
       response.status
     );
+  }
+
+  return { api_key: (data as { api_key?: string })?.api_key || null };
+}
+
+/**
+ * Website Gap 350: the outcome of the optional sandbox-claim step.
+ *
+ * `claimed` is what the reveal screen's copy branches on. `apiKey` is the fresh
+ * `inv_live_...` key the backend mints in the *same transaction* that revokes
+ * the `inv_test_...` one — after a successful claim it is the only new key that
+ * exists, because `POST /auth/provision` will then find the tenant by
+ * `clerk_org_id`, return `is_new=false` and mint nothing.
+ */
+interface SandboxClaimOutcome {
+  claimed: boolean;
+  apiKey: string | null;
+}
+
+const NO_CLAIM: SandboxClaimOutcome = { claimed: false, apiKey: null };
+
+/**
+ * Website Gap 350: promote the sandbox workspace this visitor was issued on the
+ * marketing site (BE Gap 340) into the organisation they have just created,
+ * instead of stranding their trial invoices/chat in a tenant nobody will look
+ * at again.
+ *
+ * HOW THE SIGNUP PAGE KNOWS THERE IS A SANDBOX. `lib/sandboxKey.ts` — the key
+ * was written to localStorage by `SandboxKeyCta` at the moment it was issued.
+ * There is nothing server-side to read: the visitor was anonymous when the key
+ * was issued, by definition. `readStoredSandboxKey()` returns null when there
+ * is no key, when it is malformed, or when it has already expired, so the
+ * common case (an ordinary signup) is a synchronous null and no request.
+ *
+ * ORDERING IS LOAD-BEARING: this runs BEFORE `provisionTenant()`, never after.
+ *   * Claim first  -> `claim_sandbox_tenant()` attaches `clerk_org_id` to the
+ *     sandbox tenant, so the subsequent provision call finds it by that id,
+ *     early-returns `is_new=false` and creates nothing. The `User` row is then
+ *     created on first login by `dependencies.py::get_tenant_context`, exactly
+ *     as it is for any other already-existing tenant — a claim does not strand
+ *     the user (verified against dependencies.py, not assumed).
+ *   * Provision first -> a brand-new tenant takes `clerk_org_id`, and the claim
+ *     would then try to write the same value onto the sandbox tenant, against a
+ *     UNIQUE column. Best case an error, worst case a 500 in the middle of
+ *     signup. So the order is not a preference.
+ *
+ * THIS FUNCTION NEVER THROWS AND NEVER BLOCKS SIGNUP. Claiming is an upgrade
+ * path, not a dependency: a lost race, an already-claimed workspace, an expired
+ * key, `SANDBOX_KEYS_ENABLED` switched off between issuance and signup, or the
+ * backend being unreachable all resolve to `NO_CLAIM`, and signup proceeds as
+ * an ordinary fresh signup. Failing signup because a nice-to-have upgrade
+ * failed would be strictly worse than not offering the upgrade at all.
+ */
+async function claimSandboxWorkspace(
+  payload: ProvisionPayload
+): Promise<SandboxClaimOutcome> {
+  let stored: ReturnType<typeof readStoredSandboxKey> = null;
+  try {
+    stored = readStoredSandboxKey();
+  } catch {
+    return NO_CLAIM;
+  }
+  if (!stored) return NO_CLAIM;
+
+  try {
+    let token: string | null = null;
+    try {
+      // Minted client-side for the same reason provisionTenant() does it: the
+      // session cookie the route handler would otherwise read lags a
+      // just-completed setActive (Gap 157), and the backend binds this token's
+      // `sub`/`org_id` to the body's clerk_user_id/clerk_org_id.
+      // @ts-expect-error -- window.Clerk is the runtime Clerk client, not typed here
+      token = (await window.Clerk?.session?.getToken({ template: "invoice-app" })) || null;
+    } catch (tokenErr) {
+      console.error("Could not mint a Clerk session token for the sandbox claim:", tokenErr);
+    }
+
+    const response = await fetch("/api/sandbox/claim", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        sandbox_key: stored.apiKey,
+        clerk_org_id: payload.clerk_org_id,
+        org_name: payload.org_name,
+        clerk_user_id: payload.clerk_user_id,
+      }),
+    });
+
+    const data = (await response.json().catch(() => ({}))) as {
+      api_key?: string;
+      detail?: string;
+    };
+
+    if (response.ok) {
+      // The `inv_test_` key was revoked server-side in the claim transaction —
+      // keeping it locally would only produce failing 401s later.
+      clearStoredSandboxKey();
+      return { claimed: true, apiKey: data.api_key || null };
+    }
+
+    // 400 not-a-sandbox-key / 403 wrong caller / 409 already claimed or not
+    // claimable / 410 expired are all terminal: this key will never claim
+    // anything, so drop it rather than retrying it at every future signup.
+    // 502/503 (unreachable, or SANDBOX_KEYS_ENABLED off) are left alone — the
+    // key may still be good, and it expires on its own regardless.
+    if ([400, 401, 403, 404, 409, 410].indexOf(response.status) !== -1) {
+      clearStoredSandboxKey();
+    }
+    console.warn(
+      `Sandbox claim did not apply (HTTP ${response.status}): ${data?.detail || "no detail"}. ` +
+        "Continuing as an ordinary signup."
+    );
+    return NO_CLAIM;
+  } catch (err) {
+    console.warn("Sandbox claim failed; continuing as an ordinary signup:", err);
+    return NO_CLAIM;
   }
 }
 
@@ -191,6 +323,20 @@ export default function SignupPage() {
   
   const [verificationCode, setVerificationCode] = useState("");
   const [needsVerification, setNeedsVerification] = useState(false);
+
+  // Gap 342 fix: the API key provisioning now mints is shown here exactly
+  // once, matching the "shown once, never re-revealed" convention Settings ->
+  // Security already uses for key rotation. Null means either provisioning
+  // hasn't happened yet, or this was a pre-existing tenant (no new key minted).
+  const [provisionedApiKey, setProvisionedApiKey] = useState<string | null>(null);
+  const [keyCopied, setKeyCopied] = useState(false);
+
+  // Gap 350: held so the Retry path can still reveal the key a successful claim
+  // minted even if the provision call that followed it failed, and so the
+  // reveal screen's copy can say "we carried your sandbox over" rather than
+  // silently showing a key that means something different from what the visitor
+  // expects. Stays NO_CLAIM for every ordinary signup.
+  const [sandboxClaim, setSandboxClaim] = useState<SandboxClaimOutcome>(NO_CLAIM);
 
   const inputStyle = (id: string) => ({ ...S.input, ...(focused === id ? S.inputFocus : {}) });
   const selectStyle = (id: string) => ({ ...S.select, ...(focused === id ? S.inputFocus : {}) });
@@ -261,8 +407,28 @@ export default function SignupPage() {
       clerk_user_id: finalUserId,
     };
 
+    // Gap 350: the sandbox claim runs here, BEFORE provisioning -- see
+    // claimSandboxWorkspace()'s doc comment for why the order is load-bearing.
+    // It never throws and returns NO_CLAIM when there is no sandbox key in this
+    // browser, which is every ordinary signup.
+    const claim = await claimSandboxWorkspace(payload);
+    setSandboxClaim(claim);
+
     try {
-      await provisionTenant(payload);
+      const result = await provisionTenant(payload);
+      // Gap 342 fix: show the key before navigating away instead of routing
+      // straight to /login -- once this page unmounts the raw key is gone for
+      // good, same as every other "shown once" credential in this app.
+      //
+      // Gap 350: after a successful claim, `result.api_key` is null by design
+      // -- the tenant already carries this clerk_org_id, so provisioning
+      // early-returns is_new=false and mints nothing. The claim's own key is
+      // the live one, so it is what gets revealed.
+      const revealKey = result.api_key || claim.apiKey;
+      if (revealKey) {
+        setProvisionedApiKey(revealKey);
+        return;
+      }
     } catch (provisionErr: any) {
       // Gap 133: blocking. Redirecting to /login on a failed provision is
       // what made this invisible -- the user reached a working-looking app
@@ -353,8 +519,23 @@ export default function SignupPage() {
     setRetrying(true);
     setError(null);
     try {
-      await provisionTenant(pendingProvision);
+      // Gap 350: retry the claim too, but only when the first attempt did not
+      // already succeed -- a claimed sandbox is single-winner and a second
+      // attempt would only ever 409. When the first attempt did succeed,
+      // `sandboxClaim.apiKey` still holds the key that claim minted, so the
+      // reveal below can surface it even though provisioning is what failed.
+      const claim = sandboxClaim.claimed
+        ? sandboxClaim
+        : await claimSandboxWorkspace(pendingProvision);
+      if (!sandboxClaim.claimed) setSandboxClaim(claim);
+
+      const result = await provisionTenant(pendingProvision);
       setPendingProvision(null);
+      const revealKey = result.api_key || claim.apiKey;
+      if (revealKey) {
+        setProvisionedApiKey(revealKey);
+        return;
+      }
       router.push("/login");
     } catch (retryErr: any) {
       console.error("Tenant provisioning retry failed:", retryErr);
@@ -406,7 +587,66 @@ export default function SignupPage() {
 
       <div style={S.formPanel}>
         <div style={S.card}>
-          {!needsVerification ? (
+          {provisionedApiKey ? (
+            <>
+              <div style={S.cardHeader}>
+                {/* Gap 350: a claimed signup is a materially different event
+                    from a fresh one -- the visitor's trial workspace was
+                    promoted rather than a new empty one created, and the key
+                    below is the replacement that revoked their inv_test_ one in
+                    the same transaction. Saying so is the difference between
+                    "here is a key" and "your trial is still here". */}
+                <div style={S.badge}>
+                  {sandboxClaim.claimed ? "✦ Sandbox workspace kept" : "✦ Organisation ready"}
+                </div>
+                <h2 style={S.cardTitle}>Your API key</h2>
+                <p style={S.cardSubtitle}>
+                  {sandboxClaim.claimed
+                    ? "Your sandbox workspace has been moved into this organisation — the invoices and chats you tried are still there. Your old inv_test_ key has been replaced by the one below."
+                    : "For connecting your own systems (Settings → Workflows can walk you through this later)."}
+                  {" "}This is the only time it&apos;s shown — copy it now.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  ...S.input,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "10px",
+                  padding: "13px 14px",
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: "13px",
+                  wordBreak: "break-all",
+                  userSelect: "all",
+                }}
+              >
+                <span>{provisionedApiKey}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(provisionedApiKey).then(() => {
+                    setKeyCopied(true);
+                    setTimeout(() => setKeyCopied(false), 2000);
+                  });
+                }}
+                style={{ ...S.retryBtn, marginTop: "10px", color: T.textPrimary, background: "rgba(59,130,246,0.14)", border: "1px solid rgba(59,130,246,0.35)" }}
+              >
+                {keyCopied ? "✓ Copied" : "📋 Copy key"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/login")}
+                style={{ ...S.btn }}
+              >
+                Continue to dashboard →
+              </button>
+            </>
+          ) : !needsVerification ? (
             <>
               <div style={S.cardHeader}>
                 <div style={S.badge}>✦ Free 14-day trial</div>

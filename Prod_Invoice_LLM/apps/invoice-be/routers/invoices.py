@@ -14,7 +14,18 @@ from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 from config import settings
 
-from dependencies import get_tenant_context, get_db_session, require_can_load, TenantContext
+from dependencies import (
+    get_tenant_context,
+    get_db_session,
+    require_can_load,
+    # Feature 25 (Gap 335): the ingestion + read surface an integration reaches
+    # with an `inv_live_` key. `require_can_load_or_api_key` keeps the human
+    # can_load gate on /upload intact while admitting a key of any scope --
+    # upload is ingestion, not one of the actions `actions` scope governs.
+    get_tenant_or_api_key_context,
+    require_can_load_or_api_key,
+    TenantContext,
+)
 from models import Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
@@ -222,7 +233,12 @@ async def upload_invoices(
     # Only the two write/ingest endpoints are gated -- the GET list/detail/pdf
     # routes below stay open so the Dashboard remains reachable for a user with
     # no permissions at all, per the feature's access model.
-    context: TenantContext = Depends(require_can_load),
+    # Feature 25 (Gap 335): now also reachable with an `inv_live_` API key at
+    # EITHER scope -- the founder's Strict Review policy is "read/upload-only",
+    # so feeding the system is exactly what a readonly key is for. The human
+    # can_load requirement above is unchanged; see
+    # require_permission_or_api_key().
+    context: TenantContext = Depends(require_can_load_or_api_key),
     db_session: Session = Depends(get_db_session)
 ):
     """
@@ -493,7 +509,9 @@ async def stream_invoice_status(
 @router.get("/status/{job_id}")
 async def get_invoice_status(
     job_id: UUID,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335): readonly-scope API key or Clerk session. Polling the
+    # status of a job you submitted is the other half of upload.
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session)
 ):
     """Polling status endpoint returning DB record details for a single invoice."""
@@ -529,7 +547,8 @@ async def list_invoices(
     tag: str | None = None,
     vendor_name: str | None = None,
     batch_id: UUID | None = None,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335): readonly-scope API key or Clerk session.
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session)
 ):
     """
@@ -703,7 +722,8 @@ async def rollback_batch(
 @router.get("/{invoice_id}", response_model=Invoice)
 async def get_invoice(
     invoice_id: UUID,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335): readonly-scope API key or Clerk session.
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session)
 ):
     """
@@ -726,7 +746,8 @@ async def get_invoice(
 @router.get("/{invoice_id}/pdf")
 async def get_invoice_pdf(
     invoice_id: UUID,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335): readonly-scope API key or Clerk session.
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session)
 ):
     """

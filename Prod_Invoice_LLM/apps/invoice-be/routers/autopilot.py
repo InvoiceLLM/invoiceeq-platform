@@ -60,6 +60,10 @@ class AutopilotSyncResponse(BaseModel):
     processed: int
     skipped: int
     failed: int
+    # Gap 343: the run stopped because the tenant's free-tier allowance ran out,
+    # not because anything went wrong. Defaulted so an older client (and the
+    # scheduled job, which reads no response at all) is unaffected.
+    quota_exhausted: bool = False
     message: str
 
 
@@ -236,15 +240,27 @@ def trigger_sync(
             detail=f"Sync failed: {str(exc)}",
         )
 
+    quota_exhausted = bool(summary.get("quota_exhausted"))
+    message = (
+        f"Sync complete. {summary['processed']} new file(s) imported, "
+        f"{summary['skipped']} skipped (duplicate), "
+        f"{summary['failed']} failed."
+    )
+    if quota_exhausted:
+        # Gap 343: a run that stopped on quota is not a failure the user should
+        # go debugging -- say what actually happened and what fixes it.
+        message += (
+            " Stopped early: this workspace's free-tier invoice allowance is "
+            "used up. Remaining files will be picked up after the monthly "
+            "refill, or immediately on a paid plan."
+        )
+
     return AutopilotSyncResponse(
         processed=summary["processed"],
         skipped=summary["skipped"],
         failed=summary["failed"],
-        message=(
-            f"Sync complete. {summary['processed']} new file(s) imported, "
-            f"{summary['skipped']} skipped (duplicate), "
-            f"{summary['failed']} failed."
-        ),
+        quota_exhausted=quota_exhausted,
+        message=message,
     )
 
 

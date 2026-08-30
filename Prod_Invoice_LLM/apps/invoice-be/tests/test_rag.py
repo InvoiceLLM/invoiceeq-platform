@@ -1,7 +1,7 @@
 import os
 import pytest
 from unittest.mock import patch, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
@@ -59,19 +59,49 @@ def test_session_lifecycle_and_tenant_isolation(db_session):
     assert any(s["id"] == session_id for s in sessions_list)
     
     # 3. foreign tenant access attempt should fail with 403
+    #
+    # Gap 354: this override MUST target the dependency the route actually
+    # declares. Gap 335 rewired every chat-session route (this one included) from
+    # `Depends(get_tenant_context)` to `Depends(get_tenant_or_api_key_context)`,
+    # so the previous override of `get_tenant_context` stopped taking effect --
+    # the request was served under the default MOCK_TENANT_ID identity, the
+    # isolation branch in routers/chat.py::get_session_messages() was never
+    # reached, and this test went on passing (200, not 403) without testing
+    # anything. FastAPI only substitutes overrides for dependencies declared via
+    # `Depends(...)`; `get_tenant_or_api_key_context` calls `get_tenant_context`
+    # as a plain function on its Clerk branch, so overriding the inner one has no
+    # effect on this route by design, not by accident.
     foreign_tenant_id = uuid4()
-    from dependencies import get_tenant_context, TenantContext
-    app.dependency_overrides[get_tenant_context] = lambda: TenantContext(
-        tenant_id=foreign_tenant_id,
-        user_id="user_foreign_test",
-        role="Admin",
-        billing_plan="free"
-    )
+    from dependencies import get_tenant_or_api_key_context, TenantContext
+
+    # The guard against that happening again silently: record every invocation
+    # and assert below that the override was actually reached. A future rewire to
+    # some third dependency then fails loudly here instead of quietly passing.
+    override_calls: list[UUID] = []
+
+    def _foreign_tenant_context() -> TenantContext:
+        override_calls.append(foreign_tenant_id)
+        return TenantContext(
+            tenant_id=foreign_tenant_id,
+            user_id="user_foreign_test",
+            role="Admin",
+            billing_plan="free",
+        )
+
+    app.dependency_overrides[get_tenant_or_api_key_context] = _foreign_tenant_context
     try:
         get_res = client.get(f"/api/v1/chat/sessions/{session_id}")
+        assert override_calls, (
+            "The foreign-tenant override was never invoked, so this request did "
+            "not run as a foreign tenant and the isolation check was not "
+            "exercised. GET /chat/sessions/{id} no longer depends on "
+            "get_tenant_or_api_key_context -- repoint this override at whatever "
+            "it depends on now (this is exactly how Gap 335 silently disarmed "
+            "this test)."
+        )
         assert get_res.status_code == 403
     finally:
-        del app.dependency_overrides[get_tenant_context]
+        del app.dependency_overrides[get_tenant_or_api_key_context]
 
 def test_chat_message_routing_and_history_saving(db_session):
     """Verify message postings execute agent routing paths and persist thread history."""

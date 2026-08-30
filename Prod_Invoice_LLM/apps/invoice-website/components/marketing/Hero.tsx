@@ -1,11 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import Link from "next/link";
 import {
   Sparkles,
-  ArrowRight,
-  ChevronDown,
   ShieldCheck,
   Zap,
   Cpu,
@@ -14,7 +11,25 @@ import {
   RotateCcw,
   Mail,
   Bot,
+  AlertTriangle,
 } from "lucide-react";
+import { HeroModeTabs } from "./HeroModeTabs";
+
+/**
+ * Feature 7 / Gap 346 — the discrepancy this describes is what SENTINEL
+ * actually caught. Before this feature the `status` union had no alert
+ * variant at all, so a flagged sample was literally unrepresentable and
+ * every sample in the demo routed to AUTOMATED_APPROVAL. Fixture data only
+ * — nothing here is fetched.
+ */
+interface SampleDiscrepancy {
+  /** Short headline for the warning card, e.g. what kind of problem it is. */
+  title: string;
+  /** One-sentence, plain-English explanation a finance lead would understand. */
+  detail: string;
+  /** Which line item in `taxBreakdown` the warning refers to, for the callout. */
+  lineItem: string;
+}
 
 interface SampleInvoice {
   id: string;
@@ -22,11 +37,31 @@ interface SampleInvoice {
   amount: string;
   poNumber: string;
   lineItemsCount: number;
+  /** Extraction field precision — how well NOVA read the document. */
   confidence: string;
-  status: "VERIFIED" | "MATCHED" | "AUDITED";
+  /**
+   * SENTINEL's confidence that the invoice is safe to auto-approve. Split
+   * from `confidence` in Gap 346: a price anomaly on a perfectly-legible
+   * invoice means high precision and low risk score at the same time, which
+   * one shared number could not express.
+   */
+  riskScore: string;
+  status: "VERIFIED" | "MATCHED" | "AUDITED" | "AUDIT_REQUIRED";
   rawJson: string;
-  taxBreakdown: { item: string; rate: string; tax: string; total: string }[];
+  taxBreakdown: {
+    item: string;
+    rate: string;
+    tax: string;
+    total: string;
+    /** Renders the row in the alert palette — the line SENTINEL flagged. */
+    flagged?: boolean;
+  }[];
+  /** Present only on samples SENTINEL held back for review. */
+  discrepancy?: SampleDiscrepancy;
 }
+
+/** Anything SENTINEL held for review renders in the alert palette. */
+const isFlagged = (invoice: SampleInvoice) => invoice.status === "AUDIT_REQUIRED";
 
 const SAMPLE_INVOICES: SampleInvoice[] = [
   {
@@ -36,6 +71,7 @@ const SAMPLE_INVOICES: SampleInvoice[] = [
     poNumber: "PO-88219",
     lineItemsCount: 4,
     confidence: "99.8%",
+    riskScore: "99.8%",
     status: "VERIFIED",
     rawJson: JSON.stringify(
       {
@@ -56,14 +92,18 @@ const SAMPLE_INVOICES: SampleInvoice[] = [
       { item: "Gigabit Switch 48-Port", rate: "$5,780.00", tax: "0%", total: "$5,780.00" },
     ],
   },
+  // Gap 346: the one sample that does NOT sail through. Extraction is clean
+  // (99.4% precision -- the document was perfectly legible); SENTINEL holds
+  // it anyway because a line item is far outside this vendor's own history.
   {
     id: "FRT-1048",
     vendor: "Global Freight Logistics",
     amount: "$18,750.50",
     poNumber: "PO-91042",
-    lineItemsCount: 2,
+    lineItemsCount: 3,
     confidence: "99.4%",
-    status: "MATCHED",
+    riskScore: "61.2%",
+    status: "AUDIT_REQUIRED",
     rawJson: JSON.stringify(
       {
         invoice_number: "FRT-1048",
@@ -71,17 +111,33 @@ const SAMPLE_INVOICES: SampleInvoice[] = [
         total_amount: 18750.5,
         currency: "USD",
         po_number: "PO-91042",
-        line_items_matched: 2,
-        consensus_score: 0.994,
-        routing: "AUTOMATED_APPROVAL",
+        line_items_matched: 3,
+        consensus_score: 0.612,
+        routing: "HOLD_FOR_REVIEW",
+        exceptions: [
+          {
+            type: "PRICE_VARIANCE",
+            line_item: "Freight Surcharge",
+            observed: 5200.0,
+            vendor_90d_average: 3880.6,
+            variance_pct: 34.0,
+          },
+        ],
       },
       null,
       2
     ),
     taxBreakdown: [
-      { item: "Air Cargo Transit (EU->US)", rate: "$14,000.00", tax: "10%", total: "$15,400.00" },
-      { item: "Customs Brokerage Duty", rate: "$3,350.50", tax: "0%", total: "$3,350.50" },
+      { item: "Air Cargo Transit (EU->US)", rate: "$10,400.00", tax: "10%", total: "$11,440.00" },
+      { item: "Customs Brokerage Duty", rate: "$2,110.50", tax: "0%", total: "$2,110.50" },
+      { item: "Freight Surcharge", rate: "$5,200.00", tax: "0%", total: "$5,200.00", flagged: true },
     ],
+    discrepancy: {
+      title: "SENTINEL flagged a price variance",
+      detail:
+        "Freight Surcharge came in at $5,200.00 — 34% above this vendor's own 90-day average of $3,880.60. Held for review instead of auto-approved.",
+      lineItem: "Freight Surcharge",
+    },
   },
   {
     id: "SUB-7721",
@@ -90,6 +146,7 @@ const SAMPLE_INVOICES: SampleInvoice[] = [
     poNumber: "PO-77011",
     lineItemsCount: 3,
     confidence: "99.9%",
+    riskScore: "99.9%",
     status: "VERIFIED",
     rawJson: JSON.stringify(
       {
@@ -188,6 +245,11 @@ export function Hero() {
     setRotateY(0);
   };
 
+  // Gap 346: one derived flag drives every alert branch below (stage 3,
+  // stage 4, the status pill, the warning card and the flagged line row) so
+  // they can never disagree with each other.
+  const sampleFlagged = isFlagged(selectedInvoice);
+
   const runLiveSimulation = (invoice: SampleInvoice) => {
     setSelectedInvoice(invoice);
     setIsProcessing(true);
@@ -232,75 +294,56 @@ export function Hero() {
             <span className="animated-hero-heading inline-block">Invoices, understood automatically</span>
           </h1>
 
-          <p className="mt-2 text-sm sm:text-base text-[#94A3B8] max-w-xl mx-auto leading-relaxed">
-            From inbox to verified data — no manual keying.
-          </p>
-
-          {/* One primary CTA plus a quiet scroll cue down to the pipeline demo */}
-          <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-5">
-            <Link
-              href="/login"
-              className="btn-primary-gradient w-full sm:w-auto text-base px-8 py-3.5 flex items-center justify-center gap-3 group"
-            >
-              <span>Start Free Trial</span>
-              <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-            </Link>
-            <a
-              href="#pipeline-demo"
-              className="group flex items-center gap-2 text-sm font-semibold text-[#94A3B8] hover:text-[#22D3EE] transition-colors duration-200"
-            >
-              <span>See how it flows</span>
-              <ChevronDown
-                className="w-4 h-4 animate-bounce group-hover:text-[#22D3EE]"
-                style={{ animationDuration: "2.2s" }}
-              />
-            </a>
-          </div>
+          {/* Gap 345: two-mode switcher, directly under the headline. The CTA
+              row and the "From inbox..." subhead that used to sit here were
+              removed (founder call, 2026-08-29) to recover above-the-fold
+              height after this switcher pushed the section past 900px --
+              "Get Started Free" in the header nav and the recipe selector's
+              own CTA further down both already cover the conversion path.
+              Own component: Hero.tsx is already 627 lines / 9 hooks. */}
+          <HeroModeTabs />
 
           {/* Before/after transform: a concrete invoice, not an abstract
               diagram -- replaces Gap 163's flow diagram + separate outcome
               strip with one visual that shows the actual value in one
               glance. Deliberately static (not tied to selectedInvoice below)
               -- this is a fixed, illustrative example, not another live demo. */}
-          <div className="mt-9 grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-5 max-w-4xl mx-auto">
+          <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-3 max-w-3xl mx-auto">
 
-            {/* Before: what arrives */}
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-md overflow-hidden text-left shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
-              <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#64748B]">What arrives</span>
+            {/* Before: what arrives -- shrunk 2026-08-29 (founder call) to
+                recover above-the-fold height the switcher above added */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-md overflow-hidden text-left shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/10">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748B]">What arrives</span>
                 <span className="h-1.5 w-1.5 rounded-full bg-[#64748B]" />
               </div>
-              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-white/5 text-[11px] text-[#64748B]">
+              <div className="flex items-center gap-1.5 px-3 py-1 border-b border-white/5 text-[10px] text-[#64748B]">
                 <Mail className="w-3 h-3" />
                 via email or connected apps
               </div>
-              <div className="relative m-4 -rotate-1 rounded-sm bg-[#F4F1E9] p-5 text-[#2b2b28] shadow-[0_6px_20px_rgba(0,0,0,0.35)]">
-                <span className="absolute top-14 right-4 rotate-6 rounded border border-[#b3413a] px-1.5 py-0.5 font-mono text-[9px] tracking-wide text-[#b3413a] opacity-70">
+              <div className="relative m-2.5 -rotate-1 rounded-sm bg-[#F4F1E9] p-2.5 text-[#2b2b28] shadow-[0_6px_20px_rgba(0,0,0,0.35)]">
+                <span className="absolute top-9 right-2.5 rotate-6 rounded border border-[#b3413a] px-1 py-0.5 font-mono text-[8px] tracking-wide text-[#b3413a] opacity-70">
                   RECEIVED
                 </span>
-                <div className="mb-2 flex justify-between text-[10px] text-[#6b6a60]">
+                <div className="mb-1 flex justify-between text-[9px] text-[#6b6a60]">
                   <span>INV-9842</span>
                   <span>PDF · 340KB</span>
                 </div>
-                <div className="mb-0.5 text-[15px] font-bold tracking-tight">TechCorp Solutions Inc.</div>
-                <div className="mb-3 text-[10px] text-[#8a8878]">Invoice · Net 30 · attached to email</div>
-                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-1 text-[10px] text-[#4a4940]">
+                <div className="mb-0.5 text-[13px] font-bold tracking-tight">TechCorp Solutions Inc.</div>
+                <div className="mb-1.5 text-[9px] text-[#8a8878]">Invoice · Net 30 · attached to email</div>
+                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-0.5 text-[9px] text-[#4a4940]">
                   <span>Server Rack Module x4</span>
                   <span>$18,720.00</span>
                 </div>
-                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-1 text-[10px] text-[#9c9a8c] line-through decoration-[#b3413a] decoration-wavy">
+                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-0.5 text-[9px] text-[#9c9a8c] line-through decoration-[#b3413a] decoration-wavy">
                   <span>Gigabit Switch 48-Port</span>
                   <span>$7,880.??</span>
                 </div>
-                <div className="flex justify-between border-b border-dotted border-[#c9c6b6] py-1 text-[10px] text-[#4a4940]">
-                  <span>Installation Service</span>
-                  <span>$4,200.00</span>
-                </div>
-                <div className="flex justify-between py-1 text-[10px] text-[#4a4940]">
+                <div className="flex justify-between py-0.5 text-[9px] text-[#4a4940]">
                   <span>Tax</span>
                   <span>$11,700.00</span>
                 </div>
-                <div className="mt-2 flex justify-between border-t border-[#4a4940] pt-2 text-xs font-bold">
+                <div className="mt-1 flex justify-between border-t border-[#4a4940] pt-1 text-[11px] font-bold">
                   <span>Total Due</span>
                   <span>$42,5??.00</span>
                 </div>
@@ -308,53 +351,49 @@ export function Hero() {
             </div>
 
             {/* AI Engine core */}
-            <div className="flex flex-row items-center justify-center gap-3 py-2 lg:flex-col">
-              <div className="hidden h-8 w-px bg-gradient-to-b from-transparent to-white/10 lg:block" />
+            <div className="flex flex-row items-center justify-center gap-2 py-1 lg:flex-col">
+              <div className="hidden h-5 w-px bg-gradient-to-b from-transparent to-white/10 lg:block" />
               <div className="relative flex items-center justify-center">
-                <div className="pointer-events-none absolute h-20 w-20 rounded-full bg-[#3B82F6]/25 blur-2xl" />
+                <div className="pointer-events-none absolute h-14 w-14 rounded-full bg-[#3B82F6]/25 blur-2xl" />
                 <div
-                  className="pointer-events-none absolute h-[76px] w-[76px] rounded-full border border-dashed border-white/15 animate-spin"
+                  className="pointer-events-none absolute h-[54px] w-[54px] rounded-full border border-dashed border-white/15 animate-spin"
                   style={{ animationDuration: "22s" }}
                 />
-                <div className="relative h-[64px] w-[64px] rounded-full border border-[#22D3EE]/45 bg-[#050816]/85 backdrop-blur-md flex items-center justify-center shadow-[0_0_30px_rgba(34,211,238,0.3)]">
-                  <Cpu className="w-4 h-4 text-[#22D3EE]" />
+                <div className="relative h-[46px] w-[46px] rounded-full border border-[#22D3EE]/45 bg-[#050816]/85 backdrop-blur-md flex items-center justify-center shadow-[0_0_30px_rgba(34,211,238,0.3)]">
+                  <Cpu className="w-3.5 h-3.5 text-[#22D3EE]" />
                 </div>
               </div>
               <div className="text-center">
-                <div className="text-[11px] font-bold tracking-wide text-[#22D3EE]">AI Engine</div>
-                <div className="font-mono text-[9px] text-[#64748B]">4 agents, 6 sec</div>
+                <div className="text-[10px] font-bold tracking-wide text-[#22D3EE]">AI Engine</div>
+                <div className="font-mono text-[8px] text-[#64748B]">4 agents, 6 sec</div>
               </div>
-              <div className="hidden h-8 w-px bg-gradient-to-t from-transparent to-white/10 lg:block" />
+              <div className="hidden h-5 w-px bg-gradient-to-t from-transparent to-white/10 lg:block" />
             </div>
 
-            {/* After: what you get */}
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-md overflow-hidden text-left shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
-              <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#10B981]">What you get</span>
+            {/* After: what you get -- shrunk alongside the card above */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-md overflow-hidden text-left shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/10">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#10B981]">What you get</span>
                 <span className="h-1.5 w-1.5 rounded-full bg-[#10B981] shadow-[0_0_8px_#10B981]" />
               </div>
-              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-white/5 text-[11px] text-[#64748B]">
+              <div className="flex items-center gap-1.5 px-3 py-1 border-b border-white/5 text-[10px] text-[#64748B]">
                 <Zap className="w-3 h-3" />
                 synced to your systems via webhooks
               </div>
-              <div className="p-4">
-                <div className="flex items-baseline justify-between border-b border-white/5 py-2">
-                  <span className="text-[11px] text-[#64748B]">Vendor</span>
-                  <span className="text-[13px] font-semibold text-white">TechCorp Solutions Inc.</span>
+              <div className="p-2.5">
+                <div className="flex items-baseline justify-between border-b border-white/5 py-1">
+                  <span className="text-[10px] text-[#64748B]">Vendor</span>
+                  <span className="text-[12px] font-semibold text-white">TechCorp Solutions Inc.</span>
                 </div>
-                <div className="flex items-baseline justify-between border-b border-white/5 py-2">
-                  <span className="text-[11px] text-[#64748B]">Invoice #</span>
-                  <span className="font-mono text-xs text-white">INV-9842</span>
+                <div className="flex items-baseline justify-between border-b border-white/5 py-1">
+                  <span className="text-[10px] text-[#64748B]">Invoice #</span>
+                  <span className="font-mono text-[11px] text-white">INV-9842</span>
                 </div>
-                <div className="flex items-baseline justify-between border-b border-white/5 py-2">
-                  <span className="text-[11px] text-[#64748B]">PO Match</span>
-                  <span className="font-mono text-xs text-white">PO-88219 ✓</span>
+                <div className="flex items-baseline justify-between py-1">
+                  <span className="text-[10px] text-[#64748B]">Total</span>
+                  <span className="text-[12px] font-semibold text-white">$42,500.00</span>
                 </div>
-                <div className="flex items-baseline justify-between py-2">
-                  <span className="text-[11px] text-[#64748B]">Total</span>
-                  <span className="text-[13px] font-semibold text-white">$42,500.00</span>
-                </div>
-                <div className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[#10B981]/30 bg-[#10B981]/10 px-2.5 py-1.5 text-[11px] font-bold text-[#10B981]">
+                <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-[#10B981]/30 bg-[#10B981]/10 px-2 py-1 text-[10px] font-bold text-[#10B981]">
                   <CheckCircle2 className="w-3 h-3" />
                   Verified · 99.8% precision
                 </div>
@@ -364,7 +403,7 @@ export function Hero() {
           </div>
 
           {/* Trust-signal row -- last element of the above-the-fold block */}
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[11px] text-[#64748B]">
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[11px] text-[#64748B]">
             <span className="flex items-center gap-1.5">
               <Lock className="w-3.5 h-3.5 text-[#10B981]" />
               VNet-isolated tenant
@@ -411,19 +450,31 @@ export function Hero() {
               {/* Sample Invoice Selector */}
               <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
                 <span className="text-xs text-[#94A3B8] font-medium shrink-0">Sample Invoice:</span>
-                {SAMPLE_INVOICES.map((inv) => (
-                  <button
-                    key={inv.id}
-                    onClick={() => runLiveSimulation(inv)}
-                    className={`text-xs px-3 py-1.5 rounded-lg border font-mono transition-all duration-200 shrink-0 ${
-                      selectedInvoice.id === inv.id
-                        ? "bg-[#3B82F6]/20 text-[#22D3EE] border-[#3B82F6]/50 shadow-[0_0_12px_rgba(59,130,246,0.3)]"
-                        : "bg-white/5 text-[#94A3B8] border-white/10 hover:text-white"
-                    }`}
-                  >
-                    {inv.id}
-                  </button>
-                ))}
+                {SAMPLE_INVOICES.map((inv) => {
+                  // Gap 346: the flagged sample is signposted in the selector
+                  // itself, so a visitor knows there is an exception case to
+                  // look at rather than having to guess which chip differs.
+                  const flagged = isFlagged(inv);
+                  const selected = selectedInvoice.id === inv.id;
+                  const chipClass = flagged
+                    ? selected
+                      ? "bg-[#F43F5E]/20 text-[#FECACA] border-[#F43F5E]/60 shadow-[0_0_12px_rgba(244,63,94,0.3)]"
+                      : "bg-[#F43F5E]/10 text-[#FCA5A5] border-[#F43F5E]/40 hover:text-[#FECACA]"
+                    : selected
+                    ? "bg-[#3B82F6]/20 text-[#22D3EE] border-[#3B82F6]/50 shadow-[0_0_12px_rgba(59,130,246,0.3)]"
+                    : "bg-white/5 text-[#94A3B8] border-white/10 hover:text-white";
+
+                  return (
+                    <button
+                      key={inv.id}
+                      onClick={() => runLiveSimulation(inv)}
+                      className={`text-xs px-3 py-1.5 rounded-lg border font-mono transition-all duration-200 shrink-0 flex items-center gap-1.5 ${chipClass}`}
+                    >
+                      {flagged && <AlertTriangle className="w-3 h-3" />}
+                      {inv.id}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -463,36 +514,66 @@ export function Hero() {
                   <div className="mt-2 text-[10px] font-mono text-[#22D3EE]">Smart Parsing</div>
                 </div>
 
-                {/* Stage 3: SENTINEL Review */}
+                {/* Stage 3: SENTINEL Review -- turns rose, not violet, when
+                    this is the sample SENTINEL actually held (Gap 346). */}
                 <div
                   className={`p-3.5 rounded-xl border transition-all duration-300 relative ${
-                    activeStep >= 2
-                      ? "bg-[#8B5CF6]/10 border-[#8B5CF6]/50 text-white shadow-[0_0_20px_rgba(139,92,246,0.2)]"
-                      : "bg-white/5 border-white/10 text-[#94A3B8]"
+                    activeStep < 2
+                      ? "bg-white/5 border-white/10 text-[#94A3B8]"
+                      : sampleFlagged
+                      ? "bg-[#F43F5E]/10 border-[#F43F5E]/50 text-white shadow-[0_0_20px_rgba(244,63,94,0.2)]"
+                      : "bg-[#8B5CF6]/10 border-[#8B5CF6]/50 text-white shadow-[0_0_20px_rgba(139,92,246,0.2)]"
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs font-semibold mb-1">
                     <span>3. SENTINEL Review</span>
-                    {activeStep >= 2 && <CheckCircle2 className="w-3.5 h-3.5 text-[#8B5CF6]" />}
+                    {activeStep >= 2 &&
+                      (sampleFlagged ? (
+                        <AlertTriangle className="w-3.5 h-3.5 text-[#F43F5E]" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#8B5CF6]" />
+                      ))}
                   </div>
                   <p className="text-[11px] text-[#94A3B8]">Errors & Duplicate Checks</p>
-                  <div className="mt-2 text-[10px] font-mono text-[#8B5CF6]">Risk Score {selectedInvoice.confidence}</div>
+                  <div
+                    className={`mt-2 text-[10px] font-mono ${
+                      sampleFlagged ? "text-[#FCA5A5]" : "text-[#8B5CF6]"
+                    }`}
+                  >
+                    Risk Score {selectedInvoice.riskScore}
+                  </div>
                 </div>
 
-                {/* Stage 4: Verified Result */}
+                {/* Stage 4: Verified Result -- or "Held for Review" when
+                    SENTINEL routed the sample to a human instead (Gap 346). */}
                 <div
                   className={`p-3.5 rounded-xl border transition-all duration-300 relative ${
-                    activeStep >= 3
-                      ? "bg-[#10B981]/10 border-[#10B981]/50 text-white shadow-[0_0_20px_rgba(16,185,129,0.2)]"
-                      : "bg-white/5 border-white/10 text-[#94A3B8]"
+                    activeStep < 3
+                      ? "bg-white/5 border-white/10 text-[#94A3B8]"
+                      : sampleFlagged
+                      ? "bg-[#F43F5E]/10 border-[#F43F5E]/50 text-white shadow-[0_0_20px_rgba(244,63,94,0.2)]"
+                      : "bg-[#10B981]/10 border-[#10B981]/50 text-white shadow-[0_0_20px_rgba(16,185,129,0.2)]"
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs font-semibold mb-1">
-                    <span>4. Verified Result</span>
-                    {activeStep >= 3 && <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981]" />}
+                    <span>4. {sampleFlagged ? "Held for Review" : "Verified Result"}</span>
+                    {activeStep >= 3 &&
+                      (sampleFlagged ? (
+                        <AlertTriangle className="w-3.5 h-3.5 text-[#F43F5E]" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981]" />
+                      ))}
                   </div>
-                  <p className="text-[11px] text-[#94A3B8]">Ready for Approval</p>
-                  <div className="mt-2 text-[10px] font-mono text-[#10B981]">{selectedInvoice.status}</div>
+                  <p className="text-[11px] text-[#94A3B8]">
+                    {sampleFlagged ? "Routed to an auditor" : "Ready for Approval"}
+                  </p>
+                  <div
+                    className={`mt-2 text-[10px] font-mono ${
+                      sampleFlagged ? "text-[#FCA5A5]" : "text-[#10B981]"
+                    }`}
+                  >
+                    {selectedInvoice.status}
+                  </div>
                 </div>
 
               </div>
@@ -504,7 +585,13 @@ export function Hero() {
               <div className="lg:col-span-5 p-4 rounded-xl border border-[rgba(255,255,255,0.08)] bg-[#050816]/80 space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Active Sample</span>
-                  <span className="text-xs px-2.5 py-0.5 rounded bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/30 font-semibold">
+                  <span
+                    className={`text-xs px-2.5 py-0.5 rounded border font-semibold ${
+                      sampleFlagged
+                        ? "bg-[#F43F5E]/10 text-[#FCA5A5] border-[#F43F5E]/40"
+                        : "bg-[#10B981]/10 text-[#10B981] border-[#10B981]/30"
+                    }`}
+                  >
                     {selectedInvoice.status}
                   </span>
                 </div>
@@ -513,6 +600,24 @@ export function Hero() {
                   <h4 className="text-xl font-bold text-white">{selectedInvoice.vendor}</h4>
                   <p className="text-xs font-mono text-[#94A3B8] mt-0.5">Invoice #{selectedInvoice.id} • PO #{selectedInvoice.poNumber}</p>
                 </div>
+
+                {/* Gap 346: the discrepancy card. Appears once the pipeline
+                    animation reaches SENTINEL (stage 3 = activeStep 2), which
+                    is the stage that produced it -- so the warning lands in
+                    step with the animation rather than ahead of it. */}
+                {selectedInvoice.discrepancy && activeStep >= 2 && (
+                  <div className="flex gap-2.5 p-3 rounded-xl border border-[#F43F5E]/40 bg-[#F43F5E]/10 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
+                    <AlertTriangle className="w-4 h-4 text-[#F43F5E] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-[12px] font-bold text-[#FDA4AF]">
+                        {selectedInvoice.discrepancy.title}
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-[#FECACA]">
+                        {selectedInvoice.discrepancy.detail}
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* SAGE Ready Status Chip */}
                 {activeStep >= 3 && (
@@ -588,12 +693,31 @@ export function Hero() {
                       {selectedInvoice.taxBreakdown.map((row, idx) => (
                         <div
                           key={idx}
-                          className="text-[13px] font-normal leading-[1.5] grid grid-cols-12 px-2 py-1.5 rounded bg-white/5 text-[#CBD5E1] border border-white/10 items-center"
+                          className={`text-[13px] font-normal leading-[1.5] grid grid-cols-12 px-2 py-1.5 rounded items-center ${
+                            row.flagged
+                              ? "bg-[#F43F5E]/10 text-[#FECACA] border border-[#F43F5E]/40"
+                              : "bg-white/5 text-[#CBD5E1] border border-white/10"
+                          }`}
                         >
-                          <span className="col-span-6 truncate text-white">{row.item}</span>
+                          {/* Gap 346: the flagged row is the one the warning
+                              card names, so the callout and the table agree. */}
+                          <span
+                            className={`col-span-6 truncate flex items-center gap-1.5 ${
+                              row.flagged ? "text-[#FECACA]" : "text-white"
+                            }`}
+                          >
+                            {row.flagged && <AlertTriangle className="w-3 h-3 text-[#F43F5E] shrink-0" />}
+                            {row.item}
+                          </span>
                           <span className="col-span-2 text-right text-[#94A3B8] tabular-nums font-mono">{row.rate}</span>
                           <span className="col-span-2 text-right text-[#3B82F6] tabular-nums font-mono">{row.tax}</span>
-                          <span className="col-span-2 text-right text-[#22D3EE] font-semibold tabular-nums font-mono">{row.total}</span>
+                          <span
+                            className={`col-span-2 text-right font-semibold tabular-nums font-mono ${
+                              row.flagged ? "text-[#FDA4AF]" : "text-[#22D3EE]"
+                            }`}
+                          >
+                            {row.total}
+                          </span>
                         </div>
                       ))}
                     </div>

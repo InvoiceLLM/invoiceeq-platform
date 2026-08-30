@@ -19,8 +19,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlmodel import Session, select, or_
 
-from dependencies import get_db_session, require_admin, TenantContext
-from models import AuditLog, DroppedInboundEmail, Tenant, TenantEmailSender, User
+from dependencies import (
+    get_db_session,
+    require_admin,
+    # Feature 25 (Gap 335): used only to filter the synthetic API-key service
+    # user out of the Admin user list -- see list_tenant_users().
+    api_key_service_clerk_id,
+    TenantContext,
+)
+from models import AuditLog, DroppedInboundEmail, RoleMapper, Tenant, TenantEmailSender, User
 from services.inbound_mail_security import sender_domain_of
 
 logger = logging.getLogger(__name__)
@@ -110,8 +117,22 @@ async def list_tenant_users(
     state — before this, `app/admin/page.tsx` held its user list in ephemeral
     client state that vanished on reload.
     """
+    # Feature 25 (Gap 335): exclude this tenant's synthetic API-key service
+    # user. It is a real `users` row -- it has to be, so that an
+    # `actions`-scoped key's audit entries satisfy AuditLog's non-null
+    # actor_user_id FK -- but it is not a person, has no permissions of its own,
+    # and must not appear in the Admin console as though an Admin could grant it
+    # any. Filtered by exact clerk_user_id equality rather than a `LIKE`
+    # pattern: `_` is a SQL LIKE wildcard, and "api\_key\_service\_%" is the
+    # kind of subtly-wrong pattern that works until it doesn't.
+    service_user_clerk_id = api_key_service_clerk_id(context.tenant_id)
     users = db_session.exec(
-        select(User).where(User.tenant_id == context.tenant_id).order_by(User.created_at)
+        select(User)
+        .where(
+            User.tenant_id == context.tenant_id,
+            User.clerk_user_id != service_user_clerk_id,
+        )
+        .order_by(User.created_at)
     ).all()
     return [AdminUserOut.model_validate(u, from_attributes=True) for u in users]
 
@@ -134,8 +155,12 @@ async def set_user_permissions(
     a user created seconds ago in the Admin console has no row yet. Without the
     fallback, permissions ticked at create time would be silently dropped and
     the Admin would have to come back after the user's first login. When the
-    row is created here it gets role "Viewer" — Admin is never granted by this
-    endpoint, only by the Clerk-side role the JWT carries.
+    row is created here it gets `RoleMapper.NO_ROLE` — the zero-permission
+    fallback, spelled "Viewer" until Gap 337 retired that name — because no role
+    has been established for this user yet. Admin is never granted by this
+    endpoint, only by the Clerk-side role the JWT carries. The per-area
+    permissions in the payload are still applied on top, which is the whole
+    point of the pre-provisioning path.
     """
     user: User | None = None
 
@@ -167,7 +192,7 @@ async def set_user_permissions(
             email=payload.email,
             first_name=payload.first_name,
             last_name=payload.last_name,
-            role="Viewer",
+            role=RoleMapper.NO_ROLE,
             clerk_user_id=user_ref,
             created_at=datetime.utcnow(),
         )
@@ -263,7 +288,9 @@ async def remove_tenant_user(
         user.can_train = False
         user.can_audit = False
         user.can_load = False
-        user.role = "Viewer"
+        # Gap 337: demote to the zero-permission fallback, not to one of the
+        # three assignable roles -- a detached user must hold nothing.
+        user.role = RoleMapper.NO_ROLE
         db_session.add(user)
         removed.detached = True
     else:

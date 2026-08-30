@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ShieldCheck, Key, Lock, CheckCircle2, Copy, Check, RefreshCw, FileText, AlertTriangle, Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
+import WidgetTokenSection from "@/components/settings/WidgetTokenSection";
 
 /**
  * Gap 184: metadata about the tenant's live API key, as returned by
@@ -27,6 +28,24 @@ interface ApiKeyRotateResponse extends ApiKeyStatus {
 const API_KEY_URL = "/api/settings/security/api-key";
 const API_KEY_ROTATE_URL = "/api/settings/security/api-key/rotate";
 
+/**
+ * FE Gap 324: what the "Active Role" tile shows when there is no role to show.
+ *
+ * Two different states land here and both mean the same thing to a user:
+ *   - `useAuth().role === ""` — identity is still loading, or the /auth/me
+ *     lookup failed (see hooks/useAuth.ts's ANONYMOUS).
+ *   - the backend literally returns "Restricted" — BE Gap 337's
+ *     `RoleMapper.NO_ROLE`, the zero-permission fallback for an unmapped IDP
+ *     role string, an org-mismatch clamp, or a first-login clamp.
+ *
+ * "Restricted" is deliberately never shown verbatim. It is an accurate internal
+ * name and a punitive-sounding label for someone whose only problem is that
+ * nobody has assigned them a role yet — and it is explicitly excluded from
+ * `RoleMapper.USER_FACING_ROLES` on the backend for that reason.
+ */
+const UNASSIGNED_ROLE_LABEL = "Unassigned";
+const BACKEND_NO_ROLE = "Restricted";
+
 function formatTimestamp(value: string | null): string {
   if (!value) return "Never";
   const parsed = new Date(value);
@@ -41,7 +60,7 @@ export default function SecuritySettingsPage() {
     backHref: "/settings",
   });
 
-  const { role } = useAuth();
+  const { role, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<"access" | "docs">("access");
 
   // Gap 184: all of this used to be a hardcoded `inv_live_9f8a...` string that
@@ -119,11 +138,22 @@ export default function SecuritySettingsPage() {
     }
   };
 
+  /**
+   * FE Gap 324: the three roles a user is actually assigned, with the real
+   * default permissions from the backend's `RoleMapper.ROLE_PERMISSION_DEFAULTS`
+   * (invoice-be/models.py). This table previously disagreed with the backend in
+   * three places at once: it listed "Loader" (not a role — `can_load` is a
+   * per-user permission an Admin grants from the Admin Console), it listed the
+   * now-retired "Viewer" (BE Gap 337), it gave Auditor `train: true` (Auditor is
+   * `can_train=False`), and it omitted Trainer entirely.
+   *
+   * `NO_ROLE` / "Restricted" is deliberately absent: it is an internal fallback,
+   * never assignable, and listing it would imply an Admin could pick it.
+   */
   const roleMatrix = [
-    { role: "Admin", load: true, audit: true, train: true, settings: true, desc: "Full administrative access and key management" },
-    { role: "Auditor", load: false, audit: true, train: true, settings: false, desc: "Review, approve, and train extraction models" },
-    { role: "Loader", load: true, audit: false, train: false, settings: false, desc: "Upload and batch ingest documents" },
-    { role: "Viewer", load: false, audit: false, train: false, settings: false, desc: "Read-only access to metrics and reports" },
+    { role: "Admin", load: true, audit: true, train: true, settings: true, desc: "Full administrative access, user management, and API key rotation" },
+    { role: "Auditor", load: false, audit: true, train: false, settings: false, desc: "Review, correct, approve and reject invoices in the Auditor Console" },
+    { role: "Trainer", load: false, audit: false, train: true, settings: false, desc: "Author and commit extraction rules in the AI Trainer" },
   ];
 
   return (
@@ -288,6 +318,17 @@ export default function SecuritySettingsPage() {
           )}
         </section>
 
+        {/* FE Gap 325 — chat widget tokens (BE Feature 25 / Gap 341).
+            Sits directly under the API key because both are programmatic
+            credentials, but it is deliberately a separate card: a widget token
+            is a different credential in a different table with a different
+            trust level (published in a customer's page source, chat-only, no
+            role and no permissions), and rendering it as another row of the
+            API-key panel would imply they are variants of one thing.
+            Sandbox keys (BE Gap 340) are NOT here — that credential belongs to
+            an anonymous website visitor, not to a signed-in Settings screen. */}
+        <WidgetTokenSection isAdmin={role === "Admin"} authLoading={authLoading} />
+
         {/* Tenant Isolation Status */}
         <section aria-labelledby="tenant-security-heading" className="bg-[#151B26] border border-[#222D3D] rounded-2xl p-5 space-y-4 shadow-lg">
           <div className="flex items-center gap-3">
@@ -313,7 +354,23 @@ export default function SecuritySettingsPage() {
             </div>
             <div className="bg-[#0B0F19] border border-[#222D3D] rounded-xl p-3.5 space-y-1">
               <span className="text-[10px] uppercase font-mono text-slate-500 tracking-wider">Active Role</span>
-              <p className="text-xs font-semibold text-blue-400">{role || "Viewer"}</p>
+              {/* `loading` is checked separately from `!role` deliberately.
+                  Found in a live run: while identity is in flight `role` is ""
+                  and this tile told an Admin they had no role assigned, for as
+                  long as /auth/me took. "Still loading" and "genuinely has no
+                  role" are different answers and must not share a label. */}
+              <p className="text-xs font-semibold text-blue-400">
+                {authLoading
+                  ? "…"
+                  : !role || role === BACKEND_NO_ROLE
+                  ? UNASSIGNED_ROLE_LABEL
+                  : role}
+              </p>
+              {!authLoading && (!role || role === BACKEND_NO_ROLE) && (
+                <p className="text-[10px] text-slate-500 leading-tight">
+                  No role assigned yet — an Admin can assign one from the Admin Console.
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -356,6 +413,18 @@ export default function SecuritySettingsPage() {
               </tbody>
             </table>
           </div>
+
+          {/* FE Gap 324: the table shows role *defaults*. It cannot show that an
+              Admin may grant Ingest / Audit / Trainer to an individual user from
+              the Admin Console, which is what `can_load`/`can_audit`/`can_train`
+              on the user row actually are -- so say it here rather than let the
+              table read as the whole truth. */}
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            These are the default permissions for each role. An Admin can additionally grant
+            Ingest, Audit or Trainer access to an individual member from the Admin Console, so a
+            given user&apos;s effective access can be wider than their role&apos;s row. A member with no
+            role assigned yet can still reach the Dashboard, Chat and Help.
+          </p>
         </section>
         </>
         )}

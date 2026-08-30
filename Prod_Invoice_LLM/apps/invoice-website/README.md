@@ -32,7 +32,8 @@ invoice-website/
 │   │   └── v1/email/mailintegration/route.ts          # SendGrid Inbound Parse pass-through → BE (Gap 124 public URL; UNauthenticated)
 ├── components/
 │   ├── ui/                     # empty (.gitkeep only) — no Shadcn/UI components exist
-│   └── marketing/              # Header, Hero, WorkspaceShowcase, AITeamSection, FlowsShowcaseSection, PricingTable, FlowsModal, BenefitsStrip, MouseSpotlight, Footer
+│   └── marketing/              # Header, Hero, WorkspaceShowcase, AITeamSection, FlowsShowcaseSection, PricingTable, FlowsModal, BenefitsStrip, MouseSpotlight, Footer,
+│                               # HeroModeTabs, SageChatPreview, WorkflowRecipeSelector (Feature 7 — all fixture-driven, zero network calls)
 ├── lib/
 │   ├── utils.ts                # Tailwind class merger
 │   └── billingPlans.ts         # Plan copy + searchParams/app-link helpers for the two /billing pages
@@ -45,6 +46,12 @@ invoice-website/
 - **Flows Showcase Section** — 4 flow tiles that open a live preview of `invoice-fe`'s `/flows` page in a modal/iframe
 - **AI Team Section** — showcases the four branded AI agents (NOVA, SENTINEL, SAGE, EVOLVE)
 - **Workspace Showcase** — interactive 3-column tenant isolation widget (Acme Corp, TechFirm, GlobalTrade) plus a "Live Data Isolation Probe Simulator"
+- **Plug & Play marketing surface (Feature 7, Gaps 345–348)** — three new homepage pieces, **all fixture-driven with zero network calls** (a hard constraint, not a shortcut: `/` is public and unauthenticated, so a live SAGE call here would be an open, uncapped LLM endpoint for anonymous traffic — see `website_features/feature_7_plug_and_play_workflows.md` §7):
+  - `HeroModeTabs` — a "Complete Web Application" / "Plug & Play Engine" switcher in the hero. The plug panel shows the 4 primitives (email in, Drive sync, REST API, webhooks) as capability tiles.
+  - `SageChatPreview` (`#sage-preview`) — 3 pre-seeded prompt chips; clicking one reveals a canned answer, the SQL it resolved to, and invoice citation pills, all from a local constant.
+  - `WorkflowRecipeSelector` (`#choose-your-workflow`) — 4-step selector (Input Channel → Audit Level → Output Destination → Chat Access) driving a live summary line. Its CTA points at `/signup`, **not** a sandbox-key endpoint — BE Gap 340 has not shipped; a code comment marks the retarget.
+  - `Hero`'s pipeline demo also gained a real SENTINEL discrepancy sample (`FRT-1048`, `AUDIT_REQUIRED`, held for review) — before this, `SampleInvoice.status` had no alert variant and all three samples auto-approved.
+  - **No Playwright coverage** for any of the above; verified by typecheck, `next build` and a scripted headless-Chrome run only.
 - **Benefits Strip** — row of benefit callouts below the hero
 - **Auth** — Clerk-based signup (`/signup`) and login (`/login`, with admin/user role toggle + OTP second factor)
 - **Password Reset** — Two-step forgot password flow (`/forgot-password`) using Clerk's `reset_password_email_code` strategy (Gap 3)

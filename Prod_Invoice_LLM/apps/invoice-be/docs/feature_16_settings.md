@@ -30,6 +30,15 @@
 
 `get_api_key_context()` in `dependencies.py` is a **parallel** auth path to the Clerk session dependency, not a replacement — no existing endpoint was rewired onto it. It accepts `X-API-Key: <key>` or `Authorization: Bearer <key>` (X-API-Key wins if both are sent; the `inv_live_` prefix is what tells a key apart from a Clerk JWT in the shared header), finds the candidate row by indexed `api_key_prefix`, then compares digests with `hmac.compare_digest`. Unknown prefix, wrong key, and "tenant never issued a key" all return the same `401` with the same message, so the response cannot be used to enumerate which tenants hold keys. It runs the same `enforce_lapse`/`refresh_free_quota`/`402` billing gate as the session path, and resolves as role `Viewer` with no `can_train`/`can_audit`/`can_load`: holding a key proves a request comes from the tenant's own system, not that an Admin approved a specific action, so `require_admin`/`require_can_*` routes stay unreachable by key alone. There is no mock-auth fallback on this path. `GET /settings/security/api-key/verify` is authenticated by the key itself and returns identity only (tenant id/name, role, plan), never tenant data — it exists so an integrator can confirm a key works, and it is the route that exercises this path end to end in tests.
 
+> **Additive note (2026-08-29, BE Gap 335 / Feature 25 Phase 0 — the Gap 184 design above is unchanged and not rewritten):** the key-auth path this feature built is now *extended* by [feature_25_plug_and_play_workflows.md](feature_25_plug_and_play_workflows.md), which adds a `Tenant.api_key_scope` column (`readonly` default / `actions`) and a dual-credential `get_tenant_or_api_key_context()` dependency so a key can reach real endpoints — read that document, not this paragraph, for what key-auth may do today.
+>
+> **Additive note (2026-08-29, BE Gap 336 / Feature 25 Task 25.2):** `routers/settings.py` now also
+> serves `GET`/`PUT /api/v1/settings/workflow` (Admin-only on both verbs), backed by the new
+> `TenantWorkflowConfig` model. Its `audit_policy` field is the supported way to set
+> `Tenant.api_key_scope` — the PUT writes both in one commit and the GET derives the policy back
+> from the tenant column. Same document as above for the design; this feature's own body is
+> unchanged.
+
 ### Tasks
 - [x] **Task 16.1–16.2:** Columns + vendor-flow endpoints (2026-07-28).
 - [x] **Task 16.3 (2026-08-10):** Gate Send Invoices on outbound authorized-email set instead of `outbound_sender_email`.

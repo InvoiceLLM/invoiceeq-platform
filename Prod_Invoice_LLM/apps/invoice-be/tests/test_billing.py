@@ -270,7 +270,7 @@ def test_checkout_session_surl_furl_use_backend_public_url(db_session):
 
 
 def test_checkout_session_non_admin_is_forbidden(db_session):
-    """Only an Admin can start a checkout (test_viewer -> role Viewer)."""
+    """Only an Admin can start a checkout (test_viewer -> RoleMapper.NO_ROLE)."""
     _seed_tenant(db_session)
     response = client.post(
         "/api/v1/billing/create-checkout-session",
@@ -535,7 +535,7 @@ def test_usage_on_a_non_free_plan_reports_no_metered_allowance(db_session, plan)
 
 
 def test_usage_is_readable_by_a_non_admin(db_session):
-    """Unlike create-checkout-session (403 for a Viewer above), reading your own
+    """Unlike create-checkout-session (403 for a permission-less user above), reading your own
     workspace's allowance is not an Admin action -- a non-Admin who can ingest
     is exactly who hits the 402 this number predicts."""
     _seed_tenant(db_session)

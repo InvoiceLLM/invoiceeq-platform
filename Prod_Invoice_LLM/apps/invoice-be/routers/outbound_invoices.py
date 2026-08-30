@@ -10,8 +10,16 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from dependencies import get_tenant_context, get_db_session, require_can_load, TenantContext
+from dependencies import (
+    get_db_session,
+    require_can_load,
+    # Feature 25 (Gap 335): gates confirm-send / mark-paid, which had NO
+    # permission gate at all before this -- see the note on each handler.
+    require_actions_scope,
+    TenantContext,
+)
 from models import Invoice, Tenant, User
+from services.billing_quota import charge_free_quota, count_billable_uploads
 from services.storage import upload_pdf_to_blob_storage
 from services.staff_notify import notify_auditor_action
 from services.invoice_visibility import invoice_not_deleted
@@ -67,9 +75,18 @@ def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type
 async def upload_outbound_invoice(
     file: UploadFile = File(...),
     # Feature 1.1 (Task 1.1.2): AR-side mirror of the inbound upload gate.
-    # confirm-send / mark-paid below are deliberately left ungated in this pass
-    # -- they are outbound *lifecycle* transitions, not ingestion, and were not
-    # in the approved scope.
+    #
+    # This comment used to end "confirm-send / mark-paid below are deliberately
+    # left ungated in this pass". That is no longer true and the sentence is
+    # removed rather than left to mislead: Feature 25 (Gap 335) gated both of
+    # them on `actions` scope / can_audit. Leaving those two routes open to any
+    # authenticated user turned out to be a real hole, not a scoping decision
+    # worth preserving.
+    #
+    # This upload route itself is deliberately NOT dual-credential in Phase 0:
+    # widening the AR ingestion surface to API keys was not requested, and the
+    # inbound /invoices/upload is the ingestion path integrations actually
+    # asked for. Revisit with Gap 336 if an AR integration needs it.
     context: TenantContext = Depends(require_can_load),
     db_session: Session = Depends(get_db_session),
 ):
@@ -96,6 +113,21 @@ async def upload_outbound_invoice(
         file_bytes = await file.read()
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to read file {file.filename}: {str(e)}")
+
+    # Gap 343: the AR upload door charged nothing, so a Free Tier tenant at
+    # free_invoices_remaining=0 could keep creating invoices through it. Same
+    # helpers, same order and same 402 "Limit reached" as
+    # routers/invoices.py::upload_invoices() -- classify the hash first so a
+    # re-upload of a file already on this tenant never burns quota, then take the
+    # `SELECT tenant … FOR UPDATE` and decrement. Placed before the blob upload
+    # so a refused upload stores nothing.
+    #
+    # Note the Tenant row was already loaded above for the send_invoices_enabled
+    # check; charge_free_quota() re-reads it with populate_existing=True (Gap
+    # 343, see services/billing_quota.py) precisely so this call site cannot
+    # evaluate the allowance against that earlier, now-stale copy.
+    billable = count_billable_uploads(db_session, context.tenant_id, [file_bytes])
+    charge_free_quota(db_session, context.tenant_id, billable)
 
     try:
         file_path = await run_in_threadpool(
@@ -157,7 +189,16 @@ async def upload_outbound_invoice(
 async def confirm_send_outbound_invoice(
     invoice_id: UUID,
     payload: OutboundNotifyPayload | None = None,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335). This route previously depended on bare
+    # `get_tenant_context` with NO permission gate whatsoever: any authenticated
+    # user -- including one with zero granted permissions -- could mark a
+    # tenant's outbound invoice SENT, fire the outbound webhook and trigger the
+    # staff notification email. Every other financial-finalization route in the
+    # product requires can_audit; this one and mark-paid below were the two that
+    # did not. Found during Gap 335's route audit, fixed here because this exact
+    # line was being rewritten anyway. Now: humans need can_audit (same rule and
+    # same 403 text as the audit routers), and an API key needs `actions` scope.
+    context: TenantContext = Depends(require_actions_scope),
     db_session: Session = Depends(get_db_session),
 ):
     """Feature 2.1 + Gap 125: VERIFIED/NEEDS_REVIEW → SENT. Staff notify only
@@ -211,7 +252,10 @@ async def confirm_send_outbound_invoice(
 async def mark_outbound_invoice_paid(
     invoice_id: UUID,
     payload: OutboundNotifyPayload | None = None,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335): same previously-ungated route as confirm-send above
+    # -- see that handler's note. Marking an invoice PAID is a financial
+    # finalization and now requires can_audit (humans) or `actions` scope (keys).
+    context: TenantContext = Depends(require_actions_scope),
     db_session: Session = Depends(get_db_session),
 ):
     """SENT → PAID + optional staff notify (Gap 125)."""

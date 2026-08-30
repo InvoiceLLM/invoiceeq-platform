@@ -47,6 +47,42 @@ class Settings(BaseSettings):
     # and if a future annual plan pushed it to 365 the free tier would silently
     # become 50 invoices per *year*. Same default (30) today, different meaning.
     FREE_QUOTA_CYCLE_DAYS: int = 30
+
+    # --- Feature 25 (Gap 340): sandbox `inv_test_` keys ---------------------
+    #
+    # A sandbox key is issued to an ANONYMOUS website visitor with no login, and
+    # resolves to a fresh real Tenant row. Every value below is a containment
+    # knob, so each has a deliberately conservative default rather than an
+    # "unlimited" one -- the whole surface is unauthenticated.
+    #
+    # Master switch. Default False: a deployment that has not thought about the
+    # abuse surface must not be handing out credentials to strangers. Same
+    # fail-closed reasoning as ALLOW_MOCK_AUTH above.
+    SANDBOX_KEYS_ENABLED: bool = False
+    # How long a sandbox key lives. Expiry is enforced live in
+    # dependencies.resolve_api_key_context() (the key stops verifying) AND swept
+    # by scripts/sweep_sandbox_tenants.py, which deletes the tenant outright --
+    # a flag nobody reads is not a TTL.
+    SANDBOX_KEY_TTL_HOURS: int = 72
+    # Hard ceiling on UNCLAIMED sandbox tenants platform-wide. Issuance past this
+    # fails closed with a "temporarily unavailable" 503 rather than creating
+    # tenant rows without bound. Counted under an advisory lock at issuance time.
+    SANDBOX_MAX_UNCLAIMED_TENANTS: int = 500
+    # Per-IP sliding window for issuance, enforced through the SAME limiter the
+    # public contact form uses (routers/support.py::_ContactRateLimiter) -- it
+    # already solves the which-IP-header-do-we-trust problem for this platform.
+    SANDBOX_ISSUE_RATE_LIMIT: int = 3
+    SANDBOX_ISSUE_RATE_WINDOW_SECONDS: int = 3600
+    # Gap 340 requirement 7: services/billing_quota.py's free-tier charge covers
+    # INGESTION only, so without this a sandbox key is an unmetered path to real
+    # Azure OpenAI spend. A plain bounded counter on the sandbox row, not a
+    # second quota system.
+    SANDBOX_CHAT_MESSAGE_LIMIT: int = 25
+    # How many invoices a sandbox workspace may ingest. Kept separate from
+    # DEFAULT_FREE_INVOICES_LIMIT so tightening the sandbox does not tighten the
+    # free tier a paying-adjacent customer is on.
+    SANDBOX_INVOICE_LIMIT: int = 5
+
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     # Where oauth_callback() redirects the browser back to after a connector

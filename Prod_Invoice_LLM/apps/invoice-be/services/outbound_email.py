@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Sequence
+from typing import NamedTuple, Sequence
 
 import httpx
 
@@ -12,6 +12,23 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 SENDGRID_MAIL_URL = "https://api.sendgrid.com/v3/mail/send"
+
+DEFAULT_ATTACHMENT_MIME_TYPE = "application/pdf"
+
+
+class EmailAttachment(NamedTuple):
+    """One file to attach, with its own content type.
+
+    Feature 25 (Gap 339): the MIME type used to be hardcoded to
+    `application/pdf` inside send_email(), so the only attachment this module
+    could send honestly was a PDF. Gap 339 attaches a CSV and a JSON summary,
+    and telling a mail client that a `.csv` is a PDF makes it undisplayable
+    (and, on some clients, unopenable) for no reason. The type travels with
+    the bytes now instead of being assumed by the sender.
+    """
+    filename: str
+    content: bytes
+    mime_type: str = DEFAULT_ATTACHMENT_MIME_TYPE
 
 
 def from_address() -> str:
@@ -57,6 +74,8 @@ def send_email(
     reply_to: str | None = None,
     attachment_filename: str | None = None,
     attachment_bytes: bytes | None = None,
+    attachment_mime_type: str = DEFAULT_ATTACHMENT_MIME_TYPE,
+    attachments: Sequence[EmailAttachment] | None = None,
 ) -> dict:
     """
     Send via SendGrid v3 API using httpx.
@@ -65,6 +84,14 @@ def send_email(
     sendgrid_configured() or catch and decide whether to fail the request.
     Domain authentication is optional for testing (Single Sender Verification
     is enough); missing DNS mainly hurts inbox placement, not the API call.
+
+    Attachments (Gap 339). Two ways in, and they compose:
+      * `attachment_filename` + `attachment_bytes` — the single-file form this
+        function has always had. `attachment_mime_type` defaults to
+        `application/pdf`, which is exactly what the hardcoded value used to
+        be, so every existing caller is unaffected;
+      * `attachments` — a list of `EmailAttachment(filename, content, mime_type)`
+        for the multi-file case (Gap 339 sends a CSV *and* a JSON).
     """
     settings = get_settings()
     api_key = (settings.SENDGRID_API_KEY or "").strip()
@@ -89,14 +116,21 @@ def send_email(
     if reply_to:
         payload["reply_to"] = {"email": reply_to.strip().lower()}
 
+    all_attachments: list[EmailAttachment] = []
     if attachment_bytes is not None and attachment_filename:
+        all_attachments.append(
+            EmailAttachment(attachment_filename, attachment_bytes, attachment_mime_type)
+        )
+    all_attachments.extend(attachments or [])
+    if all_attachments:
         payload["attachments"] = [
             {
-                "content": base64.b64encode(attachment_bytes).decode("ascii"),
-                "type": "application/pdf",
-                "filename": attachment_filename,
+                "content": base64.b64encode(att.content).decode("ascii"),
+                "type": att.mime_type or DEFAULT_ATTACHMENT_MIME_TYPE,
+                "filename": att.filename,
                 "disposition": "attachment",
             }
+            for att in all_attachments
         ]
 
     headers = {

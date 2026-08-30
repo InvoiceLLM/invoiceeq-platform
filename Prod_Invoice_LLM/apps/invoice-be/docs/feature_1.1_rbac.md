@@ -1,5 +1,23 @@
 # Feature 1.1: Granular Role-Based Access Control
 
+> **Additive note — 2026-08-29, BE Gap 337 (Feature 25).** The role *vocabulary*
+> described below changed; the permission model did not. The user-facing roles are
+> now **Admin, Auditor, Trainer** — "Viewer" is retired as a name. Trainer already
+> existed with exactly the permissions it keeps (`can_train` only), so this was a
+> retirement, not a rename.
+>
+> The one thing to know before reading anything below: **"Viewer" was doing two
+> unrelated jobs** — an assignable role *and* the system's zero-permission
+> fallback (unmapped IDP role strings, a missing role, Gap 173's org-mismatch
+> escalation clamp, and Gap 335's API-key requests all resolved to it). Job two
+> still exists and now has its own never-assignable name,
+> `RoleMapper.NO_ROLE == "Restricted"`, deliberately kept **out** of
+> `RoleMapper.USER_FACING_ROLES` so the fallback slot can never inherit a real
+> role's permissions. Every statement below about a permission-less user still
+> holds exactly; only the label changed. Data migration `e9f0a1b2c3d4` rewrites
+> existing `users.role = 'Viewer'` rows. Details:
+> [feature_25_plug_and_play_workflows.md](feature_25_plug_and_play_workflows.md).
+
 Extends Feature 1 (`feature_1_auth.md`), which named the target role set — Admin, Auditor, Loader, Trainer, Viewer — from the start but never implemented enforcement beyond a handful of ad-hoc `role == "Admin"` checks (`settings.py`, `billing.py`) and a fully mocked FE `useAuth()` hook (`fe_features_tracker.md` Gap 99). This feature closes that gap: real, per-user, per-area permissions instead of "Admin or not."
 
 ### Access Model

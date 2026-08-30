@@ -10,13 +10,22 @@ The properties these tests exist to hold, since this is credential handling:
 """
 import pytest
 from uuid import uuid4
-from sqlmodel import SQLModel, create_engine, Session
+from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 
 from main import app
-from dependencies import get_db_session, MOCK_TENANT_ID
-from models import Tenant
+from dependencies import (
+    get_db_session,
+    MOCK_TENANT_ID,
+    # Feature 25 (Gap 335): two-tier API key action scope.
+    KEY_SCOPE_ACTIONS,
+    KEY_SCOPE_READONLY,
+    api_key_service_clerk_id,
+    permissions_for_key_scope,
+    resolve_api_key_context,
+)
+from models import RoleMapper, Tenant, User
 from services.api_keys import (
     API_KEY_PREFIX,
     generate_api_key,
@@ -228,13 +237,137 @@ def test_key_authenticates_via_both_accepted_headers(db_session):
     assert via_bearer.json()["tenant_id"] == str(tenant.id)
 
 
-def test_key_auth_runs_as_viewer_with_no_permissions(db_session):
+def test_key_auth_never_resolves_to_a_privileged_role(db_session):
+    """Feature 25 (Gap 335) rewrite of `test_key_auth_runs_as_viewer_with_no_permissions`.
+
+    The old test asserted `role == "Viewer"` as a proxy for "this key has no
+    permissions". That proxy stopped being accurate once scope existed: an
+    `actions`-scoped key has can_audit/can_load and is STILL the same role,
+    because scope is not a role. So role is now asserted for what it actually
+    guarantees -- that a key never satisfies require_admin, at any scope -- and
+    the permissions themselves are asserted directly, from the scope, in
+    test_scope_derives_permissions below.
+
+    No behaviour changed for any existing tenant: the default scope is
+    `readonly`, which resolves to the same (False, False, False) the Viewer
+    label produced before this gap.
+
+    Gap 337 then retired the "Viewer" name itself; a key now reports
+    `RoleMapper.NO_ROLE`, which is the honest answer -- no user-facing role was
+    established for this request at all. Nothing is gated on this field.
+    """
     _seed_tenant(db_session)
     raw_key = client.post(ROTATE_URL).json()["api_key"]
 
     # Issuing a key must not hand an integration Admin/permission-gated access,
     # even though only an Admin can issue one.
-    assert client.get(VERIFY_URL, headers={"X-API-Key": raw_key}).json()["role"] == "Viewer"
+    role = client.get(VERIFY_URL, headers={"X-API-Key": raw_key}).json()["role"]
+    assert role == RoleMapper.NO_ROLE
+    assert role not in RoleMapper.USER_FACING_ROLES
+
+
+# --- Feature 25 (Gap 335): two-tier action scope ---------------------------
+
+
+def test_api_key_scope_defaults_to_readonly(db_session):
+    """Fail-closed. A tenant that has never made a choice must not have action powers."""
+    tenant = _seed_tenant(db_session)
+    assert tenant.api_key_scope == KEY_SCOPE_READONLY
+
+
+@pytest.mark.parametrize(
+    "scope,expected",
+    [
+        # readonly reproduces exactly what the pre-Gap-335 hardcoded Viewer
+        # produced -- this row is the regression guard on "nothing changed for
+        # existing tenants".
+        (KEY_SCOPE_READONLY, (False, False, False)),
+        # actions grants the five financial actions' permissions -- and NOT
+        # can_train. The founder's definition of full automation named
+        # approve/reject/verify/send/mark-paid; training was not among them.
+        (KEY_SCOPE_ACTIONS, (False, True, True)),
+        # Anything unrecognised falls back to readonly, never to actions.
+        (None, (False, False, False)),
+        ("nonsense", (False, False, False)),
+    ],
+)
+def test_scope_derives_permissions(scope, expected):
+    assert permissions_for_key_scope(scope) == expected
+
+
+def test_readonly_key_resolves_with_no_permissions_and_no_service_user(db_session):
+    tenant = _seed_tenant(db_session)
+    raw_key = client.post(ROTATE_URL).json()["api_key"]
+
+    context = resolve_api_key_context(raw_key, db_session)
+
+    assert context.auth_method == "api_key"
+    assert context.key_scope == KEY_SCOPE_READONLY
+    assert (context.can_train, context.can_audit, context.can_load) == (False, False, False)
+    # A readonly key can never reach a route that writes an AuditLog, so it
+    # creates no service user -- db_user_id stays None exactly as before Gap 335.
+    assert context.db_user_id is None
+    assert (
+        db_session.exec(
+            select(User).where(User.clerk_user_id == api_key_service_clerk_id(tenant.id))
+        ).first()
+        is None
+    )
+
+
+def test_actions_key_resolves_with_action_permissions_and_a_service_user(db_session):
+    tenant = _seed_tenant(db_session)
+    raw_key = client.post(ROTATE_URL).json()["api_key"]
+    tenant.api_key_scope = KEY_SCOPE_ACTIONS
+    db_session.add(tenant)
+    db_session.commit()
+
+    context = resolve_api_key_context(raw_key, db_session)
+
+    assert context.key_scope == KEY_SCOPE_ACTIONS
+    assert context.can_audit is True
+    assert context.can_load is True
+    # Training is deliberately excluded from `actions`.
+    assert context.can_train is False
+    # Scope is not a role: an actions key must still never satisfy require_admin.
+    assert context.role == RoleMapper.NO_ROLE
+
+    # The AuditLog actor problem: actor_user_id is a non-null FK to users.id, so
+    # an actions key needs a real row to attribute its writes to.
+    assert context.db_user_id is not None
+    service_user = db_session.get(User, context.db_user_id)
+    assert service_user is not None
+    assert service_user.tenant_id == tenant.id
+    # The row carries no authority of its own.
+    assert (service_user.can_train, service_user.can_audit, service_user.can_load) == (
+        False,
+        False,
+        False,
+    )
+
+
+def test_service_user_is_created_once_and_reused(db_session):
+    tenant = _seed_tenant(db_session)
+    raw_key = client.post(ROTATE_URL).json()["api_key"]
+    tenant.api_key_scope = KEY_SCOPE_ACTIONS
+    db_session.add(tenant)
+    db_session.commit()
+
+    first = resolve_api_key_context(raw_key, db_session).db_user_id
+    second = resolve_api_key_context(raw_key, db_session).db_user_id
+
+    assert first == second
+    rows = db_session.exec(
+        select(User).where(User.clerk_user_id == api_key_service_clerk_id(tenant.id))
+    ).all()
+    assert len(rows) == 1
+
+
+def test_clerk_context_reports_clerk_auth_method():
+    """The other half of auth_method: a browser session must not look like a key."""
+    data = client.get("/auth/me").json()
+    assert data["auth_method"] == "clerk"
+    assert data["key_scope"] is None
 
 
 def test_key_auth_records_last_used(db_session):

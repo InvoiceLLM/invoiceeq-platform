@@ -9,7 +9,18 @@ from uuid import UUID, uuid4
 from datetime import datetime
 
 import telemetry
-from dependencies import get_db_session, get_tenant_context, require_can_train, TenantContext
+from dependencies import (
+    get_db_session,
+    get_tenant_context,
+    require_can_train,
+    # Feature 25 (Gap 335): chat is reachable with an `inv_live_` key at either
+    # scope. Asking a question about your own invoices is not a financial
+    # action -- nothing here approves, sends or pays anything. The training
+    # routes at the bottom of this file stay on require_can_train, consistent
+    # with `actions` scope deliberately NOT granting can_train.
+    get_tenant_or_api_key_context,
+    TenantContext,
+)
 from models import ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
 from agents.query_agent import run_query_agent
 from services.online_quality_judge import submit_turn_judgement
@@ -49,6 +60,44 @@ def _invalidate_chat_answer_cache(tenant_id: str) -> None:
         logger.warning("Failed to invalidate chat answer cache for tenant %s: %s", tenant_id, e)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+def charge_sandbox_chat_or_402(db_session: Session, tenant_id: UUID) -> dict | None:
+    """Feature 25 (Gap 340): meter one chat turn for an unclaimed sandbox tenant.
+
+    The HTTP half of `services/sandbox.py::charge_sandbox_chat_message()`, kept
+    here rather than in the service so that module stays importable from the
+    bare sweep process without dragging FastAPI's exception types into it -- the
+    same split `services/billing_quota.py` does NOT make, and the reason it does
+    not is that quota is only ever charged from a request. This one is not.
+
+    WHY THIS EXISTS AT ALL. `services/billing_quota.py`'s free-tier charge meters
+    **ingestion** and nothing else -- there is no quota anywhere in this backend
+    covering chat or LLM calls. That was fine while every chat caller was an
+    authenticated, paying-or-free tenant who had signed up. A sandbox key is
+    handed to an anonymous visitor, so without this it is an unmetered path to
+    real Azure OpenAI spend, funded by us, available to anyone who can click a
+    button on the marketing site.
+
+    Returns None for an ordinary tenant (nothing to meter), a dict for a sandbox
+    one, and raises 402 when the sandbox allowance is spent. 402 rather than 429:
+    this is an exhausted allowance, not a rate limit -- waiting does not help,
+    signing up does, and the message says so.
+    """
+    from services.sandbox import charge_sandbox_chat_message
+
+    result = charge_sandbox_chat_message(db_session, tenant_id)
+    if result is not None and not result["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"This sandbox workspace has used its {result['limit']} included "
+                "chat messages. Sign up for a free workspace to keep going -- you "
+                "can claim this sandbox and keep the invoices you have already "
+                "uploaded."
+            ),
+        )
+    return result
 
 # Request/Response schemas
 class SessionCreate(BaseModel):
@@ -132,7 +181,7 @@ class MessageResponse(BaseModel):
 @router.get("/sessions", response_model=list[SessionResponse])
 def list_sessions(
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context)
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
     """List all previous chat sessions belonging to the requesting tenant."""
     statement = (
@@ -147,7 +196,7 @@ def list_sessions(
 def create_session(
     payload: SessionCreate,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context)
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
     """Create a new chat session."""
     title = payload.title or f"Chat Session - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
@@ -168,7 +217,7 @@ def rename_session(
     session_id: UUID,
     payload: SessionRename,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context)
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
     """
     FE Gap 216: rename a chat thread. The FE has offered inline thread renaming
@@ -213,7 +262,7 @@ def rename_session(
 def delete_session(
     session_id: UUID,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context)
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
     """Delete a chat session and all its associated messages and feedback."""
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
@@ -249,7 +298,7 @@ def delete_session(
 def get_session_messages(
     session_id: UUID,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context)
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
     """Retrieve all historical messages for a chat session, validating tenant ownership."""
     # 1. Fetch and assert session exists and belongs to requesting tenant
@@ -295,7 +344,7 @@ def post_chat_message(
     background_tasks: BackgroundTasks,
     sync: bool = False,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context)
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
     """Post a new message in a chat session.
 
@@ -321,6 +370,13 @@ def post_chat_message(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
         )
+
+    # Feature 25 (Gap 340): meter the turn if this is an unclaimed sandbox
+    # workspace. Charged BEFORE anything is generated -- see
+    # services/sandbox.py::charge_sandbox_chat_message() for why metering after
+    # the model call is the wrong order. Costs one indexed lookup and returns
+    # None for every ordinary tenant, which is all of them.
+    charge_sandbox_chat_or_402(db_session, tenant_context.tenant_id)
 
     # Auto-generate session title if it uses the default placeholder or timestamp format
     new_title = None
@@ -396,11 +452,48 @@ def post_chat_message(
         )
 
     # Synchronous Execution Path (for legacy/sync callers)
+    assistant_msg = run_sync_chat_turn(
+        session_id=session_id,
+        content=payload.content,
+        tenant_id=tenant_context.tenant_id,
+        db_session=db_session,
+        chat_session=chat_session,
+        new_title=new_title,
+    )
+
+    return MessageResponse.model_validate(assistant_msg)
+
+
+def run_sync_chat_turn(
+    *,
+    session_id: UUID,
+    content: str,
+    tenant_id: UUID,
+    db_session: Session,
+    chat_session: ChatSession | None = None,
+    new_title: str | None = None,
+) -> ChatMessage:
+    """One complete synchronous chat turn: persist, answer, persist, observe.
+
+    Extracted verbatim out of `post_chat_message()`'s synchronous branch by Gap
+    341 so the widget chat route (`routers/widget.py`) runs the **same** turn
+    rather than a second copy of it. Two copies is how the quality judge, the
+    turn telemetry, and the agent's error-path fallback drift apart between the
+    dashboard and the widget -- and a widget turn that emits no telemetry is
+    invisible in exactly the surface where an anonymous end user is talking to
+    the product.
+
+    Nothing about the behaviour changed in the extraction: the ordering (commit
+    before judging and before `track_chat_turn`, so `message_id` names a row
+    that exists), the rollback-and-re-add on an agent exception, and the
+    conditional title write are all as they were. `chat_session`/`new_title` are
+    optional because the widget path has no title to auto-generate.
+    """
     user_msg = ChatMessage(
         id=uuid4(),
         session_id=session_id,
         role="user",
-        content=payload.content,
+        content=content,
         status="completed",
     )
     db_session.add(user_msg)
@@ -412,8 +505,8 @@ def post_chat_message(
     try:
         agent_output = run_query_agent(
             session_id=str(session_id),
-            user_message=payload.content,
-            tenant_id=str(tenant_context.tenant_id),
+            user_message=content,
+            tenant_id=str(tenant_id),
             db_session=db_session
         )
     except Exception as e:
@@ -436,7 +529,7 @@ def post_chat_message(
                 "error_type": type(e).__name__,
                 "stop_reason": "agent_raised",
                 "session_id": str(session_id),
-                "tenant_id": str(tenant_context.tenant_id),
+                "tenant_id": str(tenant_id),
             },
         }
 
@@ -444,7 +537,7 @@ def post_chat_message(
 
     if user_msg not in db_session:
         db_session.add(user_msg)
-    if new_title is not None and chat_session.title != new_title:
+    if new_title is not None and chat_session is not None and chat_session.title != new_title:
         chat_session.title = new_title
         db_session.add(chat_session)
 
@@ -469,11 +562,11 @@ def post_chat_message(
     # future is not held, and `submit_turn_judgement()` is a no-op with
     # `ENABLE_PRODUCTION_QUALITY_JUDGE` off (the default) and never raises.
     submit_turn_judgement(
-        question=payload.content,
+        question=content,
         answer=assistant_msg.content,
         evidence=agent_output.get("judge_evidence"),
         generated_sql=agent_output.get("generated_sql"),
-        tenant_id=str(tenant_context.tenant_id),
+        tenant_id=str(tenant_id),
         message_id=str(assistant_msg.id),
         latency_ms=turn_latency_ms,
         # Gap 304 attribution fix: the judge's two model calls run on the same
@@ -496,17 +589,76 @@ def post_chat_message(
         latency_ms=turn_latency_ms,
     )
 
-    return MessageResponse.model_validate(assistant_msg)
+    return assistant_msg
+
+
+def _require_owned_chat_job(
+    job_id: str, db_session: Session, tenant_context: TenantContext
+) -> None:
+    """Confirm `job_id` belongs to the requesting tenant, or 404/403.
+
+    -----------------------------------------------------------------------
+    Gap 341 (the item found while security-reviewing the widget token).
+    -----------------------------------------------------------------------
+    `get_chat_job_status()` and `stream_chat_job()` both took a `tenant_context`
+    dependency and then **never used it**. They authenticated the caller and
+    checked nothing else, so any authenticated caller who learned a `job_id`
+    could read another tenant's chat answer -- the generated SQL, the citations
+    and the assistant's full reply, all of which are that tenant's invoice data.
+    Every other handler in this router does the ownership check (see
+    `_get_owned_message()` and the session handlers); these two were the
+    exception.
+
+    It was dormant, not exploited: `ENABLE_ASYNC_CHAT_QUEUE` defaults False, so
+    no job ids exist to guess in a default deployment. It is fixed now anyway
+    and **before** anything to do with the widget lands, because a widget token
+    is a credential that lives in a customer's public page source -- the
+    threshold for "an authenticated caller" drops to "anyone who viewed the
+    page", and a dormant cross-tenant read is not something to leave sitting
+    behind a flag once that is true.
+
+    Ownership is resolved through the database rather than through the Redis
+    status payload. `enqueue_chat_job()` does put `tenant_id` in that payload,
+    but `complete_job()` and `fail_job()` overwrite the cached blob with one
+    that has no tenant in it, so a finished job's cache entry cannot answer this
+    question at all. `ChatMessage.job_id` -> `session_id` -> `ChatSession.
+    tenant_id` is written before the enqueue and is authoritative.
+
+    An unknown job id is a 404, not a 403: a caller must not be able to probe
+    which job ids exist on other tenants by reading the status code.
+    """
+    message = db_session.exec(
+        select(ChatMessage).where(ChatMessage.job_id == job_id)
+    ).first()
+    if message is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat job not found.",
+        )
+
+    chat_session = db_session.exec(
+        select(ChatSession).where(ChatSession.id == message.session_id)
+    ).first()
+    if chat_session is None or chat_session.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat job.",
+        )
 
 
 @router.get("/jobs/{job_id}/status")
 def get_chat_job_status(
     job_id: str,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context),
 ):
     """Gap 280: Polling endpoint for checking the status and result of a chat turn."""
     from services.chat_queue import ChatQueueService
+
+    # Gap 341: this handler took `tenant_context` and never used it. See
+    # _require_owned_chat_job().
+    _require_owned_chat_job(job_id, db_session, tenant_context)
+
     return ChatQueueService.get_job_status(job_id, db_session=db_session)
 
 
@@ -514,12 +666,21 @@ def get_chat_job_status(
 async def stream_chat_job(
     job_id: str,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context),
 ):
     """Gap 280: Server-Sent Events (SSE) stream for real-time chat progress and result.
     Yields events: data: {"job_id": "...", "status": "processing", "step": "...", "details": ...}\n\n
     """
     import asyncio
+
+    # Gap 341: same missing ownership check as the status endpoint above, and
+    # the more serious of the two -- this one streams the full result payload.
+    # Raised BEFORE the StreamingResponse is constructed, deliberately: an
+    # HTTPException raised inside `event_generator()` would arrive after the 200
+    # and the response headers were already on the wire, i.e. as a broken stream
+    # rather than as a 403.
+    _require_owned_chat_job(job_id, db_session, tenant_context)
+
     from services.chat_queue import (
         get_redis_client,
         CHAT_JOB_CHANNEL_PREFIX,

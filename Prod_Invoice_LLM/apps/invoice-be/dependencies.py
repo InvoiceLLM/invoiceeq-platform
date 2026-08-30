@@ -38,6 +38,26 @@ class TenantContext(BaseModel):
     can_train: bool = False
     can_audit: bool = False
     can_load: bool = False
+    # Feature 25 (Gap 335): which door this request came through -- "clerk" for a
+    # browser session, "api_key" for an `inv_live_...` credential.
+    #
+    # Gap 184 deliberately made these indistinguishable ("downstream handlers
+    # cannot tell (or need to tell) which door a request came through"), which
+    # was right while a key could only echo its own identity. Once a key can
+    # approve, send and mark-paid an invoice it stops being right: "who did
+    # this" is an audit question, and "a machine, via key inv_live_ab12cd" is a
+    # materially different answer from "Priya, in a browser".
+    #
+    # `key_scope` is the Tenant.api_key_scope the request resolved at, or None
+    # on the Clerk path. Carried explicitly rather than inferred back out of the
+    # permission booleans so require_key_scope() reads as what it is.
+    #
+    # Both default to the Clerk values, so every existing TenantContext(...)
+    # construction site is unaffected. Both surface in GET /auth/me, which
+    # returns this model verbatim (routers/auth.py, response_model=TenantContext)
+    # -- purely additive there.
+    auth_method: str = "clerk"
+    key_scope: str | None = None
 
 # Cache for Clerk JWKS keys
 _jwks_cache = {}
@@ -296,7 +316,7 @@ def reconcile_role_with_org(
     already computed `org_matches` -- but only used it to gate *persisting*
     `user.role` to the database. The role handed to `TenantContext` for the
     current request was still taken straight from the token, so the escalation
-    the check was written to stop worked anyway: a Viewer creates a throwaway
+    the check was written to stop worked anyway: a permission-less user creates a throwaway
     org, switches their active org to it, and every request that session carries
     `org_role=org:admin`. The tenant resolved is still their real one (from
     `user.tenant_id`), so they got Admin `TenantContext` -- and, through
@@ -307,7 +327,12 @@ def reconcile_role_with_org(
     So: a token's role claim is only usable when the token's `org_id` is the org
     the resolved tenant is actually tied to. Otherwise fall back to the role we
     persisted for this user (our own data, unforgeable from a browser), and to
-    "Viewer" if there is none.
+    the zero-permission fallback `RoleMapper.NO_ROLE` if there is none.
+
+    Gap 337: that clamp target used to be the literal "Viewer". It is now
+    `NO_ROLE` ("Restricted") — an internal, never-assignable value — precisely so
+    that retiring "Viewer" from the user-facing vocabulary could not quietly turn
+    this clamp into a grant of some real role's permissions.
 
     Mock/test identities (ALLOW_MOCK_AUTH, default off) are exempt: they have no
     org and no token, and gating them would just disable the whole suite's
@@ -320,7 +345,7 @@ def reconcile_role_with_org(
         return token_role
 
     persisted_role = getattr(user, "role", None)
-    return RoleMapper.normalize_role(persisted_role) if persisted_role else "Viewer"
+    return RoleMapper.normalize_role(persisted_role) if persisted_role else RoleMapper.NO_ROLE
 
 
 def get_tenant_context_allow_unpaid(
@@ -383,7 +408,16 @@ def get_tenant_context_allow_unpaid(
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             plan = "unpaid" if "unpaid" in token else MOCK_BILLING_PLAN
-            role = "Viewer" if "viewer" in token else MOCK_ROLE
+            # Gap 337: the *token spelling* `test_viewer` is deliberately kept
+            # working alongside `test_restricted` -- it is a fixture vocabulary
+            # used across the whole suite, not user-facing copy -- but what it
+            # resolves to is now the zero-permission fallback, not a role named
+            # "Viewer".
+            role = (
+                RoleMapper.NO_ROLE
+                if ("viewer" in token or "restricted" in token)
+                else MOCK_ROLE
+            )
 
             tenant_id = MOCK_TENANT_ID
             clerk_org_id = None
@@ -452,9 +486,9 @@ def get_tenant_context_allow_unpaid(
             if raw_org_role:
                 role = RoleMapper.normalize_role(raw_org_role)
             else:
-                role = RoleMapper.normalize_role(raw_role or "Viewer")
+                role = RoleMapper.normalize_role(raw_role or RoleMapper.NO_ROLE)
                 if role == "Admin":
-                    role = "Viewer"
+                    role = RoleMapper.NO_ROLE
             plan = payload.get("billing_plan", "free")
             # Gap 133: track at the source whether this is a real email or the
             # synthetic `user_<clerkid>@domain.com` placeholder. The placeholder
@@ -547,7 +581,8 @@ def get_tenant_context_allow_unpaid(
         # written -- a first-login role claim for an org that is not this
         # tenant's must not be persisted either, or the fallback below would
         # later read back the very value it was meant to distrust. There is no
-        # persisted role yet on this path, so a mismatch clamps to Viewer.
+        # persisted role yet on this path, so a mismatch clamps to the
+        # zero-permission fallback (Gap 337: RoleMapper.NO_ROLE, was "Viewer").
         role = reconcile_role_with_org(role, None, tenant, clerk_org_id, is_mock_identity)
 
         user = User(
@@ -571,7 +606,7 @@ def get_tenant_context_allow_unpaid(
         # (Clerk makes its creator that org's org:admin by default, no
         # spoofing involved). That's real, Clerk-issued data, but it says
         # nothing about this user's actual tenant. Without this check, a
-        # Viewer could self-escalate on their real tenant just by switching
+        # permission-less user could self-escalate on their real tenant just by switching
         # their active org to a throwaway one they made themselves. Only
         # apply a role change when the token's org_id matches the org this
         # user's tenant is already tied to; a role claim for an unrelated
@@ -582,7 +617,8 @@ def get_tenant_context_allow_unpaid(
         # momentarily stale session cookie (no org_role this request, e.g. a
         # brief window right after Clerk.setActive() before the cookie catches
         # up) fall through this same branch and overwrite their real, correct
-        # Admin role with the org-less clamp's "Viewer". Confirmed live: this
+        # Admin role with the org-less clamp's fallback role ("Viewer" at the
+        # time; RoleMapper.NO_ROLE since Gap 337). Confirmed live: this
         # is what silently demoted an actual Admin's stored role after a
         # normal navigation, well after login, with no error visible anywhere.
         # Fix: only ever sync role from a request that actually carried a real
@@ -764,6 +800,126 @@ def get_tenant_context(
 API_KEY_USER_ID = "api_key_client"
 
 
+# --- Feature 25 (Gap 335): the two API-key action scopes --------------------
+#
+# The founder's own definition, verbatim:
+#   Full Auto-Pilot = full automation -- the API key gets to call
+#                     approve/reject/verify/send/mark-paid.
+#   Strict Review   = the key stays read/upload-only, a human finalizes in the
+#                     web UI.
+#
+# (Working user-facing name for the first one is "Full Automation", NOT "Full
+# Auto-Pilot" -- Feature 13 already ships a "Tenant Autopilot" that means
+# scheduled Google Drive sync, and both are configured from Settings. Founder
+# has not ruled on the rename; see docs/feature_25_plug_and_play_workflows.md.)
+KEY_SCOPE_READONLY = "readonly"
+KEY_SCOPE_ACTIONS = "actions"
+KEY_SCOPE_VALUES = (KEY_SCOPE_READONLY, KEY_SCOPE_ACTIONS)
+
+# Non-routable domain for the synthetic service users below. `users.email` is
+# globally unique, so the tenant id goes inside the local part.
+API_KEY_SERVICE_USER_EMAIL_DOMAIN = "service.invoice-llm.internal"
+
+
+def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool]:
+    """
+    Feature 25 (Gap 335): (can_train, can_audit, can_load) for an API-key scope.
+
+    Replaces Gap 184's hardcoded `role = "Viewer"` -> resolve_permissions(). The
+    readonly row below is the SAME effective permission set that Viewer label
+    produced, so no existing tenant's behaviour changes; only the derivation is
+    now explicit instead of being a side effect of a role name. (Gap 337 then
+    retired that label entirely -- which is exactly why deriving key permissions
+    from scope rather than from a role string mattered: nothing here had to
+    change when the role vocabulary did.)
+
+        readonly -> (False, False, False)
+        actions  -> (False, True,  True)
+
+    can_train is False at BOTH scopes, deliberately. The founder's description
+    of full automation named approve/reject/verify/send (and mark-paid);
+    training was not among them. Letting an integration rewrite the tenant's
+    extraction rules is a much larger claim than letting it finish an invoice,
+    and it will not arrive here as a side effect.
+
+    Anything unrecognised (including None, i.e. a row predating the migration on
+    a database that somehow skipped the server_default) falls to readonly --
+    fail closed, never open.
+    """
+    if scope == KEY_SCOPE_ACTIONS:
+        return False, True, True
+    return False, False, False
+
+
+def api_key_service_clerk_id(tenant_id: UUID) -> str:
+    """The `users.clerk_user_id` of a tenant's synthetic API-key service account.
+
+    Deterministic so the row can be looked up without storing a pointer to it,
+    and unique per tenant. Cannot collide with a real Clerk subject -- those are
+    `user_...`.
+    """
+    return f"api_key_service_{tenant_id}"
+
+
+def resolve_api_key_service_user(tenant: Tenant, db_session: Session) -> UUID:
+    """
+    Feature 25 (Gap 335): the `users.id` an actions-scoped API-key request acts as.
+
+    THE PROBLEM. `AuditLog.actor_user_id` is a non-null FK to `users.id`
+    (models.py), written by routers/audit.py, routers/outbound_audit.py and
+    routers/invoices.py. Gap 184's key path returned `db_user_id=None`, so the
+    first actions-scoped key to call audit-resolve would have inserted NULL into
+    that column and taken a 500 on the constraint.
+
+    WHY NOT JUST MAKE THE FK NULLABLE. Because non-null is what guarantees every
+    audited action is attributable to something. A nullable actor collapses "a
+    machine did this" and "we lost track of who did this" into the same row,
+    which is the opposite of what an audit trail is for.
+
+    THE RESOLUTION. One synthetic service user per tenant, created lazily on
+    first use. It satisfies the FK and names the actor -- "this action was taken
+    via this tenant's API key" -- and carries NO authority of its own: role
+    `RoleMapper.NO_ROLE` (the zero-permission fallback -- "Viewer" until Gap 337
+    retired that name), all three permission booleans False. Permissions for a
+    key request come from the scope on the TenantContext, never from this row.
+
+    LAZY, NOT SEEDED AT PROVISIONING -- a deliberate choice:
+      * seeding at provisioning would write a synthetic user for every tenant,
+        including the overwhelming majority that never issue a key, and would
+        need a backfill migration across every existing tenant;
+      * it keeps this out of routers/auth.py's provisioning path, which is the
+        most incident-prone function in this codebase (Gaps 133/157/173);
+      * cost is one indexed lookup by clerk_user_id, and only at `actions`
+        scope -- readonly requests keep db_user_id=None and create nothing.
+
+    Side effect, handled: routers/admin.py::list_tenant_users() filters this row
+    out so it never renders in the Settings user list as though it were a person.
+    """
+    clerk_id = api_key_service_clerk_id(tenant.id)
+    user = db_session.exec(select(User).where(User.clerk_user_id == clerk_id)).first()
+    if user:
+        return user.id
+
+    user = User(
+        clerk_user_id=clerk_id,
+        email=f"api-key-service+{tenant.id}@{API_KEY_SERVICE_USER_EMAIL_DOMAIN}",
+        first_name="API Key",
+        last_name="Service Account",
+        # Carries no authority -- see docstring. The request's permissions come
+        # from permissions_for_key_scope(), not from these.
+        role=RoleMapper.NO_ROLE,
+        can_train=False,
+        can_audit=False,
+        can_load=False,
+        tenant_id=tenant.id,
+        last_login=datetime.utcnow(),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user.id
+
+
 def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
     """
     Resolve a raw API key to its tenant's context, or raise 401.
@@ -774,20 +930,57 @@ def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
     with the same message -- the response must not reveal which tenants have
     keys.
 
-    Role is deliberately "Viewer" with no can_train/can_audit/can_load. The key
-    proves "this request comes from the tenant's own system", which is not the
-    same claim as "an Admin approved this specific action": Admin-gated routes
-    (require_admin) and permission-gated ones (require_can_*) must not become
-    reachable just because a key exists. Widening that is a deliberate,
-    separately-reviewed decision, not a side effect of issuing a key.
+    Gap 184 originally hardcoded `role = "Viewer"` here with no
+    can_train/can_audit/can_load, on the reasoning that a key proves "this
+    request comes from the tenant's own system", not "an Admin approved this
+    specific action". Feature 25 (Gap 335) keeps that reasoning and makes it a
+    tenant-settable decision instead of a constant: permissions now come from
+    Tenant.api_key_scope via permissions_for_key_scope(). A `readonly` tenant --
+    which is the default, and what every pre-existing tenant migrates to --
+    resolves to exactly the same (False, False, False) this function has always
+    returned.
+
+    `role` is the same value at BOTH scopes, deliberately: scope is not a role.
+    require_admin() must never be satisfiable by a key, however wide its scope --
+    an integration may finish an invoice, but it may not rotate keys, manage
+    users or change billing.
+
+    Gap 337: that value was the literal "Viewer" and is now `RoleMapper.NO_ROLE`
+    ("Restricted"), because a key holds no user-facing role at all -- it is the
+    clearest possible statement of "no role was established for this request".
+    This is a visible change to `GET /settings/security/api-key/verify`'s `role`
+    field, which is the only endpoint that surfaces it; it was never a
+    permission input (permissions come from the scope table above), so nothing
+    is gated on it.
     """
-    from services.api_keys import key_prefix, verify_api_key
+    from services.api_keys import key_prefix, looks_like_widget_token, verify_api_key
 
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or revoked API key.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # Feature 25 (Gap 341). A widget token reaching this function must never
+    # become a TenantContext -- that type carries `role`, `key_scope` and the
+    # three permission booleans, and a credential that lives in a customer's
+    # public page source has no business holding any of them. It is refused here
+    # explicitly rather than being allowed to fall through to the prefix lookup
+    # below and 401 as "invalid key": an integrator who pasted the wrong
+    # credential needs to be told WHICH wrong credential it was, and the answer
+    # must be identical whether they sent it as `X-API-Key` or as
+    # `Authorization: Bearer` (which is the whole reason _extract_api_key()
+    # dispatches on looks_like_platform_credential()).
+    if looks_like_widget_token(raw_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "This is a chat widget token. Widget tokens are chat-only and are "
+                "accepted on POST /api/v1/widget/chat/message and nowhere else. "
+                "Use this workspace's API key (inv_live_...) for the REST API."
+            ),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     prefix = key_prefix(raw_key)
     tenant = db_session.exec(select(Tenant).where(Tenant.api_key_prefix == prefix)).first()
@@ -811,20 +1004,106 @@ def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
             detail="Tenant subscription is unpaid. Access blocked.",
         )
 
-    role = "Viewer"
-    can_train, can_audit, can_load = resolve_permissions(role, None)
+    # Feature 25 (Gap 335). `or KEY_SCOPE_READONLY` covers a row that somehow
+    # carries NULL despite the migration's NOT NULL server_default -- fail
+    # closed rather than trusting the column blindly.
+    scope = tenant.api_key_scope or KEY_SCOPE_READONLY
+    role = RoleMapper.NO_ROLE
+
+    # --- Feature 25 (Gap 340): sandbox tenants -----------------------------
+    #
+    # Two enforcement points, both here because this is the one function every
+    # `inv_test_` request passes through.
+    #
+    # 1. TTL. `expires_at` is checked on EVERY authentication, not only by the
+    #    reaper (scripts/sweep_sandbox_tenants.py). If expiry were the reaper's
+    #    job alone then a missed job run -- an ACA Job that failed, a schedule
+    #    that was never wired up -- would silently extend every outstanding
+    #    sandbox key indefinitely. Expiry means the key stops verifying, and it
+    #    means that whether or not anything swept.
+    #
+    # 2. Scope pin. A sandbox tenant is permanently readonly. This re-derives
+    #    that rather than trusting the column, so even a direct database edit or
+    #    some future code path that widens `api_key_scope` cannot hand
+    #    approve/send/mark-paid to an anonymous visitor's key. The column is also
+    #    written as readonly at creation and refused at PUT /settings/workflow --
+    #    three layers, because this is the credential a stranger holds.
+    #
+    # A *claimed* sandbox is an ordinary tenant: sandbox_is_expired() returns
+    # False for it and the pin is lifted, because at that point the workspace
+    # has a real owner who may legitimately choose Full Automation.
+    from services.sandbox import is_sandbox_tenant, sandbox_is_expired
+
+    sandbox = is_sandbox_tenant(db_session, tenant.id)
+    if sandbox is not None and sandbox.claimed_at is None:
+        if sandbox_is_expired(sandbox):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "This sandbox key has expired. Sandbox workspaces are "
+                    "temporary -- sign up for a free workspace to keep working."
+                ),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        scope = KEY_SCOPE_READONLY
+    can_train, can_audit, can_load = permissions_for_key_scope(scope)
+
+    # Only an actions-scoped key can reach a route that writes an AuditLog, so
+    # only it needs the FK-satisfying service user. A readonly key keeps
+    # db_user_id=None exactly as before Gap 335 and creates no rows at all.
+    db_user_id = resolve_api_key_service_user(tenant, db_session) if scope == KEY_SCOPE_ACTIONS else None
 
     return TenantContext(
         tenant_id=tenant.id,
         user_id=API_KEY_USER_ID,
-        db_user_id=None,
+        db_user_id=db_user_id,
         role=role,
         billing_plan=tenant.billing_plan,
         tenant_name=tenant.name,
         can_train=can_train,
         can_audit=can_audit,
         can_load=can_load,
+        auth_method="api_key",
+        key_scope=scope,
     )
+
+
+def _extract_api_key(authorization: str | None, x_api_key: str | None) -> str | None:
+    """
+    Pull an `inv_live_...` key out of the request headers, or return None.
+
+    Extracted verbatim from get_api_key_context() by Gap 335 so that
+    get_tenant_or_api_key_context() dispatches on exactly the same rule rather
+    than a second copy of it -- two copies is how the two paths would drift.
+    Behaviour is unchanged: X-API-Key wins when both headers are present (a
+    proxy-injected Authorization header is the likelier accident of the two),
+    and a Bearer token only counts as a credential of ours if it carries a
+    prefix a Clerk JWT can never carry.
+
+    Gap 340/341 widened that prefix test from the single `inv_live_` literal to
+    `looks_like_platform_credential()`, i.e. `inv_live_` OR `inv_test_` OR
+    `inv_widget_`. The sandbox key genuinely IS an API key and resolves
+    normally; the widget token is picked up here **so that it can be rejected
+    with an accurate message** in resolve_api_key_context(). Leaving it out
+    would send `Authorization: Bearer inv_widget_...` down the Clerk verifier to
+    401 about an invalid token signature while the identical value in
+    `X-API-Key` 401'd about an invalid API key -- one credential, two headers,
+    two unrelated errors.
+    """
+    from services.api_keys import looks_like_platform_credential
+
+    if x_api_key:
+        # `or None` for a whitespace-only header. On the key-only path this is
+        # the same 401 the previous inline version produced (it stripped to ""
+        # and hit `if not raw_key`); on the dual path it simply means "no key
+        # here", so a request carrying a junk X-API-Key AND a valid Clerk token
+        # is still served as the human it is.
+        return x_api_key.strip() or None
+    if authorization and authorization.startswith("Bearer "):
+        candidate = authorization.split(" ", 1)[1].strip()
+        if looks_like_platform_credential(candidate):
+            return candidate
+    return None
 
 
 def get_api_key_context(
@@ -840,16 +1119,13 @@ def get_api_key_context(
     likelier accident of the two. Missing/malformed credentials are 401 -- there
     is no mock fallback on this path at all, deliberately: unlike the Clerk
     dependency there is no local-development story that needs one.
-    """
-    from services.api_keys import looks_like_api_key
 
-    raw_key: str | None = None
-    if x_api_key:
-        raw_key = x_api_key.strip()
-    elif authorization and authorization.startswith("Bearer "):
-        candidate = authorization.split(" ", 1)[1].strip()
-        if looks_like_api_key(candidate):
-            raw_key = candidate
+    Key-ONLY. Use get_tenant_or_api_key_context() (Gap 335) for a route that
+    should also accept a Clerk session. This one stays as it is because
+    `GET /settings/security/api-key/verify` must reject a browser session --
+    the whole point of that route is to prove a *key* works.
+    """
+    raw_key = _extract_api_key(authorization, x_api_key)
 
     if not raw_key:
         raise HTTPException(
@@ -862,6 +1138,52 @@ def get_api_key_context(
         )
 
     return resolve_api_key_context(raw_key, db_session)
+
+
+def get_tenant_or_api_key_context(
+    authorization: str | None = Header(None),
+    x_api_key: str | None = Header(None),
+    db_session: Session = Depends(get_db_session),
+) -> TenantContext:
+    """
+    Feature 25 (Gap 335): accept EITHER a Clerk session JWT or an `inv_live_`
+    API key, and return one unified TenantContext.
+
+    WHY THIS EXISTS AS ONE DEPENDENCY. FastAPI resolves dependencies eagerly, so
+    "use the Clerk dependency OR the key dependency" cannot be expressed by
+    declaring both -- declaring both runs both, and each 401s when its own
+    credential is absent. Without this, every dual-credential route would need
+    its own try/except tangle in the handler body, which is exactly the kind of
+    per-route auth logic that drifts.
+
+    DISPATCH, in order:
+      1. `X-API-Key: <key>` present            -> key path
+      2. `Authorization: Bearer inv_live_...`  -> key path
+      3. anything else                         -> Clerk path
+
+    Step 3 calls get_tenant_context_allow_unpaid() and then get_tenant_context()
+    on its result rather than reimplementing either, so the 402-on-unpaid gate,
+    the Gap 133 provisioning gate, the Gap 173 role reconciliation and the
+    ALLOW_MOCK_AUTH local/test fallback all behave IDENTICALLY to a route that
+    depends on get_tenant_context directly. Reimplementing any of that here is
+    how the two paths would silently diverge.
+
+    The key path already runs its own enforce_lapse/refresh_free_quota/402 gate
+    inside resolve_api_key_context(), so both branches are billing-gated.
+
+    Scope is NOT checked here -- this dependency only answers "who is calling".
+    A route that needs `actions` scope wraps this in require_key_scope("actions").
+    """
+    raw_key = _extract_api_key(authorization, x_api_key)
+    if raw_key:
+        return resolve_api_key_context(raw_key, db_session)
+
+    return get_tenant_context(
+        context=get_tenant_context_allow_unpaid(
+            authorization=authorization,
+            db_session=db_session,
+        )
+    )
 
 
 # --- Feature 1.1 (Task 1.1.2): permission-check dependencies ---------------
@@ -906,6 +1228,147 @@ def require_permission(permission: str):
 require_can_train = require_permission("can_train")
 require_can_audit = require_permission("can_audit")
 require_can_load = require_permission("can_load")
+
+
+# --- Feature 25 (Gap 335): dual-credential gates ---------------------------
+#
+# Same factory shape as require_permission() above -- build a dependency, attach
+# it per-route or per-router, get a 403 with a human-readable reason -- but
+# resolving through get_tenant_or_api_key_context() so a route can be reached by
+# a browser session OR an API key, each judged by its own rule.
+
+
+def require_key_scope(scope: str):
+    """
+    Build a dependency that 403s unless the caller may take financial ACTIONS on
+    an invoice (approve / reject / verify / confirm-send / mark-paid).
+
+    Two callers, two different questions, one gate:
+
+      * API key   -> the tenant's Tenant.api_key_scope must be `actions`. The
+                     403 message names the setting to change, because whoever
+                     reads it is an integrator looking at a JSON error, not a
+                     user looking at a toast.
+      * Clerk JWT -> `can_audit`, exactly as require_can_audit has always
+                     required, with the message text unchanged. That wording is
+                     asserted by tests/test_rbac.py, and more importantly it is
+                     what a human actually sees -- the arrival of API keys is no
+                     reason to reword a human's permission error.
+
+    Admins pass the human branch implicitly (resolve_permissions grants all
+    three). An API key never does, at any scope: scope is not a role.
+    """
+    if scope not in KEY_SCOPE_VALUES:
+        raise ValueError(f"Unknown API key scope {scope!r}; expected one of {KEY_SCOPE_VALUES}.")
+
+    def _dependency(
+        context: TenantContext = Depends(get_tenant_or_api_key_context),
+    ) -> TenantContext:
+        if scope == KEY_SCOPE_READONLY:
+            # Every authenticated caller satisfies readonly -- the dependency
+            # exists to admit API keys to the route at all, not to filter.
+            return context
+
+        if context.auth_method == "api_key":
+            if context.key_scope != KEY_SCOPE_ACTIONS:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "This API key is read-only and cannot approve, reject, send or "
+                        "mark invoices as paid. An Admin can switch this workspace's "
+                        "workflow policy to Full Automation in Settings to allow it."
+                    ),
+                )
+            return context
+
+        if not context.can_audit:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"You do not have permission to access {_PERMISSION_LABELS['can_audit']}. "
+                    "Ask an Admin to grant it."
+                ),
+            )
+        return context
+
+    return _dependency
+
+
+require_actions_scope = require_key_scope(KEY_SCOPE_ACTIONS)
+
+
+def require_permission_or_api_key(permission: str):
+    """
+    Build a dependency that requires `permission` from a HUMAN caller but admits
+    an API key of any scope.
+
+    This exists for ingestion. The founder's Strict Review policy is explicitly
+    "read/**upload**-only", so a `readonly` key must be able to upload -- but
+    readonly grants can_load=False, and POST /invoices/upload is gated on
+    require_can_load for humans. Swapping in the plain dual dependency would
+    have quietly deleted that human gate (the one
+    tests/test_rbac.py::test_invoice_upload_requires_can_load exists to
+    protect). So: the human rule is unchanged, and the key is admitted because
+    upload is ingestion, not one of the five actions `actions` scope governs.
+    """
+    label = _PERMISSION_LABELS.get(permission, permission)
+
+    def _dependency(
+        context: TenantContext = Depends(get_tenant_or_api_key_context),
+    ) -> TenantContext:
+        if context.auth_method == "api_key":
+            return context
+        if not getattr(context, permission, False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to access {label}. Ask an Admin to grant it.",
+            )
+        return context
+
+    return _dependency
+
+
+require_can_load_or_api_key = require_permission_or_api_key("can_load")
+
+
+# --- Feature 25 (Gap 341): the widget chat token's own, narrower context ---
+
+
+class WidgetContext(BaseModel):
+    """What a `inv_widget_...` token resolves to. **Not** a TenantContext.
+
+    ------------------------------------------------------------------------
+    THE SEPARATION IS THE SECURITY PROPERTY. READ THIS BEFORE WIDENING IT.
+    ------------------------------------------------------------------------
+    A widget token is pasted into a customer's own website's client-side code.
+    It is visible in page source to every visitor, crawler and browser
+    extension. So the containment cannot be "check the scope carefully at every
+    gate" -- that is a promise about future code, and this codebase already has
+    Gap 173 and Gap 344 as records of what happens when an authorisation
+    decision depends on somebody remembering a check.
+
+    Instead the containment is *structural*: this type deliberately has **no**
+    `role`, **no** `key_scope`, **no** `db_user_id` and **none** of
+    `can_train` / `can_audit` / `can_load`. Every gate in this file --
+    `require_permission`, `require_key_scope`, `require_permission_or_api_key`,
+    `require_admin` -- is annotated `context: TenantContext` and reads one of
+    those fields. A widget token cannot reach any of them, because
+    `get_widget_context()` is mounted on exactly one route and returns something
+    those functions cannot consume. A scope-check bug elsewhere in the codebase
+    has structurally nothing to get wrong here.
+
+    Do not add permission fields to this model, and do not make it inherit from
+    TenantContext. If a widget ever needs to do something other than send a chat
+    message, that is a new decision, not a field.
+
+    `origin` is carried for logging and for the (defence-in-depth only) origin
+    check -- see services/widget_tokens.py::origin_is_allowed. It is not an
+    authorisation input on its own and must never be described as one.
+    """
+    tenant_id: UUID
+    widget_token_id: UUID
+    auth_method: str = "widget"
+    origin: str | None = None
 
 
 def require_admin(context: TenantContext = Depends(get_tenant_context)) -> TenantContext:

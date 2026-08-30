@@ -62,6 +62,28 @@ class Tenant(SQLModel, table=True):
     # observational (lets an Admin spot a key that is still in use before
     # rotating it, or one that has never been used at all).
     api_key_last_used_at: datetime | None = Field(default=None)
+    # Feature 25 / Gap 335: how much of the invoice lifecycle this tenant's API
+    # key is allowed to finish. Exactly two values:
+    #   "readonly" -- the founder's "Strict Review": the integration may upload
+    #                 and read; a human finalizes in the web UI.
+    #   "actions"  -- the founder's "Full Automation": the key may additionally
+    #                 approve/reject/verify (audit resolve, inbound and
+    #                 outbound), confirm-send, and mark-paid.
+    # The default is "readonly" and that is a FAIL-CLOSED choice, not a
+    # stylistic one: every tenant that already exists when migration
+    # d8e9f0a1b2c3 runs, and every tenant created later without an explicit
+    # decision, must NOT silently acquire the ability to have a machine approve
+    # its invoices. Widening is an explicit act.
+    #
+    # This is on Tenant rather than on a key row because services/api_keys.py is
+    # one-key-per-tenant by design (see its module docstring) -- there is no
+    # per-key table to hang it off, and a tenant therefore cannot hold a
+    # readonly key and an actions key at the same time.
+    #
+    # Note this is NOT a pipeline auto-approval threshold, and NOT Feature 13's
+    # "Tenant Autopilot" (scheduled Drive sync) -- see
+    # docs/feature_25_plug_and_play_workflows.md for that naming collision.
+    api_key_scope: str = Field(default="readonly", max_length=20, nullable=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -254,9 +276,10 @@ class User(SQLModel, table=True):
     # privilege by default. These are our own data, deliberately NOT sourced
     # from the Clerk JWT -- an Admin grants them via the Admin console and the
     # effect is immediate on the next request without a re-login.
-    # A user with all three False is the original design's "Viewer": Dashboard
-    # + Chat + Help only. Admin implies all three (resolved in
-    # dependencies.get_tenant_context, not stored redundantly here).
+    # A user with all three False sees Dashboard + Chat + Help only. Admin
+    # implies all three (resolved in dependencies.get_tenant_context, not stored
+    # redundantly here). Gap 337 retired the name "Viewer" for that state — the
+    # permission shape it described is unchanged; see RoleMapper.NO_ROLE.
     can_train: bool = Field(default=False, nullable=False)
     can_audit: bool = Field(default=False, nullable=False)
     can_load: bool = Field(default=False, nullable=False)
@@ -549,6 +572,217 @@ class TenantAutopilotConfig(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class TenantWorkflowConfig(SQLModel, table=True):
+    """Feature 25 (Gap 336): the tenant's Plug & Play workflow choices.
+
+    One row per tenant — the answers to "how do invoices reach us, how much may a
+    machine finish, where do results go, how is chat reached". Written by the
+    Settings workflow wizard (`PUT /api/v1/settings/workflow`, Admin only).
+
+    Shaped after `TenantAutopilotConfig` deliberately: same one-row-per-tenant
+    pattern, same `UNIQUE(tenant_id)` + index, same `tenant.id` foreign key, same
+    `JSON_VARIANT` list columns (JSONB on Postgres, JSON on SQLite).
+
+    ------------------------------------------------------------------------
+    `audit_policy` IS NOT THE ENFORCEMENT PRIMITIVE. Read this before using it.
+    ------------------------------------------------------------------------
+    `Tenant.api_key_scope` (Gap 335) is the single source of truth for what an
+    API key may actually do, and it is the only thing the auth layer reads.
+    This column is the *user-facing wording* of that same decision:
+
+        full_automation  <-> Tenant.api_key_scope == "actions"
+        strict_review    <-> Tenant.api_key_scope == "readonly"
+
+    `PUT /settings/workflow` writes BOTH in one transaction, and
+    `GET /settings/workflow` **derives** `audit_policy` from
+    `Tenant.api_key_scope` rather than reading this column back. So if the two
+    ever disagree — an Admin editing the tenant column directly, a partially
+    applied write — the API reports what is actually enforced, not what the
+    wizard was last told. This column is kept because it is what the wizard
+    wrote and is useful history; it is never an authorisation input.
+
+    (Naming: "Full Automation"/"Strict Review" are the founder's two policies.
+    The user-facing name for the first is still provisional — Feature 13 already
+    ships a "Tenant Autopilot" meaning scheduled Drive sync. See
+    docs/feature_25_plug_and_play_workflows.md.)
+
+    `output_destinations` was a *stored intention* under Gap 336 — no delivery
+    code read it. **Gap 339 changed that**: `services/workflow_outputs.py` reads
+    this column when an invoice is approved and, if it contains `email_summary`,
+    emails the tenant's registered addresses a summary with CSV + JSON
+    attachments. So `webhook`, `dashboard_only` and `email_summary` are all
+    accepted now. `drive_archive` (Gap 338) is still rejected at the endpoint
+    with a 422 rather than stored and silently ignored, because a tenant
+    believing its invoices are being filed to Drive when nothing sends them is
+    worse than being told the feature is not available yet. `email_summary`
+    additionally requires the tenant to hold at least one registered
+    `TenantEmailSender` row, since that allowlist is where its recipients come
+    from — see routers/settings.py::_validate_destinations.
+    """
+    __tablename__ = "tenant_workflow_configs"
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", name="uq_workflow_config_tenant"),
+        sa.Index("idx_workflow_config_tenant", "tenant_id"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id")
+    # subset of 'email' | 'drive' | 'api' | 'manual'
+    input_channels: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # 'full_automation' | 'strict_review' — mirrors Tenant.api_key_scope, see above
+    audit_policy: str = Field(default="strict_review", max_length=32)
+    # subset of 'webhook' | 'dashboard_only' | 'email_summary' (Gap 339);
+    # 'drive_archive' (Gap 338) is not built and is rejected at the endpoint
+    output_destinations: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # 'dashboard' | 'api' | 'widget'
+    chat_access: str = Field(default="dashboard", max_length=20)
+    # When the tenant first completed the wizard. Set once, on the first
+    # successful PUT, and deliberately NOT reset by later edits — it answers
+    # "has this tenant been through onboarding", not "when was this last saved"
+    # (updated_at answers that).
+    completed_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SandboxTenant(SQLModel, table=True):
+    """Feature 25 (Gap 340): the sandbox marker for a throwaway-but-real tenant.
+
+    A sandbox key (`inv_test_...`) resolves to a **fresh, real `Tenant` row** --
+    not a shared demo tenant. That is the founder's decision and it is what makes
+    the sandbox worth having: a visitor uploads their own invoice and sees their
+    own data, in a workspace that can later be *claimed* by a real signup rather
+    than thrown away and rebuilt.
+
+    ------------------------------------------------------------------------
+    WHY THIS IS A SEPARATE TABLE AND NOT THREE COLUMNS ON `Tenant`
+    ------------------------------------------------------------------------
+    Two reasons, both load-bearing:
+
+    1. **"Is this tenant a sandbox" must be answerable by row existence.** Every
+       predicate in this feature -- the adoption blocker, the readonly pin, the
+       expiry check, the global cap, the chat counter -- is "does a row exist,
+       and is it unclaimed". A nullable column on `Tenant` would make the
+       fail-open answer (NULL) look identical to "an ordinary tenant", which is
+       the right default for a *column* and the wrong default for a *claim*.
+    2. **The overwhelming majority of tenants are not sandboxes.** Five columns
+       on `Tenant` for a state almost no row is in, on the single hottest table
+       in the schema, is the wrong trade.
+
+    `Tenant.domain` for a sandbox row is always the synthetic
+    `sandbox-<tenant_id>.invalid` (services/sandbox.py::sandbox_domain) --
+    `.invalid` is RFC 2606's reserved never-resolving TLD, the same device
+    `routers/auth.py::_create_tenant_with_unique_domain()` already uses for a
+    colliding org domain. That is what keeps a sandbox tenant permanently outside
+    the domain-matched adoption path: no real company's email domain can equal
+    it, and the tenant id inside it makes every value distinct (`Tenant.domain`
+    is `unique=True, nullable=False`).
+    """
+    __tablename__ = "sandbox_tenants"
+    # Index names are spelled here rather than via `index=True` on the fields so
+    # they match migration b1c2d3e4f5a6 byte for byte -- same convention as
+    # TenantWorkflowConfig above. SQLModel's implicit `ix_<table>_<col>` naming
+    # would otherwise disagree with what Alembic actually created.
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", name="uq_sandbox_tenant"),
+        sa.Index("idx_sandbox_tenant_tenant_id", "tenant_id"),
+        # `claimed_at IS NULL` is the unclaimed predicate, counted on every
+        # issuance for the global cap; `expires_at` is the reaper's sweep key.
+        sa.Index("idx_sandbox_tenant_claimed", "claimed_at"),
+        sa.Index("idx_sandbox_tenant_expires", "expires_at"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id")
+    # When the key stops verifying. Enforced live in
+    # dependencies.resolve_api_key_context() *and* swept by
+    # scripts/sweep_sandbox_tenants.py -- a flag nobody reads is not a TTL, so
+    # expiry is both checked at auth time and actually reaped.
+    expires_at: datetime
+    # NULL means unclaimed, and it is the compare-and-set predicate the claim
+    # transaction turns on (services/sandbox.py::claim_sandbox_tenant). Once set
+    # this row is inert history: the tenant is an ordinary tenant from then on.
+    claimed_at: datetime | None = Field(default=None)
+    claimed_by_clerk_org_id: str | None = Field(default=None, max_length=255)
+    # Gap 340 requirement 7: chat is the one thing a readonly sandbox key can do
+    # that spends real Azure OpenAI money, and services/billing_quota.py's
+    # free-tier charge covers ingestion only. A plain bounded counter, not a
+    # second quota system -- issuance is already rate-limited and capped, so
+    # this only has to stop one visitor's key running a bill up.
+    chat_messages_used: int = Field(default=0)
+    # Rate-limit forensics only. The IP that was issued this key, as resolved by
+    # routers/support.py::_get_client_ip() (i.e. only values our own
+    # infrastructure produced). Never used as an authorisation input.
+    issued_from_ip: str | None = Field(default=None, max_length=64)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WidgetToken(SQLModel, table=True):
+    """Feature 25 (Gap 341): a chat-only token for a tenant's embedded widget.
+
+    ------------------------------------------------------------------------
+    THIS IS NOT AN API KEY, AND THE SEPARATION IS THE POINT
+    ------------------------------------------------------------------------
+    A widget token is pasted into the *customer's own website's client-side
+    code*. It is visible in page source to every visitor, every crawler and
+    every browser extension. It therefore cannot carry the trust level of an
+    `inv_live_` key, and the containment is structural rather than a matter of
+    checking a scope carefully:
+
+    * it lives here, in its own table, and NOT in `Tenant.api_key_hash` /
+      `api_key_salt` / `api_key_prefix` -- those are one-key-per-tenant by
+      design (services/api_keys.py's docstring) and adding a third credential
+      type to them would make "which credential is this" a question every
+      reader of those columns has to ask;
+    * it resolves to `dependencies.WidgetContext`, which has no `role`, no
+      `key_scope` and none of the three permission booleans -- so
+      `require_actions_scope` / `require_can_load_or_api_key` and every other
+      gate in the codebase have structurally nothing to inspect on it. A scope
+      bug elsewhere cannot widen a widget token, because there is no field for
+      the bug to get wrong;
+    * `get_widget_context()` is mounted on exactly one route, the widget chat
+      send, and nowhere else.
+
+    `allowed_origins` is an ADDITIONAL layer, not the control. It is checked
+    against the request's `Origin`/`Referer`, which any non-browser client can
+    set to whatever it likes -- so it raises the cost of casual reuse of a
+    scraped token and nothing more. Nothing in this codebase or its docs should
+    describe it as a guarantee.
+    """
+    __tablename__ = "widget_tokens"
+    # Same naming reason as SandboxTenant above -- these are the names migration
+    # b1c2d3e4f5a6 creates.
+    __table_args__ = (
+        # UNIQUE, unlike Tenant.api_key_prefix which is only indexed: this is the
+        # sole lookup key across every tenant, so two rows sharing a prefix would
+        # make resolution ambiguous rather than merely slow.
+        sa.Index("idx_widget_token_prefix", "token_prefix", unique=True),
+        sa.Index("idx_widget_token_tenant", "tenant_id"),
+    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id")
+    # Same storage contract as Tenant.api_key_*: PBKDF2-HMAC-SHA256 over the raw
+    # token with a fresh per-token salt, and the raw value transmitted exactly
+    # once, by the response that created it. `token_prefix` is the non-secret
+    # lookup slice (`inv_widget_` + 6) -- indexed, and unique because unlike the
+    # one-key-per-tenant columns there can be several of these per tenant.
+    token_hash: str = Field(max_length=255)
+    token_salt: str = Field(max_length=64)
+    token_prefix: str = Field(max_length=32)
+    # Human label so an Admin can tell "marketing site" from "docs site" in the
+    # Settings list. Never an authorisation input.
+    label: str = Field(default="Chat widget", max_length=100)
+    # Origins this token is expected to be embedded on, e.g.
+    # ["https://acme.com", "https://www.acme.com"]. Empty list means the origin
+    # layer is not applied -- see the class docstring on why that is a
+    # defence-in-depth setting and not the gate.
+    allowed_origins: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # Set on revoke. Checked on every resolve, so revocation takes effect on the
+    # next request rather than at some TTL boundary. Rows are kept rather than
+    # deleted so a revoked token in a log line can still be explained.
+    revoked_at: datetime | None = Field(default=None)
+    last_used_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 # Feature 13: Tenant Autopilot — Deduplication Ledger
 # One row per file processed (or attempted) by Autopilot — both scheduled and
 # manual "Sync Now" runs. Two-layer deduplication:
@@ -740,7 +974,37 @@ class RoleMapper:
     """
     Enterprise Role & Permission Engine (Gap 108).
     Maps any 3rd-party IDP string to internal application roles and default permission flags.
+
+    Feature 25 (Gap 337): the user-facing role vocabulary is **Admin, Auditor,
+    Trainer** — three roles, per the founder's decision. "Viewer" is retired as a
+    *name*; Trainer (which already existed with exactly the permissions the
+    founder described: can_train only) takes its place as the third choice an
+    Admin can hand out.
+
+    Retiring the name was not a rename, because "Viewer" was doing two unrelated
+    jobs at once:
+      1. a role an Admin could assign, and
+      2. the system's **zero-permission fallback** — what an unmapped IDP role
+         string, a missing role, an org-mismatched session (Gap 173's escalation
+         clamp) and an API-key request all resolved to.
+
+    Job 2 still has to exist, and it must NOT be one of the three user-facing
+    roles: if the fallback slot were Trainer, every unknown role string and every
+    org-mismatched session would silently acquire `can_train`, which is the exact
+    class of quiet escalation Gap 173 was opened for. So the fallback keeps its
+    own name, `NO_ROLE`, deliberately spelled "Restricted" — a value that must
+    never appear in an invite dropdown, a role picker, or any user-facing copy.
+    `USER_FACING_ROLES` below is the assignable set; `NO_ROLE` is not in it.
     """
+
+    # The internal zero-permission fallback. Not a role anyone is given; the
+    # answer to "we could not establish a role for this request".
+    NO_ROLE = "Restricted"
+
+    # The three roles a human is ever assigned. Anything outside this tuple is
+    # either Admin-adjacent legacy data or the fallback above.
+    USER_FACING_ROLES = ("Admin", "Auditor", "Trainer")
+
     ROLE_ALIAS_MAP = {
         "org:admin": "Admin",
         "admin": "Admin",
@@ -750,25 +1014,31 @@ class RoleMapper:
         "org_trainer": "Trainer",
         "org:auditor": "Auditor",
         "auditor": "Auditor",
-        "org:member": "Viewer",
-        "member": "Viewer",
-        "viewer": "Viewer",
+        # Gap 337: an IDP "member" is not a Trainer. These three used to map to
+        # "Viewer" and resolved to zero permissions; they now map to the fallback
+        # and resolve to exactly the same zero permissions. `viewer` is kept as a
+        # legacy input alias precisely so an old Clerk role string, or a `users`
+        # row written before this gap, still lands somewhere safe.
+        "org:member": NO_ROLE,
+        "member": NO_ROLE,
+        "viewer": NO_ROLE,
+        "restricted": NO_ROLE,
     }
 
     ROLE_PERMISSION_DEFAULTS = {
         "Admin":   {"can_train": True,  "can_audit": True,  "can_load": True},
         "Trainer": {"can_train": True,  "can_audit": False, "can_load": False},
         "Auditor": {"can_train": False, "can_audit": True,  "can_load": False},
-        "Viewer":  {"can_train": False, "can_audit": False, "can_load": False},
+        NO_ROLE:   {"can_train": False, "can_audit": False, "can_load": False},
     }
 
     @classmethod
     def normalize_role(cls, raw_role: str | None) -> str:
         """Translates raw strings (e.g. 'org:trainer', 'trainer') into internal DB roles ('Trainer')."""
         if not raw_role:
-            return "Viewer"
+            return cls.NO_ROLE
         clean_key = str(raw_role).strip().lower()
-        return cls.ROLE_ALIAS_MAP.get(clean_key, raw_role.title() if raw_role else "Viewer")
+        return cls.ROLE_ALIAS_MAP.get(clean_key, raw_role.title() if raw_role else cls.NO_ROLE)
 
     @classmethod
     def resolve_permissions(cls, role: str, user: Any = None) -> tuple[bool, bool, bool]:
@@ -776,7 +1046,10 @@ class RoleMapper:
         if role == "Admin":
             return True, True, True
 
-        defaults = cls.ROLE_PERMISSION_DEFAULTS.get(role, cls.ROLE_PERMISSION_DEFAULTS["Viewer"])
+        # Gap 337: an unrecognised role — including the literal "Viewer" on any
+        # row that predates this gap's data migration — falls to the
+        # zero-permission fallback, never to a role that grants something.
+        defaults = cls.ROLE_PERMISSION_DEFAULTS.get(role, cls.ROLE_PERMISSION_DEFAULTS[cls.NO_ROLE])
         can_train = getattr(user, "can_train", None) if user else None
         can_audit = getattr(user, "can_audit", None) if user else None
         can_load  = getattr(user, "can_load", None)  if user else None

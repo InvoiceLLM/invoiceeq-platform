@@ -33,9 +33,10 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
-  // Owned by playwright.proxy.config.ts -- it needs a differently-configured
-  // server, so running it here would assert against the wrong env.
-  testIgnore: "**/billing-proxy-mode.spec.ts",
+  // Owned by playwright.proxy.config.ts / playwright.sandbox.config.ts -- both
+  // need a differently-configured server, so running them here would assert
+  // against the wrong env (see each config's own comment).
+  testIgnore: ["**/billing-proxy-mode.spec.ts", "**/sandbox-key-cta-enabled.spec.ts"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

@@ -152,6 +152,46 @@ Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to
 > falls through to creating a fresh tenant rather than 500ing), but the race
 > itself is not closed.
 >
+> **Gap 344 update (2026-08-30) — a tenant holding a live API key is not "unclaimed".**
+>
+> Additive to finding 4 above, and the *only* change to that function since. Every
+> condition Checkpoint 3c added is about **rows this schema can see**. An API key
+> is not a row — it is a credential that lives outside the database, in whoever's
+> integration was handed the raw value — and `_tenant_adoption_blockers()` never
+> looked at `Tenant.api_key_hash`. A domain-matched tenant with no `clerk_org_id`,
+> the `free` plan, no PayU state, no users and not one row in
+> `_TENANT_SCOPED_TABLES` was adoptable by every check that existed, **and could
+> still hold a minted key**. Adoption sets `clerk_org_id`, renames the tenant and
+> commits while leaving `api_key_hash`/`api_key_salt`/`api_key_prefix` untouched —
+> nothing anywhere clears them — so the old holder keeps authenticating, with the
+> key they already have, against what is now a different real company's live
+> workspace, reading its invoices through Gap 335's `X-API-Key` channel.
+>
+> The blocker list now includes **`"a live API key"`, ORed across all three
+> columns** rather than just the digest: a row half-written by a crash between the
+> assignments in `_mint_provisioning_api_key()` or `routers/settings.py::rotate_api_key()`
+> (the only two writers) is a reason to be more suspicious of it, not less. All
+> three are declared nullable with no default on `models.py::Tenant`, so NULL
+> genuinely means "never minted". `api_key_scope` is deliberately **not** the
+> signal — it is NOT NULL with a `"readonly"` default, so keying off it would
+> disable the adoption path for every tenant that has ever existed.
+>
+> **This does not make new tenants un-adoptable.** `provision_tenant()` decides
+> adoption-vs-create *first*, the adoption branch returns, and Gap 342's
+> `_mint_provisioning_api_key()` runs only on the create branch afterwards — a
+> tenant is never evaluated for adoption in the same request that mints its key,
+> and a tenant provisioning created carries a `clerk_org_id` that already trips
+> the first blocker. The only rows newly refused are key-holding, org-less ones:
+> exactly the bad state.
+>
+> **Found during Feature 25's security review**, but not part of it — this is
+> Checkpoint 3c code that predates plug-and-play; Gap 335/342 are merely what put
+> a credential on the `Tenant` row for the function to have missed. Tracked as
+> **Gap 344 against this feature**, not against Feature 25.
+>
+> **Still open, unchanged by this:** the TOCTOU window below. Adding a condition
+> to the check does not close the race.
+
 > **Also documented, no functional change:** the `tenant_id` JWT claim check
 > carries a comment that if that claim is ever added to the Clerk JWT Template
 > it must be sourced from `public_metadata` or an org shortcode — never
@@ -191,6 +231,7 @@ Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to
 
 ### Verification Plan
 * **Automated Tests**: Execute `uv run pytest tests/test_auth.py` verifying that JWTs from different tenants return status-isolated responses, and `'unpaid'` users are blocked.
+* **Postgres-only cases** (Hard rule 2 — these assert row-state/locking behaviour SQLite cannot represent, and `pytest.skip` themselves when `DATABASE_URL` is not PostgreSQL): `test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres` (Gap 133 sub-item 1 + Gap 342 — two concurrent provisions, one tenant, one surviving key, one sender row) and `test_api_key_blocks_adoption_on_postgres` (Gap 344 — an A/B where a keyless domain tenant of identical shape is still adopted while the key-holding one is refused, so the outcome is attributable to the key and not to some other blocker). A run that reports these as skipped is not evidence.
 * **Manual Verification**: Use Postman/cURL with invalid, expired, and correct tenant JWTs to verify HTTP return codes.
 
 ### Detailed Implementation Plan

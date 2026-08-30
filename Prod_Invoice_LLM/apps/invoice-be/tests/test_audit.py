@@ -57,6 +57,11 @@ def test_resolve_invoice_paid(db_session):
     assert response.json() == {
         "success": True, "corrections_applied": {}, "suggested_rule": None, "standing_rule_result": None,
         "email_notify": None,
+        # Gap 339: null because this tenant has no TenantWorkflowConfig row and
+        # therefore never selected the `email_summary` output destination.
+        "email_summary": None,
+        # Gap 338: null for the same reason -- no row, so no `drive_archive`.
+        "drive_archive": None,
     }
 
     # Verify updates in database
@@ -136,10 +141,12 @@ VIEWER = {"Authorization": "Bearer test_viewer"}
 
 
 def _viewer_row_with_audit_permission(db_session):
-    """Provisions the mock Viewer identity, then grants it can_audit=True so it
-    passes the router's require_can_audit gate while staying role='Viewer' —
-    isolates the Admin-only check in resolve_audit_invoke from the unrelated
-    can_audit gate a plain Viewer would otherwise fail on first."""
+    """Provisions the mock permission-less identity, then grants it
+    can_audit=True so it passes the router's require_can_audit gate while its
+    role stays the non-Admin zero-permission fallback (`RoleMapper.NO_ROLE`;
+    'Viewer' before Gap 337 retired that name) — isolates the Admin-only check in
+    resolve_audit_invoke from the unrelated can_audit gate this identity would
+    otherwise fail on first."""
     from models import User
     client.get("/auth/me", headers=VIEWER)
     user = db_session.exec(select(User).where(User.clerk_user_id == MOCK_USER_ID)).first()

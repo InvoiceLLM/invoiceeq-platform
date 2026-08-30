@@ -7,7 +7,15 @@ from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 from datetime import datetime
 
-from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
+from dependencies import (
+    get_db_session,
+    # Feature 25 (Gap 335): replaces this router's former
+    # `require_can_audit` / `get_tenant_context` pair, exactly as on the
+    # inbound router. Human rule unchanged; `actions`-scoped keys now pass.
+    get_tenant_or_api_key_context,
+    require_actions_scope,
+    TenantContext,
+)
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from services.invoice_visibility import invoice_not_deleted
 from utils.rule_schema import (
@@ -23,10 +31,16 @@ logger = logging.getLogger(__name__)
 
 # Feature 1.1 (Task 1.1.2): AR-side mirror of routers/audit.py -- same
 # `can_audit` permission gates the outbound review console.
+#
+# Feature 25 (Gap 335): router-level, so it gates everything mounted at
+# /outbound-audit -- which today is exactly one route,
+# PUT /resolve/{invoice_id}, with no read-only views. Same note as the inbound
+# router: a read-only view added here later must not silently inherit an
+# `actions`-scope requirement.
 router = APIRouter(
     prefix="/outbound-audit",
     tags=["Outbound Audit"],
-    dependencies=[Depends(require_can_audit)],
+    dependencies=[Depends(require_actions_scope)],
 )
 
 # Feature 7.1: outbound corrections only ever touch these fields -- the
@@ -183,7 +197,10 @@ def _apply_standing_rule_direct(db_session: Session, tenant_context: TenantConte
 async def resolve_outbound_alert(
     invoice_id: UUID,
     payload: OutboundAuditResolutionPayload,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335): dual-credential, for the same reason as the inbound
+    # resolve handler -- the router gate above has already admitted an
+    # `actions` key, and a Clerk-only resolver would 401 it here.
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session),
 ):
     """Feature 7.1, Task 7.1.2/7.1.3: corrections + AuditLog diff for a

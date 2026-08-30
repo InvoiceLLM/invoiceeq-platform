@@ -1,8 +1,24 @@
 """Gap 189: free-tier upload quota — charge billable files only, under row lock.
 
-Product doors (`POST /invoices/upload` and the directory watcher) must share this
-logic so they cannot drift: classify hashes before charging, then
-`SELECT … FOR UPDATE` the Tenant row and decrement only the billable count.
+Every product door that can create an Invoice row must share this logic so they
+cannot drift: classify hashes before charging, then `SELECT … FOR UPDATE` the
+Tenant row and decrement only the billable count.
+
+Gap 343 (2026-08-30): for two years that meant exactly the two doors in
+`routers/invoices.py` (`upload_invoices` and `start_directory_watcher`), while
+three others created invoices and charged nothing — the Google Drive connector
+import, the scheduled Autopilot sync, and the outbound (AR) upload. The call
+sites are now five:
+
+  routers/invoices.py          -> upload_invoices(), start_directory_watcher()
+  routers/connectors.py        -> trigger_file_import()          (flat 1/import)
+  services/autopilot_sync.py   -> run_sync()                     (1 per new file)
+  routers/outbound_invoices.py -> upload_outbound_invoice()
+
+`charge_free_quota()` is the single definition of "what happens when the
+allowance runs out" (402 "Limit reached", nothing ingested); a caller that
+cannot return an HTTP status handles that exception rather than redefining the
+rule — see services/autopilot_sync.py.
 """
 from __future__ import annotations
 
@@ -64,7 +80,21 @@ def charge_free_quota(
     Non-free plans: lock, return tenant, no decrement.
     billable_count <= 0: no decrement (all duplicates).
     """
-    tenant = db_session.exec(locked_tenant_select(tenant_id)).first()
+    # Gap 343: `populate_existing=True` is load-bearing, not tidiness. Without it
+    # SQLAlchemy returns an already-loaded Tenant straight from the identity map
+    # and leaves its attributes as they were — so a caller that read the tenant
+    # earlier in the same transaction would take the row lock and then evaluate
+    # the check below against a stale `free_invoices_remaining`. The lock would
+    # hold; the value it exists to protect would not. `routers/invoices.py` never
+    # hit this (it loads no tenant before charging), but
+    # `routers/outbound_invoices.py` loads the row up front for its
+    # `send_invoices_enabled` check, which is exactly that shape. Fixed here
+    # rather than at the call site so a sixth door cannot reintroduce it.
+    # `locked_tenant_select()` itself is unchanged — the FOR UPDATE assertion in
+    # tests/test_ingestion.py still guards it.
+    tenant = db_session.exec(
+        locked_tenant_select(tenant_id).execution_options(populate_existing=True)
+    ).first()
     if not tenant:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

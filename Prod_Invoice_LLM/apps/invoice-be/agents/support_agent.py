@@ -221,11 +221,15 @@ KNOWLEDGE_TOPICS: list[dict[str, Any]] = [
             "### User Management & Permissions\n\n"
             "Manage your organisation's team members and access control:\n\n"
             "1. **Access Settings**: Go to `/settings/organisation` (Admin privileges required).\n"
-            "2. **Inviting Members**: Click **Invite User**, enter their email address, and select a role (`Admin`, `Auditor`, or `Viewer`). An invite link will be sent via Clerk.\n"
+            # Gap 337: the three roles are Admin, Auditor and Trainer. This copy
+            # is live and customer-facing (Help Center chatbot), and it named a
+            # "Viewer" role that no longer exists.
+            "2. **Inviting Members**: Click **Invite User**, enter their email address, and select a role (`Admin`, `Auditor`, or `Trainer`). An invite link will be sent via Clerk.\n"
             "3. **Role Capabilities**:\n"
             "   - **Admin**: Full access to billing, user invites, webhooks, and AI Trainer.\n"
             "   - **Auditor**: Can edit, verify, approve, and reject invoices in the Auditor console.\n"
-            "   - **Viewer**: Read-only access to lists, details, and reports."
+            "   - **Trainer**: Can create and manage extraction rules in the AI Trainer. No audit or approval rights.\n"
+            "4. **Everyone**: Dashboard, Chat and Help are available to every member regardless of role; a member with no role assigned yet sees only those three."
         ),
     },
     {

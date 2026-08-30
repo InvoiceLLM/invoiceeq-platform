@@ -48,23 +48,45 @@ Gap 117 (grant_test_plan.py)
     an unknown value of either shape.
 21. The granted plan is one PAID_PLANS accepts, and the grant reuses
     extend_paid_through() so it lands N whole cycles out.
+
+Gap 343 — the three ingest doors that never charged at all (2026-08-30)
+22. The Google Drive connector import charges the quota.
+23. ...and is refused with the same 402 "Limit reached" when the allowance is
+    gone, WITHOUT queueing anything -- a refused import must leave nothing
+    behind for the worker to pick up.
+24. The outbound (AR) upload charges the quota.
+25. ...and is refused with 402 when exhausted, creating no Invoice row.
+26. ...and does not charge for a file whose hash is already on the tenant,
+    which is Gap 189's rule applied to this door rather than a second rule.
+27. The scheduled Autopilot sync charges once per genuinely new file.
+28. ...and on exhaustion stops the run, writes a FAILED log naming the quota,
+    reports quota_exhausted, and ingests nothing.
+29. None of the three doors touches a paid tenant's counter.
 """
+import hashlib
 import importlib.util
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from config import settings
 from dependencies import MOCK_TENANT_ID, get_db_session
 from main import app
-from models import Tenant
+from models import (
+    Invoice,
+    Tenant,
+    TenantAutopilotConfig,
+    TenantAutopilotLog,
+    TenantConnection,
+)
+from services.autopilot_sync import run_sync
 from services.billing_lifecycle import (
     LAPSED_PLAN,
     advance_free_quota_reset_at,
@@ -454,3 +476,269 @@ def test_sweep_free_quotas_is_idempotent(db_session):
 
     assert len(sweep_free_quotas(db_session)) == 1
     assert sweep_free_quotas(db_session) == []
+
+
+# ---------------------------------------------------------------------------
+# Gap 343: the three ingest doors that created Invoice rows and charged nothing
+#
+# These are billing tests, not connector/autopilot/AR tests -- the thing under
+# test is `services/billing_quota.charge_free_quota()` reaching doors it never
+# reached, and the exhaustion behaviour they pin has to stay identical to the
+# `routers/invoices.py` behaviour asserted above. The connector/Drive/blob
+# machinery is stubbed to the minimum each door needs.
+# ---------------------------------------------------------------------------
+
+def _drive_connection(db_session: Session, tenant_id: UUID = MOCK_TENANT_ID) -> TenantConnection:
+    from utils.encryption import encrypt_token
+
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("drive_secret"),
+        token_expiry=datetime.utcnow() + timedelta(hours=1),
+        status="active",
+    )
+    db_session.add(conn)
+    db_session.commit()
+    return conn
+
+
+def _autopilot_config(db_session: Session, tenant_id: UUID = MOCK_TENANT_ID) -> TenantAutopilotConfig:
+    config = TenantAutopilotConfig(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        source_type="gdrive",
+        source_ref="folder-abc",
+        flow_direction="INBOUND",
+        trigger_mode="interval",
+        trigger_value="60",
+    )
+    db_session.add(config)
+    db_session.commit()
+    return config
+
+
+# --- 22/23. Google Drive connector import -----------------------------------
+
+def test_connector_import_charges_the_free_quota(db_session):
+    """Gap 343: this door created invoices (via the queue worker) and charged
+    nothing, so Drive was an unmetered way past the 50/month cap."""
+    tenant = _seed_tenant(db_session, remaining=5, free_quota_reset_at=datetime.utcnow() + CYCLE)
+    _drive_connection(db_session)
+
+    with patch("routers.connectors.QueueClient") as mock_qc, \
+         patch("routers.connectors.get_settings") as mock_settings:
+        mock_settings.return_value.AZURE_STORAGE_CONNECTION_STRING = "UseDevelopmentStorage=true"
+        mock_qc.from_connection_string.return_value.send_message = MagicMock()
+        response = client.post(
+            "/api/v1/connectors/import/google_drive", json={"file_id": "gdrive_file_101"}
+        )
+
+    assert response.status_code == 200, response.text
+    db_session.expire_all()
+    assert db_session.get(Tenant, tenant.id).free_invoices_remaining == 4
+
+
+def test_connector_import_is_402_when_exhausted_and_queues_nothing(db_session):
+    """Exhaustion is mirrored from routers/invoices.py, not reinvented: the same
+    402 "Limit reached", and -- the part that matters -- the refusal lands
+    BEFORE the queue message, so nothing is left for the worker to ingest."""
+    tenant = _seed_tenant(db_session, remaining=0, free_quota_reset_at=datetime.utcnow() + CYCLE)
+    _drive_connection(db_session)
+
+    with patch("routers.connectors.QueueClient") as mock_qc, \
+         patch("routers.connectors.get_settings") as mock_settings:
+        mock_settings.return_value.AZURE_STORAGE_CONNECTION_STRING = "UseDevelopmentStorage=true"
+        response = client.post(
+            "/api/v1/connectors/import/google_drive", json={"file_id": "gdrive_file_101"}
+        )
+
+    assert response.status_code == 402
+    assert response.json()["detail"] == "Limit reached"
+    mock_qc.from_connection_string.assert_not_called()
+    db_session.expire_all()
+    assert db_session.get(Tenant, tenant.id).free_invoices_remaining == 0
+
+
+# --- 24/25/26. Outbound (AR) upload -----------------------------------------
+
+def _enable_send(db_session: Session, tenant: Tenant) -> Tenant:
+    tenant.send_invoices_enabled = True
+    db_session.add(tenant)
+    db_session.commit()
+    db_session.refresh(tenant)
+    return tenant
+
+
+def test_outbound_upload_charges_the_free_quota(db_session):
+    tenant = _enable_send(
+        db_session,
+        _seed_tenant(db_session, remaining=5, free_quota_reset_at=datetime.utcnow() + CYCLE),
+    )
+
+    with patch("routers.outbound_invoices.upload_pdf_to_blob_storage", return_value="mock/out.pdf"), \
+         patch("routers.outbound_invoices.QueueClient"):
+        response = client.post(
+            "/api/v1/outbound-invoices/upload",
+            files={"file": ("out1.pdf", BytesIO(b"%PDF-1.4 outbound"), "application/pdf")},
+        )
+
+    assert response.status_code == 201, response.text
+    db_session.expire_all()
+    assert db_session.get(Tenant, tenant.id).free_invoices_remaining == 4
+
+
+def test_outbound_upload_is_402_when_exhausted_and_stores_nothing(db_session):
+    tenant = _enable_send(
+        db_session,
+        _seed_tenant(db_session, remaining=0, free_quota_reset_at=datetime.utcnow() + CYCLE),
+    )
+
+    with patch("routers.outbound_invoices.upload_pdf_to_blob_storage") as mock_storage, \
+         patch("routers.outbound_invoices.QueueClient"):
+        response = client.post(
+            "/api/v1/outbound-invoices/upload",
+            files={"file": ("out1.pdf", BytesIO(b"%PDF-1.4 outbound"), "application/pdf")},
+        )
+
+    assert response.status_code == 402
+    assert response.json()["detail"] == "Limit reached"
+    # Charged before the blob write, so a refused upload stores nothing at all.
+    mock_storage.assert_not_called()
+    assert db_session.exec(select(Invoice)).all() == []
+    db_session.expire_all()
+    assert db_session.get(Tenant, tenant.id).free_invoices_remaining == 0
+
+
+def test_outbound_upload_of_an_already_seen_hash_does_not_charge(db_session):
+    """Gap 189's rule applied to this door rather than a second rule invented for
+    it: count_billable_uploads() runs first, so a file already on the tenant
+    costs nothing."""
+    tenant = _enable_send(
+        db_session,
+        _seed_tenant(db_session, remaining=5, free_quota_reset_at=datetime.utcnow() + CYCLE),
+    )
+    payload = b"%PDF-1.4 already ingested"
+    db_session.add(Invoice(
+        id=uuid4(),
+        tenant_id=tenant.id,
+        file_path="existing/path.pdf",
+        file_hash=hashlib.sha256(payload).hexdigest(),
+        status="COMPLETED",
+    ))
+    db_session.commit()
+
+    with patch("routers.outbound_invoices.upload_pdf_to_blob_storage", return_value="mock/out.pdf"), \
+         patch("routers.outbound_invoices.QueueClient"):
+        response = client.post(
+            "/api/v1/outbound-invoices/upload",
+            files={"file": ("out1.pdf", BytesIO(payload), "application/pdf")},
+        )
+
+    assert response.status_code == 201, response.text
+    db_session.expire_all()
+    assert db_session.get(Tenant, tenant.id).free_invoices_remaining == 5
+
+
+# --- 27/28. Scheduled Autopilot sync ----------------------------------------
+
+def _run_autopilot_with(db_session: Session, remote_files: list[dict], file_bytes: bytes):
+    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+         patch("services.autopilot_sync.list_google_drive_files", return_value=remote_files), \
+         patch("services.autopilot_sync.download_google_drive_file", return_value=file_bytes), \
+         patch("services.autopilot_sync.upload_pdf_to_blob_storage", return_value="blobs/t/i.pdf"), \
+         patch("services.autopilot_sync._dispatch_queue"):
+        return run_sync(MOCK_TENANT_ID, db_session)
+
+
+def test_autopilot_sync_charges_the_free_quota_per_new_file(db_session):
+    """The worst of the three doors: unattended, on a scheduler, so an unmetered
+    Drive folder kept ingesting with nobody watching the counter."""
+    tenant = _seed_tenant(db_session, remaining=5, free_quota_reset_at=datetime.utcnow() + CYCLE)
+    _autopilot_config(db_session)
+    _drive_connection(db_session)
+
+    summary = _run_autopilot_with(
+        db_session,
+        [{"id": "drive-1", "name": "a.pdf", "type": "file"}],
+        b"%PDF-1.4 autopilot one",
+    )
+
+    assert summary["processed"] == 1
+    assert summary["quota_exhausted"] is False
+    db_session.expire_all()
+    assert db_session.get(Tenant, tenant.id).free_invoices_remaining == 4
+
+
+def test_autopilot_sync_stops_and_ingests_nothing_when_the_quota_is_gone(db_session):
+    """No HTTP caller exists on the scheduled path, so the 402 becomes: nothing
+    ingested, a FAILED log naming the reason, and the run stops rather than
+    downloading files it already knows it must refuse. FAILED (not
+    SKIPPED_DUPLICATE, not SUCCESS) is what makes the file eligible again on the
+    next cycle once Gap 118's refill lands."""
+    tenant = _seed_tenant(db_session, remaining=0, free_quota_reset_at=datetime.utcnow() + CYCLE)
+    _autopilot_config(db_session)
+    _drive_connection(db_session)
+
+    summary = _run_autopilot_with(
+        db_session,
+        [
+            {"id": "drive-1", "name": "a.pdf", "type": "file"},
+            {"id": "drive-2", "name": "b.pdf", "type": "file"},
+        ],
+        b"%PDF-1.4 autopilot blocked",
+    )
+
+    assert summary["processed"] == 0
+    assert summary["quota_exhausted"] is True
+    # Stopped at the first refusal instead of walking the rest of the folder.
+    assert summary["failed"] == 1
+
+    assert db_session.exec(select(Invoice)).all() == []
+    logs = db_session.exec(
+        select(TenantAutopilotLog).where(TenantAutopilotLog.status == "FAILED")
+    ).all()
+    assert len(logs) == 1
+    assert "quota" in (logs[0].error_detail or "").lower()
+
+    db_session.expire_all()
+    assert db_session.get(Tenant, tenant.id).free_invoices_remaining == 0
+
+
+# --- 29. Paid plans are untouched on all three doors ------------------------
+
+def test_the_three_new_doors_never_touch_a_paid_tenants_counter(db_session):
+    """charge_free_quota() short-circuits on any non-free plan. Asserted per
+    door because the whole defect was a door skipping the helper entirely --
+    "it cannot decrement" is not the same claim as "it calls the helper"."""
+    tenant = _seed_tenant(db_session, plan="pro_combined", remaining=0)
+    _enable_send(db_session, tenant)
+    _autopilot_config(db_session)
+    _drive_connection(db_session)
+
+    with patch("routers.connectors.QueueClient") as mock_qc, \
+         patch("routers.connectors.get_settings") as mock_settings:
+        mock_settings.return_value.AZURE_STORAGE_CONNECTION_STRING = "UseDevelopmentStorage=true"
+        mock_qc.from_connection_string.return_value.send_message = MagicMock()
+        assert client.post(
+            "/api/v1/connectors/import/google_drive", json={"file_id": "f1"}
+        ).status_code == 200
+
+    with patch("routers.outbound_invoices.upload_pdf_to_blob_storage", return_value="mock/out.pdf"), \
+         patch("routers.outbound_invoices.QueueClient"):
+        assert client.post(
+            "/api/v1/outbound-invoices/upload",
+            files={"file": ("o.pdf", BytesIO(b"%PDF-1.4 paid"), "application/pdf")},
+        ).status_code == 201
+
+    summary = _run_autopilot_with(
+        db_session, [{"id": "d1", "name": "a.pdf", "type": "file"}], b"%PDF-1.4 paid autopilot"
+    )
+    assert summary["processed"] == 1
+    assert summary["quota_exhausted"] is False
+
+    db_session.expire_all()
+    reloaded = db_session.get(Tenant, tenant.id)
+    assert reloaded.free_invoices_remaining == 0
+    assert reloaded.billing_plan == "pro_combined"

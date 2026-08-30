@@ -1,0 +1,87 @@
+Gap 353 -- repeated-run proof that the flaky reported `used` count is gone.
+
+Test:   tests/test_sandbox_keys.py::test_concurrent_chat_charges_cannot_exceed_the_allowance_on_postgres
+DB:     real Postgres, postgresql://postgres:***@localhost:5433/invoice_db
+        (container invoice-postgres-local, healthy). NOT SQLite -- the test
+        skips outright when DATABASE_URL is not postgresql.
+Runner: .venv/Scripts/python.exe -m pytest ... -p no:randomly -q --no-header
+        One fresh pytest PROCESS per run (not pytest-repeat inside one process),
+        so each run re-creates the sandbox tenant and re-races 24 threads off a
+        threading.Barrier exactly as the original failing run did.
+Date:   2026-08-30
+
+A single clean pass proves nothing about a race, so this is a before/after on
+the same machine, same database, same test.
+
+===========================================================================
+BEFORE -- 20 consecutive runs with the PRE-FIX reporting behaviour restored
+===========================================================================
+The fix was temporarily reverted in place (post-commit `db_session.refresh()`
+re-added and the reported value re-read from it) purely to measure the baseline,
+then restored. No test file was modified for this measurement.
+
+run 1  FAIL: assert [1, 3, 3, 4, 5] == [1, 2, 3, 4, 5]
+run 2  FAIL: assert [1, 2, 4, 4, 5] == [1, 2, 3, 4, 5]
+run 3  PASS
+run 4  PASS
+run 5  PASS
+run 6  PASS
+run 7  PASS
+run 8  PASS
+run 9  PASS
+run 10 PASS
+run 11 FAIL: assert [1, 2, 4, 4, 5] == [1, 2, 3, 4, 5]
+run 12 FAIL: assert [1, 2, 4, 4, 5] == [1, 2, 3, 4, 5]
+run 13 PASS
+run 14 PASS
+run 15 PASS
+run 16 PASS
+run 17 PASS
+run 18 FAIL: assert [1, 3, 3, 4, 5] == [1, 2, 3, 4, 5]
+run 19 FAIL: assert [1, 3, 3, 4, 5] == [1, 2, 3, 4, 5]
+run 20 FAIL: assert [1, 2, 4, 4, 5] == [1, 2, 3, 4, 5]
+
+BEFORE: PASS=13 FAIL=7 / 20  (35% failure rate)
+
+Every failure is the same signature and only that signature: five turns granted,
+five refused-as-expected, persisted counter == 5 (all the bounding assertions
+passed in all 20 runs), but one position reported twice and one position
+reported to nobody. The security property never broke; only the reported number
+did. This also matches, and slightly exceeds, the ~1-in-5 rate the final gate
+observed, so it is the same defect.
+
+===========================================================================
+AFTER -- 25 consecutive runs with the fix in place
+===========================================================================
+run 1  PASS      run 10 PASS      run 19 PASS
+run 2  PASS      run 11 PASS      run 20 PASS
+run 3  PASS      run 12 PASS      run 21 PASS
+run 4  PASS      run 13 PASS      run 22 PASS
+run 5  PASS      run 14 PASS      run 23 PASS
+run 6  PASS      run 15 PASS      run 24 PASS
+run 7  PASS      run 16 PASS      run 25 PASS
+run 8  PASS
+run 9  PASS
+
+AFTER: PASS=25 FAIL=0 / 25
+
+At the measured 35% per-run failure rate, 25 consecutive clean runs would occur
+by chance with probability 0.65^25 ~= 1.4e-5. The flake is gone, not reduced.
+
+===========================================================================
+Whole-file re-run
+===========================================================================
+.venv/Scripts/python.exe -m pytest tests/test_sandbox_keys.py -p no:randomly -q
+  --> 52 passed in 9.21s, exit 0, nothing skipped
+      (the three real-Postgres cases in this file all RAN; they self-skip when
+      Postgres is unreachable and none did)
+
+===========================================================================
+Database left clean
+===========================================================================
+After all 45 runs + the whole-file run, the only rows left in `sandboxtenant`
+are 4 pre-existing ones created at 08:58, 09:02, 10:19 and 10:19 UTC by earlier
+sessions today -- all of these tests ran between 12:03 and 12:30 UTC and left
+nothing behind (the test cleans up in a `finally`, so even the 7 failing runs
+cleaned up). The 4 pre-existing rows were deliberately NOT deleted: they belong
+to other work, not to this task.

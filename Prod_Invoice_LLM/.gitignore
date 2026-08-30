@@ -27,6 +27,7 @@ Thumbs.db
 # Next.js
 .next/
 .next-proxy/
+.next-sandbox/
 out/
 *.tsbuildinfo
 

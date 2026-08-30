@@ -650,7 +650,8 @@ export default function AdminDashboardPage() {
         {/* The signed-in viewer's own row.
             FE Gap 167: every label here was hardcoded ("Organisation Owner",
             "Admin", "All (Admin)") and was shown to whoever loaded the page,
-            so a Viewer who reached /admin was told they were the org's Admin.
+            so a permission-less user who reached /admin was told they were the
+            org's Admin.
             The role badge, the subtitle and the permissions cell now all come
             from GET /auth/me. Only an Admin gets this far now, but the values
             are read rather than asserted so this row can never drift from the

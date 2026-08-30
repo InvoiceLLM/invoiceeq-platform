@@ -76,11 +76,43 @@ Connectors allow tenants to import/export documents to their workspace Google Dr
 
 ### Google Drive Setup:
 1. Open the [Google Cloud Console](https://console.cloud.google.com/).
-2. Go to **APIs & Services** > **OAuth consent screen** (configure as External, add `.../auth/drive.readonly` scope).
+2. Go to **APIs & Services** > **OAuth consent screen** (configure as External, add **both** `.../auth/drive.readonly` **and** `.../auth/drive.file` scopes — see the scope note below).
 3. Under **Credentials** > **Create Credentials** > **OAuth client ID** (Web application).
 4. Set Authorized Redirect URI to:
    `https://<frontend-domain>/api/connectors/callback/google_drive`
 5. Copy the **Client ID** and **Client Secret**.
+
+#### Scope note — added 2026-08-30 (BE Gap 338, Google Drive write-back)
+
+Until Gap 338 this app requested `drive.readonly` alone, which is enough to import
+invoice PDFs but cannot write anything. The `drive_archive` output destination
+(Settings → Workflow) writes an approved invoice's CSV, JSON and source PDF back
+into the tenant's Drive, so the consent screen now has to offer a write scope too.
+
+* **Both scopes are required, not one.** `drive.file` cannot *read* a tenant's
+  pre-existing PDFs, so dropping `drive.readonly` would break the connector import
+  and the Feature 13 Autopilot sync. The app requests
+  `drive.readonly drive.file`.
+* **`drive.file`, deliberately not the bare `drive` scope.** `drive` grants access
+  to everything in the user's Drive; `drive.file` grants access only to files this
+  app itself created. Adding `drive` to the consent screen would be a materially
+  larger ask of every tenant and is not needed. It is *accepted* if a token already
+  carries it, but never requested.
+* **Consequence of the narrow scope, worth knowing before a support call:** files
+  are archived into an app-created folder named **`InvoiceEQ Archive`** in the
+  connecting account's My Drive, *not* into a folder the tenant picked in the
+  connector browser. `drive.file` cannot write into a folder the app did not create.
+* **Existing connections are not upgraded automatically.** Google never widens a
+  grant that has already been given — every tenant who connected Drive before
+  2026-08-30 holds a read-only token and **must reconnect** (Settings → Connectors)
+  before `drive_archive` will work. The backend detects this rather than failing
+  opaquely: selecting the destination returns a 422 naming the fix, and an approval
+  on an un-upgraded connection reports
+  `drive_archive.code == "reconnect_required"` and archives nothing (the approval
+  itself still succeeds). No action is needed for tenants who never turn the
+  destination on.
+* If the OAuth consent screen is in **Testing** rather than Published, remember the
+  added scope also has to be listed there, and existing test users have to re-grant.
 
 ### ~~Salesforce Connected App Setup:~~ — REMOVED 2026-08-28 (Gap 334), DO NOT PERFORM
 

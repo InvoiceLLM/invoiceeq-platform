@@ -8,7 +8,16 @@ from starlette.concurrency import run_in_threadpool
 from datetime import datetime, timedelta
 
 from config import get_settings
-from dependencies import get_tenant_context, get_db_session, require_can_audit, TenantContext
+from dependencies import (
+    get_db_session,
+    # Feature 25 (Gap 335): replaces this router's former
+    # `require_can_audit` / `get_tenant_context` pair. The human rule is
+    # unchanged (still can_audit, same 403 text); an `actions`-scoped API key
+    # now also passes.
+    get_tenant_or_api_key_context,
+    require_actions_scope,
+    TenantContext,
+)
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from services.invoice_visibility import invoice_not_deleted
 from queue_worker.handlers import _run_ocr
@@ -27,10 +36,23 @@ logger = logging.getLogger(__name__)
 # Feature 1.1 (Task 1.1.2): the Audit Queue's actions (Mark Paid, Reject,
 # corrections) are real financial actions, so the whole router requires
 # `can_audit`. Admins pass implicitly.
+#
+# Feature 25 (Gap 335): this is a ROUTER-LEVEL dependency, so it gates every
+# route on the router, not just the resolve handler below -- checked, and it
+# matters: raising the gate here raises it for everything mounted at /audit.
+# As of this change the router has exactly ONE route
+# (PUT /resolve/{invoice_id}) and no read-only views at all, so requiring
+# `actions` scope here removes no read access from anyone. If a read-only audit
+# view is ever added to this router it must NOT inherit this gate -- give it its
+# own Depends(get_tenant_or_api_key_context) and move this dependency down onto
+# the resolve route, or a readonly key loses a read it should have.
+#
+# require_actions_scope keeps the human rule byte-identical to require_can_audit
+# (same permission, same 403 message) and adds the key rule alongside it.
 router = APIRouter(
     prefix="/audit",
     tags=["Audit"],
-    dependencies=[Depends(require_can_audit)],
+    dependencies=[Depends(require_actions_scope)],
 )
 
 # Feature 4: standard inbound fields that are permitted to receive corrections,
@@ -343,7 +365,14 @@ def _apply_standing_rule(
 async def resolve_audit_invoice(
     invoice_id: UUID,
     payload: AuditResolutionPayload,
-    context: TenantContext = Depends(get_tenant_context),
+    # Feature 25 (Gap 335): must be the dual-credential resolver, not
+    # get_tenant_context -- the router-level gate above already admitted an
+    # `actions`-scoped key, and a Clerk-only resolver here would then 401 the
+    # very request it just let through (an `inv_live_` Bearer token is not a
+    # verifiable JWT). `context.db_user_id` is the tenant's synthetic API-key
+    # service user on that path, which is what keeps the AuditLog write below
+    # inside its non-null FK.
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session)
 ):
     """
@@ -531,6 +560,48 @@ async def resolve_audit_invoice(
         except Exception as we:
             logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
 
+    # Feature 25 (Gap 339): the `email_summary` output destination.
+    #
+    # THIS IS THE SINGLE TRIGGER POINT, and it is placed here on purpose. Both
+    # ways of approving an invoice -- a human clicking Approve in the Auditor
+    # Review Console, and an `actions`-scoped API key (Gap 335) calling this
+    # same PUT -- converge on this one handler; the router-level
+    # `require_actions_scope` admits both credential types and
+    # `get_tenant_or_api_key_context` normalises them into one TenantContext
+    # before the body runs. So there is nothing to duplicate for the second
+    # path, and duplicating it would be the bug: two call sites would drift.
+    #
+    # Fires only on PAID -- "approved". REJECTED is deliberately excluded (a
+    # rejected invoice has no result worth exporting), as is Gap 193's
+    # AUDIT_REQUIRED reopen, which undoes a finalization rather than being one.
+    # This differs from the webhook block above, which fires on both, because
+    # that block dispatches two *different* event types.
+    #
+    # Runs after db_session.commit() above: the summary must describe an
+    # invoice that is actually PAID in the database, not one that is about to
+    # be. deliver_email_summary() never raises (see its docstring); the
+    # try/except is the same belt-and-braces the webhook and RAG blocks use.
+    #
+    # Gap 338 added the second destination (`drive_archive`) to this same
+    # block rather than to a second one, for the same reason: one trigger, one
+    # condition, both credential paths.
+    email_summary = None
+    drive_archive = None
+    if target_status == "PAID":
+        try:
+            from services.workflow_outputs import deliver_email_summary
+            email_summary = deliver_email_summary(db_session, invoice)
+        except Exception as ee:
+            logger.error("Email summary delivery failed for invoice %s: %s", invoice.id, ee)
+        try:
+            from services.workflow_outputs import deliver_drive_archive
+            drive_archive = deliver_drive_archive(db_session, invoice)
+        except Exception as de:
+            # deliver_drive_archive() never raises either (see its docstring);
+            # separate try/except so a fault in one destination cannot suppress
+            # the other -- they are independent choices by the tenant.
+            logger.error("Drive archive delivery failed for invoice %s: %s", invoice.id, de)
+
     email_notify = None
     if target_status in ("PAID", "REJECTED"):
         try:
@@ -559,4 +630,15 @@ async def resolve_audit_invoice(
         "suggested_rule": suggested_rule,
         "standing_rule_result": standing_rule_result,
         "email_notify": email_notify,
+        # Gap 339: null unless the tenant selected the `email_summary` output
+        # destination AND this resolve was an approval. Surfaced rather than
+        # kept internal so an integration can tell "no summary was configured"
+        # apart from "a summary was configured and the send failed" -- the
+        # second is actionable, the first is not.
+        "email_summary": email_summary,
+        # Gap 338: same contract for the Drive destination. Its `code` is the
+        # one field worth reading -- `reconnect_required` is how an integration
+        # learns the tenant's Drive grant is read-only, without having to parse
+        # a message or read the backend's logs.
+        "drive_archive": drive_archive,
     }

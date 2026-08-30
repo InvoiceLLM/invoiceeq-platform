@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, text
 from database import engine
 from config import get_settings
-from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion, outbound_invoices, outbound_audit, outbound_dashboard, webhooks, billing, admin, webhook_docs, autopilot, support
+from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion, outbound_invoices, outbound_audit, outbound_dashboard, webhooks, billing, admin, webhook_docs, autopilot, support, sandbox, widget
 from routers import settings as settings_router
 from utils.logging_config import TracingAndLoggingMiddleware, setup_structured_logging
 
@@ -112,6 +112,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Feature 25 (Gap 341): CORS for `/api/v1/widget/*` ONLY.
+#
+# The chat widget is embedded on customer domains this backend has never heard
+# of. `ALLOWED_ORIGINS` above was deliberately NOT widened to cover them: that
+# middleware runs with `allow_credentials=True`, so adding a customer's domain
+# there would make every session-authenticated route in the product
+# cross-origin reachable, with credentials, from that domain. This middleware is
+# path-scoped and emits **no** `Access-Control-Allow-Credentials` at all, which
+# is what makes reflecting an arbitrary origin safe on those routes and unsafe
+# on the others. See routers/widget.py::WidgetCORSMiddleware.
+#
+# Added AFTER the global CORSMiddleware on purpose: Starlette inserts each
+# `add_middleware` at the front of the stack, so the last one added is the
+# outermost. This one therefore sees a widget preflight first and answers it,
+# instead of the inner middleware passing an unknown origin through to a 405.
+app.add_middleware(widget.WidgetCORSMiddleware)
 
 # Feature 20 (Gap 292): explicitly instrument THIS app object for HTTP request
 # telemetry. Without this, App Insights' `AppRequests` table is empty for every
@@ -168,6 +184,14 @@ app.include_router(billing.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(autopilot.router, prefix="/api/v1")  # Feature 13: Tenant Autopilot
 app.include_router(support.router, prefix="/api/v1")   # Feature 19 / Website Feature 5: Support Tickets & Contact Inquiries
+# Feature 25 (Gap 340): sandbox `inv_test_` keys. POST /sandbox/keys is public
+# and unauthenticated, and the whole router 404s unless SANDBOX_KEYS_ENABLED is
+# explicitly turned on (default False).
+app.include_router(sandbox.router, prefix="/api/v1")
+# Feature 25 (Gap 341): the embedded chat widget. Exactly one route, reachable
+# only by an `inv_widget_` token, which resolves to WidgetContext and not to
+# TenantContext -- see routers/widget.py.
+app.include_router(widget.router, prefix="/api/v1")
 
 # Gap 184: documentation-only. `app.webhooks` contributes an OpenAPI 3.1
 # "webhooks" section describing the events this platform SENDS -- nothing is

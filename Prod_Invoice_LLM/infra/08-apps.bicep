@@ -131,6 +131,20 @@ param frontendMaxReplicas int = 2
 @description('Cron schedule (UTC) for the outbound overdue-webhook sweep. Daily at 02:00 UTC by default -- after any given business day has ended in the tenant time zones this product currently serves, so an invoice due "today" is not notified while today is still in progress somewhere.')
 param overdueSweepCron string = '0 2 * * *'
 
+// Gap 345: nothing scheduled scripts/sweep_sandbox_tenants.py (Gap 340), so
+// unclaimed/expired sandbox tenants accumulated forever and
+// services/sandbox.py::unclaimed_sandbox_count()'s hard global cap (500,
+// counted regardless of expiry, by design) would eventually make sandbox-key
+// issuance fail closed for everyone under ordinary usage, with no automated
+// recovery. Daily, same cadence as the other sweep jobs -- there is no reason
+// sandbox cleanup needs to run more often, since the auth check
+// (`resolve_api_key_context()`) already closes access at expiry independent
+// of this job; this job only reclaims the row and the count. 04:00 UTC: clear
+// of caj-overdue-sweep's 02:00, caj-benchmark-eval's 03:00 and
+// caj-billing-lifecycle's 06:00.
+@description('Cron schedule (UTC) for the sandbox-tenant reap sweep. Daily at 04:00 UTC by default.')
+param sandboxSweepCron string = '0 4 * * *'
+
 @description('vCPU allocation for scheduled jobs.')
 param scheduledJobCpu string = '0.5'
 
@@ -426,6 +440,42 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
       'scripts/sweep_outbound_overdue.py'
     ]
     cronExpression: overdueSweepCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
+  }
+}
+
+// Gap 345 (BE Gap 340's own tracker entry recorded this as not done: "No ACA
+// Job schedules the reaper"): the sandbox-tenant reap sweep
+// (scripts/sweep_sandbox_tenants.py). Same shape as overdueSweepJob directly
+// above -- reuses `backendImage`, the generic scheduled-job.bicep module (not
+// billing-lifecycle-job.bicep's dedicated, minimal-secrets module: that
+// module wires only DATABASE_URL, but this script's import chain
+// (database.py -> config.py, services/sandbox.py -> config.get_settings())
+// pulls in the same required-with-no-default Settings fields
+// (REDIS_URL/CHROMA_HOST/CHROMA_PORT/CLERK_SECRET_KEY/TOKEN_ENCRYPTION_KEY)
+// scheduled-job.bicep's header comment documents and provisions -- so this
+// follows the proven-complete env/secret wiring, not the narrower one).
+module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
+  name: 'sandbox-sweep-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-sandbox-sweep-${environment}'
+    containerName: 'sandbox-sweep'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/sweep_sandbox_tenants.py'
+    ]
+    cronExpression: sandboxSweepCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName

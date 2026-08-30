@@ -17,7 +17,15 @@ from dependencies import (
     MOCK_TENANT_ID,
     MOCK_USER_ID,
 )
-from models import Invoice, Tenant, TenantConnection, User
+from models import Invoice, RoleMapper, Tenant, TenantConnection, TenantEmailSender, User
+from services.api_keys import (
+    API_KEY_PREFIX,
+    generate_api_key,
+    generate_salt,
+    hash_api_key,
+    key_prefix,
+    verify_api_key,
+)
 
 sqlite_url = "sqlite:///:memory:"
 engine = create_engine(
@@ -797,12 +805,17 @@ def test_org_role_from_an_unmatched_org_does_not_elevate_the_context(
     Finding 2, the escalation itself: Gap 173 computed `org_matches` but only
     used it to gate *persisting* `user.role`. The role handed to TenantContext
     still came straight off the token, so the attack it was written to stop
-    still worked -- a Viewer creates a throwaway Clerk Organization (Clerk makes
-    its creator org:admin), switches their active org to it, and every request
-    that session carries `org_role=org:admin` while still resolving to their
-    real tenant. Admin context, Admin permissions, on somebody else's workspace.
+    still worked -- a permission-less user creates a throwaway Clerk Organization
+    (Clerk makes its creator org:admin), switches their active org to it, and
+    every request that session carries `org_role=org:admin` while still resolving
+    to their real tenant. Admin context, Admin permissions, on somebody else's
+    workspace.
+
+    Gap 337: the seeded role is `RoleMapper.NO_ROLE`, the zero-permission
+    fallback that replaced the retired "Viewer" name. Same permissions, and it is
+    deliberately NOT one of the three assignable roles.
     """
-    tenant, user = _seed_tenant_with_user(db_session, role="Viewer")
+    tenant, user = _seed_tenant_with_user(db_session, role=RoleMapper.NO_ROLE)
 
     headers = fake_clerk_token(
         {
@@ -818,20 +831,20 @@ def test_org_role_from_an_unmatched_org_does_not_elevate_the_context(
     data = response.json()
     # Still their real tenant...
     assert data["tenant_id"] == str(tenant.id)
-    # ...and still a Viewer, with none of the Admin-implied permissions.
-    assert data["role"] == "Viewer"
+    # ...and still permission-less, with none of the Admin-implied permissions.
+    assert data["role"] == RoleMapper.NO_ROLE
     assert (data["can_train"], data["can_audit"], data["can_load"]) == (False, False, False)
 
     # The stored role was already protected before Checkpoint 3c; still is.
     db_session.refresh(user)
-    assert user.role == "Viewer"
+    assert user.role == RoleMapper.NO_ROLE
 
 
 def test_unsafe_metadata_role_from_an_unmatched_org_does_not_elevate(
     fake_clerk_token, db_session
 ):
     """The same via the `role` claim (sourced from user-writable unsafe_metadata)."""
-    tenant, _ = _seed_tenant_with_user(db_session, role="Viewer")
+    tenant, _ = _seed_tenant_with_user(db_session, role=RoleMapper.NO_ROLE)
 
     headers = fake_clerk_token(
         {
@@ -844,7 +857,7 @@ def test_unsafe_metadata_role_from_an_unmatched_org_does_not_elevate(
     response = client.get("/auth/me", headers=headers)
 
     assert response.status_code == 200, response.text
-    assert response.json()["role"] == "Viewer"
+    assert response.json()["role"] == RoleMapper.NO_ROLE
     assert response.json()["can_train"] is False
 
 
@@ -873,7 +886,7 @@ def test_matching_org_role_still_applies(fake_clerk_token, db_session):
     the org this tenant is tied to, Clerk's role still governs (and still syncs
     to the stored role, exactly as Gap 173 left it).
     """
-    tenant, user = _seed_tenant_with_user(db_session, role="Viewer")
+    tenant, user = _seed_tenant_with_user(db_session, role=RoleMapper.NO_ROLE)
 
     headers = fake_clerk_token(
         {
@@ -1025,6 +1038,145 @@ def test_provision_allows_user_with_null_tenant_id(db_session):
     assert str(unlinked_user.tenant_id) == response.json()["tenant_id"]
 
 
+# ---------------------------------------------------------------------------
+# Gap 342 — provisioning finishes the job: a production API key and one
+# authorized inbound email sender, so the `api` and `email` input channels the
+# setup wizard offers are usable on day one.
+#
+# The case that actually matters here is the *double* provision. Keys are one
+# per tenant by design, and issuing works by overwriting hash+salt+prefix -- so
+# a second mint does not add a key, it revokes the first one. A Clerk webhook
+# retry doing that silently is the bug these tests exist to prevent.
+# ---------------------------------------------------------------------------
+
+def test_provision_mints_a_production_api_key_for_a_new_tenant(db_session):
+    body = _provision_body()
+    with _as_caller(**_token_for(body)):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    raw_key = response.json()["api_key"]
+    assert raw_key and raw_key.startswith(API_KEY_PREFIX)
+
+    tenant = db_session.get(Tenant, UUID(response.json()["tenant_id"]))
+    # Stored as a PBKDF2 digest under a per-key salt -- never the raw value.
+    assert tenant.api_key_hash and tenant.api_key_hash != raw_key
+    assert tenant.api_key_salt and tenant.api_key_salt != raw_key
+    assert verify_api_key(raw_key, tenant.api_key_salt, tenant.api_key_hash) is True
+    # Only the non-secret leading slice is kept for display.
+    assert tenant.api_key_prefix and raw_key.startswith(tenant.api_key_prefix)
+    assert tenant.api_key_rotated_at is not None
+    assert tenant.api_key_last_used_at is None
+
+
+def test_provisioned_key_is_readonly_scoped_not_actions(db_session):
+    """Gap 335's fail-closed rule: signing up must never hand a machine the
+    right to approve or send invoices. Widening is an explicit act through
+    PUT /settings/workflow, never a side effect of provisioning."""
+    body = _provision_body()
+    with _as_caller(**_token_for(body)):
+        response = client.post("/auth/provision", json=body)
+
+    tenant = db_session.get(Tenant, UUID(response.json()["tenant_id"]))
+    assert tenant.api_key_scope == "readonly"
+
+
+def test_provision_seeds_the_admin_email_sender(db_session):
+    """Without this row, routers/email_ingestion.py's webhook cannot resolve a
+    tenant from the From address, so a new workspace's first forwarded invoice
+    is dropped as an unregistered sender."""
+    body = _provision_body()
+    with _as_caller(**_token_for(body, email="Real.Admin@Acme.com")):
+        response = client.post("/auth/provision", json=body)
+
+    tenant_id = UUID(response.json()["tenant_id"])
+    senders = db_session.exec(
+        select(TenantEmailSender).where(TenantEmailSender.tenant_id == tenant_id)
+    ).all()
+    assert len(senders) == 1
+    # Normalised exactly the way routers/email_ingestion.py::add_email_sender does.
+    assert senders[0].email == "real.admin@acme.com"
+    assert senders[0].email_set == "inbound"
+
+
+def test_provision_seeds_no_sender_for_a_placeholder_email(db_session):
+    """A JWT Template that omits `email` yields `{sub}@domain.com`, which is not
+    a deliverable address -- and TenantEmailSender.email is *globally* unique, so
+    seeding placeholders would collide across unrelated tenants."""
+    body = _provision_body()
+    with _as_caller(**_token_for(body, email=None)):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    tenant_id = UUID(response.json()["tenant_id"])
+    assert db_session.exec(
+        select(TenantEmailSender).where(TenantEmailSender.tenant_id == tenant_id)
+    ).all() == []
+    # The key is still minted -- the two additions are independent.
+    assert response.json()["api_key"].startswith(API_KEY_PREFIX)
+
+
+def test_second_provision_does_not_mint_a_second_key_or_sender(db_session):
+    """The webhook-retry case. A repeat call must be a genuine no-op: the same
+    key still works, and no duplicate sender row appears. A second mint would
+    silently invalidate the first key -- discovered only as a 401 inside the
+    tenant's integration."""
+    body = _provision_body()
+    with _as_caller(**_token_for(body)):
+        first = client.post("/auth/provision", json=body)
+    assert first.status_code == 200, first.text
+    raw_key = first.json()["api_key"]
+
+    tenant_id = UUID(first.json()["tenant_id"])
+    tenant = db_session.get(Tenant, tenant_id)
+    hash_before, salt_before, prefix_before = (
+        tenant.api_key_hash, tenant.api_key_salt, tenant.api_key_prefix
+    )
+
+    with _as_caller(**_token_for(body)):
+        second = client.post("/auth/provision", json=body)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["is_new"] is False
+    assert second.json()["tenant_id"] == first.json()["tenant_id"]
+    # No new raw key was issued...
+    assert second.json()["api_key"] is None
+
+    db_session.expire_all()
+    tenant = db_session.get(Tenant, tenant_id)
+    # ...and the stored credential is byte-identical, so the first key still works.
+    assert (tenant.api_key_hash, tenant.api_key_salt, tenant.api_key_prefix) == (
+        hash_before, salt_before, prefix_before
+    )
+    assert verify_api_key(raw_key, tenant.api_key_salt, tenant.api_key_hash) is True
+
+    assert len(db_session.exec(
+        select(TenantEmailSender).where(TenantEmailSender.tenant_id == tenant_id)
+    ).all()) == 1
+
+
+def test_adopted_domain_tenant_gets_no_key_and_no_sender(db_session):
+    """Recorded decision, not an oversight: the legacy domain-adoption branch
+    returns is_new=False and is deliberately left alone. Such a tenant uses the
+    existing rotate / add-sender endpoints."""
+    orphan = Tenant(id=uuid4(), name="Legacy Placeholder", domain="legacy342.com", clerk_org_id=None)
+    db_session.add(orphan)
+    db_session.commit()
+
+    body = _provision_body(org_name="Legacy Co", admin_email="admin@legacy342.com")
+    response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["tenant_id"] == str(orphan.id)
+    assert response.json()["api_key"] is None
+
+    db_session.refresh(orphan)
+    assert orphan.api_key_hash is None
+    assert db_session.exec(
+        select(TenantEmailSender).where(TenantEmailSender.tenant_id == orphan.id)
+    ).all() == []
+
+
 def test_provision_concurrency_locking(db_session):
     """
     Unit-level check: provision_tenant issues PostgreSQL advisory-lock statements
@@ -1075,6 +1227,13 @@ def test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres():
     BE Gap 133 sub-item (1): two genuinely concurrent provision_tenant() calls
     for the same clerk_org_id against real Postgres must create exactly one
     tenant row and return the same tenant_id from both calls.
+
+    BE Gap 342 extends the same run rather than duplicating the harness: the two
+    things provisioning now *also* does must be equally singular. Exactly one
+    API key must survive (a second mint overwrites hash+salt+prefix and would
+    silently revoke the first) and exactly one TenantEmailSender row may exist.
+    This is the assertion SQLite cannot make: the endpoint's idempotency rests on
+    `pg_advisory_xact_lock`, a Postgres primitive that is a no-op elsewhere.
     """
     psycopg2 = pytest.importorskip("psycopg2")
     from config import get_settings
@@ -1100,6 +1259,10 @@ def test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres():
     with Session(pg_engine) as session:
         for user in session.exec(select(User).where(User.clerk_user_id == user_id)).all():
             session.delete(user)
+        for sender in session.exec(
+            select(TenantEmailSender).where(TenantEmailSender.email == email)
+        ).all():
+            session.delete(sender)
         for tenant in session.exec(select(Tenant).where(Tenant.clerk_org_id == org_id)).all():
             session.delete(tenant)
         session.commit()
@@ -1143,20 +1306,316 @@ def test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres():
     assert len(tenant_ids) == 1, f"Expected one tenant id across both calls, got {tenant_ids}"
     assert {result.is_new for result in results} == {True, False}
 
+    # Gap 342: exactly one of the two calls may report a freshly minted key.
+    raw_keys = [r.api_key for r in results if r.api_key]
+    assert len(raw_keys) == 1, f"Expected one raw key across both calls, got {len(raw_keys)}"
+
     with Session(pg_engine) as session:
         tenants = session.exec(select(Tenant).where(Tenant.clerk_org_id == org_id)).all()
         users = session.exec(select(User).where(User.clerk_user_id == user_id)).all()
+        senders = session.exec(
+            select(TenantEmailSender).where(TenantEmailSender.tenant_id == tenants[0].id)
+        ).all() if tenants else []
         try:
             assert len(tenants) == 1, f"Expected exactly one tenant row, found {len(tenants)}"
             assert len(users) == 1, f"Expected exactly one user row, found {len(users)}"
             assert str(tenants[0].id) == next(iter(tenant_ids))
             assert users[0].tenant_id == tenants[0].id
+            # Gap 342: the surviving key is the one that was actually returned --
+            # i.e. the losing thread did not overwrite the winner's credential.
+            assert verify_api_key(
+                raw_keys[0], tenants[0].api_key_salt, tenants[0].api_key_hash
+            ) is True
+            assert tenants[0].api_key_scope == "readonly"
+            assert len(senders) == 1, f"Expected exactly one sender row, found {len(senders)}"
+            assert senders[0].email == email.lower()
         finally:
+            for sender in senders:
+                session.delete(sender)
             for user in users:
                 session.delete(user)
             session.flush()
             for tenant in tenants:
                 session.delete(tenant)
+            session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Gap 344 — a tenant holding a live API key is not "unclaimed".
+#
+# Found in Feature 25's security review. _tenant_adoption_blockers() checked
+# rows and plan state but never credentials, so a tenant that was empty by every
+# one of those measures could still hold a minted key -- and adoption rewrites
+# clerk_org_id and name while leaving api_key_hash/salt/prefix completely
+# untouched. Whoever held the raw key would keep authenticating, unchanged,
+# against what is now a different, real company's workspace.
+# ---------------------------------------------------------------------------
+
+def _mint_key_onto(tenant: Tenant) -> str:
+    """Give `tenant` a real key exactly the way the two production writers do
+    (routers/auth.py::_mint_provisioning_api_key and
+    routers/settings.py::rotate_api_key) -- a real PBKDF2 digest under a real
+    salt, not a stub string, so verify_api_key() below means something."""
+    raw_key = generate_api_key()
+    salt = generate_salt()
+    tenant.api_key_hash = hash_api_key(raw_key, salt)
+    tenant.api_key_salt = salt
+    tenant.api_key_prefix = key_prefix(raw_key)
+    tenant.api_key_rotated_at = datetime.utcnow()
+    return raw_key
+
+
+def test_provision_refuses_to_adopt_an_empty_tenant_that_holds_an_api_key(db_session):
+    """
+    The exact pre-fix failure scenario. This tenant satisfies *every* blocker
+    condition that existed before Gap 344 -- no clerk_org_id, `free` plan, no
+    PayU ids, no paid_through, no users, and not one row in any table in
+    _TENANT_SCOPED_TABLES -- and was therefore adoptable. It holds a live key.
+    """
+    holder = Tenant(
+        id=uuid4(),
+        name="Key Holder Ltd",
+        domain="keyholder.com",
+        clerk_org_id=None,
+        billing_plan="free",
+    )
+    raw_key = _mint_key_onto(holder)
+    db_session.add(holder)
+    db_session.commit()
+
+    # Sanity: this row really is clean by every pre-Gap-344 measure, so the test
+    # is exercising the new blocker and not passing for some incidental reason.
+    assert holder.clerk_org_id is None
+    assert holder.billing_plan == "free"
+    assert (holder.payu_customer_id, holder.payu_subscription_id, holder.paid_through) == (
+        None, None, None
+    )
+    assert db_session.exec(select(User).where(User.tenant_id == holder.id)).all() == []
+    assert db_session.exec(select(Invoice).where(Invoice.tenant_id == holder.id)).all() == []
+
+    body = _provision_body(org_name="Unrelated Real Company")
+    with _as_caller(**_token_for(body, email="founder@keyholder.com")):
+        response = client.post("/auth/provision", json=body)
+
+    # Safe outcome: a fresh isolated tenant, same as every other blocker.
+    assert response.status_code == 200, response.text
+    new_tenant_id = response.json()["tenant_id"]
+    assert new_tenant_id != str(holder.id)
+
+    # The old workspace is untouched -- not renamed, not claimed.
+    db_session.expire_all()
+    holder = db_session.get(Tenant, holder.id)
+    assert holder.name == "Key Holder Ltd"
+    assert holder.clerk_org_id is None
+
+    # And this is the part that mattered: the old key still resolves to the old
+    # tenant only. Pre-fix, `holder` *was* the new company's workspace at this
+    # point and this same raw key still opened it.
+    assert verify_api_key(raw_key, holder.api_key_salt, holder.api_key_hash) is True
+    new_tenant = db_session.get(Tenant, UUID(new_tenant_id))
+    assert new_tenant.api_key_hash != holder.api_key_hash
+    assert verify_api_key(raw_key, new_tenant.api_key_salt, new_tenant.api_key_hash) is False
+
+
+@pytest.mark.parametrize(
+    "column",
+    ["api_key_hash", "api_key_salt", "api_key_prefix"],
+)
+def test_partially_written_key_material_also_blocks_adoption(db_session, column):
+    """The blocker is OR across all three columns, not just the digest. A row
+    half-written by a crash between the assignments in _mint_provisioning_api_key
+    is a reason to be more suspicious of it, not less."""
+    holder = Tenant(
+        id=uuid4(),
+        name="Partial Key Ltd",
+        domain=f"partial-{column}.com",
+        clerk_org_id=None,
+        billing_plan="free",
+    )
+    setattr(holder, column, "inv_live_partial" if column != "api_key_salt" else "abc123")
+    db_session.add(holder)
+    db_session.commit()
+
+    body = _provision_body(org_name="Unrelated Real Company")
+    with _as_caller(**_token_for(body, email=f"founder@partial-{column}.com")):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["tenant_id"] != str(holder.id)
+
+    db_session.expire_all()
+    assert db_session.get(Tenant, holder.id).clerk_org_id is None
+
+
+def test_new_tenant_creation_is_unaffected_by_the_key_blocker(db_session):
+    """
+    Gap 342 interaction check. Provisioning now mints a key for every new tenant,
+    so the obvious worry is that the new blocker makes fresh tenants
+    un-adoptable in a case that is supposed to work.
+
+    It cannot: _mint_provisioning_api_key() runs only on the create-a-new-tenant
+    branch, *after* the adoption-vs-create decision has already been made and
+    after the adoption branch has returned. A tenant is never evaluated for
+    adoption in the same request that mints its key. This asserts the normal
+    signup path end to end, on a domain nothing else holds.
+    """
+    body = _provision_body(org_name="Brand New Co")
+    with _as_caller(**_token_for(body, email="founder@brandnew344.com")):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["is_new"] is True
+    assert data["api_key"].startswith(API_KEY_PREFIX)
+
+    tenant = db_session.get(Tenant, UUID(data["tenant_id"]))
+    assert tenant.domain == "brandnew344.com"
+    assert verify_api_key(data["api_key"], tenant.api_key_salt, tenant.api_key_hash) is True
+    # The admin User row is still created -- the new blocker sits on the adoption
+    # branch only and does not short-circuit the create path.
+    assert db_session.exec(
+        select(User).where(User.clerk_user_id == body["clerk_user_id"])
+    ).first() is not None
+
+
+def test_a_keyless_empty_domain_tenant_is_still_adoptable(db_session):
+    """The legitimate half of the branch survives Gap 344 too: a legacy
+    pre-Clerk-Organizations placeholder that never had a key minted is still
+    adopted, so the fix is not a blanket disable of the adoption path."""
+    orphan = Tenant(
+        id=uuid4(),
+        name="Legacy Placeholder",
+        domain="keyless344.com",
+        clerk_org_id=None,
+        billing_plan="free",
+    )
+    db_session.add(orphan)
+    db_session.commit()
+    assert (orphan.api_key_hash, orphan.api_key_salt, orphan.api_key_prefix) == (
+        None, None, None
+    )
+
+    body = _provision_body(org_name="Keyless Co")
+    with _as_caller(**_token_for(body, email="admin@keyless344.com")):
+        response = client.post("/auth/provision", json=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["tenant_id"] == str(orphan.id)
+    assert response.json()["is_new"] is False
+
+
+def test_api_key_blocks_adoption_on_postgres():
+    """
+    Gap 344 against real Postgres, following the same harness as
+    test_provision_concurrent_same_org_id_creates_one_tenant_on_postgres:
+    provision_tenant() called directly with a real Postgres session, real
+    NULL/NOT NULL column semantics, real unique constraints.
+
+    This is an A/B on one run rather than a single assertion, because the claim
+    being made is comparative -- "the key is what blocks it, and nothing else
+    does". Two domain tenants are seeded identically (no clerk_org_id, `free`
+    plan, no PayU state, no users, no tenant-scoped rows); one holds a live key
+    and one does not. The keyless one must still be adopted (proving every other
+    blocker genuinely passes for this row shape, so the keyed row was adoptable
+    before this fix) and the keyed one must not be.
+    """
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+    from routers.auth import provision_tenant, TenantProvisionRequest
+
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    tag = uuid4().hex[:12]
+    keyed_domain = f"gap344-keyed-{tag}.invalid"
+    keyless_domain = f"gap344-keyless-{tag}.invalid"
+
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
+
+    created_tenant_ids: list[UUID] = []
+
+    def _call(domain: str):
+        """One provision as an unrelated real signup from `domain`."""
+        org_id = f"org_gap344_{uuid4().hex[:12]}"
+        user_id = f"user_gap344_{uuid4().hex[:12]}"
+        email = f"founder-{uuid4().hex[:8]}@{domain}"
+        body = TenantProvisionRequest(
+            clerk_org_id=org_id,
+            org_name="Unrelated Real Company",
+            admin_email=email,
+            clerk_user_id=user_id,
+        )
+        caller = AuthenticatedClerkIdentity(
+            is_mock=False, clerk_user_id=user_id, org_id=org_id, email=email,
+        )
+        with Session(pg_engine) as session:
+            return asyncio.run(provision_tenant(body, caller, session))
+
+    try:
+        with Session(pg_engine) as session:
+            keyed = Tenant(
+                id=uuid4(), name="Key Holder Ltd", domain=keyed_domain,
+                clerk_org_id=None, billing_plan="free",
+            )
+            raw_key = _mint_key_onto(keyed)
+            keyless = Tenant(
+                id=uuid4(), name="Legacy Placeholder", domain=keyless_domain,
+                clerk_org_id=None, billing_plan="free",
+            )
+            session.add(keyed)
+            session.add(keyless)
+            session.commit()
+            keyed_id, keyless_id = keyed.id, keyless.id
+            created_tenant_ids += [keyed_id, keyless_id]
+
+        # Control: identical row shape, no key -> still adopted. If this fails,
+        # the keyed assertion below proves nothing.
+        keyless_result = _call(keyless_domain)
+        assert keyless_result.tenant_id == str(keyless_id), (
+            "the keyless control was not adopted, so some other blocker fired "
+            "and this run cannot attribute the keyed outcome to the key"
+        )
+        assert keyless_result.is_new is False
+
+        # The fix: same shape, plus a key -> refused, fresh isolated tenant.
+        keyed_result = _call(keyed_domain)
+        assert keyed_result.tenant_id != str(keyed_id)
+        assert keyed_result.is_new is True
+        created_tenant_ids.append(UUID(keyed_result.tenant_id))
+
+        with Session(pg_engine) as session:
+            holder = session.get(Tenant, keyed_id)
+            # Untouched: not renamed, not claimed, key still its own.
+            assert holder.name == "Key Holder Ltd"
+            assert holder.clerk_org_id is None
+            assert verify_api_key(raw_key, holder.api_key_salt, holder.api_key_hash) is True
+            # And the raw key does not open the new company's workspace.
+            new_tenant = session.get(Tenant, UUID(keyed_result.tenant_id))
+            assert verify_api_key(
+                raw_key, new_tenant.api_key_salt, new_tenant.api_key_hash
+            ) is False
+    finally:
+        with Session(pg_engine) as session:
+            for tenant_id in created_tenant_ids:
+                for sender in session.exec(
+                    select(TenantEmailSender).where(TenantEmailSender.tenant_id == tenant_id)
+                ).all():
+                    session.delete(sender)
+                for user in session.exec(
+                    select(User).where(User.tenant_id == tenant_id)
+                ).all():
+                    session.delete(user)
+            session.commit()
+            for tenant_id in created_tenant_ids:
+                tenant = session.get(Tenant, tenant_id)
+                if tenant is not None:
+                    session.delete(tenant)
             session.commit()
 
 

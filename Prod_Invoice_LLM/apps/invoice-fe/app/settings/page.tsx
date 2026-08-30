@@ -20,6 +20,7 @@ import {
   CreditCard,
   Webhook,
   UserCog,
+  Workflow,
 } from "lucide-react";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
@@ -27,10 +28,11 @@ import { usePageHeader } from "@/components/layout/PageHeaderContext";
  * FE Gap 167: `adminOnly` exists because the Admin Console tile used to render
  * for every role — the only tile on this page with no gate at all, while
  * ServiceFlowToggles and the Webhooks/Security screens behind the other tiles
- * all resolve `role === "Admin"` from `useAuth()`. A Viewer who followed it hit
- * `/admin`, whose own list call 403s, and was then shown a page labelling them
- * the organisation's Admin. The route itself now refuses non-Admins too (see
- * `app/admin/page.tsx`); hiding the tile is the discoverability half of that.
+ * all resolve `role === "Admin"` from `useAuth()`. A non-Admin who followed it
+ * hit `/admin`, whose own list call 403s, and was then shown a page labelling
+ * them the organisation's Admin. The route itself now refuses non-Admins too
+ * (see `app/admin/page.tsx`); hiding the tile is the discoverability half of
+ * that.
  */
 interface IntegrationTile {
   id: string;
@@ -45,6 +47,19 @@ interface IntegrationTile {
 }
 
 const INTEGRATIONS: IntegrationTile[] = [
+  {
+    // Feature 17 / FE Gap 323. adminOnly because GET /settings/workflow is
+    // Admin-gated on the backend too (it reports the tenant's API key scope),
+    // so the tile would lead a non-Admin straight into a 403.
+    id: "workflows",
+    title: "Workflows",
+    desc: "Plug & play setup — inputs, audit policy, outputs & chat access",
+    href: "/settings/workflows",
+    icon: Workflow,
+    iconBg: "bg-indigo-500/10 border-indigo-500/20",
+    iconColor: "text-indigo-400",
+    adminOnly: true,
+  },
   {
     id: "connectors",
     title: "Connectors",

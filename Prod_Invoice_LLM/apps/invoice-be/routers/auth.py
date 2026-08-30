@@ -11,6 +11,7 @@ from dependencies import (
     get_authenticated_clerk_identity,
     get_tenant_context_allow_unpaid,
     get_db_session,
+    KEY_SCOPE_READONLY,
     TenantContext,
 )
 from models import (
@@ -21,11 +22,18 @@ from models import (
     ExtractionTemplateVersion,
     Invoice,
     RoleMapper,
+    SandboxTenant,
     Tenant,
     TenantConnection,
     TenantEmailSender,
     User,
     WebhookSubscription,
+)
+from services.api_keys import (
+    generate_api_key,
+    generate_salt,
+    hash_api_key,
+    key_prefix,
 )
 from config import settings
 
@@ -58,6 +66,15 @@ class TenantProvisionResponse(BaseModel):
     billing_plan: str
     free_invoices_remaining: int
     is_new: bool               # True if tenant was just created, False if already existed
+    # Gap 342: the raw production API key minted for a *brand new* tenant, and
+    # the only time it is ever transmitted -- same contract as
+    # routers/settings.py::ApiKeyRotateResponse. It is hashed on the way in
+    # (PBKDF2 + per-key salt), never stored in plaintext and never logged; a
+    # caller who drops it has to rotate. `None` on every other outcome:
+    # an org that was already provisioned, an adopted legacy domain tenant, or a
+    # tenant that somehow already holds a key. That None is what makes a repeated
+    # provision observably a no-op rather than a silent re-issue.
+    api_key: str | None = None
 
 
 class LogoutRequest(BaseModel):
@@ -153,6 +170,136 @@ def _create_tenant_with_unique_domain(
         )
 
 
+def _mint_provisioning_api_key(db_session: Session, tenant: Tenant) -> str | None:
+    """
+    Gap 342: issue the tenant's first production API key at provisioning time.
+
+    Why this exists. Gap 335 built the auth for the `api` input channel and Gap
+    336 lets a tenant *select* it in the setup wizard -- but `Tenant.api_key_hash`
+    was NULL for every newly provisioned tenant, so the channel was dead until an
+    Admin found Settings -> Security and pressed Rotate. This closes that.
+
+    **This must not run twice, and the guard is the point of the function.**
+    `services/api_keys.py` is explicit that there is one key per tenant by design,
+    and rotation works by *overwriting* hash+salt+prefix -- so a second mint does
+    not add a key, it silently revokes the first one. A Clerk webhook retry, or
+    two browser tabs finishing signup together, would otherwise hand the tenant a
+    key that stops working the moment the retry lands, discoverable only as a 401
+    in their integration. Hence:
+
+      1. provision_tenant() reaches this only on the create-a-new-tenant path,
+         which is already behind `pg_advisory_xact_lock(hashtext(org_key))`, the
+         `clerk_org_id` early return, and a UNIQUE constraint on that column;
+      2. and this function *additionally* refuses when a key already exists, so
+         the guarantee does not depend on any of the caller's three layers being
+         correct.
+
+    Returns the raw key -- the only moment it exists outside the caller's memory
+    -- or None when nothing was minted. The digest is what is persisted; the
+    diagnostic line below records the non-secret prefix only, deliberately.
+
+    Never raises: a tenant that exists without a key is two clicks from being
+    fixed, while a 500 at the end of signup leaves a Clerk user with no
+    workspace, which is exactly the failure Gap 133 was opened for.
+    """
+    if tenant.api_key_hash:
+        return None
+
+    raw_key = generate_api_key()
+    salt = generate_salt()
+
+    tenant.api_key_hash = hash_api_key(raw_key, salt)
+    tenant.api_key_salt = salt
+    tenant.api_key_prefix = key_prefix(raw_key)
+    tenant.api_key_rotated_at = datetime.utcnow()
+    tenant.api_key_last_used_at = None
+    # Gap 335's fail-closed default, written explicitly rather than relied on:
+    # a brand-new tenant never gets `actions` scope automatically. Widening to
+    # full automation is a deliberate act through PUT /settings/workflow
+    # (Gap 336), never a side effect of signing up.
+    tenant.api_key_scope = KEY_SCOPE_READONLY
+    tenant.updated_at = datetime.utcnow()
+
+    db_session.add(tenant)
+    try:
+        db_session.commit()
+        db_session.refresh(tenant)
+    except IntegrityError as e:
+        db_session.rollback()
+        print(
+            f"[provision-diag] api key mint failed for tenant {tenant.id!r}: {e!r}",
+            flush=True,
+        )
+        return None
+
+    print(
+        f"[provision-diag] api key minted at provisioning for tenant {tenant.id} "
+        f"(prefix={tenant.api_key_prefix}, scope={tenant.api_key_scope})",
+        flush=True,
+    )
+    return raw_key
+
+
+def _seed_admin_email_sender(
+    db_session: Session,
+    tenant: Tenant,
+    admin_email: str,
+) -> bool:
+    """
+    Gap 342: authorize the admin's own address on the inbound email channel.
+
+    Why this exists. `routers/email_ingestion.py`'s webhook resolves both the
+    tenant and the direction of an incoming mail *from* `tenant_email_senders`.
+    With no row there, a brand-new tenant's very first forwarded invoice is
+    rejected as an unregistered sender and filed to `dropped_inbound_emails` --
+    so email ingestion could not be used at all until somebody manually added a
+    sender. This seeds the one address we already know is real.
+
+    `admin_email` is the caller's own **verified `email` claim**, not the request
+    body (Gap 133 Checkpoint 3c bound it there); the caller passes the synthetic
+    placeholder case in as skipped, because `{clerk_user_id}@domain.com` is not a
+    deliverable address and `TenantEmailSender.email` is *globally* unique, so
+    seeding placeholders would collide across unrelated tenants.
+
+    Idempotent by the same globally-unique-address check
+    `routers/email_ingestion.py::add_email_sender()` uses, so a repeat call adds
+    nothing. Never raises, for the same reason as the key mint above.
+    """
+    email_clean = str(admin_email or "").strip().lower()
+    if not email_clean or "@" not in email_clean:
+        return False
+
+    existing = db_session.exec(
+        select(TenantEmailSender).where(TenantEmailSender.email == email_clean)
+    ).first()
+    if existing:
+        return False
+
+    sender = TenantEmailSender(
+        id=uuid4(),
+        tenant_id=tenant.id,
+        email=email_clean,
+        # Inbound: the admin forwarding supplier invoices in is the day-one use
+        # case. The outbound (AR) set stays a deliberate opt-in -- it is gated on
+        # `send_invoices_enabled` and a paid plan, and pre-authorizing an address
+        # to send invoices to customers is not something a signup should decide.
+        email_set="inbound",
+    )
+    db_session.add(sender)
+    try:
+        db_session.commit()
+    except IntegrityError as e:
+        db_session.rollback()
+        print(
+            f"[provision-diag] email sender seed failed for tenant {tenant.id!r} "
+            f"address={email_clean!r}: {e!r}",
+            flush=True,
+        )
+        return False
+
+    return True
+
+
 # Gap 133 (Checkpoint 3c): every table that is scoped to a tenant and therefore
 # means "this tenant holds real data". Used only by _tenant_adoption_blockers().
 # ChatMessage is deliberately absent -- it is scoped by session_id, so it is
@@ -189,6 +336,19 @@ def _tenant_adoption_blockers(db_session: Session, tenant: Tenant) -> list[str]:
     isolated tenant -- the same, safe outcome as the "has users" case. This is
     deliberately strict: adoption firing rarely (or never) costs nothing but a
     duplicate-looking row, while adoption firing wrongly is a tenant takeover.
+
+    Gap 344 (2026-08-30, found in Feature 25's security review): a live API key
+    is a claim on this tenant, and it was missing from this list. Every other
+    condition above is about rows *this* schema can see; the key is a credential
+    that lives outside it, in whoever's integration was handed the raw value. A
+    tenant with no org, no users, the free plan and no scoped rows -- adoptable
+    by every check that existed -- could still hold a minted key, and adoption
+    rewrites `clerk_org_id` and `name` while leaving `api_key_hash`/`salt`/
+    `prefix` untouched. The old holder then keeps authenticating, with the key
+    they already have, against what is now a different, real company's live
+    workspace. `models.py::Tenant` declares all three columns nullable with no
+    default, so NULL genuinely means "never minted"; `api_key_scope` is NOT NULL
+    with a `"readonly"` default and is therefore *not* a usable signal here.
     """
     blockers: list[str] = []
 
@@ -198,6 +358,33 @@ def _tenant_adoption_blockers(db_session: Session, tenant: Tenant) -> list[str]:
         blockers.append(f"non-default billing plan ({tenant.billing_plan})")
     if tenant.payu_customer_id or tenant.payu_subscription_id or tenant.paid_through:
         blockers.append("payment/subscription history")
+    # Gap 344: all three, not just the digest. Any one of them present means key
+    # material was minted for this tenant at some point, and a half-written row
+    # (a crash between the three assignments in _mint_provisioning_api_key(), or
+    # in routers/settings.py::rotate_api_key()) is a reason to be *more*
+    # suspicious of the row, not less -- so the check is OR, not AND.
+    if tenant.api_key_hash or tenant.api_key_salt or tenant.api_key_prefix:
+        blockers.append("a live API key")
+    # Gap 340: a sandbox workspace is never adoptable, claimed or not.
+    #
+    # This is the third independent reason a sandbox tenant cannot be adopted,
+    # and all three are deliberate:
+    #   1. its `domain` is the synthetic `sandbox-<tenant_id>.invalid`, so the
+    #      domain lookup in provision_tenant() cannot find it from any real
+    #      signup's email domain in the first place;
+    #   2. it always holds key material, so the Gap 344 check immediately above
+    #      already blocks it;
+    #   3. this, which says the thing directly instead of relying on two
+    #      properties of other code staying true.
+    # Adoption is a heuristic ("this empty domain-matched tenant probably
+    # belongs to whoever is signing up") and a sandbox is exactly the case where
+    # that heuristic is wrong: it is a stranger's workspace, and the supported
+    # way to take it over is POST /api/v1/sandbox/claim, which requires
+    # possession of the sandbox key.
+    if db_session.exec(
+        select(SandboxTenant).where(SandboxTenant.tenant_id == tenant.id)
+    ).first() is not None:
+        blockers.append("a sandbox workspace")
     if db_session.exec(select(User).where(User.tenant_id == tenant.id)).first() is not None:
         blockers.append("users")
 
@@ -274,6 +461,41 @@ async def provision_tenant(
        now, as defence in depth.
     6. **Adoption requires the domain tenant to be genuinely empty**, not merely
        user-less -- see _tenant_adoption_blockers().
+
+    Gap 342 (2026-08-30) then added what provisioning never did:
+
+    7. **A new tenant leaves this endpoint usable.** It now also mints the
+       tenant's first production API key (`readonly` scope -- Gap 335's
+       fail-closed default) and authorizes the admin's own verified address on
+       the inbound email set, so the `api` and `email` input channels the setup
+       wizard offers actually work on day one instead of requiring two manual
+       Settings visits. Both are strictly confined to the new-tenant branch and
+       both are individually guarded against re-running, because a second key
+       mint *revokes* the first (one key per tenant, by design) -- see
+       `_mint_provisioning_api_key()`. The idempotent early return above is
+       therefore still idempotent in the full sense: a repeated call changes
+       nothing and returns `api_key=None`.
+
+    Gap 344 (2026-08-30) closed one more hole in (6):
+
+    8. **A tenant holding a live API key is never adoptable.** The blocker list
+       checked rows and plan state but not credentials, so a tenant that looked
+       empty by every one of those measures could still be handed over with its
+       `api_key_hash`/`salt`/`prefix` intact -- adoption never clears them -- and
+       whoever held the raw key would keep authenticating against a workspace
+       that now belongs to somebody else. See `_tenant_adoption_blockers()`.
+
+    Gap 340 (2026-08-30) added one more, and one thing this endpoint does NOT do:
+
+    9. **A sandbox workspace is never adoptable either** -- see
+       `_tenant_adoption_blockers()`, which now names it directly rather than
+       leaning on the two properties that already excluded it. And **claiming a
+       sandbox is not this endpoint's job**: it lives at
+       `POST /api/v1/sandbox/claim` (routers/sandbox.py), because it is an
+       explicit, single-winner transaction that requires possession of the
+       sandbox key, whereas the adoption branch below is a heuristic about an
+       empty domain-matched tenant. Folding one into the other would have
+       reopened exactly the takeover surface Gap 344 just closed.
     """
     # `caller.is_mock` is only True on the mock-auth path
     # (settings.ALLOW_MOCK_AUTH, default False) -- see
@@ -503,6 +725,24 @@ async def provision_tenant(
         db_session.add(existing_user)
         db_session.commit()
 
+    # -----------------------------------------------------------------------
+    # Gap 342: finish provisioning. Until now the endpoint created a Tenant and
+    # an admin User and stopped, leaving two of the four input channels the
+    # setup wizard offers (Gap 336) dead on arrival: `api` had no key, and
+    # `email` had no authorized sender.
+    #
+    # Both run **only here**, on the branch that has just created a genuinely new
+    # tenant -- never on the `clerk_org_id` early return above, and never on the
+    # legacy domain-tenant adoption branch. Both are additionally self-guarded
+    # (see each helper), so a webhook retry or a double-submit cannot mint a
+    # second key over the first. Both are placed after the admin-user block on
+    # purpose: a signup that 409s on the user insert should not leave a key and a
+    # sender row behind for a workspace nobody got into.
+    # -----------------------------------------------------------------------
+    raw_api_key = _mint_provisioning_api_key(db_session, new_tenant)
+    if not email_is_placeholder:
+        _seed_admin_email_sender(db_session, new_tenant, admin_email)
+
     return TenantProvisionResponse(
         tenant_id=str(new_tenant.id),
         clerk_org_id=new_tenant.clerk_org_id,
@@ -510,6 +750,7 @@ async def provision_tenant(
         billing_plan=new_tenant.billing_plan,
         free_invoices_remaining=new_tenant.free_invoices_remaining,
         is_new=True,
+        api_key=raw_api_key,
     )
 
 

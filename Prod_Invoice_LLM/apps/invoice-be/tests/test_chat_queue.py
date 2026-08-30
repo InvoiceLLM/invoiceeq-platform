@@ -162,10 +162,44 @@ def test_chat_worker_executes_agent_and_publishes_events(db_session):
         assert assistant_msg.generated_sql == "SELECT SUM(grand_total) FROM invoice"
 
 
+def _seed_owned_job(db_session, job_id: str, tenant_id=MOCK_TENANT_ID):
+    """A chat session + a queued user message carrying `job_id`.
+
+    Gap 341: this is what `_require_owned_chat_job()` resolves ownership through
+    -- `ChatMessage.job_id` -> `session_id` -> `ChatSession.tenant_id`, written
+    before the enqueue. The Redis status blob cannot answer the question:
+    `enqueue_chat_job()` puts `tenant_id` in it, but `complete_job()` and
+    `fail_job()` overwrite it with one that has no tenant in it at all.
+    """
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=tenant_id, title="t"))
+    db_session.commit()
+    db_session.add(
+        ChatMessage(
+            id=uuid4(),
+            session_id=session_id,
+            role="user",
+            content="q",
+            status="queued",
+            job_id=job_id,
+        )
+    )
+    db_session.commit()
+    return session_id
+
+
 def test_chat_job_status_and_stream_endpoints(db_session):
-    """Gap 280: Verify /chat/jobs/{id}/status and /stream endpoints."""
+    """Gap 280: Verify /chat/jobs/{id}/status and /stream endpoints.
+
+    Gap 341 extended this rather than duplicating the harness: the job now has
+    to actually belong to the caller's tenant, so the rows are seeded first.
+    Before that fix these endpoints returned another tenant's answer for any
+    job id, and this test passed with no rows at all -- which is precisely how
+    the missing check stayed invisible.
+    """
     job_id = "job-stream-789"
     client = TestClient(app)
+    _seed_owned_job(db_session, job_id)
 
     with patch(
         "services.chat_queue.ChatQueueService.get_job_status",
@@ -350,3 +384,171 @@ def test_a_judge_failure_does_not_fail_the_queued_job(db_session, monkeypatch):
         )
     ).first()
     assert assistant.status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Gap 341 (item 12 of the Feature 25 security review): chat-job tenant isolation
+#
+# `get_chat_job_status()` and `stream_chat_job()` both declared a
+# `tenant_context` dependency and then never read it. They authenticated the
+# caller and checked nothing else, so ANY authenticated caller who learned a
+# `job_id` could read another tenant's chat answer -- the reply text, the
+# generated SQL and the citations, all of which are that tenant's invoice data.
+#
+# It was dormant (`ENABLE_ASYNC_CHAT_QUEUE` defaults False, so no job ids exist
+# to guess in a default deployment) but it was fixed before the widget token
+# landed, because a widget token lives in a customer's public page source and
+# drops the bar for "an authenticated caller" to "anyone who viewed the page".
+# ---------------------------------------------------------------------------
+
+
+def test_job_status_refuses_another_tenants_job(db_session):
+    """The cross-tenant read this fix exists to close."""
+    client = TestClient(app)
+    job_id = "job-belonging-to-someone-else"
+    _seed_owned_job(db_session, job_id, tenant_id=uuid4())
+
+    with patch(
+        "services.chat_queue.ChatQueueService.get_job_status",
+        return_value={
+            "job_id": job_id,
+            "status": "completed",
+            "result": {"content": "Their confidential answer"},
+        },
+    ) as mocked:
+        res = client.get(f"/api/v1/chat/jobs/{job_id}/status")
+
+    assert res.status_code == 403
+    assert "Access forbidden" in res.json()["detail"]
+    # And the payload was never even fetched -- the check runs before the read,
+    # so there is no window in which the other tenant's answer is in memory.
+    assert mocked.call_count == 0
+
+
+def test_job_stream_refuses_another_tenants_job(db_session):
+    """The more serious of the two: this one streams the full result payload.
+
+    The 403 must arrive as a 403, not as a broken stream -- an HTTPException
+    raised inside the SSE generator would land after the 200 and the response
+    headers were already on the wire.
+    """
+    client = TestClient(app)
+    job_id = "stream-belonging-to-someone-else"
+    _seed_owned_job(db_session, job_id, tenant_id=uuid4())
+
+    with patch(
+        "services.chat_queue.ChatQueueService.get_job_status",
+        return_value={"job_id": job_id, "status": "completed", "result": {"content": "secret"}},
+    ) as mocked:
+        res = client.get(f"/api/v1/chat/jobs/{job_id}/stream")
+
+    assert res.status_code == 403
+    assert "text/event-stream" not in res.headers.get("content-type", "")
+    assert "secret" not in res.text
+    assert mocked.call_count == 0
+
+
+def test_unknown_job_is_404_not_403(db_session):
+    """An unknown id must not be distinguishable from another tenant's id by
+    status code -- otherwise the pair of responses is a probe for which job ids
+    exist on other tenants."""
+    client = TestClient(app)
+    for suffix in ("status", "stream"):
+        res = client.get(f"/api/v1/chat/jobs/no-such-job/{suffix}")
+        assert res.status_code == 404
+
+
+def test_own_job_still_readable(db_session):
+    """The fix must not break the endpoints for their actual users."""
+    client = TestClient(app)
+    job_id = "my-own-job"
+    _seed_owned_job(db_session, job_id)
+
+    with patch(
+        "services.chat_queue.ChatQueueService.get_job_status",
+        return_value={"job_id": job_id, "status": "completed", "result": {"content": "mine"}},
+    ):
+        res = client.get(f"/api/v1/chat/jobs/{job_id}/status")
+    assert res.status_code == 200
+    assert res.json()["result"]["content"] == "mine"
+
+
+def test_job_isolation_on_postgres():
+    """Gap 341 item 12 against real Postgres.
+
+    Why Postgres and not just SQLite: the ownership answer is a two-hop join
+    across `chat_messages.session_id` -> `chat_sessions.tenant_id`, both real
+    UUID columns with real constraints, and this repo's standing rule is that a
+    security fix is not claimed working on a SQLite-only run. Two real tenants,
+    two real sessions, two real queued messages, and the endpoint driven for
+    each of the four combinations of (caller, job).
+    """
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+    from dependencies import TenantContext
+    from routers.chat import _require_owned_chat_job
+    from fastapi import HTTPException
+    from models import Tenant
+
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
+
+    tag = uuid4().hex[:10]
+    tenant_a_id, tenant_b_id = uuid4(), uuid4()
+    session_a, session_b = uuid4(), uuid4()
+    job_a, job_b = f"pgjob-a-{tag}", f"pgjob-b-{tag}"
+
+    with Session(pg_engine) as session:
+        try:
+            session.add(Tenant(id=tenant_a_id, name="A", domain=f"jobiso-a-{tag}.invalid"))
+            session.add(Tenant(id=tenant_b_id, name="B", domain=f"jobiso-b-{tag}.invalid"))
+            session.add(ChatSession(id=session_a, tenant_id=tenant_a_id, title="a"))
+            session.add(ChatSession(id=session_b, tenant_id=tenant_b_id, title="b"))
+            session.commit()
+            session.add(ChatMessage(id=uuid4(), session_id=session_a, role="user",
+                                    content="q", status="queued", job_id=job_a))
+            session.add(ChatMessage(id=uuid4(), session_id=session_b, role="user",
+                                    content="q", status="queued", job_id=job_b))
+            session.commit()
+
+            ctx_a = TenantContext(tenant_id=tenant_a_id, user_id="u_a", role="Admin",
+                                  billing_plan="free")
+            ctx_b = TenantContext(tenant_id=tenant_b_id, user_id="u_b", role="Admin",
+                                  billing_plan="free")
+
+            # Each tenant reads its own job.
+            _require_owned_chat_job(job_a, session, ctx_a)
+            _require_owned_chat_job(job_b, session, ctx_b)
+
+            # And neither can read the other's.
+            for job_id, ctx in ((job_a, ctx_b), (job_b, ctx_a)):
+                with pytest.raises(HTTPException) as exc:
+                    _require_owned_chat_job(job_id, session, ctx)
+                assert exc.value.status_code == 403
+
+            with pytest.raises(HTTPException) as exc:
+                _require_owned_chat_job(f"nonexistent-{tag}", session, ctx_a)
+            assert exc.value.status_code == 404
+        finally:
+            for sid in (session_a, session_b):
+                for msg in session.exec(
+                    select(ChatMessage).where(ChatMessage.session_id == sid)
+                ).all():
+                    session.delete(msg)
+                row = session.get(ChatSession, sid)
+                if row is not None:
+                    session.delete(row)
+            session.flush()
+            for tid in (tenant_a_id, tenant_b_id):
+                row = session.get(Tenant, tid)
+                if row is not None:
+                    session.delete(row)
+            session.commit()

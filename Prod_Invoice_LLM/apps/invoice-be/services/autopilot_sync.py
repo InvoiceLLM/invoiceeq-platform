@@ -13,9 +13,11 @@ Sync flow per tenant:
        Layer 1: source_file_id in tenant_autopilot_logs → skip if seen
        Layer 2: SHA-256 content hash in tenant_autopilot_logs → skip if seen
   5. Download bytes, upload to Azure Blob Storage
-  6. Create Invoice DB row + dispatch extraction queue message
-  7. Write TenantAutopilotLog row (SUCCESS / SKIPPED_DUPLICATE / FAILED)
-  8. Return summary: { processed, skipped, failed }
+  6. Charge the free-tier quota for the new file (Gap 343) — a refusal here
+     stops the run rather than ingesting past the tenant's allowance
+  7. Create Invoice DB row + dispatch extraction queue message
+  8. Write TenantAutopilotLog row (SUCCESS / SKIPPED_DUPLICATE / FAILED)
+  9. Return summary: { processed, skipped, failed, quota_exhausted }
 """
 
 import hashlib
@@ -24,6 +26,7 @@ import logging
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException, status as http_status
 from sqlmodel import Session, select
 
 from config import get_settings
@@ -33,6 +36,7 @@ from models import (
     TenantAutopilotLog,
     TenantConnection,
 )
+from services.billing_quota import charge_free_quota
 from services.storage import upload_pdf_to_blob_storage
 from utils.connector_files import (
     download_google_drive_file,
@@ -79,7 +83,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
     Run a full Autopilot sync cycle for one tenant.
 
     Returns:
-        {"processed": int, "skipped": int, "failed": int}
+        {"processed": int, "skipped": int, "failed": int, "quota_exhausted": bool}
     """
     settings = get_settings()
 
@@ -161,6 +165,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
     processed = 0
     skipped = 0
     failed = 0
+    quota_exhausted = False
     batch_id = uuid4()
     newly_imported: list[dict] = []
 
@@ -216,6 +221,46 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                 )
                 skipped += 1
                 continue
+
+            # --- Gap 343: charge the free-tier quota before ingesting ---
+            #
+            # This door used to create Invoice rows and charge nothing, so a Free
+            # Tier tenant at free_invoices_remaining=0 kept ingesting for as long
+            # as the scheduler kept polling -- and unattended, so nobody saw it.
+            # Charged here, *after* both dedup layers, so a duplicate never burns
+            # quota (Gap 189's rule) and *before* the blob upload, so a refused
+            # file leaves nothing stored.
+            #
+            # Exhaustion is mirrored from routers/invoices.py, not reinvented:
+            # nothing is ingested. There is no HTTP caller to hand a 402 to on the
+            # scheduled path, so the equivalent here is a FAILED log row naming
+            # the reason, and stopping -- every remaining file would be refused
+            # for the same reason and downloading them anyway spends Drive API
+            # calls for nothing. Dedup Layer 1 only skips rows with
+            # status == "SUCCESS", so a file refused on quota is retried on the
+            # next cycle once Gap 118's refill lands. Nothing is permanently lost.
+            try:
+                charge_free_quota(db_session, tenant_id, 1)
+            except HTTPException as quota_exc:
+                if quota_exc.status_code != http_status.HTTP_402_PAYMENT_REQUIRED:
+                    raise
+                quota_exhausted = True
+                logger.warning(
+                    "Autopilot: free-tier quota exhausted for tenant %s — stopping "
+                    "this run at %s (%d already imported this run)",
+                    tenant_id, file_name, processed,
+                )
+                _write_log(
+                    db_session, tenant_id, config.source_type,
+                    file_id, content_hash=content_hash, status="FAILED",
+                    error_detail=(
+                        "Free-tier invoice quota exhausted — this file was not "
+                        "imported. It will be retried automatically after the "
+                        "monthly quota refill, or immediately on a paid plan."
+                    ),
+                )
+                failed += 1
+                break
 
             # --- Upload to Azure Blob Storage ---
             invoice_id = uuid4()
@@ -275,7 +320,15 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
             frontend_base_url=settings.FRONTEND_URL or settings.PUBLIC_APP_URL or "",
         )
 
-    summary = {"processed": processed, "skipped": skipped, "failed": failed}
+    summary = {
+        "processed": processed,
+        "skipped": skipped,
+        "failed": failed,
+        # Gap 343: distinguishes "some files failed" from "we stopped because the
+        # tenant is out of allowance", which is the only one of the two the user
+        # can act on. Surfaced by POST /autopilot/sync.
+        "quota_exhausted": quota_exhausted,
+    }
     logger.info("Autopilot sync complete — tenant=%s summary=%s", tenant_id, summary)
     return summary
 

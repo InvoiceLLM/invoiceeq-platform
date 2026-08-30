@@ -48,7 +48,7 @@ export const SETTINGS_HELP_SECTIONS: HelpSection[] = [
     id: "settings-overview",
     title: "Platform Settings Guide",
     keywords: ["settings", "organisation", "security", "permissions", "roles", "members", "api key", "webhooks", "billing"],
-    searchText: "platform settings guide organisation security permissions roles members api key webhooks billing webhook signatures hmac md5",
+    searchText: "platform settings guide organisation security permissions roles admin auditor trainer members api key webhooks billing webhook signatures hmac md5",
     body: (
       <>
         <P>
@@ -65,8 +65,12 @@ export const SETTINGS_HELP_SECTIONS: HelpSection[] = [
             <ul className="space-y-1 text-xs text-slate-300 list-disc pl-5">
               <li><strong>Admin:</strong> Full administrative control, including billing subscription changes, user invites, webhook registrations, and template commits.</li>
               <li><strong>Auditor:</strong> Can edit extracted fields, verify data, and approve/reject invoices inside the Auditor Console.</li>
-              <li><strong>Viewer:</strong> Read-only access to view processed invoices, extraction sheets, dashboards, and reporting logs.</li>
+              <li><strong>Trainer:</strong> Can author and commit extraction rules in the AI Trainer. Trainers do not get audit or approval rights.</li>
             </ul>
+            <P>
+              A member who has not been given a role yet can still use the Dashboard, Chat and Help
+              Center — they simply have no ingest, audit or training access until an Admin grants it.
+            </P>
             <P>
               <strong>Data Isolation:</strong> All data is strictly isolated per tenant using multi-tenant organization IDs. No user from another organization can access your documents or rules.
             </P>

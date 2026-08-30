@@ -1,0 +1,93 @@
+Gap 354 -- proof that tests/test_rag.py::test_session_lifecycle_and_tenant_isolation
+can actually FAIL again, i.e. that it is really exercising tenant isolation
+rather than just returning green.
+
+Date: 2026-08-30
+Runner: .venv/Scripts/python.exe -m pytest ... -p no:randomly -q --no-header
+Note on DB: this test file builds its OWN in-memory SQLite engine and injects it
+via `dependency_overrides[get_db_session]` (pre-existing design, unchanged here).
+The process still loads the real config, DATABASE_URL =
+postgresql://...@localhost:5433/invoice_db, and the whole invoice-be suite
+including this file was run in the same Postgres-configured environment. What
+this test asserts -- which FastAPI dependency the route resolves and whether a
+403 branch is reached -- is dialect-independent; there is no Postgres-only
+behaviour in it to claim.
+
+===========================================================================
+1. Corrected record of the starting state
+===========================================================================
+The task brief described this test as "passing without actually verifying".
+The gate's own evidence (02_full_suite_run_summary.log, line 28) and a direct
+re-run both show it was FAILING, not silently passing:
+
+    FAILED tests/test_rag.py::test_session_lifecycle_and_tenant_isolation
+    assert 200 == 403   (tests/test_rag.py:72)
+
+The mechanism is exactly as diagnosed -- the override of `get_tenant_context`
+stopped taking effect after Gap 335 repointed the route at
+`get_tenant_or_api_key_context`, so the request ran as the default
+MOCK_TENANT_ID (its own tenant) and got a legitimate 200. The consequence was a
+red test rather than a green one, because the test asserts on the 403. Same root
+cause, same fix; recording the difference rather than repeating the brief.
+
+===========================================================================
+2. AFTER THE FIX, isolation intact -> PASS
+===========================================================================
+$ pytest tests/test_rag.py::test_session_lifecycle_and_tenant_isolation
+    1 passed in 6.34s
+
+$ pytest tests/test_rag.py
+    1 failed, 58 passed in 8.60s
+    The one failure is
+    test_process_crash_during_agent_leaves_no_orphan_user_message
+    (TypeError: post_chat_message() missing 1 required positional argument:
+    'background_tasks') -- pre-existing and unrelated, already root-caused by the
+    final gate via `git stash` as failing identically on clean HEAD. Untouched
+    here, deliberately: out of this task's scope.
+
+===========================================================================
+3. PROOF IT CAN FAIL -- isolation deliberately broken
+===========================================================================
+`routers/chat.py::get_session_messages()`'s ownership check was temporarily
+neutered in place (backed up first, restored immediately after and verified):
+
+    -    if chat_session.tenant_id != tenant_context.tenant_id:
+    +    if False:  # TEMPORARY Gap 354 fail-proof: isolation check disabled
+
+$ pytest tests/test_rag.py::test_session_lifecycle_and_tenant_isolation
+    FAILED
+    >           assert get_res.status_code == 403
+    E           assert 200 == 403
+    E            +  where 200 = <Response [200 OK]>.status_code
+    1 failed in 6.74s
+
+Critically, the new `assert override_calls` guard PASSED on this run (the
+failure is the 403 assertion below it), which proves the override really was
+invoked and the request really did execute as a foreign tenant -- the test
+reached the isolation branch and the branch let it through. That is the
+difference between a test that catches a broken isolation check and one that
+merely fails for its own reasons.
+
+routers/chat.py restored from backup; `grep -c "TEMPORARY Gap 354\|if False:"`
+--> 0; the four `if chat_session.tenant_id != tenant_context.tenant_id:` checks
+at lines 240 / 277 / 314 / 368 all present; test re-run --> 1 passed.
+
+===========================================================================
+4. PROOF THE NEW GUARD CATCHES THE GAP-335 FAILURE MODE ITSELF
+===========================================================================
+The override was temporarily repointed back at the OLD dependency (importing
+`get_tenant_context as get_tenant_or_api_key_context`), simulating exactly what
+Gap 335 did to this test, with production code untouched and correct:
+
+$ pytest tests/test_rag.py::test_session_lifecycle_and_tenant_isolation
+    E   AssertionError: The foreign-tenant override was never invoked, so this
+    E   request did not run as a foreign tenant and the isolation check was not
+    E   exercised. GET /chat/sessions/{id} no longer depends on
+    E   get_tenant_or_api_key_context -- repoint this override at whatever it
+    E   depends on now (this is exactly how Gap 335 silently disarmed this test).
+    E   assert []
+
+So a future re-wiring of this route now fails with a message naming the actual
+cause, instead of an opaque `assert 200 == 403` that reads like a security
+regression. test_rag.py restored from backup and re-run --> 58 passed, 1
+pre-existing unrelated failure.

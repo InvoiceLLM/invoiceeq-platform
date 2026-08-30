@@ -407,7 +407,12 @@ def test_T12b_run_sync_finds_a_real_google_drive_connection(db_session):
          patch("services.autopilot_sync.list_google_drive_files", return_value=[]):
         summary = run_sync(MOCK_TENANT_ID, db_session)
 
-    assert summary == {"processed": 0, "skipped": 0, "failed": 0}
+    # Gap 343 added `quota_exhausted` to the summary; kept as an exact-dict
+    # comparison rather than loosened to per-key checks, so a future key added
+    # to this contract still has to be acknowledged here.
+    assert summary == {
+        "processed": 0, "skipped": 0, "failed": 0, "quota_exhausted": False,
+    }
 
 
 def test_T12c_run_sync_rejects_an_unsupported_source_type(db_session):
@@ -681,7 +686,10 @@ def test_run_sync_google_drive_translation_and_unsupported_source_type_on_postgr
             with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
                  patch("services.autopilot_sync.list_google_drive_files", return_value=[]):
                 summary = run_sync(tenant_id, pg_session)
-            assert summary == {"processed": 0, "skipped": 0, "failed": 0}
+            # Gap 343 added `quota_exhausted` to the summary contract.
+            assert summary == {
+                "processed": 0, "skipped": 0, "failed": 0, "quota_exhausted": False,
+            }
 
             # Flip the config to an unsupported source_type and re-verify the
             # loud-failure path on the real engine too.

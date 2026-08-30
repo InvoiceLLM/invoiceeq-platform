@@ -15,9 +15,11 @@ from utils.encryption import encrypt_token, decrypt_token
 from utils.connector_oauth import (
     has_real_credentials as _has_real_credentials,
     get_valid_access_token,
+    GOOGLE_DRIVE_OAUTH_SCOPE,
     GOOGLE_TOKEN_URL,
 )
 from utils.connector_files import list_google_drive_files
+from services.billing_quota import charge_free_quota
 import json
 from azure.storage.queue import QueueClient
 from config import get_settings
@@ -85,20 +87,33 @@ async def get_auth_url(
             # access_type=offline + prompt=consent: Google only issues a
             # refresh_token when consent is freshly granted, so without these
             # a re-connect would silently stop returning one after the first time.
+            #
+            # Gap 338 widened `scope` from bare drive.readonly to
+            # readonly + drive.file (GOOGLE_DRIVE_OAUTH_SCOPE) so the
+            # `drive_archive` output destination can write results back. Two
+            # scopes, not one: drive.file alone cannot READ the tenant's
+            # existing PDFs, which is what Features 9/13 do here. Every
+            # connection minted before 2026-08-30 holds a readonly-only token
+            # and Google never upgrades an existing grant silently -- that is
+            # detected at use time, see services/workflow_outputs.py
+            # ::drive_archive_readiness().
             params = {
                 "client_id": settings.GOOGLE_CLIENT_ID,
                 "redirect_uri": settings.GOOGLE_REDIRECT_URI,
                 "response_type": "code",
                 "access_type": "offline",
                 "prompt": "consent",
-                "scope": "https://www.googleapis.com/auth/drive.readonly",
+                "scope": GOOGLE_DRIVE_OAUTH_SCOPE,
             }
             return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
 
     # No real credentials configured yet for this provider -- fall back to a
     # mock consent URL so local/dev testing still works end-to-end.
     mock_auth_urls = {
-        "google_drive": "https://accounts.google.com/o/oauth2/v2/auth?client_id=mock_google_id&response_type=code&scope=https://www.googleapis.com/auth/drive.readonly",
+        "google_drive": (
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=mock_google_id"
+            f"&response_type=code&scope={GOOGLE_DRIVE_OAUTH_SCOPE}"
+        ),
     }
     return {"auth_url": mock_auth_urls[prov]}
 
@@ -337,6 +352,27 @@ async def trigger_file_import(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"{provider} connection needs to be reconnected: {e}",
         )
+
+    # Gap 343: charge the free-tier quota here, before anything is queued.
+    #
+    # Until now this door created Invoice rows (via
+    # queue_worker/handlers.py::handle_import_connector_file) and charged
+    # nothing, so a Free Tier tenant sitting at free_invoices_remaining=0 could
+    # ingest without limit simply by importing from Drive instead of using the
+    # upload button. Same helper, same `SELECT tenant … FOR UPDATE`, same
+    # 402 "Limit reached" as routers/invoices.py -- the refusal is mirrored, not
+    # reinvented, and it lands *before* the queue message so a refused import
+    # leaves nothing behind.
+    #
+    # A flat 1, not count_billable_uploads(): this endpoint genuinely has no file
+    # bytes to hash -- the download happens later, in the queue worker. That is
+    # accurate rather than approximate for this door, because the connector path
+    # never persists Invoice.file_hash, so every import already creates a
+    # distinct invoice row regardless of content. Charging in the worker instead
+    # was rejected: the worker cannot return a 402 to anyone, so a quota refusal
+    # there would be an invisible background failure -- the exact class of bug
+    # Gaps 179/180/266 were opened for on this same code path.
+    charge_free_quota(db_session, context.tenant_id, 1)
 
     # Gap 179: never tell the FE "queued" unless the queue message actually landed.
     # Previously returned success=True even when AZURE_STORAGE_CONNECTION_STRING was

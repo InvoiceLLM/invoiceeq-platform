@@ -135,16 +135,28 @@ async function visibleNavItems(page: Page): Promise<string[]> {
   return (await aside.getByRole("link").allInnerTexts()).map((t) => t.trim());
 }
 
-test.describe("Sidebar — permission-less user (the design's Viewer)", () => {
+/**
+ * FE Gap 324: the identity stubs below say `role: "Restricted"`, not "Viewer".
+ * BE Gap 337 retired Viewer as an assignable role — the three user-facing roles
+ * are Admin / Auditor / Trainer, and `RoleMapper.NO_ROLE` ("Restricted") is the
+ * backend's internal zero-permission fallback, which is what `/auth/me` actually
+ * returns for the identity these tests are describing.
+ *
+ * Nothing about the assertions changed, deliberately: `useAuth()` reads the
+ * three permission booleans straight off /auth/me and never derives them from
+ * the role string, so these specs never depended on the literal's value. The
+ * point of the edit is that the stub keeps describing reality.
+ */
+test.describe("Sidebar — permission-less user (no role assigned)", () => {
   test("sees only Dashboard, Chat and Help", async ({ page }) => {
-    await stubShell(page, { role: "Viewer" });
+    await stubShell(page, { role: "Restricted" });
     await page.goto("/dashboard");
 
     expect((await visibleNavItems(page)).sort()).toEqual([...ALWAYS_VISIBLE].sort());
   });
 
   test("Ingest, Audit Queue, AI Trainer, Settings and Subscriptions are all absent", async ({ page }) => {
-    await stubShell(page, { role: "Viewer" });
+    await stubShell(page, { role: "Restricted" });
     await page.goto("/dashboard");
     await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
 
@@ -163,7 +175,7 @@ test.describe("Sidebar — individually granted permissions", () => {
 
   for (const { granted, label } of cases) {
     test(`${granted} reveals "${label}" and nothing else`, async ({ page }) => {
-      await stubShell(page, { role: "Viewer", [granted]: true });
+      await stubShell(page, { role: "Restricted", [granted]: true });
       await page.goto("/dashboard");
 
       expect((await visibleNavItems(page)).sort()).toEqual(
@@ -204,7 +216,7 @@ test.describe("Sidebar — Admin", () => {
 test.describe("Sidebar — identity lookup fails", () => {
   test("falls back to the three universal items, never to a full menu", async ({ page }) => {
     await page.route("**/api/auth/me", (route) => route.fulfill({ status: 401, body: "" }));
-    await stubShell(page, { role: "Viewer" }); // registered after, so the 401 route wins for /auth/me
+    await stubShell(page, { role: "Restricted" }); // registered after, so the 401 route wins for /auth/me
     await page.goto("/dashboard");
 
     expect((await visibleNavItems(page)).sort()).toEqual([...ALWAYS_VISIBLE].sort());
@@ -225,7 +237,7 @@ test.describe("Sidebar — identity lookup fails", () => {
  */
 test.describe("Help entry point (Gap 87 finding G, relocated by Gap 110)", () => {
   test("the Sidebar's Help item navigates to /help", async ({ page }) => {
-    await stubShell(page, { role: "Viewer" });
+    await stubShell(page, { role: "Restricted" });
     await page.goto("/dashboard");
 
     await navLink(page, "Help").click();
@@ -233,7 +245,7 @@ test.describe("Help entry point (Gap 87 finding G, relocated by Gap 110)", () =>
   });
 
   test("the header no longer carries a duplicate Help link", async ({ page }) => {
-    await stubShell(page, { role: "Viewer" });
+    await stubShell(page, { role: "Restricted" });
     await page.goto("/dashboard");
     await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
 
@@ -333,7 +345,7 @@ test.describe("Header — search box and notification bell (Gaps 87 + 95)", () =
   });
 
   test("bell is hidden from a user who cannot open the audit queue", async ({ page }) => {
-    await stubShell(page, { role: "Viewer" });
+    await stubShell(page, { role: "Restricted" });
     await page.goto("/dashboard");
     await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
 

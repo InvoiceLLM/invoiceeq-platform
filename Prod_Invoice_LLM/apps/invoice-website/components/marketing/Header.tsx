@@ -135,6 +135,20 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
           >
             Contact Us
           </Link>
+          {/* Founder ask, 2026-08-30: the guided "build your own pipeline"
+              flow (WorkflowRecipeSelector, id="choose-your-workflow") already
+              existed but was only reachable by scrolling past everything
+              else. Same active-state/hash pattern as Features/Pricing. */}
+          <Link
+            href={pathname === "/" ? "#choose-your-workflow" : "/#choose-your-workflow"}
+            onClick={() => {
+              if (pathname === "/") setHash("#choose-your-workflow");
+            }}
+            aria-current={navCurrent("#choose-your-workflow")}
+            className={navLinkClass("#choose-your-workflow")}
+          >
+            Build Your Pipeline
+          </Link>
           <Link href={loginTargetHref} aria-current={navCurrent(loginTargetHref)} className={navLinkClass(loginTargetHref)}>
             {loginLabel}
           </Link>
@@ -197,6 +211,17 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
               className={drawerLinkClass("/contact")}
             >
               Contact Us
+            </Link>
+            <Link
+              href={pathname === "/" ? "#choose-your-workflow" : "/#choose-your-workflow"}
+              onClick={() => {
+                if (pathname === "/") setHash("#choose-your-workflow");
+                setMobileMenuOpen(false);
+              }}
+              aria-current={navCurrent("#choose-your-workflow")}
+              className={drawerLinkClass("#choose-your-workflow")}
+            >
+              Build Your Pipeline
             </Link>
             <Link
               href={loginTargetHref}

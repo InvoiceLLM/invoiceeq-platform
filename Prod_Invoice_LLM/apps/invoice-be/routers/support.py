@@ -210,9 +210,20 @@ class _ContactRateLimiter:
     is per-replica, so the effective platform-wide limit is up to
     replica_count x `_RATE_LIMIT_MAX_REQUESTS`. That is a degraded mode only;
     the normal Redis path is genuinely global.
+
+    Gap 340 (2026-08-30): this is now used by a **second** public endpoint --
+    anonymous sandbox-key issuance (`routers/sandbox.py`). It was reused rather
+    than reimplemented because the hard part here is not the sliding window, it
+    is `_get_client_ip()`'s answer to "which IP claim can we trust on this
+    platform", and a second limiter would have meant a second, drifting answer
+    to that. The two instances differ only in `redis_key_prefix` (separate
+    keyspaces) and in whether they pass an `email` dimension at all. The class
+    name is kept for continuity with Gap 249 rather than renamed, which would
+    have churned every reference in tests/test_support.py for no behavioural
+    gain.
     """
 
-    def __init__(self):
+    def __init__(self, redis_key_prefix: str = _REDIS_KEY_PREFIX):
         # OrderedDict, not defaultdict: eviction needs insertion/refresh order,
         # and defaultdict's __getitem__ silently created a permanent entry for
         # every key ever *looked at*, including ones that were then rejected.
@@ -220,6 +231,14 @@ class _ContactRateLimiter:
         self._lock = Lock()
         # None = not yet attempted, False = known unavailable, else a client.
         self._redis_client: Any = None
+        # Gap 340: a second instance of this limiter now guards anonymous
+        # sandbox-key issuance (services/sandbox.py / routers/sandbox.py), and
+        # it must not share a keyspace with the contact form -- the Redis keys
+        # are `ip:<addr>`, so one namespace would make a visitor's contact-form
+        # submission count against their sandbox allowance and vice versa. The
+        # default is the literal the contact form has always used, so its
+        # behaviour and its stored keys are unchanged.
+        self._redis_key_prefix = redis_key_prefix
 
     # -- Redis plumbing -----------------------------------------------------
 
@@ -244,13 +263,24 @@ class _ContactRateLimiter:
         return self._redis_client or None
 
     @staticmethod
-    def _keys(ip: str, email: str) -> list[str]:
-        return [f"ip:{ip}", f"email:{email.lower().strip()}"]
+    def _keys(ip: str, email: str | None) -> list[str]:
+        """The dimensions this submission is counted against.
+
+        Gap 340: `email` is optional now. The sandbox issuance endpoint is
+        anonymous -- there is no address to key on -- and inventing a constant
+        placeholder would be worse than omitting the dimension, because every
+        visitor would share one bucket and the first three would exhaust it for
+        everyone. Omitted, not faked.
+        """
+        keys = [f"ip:{ip}"]
+        if email:
+            keys.append(f"email:{email.lower().strip()}")
+        return keys
 
     def _check_redis(self, client, keys, max_requests, window_seconds) -> bool:
         now = time.time()
         cutoff = now - window_seconds
-        full_keys = [f"{_REDIS_KEY_PREFIX}{k}" for k in keys]
+        full_keys = [f"{self._redis_key_prefix}{k}" for k in keys]
 
         # One round trip to drop expired members and read both counts.
         pipe = client.pipeline()
@@ -308,7 +338,7 @@ class _ContactRateLimiter:
     def check(
         self,
         ip: str,
-        email: str,
+        email: str | None = None,
         max_requests: int = _RATE_LIMIT_MAX_REQUESTS,
         window_seconds: int = _RATE_LIMIT_WINDOW_SECONDS,
     ) -> bool:
@@ -337,7 +367,7 @@ class _ContactRateLimiter:
         if client is None:
             return
         try:
-            stale = list(client.scan_iter(match=f"{_REDIS_KEY_PREFIX}*", count=500))
+            stale = list(client.scan_iter(match=f"{self._redis_key_prefix}*", count=500))
             if stale:
                 client.delete(*stale)
         except Exception as exc:
