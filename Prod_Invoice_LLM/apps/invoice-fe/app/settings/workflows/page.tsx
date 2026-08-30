@@ -34,6 +34,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { markWorkflowSetupComplete } from "@/components/settings/WorkflowSetupBanner";
 import {
   Mail,
   FolderSync,
@@ -676,8 +677,12 @@ export default function WorkflowSettingsPage() {
         // exactly as the backend leaves its own state untouched.
         throw new Error(await errorMessage(res, `Could not save (HTTP ${res.status}).`));
       }
-      applyServerConfig((await res.json()) as WorkflowConfig);
+      const saved = (await res.json()) as WorkflowConfig;
+      applyServerConfig(saved);
       setJustSaved(true);
+      // FE Gap 356: tell the header-level WorkflowSetupBanner right away —
+      // its own module cache otherwise only refreshes on a full reload.
+      if (saved.completed_at) markWorkflowSetupComplete();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Could not save your workflow settings.");
     } finally {

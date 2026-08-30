@@ -363,7 +363,19 @@ Admin-gated settings screens use, because `GET /settings/workflow` would 403 any
   not turn into a banner on every screen.
 * Hides itself on `/settings/workflows` (you are already there) and is dismissible
   for the session via `sessionStorage`, so it prompts rather than nags. Completing
-  the wizard sets `completed_at` server-side, so it never returns.
+  the wizard sets `completed_at` server-side, so a fresh fetch never shows it again.
+
+**FE Gap 356 fix (2026-08-30) — the module cache wasn't told about a save.**
+Because the "once per tab" cache above is deliberately never re-fetched on
+client-side navigation, a successful save on `/settings/workflows` used to leave
+`cachedNeedsSetup` at its stale pre-completion `true` — so the banner kept
+reappearing on every other screen for the rest of that tab's session, and only a
+full reload (in practice, logout/login) forced the fresh `GET` that correctly saw
+`completed_at` set. `WorkflowSetupBanner.tsx` now exports
+`markWorkflowSetupComplete()` (sets the cache to `false` directly, no re-fetch
+needed); `page.tsx`'s `handleSave` calls it the moment the `PUT` response comes
+back with `completed_at` set, so the banner reflects it immediately rather than
+on next login.
 
 **Why a banner and not a forced redirect — a deliberate deviation, recorded.** The
 brief called for a "first-login trigger". A redirect out of whatever route the user

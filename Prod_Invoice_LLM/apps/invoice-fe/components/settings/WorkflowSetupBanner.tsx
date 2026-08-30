@@ -43,6 +43,18 @@ const DISMISS_KEY = "workflow_setup_banner_dismissed";
 let cachedNeedsSetup: boolean | null = null;
 let inFlight: Promise<boolean | null> | null = null;
 
+/**
+ * FE Gap 356. `cachedNeedsSetup` is intentionally "once per tab" (see the
+ * module comment above) so client-side navigation doesn't re-fetch it — but
+ * that means a successful save on the wizard page never reached this cache,
+ * so the banner kept showing "Set up workflow" on every other screen until a
+ * full reload (logout/login) forced a fresh fetch. The wizard page calls this
+ * the moment its own save succeeds, so the banner reflects it immediately.
+ */
+export function markWorkflowSetupComplete() {
+  cachedNeedsSetup = false;
+}
+
 function fetchNeedsSetup(): Promise<boolean | null> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
