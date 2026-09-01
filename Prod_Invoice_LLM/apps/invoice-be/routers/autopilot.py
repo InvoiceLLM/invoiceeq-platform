@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from database import get_session
 from dependencies import get_tenant_context, TenantContext
@@ -281,13 +281,17 @@ def get_autopilot_history(
     """
     offset = (page - 1) * page_size
 
-    # Total count
-    all_logs = db_session.exec(
-        select(TenantAutopilotLog).where(
-            TenantAutopilotLog.tenant_id == context.tenant_id
-        )
-    ).all()
-    total = len(all_logs)
+    # Total count. Gap 360: this used to load every log row for the tenant
+    # into memory (`len(all_logs)`) just to count them, on every page view
+    # and every 30s auto-refresh the FE history table does on its own -- a
+    # real database COUNT does the same job without materializing the rows.
+    total = int(
+        db_session.exec(
+            select(func.count()).select_from(TenantAutopilotLog).where(
+                TenantAutopilotLog.tenant_id == context.tenant_id
+            )
+        ).one()
+    )
 
     # Paginated results, newest first
     logs = db_session.exec(

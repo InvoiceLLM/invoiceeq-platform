@@ -426,6 +426,42 @@ def test_T12c_run_sync_rejects_an_unsupported_source_type(db_session):
         run_sync(MOCK_TENANT_ID, db_session)
 
 
+def test_T12d_run_sync_passes_since_dt_as_modified_after(db_session):
+    """T12d (Gap 360): since_dt was computed from the last SUCCESS log and
+    logged, but never actually reached list_google_drive_files -- every sync
+    re-listed the entire folder from scratch and re-wrote a
+    SKIPPED_DUPLICATE row for every already-ingested file, every run,
+    forever. This asserts the wiring itself, not just the summary counts,
+    because every other test in this file mocks list_google_drive_files
+    with return_value= and would stay green even if the argument were
+    silently dropped again."""
+    _make_config(db_session)
+    _make_connection(db_session)
+    last_sync = _make_log(
+        db_session, source_file_id="gdrive-file-000", content_hash="h0", status="SUCCESS"
+    )
+
+    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+         patch("services.autopilot_sync.list_google_drive_files", return_value=[]) as mock_list:
+        run_sync(MOCK_TENANT_ID, db_session)
+
+    assert mock_list.call_args.kwargs["modified_after"] == last_sync.ingested_at
+
+
+def test_T12e_run_sync_passes_none_when_no_prior_sync(db_session):
+    """T12e (Gap 360): a tenant's first-ever sync has no last-SUCCESS row to
+    poll since -- modified_after must be None, not an error and not a
+    made-up timestamp that would silently exclude every file."""
+    _make_config(db_session)
+    _make_connection(db_session)
+
+    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+         patch("services.autopilot_sync.list_google_drive_files", return_value=[]) as mock_list:
+        run_sync(MOCK_TENANT_ID, db_session)
+
+    assert mock_list.call_args.kwargs["modified_after"] is None
+
+
 # ===========================================================================
 # T13 - run_sync skips on Layer-1 dedup (source_file_id already seen)
 # ===========================================================================

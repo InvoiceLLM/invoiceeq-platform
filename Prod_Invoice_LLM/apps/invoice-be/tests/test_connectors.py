@@ -20,6 +20,45 @@ engine = create_engine(
 
 client = TestClient(app)
 
+
+# ===========================================================================
+# Gap 360 — list_google_drive_files' modified_after query filter
+# ===========================================================================
+
+def _mock_drive_response():
+    resp = MagicMock()
+    resp.json.return_value = {"files": []}
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def test_list_google_drive_files_omits_modified_time_filter_by_default():
+    """The folder-browsing caller (routers/connectors.py) never passes
+    modified_after and must keep listing everything, unchanged."""
+    from utils.connector_files import list_google_drive_files
+
+    with patch("utils.connector_files.httpx.get", return_value=_mock_drive_response()) as mock_get:
+        list_google_drive_files("tok", folder_id="folder-1")
+
+    query = mock_get.call_args.kwargs["params"]["q"]
+    assert "modifiedTime" not in query
+
+
+def test_list_google_drive_files_adds_modified_time_filter_when_given():
+    """Gap 360: this is the actual fix -- Autopilot's incremental polling
+    only works if this filter reaches Google's own query, not just gets
+    computed and logged. A naive (tzinfo-less) datetime, matching how
+    TenantAutopilotLog.ingested_at is actually stored, must not raise."""
+    from utils.connector_files import list_google_drive_files
+
+    since = datetime(2026, 8, 30, 12, 0, 0)  # naive, same shape as ingested_at
+    with patch("utils.connector_files.httpx.get", return_value=_mock_drive_response()) as mock_get:
+        list_google_drive_files("tok", folder_id="folder-1", modified_after=since)
+
+    query = mock_get.call_args.kwargs["params"]["q"]
+    assert "modifiedTime > '2026-08-30T12:00:00'" in query
+
+
 @pytest.fixture(name="db_session")
 def db_session_fixture():
     """Yields clean isolated test database session."""

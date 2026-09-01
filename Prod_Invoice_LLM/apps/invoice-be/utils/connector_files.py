@@ -16,6 +16,7 @@ this app may write to is constrained by the `drive.file` scope, not by what
 the user can see in their own Drive.
 """
 import json
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
@@ -30,14 +31,31 @@ GOOGLE_DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
 GOOGLE_DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 
-def list_google_drive_files(access_token: str, folder_id: Optional[str] = None) -> list[dict]:
-    """Lists PDFs and folders directly under folder_id (or the Drive root)."""
+def list_google_drive_files(
+    access_token: str,
+    folder_id: Optional[str] = None,
+    modified_after: Optional[datetime] = None,
+) -> list[dict]:
+    """Lists PDFs and folders directly under folder_id (or the Drive root).
+
+    Gap 360. `modified_after`, when given, adds a `modifiedTime >` clause so
+    the caller gets only what actually changed instead of the whole folder
+    every time -- this is what makes Autopilot's "since last sync" polling
+    real. Optional and appended last so the existing folder-browsing caller
+    (routers/connectors.py, which never wants this filter) is unaffected.
+    """
     parent = folder_id or "root"
     query = (
         "trashed = false and "
         "(mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.folder') and "
         f"'{parent}' in parents"
     )
+    if modified_after is not None:
+        # Drive's API wants RFC 3339 UTC. A naive datetime (this app stores
+        # ingested_at without tzinfo) is assumed UTC, matching how it was
+        # written -- see TenantAutopilotLog.ingested_at's own default.
+        ts = modified_after if modified_after.tzinfo else modified_after.replace(tzinfo=timezone.utc)
+        query += f" and modifiedTime > '{ts.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')}'"
     params = {"q": query, "fields": "files(id,name,mimeType,size)", "pageSize": 100}
     headers = {"Authorization": f"Bearer {access_token}"}
 

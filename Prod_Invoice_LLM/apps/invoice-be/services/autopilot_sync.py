@@ -150,8 +150,15 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
 
     # 5. List files from cloud source
     if config.source_type == "gdrive":
+        # Gap 360: since_dt was computed above and logged, but never actually
+        # reached this call -- every sync re-listed the whole folder from
+        # scratch and re-wrote a SKIPPED_DUPLICATE row for every
+        # already-ingested file, every run, forever. Dedup Layers 1/2 below
+        # still run unconditionally as a safety net (clock skew, the first
+        # sync after this fix lands where since_dt may be stale) -- this is
+        # what actually stops most of the redundant work from happening.
         remote_files = list_google_drive_files(
-            access_token, folder_id=config.source_ref
+            access_token, folder_id=config.source_ref, modified_after=since_dt
         )
         # list_google_drive_files returns dicts with 'id', 'name', 'type', 'size_bytes'
         # filter to actual files (not folders)
