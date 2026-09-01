@@ -122,16 +122,32 @@ jobs:
             exit 1
           fi
 
-          website_fqdn=$(az containerapp show --name ca-invoice-website-prod \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
-            --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+          # Same fix as deploy-dev.yml's resolve-fqdns step (dev Gap 362): read
+          # customDomainName from params.prod.json instead of re-deriving the
+          # website URL from ca-invoice-website-prod's own ingress FQDN (the
+          # internal CAE domain). No-op today -- params.prod.json does not set
+          # customDomainName yet (prod Front Door cutover is still a future,
+          # not-yet-applied step per feature_6_custom_domain_integration.md) --
+          # but this closes the same latent bug here before a real prod domain
+          # is ever set, rather than leaving it to be rediscovered later.
+          custom_domain=$(python3 -c "import json;print(json.load(open('$params'))['parameters'].get('customDomainName',{}).get('value',''))")
 
-          if [ -z "$website_fqdn" ]; then
-            echo "WARNING: ca-invoice-website-prod not found yet -- falling back to FE origin for website_url." >&2
-            website_fqdn="${fe_fqdn}"
+          if [ -n "$custom_domain" ]; then
+            website_url="https://${custom_domain}"
+          else
+            website_fqdn=$(az containerapp show --name ca-invoice-website-prod \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+
+            if [ -z "$website_fqdn" ]; then
+              echo "WARNING: ca-invoice-website-prod not found yet -- falling back to FE origin for website_url." >&2
+              website_fqdn="${fe_fqdn}"
+            fi
+
+            website_url="https://${website_fqdn}"
           fi
 
-          echo "website_url=https://${website_fqdn}" >> "$GITHUB_OUTPUT"
+          echo "website_url=${website_url}" >> "$GITHUB_OUTPUT"
           echo "fe_url=https://${fe_fqdn}" >> "$GITHUB_OUTPUT"
           echo "pub_key=${pub_key}" >> "$GITHUB_OUTPUT"
 

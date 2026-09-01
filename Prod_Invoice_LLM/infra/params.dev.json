@@ -20,6 +20,9 @@
     "networkIsolation": {
       "value": false
     },
+    "customDomainName": {
+      "value": "invoicellm.admsofttech.com"
+    },
     "redisLocation": {
       "value": "eastus"
     },

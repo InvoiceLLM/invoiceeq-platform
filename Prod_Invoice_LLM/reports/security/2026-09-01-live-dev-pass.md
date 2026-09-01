@@ -16,7 +16,8 @@ Findings below are as originally written and are **not** edited in place — thi
 | F3 | Live shared secret + partial API key in plaintext docs | **Fixed, docs-only** — BE Gap 361. Redacted from all 4 locations. Founder's explicit call not to rotate the underlying values; both remain in git history as a residual accepted risk. |
 | F4 | Storage account TLS 1.0 | **Fixed** — BE Gap 361. Live (`az storage account update --min-tls-version TLS1_2`) and in `infra/modules/data/storage.bicep` (was never explicitly declared before). |
 | F5 | Connector endpoints missing backend RBAC | **Fixed** — BE Gap 361. All 5 mutating endpoints now require Admin; `GET /status` deliberately left open. 6 new regression tests in `tests/test_connectors.py`. |
-| F6–F8 | Ollama eval exposure, KV purge protection, stale CORS origin | **Not actioned** — no founder decision recorded yet. |
+| F6 | Ollama eval external ingress | **Closed, removed** — the candidate was found dead-since-deploy (zero traffic since 2026-08-24) and structurally unable to produce a valid comparison (prompt truncation + timeout margin on this sizing). `ca-ollama-eval-dev`, its CAE storage link, and `infra/ollama-eval-only.bicep` all removed. Detail: `apps/invoice-be/docs/be_features_tracker.md`, Feature 23 Phase 4. |
+| F7–F8 | KV purge protection, stale CORS origin | **Not actioned** — no founder decision recorded yet. |
 
 Full detail on F3/F4/F5: `apps/invoice-be/docs/be_features_tracker.md` Gap 361.
 

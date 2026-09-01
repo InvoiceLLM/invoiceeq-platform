@@ -225,6 +225,19 @@ def test_get_auth_url():
     assert "auth_url" in response.json()
     assert "google" in response.json()["auth_url"]
 
+
+def test_get_auth_url_forces_account_selection():
+    """Gap 362, founder-reported live: without select_account, Google
+    silently reuses whatever Google account is already signed into the
+    browser instead of ever asking who to sign in as -- observed live
+    auto-signing into application@infinevocloud.com, the account used to
+    set up this GCP project, never meant for end-user Drive connections."""
+    response = client.get("/api/v1/connectors/auth-url/google_drive")
+    assert response.status_code == 200
+    auth_url = response.json()["auth_url"]
+    assert "select_account" in auth_url
+    assert "consent" in auth_url
+
 def test_oauth_callback(db_session):
     """Verify code redirect callback performs token encryption, updates table,
     and redirects the browser back into the FE (the provider lands the browser

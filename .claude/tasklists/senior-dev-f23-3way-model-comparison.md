@@ -40,3 +40,18 @@ over the golden bank, with real pass rate / scores / cost / latency, written int
 - [ ] 15. Left uncommitted
 
 Status: sanity round done, findings already material. Starting the three graded runs.
+
+**Closed 2026-09-01, not completed — superseded by a founder decision, not abandoned silently.**
+Items 7-15 will not run. Found during the 2026-09-01 security pass (F6): `ca-ollama-eval-dev`
+had zero traffic since deploy day, and this task's own step 5 sanity round already recorded
+the disqualifier — llama3.2's prompt truncates at exactly 2050 tokens vs ~5400 on Azure, and
+per-case latency (~2m20s) sits close to ACA's 240s job timeout on the deployed 2 vCPU sizing.
+That is a structural ceiling on this hardware, not something a fuller 35-case run would have
+resolved. Founder decision: remove the Ollama infra rather than keep it idle waiting for steps
+7-15. `ca-ollama-eval-dev`, its CAE storage link, and `infra/ollama-eval-only.bicep` removed;
+see `be_features_tracker.md`'s Feature 23 Phase 4 entry for the full record. Worth noting for
+whoever picks up a GPT-4o comparison later: step 5's sanity round also showed GPT-4o scoring
+0.333 on the same subset (refused to emit SQL on both SQL cases) — that candidate is untouched
+and still deployed, but its own result here was not clean either; steps 7/8/10/11/13/14 would
+still be real, useful work if GPT-4o alone (baseline vs GPT-4o, dropping the Ollama arm) is
+ever picked back up.

@@ -116,21 +116,41 @@ jobs:
             exit 1
           fi
 
-          website_fqdn=$(az containerapp show --name ca-invoice-website-dev \
-            --resource-group "${{ env.RESOURCE_GROUP }}" \
-            --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+          # customDomainName (Front Door's live public origin) is read from
+          # params.dev.json rather than re-derived from ca-invoice-website-dev's
+          # own ingress FQDN -- that FQDN is the *internal* CAE domain
+          # (ca-invoice-website-dev.<CAE-default-domain>), which is exactly the
+          # bug this fix closes (root cause: infra/08-apps.bicep's publicOrigin
+          # falls back to that same internal FQDN whenever customDomainName is
+          # unset). NEXT_PUBLIC_WEBSITE_URL is a Docker build-arg baked into the
+          # invoice-fe client bundle at build time (see deploy-frontend below),
+          # so it must independently point at the same public origin
+          # infra/08-apps.bicep now derives at runtime for GOOGLE_REDIRECT_URI/
+          # FRONTEND_URL/ALLOWED_ORIGINS -- fixing the bicep var alone does not
+          # reach this build-arg.
+          custom_domain=$(python3 -c "import json;print(json.load(open('$params'))['parameters'].get('customDomainName',{}).get('value',''))")
 
-          if [ -z "$website_fqdn" ]; then
-            echo "WARNING: ca-invoice-website-dev not found yet -- falling back to FE origin for website_url." >&2
-            website_fqdn="${fe_fqdn}"
+          if [ -n "$custom_domain" ]; then
+            website_url="https://${custom_domain}"
+          else
+            website_fqdn=$(az containerapp show --name ca-invoice-website-dev \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)
+
+            if [ -z "$website_fqdn" ]; then
+              echo "WARNING: ca-invoice-website-dev not found yet -- falling back to FE origin for website_url." >&2
+              website_fqdn="${fe_fqdn}"
+            fi
+
+            website_url="https://${website_fqdn}"
           fi
 
-          echo "website_url=https://${website_fqdn}" >> "$GITHUB_OUTPUT"
+          echo "website_url=${website_url}" >> "$GITHUB_OUTPUT"
           echo "fe_url=https://${fe_fqdn}" >> "$GITHUB_OUTPUT"
           echo "pub_key=${pub_key}" >> "$GITHUB_OUTPUT"
 
           echo "Resolved FE FQDN: ${fe_fqdn}"
-          echo "Resolved website FQDN: ${website_fqdn}"
+          echo "Resolved website_url: ${website_url}"
 
   # Note: CLERK_SECRET_KEY is NOT synced to Key Vault by this workflow.
   # infra/05-secrets.bicep (Stage 5 of deploy-all.ps1) already seeds it from

@@ -115,7 +115,15 @@ async def get_auth_url(
                 "redirect_uri": settings.GOOGLE_REDIRECT_URI,
                 "response_type": "code",
                 "access_type": "offline",
-                "prompt": "consent",
+                # Gap 362, founder-reported: without select_account, Google
+                # silently reuses whatever Google account is already signed
+                # into the browser (observed live: application@infinevocloud.com
+                # -- the account used to set up this GCP project in the first
+                # place, never meant for end-user Drive connections) instead of
+                # ever asking who to sign in as. Same class of bug Gap 261
+                # already fixed for the now-removed Salesforce connector;
+                # Google Drive's own flow never got the equivalent fix.
+                "prompt": "select_account consent",
                 "scope": GOOGLE_DRIVE_OAUTH_SCOPE,
             }
             return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
