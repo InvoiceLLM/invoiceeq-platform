@@ -86,6 +86,108 @@ def test_encryption_decryption():
     decrypted = decrypt_token(encrypted)
     assert decrypted == plain_token
 
+# ===========================================================================
+# Gap 361 — connector mutation endpoints require Admin, not just any session
+# ===========================================================================
+#
+# `Bearer test_viewer` resolves to RoleMapper.NO_ROLE (all permissions False,
+# role != "Admin") via ALLOW_MOCK_AUTH's test-token path -- same mock-auth
+# pattern test_rbac.py uses. Before this gap, all 5 of these endpoints
+# accepted any authenticated tenant member; only the FE hid the buttons.
+
+NON_ADMIN = {"Authorization": "Bearer test_viewer"}
+
+
+def test_get_auth_url_rejects_non_admin():
+    response = client.get(
+        "/api/v1/connectors/auth-url/google_drive", headers=NON_ADMIN
+    )
+    assert response.status_code == 403
+
+
+def test_oauth_callback_rejects_non_admin():
+    response = client.get(
+        "/api/v1/connectors/callback/google_drive?code=auth_code_9928",
+        headers=NON_ADMIN,
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+
+
+def test_list_files_rejects_non_admin(db_session):
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("mock_access_token_google_drive"),
+        encrypted_refresh_token=encrypt_token("refresh_token"),
+        token_expiry=datetime.utcnow() + timedelta(hours=2),
+        status="active",
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    response = client.get(
+        "/api/v1/connectors/files/google_drive", headers=NON_ADMIN
+    )
+    assert response.status_code == 403
+
+
+def test_trigger_import_rejects_non_admin(db_session):
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("mock_access_token_google_drive"),
+        encrypted_refresh_token=encrypt_token("refresh_token"),
+        token_expiry=datetime.utcnow() + timedelta(hours=2),
+        status="active",
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    response = client.post(
+        "/api/v1/connectors/import/google_drive",
+        headers=NON_ADMIN,
+        json={"file_id": "gdrive_file_101"},
+    )
+    assert response.status_code == 403
+
+
+def test_disconnect_rejects_non_admin(db_session):
+    conn = TenantConnection(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        provider="google_drive",
+        encrypted_access_token=encrypt_token("mock_access_token_google_drive"),
+        encrypted_refresh_token=encrypt_token("refresh_token"),
+        token_expiry=datetime.utcnow() + timedelta(hours=2),
+        status="active",
+    )
+    db_session.add(conn)
+    db_session.commit()
+
+    response = client.delete(
+        "/api/v1/connectors/google_drive", headers=NON_ADMIN
+    )
+    assert response.status_code == 403
+
+    # The connection must survive a rejected request -- a 403 must not have
+    # deleted the row before the check ran.
+    statement = select(TenantConnection).where(
+        TenantConnection.tenant_id == MOCK_TENANT_ID,
+        TenantConnection.provider == "google_drive",
+    )
+    assert db_session.exec(statement).first() is not None
+
+
+def test_connectors_status_allows_non_admin():
+    """GET /status is deliberately left open to any role -- read-only display,
+    matching the FE, which never gates it behind isAdmin."""
+    response = client.get("/api/v1/connectors/status", headers=NON_ADMIN)
+    assert response.status_code == 200
+
+
 def test_connectors_status_not_configured(db_session):
     """Verify status is 'Not Configured' when no connection database records exist."""
     response = client.get("/api/v1/connectors/status")

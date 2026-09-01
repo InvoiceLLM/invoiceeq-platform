@@ -85,7 +85,7 @@ that fix would have rejected 100% of real inbound mail.
   - GoDaddy MX record: `inbound.invoicellm.admsofttech.com` ➔ `mx.sendgrid.net` (Priority 10).
   - Subdomain CNAME: `invoicellm.admsofttech.com` ➔ `invoiceeq-fd-endpoint.azurefd.net`.
   - Outbound CNAMEs: `em2270.outbound.invoicellm`, `s1._domainkey.outbound.invoicellm`, `s2._domainkey.outbound.invoicellm`.
-  - SendGrid Inbound Parse Webhook: Host `inbound.invoicellm.admsofttech.com` pointing to `https://invoicellm.admsofttech.com/api/v1/email/mailintegration?key=AdmInvoiceSecret2026`.
+  - SendGrid Inbound Parse Webhook: Host `inbound.invoicellm.admsofttech.com` pointing to `https://invoicellm.admsofttech.com/api/v1/email/mailintegration?key=<redacted -- see Key Vault SENDGRID-INBOUND-SECRET>`.
   - Live E2E runs executed: Inbound webhook multipart verification (HTTP 200) and live outbound dispatch (HTTP 202, Message ID `LbvTNInKRuafc7A2jHXORw`).
 
 ### Verification
@@ -100,5 +100,5 @@ refused. Website e2e: `email-mailintegration-relay.spec.ts` (unreachable-backend
 
 **Live Verification (2026-08-26):**
 - Outbound Mail Send via SendGrid v3 API (`POST /v3/mail/send`): `HTTP 202 Accepted`, Message IDs `57vFoWwrQNigJJLGWPBrGw`, `sDogeDxOS_qCKTW0lKbt8w`, `LbvTNInKRuafc7A2jHXORw`. Zero active bounces.
-- Inbound Webhook (`POST /api/v1/email/mailintegration?key=AdmInvoiceSecret2026`): `HTTP 200 OK`, multipart PDF attachment parsed, unknown sender security quarantine verified.
+- Inbound Webhook (`POST /api/v1/email/mailintegration?key=<redacted>`): `HTTP 200 OK`, multipart PDF attachment parsed, unknown sender security quarantine verified.
 - Microsoft 365 Outlook compatibility: Root `@` MX (`admsofttech-com.mail.protection.outlook.com`) unaffected; `invoice@admsofttech.com` established as human alias to `sbanerji@admsofttech.com`.

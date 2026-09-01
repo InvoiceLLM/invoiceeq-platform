@@ -33,6 +33,12 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   kind: 'StorageV2'
   properties: {
     accessTier: 'Hot'
+    // Gap 361 (security pass, 2026-09-01): never declared before, so the
+    // live account had drifted to TLS1_0 -- whatever the platform default
+    // was when the account was first created, not enforced by this template.
+    // Every client this app actually uses (Azure SDKs, httpx against blob
+    // endpoints) already speaks TLS1_2+, so this has no compatibility cost.
+    minimumTlsVersion: 'TLS1_2'
     publicNetworkAccess: networkIsolation ? 'Disabled' : publicNetworkAccess
     networkAcls: {
       defaultAction: networkIsolation ? 'Deny' : networkAclsDefaultAction

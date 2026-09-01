@@ -73,6 +73,19 @@ async def get_auth_url(
     """
     Generates OAuth consent screen redirect URL for Google Drive.
     """
+    # Gap 361 (security pass, 2026-09-01): this and the other 4 mutating
+    # connector endpoints below were reachable by any signed-in tenant
+    # member -- the FE's IntegrationCard.tsx already hides Connect/Disconnect/
+    # Browse behind isAdmin, but nothing on the backend enforced it, so a
+    # non-Admin member could call these directly (e.g. from DevTools) despite
+    # never seeing the button. GET /status is deliberately left open to any
+    # role -- it's a read-only status display, matching the FE, which never
+    # gates it.
+    if context.role != "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin users can manage connector integrations.",
+        )
     prov = provider.lower()
     if prov not in ["google_drive"]:
         raise HTTPException(
@@ -127,6 +140,14 @@ async def oauth_callback(
     """
     OAuth Callback handler: swaps code for credentials, encrypts them, and saves to database.
     """
+    # Gap 361, see get_auth_url()'s comment above. The Admin who clicked
+    # Connect is still the same logged-in Clerk session Google redirects
+    # back to, so this does not break the real flow.
+    if context.role != "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin users can manage connector integrations.",
+        )
     prov = provider.lower()
     if prov not in ["google_drive"]:
         raise HTTPException(
@@ -231,6 +252,12 @@ async def list_connector_files(
     Browse directories and list files in Google Drive.
     direction: 'inbound' (AP supplier PDFs) or 'outbound' (AR verified exports).
     """
+    # Gap 361, see get_auth_url()'s comment above.
+    if context.role != "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin users can manage connector integrations.",
+        )
     prov = provider.lower()
     if prov not in ["google_drive"]:
         raise HTTPException(
@@ -307,6 +334,12 @@ async def trigger_file_import(
     direction: 'inbound' feeds the AP extraction pipeline;
                'outbound' stores the file for AR record-keeping only.
     """
+    # Gap 361, see get_auth_url()'s comment above.
+    if context.role != "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin users can manage connector integrations.",
+        )
     prov = provider.lower()
     if prov not in ["google_drive"]:
         raise HTTPException(
@@ -431,6 +464,12 @@ async def disconnect_connector(
     Deletes the TenantConnection database row for the specified provider,
     effectively revoking access from the platform.
     """
+    # Gap 361, see get_auth_url()'s comment above.
+    if context.role != "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin users can manage connector integrations.",
+        )
     prov = provider.lower()
     if prov not in ["google_drive"]:
         raise HTTPException(
