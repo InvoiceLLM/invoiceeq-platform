@@ -2792,6 +2792,39 @@ database remains unmigrated** -- four revisions behind
 prior section in this Verification Plan already recorded. Nothing in this pass
 changes that.
 
+> **Correction, 2026-09-01 (founder-requested live-Azure verification): the
+> caveat above is stale.** The Azure dev environment was deployed on
+> 2026-08-30 (`ca-invoice-be-dev--0000104`, image `377f12f...`, byte-identical
+> to the commit that shipped this feature). That container's own startup log
+> (`entrypoint.sh` runs `alembic upgrade head` on boot) shows all four
+> migrations above applying cleanly at `13:02:30Z`, immediately followed by
+> `Application startup complete` with no traceback. **The Azure dev database
+> is fully migrated and this feature is live end-to-end there today** -- a
+> real `inv_live_` key against the live environment now works exactly as
+> described in this doc. This correction was verified directly (container
+> revision + deploy logs), not re-derived from this doc's own prior claim.
+
+> **Follow-on finding, same 2026-09-01 investigation, closed same day as
+> FE Gap 358: "live end-to-end" above was true of invoice-be in isolation,
+> not of the only path a real external caller has to it.** A direct
+> `az containerapp exec` into `ca-invoice-be-dev` proved the key-auth logic
+> itself works (`GET /api/v1/settings/security/api-key/verify` -> `200`).
+> But the public path -- Front Door -> invoice-website -> invoice-fe ->
+> invoice-be, the only route an actual outside integrator has -- 404'd:
+> invoice-fe's own Clerk middleware ran `.protect()` on every `/api/*`
+> request and redirected it to a `/clerk_<nonce>` handshake path before any
+> route handler, key or not, ever ran. So before FE Gap 358, this feature was
+> reachable by internal Azure diagnostics only, not by the third-party
+> integrations it exists for. FE Gap 358 fixed it: invoice-fe now exempts
+> `/api/*` from `.protect()` (verified safe -- every route it proxies to
+> enforces its own tenant-auth dependency, so nothing that was actually
+> protected became reachable), added the missing `verify` proxy route, and
+> stopped silently dropping the `X-API-Key` header. See FE Gap 358 in
+> `apps/invoice-fe/docs/fe_features_tracker.md` for the full fix. A live
+> redeploy + a real external probe through the public domain is still
+> outstanding -- functional-tester's job, sequenced after deploy, not done
+> as part of either gap.
+
 **New committed Playwright coverage this pass added (FE and website, not this
 app):** see `feature_17_plug_and_play_workflows.md` section 8 and
 `feature_7_plug_and_play_workflows.md`'s Verification Plan addendum.

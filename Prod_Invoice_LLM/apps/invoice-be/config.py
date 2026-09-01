@@ -337,3 +337,33 @@ def get_settings() -> Settings:
     return Settings()
 
 settings = get_settings()
+
+# Gap 359: ALLOW_MOCK_AUTH is a full authentication bypass (Gap 4's docstring
+# above). It defaults False and is confirmed off in every real deployment
+# today, but nothing previously stopped a future deployment from setting it
+# true by accident -- there was no startup check tying it to a non-production
+# environment, only the default itself. This mirrors NON_PRODUCTION_ENVIRONMENTS
+# in scripts/grant_test_plan.py (same set, same fail-closed reasoning) rather
+# than importing it from there -- that module is a standalone ops script, not
+# meant to be imported into the running app.
+NON_PRODUCTION_ENVIRONMENTS = {"dev", "development", "local", "test", "testing", "qa", "staging"}
+
+
+def _enforce_mock_auth_not_in_production(s: Settings) -> None:
+    """Raises if `s` describes a full auth bypass outside a non-production
+    environment. A plain function, not an inline `if`, so a test can call it
+    directly against a constructed `Settings` without reloading this module."""
+    if s.ALLOW_MOCK_AUTH and s.ENVIRONMENT not in NON_PRODUCTION_ENVIRONMENTS:
+        raise RuntimeError(
+            "ALLOW_MOCK_AUTH=true is a full authentication bypass and is refused "
+            "outside a recognized non-production ENVIRONMENT "
+            f"({', '.join(sorted(NON_PRODUCTION_ENVIRONMENTS))}); "
+            f"got ENVIRONMENT={s.ENVIRONMENT!r}. Set ALLOW_MOCK_AUTH=false, "
+            "or set ENVIRONMENT to a recognized non-production value."
+        )
+
+
+# Runs at import time, not inside main.py's lifespan hook, so a misconfigured
+# process fails before it ever binds a port rather than merely failing its
+# readiness probe -- the strongest fail-closed point available.
+_enforce_mock_auth_not_in_production(settings)

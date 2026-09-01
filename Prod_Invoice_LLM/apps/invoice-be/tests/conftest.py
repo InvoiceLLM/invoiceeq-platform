@@ -14,11 +14,17 @@ Real environment variables take precedence over `.env` values in
 pydantic-settings, so this wins regardless of the developer's local `.env`.
 
 Tests that need enforcement ON use the `mock_auth_disabled` fixture below.
+
+Gap 359: `ENVIRONMENT` is set alongside it for the same reason. `config.py`
+now refuses to import at all if `ALLOW_MOCK_AUTH=true` outside a recognized
+non-production `ENVIRONMENT` -- without this, every test in the suite would
+fail at collection, not just the ones this file is actually testing.
 """
 import os
 
 # Must happen before config/main are imported anywhere.
 os.environ["ALLOW_MOCK_AUTH"] = "true"
+os.environ.setdefault("ENVIRONMENT", "test")
 
 import pytest  # noqa: E402
 

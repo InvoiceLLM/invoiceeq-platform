@@ -207,7 +207,24 @@ Every tenant-scoped router depends on `dependencies.py::get_tenant_context()` to
 > config (`CLERK_JWKS_URL` / `CLERK_JWT_ISSUER` unset) now fails closed with a
 > `500` rather than skipping issuer validation. Full detail, including why
 > enforcement cannot yet be switched on in Azure, is in
-> [GAP_4_AUTH_ENFORCEMENT.md](GAP_4_AUTH_ENFORCEMENT.md). `get_current_user_context()` in `routers/auth.py` just echoes that resolved context back for the FE's `/auth/me` call. `get_db_session()` yields a scoped SQLModel `Session`; every router is expected to filter its own queries by `context.tenant_id` — there is no query-level enforcement, it's a per-router convention. See "Detailed Implementation Plan" below for the full walkthrough.
+> [GAP_4_AUTH_ENFORCEMENT.md](GAP_4_AUTH_ENFORCEMENT.md).
+
+> **Gap 359 update (2026-09-01):** the default being `false` was the only
+> thing standing between `ALLOW_MOCK_AUTH` and a full auth bypass reaching
+> real traffic — nothing at startup stopped a deployment from setting it
+> `true` by accident. `config.py` now refuses to import at all if
+> `ALLOW_MOCK_AUTH=True` and `ENVIRONMENT` is not one of
+> `NON_PRODUCTION_ENVIRONMENTS` (`dev`, `development`, `local`, `test`,
+> `testing`, `qa`, `staging`) — a hard failure at import time, before the
+> process ever binds a port, not a log warning. The flag itself is
+> unchanged and still needed for local dev and the ~130+ header-less
+> `TestClient` calls across the suite; removing it entirely was considered
+> and explicitly rejected as out of scope for this gap. `.env`,
+> `.env.example` and `tests/conftest.py` now all declare `ENVIRONMENT`
+> alongside `ALLOW_MOCK_AUTH=true`, which none of them needed to before this
+> guard existed.
+
+`get_current_user_context()` in `routers/auth.py` just echoes that resolved context back for the FE's `/auth/me` call. `get_db_session()` yields a scoped SQLModel `Session`; every router is expected to filter its own queries by `context.tenant_id` — there is no query-level enforcement, it's a per-router convention. See "Detailed Implementation Plan" below for the full walkthrough.
 
 ### Tasks
 - [x] **Task 1.1: Setup Auth JWT Decoding**

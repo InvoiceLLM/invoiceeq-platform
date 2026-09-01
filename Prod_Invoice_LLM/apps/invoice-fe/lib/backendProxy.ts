@@ -61,6 +61,16 @@ export async function forwardedHeaders(
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = { ...extra };
 
+  // FE Gap 358: forwarded unconditionally, independent of the Authorization
+  // branch below. An external integrator authenticates with this header
+  // alone (see invoice-be dependencies.py::_extract_api_key) and never sends
+  // an Authorization header at all, so this must not sit behind that branch's
+  // early return -- it previously did, which silently dropped every X-API-Key
+  // request into the no-inbound-Authorization / no-Clerk-session path (no
+  // auth forwarded at all, a guaranteed 401 downstream).
+  const apiKey = request.headers.get("x-api-key");
+  if (apiKey) headers["X-API-Key"] = apiKey;
+
   const inbound = request.headers.get("authorization");
   if (inbound) {
     headers["Authorization"] = inbound;

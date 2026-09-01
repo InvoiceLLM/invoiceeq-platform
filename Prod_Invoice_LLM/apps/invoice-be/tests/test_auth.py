@@ -220,6 +220,35 @@ def test_mock_auth_defaults_to_disabled():
     assert Settings.model_fields["ALLOW_MOCK_AUTH"].default is False
 
 
+def test_mock_auth_refused_outside_non_production_environment():
+    """
+    Gap 359. Constructs real `Settings` instances (not the module-level
+    singleton -- required fields like DATABASE_URL still come from the
+    developer's real `.env`/env, only ALLOW_MOCK_AUTH/ENVIRONMENT are
+    overridden) and calls the guard function directly, so this doesn't need
+    to reload `config` -- the module already ran this exact check at import
+    time, which is what makes the whole suite provable: if the guard were
+    broken, collection itself would already have failed.
+    """
+    from config import Settings, _enforce_mock_auth_not_in_production
+
+    with pytest.raises(RuntimeError, match="ALLOW_MOCK_AUTH=true"):
+        _enforce_mock_auth_not_in_production(
+            Settings(ALLOW_MOCK_AUTH=True, ENVIRONMENT="production")
+        )
+
+    # A recognized non-production environment must not raise.
+    _enforce_mock_auth_not_in_production(
+        Settings(ALLOW_MOCK_AUTH=True, ENVIRONMENT="dev")
+    )
+
+    # ALLOW_MOCK_AUTH=False must never raise regardless of ENVIRONMENT --
+    # nothing is bypassed, there is nothing for this guard to refuse.
+    _enforce_mock_auth_not_in_production(
+        Settings(ALLOW_MOCK_AUTH=False, ENVIRONMENT="production")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Gap 133 — POST /auth/provision, and the removal of request-time tenant
 # invention in get_tenant_context_allow_unpaid().
