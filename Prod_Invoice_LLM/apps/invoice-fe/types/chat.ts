@@ -147,6 +147,12 @@ export interface ChatMessage {
    * never as the confirmation card's render condition.
    */
   needs_confirmation?: boolean;
+  /**
+   * B10/R10. Present only on a `list_reconcile` turn (an advisory document);
+   * ABSENT on every other branch, per §P2.8's rule that a key's presence is
+   * itself a claim about what ran.
+   */
+  reconciliation?: AttachmentReconciliation;
 
   /** The clarifying turn (B2): two choices, no answer, no LLM call behind it. */
   attachment_clarification?: AttachmentClarification;
@@ -204,3 +210,57 @@ export interface SendMessageRequest {
 
 /** POST /chat/sessions/{id}/message — response: returns either ChatJobResponse (202 async) or ChatMessage (sync) */
 export type SendMessageResponse = ChatMessage | ChatJobResponse;
+
+/**
+ * B10/R10 — the `list_reconcile` answer shape (BE amendment B8).
+ *
+ * An ADVISORY document (statement of account, remittance advice) is a list of
+ * pointers at other documents, so it is answered by reconciliation rather than
+ * by the field-by-field diff `AttachmentComparison` carries. Mirrors
+ * `services/document_comparison.py::reconcile_referenced_documents()`.
+ *
+ * Amounts are Decimal-derived STRINGS from the backend and must be rendered as
+ * given -- never `Number()`-parsed, which would reintroduce the float error the
+ * backend went to some trouble to avoid.
+ */
+export type ReconciliationOutcome =
+  | "found_matching"
+  | "amount_mismatch"
+  | "status_mismatch"
+  | "not_found";
+
+export interface ReconciliationReference {
+  doc_number?: string | null;
+  invoice_id?: string | null;
+  outcome: ReconciliationOutcome;
+  /** Decimal-derived string. Null when either side did not state an amount. */
+  delta?: string | null;
+  stated_amount?: string | number | null;
+  invoice_amount?: string | number | null;
+  /** What THEIR document claims -- never our finding. */
+  stated_status?: string | null;
+  invoice_status?: string | null;
+}
+
+export interface ReconciliationDeduction {
+  kind?: string | null;
+  amount?: string | number | null;
+  currency?: string | null;
+  reference?: string | null;
+}
+
+export interface UnreferencedInvoice {
+  invoice_id: string;
+  invoice_number?: string | null;
+  grand_total?: string | number | null;
+}
+
+export interface AttachmentReconciliation {
+  mode: "list_reconcile";
+  party_name?: string | null;
+  references: ReconciliationReference[];
+  /** Reported per kind and NEVER netted into one figure. */
+  deductions: ReconciliationDeduction[];
+  /** The reverse direction: open invoices of ours their document omits. */
+  unreferenced_invoices: UnreferencedInvoice[];
+}

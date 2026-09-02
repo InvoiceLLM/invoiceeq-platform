@@ -69,6 +69,11 @@ _PROGRESS_STEPS = (
     "searching_attachment",     # vector search inside the attached document
     "attachment_spans_found",   # search finished; details: {"count"}
     "awaiting_intent_clarification",  # ambiguous intent (B2); the turn stops here
+    "reconciling_statement",    # B8/B9: an advisory document's list is being
+                                # joined to the tenant's invoices. Registered here
+                                # because tests/test_chat_progress.py asserts every
+                                # emitted step is a member of this tuple -- an
+                                # unregistered step is a test failure, deliberately.
 )
 
 
@@ -3310,6 +3315,14 @@ def _run_attached_document_turn(
                 },
             }
 
+        if intent == _INTENT_RECONCILE:
+            return _run_attachment_reconcile_branch(
+                tenant_uuid=tenant_uuid,
+                attachment=attachment,
+                db_session=db_session,
+                turn=turn,
+                progress=progress,
+            )
         if intent == _INTENT_CONTENT:
             return _run_attachment_content_branch(
                 user_message=user_message,
@@ -3458,6 +3471,106 @@ def _attachment_summary_block(attachment) -> str:
     return "\n".join(
         f"- {label}: {value}" for label, value in fields if value not in (None, "")
     )
+
+
+def _run_attachment_reconcile_branch(
+    *,
+    tenant_uuid,
+    attachment,
+    db_session,
+    turn,
+    progress,
+):
+    """B8/B9 — the ADVISORY family's answer: reconcile a list, not diff lines.
+
+    A statement of account or a remittance advice is a LIST OF POINTERS at other
+    documents, so the L1-L3 line matcher has nothing to run over (research §5
+    trap 6, money-only with no lines). This branch joins those pointers to the
+    tenant's own invoices and reports where the two records disagree.
+
+    EVERY FIGURE HERE IS PYTHON'S. `reconcile_referenced_documents()` is
+    deterministic `Decimal` with no LLM in it, and this function makes no model
+    call at all -- not even a narration one. The answer is a table, and a table
+    of five stated outcomes needs no prose to be understood; adding a narration
+    call would put a model between the user and figures it did not compute, for
+    no gain. Hard rule 3, kept by having nothing to keep.
+
+    Reads `referenced_documents` / `payment_deductions` off the attachment's own
+    extraction. When the document carried neither -- an unreadable scan, or a
+    statement whose table did not extract -- this says so plainly rather than
+    reporting an empty reconciliation, which would read as "nothing is
+    outstanding" and is the opposite of the truth.
+    """
+    from services.document_comparison import reconcile_referenced_documents
+
+    progress("reconciling_statement")
+
+    extracted = attachment.extracted_json or {}
+    references = extracted.get("referenced_documents") or []
+    deductions = extracted.get("payment_deductions") or []
+
+    if not references:
+        turn.route = "ATTACHMENT"
+        turn.stop_reason = "attachment_no_references_extracted"
+        return {
+            "content": (
+                "I could not read a list of invoice references off that document, so "
+                "there is nothing for me to reconcile against your records. If it is a "
+                "scan, a clearer copy usually helps."
+            ),
+            "generated_sql": "",
+            "citations": [],
+            "result_invoice_ids": [],
+            "needs_confirmation": False,
+        }
+
+    result = reconcile_referenced_documents(
+        tenant_id=tenant_uuid,
+        referenced_documents=references,
+        deductions=deductions,
+        db_session=db_session,
+        party_name=attachment.party_name,
+    )
+
+    # Deterministically composed, exactly as B2's clarifying turn is. The counts
+    # are the answer; a model asked to phrase this could only restate them, and
+    # might restate them wrongly.
+    outcomes = [r.get("outcome") for r in result["references"]]
+    matched = outcomes.count("found_matching")
+    mismatched = sum(1 for o in outcomes if o in ("amount_mismatch", "status_mismatch"))
+    missing = outcomes.count("not_found")
+    unreferenced = len(result["unreferenced_invoices"])
+
+    parts = [f"I checked {len(outcomes)} reference(s) on that document against your invoices."]
+    if matched:
+        parts.append(f"{matched} agree.")
+    if mismatched:
+        parts.append(f"{mismatched} do not — the differences are in the table below.")
+    if missing:
+        parts.append(f"{missing} reference invoices I have no record of.")
+    if unreferenced:
+        parts.append(
+            f"{unreferenced} open invoice(s) of yours are NOT listed on their document."
+        )
+    if result["deductions"]:
+        parts.append(
+            f"{len(result['deductions'])} deduction(s) are shown separately rather than netted."
+        )
+
+    turn.route = "ATTACHMENT"
+    turn.stop_reason = "reconciliation_complete"
+    result_ids = [r["invoice_id"] for r in result["references"] if r.get("invoice_id")]
+
+    return {
+        "content": " ".join(parts),
+        "generated_sql": "",
+        "citations": [],
+        "result_invoice_ids": result_ids,
+        # B10's third contract key. Absent on every other branch, per §P2.8's
+        # rule that a key's presence is itself a claim about what ran.
+        "reconciliation": result,
+        "needs_confirmation": False,
+    }
 
 
 def _run_attachment_content_branch(

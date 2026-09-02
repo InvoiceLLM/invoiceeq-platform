@@ -34,6 +34,7 @@ import SqlAuditDrawer from "./SqlAuditDrawer";
 import ThumbsDownTriage from "./ThumbsDownTriage";
 import AttachmentMatchConfirm from "./AttachmentMatchConfirm";
 import DocumentEvidence from "./DocumentEvidence";
+import ReconciliationTable from "./ReconciliationTable";
 import { apiClient } from "@/lib/apiClient";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -584,6 +585,14 @@ export default function MessageBubble({
         {/* Quoted spans from the attachment's own pages. NOT citation pills:
             there is no audit record behind an attachment span (D2). */}
         {evidence && evidence.length > 0 && <DocumentEvidence spans={evidence} />}
+        {/*
+          B10/R10. Rendered on its presence alone, exactly as the diff table is:
+          the backend emits `reconciliation` only on a `list_reconcile` turn, so
+          the key IS the condition and no flag needs consulting.
+        */}
+        {message.reconciliation && (
+          <ReconciliationTable reconciliation={message.reconciliation} />
+        )}
 
         {/* `needs_confirmation` does NOT gate the card below — the live backend
             only ever emits it as `false`, from the content branch. When it is
