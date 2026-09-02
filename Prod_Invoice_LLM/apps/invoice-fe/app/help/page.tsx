@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { Search, ChevronRight, BookOpen, Bot, Sparkles } from "lucide-react";
+import { Search, ChevronRight, BookOpen, Bot, Sparkles, Ticket } from "lucide-react";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 import { HELP_SECTIONS as TRAINER_HELP_SECTIONS, type HelpSection } from "./content/trainer-guide";
 import { AUDITOR_HELP_SECTIONS } from "./content/auditor-guide";
@@ -11,6 +11,7 @@ import { OUTBOUND_EMAIL_HELP_SECTIONS } from "./content/outbound-email-guide";
 import { AUTOPILOT_HELP_SECTIONS } from "./content/autopilot-guide";
 import { SETTINGS_HELP_SECTIONS } from "./content/settings-guide";
 import { SupportChatWindow } from "@/components/help/SupportChatWindow";
+import { TicketHistoryPanel } from "@/components/help/TicketHistoryPanel";
 
 const HELP_SECTIONS: HelpSection[] = [
   ...TRAINER_HELP_SECTIONS,
@@ -28,8 +29,9 @@ export default function HelpPage() {
     subtitle: "Step-by-step guides for using the platform, with real app screenshots and AI support assistant.",
   });
 
-  // Default view is 'guides' (Knowledge Base) as required by specification
-  const [activeTab, setActiveTab] = useState<"guides" | "assistant">("guides");
+  // Default view is 'guides' (Knowledge Base) as required by specification.
+  // FE Gap 368: "tickets" tab added, default view unchanged.
+  const [activeTab, setActiveTab] = useState<"guides" | "assistant" | "tickets">("guides");
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string>(HELP_SECTIONS[0].id);
 
@@ -82,6 +84,21 @@ export default function HelpPage() {
             <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-400/20 text-cyan-300 font-mono font-normal">
               Ask SAGE
             </span>
+          </button>
+          {/* FE Gap 368: Ticket History & Status tab */}
+          <button
+            id="tab-btn-tickets"
+            role="tab"
+            aria-selected={activeTab === "tickets"}
+            onClick={() => setActiveTab("tickets")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              activeTab === "tickets"
+                ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
+                : "text-slate-400 hover:text-white hover:bg-white/5"
+            }`}
+          >
+            <Ticket className="w-3.5 h-3.5" />
+            <span>My Tickets</span>
           </button>
         </div>
 
@@ -150,6 +167,13 @@ export default function HelpPage() {
       {activeTab === "assistant" && (
         <div id="help-assistant-container" className="animate-in fade-in duration-200">
           <SupportChatWindow />
+        </div>
+      )}
+
+      {/* Tab 3 (FE Gap 368): Ticket History & Status */}
+      {activeTab === "tickets" && (
+        <div id="help-tickets-container" className="animate-in fade-in duration-200">
+          <TicketHistoryPanel />
         </div>
       )}
     </div>

@@ -28,6 +28,8 @@ export interface OrgUser {
   canTrain: boolean;
   canAudit: boolean;
   canLoad: boolean;
+  /** Gap 369: per-user Send Invoices visibility. */
+  canSendInvoices: boolean;
 }
 
 /** Shape of a row from GET /api/admin/users (backend AdminUserOut). */
@@ -41,6 +43,7 @@ interface AdminUserDto {
   can_train: boolean;
   can_audit: boolean;
   can_load: boolean;
+  can_send_invoices: boolean;
   created_at: string;
   last_login: string | null;
 }
@@ -81,16 +84,23 @@ const DROP_REASON_LABELS: Record<string, string> = {
   ingest_failed: "Processing failed",
 };
 
-/** The three grantable permissions, in the order they render. */
+/** The four grantable permissions, in the order they render. */
 const PERMISSIONS = [
   { key: "canTrain" as const, field: "can_train" as const, label: "Trainer" },
   { key: "canAudit" as const, field: "can_audit" as const, label: "Auditor" },
   { key: "canLoad" as const, field: "can_load" as const, label: "Loader" },
+  // Gap 369: Admin-config-panel visibility control for Send Invoices.
+  { key: "canSendInvoices" as const, field: "can_send_invoices" as const, label: "Send Invoices" },
 ];
 
-export type PermissionState = { canTrain: boolean; canAudit: boolean; canLoad: boolean };
+export type PermissionState = {
+  canTrain: boolean;
+  canAudit: boolean;
+  canLoad: boolean;
+  canSendInvoices: boolean;
+};
 
-/** PUT the 3 flags for a user. `userRef` is a backend UUID or a Clerk user ID. */
+/** PUT the 4 flags for a user. `userRef` is a backend UUID or a Clerk user ID. */
 async function savePermissions(
   userRef: string,
   perms: PermissionState,
@@ -103,6 +113,7 @@ async function savePermissions(
       can_train: perms.canTrain,
       can_audit: perms.canAudit,
       can_load: perms.canLoad,
+      can_send_invoices: perms.canSendInvoices,
       ...(identity
         ? { email: identity.email, first_name: identity.firstName, last_name: identity.lastName }
         : {}),
@@ -205,6 +216,7 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
     canTrain: false,
     canAudit: false,
     canLoad: false,
+    canSendInvoices: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -228,7 +240,7 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
       // get_tenant_context only writes one on their first API call), so the
       // grant survives until they first sign in. Only attempted when at least
       // one box is ticked, so the default path stays a single request.
-      if (perms.canTrain || perms.canAudit || perms.canLoad) {
+      if (perms.canTrain || perms.canAudit || perms.canLoad || perms.canSendInvoices) {
         await savePermissions(data.userId, perms, { email: data.email, firstName, lastName });
       }
 
@@ -348,7 +360,7 @@ export default function AdminDashboardPage() {
   // FE Gap 167: the real, backend-resolved identity of whoever is looking at
   // this page. This screen used to describe the viewer as the org's Admin
   // unconditionally; every role/permission label below now comes from here.
-  const { role, canTrain, canAudit, canLoad, tenantName, loading: authLoading, userId } = useAuth();
+  const { role, canTrain, canAudit, canLoad, canSendInvoices, tenantName, loading: authLoading, userId } = useAuth();
   const isAdmin = role === "Admin";
 
   const [users, setUsers] = useState<OrgUser[]>([]);
@@ -402,6 +414,7 @@ export default function AdminDashboardPage() {
             canTrain: r.can_train,
             canAudit: r.can_audit,
             canLoad: r.can_load,
+            canSendInvoices: r.can_send_invoices,
           }))
       );
     } catch {
@@ -449,6 +462,7 @@ export default function AdminDashboardPage() {
       canTrain: target.canTrain,
       canAudit: target.canAudit,
       canLoad: target.canLoad,
+      canSendInvoices: target.canSendInvoices,
       [key]: !target[key],
     };
     // Optimistic: the checkbox flips immediately, and is rolled back if the
@@ -491,6 +505,7 @@ export default function AdminDashboardPage() {
     canTrain ? "Trainer" : null,
     canAudit ? "Auditor" : null,
     canLoad ? "Loader" : null,
+    canSendInvoices ? "Send Invoices" : null,
   ].filter(Boolean) as string[];
   const selfPermissions = isAdmin
     ? "All (Admin)"
