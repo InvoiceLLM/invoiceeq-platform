@@ -1374,3 +1374,21 @@ def test_qa_test_passes_a_real_uuid_so_chat_history_actually_loads(trainer_mocks
     # It is now a real ChatSession UUID, and history for it resolves to real turns.
     chat_session_id = UUID(captured["session_id"])
     assert get_chat_history(str(chat_session_id), db_session) != ""
+
+
+def test_trainer_upload_rejects_non_pdf(db_session):
+    """Gap 355 (BE): /trainer/upload rejects non-PDF file extensions."""
+    import io
+    files = {"file": ("training.docx", io.BytesIO(b"PK\x03\x04 fake docx content"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    response = client.post("/api/v1/trainer/upload", files=files)
+    assert response.status_code == 400
+    assert "Only PDF files are supported" in response.json()["detail"]
+
+
+def test_trainer_upload_rejects_invalid_pdf_magic_bytes(db_session):
+    """Gap 355 (BE): /trainer/upload rejects corrupt files without %PDF magic bytes."""
+    import io
+    files = {"file": ("corrupt.pdf", io.BytesIO(b"plain text without pdf header"), "application/pdf")}
+    response = client.post("/api/v1/trainer/upload", files=files)
+    assert response.status_code == 400
+    assert "Invalid PDF content" in response.json()["detail"]

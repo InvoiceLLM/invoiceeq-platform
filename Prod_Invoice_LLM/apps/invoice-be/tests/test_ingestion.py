@@ -362,7 +362,7 @@ def test_invoice_status_endpoint_returns_currency(db_session):
 
 
 def test_rejects_non_pdf_file_extension(db_session):
-    """Gap 363 (BE): Non-PDF files (e.g. .docx, .jpg) must be rejected with 400 Bad Request."""
+    """Gap 355 (BE): Non-PDF files (e.g. .docx, .jpg) must be rejected with 400 Bad Request."""
     files = {"files": ("invoice.docx", io.BytesIO(b"PK\x03\x04 fake docx content"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
     client = TestClient(app)
     response = client.post("/api/v1/invoices/upload", files=files)
@@ -371,7 +371,7 @@ def test_rejects_non_pdf_file_extension(db_session):
 
 
 def test_rejects_invalid_pdf_magic_bytes(db_session):
-    """Gap 363 (BE): Files with .pdf extension but invalid/corrupt PDF headers must be rejected with 400."""
+    """Gap 355 (BE): Files with .pdf extension but invalid/corrupt PDF headers must be rejected with 400."""
     files = {"files": ("fake.pdf", io.BytesIO(b"This is just plain text, not a PDF"), "application/pdf")}
     client = TestClient(app)
     response = client.post("/api/v1/invoices/upload", files=files)

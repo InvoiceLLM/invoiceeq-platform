@@ -253,7 +253,7 @@ async def upload_invoices(
             detail="No files uploaded."
         )
 
-    # 1. Validate that all files are PDFs and contain valid PDF headers (Gap 363)
+    # 1. Validate that all files are PDFs and contain valid PDF headers (Gap 355)
     for file in files:
         fname = (file.filename or "").strip()
         if not fname.lower().endswith(".pdf"):

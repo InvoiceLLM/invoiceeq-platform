@@ -679,7 +679,7 @@ function FlowCanvas({
                 {node.sublabel.length > 30 ? node.sublabel.slice(0, 29) + "…" : node.sublabel}
               </text>
             )}
-            {/* State dot (Gap 360: offset left of NEW badge if badge is present, preventing dot/badge collision) */}
+            {/* State dot (Gap 353: offset left of NEW badge if badge is present, preventing dot/badge collision) */}
             {state !== "idle" && (
               <circle cx={node.isNew ? NW - 44 : NW - 10} cy={11.5} r={3.5}
                 fill={state === "active" ? accentColor : state === "done" ? "#22C55E" : state === "warn" ? "#EAB308" : "#EF4444"}
