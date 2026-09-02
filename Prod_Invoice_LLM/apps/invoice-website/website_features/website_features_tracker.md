@@ -253,9 +253,26 @@ Highest number in use anywhere in the repo as of this check: **334**. The block 
   - `npx playwright test --workers=1` → **39 passed, 1 failed**. The failure (`billing-payu-relay.spec.ts:76`) was **proven pre-existing rather than assumed**: the Feature 7 changes were stashed with `git stash push -u` limited to the five touched paths, the spec re-run on the untouched baseline failed identically (same `page.waitForURL` timeout at line 99, 4 passed / 1 failed both times), and the changes were then restored.
   - **Not done, stated rather than dropped**: no Playwright spec exercises any of the three new components. The behavioural evidence above is a scripted headless-Chrome run, not a committed regression test — same residual `/contact` carries under Feature 5 Task 5.4.
 
+- [x] **Gap 353 (Website, Feature 4 / W-07): Missing interactive password visibility toggle (👁️) on Login, Signup, and Password Reset screens** — opened and closed 2026-09-02 (Category 2, Item 1 / W-07).
+  - Implemented Lucide `Eye` and `EyeOff` interactive toggle buttons inline within password input wrappers in `app/login/page.tsx`, `app/signup/page.tsx` (both Password and Confirm fields), and `app/forgot-password/page.tsx`.
+  - Added dynamic input type switching (`type={showPassword ? "text" : "password"}`) with accessible `aria-label` tags and focus styling.
+  - Verified: `npx tsc --noEmit` clean (exit 0), `npm run build` clean (exit 0).
+
+- [x] **Gap 355 (Website & BE, Feature 3 & Feature 11 / B-01, B-03, B-05..07): Payment Gateway Sandbox Integration & End-to-End Simulation Lifecycle** — opened and closed 2026-09-02 (Category 2, Item 3).
+  - Built `apps/invoice-be/tests/test_billing_sandbox.py` with 7 comprehensive sandbox simulation tests:
+    - End-to-end checkout & payment promotion for Pro (`₹4,999.00`) and Pro Combined (`₹8,999.00`) plans.
+    - Verified database state transitions, `paid_through` timestamp extensions (+30 days), and redirect handling to `/billing/success?plan=...&txnid=...`.
+    - Automated decline and bank failure simulation with safe retry routing (`/billing/failed?txnid=...`).
+    - Cryptographic SHA-512 tamper attack rejection (`/billing/failed?reason=hash_mismatch`).
+    - Downstream network timeout recovery (`/billing/failed?reason=unverifiable`).
+    - Lapsed / unpaid subscription recovery (unlocking `unpaid` tenants via checkout).
+    - Idempotency & duplicate callback resilience.
+  - Verified: `pytest tests/test_billing_sandbox.py -v` (7/7 passed), combined billing suite `pytest tests/test_billing.py tests/test_billing_sandbox.py -v` (35/35 passed).
+
 ## Gap Items (Future)
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 1 | Privacy Policy Page | `[x]` Complete | Written with glassmorphism layout, fully accessible at `/privacy` |
 | 2 | Terms & Conditions Page | `[x]` Complete | Written with glassmorphism layout, fully accessible at `/terms` |
+

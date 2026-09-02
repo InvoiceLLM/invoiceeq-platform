@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useSignUp } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 import { Header } from "@/components/marketing/Header";
 import { clearStoredSandboxKey, readStoredSandboxKey } from "@/lib/sandboxKey";
 
@@ -310,6 +311,8 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -720,28 +723,78 @@ export default function SignupPage() {
                     <div style={S.inputWrap}>
                       <span style={S.inputIcon}>🔒</span>
                       <input
-                        type="password"
+                        type={showPassword ? "text" : "password"}
                         placeholder="Password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         onFocus={() => setFocused("password")}
                         onBlur={() => setFocused(null)}
-                        style={inputStyle("password")}
+                        style={{ ...inputStyle("password"), paddingRight: "36px" }}
                         required
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        style={{
+                          position: "absolute",
+                          right: "10px",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "none",
+                          border: "none",
+                          color: T.textDim,
+                          cursor: "pointer",
+                          padding: "4px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          transition: "color 0.2s",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = T.textPrimary)}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = T.textDim)}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        tabIndex={0}
+                      >
+                        {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
                     </div>
                     <div style={S.inputWrap}>
                       <span style={S.inputIcon}>🔑</span>
                       <input
-                        type="password"
+                        type={showConfirm ? "text" : "password"}
                         placeholder="Confirm"
                         value={confirm}
                         onChange={(e) => setConfirm(e.target.value)}
                         onFocus={() => setFocused("confirm")}
                         onBlur={() => setFocused(null)}
-                        style={inputStyle("confirm")}
+                        style={{ ...inputStyle("confirm"), paddingRight: "36px" }}
                         required
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirm(!showConfirm)}
+                        style={{
+                          position: "absolute",
+                          right: "10px",
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          background: "none",
+                          border: "none",
+                          color: T.textDim,
+                          cursor: "pointer",
+                          padding: "4px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          transition: "color 0.2s",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = T.textPrimary)}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = T.textDim)}
+                        aria-label={showConfirm ? "Hide confirm password" : "Show confirm password"}
+                        tabIndex={0}
+                      >
+                        {showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
                     </div>
                   </div>
                 </div>

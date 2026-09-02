@@ -1,0 +1,103 @@
+<svg width="800" height="380" viewBox="0 0 800 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="800" height="380" rx="16" fill="#0B0F19"/>
+  <rect x="0.5" y="0.5" width="799" height="379" rx="15.5" stroke="#222D3D"/>
+  
+  <!-- Header Bar -->
+  <rect x="20" y="20" width="760" height="40" rx="8" fill="#151B26" stroke="#222D3D"/>
+  <circle cx="42" cy="40" r="5" fill="#EF4444"/>
+  <circle cx="58" cy="40" r="5" fill="#F59E0B"/>
+  <circle cx="74" cy="40" r="5" fill="#10B981"/>
+  <text x="100" y="44" fill="#94A3B8" font-family="'Inter', -apple-system, sans-serif" font-size="12" font-weight="600">Platform Settings: Multi-Tenant RBAC, API Keys &amp; Security Architecture</text>
+  <rect x="680" y="28" width="84" height="24" rx="6" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-opacity="0.3"/>
+  <text x="696" y="44" fill="#34D399" font-family="'Inter', -apple-system, sans-serif" font-size="10" font-weight="700">RBAC 2.0</text>
+
+  <!-- Step 1: Clerk Org & Roles -->
+  <g transform="translate(40, 90)">
+    <rect width="160" height="230" rx="12" fill="#151B26" stroke="#3B82F6" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#3B82F6" fill-opacity="0.15"/>
+    <!-- Users Icon -->
+    <path d="M25 28C27.2 28 29 26.2 29 24C29 21.8 27.2 20 25 20C22.8 20 21 21.8 21 24C21 26.2 22.8 28 25 28ZM25 30C22.3 30 17 31.3 17 34V36H33V34C33 31.3 27.7 30 25 30Z" fill="#60A5FA"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">Team Roles</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">Clerk Org Scoped</text>
+    <line x1="12" y1="62" x2="148" y2="62" stroke="#222D3D"/>
+    <rect x="12" y="74" width="136" height="34" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="90" fill="#60A5FA" font-family="'Inter', sans-serif" font-size="10" font-weight="700">Admin</text>
+    <text x="18" y="102" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Billing, API keys, rules</text>
+    <rect x="12" y="116" width="136" height="34" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="132" fill="#34D399" font-family="'Inter', sans-serif" font-size="10" font-weight="700">Auditor</text>
+    <text x="18" y="144" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Review &amp; approve queue</text>
+    <rect x="12" y="158" width="136" height="34" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="174" fill="#FBBF24" font-family="'Inter', sans-serif" font-size="10" font-weight="700">Trainer</text>
+    <text x="18" y="186" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Author extraction rules</text>
+  </g>
+
+  <!-- Arrow 1 -> 2 -->
+  <path d="M210 205 L240 205" stroke="#3B82F6" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="240,201 248,205 240,209" fill="#3B82F6"/>
+
+  <!-- Step 2: Tenant Context & AES Token Store -->
+  <g transform="translate(258, 90)">
+    <rect width="170" height="230" rx="12" fill="#151B26" stroke="#8B5CF6" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#8B5CF6" fill-opacity="0.15"/>
+    <!-- Key Icon -->
+    <path d="M34 22C30.7 22 28 24.7 28 28C28 29.1 28.3 30.1 28.8 31L22 37.8V42H26.2L28.2 40L30.2 42L34 38.2C34.9 38.7 35.9 39 37 39C40.3 39 43 36.3 43 33C43 29.7 40.3 22 34 22Z" fill="#A78BFA"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">Token Vault</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">AES-256 GCM</text>
+    <line x1="12" y1="62" x2="158" y2="62" stroke="#222D3D"/>
+    <rect x="12" y="74" width="146" height="38" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="90" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Encrypted OAuth</text>
+    <text x="18" y="103" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Drive tokens stored secure</text>
+    <rect x="12" y="120" width="146" height="38" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="136" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Secret Token Salts</text>
+    <text x="18" y="149" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">whsec_ salted keys</text>
+    <rect x="12" y="166" width="146" height="46" rx="6" fill="#8B5CF6" fill-opacity="0.1" stroke="#8B5CF6" stroke-opacity="0.3"/>
+    <text x="18" y="184" fill="#C4B5FD" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Tenant Scoping</text>
+    <text x="18" y="198" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="9">Strict PostgreSQL row-level</text>
+  </g>
+
+  <!-- Arrow 2 -> 3 -->
+  <path d="M438 205 L468 205" stroke="#8B5CF6" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="468,201 476,205 468,209" fill="#8B5CF6"/>
+
+  <!-- Step 3: API Keys & Connectors -->
+  <g transform="translate(486, 90)">
+    <rect width="130" height="230" rx="12" fill="#151B26" stroke="#10B981" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#10B981" fill-opacity="0.15"/>
+    <circle cx="30" cy="32" r="7" fill="#34D399"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">API Access</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">X-API-Key</text>
+    <line x1="12" y1="62" x2="118" y2="62" stroke="#222D3D"/>
+    <rect x="12" y="74" width="106" height="34" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="90" fill="#34D399" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Read / Write</text>
+    <text x="18" y="102" fill="#64748B" font-family="'Inter', sans-serif" font-size="8">Full automation</text>
+    <rect x="12" y="116" width="106" height="34" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="132" fill="#38BDF8" font-family="'Inter', sans-serif" font-size="10" font-weight="600">LOP Data Sync</text>
+    <text x="18" y="144" fill="#64748B" font-family="'Inter', sans-serif" font-size="8">Cross-service</text>
+    <rect x="12" y="158" width="106" height="46" rx="6" fill="#10B981" fill-opacity="0.1" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="18" y="176" fill="#34D399" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Key Rotation</text>
+    <text x="18" y="192" fill="#64748B" font-family="'Inter', sans-serif" font-size="8">Instant revoke</text>
+  </g>
+
+  <!-- Arrow 3 -> 4 -->
+  <path d="M626 205 L656 205" stroke="#10B981" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="656,201 664,205 656,209" fill="#10B981"/>
+
+  <!-- Step 4: PayU Billing Plans -->
+  <g transform="translate(674, 90)">
+    <rect width="90" height="230" rx="12" fill="#151B26" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="10" y="14" width="30" height="30" rx="6" fill="#06B6D4" fill-opacity="0.15"/>
+    <circle cx="25" cy="29" r="6" fill="#22D3EE"/>
+    <text x="46" y="26" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="11" font-weight="700">Tiers</text>
+    <text x="46" y="38" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Billing</text>
+    <line x1="10" y1="56" x2="80" y2="56" stroke="#222D3D"/>
+    <rect x="8" y="70" width="74" height="42" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="12" y="86" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="9" font-weight="700">Free</text>
+    <text x="12" y="100" fill="#64748B" font-family="'Inter', sans-serif" font-size="8">50 inv/mo</text>
+    <rect x="8" y="122" width="74" height="42" rx="6" fill="#3B82F6" fill-opacity="0.15" stroke="#3B82F6" stroke-opacity="0.3"/>
+    <text x="12" y="138" fill="#60A5FA" font-family="'Inter', sans-serif" font-size="9" font-weight="700">Pro</text>
+    <text x="12" y="152" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="8">Unlimited AP</text>
+    <rect x="8" y="174" width="74" height="34" rx="6" fill="#8B5CF6" fill-opacity="0.15" stroke="#8B5CF6" stroke-opacity="0.3"/>
+    <text x="12" y="192" fill="#C4B5FD" font-family="'Inter', sans-serif" font-size="9" font-weight="700">Combined</text>
+  </g>
+</svg>

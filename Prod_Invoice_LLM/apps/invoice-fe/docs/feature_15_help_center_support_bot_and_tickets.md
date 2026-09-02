@@ -52,6 +52,8 @@ Upgrade the Help Center (`/help`) into a dual-mode support and troubleshooting h
 - [x] **Task 15.3: Build `SupportTicketModal.tsx`** — Done 2026-08-17. Form fields, live validation, priority pills with SLA labels, pre-fill from escalation context / transcript, animated success state showing the returned reference number.
 - [x] **Task 15.4: Create API Proxy Routes** — Done 2026-08-17. Both routes are thin `POST` handlers over `proxyJson()` from `lib/backendProxy.ts`; Clerk token forwarding is that helper's existing behaviour rather than anything re-implemented here.
 - [x] **Task 15.5: Automated E2E Tests** — Done 2026-08-17. `e2e/help-support.spec.ts`, 6 specs: guides open by default, search filters topics, tab switch to SAGE, chat turn returns a response, escalation card appears on a system error and pre-fills the modal, and the header direct-ticket button opens a clean modal and submits.
+- [x] **Task 15.6: Knowledge Base Rich Media & Screenshots (FE Gap 249 / H-01)** — Done 2026-09-02 (Category 2, Item 4). Authored and embedded high-resolution SVG workflow and architecture diagrams across all 17 guide topics in `app/help/content/*-guide.tsx` (Autopilot Google Drive sweep, Webhooks HMAC lifecycle, Inbound/Outbound email allowlist routing, and Platform settings & multi-tenant RBAC).
+- [x] **Task 15.7: AI Support Assistant Conversation History & Persistence (FE Gap 250 / H-03)** — Done 2026-09-02 (Category 2, Item 5). Added session-level conversation history persistence in `sessionStorage` (`invoiceeq_support_chat_history`) and a Clear Chat reset action to `SupportChatWindow.tsx` while preserving all existing UI styling, prompt chips, and modal workflows.
 
 ---
 

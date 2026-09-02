@@ -635,6 +635,22 @@ Full FE design + verification record: `docs/feature_15_help_center_support_bot_a
   - **`SupportChatWindow.tsx`**: Features a single centralized **`[ 🎫 Raise Ticket Directly ]`** action button in the chat header allowing users to submit direct tickets without starting a conversation.
   - **Verification, as reported by the branch author on 2026-08-17**: `npx tsc --noEmit` clean (exit 0), `tests/test_support.py` 22/22 passed, Playwright `e2e/help-support.spec.ts` **6/6 passed**. **Not re-run in the 2026-08-18 merge-prep pass** — that pass had no `node_modules` and no backend venv available in its worktree, so it verified the code by reading it and confirmed only the countable facts: `e2e/help-support.spec.ts` does contain exactly 6 `test(` blocks, and `tests/test_support.py` does collect 22 cases (20 functions, one of them `@pytest.mark.parametrize`'d over 3 values). Every Playwright spec here stubs `/api/**`, so nothing in this feature has been exercised against a real backend, a real Clerk session, or a real SendGrid dispatch.
 
+- [x] **Gap 249 (FE, Feature 15 / H-01): Knowledge Base lacks rich walkthrough screenshots across all 17 guide topics** — opened and closed 2026-09-02 (Category 2, Item 4 / H-01).
+  - Authored and embedded high-resolution SVG workflow and architecture diagrams across missing guides:
+    - `/help/autopilot/01-autopilot-setup.svg` (Autopilot Google Drive scheduled sweep, deduplication guard, and AI extraction)
+    - `/help/webhooks/01-webhook-architecture.svg` (Developer Webhooks HMAC SHA-256 signature and retry lifecycle)
+    - `/help/email/01-inbound-email-flow.svg` (Inbound Mailbox, SendGrid Inbound Parse, and allowlist routing)
+    - `/help/email/02-outbound-email-flow.svg` (Outbound AR Invoicing audit review, Confirm Send, and internal staff notifications)
+    - `/help/settings/01-settings-overview.svg` (Multi-tenant Clerk RBAC, AES-256 token vault, and billing subscriptions)
+  - Updated `webhooks-guide.tsx`, `inbound-email-guide.tsx`, `outbound-email-guide.tsx`, `autopilot-guide.tsx`, and `settings-guide.tsx` to render responsive `Shot` components with captions.
+  - Verified: `npx tsc --noEmit` clean (exit 0), `npm run build` clean (exit 0).
+
+- [x] **Gap 250 (FE, Feature 15 / H-03): AI Support Assistant Conversation History & Persistence** — opened and closed 2026-09-02 (Category 2, Item 5 / H-03).
+  - Resolved conversation history wipe on tab switch between "Knowledge Base Guides" and "Ask SAGE" or page reload by persisting message state in `sessionStorage` (`invoiceeq_support_chat_history`).
+  - Added a dedicated `Clear Chat` action button in the chat header allowing users to cleanly reset the conversation back to the initial welcome state.
+  - Kept all existing glassmorphic chat UI styling, prompt chips, low confidence fallback, and `SupportTicketModal` pre-fill integrations intact.
+  - Verified: `npx tsc --noEmit` clean (exit 0), `npm run build` clean (exit 0).
+
 ---
 
 ## Feature 14 — Alert-Anchored Trainer & Chat Correction Lane (2026-08-17)

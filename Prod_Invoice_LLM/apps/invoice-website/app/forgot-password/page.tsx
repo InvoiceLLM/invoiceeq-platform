@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useSignIn } from "@clerk/nextjs";
 import Link from "next/link";
+import { Eye, EyeOff } from "lucide-react";
 import { Header } from "@/components/marketing/Header";
 
 /* Design tokens (match login/signup) */
@@ -58,6 +59,7 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [step, setStep] = useState<"request" | "verify">("request");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -232,7 +234,7 @@ export default function ForgotPasswordPage() {
                 <div style={S.inputWrap}>
                   <span style={S.inputIcon}>🔒</span>
                   <input
-                    type="password"
+                    type={showNewPassword ? "text" : "password"}
                     name="new-password"
                     autoComplete="new-password"
                     placeholder="New password"
@@ -240,9 +242,34 @@ export default function ForgotPasswordPage() {
                     onChange={(e) => setNewPassword(e.target.value)}
                     onFocus={() => setFocused("password")}
                     onBlur={() => setFocused(null)}
-                    style={inputStyle("password")}
+                    style={{ ...inputStyle("password"), paddingRight: "40px" }}
                     required
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    style={{
+                      position: "absolute",
+                      right: "12px",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "none",
+                      border: "none",
+                      color: T.textDim,
+                      cursor: "pointer",
+                      padding: "4px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      transition: "color 0.2s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = T.textPrimary)}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = T.textDim)}
+                    aria-label={showNewPassword ? "Hide password" : "Show password"}
+                    tabIndex={0}
+                  >
+                    {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
                 </div>
 
                 {error && (

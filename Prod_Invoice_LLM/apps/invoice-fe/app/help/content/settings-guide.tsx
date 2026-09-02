@@ -13,7 +13,7 @@ function Shot({ src, alt, caption }: { src: string; alt: string; caption?: strin
           src={src}
           alt={alt}
           onError={() => setHasError(true)}
-          className="w-full block object-cover max-h-[420px]"
+          className="w-full block object-contain max-h-[420px]"
         />
       ) : (
         <div className="flex flex-col items-center justify-center p-8 bg-[#0F172A]/90 text-slate-400 gap-2 border-b border-[#222D3D]">
@@ -54,6 +54,12 @@ export const SETTINGS_HELP_SECTIONS: HelpSection[] = [
         <P>
           Configure and manage your workspace settings, security access, automated integrations, and subscription billing.
         </P>
+
+        <Shot
+          src="/help/settings/01-settings-overview.svg"
+          alt="Platform Settings & RBAC Architecture Overview"
+          caption="Settings Architecture: Multi-tenant Clerk RBAC, AES-256 token encryption vault, and PayU subscription tiers."
+        />
 
         <div className="space-y-4 mt-4">
           {/* Section 1: Organisation & Security */}

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useSignIn, useClerk, useUser } from "@clerk/nextjs";
+import { Eye, EyeOff } from "lucide-react";
 import { appHref } from "../../lib/billingPlans";
 import { Header } from "@/components/marketing/Header";
 
@@ -68,6 +69,7 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [needsOtp, setNeedsOtp] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -275,15 +277,40 @@ export default function LoginPage() {
               <div style={S.inputWrap}>
                 <span style={S.inputIcon}>🔒</span>
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   placeholder="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onFocus={() => setFocused("password")}
                   onBlur={() => setFocused(null)}
-                  style={inputStyle("password")}
+                  style={{ ...inputStyle("password"), paddingRight: "40px" }}
                   required
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: "absolute",
+                    right: "12px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none",
+                    border: "none",
+                    color: T.textDim,
+                    cursor: "pointer",
+                    padding: "4px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "color 0.2s",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = T.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = T.textDim)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  tabIndex={0}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
 
               <div style={{ textAlign: "right", marginTop: "6px", marginBottom: "8px" }}>

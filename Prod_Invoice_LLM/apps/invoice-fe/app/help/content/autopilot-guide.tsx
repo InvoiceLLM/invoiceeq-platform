@@ -13,7 +13,7 @@ function Shot({ src, alt, caption }: { src: string; alt: string; caption?: strin
           src={src}
           alt={alt}
           onError={() => setHasError(true)}
-          className="w-full block object-cover max-h-[420px]"
+          className="w-full block object-contain max-h-[420px]"
         />
       ) : (
         <div className="flex flex-col items-center justify-center p-8 bg-[#0F172A]/90 text-slate-400 gap-2 border-b border-[#222D3D]">
@@ -60,9 +60,9 @@ export const AUTOPILOT_HELP_SECTIONS: HelpSection[] = [
         </P>
         
         <Shot
-          src="/help/autopilot/01-autopilot-setup.png"
+          src="/help/autopilot/01-autopilot-setup.svg"
           alt="Autopilot settings configuration view"
-          caption="Configure target directories and sync intervals for your Google Drive source."
+          caption="Configure target directories, deduplication guard, and sync intervals for your Google Drive source."
         />
 
         <div className="space-y-2 mt-4">

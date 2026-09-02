@@ -1,6 +1,35 @@
 import React from "react";
 import { HelpSection } from "./trainer-guide";
-import { Webhook, ShieldCheck, Zap } from "lucide-react";
+import { Webhook, ShieldCheck, Zap, ImageIcon } from "lucide-react";
+
+function Shot({ src, alt, caption }: { src: string; alt: string; caption?: string }) {
+  const [hasError, setHasError] = React.useState(false);
+
+  return (
+    <figure className="rounded-xl overflow-hidden border border-[#222D3D] bg-[#0B0F19]">
+      {!hasError ? (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          src={src}
+          alt={alt}
+          onError={() => setHasError(true)}
+          className="w-full block object-contain max-h-[420px]"
+        />
+      ) : (
+        <div className="flex flex-col items-center justify-center p-8 bg-[#0F172A]/90 text-slate-400 gap-2 border-b border-[#222D3D]">
+          <ImageIcon className="w-8 h-8 text-blue-400/60" />
+          <span className="text-xs font-semibold text-slate-300">{alt}</span>
+          <span className="text-[10px] text-slate-500 font-mono">Platform User Guide Preview Asset</span>
+        </div>
+      )}
+      {caption && (
+        <figcaption className="text-[11px] text-slate-500 px-3 py-2 border-t border-[#222D3D]">
+          {caption}
+        </figcaption>
+      )}
+    </figure>
+  );
+}
 
 function P({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-slate-300 leading-relaxed">{children}</p>;
@@ -28,6 +57,12 @@ export const WEBHOOKS_HELP_SECTIONS: HelpSection[] = [
         <P>
           Instead of constantly polling the REST API for updates, webhooks push data to your designated <strong>Target URL</strong> instantly as status changes occur.
         </P>
+
+        <Shot
+          src="/help/webhooks/01-webhook-architecture.svg"
+          alt="Developer Webhooks Architecture Diagram"
+          caption="Webhook delivery lifecycle: Event generation -> HMAC-SHA256 signature -> HTTPS POST with 3x exponential backoff."
+        />
 
         <div className="space-y-2 mt-4">
           <h4 className="text-xs font-semibold text-white uppercase tracking-wider">Subscribed Events</h4>

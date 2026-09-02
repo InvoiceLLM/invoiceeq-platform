@@ -11,6 +11,7 @@ import {
   ArrowRight,
   HelpCircle,
   Shield,
+  RotateCcw,
 } from "lucide-react";
 import { SupportTicketModal, type EscalationData } from "./SupportTicketModal";
 
@@ -44,20 +45,59 @@ const PROMPT_CHIPS = [
   { label: "Simulate ERP Batch Sync Timeout (504)", query: "We experienced a 504 gateway timeout during batch sync", isError: true },
 ];
 
+const INTRO_MESSAGE: ChatMessage = {
+  id: "intro-1",
+  role: "assistant",
+  content:
+    "Hello! I am **SAGE**, your AI Support & Troubleshooting Assistant.\n\n" +
+    "Ask me anything about platform workflows, training custom extraction rules, resolving auditor alerts, or system integrations. If we run into an unresolvable issue, I can automatically draft a priority support ticket for our engineering team.",
+};
+
+const STORAGE_KEY = "invoiceeq_support_chat_history";
+
 export function SupportChatWindow() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "intro-1",
-      role: "assistant",
-      content:
-        "Hello! I am **SAGE**, your AI Support & Troubleshooting Assistant.\n\n" +
-        "Ask me anything about platform workflows, training custom extraction rules, resolving auditor alerts, or system integrations. If we run into an unresolvable issue, I can automatically draft a priority support ticket for our engineering team.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([INTRO_MESSAGE]);
+  const [isClient, setIsClient] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState<EscalationData | null>(null);
+
+  // Restore conversation history from sessionStorage on mount (FE Gap 250)
+  useEffect(() => {
+    setIsClient(true);
+    try {
+      const stored = sessionStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+        }
+      }
+    } catch {
+      // sessionStorage unavailable or parse error; fallback to default
+    }
+  }, []);
+
+  // Sync conversation history to sessionStorage on every message update (FE Gap 250)
+  useEffect(() => {
+    if (isClient) {
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+      } catch {
+        // sessionStorage write error
+      }
+    }
+  }, [messages, isClient]);
+
+  const handleClearChat = () => {
+    setMessages([INTRO_MESSAGE]);
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -185,15 +225,31 @@ export function SupportChatWindow() {
             </div>
           </div>
 
-          {/* Single Dedicated Direct Ticket Button in Chat Header */}
-          <button
-            id="direct-raise-ticket-btn"
-            onClick={handleOpenDirectTicket}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600/20 to-cyan-500/20 hover:from-blue-600/30 hover:to-cyan-500/30 border border-cyan-500/40 text-cyan-300 text-xs font-semibold transition-all hover:shadow-lg hover:shadow-cyan-500/10 active:scale-95"
-          >
-            <Ticket className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Raise Ticket Directly</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {messages.length > 1 && (
+              <button
+                id="clear-chat-history-btn"
+                type="button"
+                onClick={handleClearChat}
+                title="Clear conversation history"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1E293B] hover:bg-[#2A374A] border border-[#222D3D] text-slate-400 hover:text-slate-200 text-xs font-medium transition-all active:scale-95"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Clear Chat</span>
+              </button>
+            )}
+
+            {/* Single Dedicated Direct Ticket Button in Chat Header */}
+            <button
+              id="direct-raise-ticket-btn"
+              type="button"
+              onClick={handleOpenDirectTicket}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600/20 to-cyan-500/20 hover:from-blue-600/30 hover:to-cyan-500/30 border border-cyan-500/40 text-cyan-300 text-xs font-semibold transition-all hover:shadow-lg hover:shadow-cyan-500/10 active:scale-95"
+            >
+              <Ticket className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Raise Ticket Directly</span>
+            </button>
+          </div>
         </div>
 
         {/* Message Stream */}
