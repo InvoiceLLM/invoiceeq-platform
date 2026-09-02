@@ -186,6 +186,46 @@ class OutboundInvoiceExtractionSchema(BaseModel):
     taxes: List[TaxItem] = Field(default=[], description="Detailed list of taxes, one entry per printed tax line (e.g. CGST 9% and SGST 9% as two separate entries). Transcribe each component amount verbatim as printed.")
 
 
+# ---------------------------------------------------------------------------
+# Reference documents (PO / quotation) — Feature 26 (Gap 366)
+# ---------------------------------------------------------------------------
+# A purchase order and a quotation are the SAME shape as far as extraction is
+# concerned: a party, a document number, a date, line items, subtotal/tax/total
+# and a currency. They differ only in what the header calls itself and in
+# whether the number is the tenant's own PO number or the counterparty's quote
+# number. So this is ONE schema with a `doc_type` discriminator, not two
+# near-identical parallel schemas -- the second schema would have been a
+# copy/paste of this one with a different class name, which is exactly the
+# duplication Gap 283 spent a whole gap removing from the outbound flow.
+#
+# Deliberately a NARROWER field set than InvoiceExtractionSchema: no
+# `compliance_metadata`, no `payment_instructions`, no `deductions`. A PO is not
+# an e-invoice and has no IRN/QR/Peppol block, and asking a model for a field
+# the document cannot contain invites it to invent somewhere to put something.
+class ReferenceDocLineItem(BaseModel):
+    model_config = {"extra": "forbid"}
+    description: str = Field(description="Description of the ordered/quoted item or service")
+    quantity: Optional[float] = Field(default=None, description="Quantity ordered or quoted")
+    unit_price: Optional[float] = Field(default=None, description="Unit price. Transcribe the printed figure verbatim, including a leading minus sign if the line is a credit or discount.")
+    amount: Optional[float] = Field(default=None, description="Line total. Transcribe the printed figure verbatim. If the printed figure is negative (prefixed '-' or in parentheses), extract it as a negative number.")
+
+
+class ReferenceDocExtractionSchema(BaseModel):
+    model_config = {"extra": "forbid"}
+    doc_type: Optional[str] = Field(default=None, description="What this document calls itself: 'PURCHASE_ORDER' if it is a purchase order, 'QUOTATION' if it is a quotation/quote/estimate/proforma, otherwise 'OTHER'. Decide from the printed document title, not from the content.")
+    party_name: Optional[str] = Field(default=None, description="The counterparty named on the document -- the supplier a purchase order is addressed to, or the issuer of a quotation.")
+    doc_number: Optional[str] = Field(default=None, description="The document's own number as printed (PO number, or quotation/quote number).")
+    po_number: Optional[str] = Field(default=None, description="The purchase order number this document references. On a purchase order this is normally the same value as doc_number; on a quotation it is the customer PO number if one is quoted, otherwise null.")
+    doc_date: Optional[str] = Field(default=None, description="Date of the document (YYYY-MM-DD format if possible)")
+    subtotal: Optional[float] = Field(default=None, description="Subtotal before taxes/discounts. Transcribe the printed figure verbatim. Do not auto-correct math.")
+    tax_amount: Optional[float] = Field(default=None, description="Total tax. Transcribe the printed figure verbatim. On a CGST + SGST (or IGST) split, sum them into this single field. Do not recalculate.")
+    grand_total: Optional[float] = Field(default=None, description="Grand total as printed. Transcribe exactly, even if it does not reconcile with subtotal plus tax -- a mismatch is a real finding for the comparison step, not something to fix here.")
+    currency: Optional[str] = Field(default=None, description="ISO 4217 currency code (e.g. INR, EUR, USD)")
+    discount_amount: Optional[float] = Field(default=None, description="Top-level discount amount, if printed")
+    items: List[ReferenceDocLineItem] = Field(default=[], description="List of ordered or quoted line items")
+    taxes: List[TaxItem] = Field(default=[], description="Detailed list of taxes, one entry per printed tax line")
+
+
 # 2. State definition
 class ExtractionState(TypedDict):
     file_path: str
@@ -371,6 +411,61 @@ def _build_outbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[s
     return prompt
 
 
+def build_reference_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Dict[str, Any]] = None) -> List[HumanMessage]:
+    """Feature 26: framed as a REFERENCE document (purchase order or quotation),
+    not a bill. The distinction matters at the prompt level because a PO's
+    totals are an *intent to buy* and a quotation's are an *offer* -- neither is
+    an amount owed, and a model told it is reading an invoice will happily
+    relabel a 'Quotation Total' as a grand total due."""
+    prompt_text = (
+        "You are reading a REFERENCE commercial document -- a PURCHASE ORDER or a "
+        "QUOTATION. It is NOT an invoice and nothing on it is an amount currently "
+        "owed: a purchase order records what was ordered, a quotation records what "
+        "was offered. Analyze the following OCR text and visual representations and "
+        "extract structured data aligning with the schema.\n\n"
+        "Set `doc_type` from the document's own printed title: 'PURCHASE_ORDER' for a "
+        "purchase order, 'QUOTATION' for a quotation/quote/estimate/proforma, "
+        "'OTHER' if it is plainly neither. Do not guess from the content if the "
+        "title is legible.\n\n"
+        + GAP_46_VERBATIM_DIRECTIVE
+    )
+    prompt_constraints = normalize_constraints(rules)
+    if prompt_constraints:
+        prompt_text += "You MUST respect the following layout extraction constraints/rules:\n"
+        for rule in prompt_constraints:
+            prompt_text += f"- {rule}\n"
+        prompt_text += "\n"
+
+    prompt_text += f"OCR Text:\n{ocr_text}"
+
+    content = [{"type": "text", "text": prompt_text}]
+    for img_url in images:
+        content.append({"type": "image_url", "image_url": {"url": img_url}})
+    return [HumanMessage(content=content)]
+
+
+def _build_reference_text_prompt(state: "ExtractionState", rules: Optional[Dict[str, Any]]) -> str:
+    """Text-only (no page images / non-Azure) reference-document prompt. Same
+    framing as `build_reference_multimodal_prompt`."""
+    prompt = (
+        "This is a REFERENCE commercial document -- a PURCHASE ORDER or a QUOTATION, "
+        "not an invoice and not an amount owed. Set `doc_type` from the printed "
+        "document title. Extract structured details from the following OCR text:\n\n"
+        + GAP_46_VERBATIM_DIRECTIVE
+    )
+    dynamic_qa_context = state.get("dynamic_qa_context")
+    if dynamic_qa_context:
+        prompt += f"DYNAMIC LAYOUT PRE-ANALYSIS FINDINGS (Gap 4 Targeted Q&A):\n{dynamic_qa_context}\n\n"
+    prompt_constraints = normalize_constraints(rules)
+    if prompt_constraints:
+        prompt += "You MUST respect the following layout extraction constraints/rules:\n"
+        for rule in prompt_constraints:
+            prompt += f"- {rule}\n"
+        prompt += "\n"
+    prompt += state["ocr_text"]
+    return prompt
+
+
 # ---------------------------------------------------------------------------
 # Gap 283 — one graph, two directions
 # ---------------------------------------------------------------------------
@@ -422,6 +517,31 @@ _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
         required_fields=("customer_name", "invoice_number", "grand_total"),
         passed_status="VERIFIED",
         review_status="NEEDS_REVIEW",
+        legacy_audit_path_shim=False,
+    ),
+    # Feature 26 (Gap 366). A third direction, purely additive: INBOUND and
+    # OUTBOUND above are byte-for-byte unchanged, and `resolve_direction_profile`
+    # still defaults to INBOUND for anything it does not recognise, so no
+    # existing caller can reach this entry by accident -- only an explicit
+    # flow_direction="REFERENCE" does.
+    #
+    # `required_fields=()` for the same reason INBOUND has none: a counterparty's
+    # purchase order is as unpredictable as a vendor's bill, and a missing field
+    # here is a matching problem to be surfaced to the user, not an extraction
+    # failure. The status vocabulary is its own -- "EXTRACTED"/"EXTRACT_FAILED"
+    # rather than COMPLETED/AUDIT_REQUIRED -- because a reference document has no
+    # audit lifecycle at all; it is never approved, sent or paid.
+    # `legacy_audit_path_shim=False`: the `"audit" in file_path` short-circuit is
+    # an inbound-only legacy behaviour and a reference doc whose filename happens
+    # to contain "audit" must not inherit an inbound status string.
+    "REFERENCE": _DirectionProfile(
+        schema=ReferenceDocExtractionSchema,
+        max_tokens=8192,
+        build_multimodal_prompt=build_reference_multimodal_prompt,
+        build_text_prompt=_build_reference_text_prompt,
+        required_fields=(),
+        passed_status="EXTRACTED",
+        review_status="EXTRACT_FAILED",
         legacy_audit_path_shim=False,
     ),
 }

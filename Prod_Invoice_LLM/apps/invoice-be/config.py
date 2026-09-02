@@ -26,9 +26,38 @@ class Settings(BaseSettings):
     # behaviour for every tenant until this is verified live -- as merged,
     # the branch made async the unconditional default with the old behaviour
     # reachable only via an undiscoverable ?sync=true escape hatch, which is
-    # a real production-behaviour change to chat with no rollout gate. Flip
-    # per-environment once the queue/worker/SSE path has real live evidence
-    # behind it, not by default on merge.
+    # a real production-behaviour change to chat with no rollout gate.
+    #
+    # Gap 365: "once it has real live evidence" was the whole problem -- a gate
+    # with no stated bar is a gate nobody can ever satisfy, so the flag sat False
+    # over a fully built queue/worker/SSE path. These are the five criteria.
+    # ALL FIVE must pass, on ONE run against real Postgres and a real Redis
+    # (hard rule 2 -- a SQLite/fakeredis run is not evidence), and passing them
+    # flips this in DEV only. Production stays False until a 24h dev soak ends
+    # with every `chat_inflight:{tenant}` counter back at zero.
+    #   1. LIVE PROGRESS. An SSE transcript from one real turn on
+    #      GET /chat/jobs/{id}/stream shows >= 6 DISTINCT `step` values, and a
+    #      turn whose SQL needed repair shows each attempt separately. Before
+    #      Gap 365 the worker published exactly 2 hardcoded steps.
+    #   2. CONCURRENCY CEILING. The 4th simultaneous job for one tenant is
+    #      rejected with HTTP 429 + Retry-After while the 3 in flight all
+    #      complete. (Enforcement is Gap 364/Track A's
+    #      `services/chat_queue.py::enqueue_chat_job` -- cite that run, do not
+    #      re-derive it here.)
+    #   3. FOLLOW-UP CORRECTNESS UNDER LOAD. A narrowing follow-up sent while
+    #      earlier turns are in flight still routes to SQL -- i.e. Gap 237's
+    #      deterministic override still sees the previous turn's `generated_sql`.
+    #      This is what Gap 365's per-session Redis lock
+    #      (`queue_worker/handlers.py::chat_session_lock`) exists to guarantee.
+    #   4. NO SLOT LEAK ON FAILURE. A job that FAILS releases its slot:
+    #      `chat_inflight:{tenant}` returns to 0 after `fail_job`, not just
+    #      after `complete_job`.
+    #   5. REDIS-DOWN FALLBACK. With Redis unreachable,
+    #      POST /chat/sessions/{id}/message still answers via the synchronous
+    #      path and returns no 5xx.
+    # Deliberately left False by the change that wrote these criteria: stating
+    # the bar and clearing it are two different jobs, and the second one belongs
+    # to whoever holds the verification evidence.
     ENABLE_ASYNC_CHAT_QUEUE: bool = False
     # Gap 117: which deployment this process is. Read only by ops scripts that
     # must never touch production data (scripts/grant_test_plan.py), never by

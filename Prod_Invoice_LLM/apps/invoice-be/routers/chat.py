@@ -118,6 +118,13 @@ class SessionResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+    # Feature 26 (Gap 366): an optional reference document (PO/quotation) the
+    # user attached to this turn, uploaded beforehand via
+    # POST /chat/sessions/{id}/attachments. Optional with a None default so
+    # every existing caller and every existing test body stays valid unchanged.
+    # Ownership/tenant scoping of the id is resolved in the agent's attachment
+    # path against the DB -- this router does not widen it.
+    attachment_id: UUID | None = None
 
 class ChatJobResponse(BaseModel):
     """Gap 280: Async job enqueue response."""
@@ -380,6 +387,7 @@ def post_chat_message(
 
     # Auto-generate session title if it uses the default placeholder or timestamp format
     new_title = None
+    original_title = chat_session.title  # Gap 364: restored if the turn is rejected
     if chat_session.title.startswith("Chat Session -") or chat_session.title == "New Chat":
         words = payload.content.strip().split()
         if words:
@@ -390,10 +398,22 @@ def post_chat_message(
             db_session.add(chat_session)
 
     from config import get_settings
-    use_async_queue = get_settings().ENABLE_ASYNC_CHAT_QUEUE and not sync
+    # Feature 26 (Gap 366): an attached-document turn runs synchronously. The
+    # queue path carries only (session_id, user_msg_id, content, tenant_id,
+    # job_id) -- `ChatQueueService.enqueue_chat_job()` and
+    # `handle_process_chat_job()` have no attachment parameter -- so enqueuing
+    # one would drop the attachment on the floor and answer the question as an
+    # ordinary chat turn, which is worse than answering it a bit more slowly.
+    # Threading the id through the worker is its own change to those two files
+    # and is deliberately not done here.
+    use_async_queue = (
+        get_settings().ENABLE_ASYNC_CHAT_QUEUE
+        and not sync
+        and payload.attachment_id is None
+    )
     if use_async_queue:
         # Gap 280: Asynchronous Queue-based Dispatch
-        from services.chat_queue import ChatQueueService
+        from services.chat_queue import ChatQueueCapacityError, ChatQueueService
         from queue_worker.handlers import handle_process_chat_job
 
         job_id = str(uuid4())
@@ -409,13 +429,46 @@ def post_chat_message(
         db_session.commit()
         db_session.refresh(user_msg)
 
-        ChatQueueService.enqueue_chat_job(
-            session_id=str(session_id),
-            user_msg_id=str(user_msg.id),
-            content=payload.content,
-            tenant_id=str(tenant_context.tenant_id),
-            job_id=job_id,
-        )
+        try:
+            ChatQueueService.enqueue_chat_job(
+                session_id=str(session_id),
+                user_msg_id=str(user_msg.id),
+                content=payload.content,
+                tenant_id=str(tenant_context.tenant_id),
+                job_id=job_id,
+            )
+        except ChatQueueCapacityError as exc:
+            # Gap 364: the tenant is at PER_TENANT_MAX_ACTIVE_CHAT. Undo the row
+            # staged a few lines up before answering, so a rejected turn leaves
+            # no `queued` ChatMessage that no worker will ever finish -- the
+            # session list renders those as a turn stuck thinking forever.
+            #
+            # Deviation from the task's preferred shape, stated rather than
+            # hidden: the row is still written *before* the enqueue and deleted
+            # on rejection, not written after a successful enqueue. Writing it
+            # afterwards would open a real race on the other call path --
+            # `queue_worker/main_worker.py` runs in a different process and can
+            # pop the job off `chat_tasks_queue` between the `lpush` and this
+            # process's commit, and `handle_process_chat_job` would then find no
+            # user row to move off `queued` (handlers.py L1059-1068 logs and
+            # continues), producing the exact orphan this is meant to prevent.
+            # Net effect on the rejection path is identical: no orphan row.
+            db_session.delete(user_msg)
+            # The title was rewritten from this message's text further up; a
+            # turn that was never accepted should not have renamed the session.
+            if new_title:
+                chat_session.title = original_title
+                db_session.add(chat_session)
+            db_session.commit()
+
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"You already have {exc.limit} chat turns running in this "
+                    "workspace. Wait for one to finish and try again."
+                ),
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
 
         # Immediate asynchronous background executor (sub-millisecond handoff).
         #
@@ -459,6 +512,7 @@ def post_chat_message(
         db_session=db_session,
         chat_session=chat_session,
         new_title=new_title,
+        attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
     )
 
     return MessageResponse.model_validate(assistant_msg)
@@ -472,6 +526,7 @@ def run_sync_chat_turn(
     db_session: Session,
     chat_session: ChatSession | None = None,
     new_title: str | None = None,
+    attachment_id: str | None = None,
 ) -> ChatMessage:
     """One complete synchronous chat turn: persist, answer, persist, observe.
 
@@ -488,6 +543,11 @@ def run_sync_chat_turn(
     that exists), the rollback-and-re-add on an agent exception, and the
     conditional title write are all as they were. `chat_session`/`new_title` are
     optional because the widget path has no title to auto-generate.
+
+    Feature 26 (Gap 366): `attachment_id` is likewise optional and is passed
+    straight through to `run_query_agent()`, whose pre-route gate takes the
+    attached-document branch when it is set. Nothing about the turn's own
+    ordering or persistence changes.
     """
     user_msg = ChatMessage(
         id=uuid4(),
@@ -507,7 +567,8 @@ def run_sync_chat_turn(
             session_id=str(session_id),
             user_message=content,
             tenant_id=str(tenant_id),
-            db_session=db_session
+            db_session=db_session,
+            attachment_id=attachment_id,
         )
     except Exception as e:
         logger.error("run_query_agent failed unexpectedly for session %s: %s", session_id, e)

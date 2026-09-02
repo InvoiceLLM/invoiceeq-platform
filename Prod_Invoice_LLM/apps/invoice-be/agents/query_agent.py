@@ -3,7 +3,7 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 import telemetry
@@ -20,6 +20,73 @@ from chroma_client import query_invoice_chunks
 from agents.sage_prompts import PERSONA_BLOCK
 
 logger = logging.getLogger(__name__)
+
+# Gap 365: the turn's live progress channel.
+#
+# A caller that wants to show the user what this turn is doing passes an
+# `on_progress(step, details)` callable; everything else passes nothing and gets
+# byte-identical behaviour (`_progress_emitter(None)` returns a no-op). The only
+# real caller today is `queue_worker/handlers.py::handle_process_chat_job`, which
+# forwards each call to `ChatQueueService.publish_progress()` so it becomes an
+# SSE event on the job's channel. The synchronous route in `routers/chat.py` and
+# `agents/query_tools.py::query_invoices()` pass nothing.
+#
+# TWO RULES ON WHAT MAY BE PUBLISHED, both non-negotiable because these strings
+# reach the browser:
+#   1. `step` is a short fixed identifier from `_PROGRESS_STEPS` below -- never
+#      interpolated with anything user- or model-supplied.
+#   2. `details` carries structured facts only (route name, attempt number,
+#      chunk count). Never SQL, never model prose, never an exception message.
+#      That is the same boundary `redact_query_internals()` enforces on the
+#      answer text (Gap 294) -- honoured here by never putting internals on the
+#      channel in the first place, rather than by redacting them afterwards.
+ProgressCallback = Callable[[str, Optional[dict]], None]
+
+#: Every step name this module can emit, in roughly the order they occur. Kept
+#: as a tuple so tests (and a future FE step-label map) have one authoritative
+#: list rather than grepping for call sites.
+_PROGRESS_STEPS = (
+    "understanding_question",   # the turn has started; classification is next
+    "cached_answer",            # semantic cache hit -- the turn stops here
+    "route_selected",           # details: {"route": "SQL"|"RAG"|"CHAT"}
+    "route_override",           # Gap 237 fired; details: {"route", "from"}
+    "building_query",           # SQL prompt assembled
+    "generating_sql",           # one generation attempt; details: {"attempt", "max_attempts"}
+    "running_query",            # generated SQL is being executed
+    "summarizing_results",      # SQL synthesis call started
+    "searching_documents",      # RAG retrieval started
+    "documents_found",          # RAG retrieval finished; details: {"count"}
+    "composing_answer",         # RAG/CHAT synthesis call started
+    "answer_ready",             # synthesis returned; the turn is done
+    # Feature 26 (Gap 366) -- the attached-document branch. These sit before
+    # "route_selected" in wall-clock order and are mutually exclusive with it:
+    # a turn that emits these never classifies, so it never emits a route.
+    "reading_attachment",       # the pre-route gate fired; details: {"doc_type"}
+    "matching_invoices",        # Tier 1/Tier 2 candidate search running
+    "awaiting_confirmation",    # candidates found, waiting on the user (D4)
+    "comparing_documents",      # deterministic diff running
+)
+
+
+def _progress_emitter(on_progress: Optional[ProgressCallback]):
+    """Wrap a caller's callback so no seam has to null-check or try/except.
+
+    A progress event is decoration on a turn that is otherwise working: a
+    callback that raises (Redis down mid-turn, a publisher bug) must not be able
+    to fail the answer, so every exception is swallowed at debug level. That is
+    the same posture `publish_progress()` itself takes on the Redis side.
+    """
+
+    def emit(step: str, **details) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(step, details or None)
+        except Exception as e:  # pragma: no cover - defensive only
+            logger.debug("on_progress callback failed for step %s: %s", step, e)
+
+    return emit
+
 
 # Task 6.11: semantic/result caching. Repeated or near-identical questions get served
 # instantly from Redis instead of re-running retrieval + LLM synthesis, keyed on
@@ -2495,6 +2562,7 @@ def run_sql_generation_loop(
     snapshot: list | None = None,
     max_attempts: int = 3,
     telemetry_agent_name: str = "chat.sql_generation",
+    on_progress: Optional[ProgressCallback] = None,
 ) -> "SqlGenerationOutcome":
     """Generate SQL, execute it, repair on failure -- up to `max_attempts` times.
 
@@ -2511,7 +2579,15 @@ def run_sql_generation_loop(
     handler, so the outer event would report zero tokens while still counting as
     a call in the eval harness. One call, one event, correctly attributed. The
     default keeps the existing chat path's event name byte-identical.
+
+    `on_progress` (Gap 365) is optional and defaults to None. It fires once per
+    generation attempt and once per execution -- the repair loop is the seam a
+    slow turn actually spends its time in, so a progress feed that only showed
+    "generating SQL" once would go silent for exactly the two retries the user is
+    waiting through. Attempt numbers only; the generated statement is never
+    published (see `_progress_emitter`).
     """
+    progress = _progress_emitter(on_progress)
     generated_sql = None
     last_error = None
     db_result = None
@@ -2528,6 +2604,12 @@ def run_sql_generation_loop(
     for attempt in range(max_attempts):
         try:
             attempts_made += 1
+            # Gap 365: every attempt, not just the first -- attempt 2 and 3 are
+            # the repair round-trips, and they are what a waiting user is
+            # actually waiting on.
+            progress(
+                "generating_sql", attempt=attempt + 1, max_attempts=max_attempts
+            )
             structured_sql = llm.with_structured_output(SQLGenerationSchema)
             # Feature 23 Phase 1: one event per generation attempt, not per loop --
             # a repair retry is a second billable round-trip and `attempt` is on
@@ -2573,6 +2655,7 @@ def run_sql_generation_loop(
             logger.info("Generated SQL (attempt %d): %s", attempt + 1, generated_sql)
             
             # Execute SQL
+            progress("running_query", attempt=attempt + 1)
             if snapshot is not None:
                 snapshot.clear()  # a repair retry must not double-count
             db_result = execute_generated_sql(
@@ -2739,7 +2822,14 @@ def _previous_assistant_sql(session_id: str, db_session) -> Optional[str]:
         return ""
 
 
-def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_session) -> dict:
+def run_query_agent(
+    session_id: str,
+    user_message: str,
+    tenant_id: str,
+    db_session,
+    on_progress: Optional[ProgressCallback] = None,
+    attachment_id: Optional[str] = None,
+) -> dict:
     """
     RAG Query Agent routing natural language inputs to semantic context indexers,
     safe database queries, or conversational chat saves with multi-turn short-term memory.
@@ -2758,13 +2848,35 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
     the SAGE branch and the cache hit. That is the point: before this, a declined
     turn, an errored turn and a cache hit produced no turn-level telemetry
     whatsoever, so their rates were unaskable.
+
+    Gap 365: `on_progress(step, details)` is optional and defaults to None, which
+    is a no-op — every existing caller (`routers/chat.py`'s synchronous path,
+    `agents/query_tools.py::query_invoices()`, the eval harnesses) is unaffected.
+    The queue worker passes one so the ~10 seams below reach the browser as SSE
+    events instead of the two hardcoded ones it used to publish around this call.
+    This is a *separate channel from telemetry*: `tracked_llm_call` /
+    `track_chat_turn` write customEvents for operators, this writes short
+    user-facing progress. They are deliberately not merged.
+
+    Feature 26 (Gap 366): `attachment_id` is optional and defaults to None. When
+    it is present the turn takes the attached-document branch inside
+    `_run_query_agent()` and `classify_query()` is never called — see the gate
+    there for why this is a pre-route branch rather than a fourth route value.
     """
     with telemetry.chat_turn_scope(session_id=str(session_id), tenant_id=str(tenant_id)) as turn:
         turn.turn_index, turn.seconds_since_prev_turn = _session_turn_position(
             session_id, db_session
         )
         prev_sql = _previous_assistant_sql(session_id, db_session)
-        result = _run_query_agent(session_id, user_message, tenant_id, db_session, turn)
+        result = _run_query_agent(
+            session_id,
+            user_message,
+            tenant_id,
+            db_session,
+            turn,
+            on_progress=on_progress,
+            attachment_id=attachment_id,
+        )
         # Gap 324: computed after the turn resolves (every path sets
         # turn.generated_sql before returning, including the cache-hit and
         # SAGE-decline shortcuts), against the SQL fetched above -- a row
@@ -2779,8 +2891,205 @@ def run_query_agent(session_id: str, user_message: str, tenant_id: str, db_sessi
         return result
 
 
+def _run_attached_document_turn(
+    *,
+    session_id: str,
+    user_message: str,
+    tenant_id: str,
+    db_session,
+    turn,
+    attachment_id: str,
+    progress,
+) -> dict:
+    """Feature 26 (Gap 366): a turn grounded in an attached PO/quotation.
+
+    Reached only from the pre-route gate in `_run_query_agent()`. Everything
+    that decides a number happens in `services/document_comparison.py` — pure
+    Python, `Decimal`, no LLM (D5). The only model call in this function is the
+    final narration, and its prompt forbids stating any figure that is not in
+    the diff table it was handed.
+
+    The confirmation gate (D4) is the important part and is checked FIRST: if
+    the attachment has no `confirmed_invoice_ids`, this returns a confirmation
+    payload and never a computed answer. That ordering is deliberate — the
+    comparison is not run and then withheld, it is not run at all, so there is
+    no path by which an unconfirmed figure can leak into the reply.
+    """
+    from models import ChatAttachment, Invoice  # local: keeps models out of the eval-harness import graph
+    from services.document_comparison import (
+        build_confirmation_payload,
+        build_suggested_actions,
+        compare_reference_to_invoices,
+        find_candidate_invoices,
+    )
+    from sqlmodel import select as _select
+
+    turn.route = "ATTACHMENT"
+
+    # The ids arrive as strings from the router and as UUIDs from the worker,
+    # and the UUID columns will not compare against a str on either backend.
+    attachment_uuid = _uuid_or_none(attachment_id)
+    tenant_uuid = _uuid_or_none(tenant_id) or tenant_id
+
+    attachment = db_session.exec(
+        _select(ChatAttachment).where(
+            ChatAttachment.id == attachment_uuid,
+            # Tenant scoping is asserted here as well as in the router. The
+            # router is the enforcement point, but this function is also
+            # reachable from the queue worker, and a document holding another
+            # company's pricing is not something to leave to one check.
+            ChatAttachment.tenant_id == tenant_uuid,
+        )
+    ).first()
+
+    if attachment is None or attachment.session_id != _uuid_or_none(session_id):
+        turn.status = telemetry.TURN_STATUS_ERROR
+        turn.stop_reason = "attachment_not_found"
+        return {
+            "content": "I can't find that attachment on this conversation. Try uploading it again.",
+            "generated_sql": "",
+            "citations": [],
+            "result_invoice_ids": [],
+        }
+
+    if attachment.extraction_status != "EXTRACTED":
+        turn.status = telemetry.TURN_STATUS_ERROR
+        turn.stop_reason = "attachment_extract_failed"
+        return {
+            "content": (
+                "I wasn't able to read that document well enough to compare it. "
+                "If it's a scanned copy, a clearer PDF usually works."
+            ),
+            "generated_sql": "",
+            "citations": [],
+            "result_invoice_ids": [],
+        }
+
+    reference = dict(attachment.extracted_json or {})
+    progress("reading_attachment", doc_type=attachment.doc_type)
+
+    confirmed_ids = [str(i) for i in (attachment.confirmed_invoice_ids or [])]
+
+    # --- The confirmation gate (D4) ---------------------------------------
+    if not confirmed_ids:
+        progress("matching_invoices")
+        found = find_candidate_invoices(
+            tenant_id=tenant_uuid,
+            po_number=reference.get("po_number") or reference.get("doc_number"),
+            party_name=reference.get("party_name"),
+            doc_date=reference.get("doc_date"),
+            db_session=db_session,
+        )
+        candidates = found["invoices"]
+        attachment.candidate_invoice_ids = [str(inv.id) for inv in candidates]
+        db_session.add(attachment)
+        db_session.commit()
+
+        payload = build_confirmation_payload(
+            attachment_id=str(attachment.id),
+            doc_type=attachment.doc_type,
+            doc_number=attachment.doc_number,
+            tier=found["tier"],
+            invoices=candidates,
+            truncated=found["truncated"],
+        )
+        progress("awaiting_confirmation")
+        turn.status = telemetry.TURN_STATUS_SUCCESS
+        turn.stop_reason = "awaiting_match_confirmation"
+        return {
+            # Plain prose, deterministically composed. No model call happens on
+            # this path at all: there is nothing to narrate yet, and asking a
+            # model to word a confirmation request invites it to volunteer the
+            # answer the user has not yet authorised it to compute.
+            "content": payload["message"],
+            "generated_sql": "",
+            "citations": [],
+            "result_invoice_ids": [c["invoice_id"] for c in payload["candidates"]],
+            "attachment_confirmation": payload,
+        }
+
+    # --- The answer turn ---------------------------------------------------
+    invoices = db_session.exec(
+        _select(Invoice).where(
+            Invoice.tenant_id == tenant_uuid,
+            Invoice.id.in_([_uuid_or_none(i) for i in confirmed_ids]),
+            Invoice.deleted_at == None,  # noqa: E711
+        )
+    ).all()
+
+    progress("comparing_documents")
+    diff = compare_reference_to_invoices(reference, invoices)
+
+    suggestions = []
+    for comparison in diff["comparisons"]:
+        suggestions.extend(build_suggested_actions(comparison))
+
+    progress("composing_answer")
+    llm = get_llm(temperature=0)
+    system_prompt = (
+        f"{PERSONA_BLOCK}\n\n"
+        "You are reporting the result of a comparison between a reference document "
+        "(a purchase order or quotation the user attached) and one or more invoices.\n\n"
+        "THE COMPARISON HAS ALREADY BEEN COMPUTED. It is given to you below as JSON.\n"
+        "HARD RULES:\n"
+        "- You MUST NOT state any number that does not appear verbatim in the JSON.\n"
+        "- You MUST NOT compute, re-derive, sum, or correct any figure yourself.\n"
+        "- Where an entry has outcome 'currency_mismatch', report that no comparison "
+        "was possible and say why. Do not convert currencies and do not compare the "
+        "magnitudes anyway.\n"
+        "- Where a field's status is 'missing', say the document did not state it. "
+        "Do not treat a missing value as zero.\n"
+        "- Do not suggest actions; those are supplied separately.\n\n"
+        f"COMPARISON JSON:\n{json.dumps(diff, default=str)}\n\n"
+        f"The user asked: {_wrap_user_input(user_message, tenant_id)}"
+    )
+    try:
+        with tracked_llm_call("chat.attachment_compare", llm=llm, tenant_id=tenant_id):
+            res = llm.invoke(system_prompt)
+        response_text = res.content
+        turn.status = telemetry.TURN_STATUS_SUCCESS
+    except Exception as e:
+        logger.error("Attached-document synthesis failed: %s", e)
+        turn.status = telemetry.TURN_STATUS_ERROR
+        turn.error_type = type(e).__name__
+        turn.stop_reason = "attachment_answer_failed"
+        response_text = "I compared the documents but couldn't write up the result. Try asking again."
+
+    progress("answer_ready")
+    return {
+        "content": response_text,
+        # No SQL was generated: the candidate query is a parameterised ORM query
+        # this module owns, not model output, so there is nothing to show or to
+        # feed the Gap 237 follow-up machinery.
+        "generated_sql": "",
+        "citations": [],
+        "result_invoice_ids": [str(inv.id) for inv in invoices][:MAX_SNAPSHOT_INVOICE_IDS],
+        "attachment_comparison": diff,
+        "suggested_actions": suggestions[:3],
+    }
+
+
+def _uuid_or_none(value):
+    """Session ids arrive as strings from the router and as UUIDs from the
+    worker; the equality check above has to survive both."""
+    from uuid import UUID as _UUID
+
+    if isinstance(value, _UUID):
+        return value
+    try:
+        return _UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
 def _run_query_agent(
-    session_id: str, user_message: str, tenant_id: str, db_session, turn
+    session_id: str,
+    user_message: str,
+    tenant_id: str,
+    db_session,
+    turn,
+    on_progress: Optional[ProgressCallback] = None,
+    attachment_id: Optional[str] = None,
 ) -> dict:
     """The turn itself. See `run_query_agent()` above for the Trace wrapper.
 
@@ -2791,6 +3100,46 @@ def _run_query_agent(
     see `docs/be_features_tracker.md`, Feature 21 and Gap 316.
     """
     logger.info("Executing Query Agent for session %s, tenant %s", session_id, tenant_id)
+
+    # Gap 365. First seam: the turn is alive. Emitted before the cache lookup so
+    # even a cache hit produces two events rather than one.
+    progress = _progress_emitter(on_progress)
+    progress("understanding_question")
+
+    # ---------------------------------------------------------------------
+    # Feature 26 (Gap 366) — the deterministic pre-route gate.
+    # ---------------------------------------------------------------------
+    # If this turn carries an attached reference document, it is handled here
+    # and `classify_query()` below is NEVER reached. Two reasons this is a gate
+    # rather than a fourth value on `QueryRoutingSchema.route`:
+    #
+    #   1. That enum is a closed `Literal["RAG","SQL","CHAT"]` the structured
+    #      output is bound to; widening it changes every routing call's contract.
+    #   2. More importantly, it would not even work. `_SQL_KEYWORDS` (above)
+    #      contains "vendor", "po number", "purchase order" and "total", and
+    #      `classify_query()` returns "SQL" on a keyword hit BEFORE any LLM call.
+    #      The single most likely phrasing of an attached-PO question — "does
+    #      this purchase order match the vendor's total?" — would short-circuit
+    #      to SQL and silently drop the attachment on the floor.
+    #
+    # So the routing decision for this case involves no LLM at all, which is
+    # also what hard rule 3 wants: a branch that decides which data a financial
+    # answer is computed from is not a thing to ask a model about.
+    #
+    # The cache is deliberately bypassed too. `get_cached_answer()` is keyed on
+    # (tenant_id, normalized_query) with no attachment dimension, so "does this
+    # match?" asked about two different POs would collide on one cache entry and
+    # serve the first document's figures for the second document.
+    if attachment_id:
+        return _run_attached_document_turn(
+            session_id=session_id,
+            user_message=user_message,
+            tenant_id=tenant_id,
+            db_session=db_session,
+            turn=turn,
+            attachment_id=attachment_id,
+            progress=progress,
+        )
 
     cached = get_cached_answer(tenant_id, user_message)
     if cached is not None:
@@ -2819,6 +3168,8 @@ def _run_query_agent(
         # payload is deliberately untouched -- it is internal (Gap 231/237), and
         # only `content` is ever shown.
         cached["content"] = redact_query_internals(cached.get("content"), tenant_id)
+        progress("cached_answer")
+        progress("answer_ready")
         return cached
 
     # Retrieve short-term context history
@@ -2845,6 +3196,7 @@ def _run_query_agent(
     route = classify_query(user_message, tenant_id=str(tenant_id))
     logger.info("Selected Route: %s", route)
     turn.route = route
+    progress("route_selected", route=route)
 
     # Gap 237 step 2: the previous turn's exact query, when there was one. Needed
     # before the route is final, because it is also the evidence that this
@@ -2873,6 +3225,11 @@ def _run_query_agent(
             "Routing override (Gap 237): %s -> SQL; message back-references a prior "
             "SQL-answered turn in session %s", route, session_id,
         )
+        # Gap 365: published *before* `route` is reassigned, so the event can say
+        # what it was overridden from. Two names, not one -- an operator reading
+        # an SSE transcript needs to see that the classifier's answer was
+        # deterministically overruled, which is the whole diagnosis of Gap 237.
+        progress("route_override", route="SQL", **{"from": route})
         route = "SQL"
         # The Trace records the route that really ran, not the one the classifier
         # picked -- the override is the whole reason Gap 237 was diagnosable at
@@ -2905,6 +3262,7 @@ def _run_query_agent(
         # now live in build_sql_system_prompt() / run_sql_generation_loop() above,
         # unchanged, so agents/query_tools.py's query_invoices() tool runs the exact
         # same code path this route does. This branch's behaviour is unchanged.
+        progress("building_query")
         system_prompt = build_sql_system_prompt(
             user_message,
             tenant_id,
@@ -2930,6 +3288,7 @@ def _run_query_agent(
             prior_turn_sql=prior_turn_sql,
             snapshot=result_invoice_ids,
             max_attempts=max_attempts,
+            on_progress=on_progress,
         )
         generated_sql = outcome.generated_sql
         db_result = outcome.db_result
@@ -3058,6 +3417,7 @@ Results:
 User Query: {user_message}
 """
 
+                progress("summarizing_results")
                 try:
                     # Feature 23 Phase 1. Gap 305 (partial): `zero_result` rides
                     # this existing event rather than becoming a new one. This is
@@ -3094,6 +3454,7 @@ User Query: {user_message}
                         + f"\n\n### Query Results\n\n{db_result}"
                     )
                     route_succeeded = True
+                    progress("answer_ready", route="SQL")
                 except Exception as e:
                     logger.error("SQL summary synthesis failed: %s", e)
                     response_text = (
@@ -3106,7 +3467,11 @@ User Query: {user_message}
 
     elif route == "RAG":
         # Vector search (Long-term semantic facts)
+        progress("searching_documents")
         chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
+        # A count, not the chunks: the chunk text is raw document content and has
+        # no business on a progress channel.
+        progress("documents_found", count=len(chunks))
 
         context_str = ""
         for chunk in chunks:
@@ -3188,6 +3553,7 @@ Extracted Document Context (Long-term Facts):
 Conversation History (Short-term context):
 {chat_history}
 """
+        progress("composing_answer", route="RAG")
         try:
             # Feature 23 Phase 1
             with tracked_llm_call(
@@ -3213,6 +3579,7 @@ Conversation History (Short-term context):
                 
                 response_text += "\n\n**Citations:**\n" + ", ".join(citation_links)
             route_succeeded = True
+            progress("answer_ready", route="RAG")
         except Exception as e:
             logger.error("RAG path execution failed: %s", e)
             response_text = f"Failed to run document lookup: {str(e)}"
@@ -3237,11 +3604,13 @@ FORMATTING: Format your answer in Markdown. Use a bullet list when listing multi
 Conversation History:
 {chat_history}
 """
+        progress("composing_answer", route="CHAT")
         try:
             # Feature 23 Phase 1
             with tracked_llm_call("chat.conversational", llm=llm, tenant_id=tenant_id):
                 res = llm.invoke(f"{system_prompt}\nUser Message: {wrapped_user_message}")
             response_text = res.content
+            progress("answer_ready", route="CHAT")
         except Exception as e:
             logger.error("Chat path execution failed: %s", e)
             response_text = f"Error generating message response: {str(e)}"

@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 import redis
@@ -972,6 +973,144 @@ def handle_deliver_webhook(
         return {"delivered": False, "skipped": False, "error": str(e)}
 
 
+# --- Gap 365: per-session serialisation + live progress -----------------------
+#
+# D8: turns in ONE chat session are serialised; turns in different sessions (or
+# different tenants) still run fully in parallel, up to
+# `PER_TENANT_MAX_ACTIVE_CHAT`. The correctness risk the lock exists for is
+# exactly one session wide: `query_agent._previous_assistant_sql()` and
+# `_is_narrowing_followup()` read *the previous turn of this session*, so two
+# concurrent turns in the same session can read each other's half-written state
+# and the Gap 237 route override then silently fails. Two turns in different
+# sessions cannot race that, and globally serialising the worker would throw away
+# the whole point of the queue to fix a per-session bug.
+#
+# The lock is taken here rather than in `services/chat_queue.py` because
+# `handle_process_chat_job` is the single funnel every path goes through -- the
+# Azure-queue worker (`main_worker._process_message`), the Redis-list drain
+# (`main_worker._process_redis_chat_tasks`) and `routers/chat.py`'s background
+# pool all land here.
+CHAT_SESSION_LOCK_PREFIX = "chat_session_lock:"
+#: Safety TTL. Longer than any real turn (the SQL route is capped at 3 model
+#: round-trips plus a summary call), short enough that a worker killed mid-turn
+#: does not wedge that session until someone notices. A crashed holder costs one
+#: session five minutes, never forever.
+CHAT_SESSION_LOCK_TTL_SECONDS = 300
+#: How long a second turn for the same session waits for the first. On timeout it
+#: proceeds UNSERIALISED rather than failing: a stale-context answer is a
+#: degraded answer, a dropped turn is a broken product.
+CHAT_SESSION_LOCK_WAIT_SECONDS = 120
+CHAT_SESSION_LOCK_POLL_SECONDS = 0.1
+
+
+@contextmanager
+def chat_session_lock(
+    session_id: str,
+    *,
+    client: Optional[redis.Redis] = None,
+    wait_seconds: float = CHAT_SESSION_LOCK_WAIT_SECONDS,
+    ttl_seconds: int = CHAT_SESSION_LOCK_TTL_SECONDS,
+    poll_seconds: float = CHAT_SESSION_LOCK_POLL_SECONDS,
+):
+    """Hold `chat_session_lock:{session_id}` for the duration of one turn.
+
+    Yields True if the lock was really held, False if it was skipped (no Redis,
+    no session id) or timed out. Never raises and never blocks forever: Redis
+    being unreachable degrades to today's behaviour (unserialised) rather than
+    taking chat down with it, which is criterion 5 of the flip criteria in
+    `config.py`.
+
+    Released with a token check so a turn that overran the TTL cannot delete a
+    lock the *next* turn has since acquired.
+    """
+    r = client
+    if r is None and session_id:
+        try:
+            r = _get_redis_sync()
+        except Exception as e:
+            logger.warning("Redis unavailable for chat session lock: %s", e)
+            r = None
+
+    key = f"{CHAT_SESSION_LOCK_PREFIX}{session_id}"
+    token = str(uuid4())
+    acquired = False
+
+    if r is not None and session_id:
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            try:
+                acquired = bool(r.set(key, token, nx=True, ex=ttl_seconds))
+            except Exception as e:
+                # Redis went away mid-wait. Same degradation as above.
+                logger.warning(
+                    "Could not acquire chat session lock for %s (%s); "
+                    "processing without per-session serialisation",
+                    session_id, e,
+                )
+                r = None
+                acquired = False
+                break
+            if acquired or time.monotonic() >= deadline:
+                break
+            time.sleep(poll_seconds)
+        if not acquired and r is not None:
+            logger.warning(
+                "Timed out after %ss waiting on chat session lock for %s; "
+                "processing without per-session serialisation",
+                wait_seconds, session_id,
+            )
+
+    try:
+        yield acquired
+    finally:
+        if acquired and r is not None:
+            try:
+                if r.get(key) == token:
+                    r.delete(key)
+            except Exception as e:
+                logger.warning(
+                    "Failed to release chat session lock for %s: %s", session_id, e
+                )
+
+
+#: Gap 365: the user-facing sentence for each step the query agent emits. The
+#: agent publishes step names and structured details only (it has no business
+#: owning UI copy); this map turns them into the `details.message` the FE renders
+#: (`useChatSession.ts` prefers `details.message`, falls back to `step`). An
+#: unmapped step is not an error -- the FE shows the step name.
+_CHAT_PROGRESS_MESSAGES = {
+    "understanding_question": "Reading your question...",
+    "cached_answer": "Found a recent answer to this question.",
+    "route_selected": "Deciding how to answer...",
+    "route_override": "Treating this as a follow-up to your last question...",
+    "building_query": "Preparing a database query...",
+    "generating_sql": "Writing the query...",
+    "running_query": "Running the query against your invoices...",
+    "summarizing_results": "Summarizing the results...",
+    "searching_documents": "Searching your documents...",
+    "documents_found": "Reading the matching documents...",
+    "composing_answer": "Composing the answer...",
+    "answer_ready": "Finishing up...",
+    # Handler-owned bookends (not agent seams).
+    "received": "Picked up your question...",
+    "saving": "Saving the answer...",
+}
+
+
+def _chat_progress_message(step: str, details: Optional[dict]) -> str:
+    """Human sentence for one progress step, with the retry made visible.
+
+    The attempt number is the one detail worth surfacing in the copy: a turn that
+    silently sat on "Writing the query..." for three round-trips is the exact
+    opaque wait this gap was opened over.
+    """
+    message = _CHAT_PROGRESS_MESSAGES.get(step, step)
+    attempt = (details or {}).get("attempt")
+    if step in ("generating_sql", "running_query") and isinstance(attempt, int) and attempt > 1:
+        message = f"{message} (retry {attempt - 1})"
+    return message
+
+
 def handle_process_chat_job(
     job_id: str,
     session_id: str,
@@ -1013,14 +1152,29 @@ def handle_process_chat_job(
     from services.online_quality_judge import submit_turn_judgement
     from models import ChatMessage
 
+    # Gap 365: one progress event per real seam inside the turn, replacing the
+    # two hardcoded ones ("routing" published before anything routed,
+    # "synthesizing" published after synthesis had already finished) that were
+    # the only visibility this path had. Same closure shape ingestion already
+    # uses for its per-stage log feed (`handle_process_invoice`'s `on_log`
+    # above) -- the difference is where the calls come from: ingestion streams
+    # LangGraph node updates, and `run_query_agent` is a plain imperative
+    # function, so it takes a callback instead.
+    def on_progress(step: str, details: Optional[dict] = None) -> None:
+        payload = dict(details or {})
+        payload["message"] = _chat_progress_message(step, details)
+        ChatQueueService.publish_progress(
+            job_id=job_id,
+            step=step,
+            details=payload,
+        )
+
     def _execute(session: Session) -> dict:
         try:
-            # 1. Publish initial progress
-            ChatQueueService.publish_progress(
-                job_id=job_id,
-                step="routing",
-                details={"message": "Analyzing query intent and database schema..."},
-            )
+            # 1. The handler's own bookend: the job has been picked up off the
+            #    queue. Everything between here and step 3 now comes from the
+            #    agent itself via `on_progress`.
+            on_progress("received")
 
             # 2. Run query agent
             # Gap 304 half (2): timed for the production `agent_eval_run` row's
@@ -1031,15 +1185,13 @@ def handle_process_chat_job(
                 user_message=content,
                 tenant_id=str(tenant_id),
                 db_session=session,
+                on_progress=on_progress,
             )
             turn_latency_ms = (time.perf_counter() - turn_started) * 1000.0
 
-            # 3. Publish synthesis step
-            ChatQueueService.publish_progress(
-                job_id=job_id,
-                step="synthesizing",
-                details={"message": "Finalizing response with citations..."},
-            )
+            # 3. The closing bookend -- persistence is the worker's work, not the
+            #    agent's, so it is published here and named for what it is.
+            on_progress("saving")
 
             # 4. Save Assistant ChatMessage & update User message
             assistant_msg = ChatMessage(
@@ -1166,8 +1318,13 @@ def handle_process_chat_job(
             return {"job_id": job_id, "status": "failed", "error": str(e)}
 
     with correlation_context(tenant_id=tenant_id, trace_id=trace_id, request_id=request_id):
-        if db_session is not None:
-            return _execute(db_session)
-        with Session(engine) as session:
-            return _execute(session)
+        # Gap 365 / D8: held across the whole turn, including the commit -- the
+        # next turn in this session must not start reading `ChatMessage` history
+        # until this one's assistant row is written, which is precisely the read
+        # `_previous_assistant_sql()` depends on.
+        with chat_session_lock(str(session_id) if session_id else ""):
+            if db_session is not None:
+                return _execute(db_session)
+            with Session(engine) as session:
+                return _execute(session)
 

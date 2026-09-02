@@ -91,3 +91,77 @@ Inline thread rename (the pencil icon in `ChatWindow.tsx`'s `ThreadSidebar`, add
 - **TypeScript Compile**: `npx tsc --noEmit` — ✅ **0 errors** (verified 2026-07-22; re-verified 2026-08-12 with the Gap 216 changes)
 - **E2E**: `npx playwright test e2e/chat-thread-rename.spec.ts` — ✅ 3 passed (2026-08-12). Needs the Next dev server on the configured Playwright port; no FastAPI backend is required (the page tests stub `/api/chat/**` in the browser, and the proxy-reachability test asserts "not 405", not a success status, precisely so it does not depend on one).
 - **Manual Verification**: Launch the Chat screen. Type a query (e.g., _"What is my total spend?"_), confirm the SQL drawer displays the query, and click a citation pill to check its behavior.
+
+
+---
+
+## Additive section — attached reference documents (BE Feature 26 / Gap 366, 2026-09-01)
+
+Additive only, per hard rule 4 — nothing above this line is changed. The
+backend design record for this is `apps/invoice-be/docs/feature_26_chat_attached_documents.md`;
+this section specifies only the chat FE surface.
+
+**Status: specified, NOT built.** The backend (three endpoints, the extraction
+profile, the deterministic matcher/comparator, and the pre-route gate) shipped
+on 2026-09-01. The FE work below was the pre-agreed cut line for that time-box
+and was deliberately left unbuilt rather than half-built. It is written down here
+so the surface is specified and the next session does not have to re-derive it.
+
+### What the user does
+
+Attach a PDF **purchase order or quotation** to a chat session, then ask a
+question grounded in it — "does this bill match what we agreed?". The assistant
+finds the corresponding invoice(s), **asks the user to confirm the match before
+saying anything financial**, and then reports a diff that was computed
+deterministically in Python (the LLM only narrates it).
+
+### File Coordinates
+
+- **`components/chat/ChatWindow.tsx`** — the composer's `InputBar` is co-located
+  in this file, not its own module. Adds a paperclip button plus a hidden
+  `<input type="file">`. **Lift `components/ingestion/DropZone.tsx`'s existing
+  guards rather than writing new ones** — that component already has the PDF
+  `accept` attribute, the byte-size cap and the filename-suffix check, and a
+  second, subtly different set of client guards for the same backend rules is
+  how the two drift apart. PDF-only; images are a separate Phase 2 item
+  (`apps/invoice-be/docs/phase_2_enhancements.md` §2), not this one.
+- **`types/chat.ts`** — `ChatMessage` has no attachment field today. Add an
+  optional attachment reference plus the `attachment_id` the send path carries.
+- **`hooks/useChatSession.ts`** — sends `attachment_id` on the message when one
+  is attached, and re-reads the attachment on session reload via
+  `GET /chat/attachments/{id}` (this is exactly why the backend persists a row
+  rather than keeping session scratch — the existing reload/reattach path would
+  otherwise lose it).
+- **NEW `components/chat/AttachmentMatchConfirm.tsx`** — renders the
+  `attachment_match_confirmation` payload: the candidate invoices, whether they
+  were found by exact PO number (tier 1) or by name+date (tier 2, and therefore
+  worth checking), and a confirm action posting to
+  `POST /chat/attachments/{id}/confirm-matches`.
+
+### Rules this surface must respect
+
+1. **The confirmation step is not skippable.** Until the user confirms, the
+   backend returns a confirmation payload and no figures at all. The FE must
+   render that as a confirmation prompt, never as an answer, and must not
+   auto-confirm a single candidate on the user's behalf — a one-candidate tier-2
+   guess is still a guess.
+2. **Zero matches offers manual entry.** The payload sets
+   `requires_manual_entry`; the FE asks for an invoice number rather than
+   showing an empty list.
+3. **Suggested actions are links, never buttons that act.** The backend returns
+   0–3 deep-links whose preconditions it has already checked. Render them as
+   navigation, the same way `ThumbsDownTriage.tsx` consumes the triage
+   `redirect` block. Chat never invokes a mutating endpoint.
+4. **Client-side caps mirror the server, they do not replace it.** 10 MB, PDF
+   only, 5 per session are all enforced server-side (413 / 415 / 409); the
+   client checks are for a fast error message, and the server responses still
+   need surfacing.
+
+### Verification Plan for this section (when built)
+
+- `npx tsc --noEmit` clean.
+- A Playwright case that attaches a PDF, asserts the **confirmation prompt**
+  renders instead of an answer, confirms a candidate, and only then asserts a
+  figure appears.
+- A case asserting an oversized file and a non-PDF are both rejected with the
+  server's message surfaced, not swallowed.

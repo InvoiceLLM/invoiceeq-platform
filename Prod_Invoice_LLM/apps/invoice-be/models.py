@@ -235,6 +235,53 @@ class ChatMessage(SQLModel, table=True):
     error_message: str | None = Field(default=None, max_length=1000)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+class ChatAttachment(SQLModel, table=True):
+    __tablename__ = "chat_attachments"
+    # Feature 26 (Gap 366): a reference document (purchase order or quotation)
+    # attached to a chat session so the user can ask "does this bill agree with
+    # what we agreed?".
+    #
+    # This is deliberately NOT an `Invoice` row (Feature 26, decision D2). A
+    # quotation is not a payable. Writing one into `invoice` would silently
+    # corrupt spend aggregates, /dashboard/insights, the AUDIT_REQUIRED count,
+    # billing quota and the RAG index -- five separate consumers that all read
+    # `invoice` as "money we owe or are owed". It is also not session-scratch:
+    # the FE reload/reattach path and the async chat worker (a different OS
+    # process from the request that uploaded the file) both need to read it
+    # back, and neither can read a request-scoped dict.
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    session_id: UUID = Field(foreign_key="chatsession.id", index=True)
+    filename: str = Field(max_length=512)
+    blob_path: str = Field(max_length=1024)
+    # "PURCHASE_ORDER" | "QUOTATION" | "OTHER" -- what the extractor decided the
+    # document is. One profile with a discriminator rather than two parallel
+    # schemas (D1): a PO and a quotation carry the same field spine and differ
+    # only in what the header calls itself.
+    doc_type: str = Field(default="OTHER", max_length=32)
+    # Persisted so D3's 10 MB cap is auditable after the fact, not just a
+    # transient check inside the upload handler.
+    file_size_bytes: int = Field(default=0)
+    # "PENDING" | "EXTRACTED" | "EXTRACT_FAILED"
+    extraction_status: str = Field(default="PENDING", max_length=32)
+    extracted_json: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    # Denormalised out of extracted_json purely so the Tier 1/Tier 2 match query
+    # is a plain indexed SQL predicate instead of a JSON dig in Python.
+    doc_number: str | None = Field(default=None, max_length=255)
+    party_name: str | None = Field(default=None, max_length=512)
+    doc_date: date | None = Field(default=None)
+    currency: str | None = Field(default=None, max_length=8)
+    grand_total: float | None = Field(default=None)
+    # What find_candidate_invoices() proposed, and what the user actually
+    # confirmed. These are kept separate on purpose: the confirmation gate (D4)
+    # turns on `confirmed_invoice_ids` being non-empty, and a proposal must
+    # never be able to satisfy it. Empty confirmed list + non-empty candidate
+    # list == "we found these, the user has not agreed yet".
+    candidate_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    confirmed_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ChatFeedback(SQLModel, table=True):
     __tablename__ = "chat_feedback"
     # Gap 54: signal-only per-answer thumbs up/down, tied to that turn's

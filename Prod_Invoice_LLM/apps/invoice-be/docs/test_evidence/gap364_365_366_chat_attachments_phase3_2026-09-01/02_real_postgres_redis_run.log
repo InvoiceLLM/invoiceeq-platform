@@ -1,0 +1,137 @@
+Failed to enqueue chat job 25f5676b-6714-4f29-a860-d590db367da5 to Redis: simulated Redis lpush failure (real redis backing the counters)
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+Redis PING: True
+Postgres check - tenant count: 12
+
+================================================================================
+T1a — 4th concurrent job rejected, real Redis counter, real accept/reject/release cycle
+================================================================================
+  accepted #1: queued job_id=badf8fac-3a70-4cdd-86ba-1aaf0e34a060
+  accepted #2: queued job_id=fd2be6e7-c069-4874-8117-e378cd9126ad
+  accepted #3: queued job_id=5d8835c9-b7eb-410d-99ef-9fad18a60b2a
+  real redis GET chat_inflight:phase3-t1-4d6b7a87-a104-44eb-9762-4ad1a9c50c35 = 3
+  4th call correctly rejected: active=4 limit=3 retry_after=5
+  real redis GET after rejection chat_inflight:phase3-t1-4d6b7a87-a104-44eb-9762-4ad1a9c50c35 = 3
+  after complete_job: 2
+  after fail_job: 1
+  after release_tenant_slot: 0
+  PASS: chat_inflight returns to 0 after both completion and failure release paths (real Redis)
+
+================================================================================
+T1b — slot-leak fix: failed lpush against REAL Redis counters (only lpush is faked)
+================================================================================
+  enqueue result despite lpush failure (swallowed, non-500): {'job_id': '25f5676b-6714-4f29-a860-d590db367da5', 'status': 'queued', 'created_at': '2026-09-01T17:17:53.104237+00:00'}
+  REAL redis counter after the failed lpush: 0
+  PASS: INCR happened on real Redis, lpush failed, slot was rolled back to 0 on real Redis
+
+================================================================================
+T1c — real HTTP 429 with Retry-After, real Postgres orphan-row check
+================================================================================
+  primed real redis counter to: 3
+{"timestamp": "2026-09-01T17:18:03.082066+00:00", "level": "INFO", "service": "invoice-be", "logger": "services.chat_queue", "message": "Rejected chat job 70c65747-3789-4fdc-a650-0fc0e42148b8 for tenant b7b9eb06-1a35-4a5a-8cce-0b46f83e18f5: 3 in flight, limit 3", "module": "chat_queue", "function": "enqueue_chat_job", "line": 153, "request_id": "685d89c0-6a3b-4187-a885-36025030ce73", "trace_id": "685d89c0-6a3b-4187-a885-36025030ce73"}
+{"timestamp": "2026-09-01T17:18:03.095540+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP POST /api/v1/chat/sessions/fbf40b3f-74e2-4a20-a3e4-1ccf71ced17b/message 429 (111.83ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "685d89c0-6a3b-4187-a885-36025030ce73", "trace_id": "685d89c0-6a3b-4187-a885-36025030ce73", "duration_ms": 111.83, "status_code": 429}
+{"timestamp": "2026-09-01T17:18:03.098759+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: POST http://testserver/api/v1/chat/sessions/fbf40b3f-74e2-4a20-a3e4-1ccf71ced17b/message \"HTTP/1.1 429 Too Many Requests\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  status: 429 Retry-After: 5
+  body: {'detail': 'You already have 3 chat turns running in this workspace. Wait for one to finish and try again.'}
+  ChatMessage rows for this session after the 429: 0
+  session title unchanged: New Chat
+  PASS: real 429 + Retry-After: 5, zero orphan ChatMessage rows on real Postgres
+  counter after cleanup release: 0
+{"timestamp": "2026-09-01T17:18:03.154872+00:00", "level": "INFO", "service": "invoice-be", "logger": "services.chat_queue", "message": "Enqueued chat job 8af2036b-4d5b-4cc5-ba18-c36a005843a7 for tenant b7b9eb06-1a35-4a5a-8cce-0b46f83e18f5 (session fbf40b3f-74e2-4a20-a3e4-1ccf71ced17b)", "module": "chat_queue", "function": "enqueue_chat_job", "line": 176, "request_id": "bc1e0a58-b76e-4a22-b110-895445975ba2", "trace_id": "bc1e0a58-b76e-4a22-b110-895445975ba2"}
+{"timestamp": "2026-09-01T17:18:03.156991+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP POST /api/v1/chat/sessions/fbf40b3f-74e2-4a20-a3e4-1ccf71ced17b/message 202 (38.87ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "bc1e0a58-b76e-4a22-b110-895445975ba2", "trace_id": "bc1e0a58-b76e-4a22-b110-895445975ba2", "duration_ms": 38.87, "status_code": 202}
+{"timestamp": "2026-09-01T17:18:03.160833+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: POST http://testserver/api/v1/chat/sessions/fbf40b3f-74e2-4a20-a3e4-1ccf71ced17b/message \"HTTP/1.1 202 Accepted\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  status after release: 202 queued
+  PASS: tenant admitted again once real redis counter is back under ceiling
+
+================================================================================
+T2a — per-session lock against REAL Redis: same-session serialises, cross-session parallel
+================================================================================
+  same-session x2: acquired=[True, True] overlapped=False
+  cross-session x2: acquired=[True, True] overlapped=True
+  PASS: real Redis SET NX lock serialises same-session turns, leaves cross-session turns parallel
+
+================================================================================
+T2b — real SSE transcript from GET /chat/jobs/{id}/stream (real Postgres + real Redis)
+================================================================================
+{"timestamp": "2026-09-01T17:18:04.451355+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP GET /api/v1/chat/jobs/phase3-t2-job-9d7888e0a8/stream 200 (26.24ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "3a4ee923-1299-49d3-8d30-6f021f65d44f", "trace_id": "3a4ee923-1299-49d3-8d30-6f021f65d44f", "duration_ms": 26.24, "status_code": 200}
+{"timestamp": "2026-09-01T17:18:05.084705+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Executing Query Agent for session 593ce36e-e413-4df9-a16a-99b9392037fb, tenant 1148f9eb-3a43-44cb-92e6-753f8f5b574b", "module": "query_agent", "function": "_run_query_agent", "line": 3102, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b"}
+{"timestamp": "2026-09-01T17:18:05.254607+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Selected Route: SQL", "module": "query_agent", "function": "_run_query_agent", "line": 3197, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b"}
+{"timestamp": "2026-09-01T17:18:05.299560+00:00", "level": "INFO", "service": "invoice-be", "logger": "invoice_be_telemetry", "message": "llm_agent_call", "module": "telemetry", "function": "_emit_event", "line": 529, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b", "agent_name": "chat.sql_generation", "model": "gpt-5-mini-fake", "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "latency_ms": 0.31, "status": "success", "request_id": "", "trace_id": "", "run_source": "production", "llm_calls": 0, "attempt": 1}
+{"timestamp": "2026-09-01T17:18:05.299687+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Generated SQL (attempt 1): SELECT id FROM invoice WHERE tenant_id = '1148f9eb-3a43-44cb-92e6-753f8f5b574b'", "module": "query_agent", "function": "run_sql_generation_loop", "line": 2655, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b"}
+{"timestamp": "2026-09-01T17:18:05.309060+00:00", "level": "WARNING", "service": "invoice-be", "logger": "agents.query_agent", "message": "SQL execution failed on attempt 1: syntax error at or near", "module": "query_agent", "function": "run_sql_generation_loop", "line": 2668, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b"}
+{"timestamp": "2026-09-01T17:18:05.318105+00:00", "level": "INFO", "service": "invoice-be", "logger": "invoice_be_telemetry", "message": "llm_agent_call", "module": "telemetry", "function": "_emit_event", "line": 529, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b", "agent_name": "chat.sql_generation", "model": "gpt-5-mini-fake", "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "latency_ms": 0.45, "status": "success", "request_id": "", "trace_id": "", "run_source": "production", "llm_calls": 0, "attempt": 2}
+{"timestamp": "2026-09-01T17:18:05.318348+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Generated SQL (attempt 2): SELECT id FROM invoice WHERE tenant_id = '1148f9eb-3a43-44cb-92e6-753f8f5b574b'", "module": "query_agent", "function": "run_sql_generation_loop", "line": 2655, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b"}
+{"timestamp": "2026-09-01T17:18:05.349995+00:00", "level": "INFO", "service": "invoice-be", "logger": "invoice_be_telemetry", "message": "llm_agent_call", "module": "telemetry", "function": "_emit_event", "line": 529, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b", "agent_name": "chat.sql_summary", "model": "gpt-5-mini-fake", "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "latency_ms": 0.3, "status": "success", "request_id": "", "trace_id": "", "run_source": "production", "llm_calls": 0, "zero_result": false, "zero_result_fallback_recovered": false}
+{"timestamp": "2026-09-01T17:18:05.420964+00:00", "level": "INFO", "service": "invoice-be", "logger": "invoice_be_telemetry", "message": "chat_turn", "module": "telemetry", "function": "_emit_event", "line": 529, "tenant_id": "1148f9eb-3a43-44cb-92e6-753f8f5b574b", "turn_id": "6d7d5872-4abb-4c56-9c28-767917be8e92", "session_id": "593ce36e-e413-4df9-a16a-99b9392037fb", "message_id": "568e0d68-2a30-4d2b-b200-ae9b887b3e16", "route": "SQL", "status": "success", "latency_ms": 311.37, "stop_reason": "", "tool_calls_made": 0, "tools_called": "", "llm_call_count": 3, "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "agents_called": "chat.sql_generation,chat.sql_summary", "sql_generated": true, "generated_sql": "SELECT id FROM invoice WHERE tenant_id = '1148f9eb-3a43-44cb-92e6-753f8f5b574b'", "sql_attempts": 2, "zero_result": false, "zero_result_fallback_recovered": false, "citation_count": 0, "result_invoice_count": 0, "tool_output": "DATABASE RESULTS:\n\n\nid | currency\n--- | ---\nrow | USD", "tool_output_chars": 53, "error_type": "", "drift_flags": "", "request_id": "", "trace_id": "", "run_source": "production", "turn_index": 1}
+  worker result status: completed
+{"timestamp": "2026-09-01T17:18:05.532151+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/chat/jobs/phase3-t2-job-9d7888e0a8/stream \"HTTP/1.1 200 OK\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  captured 5 SSE frames from the real HTTP stream endpoint
+  steps seen on the real SSE transcript, in order: ['queued', 'received', 'understanding_question', 'route_selected', 'completed']
+  distinct step count: 5
+  generating_sql attempt details, in arrival order: []
+  T2 flip-criterion-1 verdict: FAIL (distinct=5, repair-attempts-shown=0)
+
+================================================================================
+T2c — Gap 237 route-override visible on the real Redis channel under a second real run
+================================================================================
+{"timestamp": "2026-09-01T17:18:05.583526+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Executing Query Agent for session c4f46809-3ba0-4377-939b-b2a38251fad7, tenant d1013306-010e-4c9b-ad6a-3ed112c07243", "module": "query_agent", "function": "_run_query_agent", "line": 3102, "tenant_id": "d1013306-010e-4c9b-ad6a-3ed112c07243"}
+{"timestamp": "2026-09-01T17:18:05.607684+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Selected Route: RAG", "module": "query_agent", "function": "_run_query_agent", "line": 3197, "tenant_id": "d1013306-010e-4c9b-ad6a-3ed112c07243"}
+{"timestamp": "2026-09-01T17:18:05.623274+00:00", "level": "INFO", "service": "invoice-be", "logger": "invoice_be_telemetry", "message": "llm_agent_call", "module": "telemetry", "function": "_emit_event", "line": 529, "tenant_id": "d1013306-010e-4c9b-ad6a-3ed112c07243", "agent_name": "chat.rag_answer", "model": "gpt-5-mini-fake", "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "latency_ms": 0.46, "status": "success", "request_id": "", "trace_id": "", "run_source": "production", "llm_calls": 0, "chunk_count": 0}
+{"timestamp": "2026-09-01T17:18:05.675987+00:00", "level": "INFO", "service": "invoice-be", "logger": "invoice_be_telemetry", "message": "chat_turn", "module": "telemetry", "function": "_emit_event", "line": 529, "tenant_id": "d1013306-010e-4c9b-ad6a-3ed112c07243", "turn_id": "d7ee1fdf-226d-4302-9607-b1986684fa82", "session_id": "c4f46809-3ba0-4377-939b-b2a38251fad7", "message_id": "9d625192-61e3-4046-9842-31d2382f3608", "route": "RAG", "status": "success", "latency_ms": 51.65, "stop_reason": "", "tool_calls_made": 0, "tools_called": "", "llm_call_count": 1, "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "agents_called": "chat.rag_answer", "sql_generated": false, "generated_sql": "", "sql_attempts": 0, "zero_result": false, "zero_result_fallback_recovered": false, "citation_count": 0, "result_invoice_count": 0, "tool_output": "", "tool_output_chars": 0, "error_type": "", "drift_flags": "", "request_id": "", "trace_id": "", "run_source": "production", "turn_index": 1}
+  worker result status: completed generated_sql set: False
+  route_override events published on the real Redis channel: []
+  T2 flip-criterion-3 verdict: FAIL
+
+================================================================================
+T3 — attached-document flow against real Postgres + real Azurite blob storage
+================================================================================
+{"timestamp": "2026-09-01T17:18:05.774595+00:00", "level": "INFO", "service": "invoice-be", "logger": "services.storage", "message": "Attempting upload to Azure Blob Storage: tenants/b098cf26-679b-4484-8f32-772abedd81ca/invoices/chat-attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3.pdf", "module": "storage", "function": "upload_pdf_to_blob_storage", "line": 25, "request_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631", "trace_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631"}
+{"timestamp": "2026-09-01T17:18:05.837489+00:00", "level": "INFO", "service": "invoice-be", "logger": "azure.core.pipeline.policies.http_logging_policy", "message": "Request URL: 'http://127.0.0.1:10000/devstoreaccount1/invoices?restype=REDACTED'\nRequest method: 'PUT'\nRequest headers:\n    'x-ms-version': 'REDACTED'\n    'Accept': 'application/xml'\n    'User-Agent': 'azsdk-python-storage-blob/12.30.0 Python/3.14.6 (Windows-11-10.0.26200-SP0)'\n    'x-ms-date': 'REDACTED'\n    'x-ms-client-request-id': '18657229-a629-11f1-9409-010101010000'\n    'Authorization': 'REDACTED'\nNo body was attached to the request", "module": "_universal", "function": "on_request", "line": 535, "request_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631", "trace_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631"}
+{"timestamp": "2026-09-01T17:18:05.865365+00:00", "level": "INFO", "service": "invoice-be", "logger": "azure.core.pipeline.policies.http_logging_policy", "message": "Response status: 409\nResponse headers:\n    'Server': 'Azurite-Blob/3.37.0'\n    'x-ms-error-code': 'ContainerAlreadyExists'\n    'x-ms-request-id': 'c0c7de60-7961-4178-bd10-d5c0285f6ebd'\n    'content-type': 'application/xml'\n    'Date': 'Tue, 01 Sep 2026 17:18:05 GMT'\n    'Connection': 'keep-alive'\n    'Keep-Alive': 'REDACTED'\n    'Transfer-Encoding': 'chunked'", "module": "_universal", "function": "on_response", "line": 581, "request_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631", "trace_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631"}
+{"timestamp": "2026-09-01T17:18:05.870748+00:00", "level": "INFO", "service": "invoice-be", "logger": "azure.core.pipeline.policies.http_logging_policy", "message": "Request URL: 'http://127.0.0.1:10000/devstoreaccount1/invoices/tenants/b098cf26-679b-4484-8f32-772abedd81ca/invoices/chat-attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3.pdf'\nRequest method: 'PUT'\nRequest headers:\n    'Content-Length': '62'\n    'x-ms-blob-type': 'REDACTED'\n    'x-ms-version': 'REDACTED'\n    'Content-Type': 'application/octet-stream'\n    'Accept': 'application/xml'\n    'User-Agent': 'azsdk-python-storage-blob/12.30.0 Python/3.14.6 (Windows-11-10.0.26200-SP0)'\n    'x-ms-date': 'REDACTED'\n    'x-ms-client-request-id': '186a949f-a629-11f1-a488-010101010000'\n    'Authorization': 'REDACTED'\nA body is sent with the request", "module": "_universal", "function": "on_request", "line": 532, "request_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631", "trace_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631"}
+{"timestamp": "2026-09-01T17:18:05.929361+00:00", "level": "INFO", "service": "invoice-be", "logger": "azure.core.pipeline.policies.http_logging_policy", "message": "Response status: 201\nResponse headers:\n    'Server': 'Azurite-Blob/3.37.0'\n    'etag': '\"0x1D94AD39FE4D600\"'\n    'last-modified': 'Tue, 01 Sep 2026 17:18:05 GMT'\n    'content-md5': 'REDACTED'\n    'x-ms-client-request-id': '186a949f-a629-11f1-a488-010101010000'\n    'x-ms-request-id': '42c41d3a-27b3-4e96-bbce-0bbb4b7e12aa'\n    'x-ms-version': 'REDACTED'\n    'date': 'Tue, 01 Sep 2026 17:18:05 GMT'\n    'x-ms-request-server-encrypted': 'REDACTED'\n    'Connection': 'keep-alive'\n    'Keep-Alive': 'REDACTED'\n    'Content-Length': '0'", "module": "_universal", "function": "on_response", "line": 581, "request_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631", "trace_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631"}
+{"timestamp": "2026-09-01T17:18:05.960303+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP POST /api/v1/chat/sessions/09784046-20a1-4e1a-9ad6-7476d1a25eef/attachments 200 (214.27ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631", "trace_id": "8055e80e-7a16-4f1e-a8e9-4aee04f81631", "duration_ms": 214.27, "status_code": 200}
+{"timestamp": "2026-09-01T17:18:05.964805+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: POST http://testserver/api/v1/chat/sessions/09784046-20a1-4e1a-9ad6-7476d1a25eef/attachments \"HTTP/1.1 200 OK\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  upload status: 200 {'id': '6a67cde3-1731-4d1c-a392-c2adaa6558c3', 'session_id': '09784046-20a1-4e1a-9ad6-7476d1a25eef', 'filename': 'po.pdf', 'doc_type': 'PURCHASE_ORDER', 'extraction_status': 'EXTRACTED', 'doc_number': 'PO-2026/0099', 'party_name': 'Acme Supplies Ltd', 'doc_date': '2026-03-01', 'currency': 'INR', 'grand_total': 1380.0, 'file_size_bytes': 62, 'candidate_invoice_ids': [], 'confirmed_invoice_ids': []}
+  ChatAttachment row exists: True blob_path: azure://invoices/tenants/b098cf26-679b-4484-8f32-772abedd81ca/invoices/chat-attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3.pdf
+  blob_path recorded, no billing/ingestion effect asserted below
+  Invoice rows for tenant A after upload (should be exactly the 1 pre-seeded one): 1
+  tenant.ingestion/billing counters untouched (no such field bumped): {'free_quota_reset_at': None}
+  Tier 1 match on real Postgres: 1 [UUID('39c89bd8-06d4-46e8-a1da-e850d99e62c4')]
+  Tier 2 fallback on real Postgres (no PO match): 2 [UUID('39c89bd8-06d4-46e8-a1da-e850d99e62c4'), UUID('1286bd0b-9cbf-4520-ae60-1b6cd2a5a0dc')]
+  zero-match path on real Postgres: 0 []
+{"timestamp": "2026-09-01T17:18:06.045647+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Executing Query Agent for session 09784046-20a1-4e1a-9ad6-7476d1a25eef, tenant b098cf26-679b-4484-8f32-772abedd81ca", "module": "query_agent", "function": "_run_query_agent", "line": 3102}
+  pre-confirm turn (real Postgres row): attachment_match_confirmation
+{"timestamp": "2026-09-01T17:18:06.084112+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP POST /api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3/confirm-matches 200 (16.77ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "66de5e1e-2237-464e-a59e-213de9047169", "trace_id": "66de5e1e-2237-464e-a59e-213de9047169", "duration_ms": 16.77, "status_code": 200}
+{"timestamp": "2026-09-01T17:18:06.087208+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: POST http://testserver/api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3/confirm-matches \"HTTP/1.1 200 OK\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  confirm-matches status: 200 {'id': '6a67cde3-1731-4d1c-a392-c2adaa6558c3', 'session_id': '09784046-20a1-4e1a-9ad6-7476d1a25eef', 'filename': 'po.pdf', 'doc_type': 'PURCHASE_ORDER', 'extraction_status': 'EXTRACTED', 'doc_number': 'PO-2026/0099', 'party_name': 'Acme Supplies Ltd', 'doc_date': '2026-03-01', 'currency': 'INR', 'grand_total': 1380.0, 'file_size_bytes': 62, 'candidate_invoice_ids': ['39c89bd8-06d4-46e8-a1da-e850d99e62c4'], 'confirmed_invoice_ids': ['39c89bd8-06d4-46e8-a1da-e850d99e62c4']}
+{"timestamp": "2026-09-01T17:18:06.088102+00:00", "level": "INFO", "service": "invoice-be", "logger": "agents.query_agent", "message": "Executing Query Agent for session 09784046-20a1-4e1a-9ad6-7476d1a25eef, tenant b098cf26-679b-4484-8f32-772abedd81ca", "module": "query_agent", "function": "_run_query_agent", "line": 3102}
+  post-confirm deterministic diff (real Postgres invoice + real attachment row): grand_total delta = 0.0 status = match
+  currency-mismatch outcome on real Postgres row: currency_mismatch The attached document is in INR and this invoice is in EUR. No amounts were compared: converting between currencies is not something this comparison does.
+
+================================================================================
+T3d — tenant isolation on chat_attachments.py endpoints (real Postgres)
+================================================================================
+{"timestamp": "2026-09-01T17:18:06.146755+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP GET /api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3 404 (21.62ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "a2863b81-be30-483a-8ee7-eedc0d3c5fbc", "trace_id": "a2863b81-be30-483a-8ee7-eedc0d3c5fbc", "duration_ms": 21.62, "status_code": 404}
+{"timestamp": "2026-09-01T17:18:06.149467+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3 \"HTTP/1.1 404 Not Found\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  tenant B GET tenant A's attachment: 404
+{"timestamp": "2026-09-01T17:18:06.159034+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP POST /api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3/confirm-matches 404 (6.58ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "000a5552-71bf-4c7c-998e-a647acc525a8", "trace_id": "000a5552-71bf-4c7c-998e-a647acc525a8", "duration_ms": 6.58, "status_code": 404}
+{"timestamp": "2026-09-01T17:18:06.160763+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: POST http://testserver/api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3/confirm-matches \"HTTP/1.1 404 Not Found\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  tenant B confirm-matches on tenant A's attachment: 404
+{"timestamp": "2026-09-01T17:18:06.168859+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP POST /api/v1/chat/sessions/09784046-20a1-4e1a-9ad6-7476d1a25eef/attachments 404 (5.6ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "3b4b18bb-797e-484d-9699-faab2b3b2409", "trace_id": "3b4b18bb-797e-484d-9699-faab2b3b2409", "duration_ms": 5.6, "status_code": 404}
+{"timestamp": "2026-09-01T17:18:06.171741+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: POST http://testserver/api/v1/chat/sessions/09784046-20a1-4e1a-9ad6-7476d1a25eef/attachments \"HTTP/1.1 404 Not Found\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  tenant B upload into tenant A's session: 404
+{"timestamp": "2026-09-01T17:18:06.180263+00:00", "level": "INFO", "service": "invoice-be", "logger": "access", "message": "HTTP GET /api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3 200 (5.98ms)", "module": "logging_config", "function": "dispatch", "line": 179, "request_id": "425b9ecc-21d8-4f65-93d2-c8e347e04bd6", "trace_id": "425b9ecc-21d8-4f65-93d2-c8e347e04bd6", "duration_ms": 5.98, "status_code": 200}
+{"timestamp": "2026-09-01T17:18:06.183083+00:00", "level": "INFO", "service": "invoice-be", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/chat/attachments/6a67cde3-1731-4d1c-a392-c2adaa6558c3 \"HTTP/1.1 200 OK\"", "module": "_client", "function": "_send_single_request", "line": 1025}
+  tenant A (owner) GET own attachment still works: 200
+  PASS: tenant isolation holds on GET/confirm-matches/upload (real Postgres, 2 real tenants)
+
+================================================================================
+T4 — flip-criteria summary
+================================================================================
+1. LIVE PROGRESS (>=6 distinct steps + per-attempt repair visibility): FAIL (distinct=5, repair-attempts=0)
+2. CONCURRENCY CEILING (4th job real-429 while 3 in flight complete): PASS (T1a/T1c)
+3. FOLLOW-UP CORRECTNESS UNDER LOAD (Gap 237 override visible + per-session lock real): FAIL
+4. FAILED JOB RELEASES SLOT (chat_inflight back to 0 after fail_job, real Redis): PASS (T1a)
+5. REDIS DOWN DEGRADES, NO 500: NOT EXERCISED IN THIS RUN (see report)

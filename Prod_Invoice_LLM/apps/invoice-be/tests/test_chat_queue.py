@@ -9,7 +9,12 @@ from sqlalchemy.pool import StaticPool
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
 from models import ChatSession, ChatMessage
-from services.chat_queue import ChatQueueService
+from services.chat_queue import (
+    CHAT_TENANT_INFLIGHT_PREFIX,
+    PER_TENANT_MAX_ACTIVE_CHAT,
+    ChatQueueCapacityError,
+    ChatQueueService,
+)
 from queue_worker.handlers import handle_process_chat_job
 
 sqlite_url = "sqlite:///:memory:"
@@ -552,3 +557,255 @@ def test_job_isolation_on_postgres():
                 if row is not None:
                     session.delete(row)
             session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Gap 364: PER_TENANT_MAX_ACTIVE_CHAT is actually enforced
+#
+# `test_tenant_concurrency_throttle_and_fair_share_tracking` above asserted
+# `mock_redis.incr.called` and stopped there -- which is exactly why the missing
+# comparison stayed invisible: the counter really was incremented, it was just
+# never compared to anything. These cases count for real, against a fake that
+# keeps state, so "the 4th is refused" is a property of the code and not of a
+# mock's configured return value.
+# ---------------------------------------------------------------------------
+
+
+class _CountingRedis:
+    """In-memory stand-in for the five Redis ops the enqueue path uses.
+
+    A `MagicMock` cannot express this test: the whole question is what the
+    *value returned by INCR* causes, so the counter has to be real. `lpush` can
+    be armed to fail, which is the slot-leak case.
+    """
+
+    def __init__(self, fail_lpush: bool = False):
+        self.counters: dict[str, int] = {}
+        self.blobs: dict[str, str] = {}
+        self.queue: list[str] = []
+        self.published: list[tuple[str, str]] = []
+        self.fail_lpush = fail_lpush
+
+    def incr(self, key):
+        self.counters[key] = self.counters.get(key, 0) + 1
+        return self.counters[key]
+
+    def decr(self, key):
+        self.counters[key] = self.counters.get(key, 0) - 1
+        return self.counters[key]
+
+    def get(self, key):
+        if key in self.counters:
+            return str(self.counters[key])
+        return self.blobs.get(key)
+
+    def set(self, key, value, ex=None):
+        if key in self.counters:
+            self.counters[key] = int(value)
+        else:
+            self.blobs[key] = value
+
+    def lpush(self, key, value):
+        if self.fail_lpush:
+            raise ConnectionError("Redis connection reset by peer")
+        self.queue.append(value)
+        return len(self.queue)
+
+    def publish(self, channel, message):
+        # `complete_job`/`fail_job` publish before releasing the slot, and they
+        # swallow their own exceptions -- so a fake without this silently skips
+        # the release under test rather than failing loudly.
+        self.published.append((channel, message))
+        return 1
+
+
+def _enqueue(tenant_id, client):
+    return ChatQueueService.enqueue_chat_job(
+        session_id=str(uuid4()),
+        user_msg_id=str(uuid4()),
+        content="How much did we spend with Acme?",
+        tenant_id=tenant_id,
+        client=client,
+    )
+
+
+def test_fourth_concurrent_turn_for_one_tenant_is_refused():
+    """The ceiling is 3, so turns 1-3 queue and the 4th is refused.
+
+    Before Gap 364 the 4th (and the 400th) queued happily -- `enqueue_chat_job`
+    incremented `chat_inflight:{tenant}` and never read it back, and
+    `PER_TENANT_MAX_ACTIVE_CHAT` was referenced nowhere else in the application.
+    """
+    assert PER_TENANT_MAX_ACTIVE_CHAT == 3  # the cases below are written for 3
+    r = _CountingRedis()
+    tenant_id = "tenant-at-the-ceiling"
+    inflight_key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}"
+
+    accepted = [_enqueue(tenant_id, r) for _ in range(PER_TENANT_MAX_ACTIVE_CHAT)]
+    assert [job["status"] for job in accepted] == ["queued"] * 3
+    assert len(r.queue) == 3, "all three accepted turns reached the task queue"
+    assert r.counters[inflight_key] == 3
+
+    with pytest.raises(ChatQueueCapacityError) as exc:
+        _enqueue(tenant_id, r)
+
+    assert exc.value.limit == PER_TENANT_MAX_ACTIVE_CHAT
+    assert exc.value.retry_after_seconds == 5
+
+    # The three in flight are untouched: still queued, still holding 3 slots.
+    assert len(r.queue) == 3, "the refused turn was not pushed onto the queue"
+    assert r.counters[inflight_key] == 3, "the refused turn handed its slot back"
+
+    # ...and no status blob was left behind for a job that will never run:
+    # exactly the three accepted job ids have one. The ceiling check runs before
+    # the status `set` precisely so a refusal writes nothing at all.
+    assert len(r.blobs) == 3
+
+
+def test_a_refusal_does_not_permanently_consume_the_slot():
+    """The DECR-back matters more than the refusal itself: without it the
+    counter climbs on every rejected attempt, the tenant sits above the ceiling
+    forever, and nothing decrements it because no job ever ran."""
+    r = _CountingRedis()
+    tenant_id = "tenant-retrying"
+    inflight_key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}"
+
+    for _ in range(PER_TENANT_MAX_ACTIVE_CHAT):
+        _enqueue(tenant_id, r)
+
+    for _ in range(5):
+        with pytest.raises(ChatQueueCapacityError):
+            _enqueue(tenant_id, r)
+
+    assert r.counters[inflight_key] == 3, "five refusals did not inflate the counter"
+    assert ChatQueueService.get_tenant_inflight_count(tenant_id, client=r) == 3
+
+    # One finishes -> the freed slot is immediately usable again.
+    ChatQueueService.release_tenant_slot(tenant_id, client=r)
+    assert _enqueue(tenant_id, r)["status"] == "queued"
+    assert r.counters[inflight_key] == 3
+
+
+def test_failed_job_releases_its_slot_and_frees_the_ceiling():
+    """`fail_job` already released the slot; what Gap 364 adds is that the
+    release now demonstrably lets a refused tenant back in."""
+    r = _CountingRedis()
+    tenant_id = "tenant-with-a-failure"
+
+    for _ in range(PER_TENANT_MAX_ACTIVE_CHAT):
+        _enqueue(tenant_id, r)
+    with pytest.raises(ChatQueueCapacityError):
+        _enqueue(tenant_id, r)
+
+    ChatQueueService.fail_job(
+        job_id="doomed-job",
+        tenant_id=tenant_id,
+        error_message="Azure OpenAI Rate Limit Exceeded",
+        client=r,
+    )
+    assert ChatQueueService.get_tenant_inflight_count(tenant_id, client=r) == 2
+    assert _enqueue(tenant_id, r)["status"] == "queued"
+
+
+def test_lpush_failure_rolls_the_reserved_slot_back():
+    """The slot leak, directly.
+
+    The `except` in `enqueue_chat_job` swallows Redis failures on purpose --
+    chat must not 500 because the queue hiccuped -- but the INCR has already
+    happened by the time `lpush` throws. Swallowing without releasing burned one
+    of the tenant's three slots permanently: `chat_inflight:{tenant}` has no TTL
+    and only `complete_job`/`fail_job` decrement it, neither of which runs for a
+    job that was never queued. Three such failures and that tenant could never
+    chat again.
+    """
+    r = _CountingRedis(fail_lpush=True)
+    tenant_id = "tenant-hitting-a-flaky-redis"
+    inflight_key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}"
+
+    # Still returns a job id rather than raising -- the swallow is deliberate.
+    assert _enqueue(tenant_id, r)["status"] == "queued"
+
+    assert r.queue == [], "nothing reached the queue, which is the failure"
+    assert r.counters[inflight_key] == 0, "the reserved slot was handed back"
+
+    # Repeat it: a flaky Redis must not ratchet the tenant out of service.
+    for _ in range(10):
+        _enqueue(tenant_id, r)
+    assert r.counters[inflight_key] == 0
+
+    # And once Redis recovers the tenant still has all three slots available.
+    r.fail_lpush = False
+    for _ in range(PER_TENANT_MAX_ACTIVE_CHAT):
+        assert _enqueue(tenant_id, r)["status"] == "queued"
+    with pytest.raises(ChatQueueCapacityError):
+        _enqueue(tenant_id, r)
+
+
+def test_over_capacity_post_returns_429_with_retry_after_and_no_orphan_row(db_session):
+    """The HTTP half: a refused turn is a 429 the FE can act on, and it leaves
+    the session exactly as it found it.
+
+    The orphan row is the part worth guarding. `post_chat_message` commits the
+    user `ChatMessage(status="queued")` before enqueuing, so a refusal that
+    simply returned an error would leave a message no worker will ever move off
+    `queued` -- the FE renders that as a turn stuck thinking forever.
+    """
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="New Chat"))
+    db_session.commit()
+
+    client = TestClient(app)
+
+    with patch(
+        "services.chat_queue.ChatQueueService.enqueue_chat_job",
+        side_effect=ChatQueueCapacityError(
+            tenant_id=str(MOCK_TENANT_ID), active=4, limit=PER_TENANT_MAX_ACTIVE_CHAT
+        ),
+    ):
+        res = client.post(
+            f"/api/v1/chat/sessions/{session_id}/message",
+            json={"content": "What is the total spend on hardware?"},
+        )
+
+    assert res.status_code == 429
+    assert res.headers["Retry-After"] == "5"
+    assert "3 chat turns running" in res.json()["detail"]
+
+    rows = db_session.exec(
+        select(ChatMessage).where(ChatMessage.session_id == session_id)
+    ).all()
+    assert rows == [], "a refused turn left no queued ChatMessage behind"
+
+    # The auto-title is derived from the message that was refused, so it must
+    # not stick either.
+    db_session.expire_all()
+    assert db_session.get(ChatSession, session_id).title == "New Chat"
+
+
+def test_an_accepted_turn_is_unaffected_by_the_new_limiter(db_session):
+    """Guard against the fix costing the happy path: under the ceiling, the
+    endpoint still answers 202 and still stages the user row."""
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="New Chat"))
+    db_session.commit()
+
+    client = TestClient(app)
+    r = _CountingRedis()
+
+    with patch("services.chat_queue.get_redis_client", return_value=r), \
+         patch("routers.chat._chat_background_pool") as pool:
+        res = client.post(
+            f"/api/v1/chat/sessions/{session_id}/message",
+            json={"content": "What is the total spend on hardware?"},
+        )
+
+    assert res.status_code == 202
+    assert pool.submit.called
+    assert len(r.queue) == 1
+    assert r.counters[f"{CHAT_TENANT_INFLIGHT_PREFIX}{MOCK_TENANT_ID}"] == 1
+
+    staged = db_session.exec(
+        select(ChatMessage).where(ChatMessage.session_id == session_id)
+    ).one()
+    assert staged.status == "queued"
+    assert staged.job_id == res.json()["job_id"]

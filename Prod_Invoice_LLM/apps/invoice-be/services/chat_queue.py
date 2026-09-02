@@ -21,6 +21,46 @@ CHAT_TENANT_INFLIGHT_PREFIX = "chat_inflight:"
 PER_TENANT_MAX_ACTIVE_CHAT = 3
 JOB_STATUS_TTL_SECONDS = 3600  # 1 hour TTL for cached job outcomes
 
+# Gap 364: how long the caller is told to wait before retrying a rejected turn.
+# Lives here rather than in the router because the ceiling it belongs to lives
+# here -- the router should not have to invent a number for a limit it does not
+# own.
+CHAT_CAPACITY_RETRY_AFTER_SECONDS = 5
+
+
+class ChatQueueCapacityError(Exception):
+    """Gap 364: the tenant already has `PER_TENANT_MAX_ACTIVE_CHAT` chat jobs
+    in flight, so this turn was not enqueued and no slot is held for it.
+
+    Shaped like `services/sandbox.py::SandboxClaimError`: the machine-readable
+    fields (`active`, `limit`, `retry_after_seconds`) are attributes so the
+    router can build a status code and a `Retry-After` header without parsing
+    prose, and without hard-coding the ceiling a second time.
+
+    Raising is deliberate rather than returning a `{"status": "rejected"}` dict:
+    every existing caller of `enqueue_chat_job()` treats its return value as a
+    successfully queued job, so a sentinel return would have been silently
+    ignored exactly the way the unenforced counter was.
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,
+        active: int,
+        limit: int = PER_TENANT_MAX_ACTIVE_CHAT,
+        retry_after_seconds: int = CHAT_CAPACITY_RETRY_AFTER_SECONDS,
+    ):
+        message = (
+            f"Tenant {tenant_id} already has {min(active, limit)} of {limit} "
+            "concurrent chat turns in flight."
+        )
+        super().__init__(message)
+        self.tenant_id = tenant_id
+        self.active = active
+        self.limit = limit
+        self.retry_after_seconds = retry_after_seconds
+        self.message = message
+
 
 def get_redis_client() -> redis.Redis | None:
     """Returns a connected Redis client, or None if unreachable."""
@@ -49,8 +89,24 @@ class ChatQueueService:
     ) -> dict:
         """Enqueues a chat query into the Redis task queue with fair-share throttling.
 
+        Gap 364 made the throttle real. Before it, this function incremented
+        `chat_inflight:{tenant_id}` and never compared it to anything --
+        `PER_TENANT_MAX_ACTIVE_CHAT` was referenced nowhere in the application,
+        so the "fair-share concurrency limiter" enforced no limit at all. Same
+        class of defect as Gap 352: a declared meter that did not meter.
+
+        Order matters here. The slot is reserved (INCR) and checked *first*, so
+        a rejected turn leaves nothing behind at all -- no status blob for a job
+        that will never run, and nothing on the queue. The two write steps that
+        follow are what the reservation was taken for.
+
         Returns:
             dict containing `job_id` and initial status (`"queued"`).
+
+        Raises:
+            ChatQueueCapacityError: the tenant is already at the ceiling. No
+                slot is held and nothing was queued -- the caller may safely
+                turn this into a 429 (routers/chat.py does).
         """
         r = client or get_redis_client()
         job_id = job_id or str(uuid4())
@@ -67,16 +123,52 @@ class ChatQueueService:
         }
 
         if r:
+            slot_reserved = False
             try:
-                # 1. Store initial job status cache
+                # 1. Reserve the tenant's in-flight slot, and enforce the
+                #    ceiling on the value INCR returned. INCR-then-check rather
+                #    than GET-then-INCR: only the atomic return value is safe
+                #    against two concurrent turns both reading 2 and both
+                #    proceeding. The slot is released again below if we are over.
+                inflight_key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}"
+                active = r.incr(inflight_key)
+                slot_reserved = True
+
+                try:
+                    active_count = int(active)
+                except (TypeError, ValueError):
+                    # Counter unreadable (non-numeric value in the key). Fail
+                    # open -- this limiter exists to smooth bursts, not to
+                    # authorise anything, so a broken counter must not deny an
+                    # otherwise valid turn.
+                    active_count = 0
+
+                if active_count > PER_TENANT_MAX_ACTIVE_CHAT:
+                    # Over the ceiling: hand the slot straight back. Not doing
+                    # this would leave the counter permanently above the limit
+                    # and lock the tenant out for good, since nothing else ever
+                    # decrements it for a job that never ran.
+                    ChatQueueService.release_tenant_slot(tenant_id, r)
+                    slot_reserved = False
+                    logger.info(
+                        "Rejected chat job %s for tenant %s: %s in flight, limit %s",
+                        job_id,
+                        tenant_id,
+                        active_count - 1,
+                        PER_TENANT_MAX_ACTIVE_CHAT,
+                    )
+                    raise ChatQueueCapacityError(
+                        tenant_id=tenant_id,
+                        active=active_count,
+                        limit=PER_TENANT_MAX_ACTIVE_CHAT,
+                    )
+
+                # 2. Store initial job status cache
                 r.set(
                     f"{CHAT_JOB_STATUS_PREFIX}{job_id}",
                     json.dumps(job_payload),
                     ex=JOB_STATUS_TTL_SECONDS,
                 )
-
-                # 2. Increment tenant in-flight counter
-                r.incr(f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}")
 
                 # 3. Push to queue
                 r.lpush(CHAT_QUEUE_KEY, json.dumps(job_payload))
@@ -87,7 +179,17 @@ class ChatQueueService:
                     tenant_id,
                     session_id,
                 )
+            except ChatQueueCapacityError:
+                raise
             except Exception as e:
+                # Gap 364, second half: this except used to swallow a failed
+                # `lpush` that happened AFTER the INCR, leaking a slot that
+                # nothing would ever release -- three such failures and the
+                # tenant could never chat again until the key expired (it has no
+                # TTL) or was deleted by hand. Give the slot back before
+                # swallowing.
+                if slot_reserved:
+                    ChatQueueService.release_tenant_slot(tenant_id, r)
                 logger.error("Failed to enqueue chat job %s to Redis: %s", job_id, e)
 
         return {"job_id": job_id, "status": "queued", "created_at": now_iso}

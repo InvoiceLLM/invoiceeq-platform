@@ -11,6 +11,9 @@ from database import engine
 from config import get_settings
 from routers import auth, invoices, chat, audit, dashboard, connectors, trainer, email_ingestion, outbound_invoices, outbound_audit, outbound_dashboard, webhooks, billing, admin, webhook_docs, autopilot, support, sandbox, widget
 from routers import settings as settings_router
+# Feature 26 (Gap 366): chat reference-document attachments. A separate module
+# from `chat` on purpose -- see that file's header.
+from routers import chat_attachments
 from utils.logging_config import TracingAndLoggingMiddleware, setup_structured_logging
 
 logger = logging.getLogger(__name__)
@@ -170,6 +173,7 @@ if azure_monitor_configured:
 app.include_router(auth.router)
 app.include_router(invoices.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
+app.include_router(chat_attachments.router, prefix="/api/v1")  # Feature 26: PO/quotation attachments
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(connectors.router, prefix="/api/v1")
