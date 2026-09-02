@@ -15,6 +15,7 @@ import Link from "next/link";
 import { Lock, FolderOpen } from "lucide-react";
 import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
+import { useAuth } from "../../hooks/useAuth";
 
 type IngestionTab = "receiving" | "sending" | "autopilot";
 
@@ -60,6 +61,10 @@ export default function IngestionPage() {
   // its one relevant view, unchanged from today's default when Send is off.
   const [receiveEnabled, setReceiveEnabled] = useState(true);
   const [sendEnabled, setSendEnabled] = useState(false);
+  // Gap 369: per-user Send Invoices visibility, on top of the tenant-wide
+  // sendEnabled flag above -- both must be true for this user to see Sending.
+  const { canSendInvoices } = useAuth();
+  const sendVisible = sendEnabled && canSendInvoices;
   const [activeTab, setActiveTab] = useState<IngestionTab>("receiving");
 
   // Feature 13: Autopilot config state
@@ -218,7 +223,10 @@ export default function IngestionPage() {
         if (cancelled || !data) return;
         setReceiveEnabled(data.receive_invoices_enabled ?? true);
         setSendEnabled(data.send_invoices_enabled ?? false);
-        if (!data.receive_invoices_enabled && data.send_invoices_enabled) {
+        // Gap 369: only auto-switch to a tab this user can actually see --
+        // canSendInvoices=false must not land them on a tab with no visible
+        // button and nothing rendered.
+        if (!data.receive_invoices_enabled && data.send_invoices_enabled && canSendInvoices) {
           setActiveTab("sending");
         }
       })
@@ -288,10 +296,16 @@ export default function IngestionPage() {
     cachedTrackedFiles = trackedFiles;
   }, [trackedFiles]);
 
-  // Gap 12/FE Gap 1: directory watcher — bulk-ingest a server-accessible folder
-  // in one pass, without per-file drag-and-drop.
-  const [directoryPath, setDirectoryPath] = useState("");
-  const [isScanning, setIsScanning] = useState(false);
+  // FE Gap 370 (2026-09-02): the server-path directory watcher form
+  // (directoryPath/isScanning/handleWatchDirectory, POST /invoices/watcher)
+  // was removed here -- a raw server-filesystem path input is meaningless in
+  // a hosted multi-tenant SaaS deployment, and the browser folder picker
+  // below (Gap 145) is the working, modern equivalent. watcherError/
+  // watcherResult are kept: the folder picker's own onChange handler still
+  // uses both to report what it found. The backend endpoint
+  // (`routers/invoices.py::start_directory_watcher`) is deliberately left
+  // in place -- see be_features_tracker.md Gap 370 for why removing it is a
+  // separate, later decision.
   const [watcherError, setWatcherError] = useState<string | null>(null);
   const [watcherResult, setWatcherResult] = useState<{ files_found: number; files_queued: number } | null>(null);
   // FE Gap 69: collapsed by default so the left column fits the viewport
@@ -300,34 +314,6 @@ export default function IngestionPage() {
   // it's the right one to fold away -- the header row stays visible so it's
   // still discoverable, unlike being pushed below the fold entirely.
   const [isDirectoryScanOpen, setIsDirectoryScanOpen] = useState(false);
-
-  const handleWatchDirectory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!directoryPath.trim()) return;
-
-    setIsScanning(true);
-    setWatcherError(null);
-    setWatcherResult(null);
-
-    try {
-      const response = await apiClient.post("/invoices/watcher", { directory_path: directoryPath.trim() });
-      const { batch_id, job_ids, files_found, files_queued } = response.data;
-      setWatcherResult({ files_found, files_queued });
-      if (job_ids?.length > 0) {
-        setTrackedFiles(job_ids.map((id: string) => ({ name: id, size: 0 })));
-        setBatchId(batch_id);
-        setJobIds(job_ids);
-      }
-    } catch (err: any) {
-      if (err.response?.status === 501) {
-        setWatcherError("Directory watcher isn't enabled for this environment.");
-      } else {
-        setWatcherError(err.response?.data?.detail || "Failed to scan directory.");
-      }
-    } finally {
-      setIsScanning(false);
-    }
-  };
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -371,9 +357,13 @@ export default function IngestionPage() {
     }
   };
 
-  const showTabs = receiveEnabled && sendEnabled;
-  const showReceiving = activeTab === "receiving" && (receiveEnabled || !sendEnabled);
-  const showSending = activeTab === "sending" && sendEnabled;
+  // Gap 369: sendVisible (tenant flag AND per-user permission) replaces
+  // sendEnabled everywhere Sending's visibility, not just its backing data,
+  // is decided -- a user without canSendInvoices must not see the tab, the
+  // tab button, or land on it via the auto-switch effect above.
+  const showTabs = receiveEnabled && sendVisible;
+  const showReceiving = activeTab === "receiving" && (receiveEnabled || !sendVisible);
+  const showSending = activeTab === "sending" && sendVisible;
   const showAutopilot = activeTab === "autopilot";
 
   return (
@@ -391,7 +381,7 @@ export default function IngestionPage() {
               Receiving
             </button>
           )}
-          {sendEnabled && (
+          {sendVisible && (
             <button
               onClick={() => setActiveTab("sending")}
               className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
@@ -518,10 +508,12 @@ export default function IngestionPage() {
               Settings rather than the whole row disappearing. */}
           <ConnectorBrowseBar direction="inbound" />
 
-          {/* Directory Watcher (Gap 12 / FE Gap 1): bulk-ingest a server-accessible
-              folder in one pass, no per-file drag-and-drop.
-              FE Gap 69: collapsed into a disclosure so it stops pushing itself
-              off-screen. Header row is always rendered and always clickable. */}
+          {/* Bulk Directory Scan: bulk-ingest a local folder in one pass, no
+              per-file drag-and-drop. FE Gap 69: collapsed into a disclosure so
+              it stops pushing itself off-screen. Header row is always
+              rendered and always clickable. FE Gap 370: the server-path half
+              of this card was removed -- browser folder selection (Gap 145)
+              is now the only mechanism here. */}
           <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-3">
             <button
               type="button"
@@ -541,9 +533,9 @@ export default function IngestionPage() {
 
             {isDirectoryScanOpen && (
             <div id="bulk-directory-scan-body" className="space-y-3">
-            {/* FE Gap 113 item 3 & Gap 145: support both client-side folder selection and server-path watcher */}
+            {/* FE Gap 113 item 3 & Gap 145: client-side folder selection. */}
             <p className="text-[11px] text-slate-500">
-              Select a local folder or enter a shared server directory path.
+              Select a local folder containing the invoices you want to bulk-ingest.
             </p>
 
             {/* Gap 145: Browser Local Folder Picker */}
@@ -578,7 +570,7 @@ export default function IngestionPage() {
                   }
                 } catch (err) {
                   console.error("Failed to read selected folder", err);
-                  setWatcherError("Couldn't read the selected folder. Try again, or use the server directory path below instead.");
+                  setWatcherError("Couldn't read the selected folder. Please try again.");
                 } finally {
                   // Reset so re-selecting the same folder fires onChange again.
                   e.target.value = "";
@@ -595,39 +587,6 @@ export default function IngestionPage() {
               <FolderSearch className="w-3.5 h-3.5" />
               <span>Select Folder from Computer</span>
             </button>
-
-            <div className="flex items-center gap-2 text-[10px] text-slate-500 my-1">
-              <div className="h-px bg-[#222D3D] flex-1" />
-              <span>OR SERVER PATH</span>
-              <div className="h-px bg-[#222D3D] flex-1" />
-            </div>
-
-            <form onSubmit={handleWatchDirectory} className="flex flex-col gap-2">
-              <input
-                type="text"
-                value={directoryPath}
-                onChange={(e) => setDirectoryPath(e.target.value)}
-                placeholder="/path/to/watched/folder"
-                className="w-full bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-accent-blue/60"
-              />
-              <button
-                type="submit"
-                disabled={!directoryPath.trim() || isScanning}
-                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
-                  !directoryPath.trim()
-                    ? "bg-slate-800/40 border-[#222D3D] text-slate-500 cursor-not-allowed"
-                    : "bg-slate-800/60 border-[#222D3D] text-slate-200 hover:bg-slate-800"
-                }`}
-              >
-                {isScanning ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Scanning...
-                  </>
-                ) : (
-                  "Scan Directory Path"
-                )}
-              </button>
-            </form>
             {watcherError && (
               <div className="flex items-center gap-2 p-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-[11px]">
                 <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />

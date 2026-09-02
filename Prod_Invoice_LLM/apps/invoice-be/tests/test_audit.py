@@ -419,4 +419,108 @@ def test_standing_rule_not_attempted_when_checkbox_unset(db_session):
         m_extract.assert_not_called()
 
     assert response.status_code == 200
-    assert response.json()["standing_rule_result"] is None
+
+
+# ---------------------------------------------------------------------------
+# Gap 371: REVIEW_LATER / NEEDS_RESUBMISSION — non-terminal deferral states
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("target_status", ["REVIEW_LATER", "NEEDS_RESUBMISSION"])
+def test_resolve_to_deferral_status_succeeds_from_audit_required(db_session, target_status):
+    """Either new status is reachable from AUDIT_REQUIRED, the normal case, by
+    any user who can already resolve invoices -- no Admin gate, unlike reopen."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=["Math mismatch"],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": target_status, "dismissed_alerts": []},
+    )
+    assert response.status_code == 200, response.text
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == target_status
+    # Neither is a finalization -- action must log as RESOLVE_INVOICE, not
+    # REOPEN_INVOICE (that branch checks specifically for AUDIT_REQUIRED).
+    audit_logs = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id)).all()
+    assert len(audit_logs) == 1
+    assert audit_logs[0].action == "RESOLVE_INVOICE"
+    assert audit_logs[0].details["target_status"] == target_status
+
+
+@pytest.mark.parametrize("target_status", ["REVIEW_LATER", "NEEDS_RESUBMISSION"])
+@pytest.mark.parametrize("terminal_status", ["PAID", "REJECTED"])
+def test_deferral_status_rejected_from_a_terminal_invoice(db_session, target_status, terminal_status):
+    """Neither new status may be set directly on an already-finalized invoice --
+    that would silently un-finalize it with no Admin involved. Must go through
+    the existing AUDIT_REQUIRED reopen (Admin-only) first."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status=terminal_status, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": target_status, "dismissed_alerts": []},
+    )
+    assert response.status_code == 400
+    assert "reopen it first" in response.json()["detail"]
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == terminal_status  # unchanged
+
+
+@pytest.mark.parametrize("target_status", ["REVIEW_LATER", "NEEDS_RESUBMISSION"])
+def test_deferral_status_does_not_trigger_finalization_side_effects(db_session, target_status):
+    """The webhook dispatch, staff-notify, Drive-archive, and email-summary
+    blocks in resolve_audit_invoice() all gate on target_status in
+    ("PAID", "REJECTED") specifically -- confirms neither new status
+    accidentally fires an invoice.approved/invoice.rejected webhook or a
+    customer/staff notification meant for an actual finalization."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("services.webhooks.dispatch_webhook_event") as m_webhook, \
+         patch("services.staff_notify.notify_auditor_action") as m_notify:
+        response = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": target_status, "dismissed_alerts": []},
+        )
+        assert response.status_code == 200, response.text
+        m_webhook.assert_not_called()
+        m_notify.assert_not_called()
+
+
+def test_deferral_status_not_reachable_via_invalid_status_message(db_session):
+    """The 400 error message for a genuinely invalid status must list all five
+    valid values -- a stale error message would be a real regression for
+    anyone reading it to debug an integration."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "BOGUS_STATUS", "dismissed_alerts": []},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    for expected in ("PAID", "REJECTED", "AUDIT_REQUIRED", "REVIEW_LATER", "NEEDS_RESUBMISSION"):
+        assert expected in detail

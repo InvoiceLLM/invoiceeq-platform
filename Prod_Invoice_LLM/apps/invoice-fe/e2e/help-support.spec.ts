@@ -11,6 +11,10 @@ import { test, expect, Page } from "@playwright/test";
  * 5. Smart Escalation: Error keyword triggers inline [Raise Support Ticket from this Issue] card.
  * 6. Modal Pre-fill: Escalation trigger pre-populates subject, category, and priority in modal.
  * 7. Direct Ticket Trigger: Single direct ticket button in chat header opens clean modal and submits successfully.
+ *
+ * FE Gap 368 (Ticket History & Status portal):
+ * 8. My Tickets tab lists the tenant's own tickets from GET /api/support/ticket.
+ * 9. My Tickets tab shows the empty state when the tenant has no tickets.
  */
 
 async function stubShell(page: Page) {
@@ -207,5 +211,63 @@ test.describe("Feature 15: Help Center & AI Support Assistant", () => {
 
     await expect(page.locator("#ticket-success-card")).toBeVisible();
     await expect(page.locator("#ticket-success-card")).toContainText("TICK-2026-1122");
+  });
+
+  test("8. My Tickets tab lists the tenant's own tickets", async ({ page }) => {
+    await page.route("**/api/support/ticket", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          tickets: [
+            {
+              ticket_number: "TICK-2026-4471",
+              subject: "Webhook signature verification failing",
+              category: "TECHNICAL_SUPPORT",
+              priority: "URGENT",
+              status: "OPEN",
+              source: "HELP_CHATBOT",
+              created_at: "2026-09-01T10:15:00Z",
+            },
+            {
+              ticket_number: "TICK-2026-3390",
+              subject: "Question about Pro Combined plan limits",
+              category: "BILLING",
+              priority: "NORMAL",
+              status: "RESOLVED",
+              source: "DIRECT_TICKET",
+              created_at: "2026-08-28T14:02:00Z",
+            },
+          ],
+        }),
+      });
+    });
+
+    await gotoHelp(page);
+    await page.locator("#tab-btn-tickets").click();
+
+    await expect(page.locator("#tab-btn-tickets")).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator("#ticket-history-panel")).toBeVisible();
+    await expect(page.locator("#ticket-history-panel")).toContainText("TICK-2026-4471");
+    await expect(page.locator("#ticket-history-panel")).toContainText("Webhook signature verification failing");
+    await expect(page.locator("#ticket-history-panel")).toContainText("TICK-2026-3390");
+  });
+
+  test("9. My Tickets tab shows the empty state with no tickets", async ({ page }) => {
+    await page.route("**/api/support/ticket", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ tickets: [] }),
+      });
+    });
+
+    await gotoHelp(page);
+    await page.locator("#tab-btn-tickets").click();
+
+    await expect(page.locator("#ticket-history-empty-state")).toBeVisible();
+    await expect(page.locator("#ticket-history-empty-state")).toContainText("No tickets yet");
   });
 });

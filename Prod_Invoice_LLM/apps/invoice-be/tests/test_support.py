@@ -32,6 +32,18 @@ Email dispatch (mocked in all tests)
 """
 from __future__ import annotations
 
+import os
+
+# Gap 367: evaluate_support_query() now has a vector-search fallback
+# (agents/support_agent.py) that goes through chroma_client.get_embeddings().
+# Must be set before `config`/`main` are imported anywhere (see conftest.py's
+# comment on ALLOW_MOCK_AUTH for why) so this file never pays the real
+# BAAI/bge-m3 model's load cost — every existing test in this file that falls
+# through to a miss now also exercises that fallback, and the mock path's
+# high-dimensional random vectors are what keeps that safe (see
+# TestSupportAgentVectorFallback below for why that isn't just assumed).
+os.environ.setdefault("MOCK_EMBEDDINGS", "true")
+
 import re
 import time
 from unittest.mock import patch
@@ -522,6 +534,171 @@ class TestSupportChatEndpoint:
                     f"expected {expected_code} — a KB keyword is shadowing this trigger"
                 )
 
+
+# ---------------------------------------------------------------------------
+# Gap 367: semantic (vector) fallback for zero-keyword-match queries
+# ---------------------------------------------------------------------------
+
+class TestSupportAgentVectorFallback:
+    """
+    Gap 367 — support_agent.py's evaluate_support_query() now tries a
+    semantic match over KNOWLEDGE_TOPICS before giving up on a query that
+    scored zero keyword hits (and isn't an error trigger / human-help ask).
+
+    Why these tests don't rely on real embeddings: MOCK_EMBEDDINGS=true (set
+    at the top of this file) means every call goes through
+    chroma_client.get_embeddings()'s mock branch, which returns
+    random.uniform(-0.1, 0.1) vectors over 1024 dims, normalized. Two
+    independent random unit vectors in 1024 dimensions concentrate tightly
+    around cosine distance 1.0 (orthogonal) — nowhere near
+    SUPPORT_RELEVANCE_DISTANCE_THRESHOLD's 0.35 — which is *why* every
+    pre-existing "should miss" test above (e.g. "how do I wash my car?")
+    still passes unmodified with this fallback wired in: the mock path
+    essentially never produces a false-positive semantic match. That property
+    is exercised directly below rather than just asserted in prose. Proving a
+    *correct* semantic match (as opposed to "nothing accidentally matched")
+    needs a controlled embedding, since random mock vectors carry no real
+    meaning to test against (Gap 244's process lesson) — so the positive
+    match test below monkeypatches agents.support_agent.get_embeddings
+    directly rather than relying on MOCK_EMBEDDINGS' randomness.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh_support_collection(self):
+        """Every test in this class re-seeds the shared support-topics Chroma
+        collection from scratch, so whichever embedding function (default
+        mock or a test's own monkeypatch) is active at test time is the one
+        that actually populates it — this class neither depends on nor leaks
+        into another test's seeding order."""
+        import agents.support_agent as support_agent_mod
+
+        def _reset():
+            chroma = support_agent_mod.get_chroma_client()
+            try:
+                chroma.delete_collection(name=support_agent_mod._SUPPORT_COLLECTION_NAME)
+            except Exception:
+                pass
+            support_agent_mod._support_collection_seeded = False
+
+        _reset()
+        yield
+        _reset()
+
+    def test_random_mock_vectors_do_not_produce_false_positive_matches(self, db_session: Session):
+        """The safety property every other test in this file leans on: under
+        the mock embedding path, a query semantically unrelated to all 12
+        topics still falls through to the existing low-confidence miss."""
+        res = client.post(
+            "/api/v1/support/chat",
+            json={"message": "recommend a good pizza topping for dinner tonight"},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["low_confidence"] is True
+        assert body["topic_id"] is None
+
+    def test_semantic_match_with_no_keyword_overlap_resolves_via_vector_search(
+        self, db_session: Session, monkeypatch
+    ):
+        """The actual point of Gap 367: a paraphrase sharing *zero* keywords
+        with any topic (so the existing keyword pass cannot match it) still
+        resolves to the right topic once semantic distance is small.
+        Embeddings are monkeypatched to a controlled mapping — this proves
+        the retrieval *wiring* (query embed -> Chroma query -> threshold ->
+        topic lookup), not a real model's judgment, which is what the
+        approved scope deliberately left out (be_features_tracker.md Gap 367:
+        hybrid vector search only, no LLM call, and a real-model quality
+        claim would need a live/manual run this task didn't do)."""
+        import agents.support_agent as support_agent_mod
+
+        autopilot_topic = next(
+            t for t in support_agent_mod.KNOWLEDGE_TOPICS if t["id"] == "autopilot"
+        )
+        autopilot_text = support_agent_mod._topic_embedding_text(autopilot_topic)
+        paraphrase = "does the tool stop me from feeding it the same document more than once"
+
+        # Precondition: the paraphrase must not already win on keywords, or
+        # this test would pass for the wrong reason (step 1, not step 5).
+        assert support_agent_mod._score_topic(autopilot_topic, paraphrase.lower())[0] == 0
+
+        def fake_get_embeddings(texts: list[str]) -> list[list[float]]:
+            near = [1.0] + [0.0] * 1023  # the "autopilot" concept
+            far = [0.0, 1.0] + [0.0] * 1022  # every other topic
+            return [near if t in (autopilot_text, paraphrase) else far for t in texts]
+
+        monkeypatch.setattr(support_agent_mod, "get_embeddings", fake_get_embeddings)
+
+        res = client.post("/api/v1/support/chat", json={"message": paraphrase})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["topic_id"] == "autopilot"
+        assert body["low_confidence"] is False
+        assert body["suggest_escalation"] is False
+        assert "Autopilot" in body["answer"]
+
+    def test_vector_fallback_never_overrides_a_keyword_match(self, db_session: Session, monkeypatch):
+        """A genuine keyword hit is decided in step 1 and must never reach the
+        vector fallback — proven with a call counter, not just the final
+        topic_id, since a forced-identical-vector mock would otherwise "match"
+        every topic equally and mask an ordering bug that let it through."""
+        import agents.support_agent as support_agent_mod
+
+        calls: list[list[str]] = []
+
+        def spy_get_embeddings(texts: list[str]) -> list[list[float]]:
+            calls.append(texts)
+            return [[1.0] + [0.0] * 1023 for _ in texts]
+
+        monkeypatch.setattr(support_agent_mod, "get_embeddings", spy_get_embeddings)
+
+        res = client.post("/api/v1/support/chat", json={"message": "How do I reset my password?"})
+        assert res.status_code == 200
+        assert res.json()["topic_id"] == "account_auth"
+        assert calls == [], "vector fallback ran even though the keyword pass already matched"
+
+    def test_error_trigger_still_wins_over_a_forced_semantic_match(self, db_session: Session, monkeypatch):
+        """Hard guarantee that must survive Gap 367: error triggers are
+        checked before the vector fallback, so a real incident escalation can
+        never even reach embedding code, let alone be suppressed by it."""
+        import agents.support_agent as support_agent_mod
+
+        calls: list[list[str]] = []
+
+        def spy_get_embeddings(texts: list[str]) -> list[list[float]]:
+            calls.append(texts)
+            return [[1.0] + [0.0] * 1023 for _ in texts]
+
+        monkeypatch.setattr(support_agent_mod, "get_embeddings", spy_get_embeddings)
+
+        res = client.post(
+            "/api/v1/support/chat",
+            json={"message": "We experienced a 504 gateway timeout during batch sync"},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["suggest_escalation"] is True
+        assert body["escalation_context"]["error_code"] == "ERR_GATEWAY_TIMEOUT_504"
+        assert calls == [], "vector fallback ran for a query that should have escalated on the error-trigger path"
+
+    def test_vector_search_failure_degrades_to_the_existing_miss(self, db_session: Session, monkeypatch):
+        """A Chroma/embedding outage must not break the Support Assistant —
+        it should only cost this one enhancement and behave exactly as it did
+        before Gap 367."""
+        import agents.support_agent as support_agent_mod
+
+        def broken_get_embeddings(texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("chroma is unreachable")
+
+        monkeypatch.setattr(support_agent_mod, "get_embeddings", broken_get_embeddings)
+
+        res = client.post(
+            "/api/v1/support/chat",
+            json={"message": "recommend a good pizza topping for dinner tonight"},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["low_confidence"] is True
+        assert body["topic_id"] is None
 
 
 # ---------------------------------------------------------------------------

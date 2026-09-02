@@ -39,6 +39,8 @@
 > from the tenant column. Same document as above for the design; this feature's own body is
 > unchanged.
 
+> **Additive note (2026-09-02, Gap 369 — built):** `send_invoices_enabled` above stays exactly as documented — a tenant-wide plan/email prerequisite gate, unchanged by this gap. What Gap 369 added sits in Feature 1.1, not here: a 4th per-user permission, `User.can_send_invoices`, checked *in addition to* this tenant-wide flag (`POST /outbound-invoices/upload` now requires both). See `feature_1.1_rbac.md` and `be_features_tracker.md` Gap 369 for the full build record.
+
 ### Tasks
 - [x] **Task 16.1–16.2:** Columns + vendor-flow endpoints (2026-07-28).
 - [x] **Task 16.3 (2026-08-10):** Gate Send Invoices on outbound authorized-email set instead of `outbound_sender_email`.

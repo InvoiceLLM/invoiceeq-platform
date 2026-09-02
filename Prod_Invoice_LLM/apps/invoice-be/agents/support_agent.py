@@ -19,12 +19,22 @@ rendered an unanswered question in the same red "Issue Diagnosis & Recommended
 Escalation" framing as a genuine detected incident. The two are not the same
 claim, so they no longer share a flag — but a miss still needs *some* way to
 raise a ticket, which is what `low_confidence` drives in the UI.
+
+Gap 367: a query that scores zero keyword hits against `KNOWLEDGE_TOPICS` and
+isn't an error trigger or an explicit human-help request now gets one more
+chance — a semantic (vector) match against the same topic set — before it is
+allowed to become a generic miss. This does not touch the keyword pass, the
+error triggers, or the human-help path at all: those are all checked first and
+are exactly as deterministic as before. See `_vector_match_topic()` below.
 """
 from __future__ import annotations
 
 import logging
 import re
+import threading
 from typing import Any
+
+from chroma_client import get_chroma_client, get_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +353,95 @@ def _score_topic(topic: dict[str, Any], lower_query: str) -> tuple[int, int]:
     return len(matched), sum(len(kw) for kw in matched)
 
 
+# ---------------------------------------------------------------------------
+# Gap 367: semantic (vector) fallback over KNOWLEDGE_TOPICS
+# ---------------------------------------------------------------------------
+#
+# Only reached when the keyword pass above scores zero hits AND the query is
+# not an error trigger or an explicit human-help request (both checked first
+# in evaluate_support_query() — see the ordering note there for why). This is
+# a shared, non-tenant collection: platform documentation is identical for
+# every tenant, unlike chroma_client.py's per-tenant invoice-chunk collections
+# (Gap 55), so there is nothing to isolate.
+
+_SUPPORT_COLLECTION_NAME = "support_knowledge_topics"
+_support_collection_lock = threading.Lock()
+_support_collection_seeded = False
+
+# Conservative starting point, not an empirically derived constant. Gap 244
+# derived its 0.49 invoice-chunk threshold from a labelled retrieval dataset;
+# there is no equivalent labelled dataset for support topics yet, so this is
+# deliberately strict (only accept a confident match) and needs live tuning
+# against real traffic rather than being treated as scientifically grounded.
+SUPPORT_RELEVANCE_DISTANCE_THRESHOLD = 0.35
+
+
+def _topic_embedding_text(topic: dict[str, Any]) -> str:
+    """Text embedded to represent a topic in the vector index: title plus its
+    curated keyword phrases, which are closer in register to how a user
+    actually phrases a question than the prose `guidance` answer is."""
+    return f"{topic['title']}. {' '.join(topic['keywords'])}"
+
+
+def _get_support_collection():
+    """Returns the shared support-topics Chroma collection, seeding it from
+    `KNOWLEDGE_TOPICS` on first use in this process. Seeding is idempotent
+    (guarded by `collection.count()`) and reruns automatically if a new
+    process starts with an empty collection — there is no separate migration
+    step to keep in sync with `KNOWLEDGE_TOPICS` edits."""
+    global _support_collection_seeded
+    client = get_chroma_client()
+    collection = client.get_or_create_collection(
+        name=_SUPPORT_COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"},
+    )
+    if not _support_collection_seeded:
+        with _support_collection_lock:
+            if not _support_collection_seeded:
+                if collection.count() == 0:
+                    texts = [_topic_embedding_text(t) for t in KNOWLEDGE_TOPICS]
+                    embeddings = get_embeddings(texts)
+                    collection.upsert(
+                        ids=[t["id"] for t in KNOWLEDGE_TOPICS],
+                        embeddings=embeddings,
+                        documents=texts,
+                        metadatas=[{"topic_id": t["id"]} for t in KNOWLEDGE_TOPICS],
+                    )
+                _support_collection_seeded = True
+    return collection
+
+
+def _vector_match_topic(query: str) -> dict[str, Any] | None:
+    """Semantic fallback for a query that scored zero keyword hits. Returns
+    the best-matching topic dict if it clears
+    `SUPPORT_RELEVANCE_DISTANCE_THRESHOLD`, else None.
+
+    Any Chroma/embedding failure degrades to None (falls through to the
+    existing miss path) rather than raising — a vector-search outage must not
+    break the Support Assistant, it should only cost this one enhancement.
+    This collection is always freshly created with `hnsw:space=cosine` by
+    `_get_support_collection()` above, so unlike `query_invoice_chunks()`
+    there is no pre-existing non-cosine collection to normalize distances for.
+    """
+    try:
+        collection = _get_support_collection()
+        query_embedding = get_embeddings([query])
+        results = collection.query(query_embeddings=query_embedding, n_results=1)
+    except Exception:
+        logger.warning("Gap 367 vector fallback failed; treating as a miss", exc_info=True)
+        return None
+
+    ids = (results.get("ids") or [[]])[0]
+    distances = (results.get("distances") or [[]])[0]
+    if not ids or not distances:
+        return None
+
+    if distances[0] > SUPPORT_RELEVANCE_DISTANCE_THRESHOLD:
+        return None
+
+    return _topic_by_id(ids[0])
+
+
 _FOLLOW_UP_PHRASES = (
     "how do i do that",
     "how to do that",
@@ -471,7 +570,18 @@ def evaluate_support_query(
             },
         }
 
-    # 5. General fallback: an honest miss. `suggest_escalation` stays False so the
+    # 5. Gap 367: semantic fallback. Deliberately placed after error triggers and
+    # the explicit human-help check above, not before them — those two guarantees
+    # (a genuine incident always escalates, an explicit ask for a human always
+    # escalates) must stay exactly as deterministic as they were, unaffected by
+    # embedding-model behaviour. This step only gets a query that has already
+    # failed every keyword-based check; it exists to give that query one more,
+    # semantic chance before it becomes a generic miss.
+    vector_topic = _vector_match_topic(clean_query)
+    if vector_topic:
+        return _topic_result(vector_topic)
+
+    # 6. General fallback: an honest miss. `suggest_escalation` stays False so the
     # UI does not frame an unanswered question as a diagnosed incident, and
     # `low_confidence` is set so it can still offer a plain "raise a ticket"
     # affordance instead of silently offering nothing (see SupportChatWindow.tsx).

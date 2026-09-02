@@ -89,20 +89,21 @@ def _grant(db_session, **flags) -> None:
 # ---------------------------------------------------------------------------
 
 def test_resolve_permissions_admin_implies_all():
-    """Admin is a role, not a 4th flag -- it grants all three regardless of the row."""
+    """Admin is a role, not a per-permission flag -- it grants all four
+    (can_send_invoices added by Gap 369) regardless of the row."""
     user = User(
         email="a@example.com", role="Admin", clerk_user_id="user_admin",
-        can_train=False, can_audit=False, can_load=False,
+        can_train=False, can_audit=False, can_load=False, can_send_invoices=False,
     )
-    assert resolve_permissions("Admin", user) == (True, True, True)
+    assert resolve_permissions("Admin", user) == (True, True, True, True)
 
 
 def test_resolve_permissions_reads_the_user_row_for_non_admins():
     user = User(
         email="v@example.com", role=RoleMapper.NO_ROLE, clerk_user_id="user_v",
-        can_train=True, can_audit=False, can_load=True,
+        can_train=True, can_audit=False, can_load=True, can_send_invoices=True,
     )
-    assert resolve_permissions(RoleMapper.NO_ROLE, user) == (True, False, True)
+    assert resolve_permissions(RoleMapper.NO_ROLE, user) == (True, False, True, True)
 
 
 # --- Feature 25 (Gap 337): the retired "Viewer" name ------------------------
@@ -128,22 +129,24 @@ def test_zero_permission_fallback_never_grants_anything(raw_role):
     org-mismatched session would silently acquire can_train."""
     role = RoleMapper.normalize_role(raw_role)
     assert role != "Trainer"
-    assert RoleMapper.resolve_permissions(role, None) == (False, False, False)
+    assert RoleMapper.resolve_permissions(role, None) == (False, False, False, False)
 
 
 def test_legacy_viewer_rows_still_resolve_to_no_permissions():
     """A `users` row written before this gap's data migration (or by an
     un-migrated database) still carries the literal 'Viewer'. It must resolve to
     zero permissions via the unmapped-role fallback, not raise a KeyError."""
-    assert RoleMapper.resolve_permissions("Viewer", None) == (False, False, False)
+    assert RoleMapper.resolve_permissions("Viewer", None) == (False, False, False, False)
 
 
 def test_auth_me_exposes_permissions_for_admin():
-    """GET /auth/me returns the 3 booleans -- this is the FE's only source for them."""
+    """GET /auth/me returns the 4 booleans (can_send_invoices added by Gap
+    369) -- this is the FE's only source for them."""
     data = client.get("/auth/me").json()
     assert data["can_train"] is True
     assert data["can_audit"] is True
     assert data["can_load"] is True
+    assert data["can_send_invoices"] is True
 
 
 def test_auth_me_exposes_permissions_for_unpermissioned_user():
@@ -153,6 +156,7 @@ def test_auth_me_exposes_permissions_for_unpermissioned_user():
     assert data["can_train"] is False
     assert data["can_audit"] is False
     assert data["can_load"] is False
+    assert data["can_send_invoices"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +223,54 @@ def test_outbound_upload_requires_can_load():
         files={"file": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
     )
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Gap 369: can_send_invoices — a 4th, independent gate on outbound upload,
+# layered on top of can_load rather than folded into it.
+# ---------------------------------------------------------------------------
+
+def test_outbound_upload_still_403s_with_can_load_but_no_send_invoices(db_session):
+    """can_load alone must not be enough -- that would make the new permission
+    a no-op for anyone who already has ingestion access. Asserts the exact
+    require_permission() wording, not just "contains 'send invoices'" --
+    the handler's own tenant-level send_invoices_enabled check (unrelated to
+    this permission, checked further down in the function body) 403s with a
+    *different* message ("...is not enabled for this tenant...") that would
+    also match a looser substring check and mask this gate not actually firing."""
+    _grant(db_session, can_load=True, can_send_invoices=False)
+    response = client.post(
+        "/api/v1/outbound-invoices/upload",
+        headers=VIEWER,
+        files={"file": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
+    )
+    assert response.status_code == 403
+    assert "ask an admin to grant it" in response.json()["detail"].lower()
+
+
+def test_outbound_upload_succeeds_with_both_permissions_granted(db_session):
+    """Both gates satisfied, AND the tenant's own send_invoices_enabled toggle
+    (Feature 16 -- a separate, pre-existing check in the handler body, not a
+    Depends) also on -- the upload itself may still fail past that for
+    unrelated reasons (storage, billing quota), so this only asserts past the
+    403s, matching how test_outbound_upload_requires_can_load only asserts
+    the 403 side for its own case."""
+    from dependencies import MOCK_TENANT_ID
+    from models import Tenant
+
+    _grant(db_session, can_load=True, can_send_invoices=True)
+    tenant = db_session.get(Tenant, MOCK_TENANT_ID)
+    tenant.send_invoices_enabled = True
+    tenant.billing_plan = "pro_combined"
+    db_session.add(tenant)
+    db_session.commit()
+
+    response = client.post(
+        "/api/v1/outbound-invoices/upload",
+        headers=VIEWER,
+        files={"file": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
+    )
+    assert response.status_code != 403
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +344,31 @@ def test_admin_lists_tenant_users(db_session):
     assert response.status_code == 200
     emails = [u["email"] for u in response.json()]
     assert "test@example.com" in emails
-    assert all({"can_train", "can_audit", "can_load"} <= set(u) for u in response.json())
+    assert all({"can_train", "can_audit", "can_load", "can_send_invoices"} <= set(u) for u in response.json())
+
+
+def test_admin_sets_can_send_invoices(db_session):
+    """Gap 369's 4th flag round-trips through the same endpoint the other
+    three already use -- no separate admin endpoint was added."""
+    user = _viewer_row(db_session)
+    response = client.put(
+        f"/api/v1/admin/users/{user.id}/permissions",
+        json={"can_train": False, "can_audit": False, "can_load": False, "can_send_invoices": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["can_send_invoices"] is True
+
+    stored = db_session.exec(select(User).where(User.id == user.id)).first()
+    assert stored.can_send_invoices is True
+
+    # Revoke it again -- confirms the field is genuinely read both ways, not
+    # just accepted once and ignored on a second write.
+    response = client.put(
+        f"/api/v1/admin/users/{user.id}/permissions",
+        json={"can_train": False, "can_audit": False, "can_load": False, "can_send_invoices": False},
+    )
+    assert response.status_code == 200
+    assert response.json()["can_send_invoices"] is False
 
 
 def test_admin_sets_permissions_by_backend_uuid(db_session):
