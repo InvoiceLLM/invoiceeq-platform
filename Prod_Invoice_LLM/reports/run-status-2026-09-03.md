@@ -53,3 +53,9 @@ in progress: F26 R11 (H7) done, committing; next F26 R7 (V-25 probe) or wrap-up
 landed since last: R5(c) documents surface 510c444; full suite w/ Postgres 16 failed/2575 passed/1 skipped (was 26 skipped) -> Gap 394; H7 async wiring across 4 sites.
 gaps filed: 394
 blockers: R5(a) flag-exposure mechanism needs a FOUNDER RULING - spec names two options, picks neither, assigns to architect. R5(b) DropZone depends on it.
+
+[01:30] mins left: 117 | persona: senior-dev
+in progress: F27 R10 done (item 4, done out of order - flagged); wrapping up next
+landed since last: F27 R10 (A8) — disclaimer + Gutschrift pre-checks, resolve_ambiguous_direction_type, derive_rule_era, T-C-5 (12 tests). 777 passed.
+gaps filed: none this task
+blockers: R5(a) still needs a founder ruling

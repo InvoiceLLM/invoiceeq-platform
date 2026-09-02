@@ -511,6 +511,147 @@ def _drop_subsumed(matches: List[_SynonymMatch]) -> List[_SynonymMatch]:
     return kept
 
 
+def _title_band_lines(text: str) -> List[str]:
+    """The first `_TITLE_BAND_LINES` non-blank lines -- the same band
+    `classify_doc_type_deterministic()` scans. Factored out by A8/R10 so the
+    ambiguity pre-check looks at exactly the same region the synonym pass does;
+    two definitions of "the title" would drift."""
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    return lines[:_TITLE_BAND_LINES]
+
+
+# ---------------------------------------------------------------------------
+# A8 / task R10 — the two pre-checks, the Gutschrift rule, and the rule era
+# ---------------------------------------------------------------------------
+
+#: Phrases that mean *this is not a tax document*, in the languages the product
+#: targets. Research §5 trap 1(c).
+#:
+#: A proforma, an order confirmation and a dunning letter all routinely reuse an
+#: invoice template -- same layout, same totals block, often the word "Invoice"
+#: in the title band. What separates them is not the layout, it is a printed
+#: disclaimer that the document itself puts there BECAUSE the layout is
+#: misleading. Reading it is the cheapest correct signal available.
+_NOT_A_TAX_DOCUMENT_MARKERS: Tuple[str, ...] = (
+    "kein vorsteuerabzug",              # DE — no input-tax deduction
+    "keine rechnung",                   # DE — not an invoice
+    "ne vaut pas facture",              # FR
+    "non valido ai fini fiscali",       # IT
+    "non e una fattura",                # IT
+    "no valido a efectos fiscales",     # ES
+    "this is not a tax invoice",
+    "not a tax invoice",
+    "not a vat invoice",
+    "this is not an invoice",
+    "proforma - not for itc",
+    "not for input tax credit",
+    "no input tax credit",
+    "for customs purposes only",
+)
+
+#: The word that must never resolve deterministically (A8 item 4).
+_AMBIGUOUS_TITLE_WORDS: Tuple[str, ...] = ("gutschrift",)
+
+#: India's GST rate rationalisation and the TDS renumbering; the EU e-invoicing
+#: go-lives. A document's DATE decides which rules applied to it.
+_RULE_ERA_BOUNDARIES: Tuple[Tuple[str, str], ...] = (
+    ("2025-09-22", "IN_GST_SLABS_RATIONALISED"),
+    ("2026-01-01", "BE_PEPPOL_MANDATORY"),
+    ("2026-02-01", "PL_KSEF_LARGE"),
+    ("2026-04-01", "IN_TDS_RENUMBERED"),
+    ("2026-09-01", "FR_EINVOICE_RECEIVE_ALL"),
+)
+
+
+def has_not_a_tax_document_disclaimer(text: Optional[str]) -> Tuple[bool, str]:
+    """Whether the document says outright that it is not a tax document.
+
+    Returns `(hit, phrase)`. A hit VETOES the INVOICE family as a deterministic
+    outcome -- it does not choose a replacement, because the disclaimer says what
+    the document is *not*, never what it is.
+    """
+    if not text:
+        return False, ""
+    haystack = _normalize(text)
+    for marker in _NOT_A_TAX_DOCUMENT_MARKERS:
+        if _normalize(marker) in haystack:
+            return True, marker
+    return False, ""
+
+
+def title_band_is_mandatorily_ambiguous(text: Optional[str]) -> Tuple[bool, str]:
+    """A8 item 4: words whose meaning is decided by DIRECTION, not by the word.
+
+    "Gutschrift" is the whole list today. Under UStG §14(2) it is a SELF-BILLING
+    INVOICE issued by the customer; in ordinary commercial use it is a credit
+    note. BMF 25.10.2013 is explicit that the label alone does not settle it, and
+    research §5 trap 2 says classification must key on *issuer direction +
+    reference to a prior invoice + sign of VAT*, never on the word.
+
+    So the word is never allowed to resolve deterministically, even when it is
+    the only synonym in the title band. It goes to the LLM fallback with
+    `direction` supplied, and the fallback's answer is then constrained by the
+    rule in `resolve_ambiguous_direction_type()`.
+    """
+    if not text:
+        return False, ""
+    for line in _title_band_lines(text):
+        normalized = _normalize(line)
+        for word in _AMBIGUOUS_TITLE_WORDS:
+            if word in normalized:
+                return True, line.strip()
+    return False, ""
+
+
+def resolve_ambiguous_direction_type(
+    direction: Optional[str], references_original: bool
+) -> Optional[str]:
+    """The constrained answer for a direction-decided title (A8 item 4).
+
+    Research §3.3, verbatim: classification must key on issuer direction, a
+    reference to a prior invoice, and the sign of VAT -- never on the label.
+
+      * issued by the customer or by us, with NO reference to a prior invoice
+        -> it is a SELF-BILLED INVOICE, which is an `INVOICE` carrying
+        `invoice_subtype = SELF_BILLED`.
+      * issued by the supplier AND referencing a prior invoice -> it is a
+        commercial `CREDIT_NOTE`.
+      * anything else -> `None`, i.e. we still do not know, and the caller keeps
+        the model's own low-confidence answer or falls to `OTHER`. Guessing
+        between the two would put a payable and a credit on the same footing.
+    """
+    if direction in ("SELF", "BUYER_ISSUED") and not references_original:
+        return "INVOICE"
+    if direction == "SUPPLIER_ISSUED" and references_original:
+        return "CREDIT_NOTE"
+    return None
+
+
+def derive_rule_era(doc_date: Optional[str]) -> Optional[str]:
+    """Which regulatory era a document's DATE places it in (A8 item 5).
+
+    NOT consumed by the classifier -- a document's type does not depend on when
+    it was issued. This is a VERIFICATION input: a credit note dated before
+    2025-09-22 legitimately carries a GST rate that no longer exists, and a
+    rubric that checked it against today's slabs would flag a correct document.
+    Research §3.1 is explicit that HSN->rate must never be hard-coded.
+
+    Returns the most recent boundary the date is on or after, or `None` for a
+    date before every boundary or one we could not parse. `None` means "no era
+    established" and must never be read as "current rules apply".
+    """
+    if not doc_date:
+        return None
+    text = str(doc_date).strip()[:10]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+        return None
+    era = None
+    for boundary, name in _RULE_ERA_BOUNDARIES:
+        if text >= boundary:
+            era = name
+    return era
+
+
 def classify_doc_type_deterministic(ocr_text: str) -> Tuple[Optional[str], str]:
     """Stage 1 (E7). Title-band synonym match. **Never calls an LLM.**
 
@@ -686,13 +827,46 @@ def classify_doc_type(
     if not text.strip() and isinstance(ocr_result, dict):
         text = ocr_result.get("content") or ""
 
+    # --- A8/R10 pre-check 1: a direction-decided title never resolves here ---
+    #
+    # Checked BEFORE the synonym pass, not after, because "Gutschrift" IS a
+    # synonym -- of CREDIT_NOTE in commercial use and of a self-billed INVOICE
+    # under UStG §14(2). Letting the deterministic pass see it first would give a
+    # confident 1.0 answer to the one word that cannot be answered from the word.
+    ambiguous, ambiguous_line = title_band_is_mandatorily_ambiguous(text)
+
     doc_type, evidence = classify_doc_type_deterministic(text)
-    if doc_type is not None:
+
+    # --- A8/R10 pre-check 2: a printed disclaimer vetoes the INVOICE family ---
+    #
+    # Research §5 trap 1(c). A proforma, an order confirmation and a dunning
+    # letter routinely reuse an invoice template -- and the document itself
+    # prints "ne vaut pas facture" / "kein Vorsteuerabzug" precisely BECAUSE the
+    # layout misleads. A veto, not a replacement: the disclaimer says what the
+    # document is not, never what it is, so the type still has to be established
+    # by the fallback rather than guessed at here.
+    disclaimed, disclaimer = has_not_a_tax_document_disclaimer(text)
+    # The veto is scoped to INVOICE alone, NOT to the money family. A proforma
+    # printing "ne vaut pas facture" is not contradicting itself -- a proforma is
+    # BY DEFINITION not a tax document, so the disclaimer CONFIRMS the type the
+    # title band read. Same for a commercial credit note carrying "no input tax
+    # credit", which research §3.1 says is common and is still a credit note.
+    # `INVOICE` is the one type the phrase actually contradicts.
+    vetoed = disclaimed and doc_type == "INVOICE"
+
+    if doc_type is not None and not ambiguous and not vetoed:
         # Confidence 1.0 is not flattery: a printed title band is a fact, and
         # this branch reports what the document says about itself.
         return _result(doc_type, evidence, 1.0, "deterministic")
 
-    stage_one_reason = "ambiguous_title_band" if evidence else "no_title_band_match"
+    if ambiguous:
+        stage_one_reason = "direction_decided_title"
+        evidence = ambiguous_line or evidence
+    elif vetoed:
+        stage_one_reason = "not_a_tax_document_disclaimer"
+        evidence = disclaimer
+    else:
+        stage_one_reason = "ambiguous_title_band" if evidence else "no_title_band_match"
 
     if not text.strip():
         # No text at all is not an ambiguity a model can resolve; spending a call
