@@ -39,6 +39,7 @@ from services.storage import download_pdf_from_storage
 # build note flags (see `services/document_type_classifier.py`, naming note 1).
 from services.doc_attributes import derive_doc_attributes
 from services.document_type_classifier import (
+    ADVISORY_FAMILY,
     COMMITMENT_FAMILY,
     DOC_TYPE_FAMILY,
     DOC_TYPES,
@@ -309,6 +310,48 @@ class GenericLineItem(BaseModel):
     batch_or_serial: Optional[str] = Field(default=None, description="Batch, lot or serial number printed against this row, as a single string. Null if the row prints none.")
 
 
+class ReferencedDocument(BaseModel):
+    """One document a statement or remittance advice REFERS TO (A7).
+
+    An advisory document's whole substance is a list of pointers at other
+    documents -- which invoices a payment covers, which invoices are still open.
+    This is the shape of one such pointer, and it is what Feature 26's
+    `list_reconcile` comparison joins against `Invoice` rows.
+
+    Every field Optional: a statement line may print a number and an amount and
+    nothing else. `status_hint` is transcribed EXACTLY AS PRINTED and never
+    inferred -- "Open" on a supplier's statement is the supplier's claim, not our
+    finding, and the entire value of reconciling is in seeing where the two differ.
+    """
+    model_config = {"extra": "forbid"}
+
+    doc_number: Optional[str] = Field(default=None, description="The referenced document's number, exactly as printed (an invoice number, a credit note number, a payment reference).")
+    doc_date: Optional[str] = Field(default=None, description="The referenced document's date as printed, ISO 8601 if unambiguous. Null if not stated.")
+    amount: Optional[float] = Field(default=None, description="The amount shown against this reference. Transcribe exactly, including a negative sign for a credit. Null if no amount is printed on the line.")
+    currency: Optional[str] = Field(default=None, description="ISO currency code for this line if printed per-line. Null if the document states one currency globally.")
+    status_hint: Optional[str] = Field(default=None, description="The status the DOCUMENT ITSELF claims for this reference: OPEN, PAID, PARTIALLY_PAID or DISPUTED. Transcribe only what is printed and never infer one from the amount -- this is the counterparty's claim, and comparing it to our own record is the point.")
+
+
+class DeductionItem(BaseModel):
+    """One amount withheld from a payment (A7).
+
+    This is what makes "what did they short-pay?" answerable. A remittance advice
+    that settles 92,000 against a 100,000 invoice is not a discrepancy to
+    investigate if it also prints "TDS u/s 194C: 8,000" -- it is a correct
+    payment, and the deduction is the explanation.
+
+    Deductions are reported INDIVIDUALLY and never netted into one figure: a
+    single unexplained 8,000 gap is a support ticket, while "TDS 6,000 +
+    chargeback 2,000" is an answer.
+    """
+    model_config = {"extra": "forbid"}
+
+    kind: Optional[str] = Field(default=None, description="What was withheld: TDS, GST_TDS, CHARGEBACK, SKONTO, EARLY_PAYMENT_DISCOUNT, RETENTION, or OTHER. Choose from the printed label; use OTHER rather than guessing.")
+    amount: Optional[float] = Field(default=None, description="The amount withheld, as a positive number. Null if the document names a deduction without quantifying it.")
+    currency: Optional[str] = Field(default=None, description="ISO currency code if printed per-line. Null if global.")
+    reference: Optional[str] = Field(default=None, description="What the deduction is against or under -- an invoice number, a TDS section, a chargeback code. Quoted as printed.")
+
+
 class GenericDocumentSchema(BaseModel):
     """The union spine every commercial document has (E8), for non-INVOICE types.
 
@@ -360,6 +403,33 @@ class GenericDocumentSchema(BaseModel):
     delivery_terms: Optional[str] = Field(default=None, description="Delivery terms, schedule or lead time as printed (e.g. 'Delivery within 4 weeks of order', 'Ex-works Pune'). Null if not stated.")
     incoterms: Optional[str] = Field(default=None, description="Incoterms as printed, with the named place if given (e.g. 'FOB Nhava Sheva', 'DDP Hamburg', 'CIF'). Null if not stated.")
     notes: Optional[str] = Field(default=None, description="Free-text terms, conditions and remarks worth keeping that no other field holds — validity/renewal/termination wording, short-delivery or damage remarks, the reason a credit or debit note was raised. Quote the document rather than summarising it.")
+    # --- A7/R9: the ADVISORY family's two lists -----------------------------
+    #
+    # Populated for STATEMENT_OF_ACCOUNT and REMITTANCE_ADVICE, and empty for
+    # every other type. They are additive and default to `[]`, so no existing
+    # document's extracted shape changes.
+    #
+    # These carry the substance of a document that HAS NO LINE ITEMS to diff
+    # (research §5 trap 6). A statement's rows are pointers at other documents,
+    # not goods, which is why Feature 26 gives this family its own comparison
+    # mode (`list_reconcile`, B8) instead of running the L1-L3 line matcher over
+    # something that is not a line.
+    referenced_documents: List[ReferencedDocument] = Field(default=[], description="For a STATEMENT OF ACCOUNT or REMITTANCE ADVICE: one entry per referenced invoice, credit note or payment listed on the document. Empty for every other document type. Transcribe the list exactly and never total it.")
+    # NAMED `payment_deductions`, NOT `deductions` -- a deliberate deviation from
+    # A7's field name, forced by a collision the disjointness test caught.
+    #
+    # `deductions` already exists on `InvoiceExtractionSchema` (Tasks 2.21-2.31)
+    # and means something ELSE: deduction LINES on an invoice. A2 guarantees the
+    # generic spine carries none of the invoice-only fields, and
+    # `test_the_existing_schemas_are_unchanged_by_g3` asserts that set is disjoint
+    # -- which is how the repo proves an invoice is never silently extracted onto
+    # the generic schema, dropping compliance_metadata and the rest.
+    #
+    # Reusing the name would have broken a load-bearing invariant to satisfy a
+    # label. These are genuinely different things (an invoice's deduction lines
+    # vs amounts withheld from a payment), so the distinct name is also the more
+    # honest one.
+    payment_deductions: List[DeductionItem] = Field(default=[], description="For a REMITTANCE ADVICE: one entry per amount withheld from the payment (TDS, GST-TDS, chargeback, Skonto, retention). Empty for every other document type. Report each separately and NEVER net them into a single figure.")
 
 
 # 2. State definition
@@ -767,6 +837,17 @@ def _build_reference_text_prompt(state: "ExtractionState", rules: Optional[Dict[
 # asked for one, rather than quietly serving a generic prompt for a document that
 # should have gone to `InvoiceExtractionSchema`.
 _GENERIC_FAMILY_STANCE: Dict[str, str] = {
+    ADVISORY_FAMILY: (
+        "This document is ADVISORY: it reports on other documents and is NEVER itself a payable. "
+        "Its substance is a LIST OF REFERENCES -- invoice numbers, credit notes, payments -- and, "
+        "on a remittance advice, the DEDUCTIONS taken against them.\n"
+        "- Transcribe the list exactly. Do NOT total it, do not reconcile it, and do not compute a "
+        "balance the document does not print.\n"
+        "- Report each deduction separately with its own stated reason. Never net several "
+        "deductions into one figure -- the reasons are the answer, not the arithmetic.\n"
+        "- A status printed against a reference (Open, Paid, Overdue) is the COUNTERPARTY'S CLAIM. "
+        "Transcribe it as printed and never infer one from an amount."
+    ),
     MONEY_FAMILY: (
         "This document type prints monetary values and its arithmetic is checked downstream. "
         "Transcribe every figure exactly as printed. A total that does not reconcile with the "
@@ -1572,11 +1653,47 @@ _OTHER_RUBRIC = _VerificationRubric(
     run_di_tax_backfill=False,
 )
 
+# A7/R9: the fourth family.
+#
+# NOT `OTHER` with a friendlier name. `OTHER` means "we do not know what this is";
+# `ADVISORY` means "we know exactly what it is, and it is not a payable". They
+# share `advisory_only=True` and nothing else -- ADVISORY has a schema
+# (`referenced_documents[]`, `deductions[]`) and a comparison mode
+# (`list_reconcile`, Feature 26 B8); OTHER has neither.
+#
+# The arithmetic flags are the substantive difference from `_OTHER_RUBRIC`, which
+# leaves both math checks ON. A statement carries a RUNNING BALANCE, not a
+# subtotal/tax/total triple, and a remittance lists per-invoice amounts against a
+# payment -- so `verify_line_items_math` and `verify_totals_math` have nothing to
+# check and would report the absence of a structure that was never supposed to be
+# there. Research §5 trap 6: money-only, no lines.
+_ADVISORY_RUBRIC = _VerificationRubric(
+    run_line_item_math=False,
+    run_totals_math=False,
+    # Declarative, as G5 left it -- there is still no currency check in
+    # `verify_node` to gate. Recorded because an amount without a currency is
+    # meaningless for reconciliation, which is this family's entire purpose.
+    require_currency=True,
+    price_fields_optional=True,
+    # Never sets a review status and never enters spend. These rows go to
+    # `documents` (E10), so `/dashboard/*` cannot see them by construction --
+    # this flag is the second layer, not the only one.
+    advisory_only=True,
+    passed_status="EXTRACTED",
+    review_status="EXTRACT_FAILED",
+    # §8 trap 1: DI's invoice fields force-fit onto a statement are wrong by
+    # construction, and a `low_confidence_field` alert naming `InvoiceTotal` on a
+    # vendor statement is the founder's original symptom in a new costume.
+    run_field_confidence=False,
+    run_di_tax_backfill=False,
+)
+
 _RUBRIC_BY_FAMILY: Dict[str, _VerificationRubric] = {
     MONEY_FAMILY: _MONEY_RUBRIC,
     QUANTITY_FAMILY: _QUANTITY_RUBRIC,
     COMMITMENT_FAMILY: _COMMITMENT_RUBRIC,
     OTHER_FAMILY: _OTHER_RUBRIC,
+    ADVISORY_FAMILY: _ADVISORY_RUBRIC,
 }
 
 # E6's "one entry per enum value, derived from the family table". Derived by

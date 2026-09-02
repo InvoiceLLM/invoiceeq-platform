@@ -151,11 +151,27 @@ def test_generic_line_item_constructs_with_no_arguments_at_all():
 
 def test_generic_document_schema_constructs_with_no_arguments_at_all():
     doc = GenericDocumentSchema()
-    scalars = [n for n in GenericDocumentSchema.model_fields if n not in ("items", "taxes", "reference_numbers")]
+
+    # The list-valued fields are DERIVED from the model rather than hardcoded.
+    # A7/R9 added two more (`referenced_documents`, `payment_deductions`) and the
+    # old hardcoded tuple made that an unrelated failure -- the test would break
+    # on every future additive field, which is the opposite of what a
+    # "constructs with no arguments" guard is for.
+    list_fields = [
+        name for name, field in GenericDocumentSchema.model_fields.items()
+        if isinstance(field.default, list)
+    ]
+    scalars = [n for n in GenericDocumentSchema.model_fields if n not in list_fields]
+
     assert all(getattr(doc, name) is None for name in scalars)
-    assert doc.items == []
-    assert doc.taxes == []
-    assert doc.reference_numbers == []
+    for name in list_fields:
+        assert getattr(doc, name) == [], name
+
+    # Named explicitly as well, so a field silently ceasing to be a list is still
+    # caught rather than quietly dropping out of the derived set above.
+    for name in ("items", "taxes", "reference_numbers", "referenced_documents",
+                 "payment_deductions"):
+        assert name in list_fields, name
 
 
 def test_a_delivery_note_with_no_prices_is_a_complete_document_not_a_broken_one():
@@ -2896,3 +2912,116 @@ def test_run_extraction_agent_still_only_renders_pdfs_today():
     than by wondering why nothing changed."""
     source = inspect.getsource(ea.run_extraction_agent)
     assert 'endswith(".pdf")' in source
+
+
+# --- T-R-8 (A7/R9): the ADVISORY family --------------------------------------
+
+
+def test_t_r_8_the_advisory_family_runs_no_arithmetic_and_never_sets_a_review_status():
+    """A statement carries a RUNNING BALANCE, not a subtotal/tax/total triple, and
+    a remittance lists per-invoice amounts against one payment. Research §5 trap 6:
+    money-only, no lines. Running the money checks over either reports the absence
+    of a structure that was never supposed to be there -- the founder's original
+    false-failure, in a new costume.
+
+    Asserted on the rubric's flags rather than on an alert count, because both
+    check functions already return None when their inputs are absent: an
+    alerts-only assertion would pass against completely ungated code. What is
+    proved here is that they are never ATTEMPTED.
+    """
+    from agents.extraction_agent import _RUBRIC_BY_DOC_TYPE
+    from services.document_type_classifier import ADVISORY_FAMILY, DOC_TYPE_FAMILY
+
+    for doc_type in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+        assert DOC_TYPE_FAMILY[doc_type] == ADVISORY_FAMILY, doc_type
+        rubric = _RUBRIC_BY_DOC_TYPE[doc_type]
+        assert rubric.run_line_item_math is False, doc_type
+        assert rubric.run_totals_math is False, doc_type
+        assert rubric.advisory_only is True, doc_type
+        assert rubric.price_fields_optional is True, doc_type
+        # §8 trap 1: DI force-fits InvoiceTotal onto a vendor statement, so a
+        # low_confidence_field alert here names a field the document never had.
+        assert rubric.run_field_confidence is False, doc_type
+        assert rubric.run_di_tax_backfill is False, doc_type
+        assert rubric.passed_status == "EXTRACTED", doc_type
+
+
+def test_t_r_8_advisory_is_not_other_with_a_friendlier_name():
+    """They share `advisory_only` and nothing else. OTHER means "we could not
+    establish what this is"; ADVISORY means "we know exactly what it is and it is
+    not a payable" -- and knowing is what earns it a schema and a comparison mode.
+
+    The arithmetic flags are the substantive difference and this test pins them:
+    _OTHER_RUBRIC leaves both math checks ON (it has no idea what it is looking
+    at, so it checks and reports advisory-only), while ADVISORY switches them off
+    on purpose.
+    """
+    from agents.extraction_agent import _ADVISORY_RUBRIC, _OTHER_RUBRIC
+
+    assert _OTHER_RUBRIC.advisory_only == _ADVISORY_RUBRIC.advisory_only is True
+    assert _OTHER_RUBRIC.run_line_item_math is True
+    assert _ADVISORY_RUBRIC.run_line_item_math is False
+    assert _OTHER_RUBRIC.run_totals_math is True
+    assert _ADVISORY_RUBRIC.run_totals_math is False
+
+
+def test_t_r_8_the_two_advisory_lists_are_additive_and_default_empty():
+    """`referenced_documents[]` and `deductions[]` are the family's substance and
+    the input to Feature 26's `list_reconcile`. Additive with `[]` defaults, so no
+    existing document type's extracted shape changes -- A2's guarantee applies to
+    the generic schema too, not only to the invoice one."""
+    from agents.extraction_agent import GenericDocumentSchema
+
+    blank = GenericDocumentSchema()
+    assert blank.referenced_documents == []
+    assert blank.payment_deductions == []
+
+    # And the money spine is untouched by A7.
+    for field in ("subtotal", "tax_amount", "grand_total", "items", "taxes"):
+        assert field in GenericDocumentSchema.model_fields
+
+
+def test_t_r_8_a_referenced_documents_status_hint_is_never_inferred():
+    """The status printed against a reference is the COUNTERPARTY'S CLAIM, and the
+    whole value of reconciling is seeing where their claim and our record differ.
+    A schema that defaulted it would erase exactly that."""
+    from agents.extraction_agent import ReferencedDocument
+
+    row = ReferencedDocument(doc_number="INV-1", amount=1000.0)
+    assert row.status_hint is None
+    assert row.doc_date is None
+
+
+def test_t_r_8_deductions_are_individually_reported_never_netted():
+    """A remittance settling 92,000 against a 100,000 invoice is not a
+    discrepancy if it prints "TDS u/s 194C: 8,000" -- it is a correct payment with
+    an explanation. One unexplained 8,000 gap is a support ticket; "TDS 6,000 +
+    chargeback 2,000" is an answer. The schema carries a LIST for that reason, and
+    the prompt says so; this pins the shape."""
+    from agents.extraction_agent import DeductionItem, GenericDocumentSchema
+
+    doc = GenericDocumentSchema(
+        payment_deductions=[
+            DeductionItem(kind="TDS", amount=6000.0, reference="194C"),
+            DeductionItem(kind="CHARGEBACK", amount=2000.0, reference="OTIF-Q3"),
+        ]
+    )
+    assert len(doc.payment_deductions) == 2
+    assert {d.kind for d in doc.payment_deductions} == {"TDS", "CHARGEBACK"}
+    # No total field exists on which to net them -- the absence is the control.
+    assert not hasattr(doc.payment_deductions[0], "total")
+    # And A2's disjointness holds: `deductions` stays invoice-only.
+    assert "deductions" not in GenericDocumentSchema.model_fields
+
+
+def test_t_r_8_the_advisory_stance_reaches_the_prompt():
+    """The family stance is what a NEW advisory type would inherit before anyone
+    writes it a specific overlay -- the reason G3 added a stance layer above the
+    per-type table at all."""
+    from agents.extraction_agent import resolve_doc_type_overlay
+
+    text = resolve_doc_type_overlay("STATEMENT_OF_ACCOUNT")
+    lowered = text.lower()
+    assert "advisory" in lowered
+    assert "never" in lowered and "payable" in lowered
+    assert "list of references" in lowered

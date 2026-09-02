@@ -13,3 +13,10 @@ in progress: F27 R8 done, committing; next F27 R9 (ADVISORY family)
 landed since last: F27 R8 — services/doc_attributes.py (direction/subtype/correction/markers/ids/cumulative, all pure Python), doc_attributes JSONB on Invoice+Document, migration a6b7c8d9e0f1 APPLIED to Postgres, node+handler wiring, 40 new tests. 729 passed across 10 suites.
 gaps filed: 393 (Invoice.doc_type never written since G9)
 blockers: none
+
+[02:25] mins left: 63 | persona: senior-dev
+in progress: F27 R9 done, committing; next F26 R9 (Tier 3) per the run order
+landed since last: F27 R9 — ADVISORY_FAMILY + _ADVISORY_RUBRIC, ReferencedDocument/DeductionItem schemas, referenced_documents[]/payment_deductions[], family stance, T-R-8 (6 tests). 735 passed.
+gaps filed: none this task
+blockers: none
+note: A7 named its field `deductions[]`, which collides with InvoiceExtractionSchema's own `deductions` and broke A2's disjointness invariant. Renamed to `payment_deductions` -- deviation recorded in code + commit.

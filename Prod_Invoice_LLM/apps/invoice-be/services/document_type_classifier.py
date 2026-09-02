@@ -132,6 +132,13 @@ MONEY_FAMILY = "MONEY"
 QUANTITY_FAMILY = "QUANTITY"
 COMMITMENT_FAMILY = "COMMITMENT"
 OTHER_FAMILY = "OTHER"
+# A7/R9. Research §2's "A" family: documents that report ON other documents and
+# are never themselves payable. Distinct from OTHER_FAMILY, which means "we could
+# not establish what this is" -- these we know exactly, and knowing is what earns
+# them a schema (`referenced_documents[]`, `deductions[]`) and their own
+# comparison mode (Feature 26 B8's `list_reconcile`). DUNNING and PAYMENT_PROOF
+# join them if either is ever promoted out of OTHER.
+ADVISORY_FAMILY = "ADVISORY"
 
 DOC_TYPE_FAMILY: Dict[str, str] = {
     # FOUNDER RULING, 2026-09-03 (A5/R7): QUOTATION is COMMITMENT, settled. It is
@@ -160,18 +167,14 @@ DOC_TYPE_FAMILY: Dict[str, str] = {
     "RECEIPT": MONEY_FAMILY,
     "CREDIT_NOTE": MONEY_FAMILY,
     "DEBIT_NOTE": MONEY_FAMILY,
-    # A5/R7 -> A7/R9. These two are the ADVISORY family in the design, and
-    # ADVISORY does not exist yet: `_RUBRIC_BY_FAMILY` is a comprehension over
-    # DOC_TYPES, so a family with no rubric is a KeyError AT IMPORT. Mapped to
-    # OTHER_FAMILY as the interim, which is behaviourally the right shape rather
-    # than a placeholder -- `_OTHER_RUBRIC` is `advisory_only=True`, so a
-    # statement already records alerts without ever setting a review status,
-    # which is exactly what an advisory document must do. R9 introduces
-    # ADVISORY_FAMILY + _ADVISORY_RUBRIC and moves these two; what it adds is
-    # `referenced_documents[]` / `deductions[]` and the list_reconcile mode, not
-    # a change to the never-set-review-status guarantee.
-    "REMITTANCE_ADVICE": OTHER_FAMILY,
-    "STATEMENT_OF_ACCOUNT": OTHER_FAMILY,
+    # A7/R9: moved off the interim OTHER_FAMILY mapping R7 left here. The
+    # never-set-a-review-status guarantee is unchanged (both rubrics are
+    # `advisory_only`); what ADVISORY adds is the two arithmetic flags switched
+    # OFF -- a statement has a running balance, not a subtotal/tax/total triple,
+    # so the money checks had nothing to check -- plus the schema lists and
+    # Feature 26's `list_reconcile` comparison mode.
+    "REMITTANCE_ADVICE": ADVISORY_FAMILY,
+    "STATEMENT_OF_ACCOUNT": ADVISORY_FAMILY,
     "OTHER": OTHER_FAMILY,
 }
 
