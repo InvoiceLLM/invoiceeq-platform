@@ -59,3 +59,9 @@ in progress: F27 R10 done (item 4, done out of order - flagged); wrapping up nex
 landed since last: F27 R10 (A8) — disclaimer + Gutschrift pre-checks, resolve_ambiguous_direction_type, derive_rule_era, T-C-5 (12 tests). 777 passed.
 gaps filed: none this task
 blockers: R5(a) still needs a founder ruling
+
+[01:36] mins left: 111 | persona: security-tester + senior-dev
+in progress: F26 R7 (V-25) done; next F26 R8 (H8 sweeper) then wrap-up
+landed since last: F27 R10 c82a751; V-25 probe committed + run LIVE for the first time -> Azure's own jailbreak filter blocks it (400, jailbreak detected). Gap 395 filed AND fixed (misleading "try asking again" on a permanent failure).
+gaps filed: 395
+blockers: R5(a) founder ruling; V-25's actual question still open (model never saw the prompt)

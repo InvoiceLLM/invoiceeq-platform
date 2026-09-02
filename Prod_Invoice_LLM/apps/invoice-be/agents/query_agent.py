@@ -3718,11 +3718,35 @@ The user asked: {_wrap_user_input(user_message, tenant_id)}
         logger.error("Attached-document content synthesis failed: %s", e)
         turn.status = telemetry.TURN_STATUS_ERROR
         turn.error_type = type(e).__name__
-        turn.stop_reason = "attachment_content_failed"
-        response_text = (
-            "I found the relevant part of that document but couldn't write up "
-            "the answer. Try asking again."
-        )
+
+        # BE Gap 395, found by V-25's live probe. Azure applies its OWN jailbreak
+        # classifier to the prompt and can refuse it with HTTP 400 before the
+        # model sees anything -- and a document's text is part of that prompt, so
+        # a PDF containing "ignore all prior instructions" trips it. Verified
+        # live 2026-09-03: `content_filter` / `jailbreak: detected=True`.
+        #
+        # The generic message below is WRONG for that cause. "Try asking again"
+        # invites the user to retry something that will fail identically every
+        # time, because the input that was filtered is the document, not the
+        # phrasing of their question. Telling them what actually happened is both
+        # more honest and more actionable -- and the distinction matters for
+        # support, since one of these is transient and the other never is.
+        detail = str(e)
+        if "content_filter" in detail or "ResponsibleAIPolicy" in detail:
+            turn.stop_reason = "attachment_content_filtered_upstream"
+            response_text = (
+                "I couldn't answer from that document: our AI provider's safety "
+                "filter rejected its contents. That usually means the file "
+                "contains text shaped like an instruction to the assistant. The "
+                "document is stored and its details are still available — but I "
+                "can't quote from it, and retrying will give the same result."
+            )
+        else:
+            turn.stop_reason = "attachment_content_failed"
+            response_text = (
+                "I found the relevant part of that document but couldn't write up "
+                "the answer. Try asking again."
+            )
 
     progress("answer_ready")
     return {
