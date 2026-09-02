@@ -1088,6 +1088,11 @@ def test_the_node_writes_the_type_the_evidence_and_the_confidence(generic_flag_o
         "doc_type": "DELIVERY_NOTE",
         "doc_type_evidence": "DELIVERY CHALLAN",
         "doc_type_confidence": 1.0,
+        # A6/R8: the node now also derives the classification attributes from the
+        # same OCR text. None here because a bare "DELIVERY CHALLAN" carries no
+        # tax IDs, no fiscal markers and no correction marker -- which is the
+        # common case and is why the key is None rather than {}.
+        "doc_attributes": None,
     }
 
 
@@ -1146,7 +1151,15 @@ def test_a_classifier_failure_degrades_to_unclassified_rather_than_failing_the_r
     with caplog.at_level("WARNING", logger="agents.extraction_agent"):
         update = ea.classify_doc_type_node(_pipeline_state())
 
-    assert update == {"doc_type": None, "doc_type_evidence": None, "doc_type_confidence": None}
+    assert update == {
+        "doc_type": None,
+        "doc_type_evidence": None,
+        "doc_type_confidence": None,
+        # A6/R8: the failure path clears the attributes too. A half-populated row
+        # -- attributes from a run whose type derivation blew up -- would be worse
+        # than an empty one, because the rubric reads both.
+        "doc_attributes": None,
+    }
     assert any("classification failed" in r.message for r in caplog.records)
 
 

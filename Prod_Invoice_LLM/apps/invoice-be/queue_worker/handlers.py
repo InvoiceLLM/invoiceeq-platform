@@ -449,6 +449,7 @@ def _persist_non_invoice_document(
     alerts: list,
     doc_type: str | None,
     doc_type_evidence: str | None,
+    doc_attributes: dict | None,
     doc_type_confidence: float | None,
     source_document_json: dict | None,
 ) -> Document:
@@ -501,6 +502,7 @@ def _persist_non_invoice_document(
         processing_attempts=placeholder.processing_attempts,
         doc_type=doc_type,
         doc_type_evidence=doc_type_evidence,
+        doc_attributes=doc_attributes,
         doc_type_confidence=doc_type_confidence,
         party_name=extracted_data.get("party_name"),
         counterparty_name=extracted_data.get("counterparty_name"),
@@ -884,6 +886,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
         # row.
         doc_type = agent_result.get("doc_type")
         doc_type_evidence = agent_result.get("doc_type_evidence")
+        doc_attributes = agent_result.get("doc_attributes")
         doc_type_confidence = agent_result.get("doc_type_confidence")
 
         # Stage 2: now that the vendor is known, merge Global + vendor-specific
@@ -910,6 +913,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 # persisted rather than leaving a stale value from the first pass.
                 doc_type = agent_result.get("doc_type")
                 doc_type_evidence = agent_result.get("doc_type_evidence")
+                doc_attributes = agent_result.get("doc_attributes")
                 doc_type_confidence = agent_result.get("doc_type_confidence")
 
 
@@ -945,6 +949,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     alerts=alerts,
                     doc_type=doc_type,
                     doc_type_evidence=doc_type_evidence,
+                    doc_attributes=doc_attributes,
                     doc_type_confidence=doc_type_confidence,
                     source_document_json=source_document_json,
                 )
@@ -1055,6 +1060,21 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 # overlay impossible one layer up rather than what makes this
                 # check wrong.
                 invoice.coordinates = coordinates if _should_persist_coordinates(doc_type) else []
+                # Feature 27 G9 columns, finally written (BE Gap 393). G9 added
+                # `Invoice.doc_type` / `doc_type_evidence` and E10 states plainly
+                # that "an invoice's own sub-type (Tax Invoice vs proforma vs
+                # credit note) is real information and the INVOICE family stays in
+                # `invoice`" -- but only the `documents` fork above ever populated
+                # them, so for an INVOICE-family row they have been NULL since the
+                # migration landed. A6's `doc_attributes` would have been dead on
+                # arrival for the same reason.
+                #
+                # Every value is None on a flag-OFF run (the classifier node is
+                # not in that graph), so this writes NULL exactly as today and
+                # changes nothing until the flag is on.
+                invoice.doc_type = doc_type
+                invoice.doc_type_evidence = doc_type_evidence
+                invoice.doc_attributes = doc_attributes
                 invoice.field_confidence = field_confidence
                 invoice.source_document_json = source_document_json
                 invoice.currency = extracted_data.get("currency")

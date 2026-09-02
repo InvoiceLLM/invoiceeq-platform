@@ -192,6 +192,24 @@ class Invoice(SQLModel, table=True):
     doc_type: str | None = Field(default=None, max_length=32)
     doc_type_evidence: str | None = Field(default=None)
 
+    # Feature 27 A6 / task R8: the classification attributes derived from the
+    # document's own text by `services/doc_attributes.py` -- `direction`,
+    # `invoice_subtype`, `correction_method`, `fiscal_markers`, `regional_ids`,
+    # `cumulative`, each with its evidence.
+    #
+    # ONE JSON COLUMN, not six typed ones, and the reason is not convenience:
+    # these attributes are a SET THAT GROWS (A8 adds `rule_era`; the research
+    # names several more as v2 candidates), every one of them is optional, and
+    # none is ever queried on. A typed column per attribute would be a migration
+    # per amendment for fields nothing filters by.
+    #
+    # KEYS ARE OMITTED WHEN UNDETERMINED rather than stored as null. `{}` and NULL
+    # both mean "nothing established"; a key present with a null value would be a
+    # third state nobody wants. NULL on the column itself means never classified.
+    doc_attributes: dict | None = Field(
+        default=None, sa_column=Column(JSON_VARIANT, nullable=True)
+    )
+
     # FE Gap 29: dashboard/list filters are always tenant-scoped plus one of
     # status/date/vendor, so composite indexes led by tenant_id (rather than
     # single-column ones) are what the query planner actually uses here.
@@ -256,6 +274,24 @@ class Document(SQLModel, table=True):
     doc_type: str | None = Field(default=None, max_length=32, index=True)
     doc_type_evidence: str | None = Field(default=None)
     doc_type_confidence: float | None = Field(default=None)
+
+    # Feature 27 A6 / task R8: the classification attributes derived from the
+    # document's own text by `services/doc_attributes.py` -- `direction`,
+    # `invoice_subtype`, `correction_method`, `fiscal_markers`, `regional_ids`,
+    # `cumulative`, each with its evidence.
+    #
+    # ONE JSON COLUMN, not six typed ones, and the reason is not convenience:
+    # these attributes are a SET THAT GROWS (A8 adds `rule_era`; the research
+    # names several more as v2 candidates), every one of them is optional, and
+    # none is ever queried on. A typed column per attribute would be a migration
+    # per amendment for fields nothing filters by.
+    #
+    # KEYS ARE OMITTED WHEN UNDETERMINED rather than stored as null. `{}` and NULL
+    # both mean "nothing established"; a key present with a null value would be a
+    # third state nobody wants. NULL on the column itself means never classified.
+    doc_attributes: dict | None = Field(
+        default=None, sa_column=Column(JSON_VARIANT, nullable=True)
+    )
 
     # Roles, not document-type words. `party_name` is whoever ISSUED the
     # document; `counterparty_name` is whoever it is addressed to. Defined once,

@@ -37,6 +37,7 @@ from services.storage import download_pdf_from_storage
 # by name because `INVOICE` is already a `doc_type` *value*: comparing against the
 # bare literal `"INVOICE"` when a family was meant is the exact collision the G2
 # build note flags (see `services/document_type_classifier.py`, naming note 1).
+from services.doc_attributes import derive_doc_attributes
 from services.document_type_classifier import (
     COMMITMENT_FAMILY,
     DOC_TYPE_FAMILY,
@@ -403,6 +404,10 @@ class ExtractionState(TypedDict):
     doc_type: Optional[str]
     doc_type_evidence: Optional[str]
     doc_type_confidence: Optional[float]
+    # Feature 27 A6/R8. Written by `classify_doc_type_node`; persisted onto the
+    # row's `doc_attributes` column by the handler. Absent (not None) on every
+    # flag-OFF run, because the node that writes it is not in that graph at all.
+    doc_attributes: Optional[Dict[str, Any]]
 
 
 
@@ -2136,7 +2141,12 @@ def classify_doc_type_node(state: ExtractionState) -> Dict[str, Any]:
             state.get("file_path"),
             e,
         )
-        return {"doc_type": None, "doc_type_evidence": None, "doc_type_confidence": None}
+        return {
+            "doc_type": None,
+            "doc_type_evidence": None,
+            "doc_type_confidence": None,
+            "doc_attributes": None,
+        }
 
     logger.info(
         "Document type %s for %s via %s (confidence %.2f, evidence %r%s)",
@@ -2150,10 +2160,45 @@ def classify_doc_type_node(state: ExtractionState) -> Dict[str, Any]:
         f", reason: {result['doc_type_reason']}" if result.get("doc_type_reason") else "",
     )
 
+    # Feature 27 A6 / task R8: the classification attributes, derived from the
+    # same OCR text, in the same node.
+    #
+    # Here rather than in a node of their own because they answer the same
+    # question the classifier does -- what IS this document -- and because they
+    # are worthless without `doc_type`: `derive_invoice_subtype()` is scoped by
+    # it, and A8's Gutschrift rule consumes `direction` to resolve a type the
+    # title cannot. A second node would add a graph edge and a second failure
+    # site for one dict.
+    #
+    # Pure Python, no model call (hard rule 3). These feed rubric selection and
+    # Feature 26's comparison mode, both of which decide how a FIGURE is judged,
+    # so a model deciding them would be deciding a financial outcome one step
+    # removed. `derive_doc_attributes()` never raises, for the same reason this
+    # node's own except exists: an enrichment must not fail the extraction it
+    # decorates.
+    doc_attributes = derive_doc_attributes(
+        state.get("ocr_text") or "",
+        doc_type=result.get("doc_type"),
+        # Not yet plumbed: the tenant's own registered tax IDs, which is what
+        # turns "two different IDs" into SUPPLIER_ISSUED vs BUYER_ISSUED. Without
+        # them `derive_direction()` still answers SELF for the both-sides-equal
+        # case -- the RCM self-invoice and statutory Gutschrift that A8 needs --
+        # and returns None for the rest rather than guessing. Widening this is a
+        # Tenant-settings change and is deliberately not smuggled in here.
+        tenant_tax_ids=None,
+    )
+    if doc_attributes:
+        logger.info(
+            "Document attributes for %s: %s",
+            state.get("file_path"),
+            {k: v for k, v in doc_attributes.items() if not k.endswith("_evidence")},
+        )
+
     return {
         "doc_type": result.get("doc_type"),
         "doc_type_evidence": result.get("doc_type_evidence"),
         "doc_type_confidence": result.get("doc_type_confidence"),
+        "doc_attributes": doc_attributes or None,
     }
 
 
@@ -2417,6 +2462,7 @@ def run_extraction_agent(
         "doc_type": None,
         "doc_type_evidence": None,
         "doc_type_confidence": None,
+        "doc_attributes": None,
     }
 
     # Feature 27 (G4): flag OFF returns the module-level `graph` object itself,
@@ -2458,5 +2504,8 @@ def run_extraction_agent(
         # nothing for `status`/`alerts`/`extracted_data`.
         "doc_type_evidence": final_state.get("doc_type_evidence"),
         "doc_type_confidence": final_state.get("doc_type_confidence"),
+        # A6/R8. `None` on every flag-OFF run: the node that writes it is absent
+        # from that graph, so the key is never in state to begin with.
+        "doc_attributes": final_state.get("doc_attributes"),
     }
 

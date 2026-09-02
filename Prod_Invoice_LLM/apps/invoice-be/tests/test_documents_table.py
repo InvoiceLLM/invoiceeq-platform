@@ -798,6 +798,10 @@ def test_document_model_carries_e10s_full_column_list():
         "delivery_terms", "incoterms", "notes", "status", "sa_alerts",
         "source_document_json", "created_at", "completed_at", "deleted_at",
         "last_enqueued_at", "processing_attempts", "submitted_by_email",
+        # A6/R8. One JSON column, not six typed ones: the attribute set grows by
+        # design (A8 adds `rule_era`), every attribute is optional, and none is
+        # queried on -- so typed columns would be a migration per amendment.
+        "doc_attributes",
     }
     assert {c.name for c in Document.__table__.columns} == expected
     assert Document.__tablename__ == "documents"
