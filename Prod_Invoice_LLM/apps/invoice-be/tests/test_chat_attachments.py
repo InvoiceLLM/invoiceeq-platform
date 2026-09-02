@@ -48,6 +48,30 @@ def db_session_fixture():
     SQLModel.metadata.drop_all(engine)
 
 
+@pytest.fixture(name="no_vector_tier3")
+def no_vector_tier3_fixture():
+    """Gap 401 — keep the TIER-SELECTION tests off the real embedding model.
+
+    Tier 3 (E-4) made `find_candidate_invoices()` call `query_invoice_chunks()`
+    whenever tiers 1 and 2 both come back empty, which is precisely the state the
+    two tests below construct on purpose. `.env` carries `MOCK_EMBEDDINGS=false`,
+    so those two SQL-tiering unit tests began loading a real SentenceTransformer
+    and running a real vector query -- and on Windows, under memory pressure from
+    a concurrent Playwright run, torch took the whole pytest process down with a
+    native access violation mid-suite. No traceback, no failure list, 2600 results
+    lost; only re-running the suite alone revealed the actual 16.
+
+    Patched at `chroma_client.query_invoice_chunks` because
+    `_tier3_candidates()` imports it inside the function body.
+
+    Deliberately a NAMED fixture rather than module-autouse: the sections lower in
+    this file run against conftest's real in-memory `EphemeralClient` on purpose,
+    and blanketing the module would silently gut them.
+    """
+    with patch("chroma_client.query_invoice_chunks", return_value=[]) as stub:
+        yield stub
+
+
 def _invoice(db, **kw):
     defaults = dict(
         tenant_id=TENANT,
@@ -135,7 +159,7 @@ def test_tier2_caps_candidates(db_session):
     assert len(found["invoices"]) == CANDIDATE_LIMIT
 
 
-def test_zero_match_is_reported_not_widened(db_session):
+def test_zero_match_is_reported_not_widened(db_session, no_vector_tier3):
     _invoice(db_session, vendor_name="Completely Different Co")
     found = find_candidate_invoices(
         tenant_id=TENANT,
@@ -146,9 +170,13 @@ def test_zero_match_is_reported_not_widened(db_session):
     )
     assert found["tier"] == 0
     assert found["invoices"] == []
+    # Tier 3 was consulted and had nothing -- asserted, because "tier 0" would
+    # also be the answer if tier 3 had never been reached at all, and that is the
+    # regression this call ordering is worth protecting.
+    no_vector_tier3.assert_called_once()
 
 
-def test_matching_is_tenant_scoped(db_session):
+def test_matching_is_tenant_scoped(db_session, no_vector_tier3):
     _invoice(db_session, tenant_id=OTHER_TENANT, po_number="PO-2024/0043")
     found = find_candidate_invoices(
         tenant_id=TENANT,

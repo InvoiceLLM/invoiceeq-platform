@@ -124,3 +124,9 @@ in progress: item 7 (full BE suite + Playwright running in background; tsc --noE
 landed since last: R12/R13 bf01d58 (flag-removal criteria in config.py); R12/H13 e0c090b (FE Part 2 spec section)
 gaps filed: none new
 blockers: none. Item 4 (H9 bicep deploy) still with infra-devops; baseline to match is 16 failed / 2607 passed / 1 skipped
+
+[02:58] mins left: 132 | persona: functional-tester
+in progress: item 7 DONE — readiness note written, evidence filed
+landed since last: H9 b24aa73 (job DEPLOYED, execution FAILED on stale image = Gap 400); Gap 401 fixed
+gaps filed: 400 (~, image rebuild needed), 401 (fixed)
+blockers: none. BE 16 failed/2684 passed — failure set IDENTICAL to baseline, diff recorded. tsc clean. Playwright 122/137, 1 in-scope failure = known FE Gap 392
