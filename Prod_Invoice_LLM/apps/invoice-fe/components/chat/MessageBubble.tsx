@@ -178,14 +178,26 @@ const markdownComponents = {
   h1: (props: any) => <h1 className="text-sm font-bold text-white mt-2 mb-1" {...props} />,
   h2: (props: any) => <h2 className="text-sm font-bold text-white mt-2 mb-1" {...props} />,
   h3: (props: any) => <h3 className="text-xs font-bold text-white uppercase tracking-wide mt-2 mb-1" {...props} />,
-  a: (props: any) => (
-    <a
-      className="text-[#3B82F6] hover:text-[#60A5FA] underline underline-offset-2"
-      target="_blank"
-      rel="noopener noreferrer"
-      {...props}
-    />
-  ),
+  a: (props: any) => {
+    const href = props.href || "";
+    const isInternal = href.startsWith("/") || href.startsWith("#");
+    if (isInternal) {
+      return (
+        <a
+          className="text-[#3B82F6] hover:text-[#60A5FA] underline underline-offset-2 cursor-pointer font-medium"
+          {...props}
+        />
+      );
+    }
+    return (
+      <a
+        className="text-[#3B82F6] hover:text-[#60A5FA] underline underline-offset-2 font-medium"
+        target="_blank"
+        rel="noopener noreferrer"
+        {...props}
+      />
+    );
+  },
   blockquote: (props: any) => (
     <blockquote className="border-l-2 border-[#3B82F6]/40 pl-2 my-1 text-slate-400 italic" {...props} />
   ),

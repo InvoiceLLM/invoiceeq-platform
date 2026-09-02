@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useSignUp } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 import { Header } from "@/components/marketing/Header";
 import { clearStoredSandboxKey, readStoredSandboxKey } from "@/lib/sandboxKey";
 
@@ -29,34 +30,36 @@ const S: Record<string, React.CSSProperties> = {
   root: { minHeight: "calc(100vh - 65px)", background: T.bg, display: "flex", fontFamily: T.font, color: T.textPrimary, overflow: "hidden", position: "relative" },
   orbTL: { position: "absolute", top: "-120px", left: "-120px", width: "520px", height: "520px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.13) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
   orbBR: { position: "absolute", bottom: "-150px", right: "-100px", width: "620px", height: "620px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.10) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 },
-  brandPanel: { flex: "1 1 45%", display: "flex", flexDirection: "column", justifyContent: "center", padding: "64px 56px", position: "relative", zIndex: 1 },
-  logoRow: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "56px" },
+  brandPanel: { flex: "1 1 45%", display: "flex", flexDirection: "column", justifyContent: "center", position: "relative", zIndex: 1 },
+  logoRow: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "32px" },
   logoIcon: { width: "40px", height: "40px", borderRadius: "10px", background: "linear-gradient(135deg, #10B981 0%, #3B82F6 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "20px", fontWeight: 700, color: "#fff", flexShrink: 0 },
   logoText: { fontSize: "20px", fontWeight: 700, letterSpacing: "-0.3px", background: "linear-gradient(90deg, #E2E8F0 0%, #94A3B8 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" },
-  headline: { fontSize: "40px", fontWeight: 800, lineHeight: 1.15, letterSpacing: "-1px", marginBottom: "20px", color: T.textPrimary },
+  headline: { fontSize: "36px", fontWeight: 800, lineHeight: 1.15, letterSpacing: "-1px", marginBottom: "16px", color: T.textPrimary },
   headlineAccent: { background: "linear-gradient(90deg, #10B981 0%, #3B82F6 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" },
-  subtext: { fontSize: "16px", color: T.textMuted, lineHeight: 1.65, maxWidth: "380px", marginBottom: "48px" },
-  featureList: { display: "flex", flexDirection: "column", gap: "18px" },
+  subtext: { fontSize: "15px", color: T.textMuted, lineHeight: 1.6, maxWidth: "380px", marginBottom: "32px" },
+  featureList: { display: "flex", flexDirection: "column", gap: "16px" },
   featureItem: { display: "flex", alignItems: "flex-start", gap: "14px" },
   featureDot: { width: "32px", height: "32px", borderRadius: "8px", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.25)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: "15px" },
   featureTitle: { fontSize: "14px", fontWeight: 600, color: T.textPrimary, marginBottom: "2px" },
   featureDesc: { fontSize: "13px", color: T.textDim },
   vDivider: { width: "1px", flexShrink: 0, zIndex: 1, background: "linear-gradient(to bottom, transparent, #222D3D 20%, #222D3D 80%, transparent)" },
-  formPanel: { flex: "1 1 55%", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 48px", zIndex: 1 },
-  card: { width: "100%", maxWidth: "460px", background: T.panel, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", border: `1px solid ${T.border}`, borderRadius: "20px", padding: "40px", boxShadow: "0 24px 64px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)" },
-  cardHeader: { marginBottom: "28px", textAlign: "center" },
-  badge: { display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.20)", borderRadius: "20px", padding: "4px 12px", fontSize: "11px", color: T.green, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: "14px" },
-  cardTitle: { fontSize: "26px", fontWeight: 700, color: T.textPrimary, letterSpacing: "-0.5px", marginBottom: "6px" },
-  cardSubtitle: { fontSize: "14px", color: T.textDim },
-  sectionLabel: { fontSize: "11px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#475569", marginBottom: "10px", marginTop: "22px" },
+  formPanel: { flex: "1 1 55%", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1 },
+  card: { width: "100%", maxWidth: "460px", background: T.panel, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", border: `1px solid ${T.border}`, borderRadius: "20px", boxShadow: "0 24px 64px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)" },
+  cardHeader: { marginBottom: "24px", textAlign: "center" },
+  badge: { display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(16,185,129,0.10)", border: "1px solid rgba(16,185,129,0.20)", borderRadius: "20px", padding: "4px 12px", fontSize: "11px", color: T.green, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", marginBottom: "12px" },
+  cardTitle: { fontSize: "24px", fontWeight: 700, color: T.textPrimary, letterSpacing: "-0.5px", marginBottom: "4px" },
+  cardSubtitle: { fontSize: "13px", color: T.textDim },
+  sectionLabel: { fontSize: "11px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#475569", marginBottom: "8px", marginTop: "16px" },
   inputWrap: { position: "relative" },
   inputIcon: { position: "absolute", left: "13px", top: "50%", transform: "translateY(-50%)", fontSize: "14px", opacity: 0.5, pointerEvents: "none" },
   input: { width: "100%", boxSizing: "border-box", background: "rgba(15, 20, 30, 0.60)", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "11px 14px 11px 38px", fontSize: "14px", color: T.textPrimary, outline: "none", transition: "border-color 0.2s, box-shadow 0.2s" },
+  inputWithEye: { width: "100%", boxSizing: "border-box", background: "rgba(15, 20, 30, 0.60)", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "11px 36px 11px 38px", fontSize: "14px", color: T.textPrimary, outline: "none", transition: "border-color 0.2s, box-shadow 0.2s" },
   select: { width: "100%", boxSizing: "border-box", background: "rgba(15, 20, 30, 0.60)", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "11px 14px 11px 38px", fontSize: "14px", color: T.textPrimary, outline: "none", transition: "border-color 0.2s, box-shadow 0.2s", appearance: "none", cursor: "pointer" },
   inputFocus: { borderColor: T.green, boxShadow: "0 0 0 3px rgba(16,185,129,0.13)" },
+  eyeBtn: { position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", color: "#64748B", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: "4px", borderRadius: "4px" },
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" },
   errorBox: { display: "flex", alignItems: "flex-start", gap: "8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "10px", padding: "10px 14px", fontSize: "13px", color: T.red, marginTop: "10px" },
-  btn: { width: "100%", background: "linear-gradient(135deg, #10B981 0%, #059669 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: "22px", letterSpacing: "0.2px", transition: "opacity 0.2s, transform 0.15s", boxShadow: "0 4px 20px rgba(16,185,129,0.25)" },
+  btn: { width: "100%", background: "linear-gradient(135deg, #10B981 0%, #059669 100%)", border: "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: "18px", letterSpacing: "0.2px", transition: "opacity 0.2s, transform 0.15s", boxShadow: "0 4px 20px rgba(16,185,129,0.25)" },
   retryBtn: { alignSelf: "flex-start", background: "rgba(239,68,68,0.14)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: "8px", padding: "7px 14px", fontSize: "13px", fontWeight: 600, color: T.red, cursor: "pointer" },
   loginRow: { textAlign: "center", marginTop: "20px", fontSize: "13px", color: T.textDim },
   loginLink: { color: T.blue, textDecoration: "none", fontWeight: 600 },
@@ -310,6 +313,8 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -450,6 +455,7 @@ export default function SignupPage() {
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isLoaded) return;
+    if (!orgName.trim()) { setError("Organisation name is required."); return; }
     if (password !== confirm) { setError("Passwords do not match"); return; }
 
     setLoading(true);
@@ -462,7 +468,7 @@ export default function SignupPage() {
         unsafeMetadata: { orgType, country, role: "admin" },
       });
 
-      const finalOrgName = orgName.trim() || `${email.split("@")[0]}'s Org`;
+      const finalOrgName = orgName.trim();
 
       if (result.status === "complete") {
         await completeSignupAndProvision(result.createdUserId || "", result.createdSessionId || "", finalOrgName);
@@ -487,7 +493,7 @@ export default function SignupPage() {
     setError(null);
     try {
       const result = await signUp.attemptEmailAddressVerification({ code: verificationCode });
-      const finalOrgName = orgName.trim() || `${email.split("@")[0]}'s Org`;
+      const finalOrgName = orgName.trim();
 
       if (result.status === "complete") {
         await completeSignupAndProvision(result.createdUserId || "", result.createdSessionId || "", finalOrgName);
@@ -555,11 +561,11 @@ export default function SignupPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header />
-      <div style={S.root}>
+      <div style={S.root} className="flex flex-col lg:flex-row">
       <div style={S.orbTL} />
       <div style={S.orbBR} />
 
-      <div style={S.brandPanel}>
+      <div style={S.brandPanel} className="hidden lg:flex p-10 lg:p-14">
         <div style={S.logoRow}>
           <div style={S.logoIcon}>I</div>
           <span style={S.logoText}>InvoiceAI</span>
@@ -583,10 +589,10 @@ export default function SignupPage() {
         </div>
       </div>
 
-      <div style={S.vDivider} />
+      <div style={S.vDivider} className="hidden lg:block" />
 
-      <div style={S.formPanel}>
-        <div style={S.card}>
+      <div style={S.formPanel} className="w-full p-4 sm:p-8 lg:p-12">
+        <div style={S.card} className="w-full max-w-[460px] p-6 sm:p-10">
           {provisionedApiKey ? (
             <>
               <div style={S.cardHeader}>
@@ -661,12 +667,13 @@ export default function SignupPage() {
                     <span style={S.inputIcon}>🏢</span>
                     <input
                       type="text"
-                      placeholder="Organisation name (optional)"
+                      placeholder="Organisation name"
                       value={orgName}
                       onChange={(e) => setOrgName(e.target.value)}
                       onFocus={() => setFocused("orgName")}
                       onBlur={() => setFocused(null)}
                       style={inputStyle("orgName")}
+                      required
                     />
                   </div>
                   <div style={S.grid2}>
@@ -720,28 +727,46 @@ export default function SignupPage() {
                     <div style={S.inputWrap}>
                       <span style={S.inputIcon}>🔒</span>
                       <input
-                        type="password"
+                        type={showPassword ? "text" : "password"}
                         placeholder="Password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         onFocus={() => setFocused("password")}
                         onBlur={() => setFocused(null)}
-                        style={inputStyle("password")}
+                        style={{ ...S.inputWithEye, ...(focused === "password" ? S.inputFocus : {}) }}
                         required
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        style={S.eyeBtn}
+                        title={showPassword ? "Hide password" : "Show password"}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                      >
+                        {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
                     </div>
                     <div style={S.inputWrap}>
                       <span style={S.inputIcon}>🔑</span>
                       <input
-                        type="password"
+                        type={showConfirmPassword ? "text" : "password"}
                         placeholder="Confirm"
                         value={confirm}
                         onChange={(e) => setConfirm(e.target.value)}
                         onFocus={() => setFocused("confirm")}
                         onBlur={() => setFocused(null)}
-                        style={inputStyle("confirm")}
+                        style={{ ...S.inputWithEye, ...(focused === "confirm" ? S.inputFocus : {}) }}
                         required
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword((prev) => !prev)}
+                        style={S.eyeBtn}
+                        title={showConfirmPassword ? "Hide password" : "Show password"}
+                        aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                      >
+                        {showConfirmPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
                     </div>
                   </div>
                 </div>

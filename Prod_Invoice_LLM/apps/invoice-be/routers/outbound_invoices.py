@@ -93,8 +93,9 @@ async def upload_outbound_invoice(
     """Feature 2.1, Task 2.1.5: upload the tenant's own invoice to be sent to
     a customer. Gated on the Send Invoices toggle -- upload-only, no in-app
     invoice creation/generation (see feature_17_invoice_builder.md)."""
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid file format: {file.filename}. Only PDF is allowed.")
+    fname = (file.filename or "").strip()
+    if not fname.lower().endswith(".pdf"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid file format: {file.filename or 'unnamed'}. Only PDF is allowed.")
 
     tenant = db_session.get(Tenant, context.tenant_id)
     if not tenant:
@@ -112,7 +113,13 @@ async def upload_outbound_invoice(
     try:
         file_bytes = await file.read()
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to read file {file.filename}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to read file {fname}: {str(e)}")
+
+    if not file_bytes.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid PDF content in file {fname}. Only valid PDF documents are supported.",
+        )
 
     # Gap 343: the AR upload door charged nothing, so a Free Tier tenant at
     # free_invoices_remaining=0 could keep creating invoices through it. Same

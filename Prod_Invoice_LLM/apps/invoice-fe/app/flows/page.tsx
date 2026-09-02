@@ -666,16 +666,22 @@ function FlowCanvas({
             {/* Icon */}
             <text x={11} y={23} fontSize="15" dominantBaseline="middle">{node.icon}</text>
             {/* Label */}
-            <text x={33} y={20} fill={isActive ? "#E2E8F0" : s.text} fontSize="10.5"
-              fontWeight="700" fontFamily="Inter,sans-serif">{node.label}</text>
+            {(() => {
+              const maxLabelLen = node.isNew ? (state !== "idle" ? 16 : 19) : 25;
+              const displayLabel = node.label.length > maxLabelLen ? node.label.slice(0, maxLabelLen - 1) + "…" : node.label;
+              return (
+                <text x={33} y={20} fill={isActive ? "#E2E8F0" : s.text} fontSize="10.5"
+                  fontWeight="700" fontFamily="Inter,sans-serif">{displayLabel}</text>
+              );
+            })()}
             {node.sublabel && (
               <text x={33} y={35} fill="#475569" fontSize="8.5" fontFamily="Inter,sans-serif">
                 {node.sublabel.length > 30 ? node.sublabel.slice(0, 29) + "…" : node.sublabel}
               </text>
             )}
-            {/* State dot */}
+            {/* State dot (Gap 360: offset left of NEW badge if badge is present, preventing dot/badge collision) */}
             {state !== "idle" && (
-              <circle cx={NW - 10} cy={10} r={4}
+              <circle cx={node.isNew ? NW - 44 : NW - 10} cy={11.5} r={3.5}
                 fill={state === "active" ? accentColor : state === "done" ? "#22C55E" : state === "warn" ? "#EAB308" : "#EF4444"}
                 style={isActive ? { animation: "blink 0.8s ease-in-out infinite" } : undefined} />
             )}

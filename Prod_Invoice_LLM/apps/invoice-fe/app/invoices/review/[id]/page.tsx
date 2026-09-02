@@ -1039,9 +1039,9 @@ export default function AuditorReviewPage() {
               )}
             </div>
 
-            <div className="flex-1 overflow-auto custom-scrollbar p-3">
+            <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar p-3">
               {isEditingItems ? (
-                <table className="w-full border-collapse text-left">
+                <table className="w-full min-w-[460px] border-collapse text-left">
                   <thead>
                     <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
                       <th className="pb-2 pr-2 font-medium w-6">#</th>
@@ -1131,21 +1131,21 @@ export default function AuditorReviewPage() {
                 </table>
               ) : (
                 invoice.items && invoice.items.length > 0 ? (
-                  <table className="w-full border-collapse text-left">
+                  <table className="w-full min-w-[460px] border-collapse text-left">
                     <thead>
                       <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="pb-2 pr-2 font-medium">#</th>
+                        <th className="pb-2 pr-2 font-medium w-6">#</th>
                         <th className="pb-2 pr-2 font-medium">Description</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Qty</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Unit Price</th>
-                        <th className="pb-2 text-right font-medium">Total</th>
+                        <th className="pb-2 pr-2 text-right font-medium w-16">Qty</th>
+                        <th className="pb-2 pr-2 text-right font-medium w-24">Unit Price</th>
+                        <th className="pb-2 text-right font-medium w-24">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#222D3D]/60">
                       {invoice.items.map((item, idx) => (
                         <tr key={idx} className="text-xs text-slate-300">
                           <td className="py-2 pr-2 text-slate-500">{idx + 1}</td>
-                          <td className="py-2 pr-2">{item.description}</td>
+                          <td className="py-2 pr-2 break-words max-w-[200px]">{item.description}</td>
                           <td className="py-2 pr-2 text-right text-slate-400">
                             {item.quantity ?? "—"}
                           </td>

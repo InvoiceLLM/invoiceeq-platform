@@ -359,3 +359,22 @@ def test_invoice_status_endpoint_returns_currency(db_session):
     data = client.get(f"/api/v1/invoices/status/{invoice.id}").json()
     assert data["grand_total"] == 40000.0
     assert data["currency"] == "INR"
+
+
+def test_rejects_non_pdf_file_extension(db_session):
+    """Gap 363 (BE): Non-PDF files (e.g. .docx, .jpg) must be rejected with 400 Bad Request."""
+    files = {"files": ("invoice.docx", io.BytesIO(b"PK\x03\x04 fake docx content"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    client = TestClient(app)
+    response = client.post("/api/v1/invoices/upload", files=files)
+    assert response.status_code == 400
+    assert "Only PDF is allowed" in response.json()["detail"]
+
+
+def test_rejects_invalid_pdf_magic_bytes(db_session):
+    """Gap 363 (BE): Files with .pdf extension but invalid/corrupt PDF headers must be rejected with 400."""
+    files = {"files": ("fake.pdf", io.BytesIO(b"This is just plain text, not a PDF"), "application/pdf")}
+    client = TestClient(app)
+    response = client.post("/api/v1/invoices/upload", files=files)
+    assert response.status_code == 400
+    assert "Invalid PDF content" in response.json()["detail"]
+
