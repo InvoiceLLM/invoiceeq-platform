@@ -47,3 +47,9 @@ in progress: F26 R10 COMPLETE (B3/B7/B8/B9/B10); next F27 R11 or F26 R11
 landed since last: B9 f5e1a6d; B10 — reconcile branch in the turn, ReconciliationTable.tsx, FE types, MessageBubble wiring. tsc exit 0. 815 passed.
 gaps filed: none
 blockers: none
+
+[01:24] mins left: 123 | persona: senior-dev
+in progress: F26 R11 (H7) done, committing; next F26 R7 (V-25 probe) or wrap-up
+landed since last: R5(c) documents surface 510c444; full suite w/ Postgres 16 failed/2575 passed/1 skipped (was 26 skipped) -> Gap 394; H7 async wiring across 4 sites.
+gaps filed: 394
+blockers: R5(a) flag-exposure mechanism needs a FOUNDER RULING - spec names two options, picks neither, assigns to architect. R5(b) DropZone depends on it.

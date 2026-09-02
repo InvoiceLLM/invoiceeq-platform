@@ -234,6 +234,14 @@ def _process_message(queue_client: QueueClient, msg) -> None:
                 user_msg_id=kwargs.get("user_msg_id"),
                 content=kwargs.get("content"),
                 tenant_id=tenant_id,
+                # E-5 / Feature 26 task H7. The third dispatch site -- the queue
+                # payload carries the key and the handler accepts it, but the
+                # worker is what actually reads one and calls the other, so
+                # missing it here would drop the attachment as silently as not
+                # carrying it at all. `.get()` so a pre-H7 message still in the
+                # queue at deploy time is processed as an ordinary chat turn
+                # rather than raising.
+                attachment_id=kwargs.get("attachment_id"),
             )
         else:
             logger.warning(f"Unknown task {task_name}")

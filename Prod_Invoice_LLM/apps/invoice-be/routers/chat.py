@@ -503,19 +503,31 @@ def post_chat_message(
             db_session.add(chat_session)
 
     from config import get_settings
-    # Feature 26 (Gap 366): an attached-document turn runs synchronously. The
-    # queue path carries only (session_id, user_msg_id, content, tenant_id,
-    # job_id) -- `ChatQueueService.enqueue_chat_job()` and
-    # `handle_process_chat_job()` have no attachment parameter -- so enqueuing
-    # one would drop the attachment on the floor and answer the question as an
-    # ordinary chat turn, which is worse than answering it a bit more slowly.
-    # Threading the id through the worker is its own change to those two files
-    # and is deliberately not done here.
-    use_async_queue = (
-        get_settings().ENABLE_ASYNC_CHAT_QUEUE
-        and not sync
-        and payload.attachment_id is None
-    )
+    # Feature 26 E-5 / task H7. The `payload.attachment_id is None` condition is
+    # GONE, and this comment records what it was for rather than deleting the
+    # reasoning with it.
+    #
+    # Gap 366 forced attachment turns synchronous because the queue payload
+    # carried only (session_id, user_msg_id, content, tenant_id, job_id): with no
+    # attachment parameter anywhere in `enqueue_chat_job()`,
+    # `handle_process_chat_job()` or the worker's dispatch, enqueuing one would
+    # have dropped the attachment and answered the question as an ordinary chat
+    # turn -- the exact silent-drop failure the pre-route gate exists to prevent,
+    # and worse than answering a bit more slowly.
+    #
+    # H7 threads the id through all three, so the condition has nothing left to
+    # protect against. The CONSEQUENCE of removing it is the point (E-5): until
+    # now attachment turns bypassed Gap 364's per-tenant concurrency ceiling
+    # entirely, because that ceiling lives only in `enqueue_chat_job()` -- and
+    # this feature's content branch made those turns MORE expensive than the ones
+    # the ceiling governs (an embedding call, a vector search and a narration
+    # call). Leaving them unwired was widening an existing noisy-neighbour hole.
+    #
+    # `ENABLE_ASYNC_CHAT_QUEUE` is NOT flipped by this change and stays False
+    # until Gap 365 / D7's five criteria are cleared against real Postgres and
+    # real Redis. Wiring it means that when someone does flip it, attachment
+    # turns are already correct; it does not flip anything.
+    use_async_queue = get_settings().ENABLE_ASYNC_CHAT_QUEUE and not sync
     if use_async_queue:
         # Gap 280: Asynchronous Queue-based Dispatch
         from services.chat_queue import ChatQueueCapacityError, ChatQueueService
@@ -541,6 +553,11 @@ def post_chat_message(
                 content=payload.content,
                 tenant_id=str(tenant_context.tenant_id),
                 job_id=job_id,
+                # E-5/H7. The fourth and last site: payload key, handler
+                # parameter, worker dispatch, and here -- the caller that
+                # actually supplies it. Missing this one would leave the other
+                # three carrying a value nobody ever sets.
+                attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
             )
         except ChatQueueCapacityError as exc:
             # Gap 364: the tenant is at PER_TENANT_MAX_ACTIVE_CHAT. Undo the row

@@ -616,7 +616,7 @@ def router_client_fixture(db_session):
 
 
 def test_post_message_threads_attachment_id_to_the_attached_document_turn(
-    db_session, router_client
+    db_session, router_client, monkeypatch
 ):
     """POST /chat/sessions/{id}/message with an attachment_id reaches the branch.
 
@@ -625,8 +625,25 @@ def test_post_message_threads_attachment_id_to_the_attached_document_turn(
     answer while the attachment was dropped and the question answered as an
     ordinary SQL turn is exactly the bug, and is indistinguishable from success
     if you only check the response body.
+
+    THE SYNC PATH IS PINNED EXPLICITLY (task H7). Until H7 this test did not have
+    to say so: `use_async_queue` carried `and payload.attachment_id is None`, so
+    an attachment turn was FORCED synchronous and this assertion held whatever
+    the flag said. H7 removed that condition — the queue now carries the id
+    through all four sites — so with `ENABLE_ASYNC_CHAT_QUEUE=true` in the
+    developer `.env` and Redis reachable, the same request correctly returns 202
+    and the agent runs later in the worker.
+
+    What this test is about is the ROUTER threading the id into the agent, which
+    is a synchronous-path claim, so the path is now stated rather than inherited.
+    The async half is V-16..V-18's, against real Redis. Leaving it unpinned would
+    make the result depend on whether a container happens to be running — BE Gap
+    390's exact shape.
     """
     import agents.query_agent as qa
+    import config
+
+    monkeypatch.setattr(config.settings, "ENABLE_ASYNC_CHAT_QUEUE", False)
 
     chat_session = ChatSession(tenant_id=MOCK_TENANT_ID, title="New Chat")
     db_session.add(chat_session)

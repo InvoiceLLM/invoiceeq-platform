@@ -1468,6 +1468,7 @@ def handle_process_chat_job(
     content: str,
     tenant_id: str,
     db_session: Optional[Session] = None,
+    attachment_id: Optional[str] = None,
     trace_id: Optional[str] = None,
     request_id: Optional[str] = None,
 ) -> dict:
@@ -1536,6 +1537,10 @@ def handle_process_chat_job(
                 tenant_id=str(tenant_id),
                 db_session=session,
                 on_progress=on_progress,
+                # E-5/H7. `run_query_agent()` has accepted this since C4; the
+                # queue simply never carried it. With it threaded, the pre-route
+                # gate fires in the worker exactly as it does in the request.
+                attachment_id=attachment_id,
             )
             turn_latency_ms = (time.perf_counter() - turn_started) * 1000.0
 
