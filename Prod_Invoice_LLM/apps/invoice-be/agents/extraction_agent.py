@@ -234,6 +234,26 @@ class ReferenceDocLineItem(BaseModel):
     quantity: Optional[float] = Field(default=None, description="Quantity ordered or quoted")
     unit_price: Optional[float] = Field(default=None, description="Unit price. Transcribe the printed figure verbatim, including a leading minus sign if the line is a credit or discount.")
     amount: Optional[float] = Field(default=None, description="Line total. Transcribe the printed figure verbatim. If the printed figure is negative (prefixed '-' or in parentheses), extract it as a negative number.")
+    # --- B3/R10: the line-item matcher's join keys --------------------------
+    #
+    # WITHOUT THESE, the only key available across the two sides is free-text
+    # description -- which is precisely the judgement call `_compare_one()`
+    # refused to make when it stopped at line-item COUNT ("Widget, blue, 10pk"
+    # vs "Blue widget x10"). Widening this schema is therefore B3's stated
+    # PREREQUISITE, not a convenience: L1 matching keys on
+    # `hsn_sac_code` + `uom`, and it cannot exist until the reference side
+    # carries them.
+    #
+    # Wording is matched to `InvoiceLineItem`'s deliberately. The two schemas are
+    # about to be compared field-for-field, and two descriptions of the same
+    # concept are how a model comes to populate them differently.
+    #
+    # Additive and all Optional, so every existing REFERENCE extraction stays
+    # valid byte-for-byte; the schema is `extra="forbid"`, so this is a real
+    # edit rather than a no-op.
+    hsn_sac_code: Optional[str] = Field(default=None, description="HSN/SAC code (mandatory for Indian GST)")
+    uom: Optional[str] = Field(default=None, description="Unit of measure (e.g., each, kg, hours)")
+    line_number: Optional[int] = Field(default=None, description="The line's printed row number or serial number, if the document numbers its rows. Null if the table is unnumbered — never invent a position.")
 
 
 class ReferenceDocExtractionSchema(BaseModel):
@@ -309,6 +329,13 @@ class GenericLineItem(BaseModel):
     uom: Optional[str] = Field(default=None, description="Unit of measure exactly as printed (e.g. 'NOS', 'KG', 'PCS', 'hours', 'each').")
     batch_or_serial: Optional[str] = Field(default=None, description="Batch, lot or serial number printed against this row, as a single string. Null if the row prints none.")
 
+    # NOT widened with `hsn_sac_code` / `line_number`, deliberately -- an earlier
+    # pass of R10 added them here and two tests caught it. A2 names per-line
+    # `hsn_sac_code` among the invoice-only fields the generic spine must NOT
+    # carry, and `test_the_existing_schemas_are_unchanged_by_g3` asserts exactly
+    # that. B3's prerequisite is `ReferenceDocLineItem` (Feature 26's
+    # chat-attachment path), which is a different schema; widening this one was
+    # scope creep that would have weakened A2 for no caller.
 
 class ReferencedDocument(BaseModel):
     """One document a statement or remittance advice REFERS TO (A7).
