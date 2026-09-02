@@ -1,0 +1,100 @@
+<svg width="800" height="380" viewBox="0 0 800 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="800" height="380" rx="16" fill="#0B0F19"/>
+  <rect x="0.5" y="0.5" width="799" height="379" rx="15.5" stroke="#222D3D"/>
+  
+  <!-- Header Bar -->
+  <rect x="20" y="20" width="760" height="40" rx="8" fill="#151B26" stroke="#222D3D"/>
+  <circle cx="42" cy="40" r="5" fill="#EF4444"/>
+  <circle cx="58" cy="40" r="5" fill="#F59E0B"/>
+  <circle cx="74" cy="40" r="5" fill="#10B981"/>
+  <text x="100" y="44" fill="#94A3B8" font-family="'Inter', -apple-system, sans-serif" font-size="12" font-weight="600">Outbound AR Invoicing: Audit Review, Confirm Send &amp; Staff Notifications</text>
+  <rect x="680" y="28" width="84" height="24" rx="6" fill="#F59E0B" fill-opacity="0.15" stroke="#F59E0B" stroke-opacity="0.3"/>
+  <text x="696" y="44" fill="#FBBF24" font-family="'Inter', -apple-system, sans-serif" font-size="10" font-weight="700">AR AUDIT</text>
+
+  <!-- Step 1: Outbound Set Upload -->
+  <g transform="translate(40, 90)">
+    <rect width="150" height="230" rx="12" fill="#151B26" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#F59E0B" fill-opacity="0.15"/>
+    <!-- Document Upload Icon -->
+    <path d="M24 24H32L36 28V38H24V24Z" fill="#FBBF24"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">AR Ingestion</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">Billing Staff</text>
+    <line x1="12" y1="62" x2="138" y2="62" stroke="#222D3D"/>
+    <text x="14" y="82" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Source:</text>
+    <rect x="12" y="90" width="126" height="26" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="107" fill="#FBBF24" font-family="'Inter', sans-serif" font-size="10">AR Authorized Email</text>
+    <text x="14" y="136" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Payload:</text>
+    <rect x="12" y="144" width="126" height="26" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="161" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="10">Client_Bill_2026.pdf</text>
+    <rect x="12" y="184" width="126" height="30" rx="6" fill="#F59E0B" fill-opacity="0.1" stroke="#F59E0B" stroke-opacity="0.2"/>
+    <text x="22" y="203" fill="#FBBF24" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Upload / Ingest ↗</text>
+  </g>
+
+  <!-- Arrow 1 -> 2 -->
+  <path d="M200 205 L230 205" stroke="#F59E0B" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="230,201 238,205 230,209" fill="#F59E0B"/>
+
+  <!-- Step 2: Outbound Auditor Console -->
+  <g transform="translate(248, 90)">
+    <rect width="180" height="230" rx="12" fill="#151B26" stroke="#3B82F6" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#3B82F6" fill-opacity="0.15"/>
+    <circle cx="30" cy="32" r="7" fill="#60A5FA"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">Outbound Audit</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">Console Review</text>
+    <line x1="12" y1="62" x2="168" y2="62" stroke="#222D3D"/>
+    <rect x="12" y="74" width="156" height="38" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="90" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Arithmetic Validation</text>
+    <text x="20" y="103" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Subtotal + Tax = Grand Total</text>
+    <rect x="12" y="120" width="156" height="38" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="136" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Client Info &amp; Due Date</text>
+    <text x="20" y="149" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Verified against terms</text>
+    <rect x="12" y="166" width="156" height="46" rx="6" fill="#3B82F6" fill-opacity="0.1" stroke="#3B82F6" stroke-opacity="0.3"/>
+    <text x="20" y="184" fill="#93C5FD" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Confirm Send Action</text>
+    <text x="20" y="198" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="9">Changes state to SENT</text>
+  </g>
+
+  <!-- Arrow 2 -> 3 -->
+  <path d="M438 205 L468 205" stroke="#3B82F6" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="468,201 476,205 468,209" fill="#3B82F6"/>
+
+  <!-- Step 3: Zero Customer Spam Guard -->
+  <g transform="translate(486, 90)">
+    <rect width="130" height="230" rx="12" fill="#151B26" stroke="#10B981" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#10B981" fill-opacity="0.15"/>
+    <path d="M30 24L38 27V33C38 37 34 40 30 42C26 40 22 37 22 33V27L30 24Z" fill="#34D399"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">Safety Policy</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">Zero-Spam Guard</text>
+    <line x1="12" y1="62" x2="118" y2="62" stroke="#222D3D"/>
+    <rect x="12" y="74" width="106" height="42" rx="6" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="18" y="90" fill="#34D399" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Internal Only</text>
+    <text x="18" y="104" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="8">Never emails clients</text>
+    <rect x="12" y="124" width="106" height="42" rx="6" fill="#3B82F6" fill-opacity="0.15" stroke="#3B82F6" stroke-opacity="0.3"/>
+    <text x="18" y="140" fill="#60A5FA" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Staff Notify</text>
+    <text x="18" y="154" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="8">Multi-select AR team</text>
+    <rect x="12" y="174" width="106" height="34" rx="6" fill="#10B981" fill-opacity="0.1" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="18" y="193" fill="#34D399" font-family="'Inter', sans-serif" font-size="9" font-weight="600">Audit Trail</text>
+  </g>
+
+  <!-- Arrow 3 -> 4 -->
+  <path d="M626 205 L656 205" stroke="#10B981" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="656,201 664,205 656,209" fill="#10B981"/>
+
+  <!-- Step 4: Lifecycle & Reconciliation -->
+  <g transform="translate(674, 90)">
+    <rect width="90" height="230" rx="12" fill="#151B26" stroke="#8B5CF6" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="10" y="14" width="30" height="30" rx="6" fill="#8B5CF6" fill-opacity="0.15"/>
+    <circle cx="25" cy="29" r="6" fill="#A78BFA"/>
+    <text x="46" y="26" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="11" font-weight="700">Status</text>
+    <text x="46" y="38" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Tracking</text>
+    <line x1="10" y1="56" x2="80" y2="56" stroke="#222D3D"/>
+    <rect x="8" y="70" width="74" height="42" rx="6" fill="#3B82F6" fill-opacity="0.15" stroke="#3B82F6" stroke-opacity="0.3"/>
+    <text x="12" y="86" fill="#60A5FA" font-family="'Inter', sans-serif" font-size="9" font-weight="700">SENT</text>
+    <text x="12" y="100" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="8">Dispatched</text>
+    <rect x="8" y="122" width="74" height="42" rx="6" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="12" y="138" fill="#34D399" font-family="'Inter', sans-serif" font-size="9" font-weight="700">PAID</text>
+    <text x="12" y="152" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="8">Reconciled</text>
+    <rect x="8" y="174" width="74" height="34" rx="6" fill="#EF4444" fill-opacity="0.15" stroke="#EF4444" stroke-opacity="0.3"/>
+    <text x="12" y="192" fill="#F87171" font-family="'Inter', sans-serif" font-size="9" font-weight="700">OVERDUE</text>
+  </g>
+</svg>

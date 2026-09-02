@@ -1,0 +1,101 @@
+<svg width="800" height="380" viewBox="0 0 800 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="800" height="380" rx="16" fill="#0B0F19"/>
+  <rect x="0.5" y="0.5" width="799" height="379" rx="15.5" stroke="#222D3D"/>
+  
+  <!-- Header Bar -->
+  <rect x="20" y="20" width="760" height="40" rx="8" fill="#151B26" stroke="#222D3D"/>
+  <circle cx="42" cy="40" r="5" fill="#EF4444"/>
+  <circle cx="58" cy="40" r="5" fill="#F59E0B"/>
+  <circle cx="74" cy="40" r="5" fill="#10B981"/>
+  <text x="100" y="44" fill="#94A3B8" font-family="'Inter', -apple-system, sans-serif" font-size="12" font-weight="600">Developer Webhooks: Event Dispatch &amp; HMAC Signature Lifecycle</text>
+  <rect x="680" y="28" width="84" height="24" rx="6" fill="#8B5CF6" fill-opacity="0.15" stroke="#8B5CF6" stroke-opacity="0.3"/>
+  <text x="692" y="44" fill="#C4B5FD" font-family="'Inter', -apple-system, sans-serif" font-size="10" font-weight="700">REAL-TIME</text>
+
+  <!-- Step 1: Event Trigger -->
+  <g transform="translate(40, 90)">
+    <rect width="160" height="230" rx="12" fill="#151B26" stroke="#3B82F6" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#3B82F6" fill-opacity="0.15"/>
+    <circle cx="30" cy="32" r="7" fill="#60A5FA"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">Platform Event</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">Internal Event Bus</text>
+    <line x1="12" y1="62" x2="148" y2="62" stroke="#222D3D"/>
+    <rect x="12" y="74" width="136" height="28" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="92" fill="#93C5FD" font-family="'Courier New', monospace" font-size="10">invoice.completed</text>
+    <rect x="12" y="108" width="136" height="28" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="126" fill="#34D399" font-family="'Courier New', monospace" font-size="10">invoice.approved</text>
+    <rect x="12" y="142" width="136" height="28" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="160" fill="#FBBF24" font-family="'Courier New', monospace" font-size="10">invoice.audit_req</text>
+    <rect x="12" y="176" width="136" height="28" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="194" fill="#F87171" font-family="'Courier New', monospace" font-size="10">invoice.rejected</text>
+  </g>
+
+  <!-- Arrow 1 -> 2 -->
+  <path d="M210 205 L240 205" stroke="#3B82F6" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="240,201 248,205 240,209" fill="#3B82F6"/>
+
+  <!-- Step 2: HMAC Signer -->
+  <g transform="translate(258, 90)">
+    <rect width="170" height="230" rx="12" fill="#151B26" stroke="#10B981" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#10B981" fill-opacity="0.15"/>
+    <!-- Lock Icon -->
+    <path d="M25 28V26C25 23.2 27.2 21 30 21C32.8 21 35 23.2 35 26V28H37V39H23V28H25ZM27 28H33V26C33 24.3 31.7 23 30 23C28.3 23 27 24.3 27 26V28Z" fill="#34D399"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">HMAC-SHA256</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">Cryptographic Seal</text>
+    <line x1="12" y1="62" x2="158" y2="62" stroke="#222D3D"/>
+    <text x="14" y="82" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Tenant Secret Key:</text>
+    <rect x="12" y="90" width="146" height="26" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="20" y="107" fill="#64748B" font-family="'Courier New', monospace" font-size="10">whsec_••••••••••••</text>
+    <text x="14" y="136" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="10" font-weight="600">Dispatched Header:</text>
+    <rect x="12" y="144" width="146" height="32" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="159" fill="#34D399" font-family="'Courier New', monospace" font-size="9">X-InvoiceAI-Signature</text>
+    <text x="18" y="171" fill="#64748B" font-family="'Courier New', monospace" font-size="9">sha256=d41d8cd98f00b204</text>
+    <rect x="12" y="184" width="146" height="30" rx="6" fill="#10B981" fill-opacity="0.1" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="24" y="203" fill="#34D399" font-family="'Inter', sans-serif" font-size="10" font-weight="600">✓ Prevents Tampering</text>
+  </g>
+
+  <!-- Arrow 2 -> 3 -->
+  <path d="M438 205 L468 205" stroke="#10B981" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="468,201 476,205 468,209" fill="#10B981"/>
+
+  <!-- Step 3: HTTPS Dispatch & Retry -->
+  <g transform="translate(486, 90)">
+    <rect width="130" height="230" rx="12" fill="#151B26" stroke="#F59E0B" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="12" y="14" width="36" height="36" rx="8" fill="#F59E0B" fill-opacity="0.15"/>
+    <!-- Zap Icon -->
+    <path d="M32 18L22 30H29L27 42L38 28H31L32 18Z" fill="#FBBF24"/>
+    <text x="56" y="28" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="13" font-weight="700">Dispatcher</text>
+    <text x="56" y="42" fill="#64748B" font-family="'Inter', sans-serif" font-size="10">HTTP POST</text>
+    <line x1="12" y1="62" x2="118" y2="62" stroke="#222D3D"/>
+    <rect x="12" y="74" width="106" height="30" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="93" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="10">Attempt 1 (Immediate)</text>
+    <rect x="12" y="110" width="106" height="30" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="129" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="10">Attempt 2 (+30s)</text>
+    <rect x="12" y="146" width="106" height="30" rx="6" fill="#0B0F19" stroke="#222D3D"/>
+    <text x="18" y="165" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="10">Attempt 3 (+5m)</text>
+    <rect x="12" y="184" width="106" height="30" rx="6" fill="#F59E0B" fill-opacity="0.1" stroke="#F59E0B" stroke-opacity="0.3"/>
+    <text x="18" y="203" fill="#FBBF24" font-family="'Inter', sans-serif" font-size="10" font-weight="600">3x Exponential</text>
+  </g>
+
+  <!-- Arrow 3 -> 4 -->
+  <path d="M626 205 L656 205" stroke="#F59E0B" stroke-width="2" stroke-dasharray="4 4"/>
+  <polygon points="656,201 664,205 656,209" fill="#F59E0B"/>
+
+  <!-- Step 4: Customer Endpoint -->
+  <g transform="translate(674, 90)">
+    <rect width="90" height="230" rx="12" fill="#151B26" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1.5"/>
+    <rect x="10" y="14" width="30" height="30" rx="6" fill="#06B6D4" fill-opacity="0.15"/>
+    <circle cx="25" cy="29" r="6" fill="#22D3EE"/>
+    <text x="46" y="26" fill="#E2E8F0" font-family="'Inter', sans-serif" font-size="11" font-weight="700">Your API</text>
+    <text x="46" y="38" fill="#64748B" font-family="'Inter', sans-serif" font-size="9">Endpoint</text>
+    <line x1="10" y1="56" x2="80" y2="56" stroke="#222D3D"/>
+    <rect x="8" y="70" width="74" height="42" rx="6" fill="#06B6D4" fill-opacity="0.15" stroke="#06B6D4" stroke-opacity="0.3"/>
+    <text x="12" y="86" fill="#22D3EE" font-family="'Inter', sans-serif" font-size="9" font-weight="700">ERP Sync</text>
+    <text x="12" y="100" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="8">SAP / NetSuite</text>
+    <rect x="8" y="122" width="74" height="42" rx="6" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-opacity="0.3"/>
+    <text x="12" y="138" fill="#34D399" font-family="'Inter', sans-serif" font-size="9" font-weight="700">200 OK</text>
+    <text x="12" y="152" fill="#94A3B8" font-family="'Inter', sans-serif" font-size="8">ACK Recorded</text>
+    <rect x="8" y="174" width="74" height="34" rx="6" fill="#8B5CF6" fill-opacity="0.15" stroke="#8B5CF6" stroke-opacity="0.3"/>
+    <text x="14" y="192" fill="#C4B5FD" font-family="'Inter', sans-serif" font-size="9" font-weight="700">Logs Saved</text>
+  </g>
+</svg>
