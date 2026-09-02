@@ -830,3 +830,101 @@ def test_the_flag_is_the_only_difference_between_the_two_paths(db_session, monke
     on.search.assert_called_once()
     assert "evidence" in on.result
     assert "attachment_confirmation" not in on.result
+
+
+# --- V-30 (B9/R10): the doc-type-aware intent split over 14 types ------------
+
+
+@pytest.mark.parametrize(
+    "doc_type,expected",
+    [
+        ("INVOICE", "comparison"),
+        ("PROFORMA_INVOICE", "comparison"),
+        ("CREDIT_NOTE", "comparison"),
+        ("DEBIT_NOTE", "comparison"),
+        ("RECEIPT", "comparison"),
+        ("PURCHASE_ORDER", "comparison"),
+        ("ORDER_CONFIRMATION", "comparison"),
+        ("QUOTATION", "comparison"),
+        ("DELIVERY_NOTE", "content"),
+        ("GRN", "content"),
+        ("CONTRACT", "content"),
+        ("STATEMENT_OF_ACCOUNT", "comparison"),
+        ("REMITTANCE_ADVICE", "comparison"),
+    ],
+)
+def test_v30_the_both_match_bias_covers_every_type_except_other(doc_type, expected):
+    """The bias resolves the BOTH-MATCH case only. A message carrying keywords
+    from both families lands here, and every type in the taxonomy must have a
+    defensible answer -- except OTHER, which has none and clarifies."""
+    import agents.query_agent as qa
+
+    # "compare" is a comparison keyword; "what does it say" is a content one.
+    both = "compare this and tell me what it says"
+    assert qa._classify_attachment_intent(both, doc_type) == expected
+
+
+def test_v30_other_and_an_unknown_type_still_clarify_on_both_match():
+    import agents.query_agent as qa
+
+    both = "compare this and tell me what it says"
+    assert qa._classify_attachment_intent(both, "OTHER") == "clarify"
+    assert qa._classify_attachment_intent(both, None) == "clarify"
+    assert qa._classify_attachment_intent(both, "NOT_A_TYPE") == "clarify"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "which of these are unpaid?",
+        "what did they short-pay?",
+        "is anything missing from this statement?",
+        "can you reconcile this against my invoices?",
+        "what was deducted?",
+    ],
+)
+def test_v30_reconcile_questions_route_to_list_reconcile_on_advisory_documents(message):
+    """The question shape an advisory document exists for. Before B9 these
+    matched NEITHER existing family and fell to "neither matched" -- so the user
+    asking the one question a statement is for got asked a question back."""
+    import agents.query_agent as qa
+
+    for doc_type in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+        assert qa._classify_attachment_intent(message, doc_type) == "reconcile", (
+            f"{message!r} on {doc_type}"
+        )
+
+
+def test_v30_a_reconcile_word_on_a_non_advisory_document_is_comparison_not_reconcile():
+    """`list_reconcile` needs `referenced_documents[]`, which only an advisory
+    document carries. "Which of these are unpaid?" about a delivery note is still
+    a real question -- it is just a comparison question, and routing it to a mode
+    with no input would answer nothing."""
+    import agents.query_agent as qa
+
+    for doc_type in ("DELIVERY_NOTE", "PURCHASE_ORDER", "INVOICE", "CONTRACT"):
+        assert qa._classify_attachment_intent("which of these are unpaid?", doc_type) == (
+            "comparison"
+        ), doc_type
+
+
+def test_v30_neither_match_still_clarifies_for_every_family_including_advisory():
+    """B2's rule survives B9: the bias resolves genuine two-way ambiguity and
+    never rescues a question we failed to recognise at all."""
+    import agents.query_agent as qa
+
+    for doc_type in ("INVOICE", "DELIVERY_NOTE", "CONTRACT", "STATEMENT_OF_ACCOUNT",
+                     "REMITTANCE_ADVICE", "ORDER_CONFIRMATION", "RECEIPT", "OTHER"):
+        assert qa._classify_attachment_intent("hello there", doc_type) == "clarify", doc_type
+
+
+def test_v30_the_intent_split_still_makes_no_llm_call():
+    """Hard rule 3. It decides whether a financial answer is computed
+    deterministically or narrated, so a model must not be consulted."""
+    import inspect
+
+    import agents.query_agent as qa
+
+    source = inspect.getsource(qa._classify_attachment_intent)
+    for forbidden in ("get_llm", "invoke", "with_structured_output"):
+        assert forbidden not in source

@@ -3029,6 +3029,16 @@ _CONTENT_INTENT_PATTERN = _compile_keyword_pattern(_CONTENT_INTENT_KEYWORDS)
 _INTENT_COMPARISON = "comparison"
 _INTENT_CONTENT = "content"
 _INTENT_CLARIFY = "clarify"
+#: B9/R10. Routes to B8's `list_reconcile` comparison mode rather than the
+#: line-item diff -- an advisory document has no lines to diff.
+_INTENT_RECONCILE = "reconcile"
+
+_ADVISORY_DOC_TYPES = ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE")
+
+
+def _is_advisory_doc_type(doc_type) -> bool:
+    """Whether this type has a `list_reconcile` mode to route to."""
+    return str(doc_type or "").strip().upper() in _ADVISORY_DOC_TYPES
 
 #: E-1's per-family default bias. It resolves the **both-match** case ONLY —
 #: "neither matches" clarifies for every family, including the money ones,
@@ -3041,6 +3051,51 @@ _INTENT_CLARIFY = "clarify"
 #: and a PO is asked about for comparison where a contract is asked about for
 #: its terms even though Feature 27 groups them together. A `None` value, and
 #: any type not listed (including `None` itself), means clarify.
+#: B9/R10 — the third intent family, for ADVISORY documents.
+#:
+#: A statement or a remittance advice invites a question shape that matches
+#: NEITHER existing list: "which of these are unpaid?", "what did they
+#: short-pay?", "is anything missing from this statement?". Those are not
+#: "compare this document to an invoice" (there is no single invoice) and not
+#: "read me the document" (the answer is a join against our ledger). Without this
+#: family they fall to "neither matched" and clarify forever -- the user asking
+#: the one question the document exists for, and being asked back.
+_RECONCILE_INTENT_KEYWORDS = (
+    "unpaid",
+    "outstanding",
+    "still open",
+    # Hyphen and space are BOTH written in practice, and `_compile_keyword_pattern`
+    # escapes each phrase literally -- so "short pay" does not match "short-pay".
+    # Listing both spellings is cheaper and more obvious than normalising the
+    # message text, which would also have to leave real hyphens in part numbers
+    # alone.
+    "short paid",
+    "short-paid",
+    "short pay",
+    "short-pay",
+    "shortpay",
+    "underpaid",
+    "under paid",
+    "under-paid",
+    "missing from",
+    "not on this",
+    "reconcile",
+    "reconciliation",
+    "settled",
+    "cleared",
+    "written off",
+    "aging",
+    "ageing",
+    "overdue",
+    "deducted",
+    "deduction",
+    "tds",
+    "chargeback",
+    "withheld",
+)
+
+_RECONCILE_INTENT_PATTERN = _compile_keyword_pattern(_RECONCILE_INTENT_KEYWORDS)
+
 _INTENT_BIAS_BY_DOC_TYPE = {
     # Money family — every figure on the document is a money claim with an
     # invoice-side counterpart.
@@ -3048,10 +3103,17 @@ _INTENT_BIAS_BY_DOC_TYPE = {
     "PROFORMA_INVOICE": _INTENT_COMPARISON,
     "CREDIT_NOTE": _INTENT_COMPARISON,
     "DEBIT_NOTE": _INTENT_COMPARISON,
+    # B9/R10. A receipt is a money document and its figures have an invoice-side
+    # counterpart, so it biases like the rest of the family.
+    "RECEIPT": _INTENT_COMPARISON,
     # Commitment family — Part 1's original case; these exist to be checked
     # against what was billed.
     "PURCHASE_ORDER": _INTENT_COMPARISON,
     "QUOTATION": _INTENT_COMPARISON,
+    # B9/R10. An order confirmation is the seller's acknowledgement and often
+    # carries the REAL agreed price, which makes it a comparison document in the
+    # same sense a PO is -- arguably a stronger one.
+    "ORDER_CONFIRMATION": _INTENT_COMPARISON,
     # Quantity family — price fields are optional and frequently absent by
     # design, so there is usually nothing to compare numerically.
     "DELIVERY_NOTE": _INTENT_CONTENT,
@@ -3059,6 +3121,14 @@ _INTENT_BIAS_BY_DOC_TYPE = {
     # Terms family — rate cards and framework agreements frequently carry no
     # grand total at all; the answerable questions are terms, not totals.
     "CONTRACT": _INTENT_CONTENT,
+    # B9/R10 — ADVISORY. These bias to COMPARISON because the whole reason
+    # someone attaches a statement is "does this agree with my ledger?", and B8
+    # gives that question a real mode (`list_reconcile`) rather than the
+    # line-item diff. Biasing them to CONTENT would answer "what does this say?"
+    # about a document whose entire content is a list of numbers the user can
+    # already see.
+    "STATEMENT_OF_ACCOUNT": _INTENT_COMPARISON,
+    "REMITTANCE_ADVICE": _INTENT_COMPARISON,
     # Unknown — we do not know what the document is and have no defensible
     # default. Explicit rather than absent, so a reader sees it was considered.
     "OTHER": None,
@@ -3083,7 +3153,15 @@ def _classify_attachment_intent(user_message: str, doc_type) -> str:
     text = user_message or ""
     comparison_hit = bool(_COMPARISON_INTENT_PATTERN.search(text))
     content_hit = bool(_CONTENT_INTENT_PATTERN.search(text))
+    reconcile_hit = bool(_RECONCILE_INTENT_PATTERN.search(text))
 
+    # B9/R10: the reconcile family is checked FIRST, and only for the document
+    # types that have a `list_reconcile` mode to route to. "Which of these are
+    # unpaid?" is a comparison question in the ordinary sense, so on any other
+    # document type these words are treated as comparison keywords rather than
+    # being given a mode that does not exist for it.
+    if reconcile_hit and _is_advisory_doc_type(doc_type):
+        return _INTENT_RECONCILE
     if comparison_hit and not content_hit:
         return _INTENT_COMPARISON
     if content_hit and not comparison_hit:
@@ -3091,6 +3169,10 @@ def _classify_attachment_intent(user_message: str, doc_type) -> str:
     if comparison_hit and content_hit:
         bias = _INTENT_BIAS_BY_DOC_TYPE.get(str(doc_type or "").strip().upper())
         return bias or _INTENT_CLARIFY
+    # A reconcile word on a non-advisory document reads as comparison -- it is
+    # still a question about how this document relates to our records.
+    if reconcile_hit:
+        return _INTENT_COMPARISON
     # Neither matched. Always clarify, for every family: the fail-safe behaviour
     # of a question we cannot classify is to ask, not to run the wrong machinery
     # quietly (E-1's original wording said "comparison, always", which B2
