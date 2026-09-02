@@ -112,3 +112,15 @@ in progress: item 2 (F27 R11) done, committing; next item 3 (F27 R6 sweep wiring
 landed since last: 8 new fixtures (A5's four types, 14/14 covered); 24/24 classify correctly AND deterministically; threshold 0.6 -> 0.75 on 6 measured points; T-C-6/T-R-8/T-R-9/T-R-11/T-A-1 = 55 tests.
 gaps filed: 396 (German umlaut transliteration missing from synonyms - fixed)
 blockers: none
+
+[02:35] mins left: 155 | persona: senior-dev
+in progress: item 3 (F27 R6) DONE; starting item 4 (F26 R8/H9 TTL job bicep, infra-devops)
+landed since last: R11 478fb89 (24 fixtures, 24/24 deterministic, threshold 0.6->0.75); R6 09198ca (DELETE /documents/{id} + batch rollback fix, 11 tests on real Postgres)
+gaps filed: 396, 397 (fixed), 398 (open), 399 (deferred+anchored)
+blockers: none
+
+[02:44] mins left: 146 | persona: functional-tester
+in progress: item 7 (full BE suite + Playwright running in background; tsc --noEmit CLEAN)
+landed since last: R12/R13 bf01d58 (flag-removal criteria in config.py); R12/H13 e0c090b (FE Part 2 spec section)
+gaps filed: none new
+blockers: none. Item 4 (H9 bicep deploy) still with infra-devops; baseline to match is 16 failed / 2607 passed / 1 skipped
