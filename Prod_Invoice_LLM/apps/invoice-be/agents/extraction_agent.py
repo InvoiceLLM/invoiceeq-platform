@@ -905,6 +905,55 @@ _DOC_TYPE_OVERLAYS: Dict[str, str] = {
         "`reference_numbers`.\n"
         "- The stated reason for the debit goes into `notes`, quoted as printed."
     ),
+    # --- A5/R7: the four new document types ---------------------------------
+    "ORDER_CONFIRMATION": (
+        "This is an ORDER CONFIRMATION (order acknowledgement, Auftragsbestaetigung, sales order) - "
+        "the SELLER's acknowledgement of a buyer's purchase order, stating what they have accepted "
+        "and on what terms.\n"
+        "- Direction matters and is the only thing separating this from a PURCHASE ORDER: the party "
+        "ISSUING it is the seller, so `party_name` is the supplier and `counterparty_name` is the "
+        "buyer. Do not swap them because the layout resembles a PO.\n"
+        "- The buyer's own PO number is a REFERENCE, not this document's number: put it in "
+        "`po_number`, and put this acknowledgement's own number in `doc_number`.\n"
+        "- Confirmed prices frequently DIFFER from the ordered prices, and the confirmed figure is "
+        "the one that matters. Transcribe exactly what is printed; never reconcile the two.\n"
+        "- Promised delivery dates and lead times go into `delivery_terms`; validity into "
+        "`valid_until`."
+    ),
+    "RECEIPT": (
+        "This is a RECEIPT - a payment receipt, fiscal receipt, cash memo, or a SIMPLIFIED invoice "
+        "(Kleinbetragsrechnung, scontrino, fattura semplificata, ticket, faktura uproszczona).\n"
+        "- These documents are legally allowed to omit things a full invoice must carry: the BUYER'S "
+        "NAME, the UNIT PRICE, and sometimes the VAT AMOUNT (a rate alone is permitted). Their "
+        "absence is normal and is NOT a defect - leave those fields null and do not infer them.\n"
+        "- Do not compute a VAT amount from a rate, and do not derive a unit price by dividing a line "
+        "total by a quantity. A figure the document does not print must not appear.\n"
+        "- The total actually paid goes into `grand_total`; the payment method and any reference "
+        "(card, UPI, UTR) go into `notes`."
+    ),
+    "REMITTANCE_ADVICE": (
+        "This is a REMITTANCE ADVICE (payment advice, Zahlungsavis) - it tells a supplier WHICH "
+        "invoices a payment covers. It is NOT itself a payable and creates no obligation.\n"
+        "- Its substance is a LIST OF REFERENCES to other documents. Every invoice number it settles "
+        "goes into `reference_numbers`, exactly as printed.\n"
+        "- DEDUCTIONS are the reason this document is interesting: TDS, GST-TDS, chargebacks, "
+        "short-payments, early-payment discount (Skonto). Capture each deduction and its stated "
+        "reason verbatim in `notes`. NEVER net them into a single figure and never recompute a "
+        "total.\n"
+        "- `grand_total` is the amount actually remitted, if printed. If the document shows only "
+        "per-invoice amounts, leave it null rather than summing them yourself."
+    ),
+    "STATEMENT_OF_ACCOUNT": (
+        "This is a STATEMENT OF ACCOUNT (vendor statement, ledger, Kontoauszug, Khata) - a periodic "
+        "list of open or settled items between two parties. It must NEVER be treated as a payable.\n"
+        "- Its substance is a LIST OF REFERENCES: every invoice, credit note and payment it lists "
+        "goes into `reference_numbers` exactly as printed.\n"
+        "- A statement carries a RUNNING BALANCE, not a subtotal/tax/total triple. Put the closing "
+        "balance in `grand_total` only if it is printed as such, and leave `subtotal` and "
+        "`tax_amount` null - they usually do not exist on this document.\n"
+        "- The statement period goes into `notes` along with any aging buckets, quoted as printed.\n"
+        "- Do not add the listed amounts up. The document's own arithmetic is what it states."
+    ),
     # E5: transport and custody documents — bill of lading, air waybill, CMR
     # consignment note, India's e-way bill — are deliberately out of v1 and land
     # here. This overlay is what stops them being force-fitted into an invoice.

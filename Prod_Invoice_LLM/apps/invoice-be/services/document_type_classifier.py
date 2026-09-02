@@ -75,12 +75,16 @@ DOC_TYPES = (
     "QUOTATION",
     "PROFORMA_INVOICE",
     "PURCHASE_ORDER",
+    "ORDER_CONFIRMATION",     # A5/R7 — seller->buyer ack; often the REAL agreed price
     "CONTRACT",
-    "DELIVERY_NOTE",
+    "DELIVERY_NOTE",          # A5/R7 — now also absorbs PACKING_LIST
     "GRN",
     "INVOICE",
+    "RECEIPT",                # A5/R7 — payment/fiscal receipt + simplified invoice
     "CREDIT_NOTE",
     "DEBIT_NOTE",
+    "REMITTANCE_ADVICE",      # A5/R7 — advisory; "what did they short-pay?"
+    "STATEMENT_OF_ACCOUNT",   # A5/R7 — advisory; "which of these are unpaid?"
     "OTHER",
 )
 
@@ -130,15 +134,44 @@ COMMITMENT_FAMILY = "COMMITMENT"
 OTHER_FAMILY = "OTHER"
 
 DOC_TYPE_FAMILY: Dict[str, str] = {
-    "QUOTATION": COMMITMENT_FAMILY,  # see naming note 2 above — provisional
+    # FOUNDER RULING, 2026-09-03 (A5/R7): QUOTATION is COMMITMENT, settled. It is
+    # priced and arithmetically checkable but is not a payable, and a
+    # partially-priced quote is normal -- MONEY, which wants a currency and a
+    # reconciling grand total, would recreate the false-discrepancy class this
+    # whole feature exists to remove. No longer provisional.
+    "QUOTATION": COMMITMENT_FAMILY,
     "PROFORMA_INVOICE": MONEY_FAMILY,
     "PURCHASE_ORDER": COMMITMENT_FAMILY,
+    # A5/R7. Distinguished from PURCHASE_ORDER by DIRECTION (seller->buyer), not
+    # by layout -- research §6.1. Same commitment rubric: it states agreed goods,
+    # prices and terms over a horizon, and a partially-priced ack is normal.
+    "ORDER_CONFIRMATION": COMMITMENT_FAMILY,
     "CONTRACT": COMMITMENT_FAMILY,
     "DELIVERY_NOTE": QUANTITY_FAMILY,
     "GRN": QUANTITY_FAMILY,
     "INVOICE": MONEY_FAMILY,
+    # A5/R7. MONEY, but the money rubric must tolerate a legally-absent buyer
+    # name, unit price and VAT amount (research §5 trap 9: DE Kleinbetragsrechnung
+    # <=EUR 250, IT scontrino, ES ticket, PL <= PLN 450, India cash memo). The
+    # RELAXATION ITSELF IS R8's -- it rides on `invoice_subtype=SIMPLIFIED` and
+    # the per-sub-type expected-absent set. Until then a RECEIPT is graded as an
+    # invoice, which can over-flag; that is the honest interim state and is why
+    # R8 follows immediately.
+    "RECEIPT": MONEY_FAMILY,
     "CREDIT_NOTE": MONEY_FAMILY,
     "DEBIT_NOTE": MONEY_FAMILY,
+    # A5/R7 -> A7/R9. These two are the ADVISORY family in the design, and
+    # ADVISORY does not exist yet: `_RUBRIC_BY_FAMILY` is a comprehension over
+    # DOC_TYPES, so a family with no rubric is a KeyError AT IMPORT. Mapped to
+    # OTHER_FAMILY as the interim, which is behaviourally the right shape rather
+    # than a placeholder -- `_OTHER_RUBRIC` is `advisory_only=True`, so a
+    # statement already records alerts without ever setting a review status,
+    # which is exactly what an advisory document must do. R9 introduces
+    # ADVISORY_FAMILY + _ADVISORY_RUBRIC and moves these two; what it adds is
+    # `referenced_documents[]` / `deductions[]` and the list_reconcile mode, not
+    # a change to the never-set-review-status guarantee.
+    "REMITTANCE_ADVICE": OTHER_FAMILY,
+    "STATEMENT_OF_ACCOUNT": OTHER_FAMILY,
     "OTHER": OTHER_FAMILY,
 }
 
@@ -200,6 +233,21 @@ _DOC_TYPE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
         # US
         "packing slip",
         "packing list",
+        # A5/R7 -- the PACKING_LIST fold. It is NOT its own type: same quantity
+        # rubric, same absent-price expectation, so a second value would split one
+        # document class across two enum entries for no downstream difference.
+        "pack list",
+        "pick ticket",
+        "case list",
+        "packliste",
+        "liste de colisage",
+        "distinta di imballaggio",
+        "lista de embalaje",
+        "paklijst",
+        "lista pakowa",
+        "dispatch note",
+        "job work challan",
+        "guia de remessa",
         "delivery note",
         "shipping list",
         # Germany / DACH
@@ -248,9 +296,109 @@ _DOC_TYPE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
         "debit memo",
         "debit memorandum",
     ),
-    # `OTHER` is never matched deterministically — it is where the classifier
-    # lands when it declines to decide, not something a document prints.
-    "OTHER": (),
+    # --- A5/R7: the four new types ------------------------------------------
+    "ORDER_CONFIRMATION": (
+        "order confirmation",
+        "order acknowledgement",
+        "order acknowledgment",
+        "sales order",
+        # DE/IT/NL manufacturing and wholesale, where this document is routine.
+        # "ab" and "oa" are deliberately ABSENT: two letters match too much
+        # ordinary text for the title-band coverage guard to redeem, which is the
+        # same call G2 made for PURCHASE_ORDER's "po".
+        "auftragsbestatigung",
+        # Written in the NORMALISED form: `_normalize()` strips the apostrophe
+        # rather than turning it into a space, so "Conferma d'ordine" folds to
+        # "conferma dordine". Synonyms are matched post-normalisation, so this is
+        # the spelling that matches -- a human-readable "conferma d ordine" never
+        # would.
+        "conferma dordine",
+        "confirmacion de pedido",
+        "orderbevestiging",
+        "potwierdzenie zamowienia",
+    ),
+    "RECEIPT": (
+        "receipt",
+        "payment receipt",
+        "cash memo",
+        "expense receipt",
+        # The simplified-invoice family (research §5 trap 9) -- legally allowed to
+        # omit the buyer, the unit price and the VAT amount.
+        "kleinbetragsrechnung",
+        "facture simplifiee",
+        "fattura semplificata",
+        "scontrino",
+        "factura simplificada",
+        "faktura uproszczona",
+    ),
+    "REMITTANCE_ADVICE": (
+        "remittance advice",
+        "payment advice",
+        "zahlungsavis",
+        "avis de paiement",
+        "avviso di pagamento",
+        "aviso de pago",
+        "betalingsspecificatie",
+    ),
+    "STATEMENT_OF_ACCOUNT": (
+        "statement of account",
+        "account statement",
+        "vendor statement",
+        "aging statement",
+        "balance confirmation",
+        "kontoauszug",
+        "saldenbestatigung",
+        "releve de compte",
+        "estratto conto",
+        "extracto de cuenta",
+        "rekeningoverzicht",
+    ),
+    # --- E5's deferred documents, routed to OTHER DETERMINISTICALLY (A5/R7) ---
+    #
+    # This entry replaces an earlier `"OTHER": ()` and the comment that went with
+    # it ("OTHER is never matched deterministically -- it is where the classifier
+    # lands when it declines to decide"). That was true when OTHER meant only
+    # "undecided". E5 also routes a NAMED, KNOWN set of documents here -- bills of
+    # lading, e-way bills, customs paperwork, tax certificates, dunning letters --
+    # and those are not undecided at all: we know exactly what they are and have
+    # decided they are out of v1.
+    #
+    # Recognising them by title is therefore a real improvement, not a shortcut:
+    # an e-way bill quoting its tax-invoice number currently reaches OTHER only
+    # via a paid LLM fallback, and one that happens to confuse the model reaches
+    # INVOICE instead. Deterministic recognition makes the v1 exclusion free and
+    # unambiguous. The distinction OTHER now carries -- "declined to decide"
+    # vs "recognised and deferred" -- is visible in `doc_type_method`
+    # (`deterministic` here, `fallback` for a genuine miss), which is exactly what
+    # that field is for.
+    "OTHER": (
+        # Transport / custody (E5, research §6.3) -- v2 candidates, EWB first
+        "bill of lading",
+        "air waybill",
+        "airway bill",
+        "lorry receipt",
+        "bilty",
+        "consignment note",
+        "e way bill",
+        "eway bill",
+        "cmr",
+        # Customs -- Bill of Entry matters for Indian import ITC (GSTR-2B)
+        "shipping bill",
+        "bill of entry",
+        "cbp 7501",
+        # Dunning -- research §5 trap 10: never book these as payables
+        "mahnung",
+        "zahlungserinnerung",
+        "mise en demeure",
+        "sollecito",
+        "past due notice",
+        "final notice",
+        # Services fulfilment -- the GRN analogue; promote to QUANTITY if service
+        # invoices become a real use case (E5)
+        "timesheet",
+        "work completion certificate",
+        "abnahmeprotokoll",
+    ),
 }
 
 

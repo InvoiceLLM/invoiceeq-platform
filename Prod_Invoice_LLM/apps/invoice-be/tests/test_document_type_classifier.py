@@ -28,6 +28,8 @@ from services.document_type_classifier import (
     DOC_TYPE_CONFIDENCE_THRESHOLD,
     DOC_TYPE_FAMILY,
     DOC_TYPES,
+    MONEY_FAMILY,
+    QUANTITY_FAMILY,
     DocTypeClassification,
     classify_doc_type,
     classify_doc_type_deterministic,
@@ -57,20 +59,33 @@ def _document(title: str) -> str:
 # --- The taxonomy itself (E4) ------------------------------------------------
 
 
-def test_doc_types_is_the_closed_ten_value_tuple_in_lifecycle_order():
-    """The order is load-bearing (E4): quote → proforma → order → contract →
-    delivery → receipt → invoice → adjustments. It is the order a future
-    matching feature walks, so an alphabetical "tidy-up" would be a regression."""
+def test_doc_types_is_the_closed_fourteen_value_tuple_in_lifecycle_order():
+    """The order is load-bearing (E4): quote -> proforma -> order -> confirmation
+    -> contract -> delivery -> goods receipt -> invoice -> payment receipt ->
+    adjustments -> settlement -> reconciliation. It is the order a future matching
+    feature walks, so an alphabetical "tidy-up" would be a regression.
+
+    Widened 10 -> 14 by A5/R7. The four additions each earn a value rather than an
+    attribute because each needs a DIFFERENT rubric or a different comparison
+    mode: ORDER_CONFIRMATION is commitment (and is separated from PURCHASE_ORDER
+    by direction, not layout), RECEIPT is money with legally-absent fields,
+    and REMITTANCE_ADVICE / STATEMENT_OF_ACCOUNT are advisory list documents that
+    must never be booked as payables (research §5 trap 10).
+    """
     assert DOC_TYPES == (
         "QUOTATION",
         "PROFORMA_INVOICE",
         "PURCHASE_ORDER",
+        "ORDER_CONFIRMATION",
         "CONTRACT",
         "DELIVERY_NOTE",
         "GRN",
         "INVOICE",
+        "RECEIPT",
         "CREDIT_NOTE",
         "DEBIT_NOTE",
+        "REMITTANCE_ADVICE",
+        "STATEMENT_OF_ACCOUNT",
         "OTHER",
     )
 
@@ -80,7 +95,15 @@ def test_every_doc_type_has_exactly_one_family_and_no_family_has_a_stray_key():
     there is a `KeyError` mid-extraction, and a stray one is a rubric nothing can
     reach."""
     assert set(DOC_TYPE_FAMILY) == set(DOC_TYPES)
-    assert set(DOC_TYPE_FAMILY.values()) <= {"MONEY", "QUANTITY", "COMMITMENT", "OTHER"}
+    # A5/R7 widened the enum and A7/R9 adds ADVISORY; the closed set is asserted
+    # from the module's own exported constants rather than restated as literals,
+    # so adding a family is one edit there and not a second one here.
+    assert set(DOC_TYPE_FAMILY.values()) <= {
+        MONEY_FAMILY,
+        QUANTITY_FAMILY,
+        dtc.COMMITMENT_FAMILY,
+        dtc.OTHER_FAMILY,
+    } | {getattr(dtc, "ADVISORY_FAMILY", "ADVISORY")}
     assert DOC_TYPE_FAMILY["INVOICE"] == "MONEY"
     assert DOC_TYPE_FAMILY["PROFORMA_INVOICE"] == "MONEY"
     assert DOC_TYPE_FAMILY["CREDIT_NOTE"] == "MONEY"
@@ -101,9 +124,25 @@ def test_no_synonym_is_claimed_by_two_document_types():
         for phrase in phrases:
             assert phrase not in seen, f"{phrase!r} claimed by {seen.get(phrase)} and {doc_type}"
             seen[phrase] = doc_type
-    # OTHER is where the classifier lands when it declines to decide; it is not
-    # something a document prints.
-    assert _SYNONYMS["OTHER"] == ()
+    # A5/R7 CHANGED THIS INVARIANT, deliberately. It previously read
+    # `assert _SYNONYMS["OTHER"] == ()`, on the reasoning that OTHER is where the
+    # classifier lands when it DECLINES to decide and is not something a document
+    # prints.
+    #
+    # That is still true of a genuine miss, but it was never true of E5's deferred
+    # documents. A bill of lading, an e-way bill, a bill of entry and a dunning
+    # letter are not undecided: we know exactly what they are and have decided
+    # they are out of v1. Recognising them by title costs nothing and buys two
+    # things -- the v1 exclusion becomes free (no LLM call) and unambiguous (a
+    # model that mistakes an e-way bill quoting a tax-invoice number for an
+    # invoice can no longer do so).
+    #
+    # The distinction OTHER now carries is not lost, it MOVED: `doc_type_method`
+    # is `deterministic` for a recognised-and-deferred document and `fallback` for
+    # a genuine miss, which is what that field exists to record.
+    assert _SYNONYMS["OTHER"], "E5's deferred documents must be recognised, not guessed at"
+    for phrase in ("bill of lading", "e way bill", "bill of entry", "mahnung"):
+        assert phrase in _SYNONYMS["OTHER"]
 
 
 # --- T-C-1: the deterministic pass, and no model call ------------------------
@@ -398,26 +437,34 @@ def test_transport_documents_are_other_not_a_mistyped_commercial_document(text, 
     must route to `OTHER` cleanly rather than being force-fitted onto a
     commercial type.
 
-    Two separate assertions, because they can fail independently: the
-    deterministic pass must not misfire on them at all, and the fallback must
-    fail closed. The fallback here is the **real `MockInvoiceLLM`**, not a
-    hand-built double — it is what runs in mock mode, and its no-opinion default
-    landing on `OTHER` is the behaviour that matters.
+    INVERTED BY A5/R7. This previously asserted
+    `classify_doc_type_deterministic(text) == (None, "")` -- that the deterministic
+    pass must NOT decide -- and then that the LLM fallback landed on `OTHER`.
+    A8 rules the opposite: E5's deferred documents are recognised by title
+    DETERMINISTICALLY "so they never fall to the LLM". These are not undecided
+    documents; they are known documents we have decided are out of v1, and paying
+    for a model call to reach a conclusion we already hold was the waste.
+
+    What is asserted now is stronger on the point that matters: the answer is
+    still `OTHER`, it costs NO model call, and `doc_type_method` says
+    `deterministic` -- so a genuine miss (`fallback`) stays distinguishable from a
+    recognised deferral in the telemetry, which is the distinction that made this
+    change safe to make.
 
     Minimal representative text, not a fixture file: §7 task F has not produced
-    real samples yet. When it does, this becomes a fixture-backed assertion —
-    including the case this text deliberately omits, a real e-way bill that
-    quotes its tax-invoice number.
+    real samples for these cells yet.
     """
-    assert classify_doc_type_deterministic(text) == (None, ""), label
+    doc_type, evidence = classify_doc_type_deterministic(text)
+    assert doc_type == "OTHER", label
+    assert evidence, "a deterministic OTHER must still cite the printed line it decided from"
 
-    with patch.object(dtc, "get_llm", return_value=MockInvoiceLLM()), patch.object(
-        dtc, "tracked_llm_call"
-    ):
+    with patch.object(dtc, "get_llm") as get_llm, patch.object(dtc, "tracked_llm_call"):
         result = classify_doc_type(text, {})
 
     assert result["doc_type"] == "OTHER"
-    assert result["doc_type_method"] == "fallback"
+    assert result["doc_type_method"] == "deterministic"
+    # The load-bearing half: a recognised deferral must not pay for a model call.
+    get_llm.assert_not_called()
 
 
 def test_an_e_way_bill_quoting_its_tax_invoice_number_is_still_not_an_invoice():
@@ -439,15 +486,117 @@ def test_an_e_way_bill_quoting_its_tax_invoice_number_is_still_not_an_invoice():
         "Valid Until: 03/09/2026     Approx Distance: 412 km\n"
     )
 
-    assert classify_doc_type_deterministic(text) == (None, "")
+    # A5/R7: this now resolves DETERMINISTICALLY to OTHER on the "e-Way Bill"
+    # title line, where it previously reached OTHER only via the LLM fallback.
+    # The test is STRONGER for it, not weaker: the danger was never that a model
+    # would decline to answer, it was that a model shown "Tax Invoice No
+    # INV-2026-0447" might answer INVOICE. Recognising the title removes the
+    # opportunity entirely rather than relying on the model's restraint.
+    #
+    # The title-band coverage guard is still what makes this work and is still
+    # load-bearing -- the quoted tax-invoice reference sits on a body line whose
+    # synonym coverage is far below the threshold, so it never competes with the
+    # title. The negative control below still applies.
+    doc_type, evidence = classify_doc_type_deterministic(text)
+    assert doc_type == "OTHER"
+    assert "way bill" in evidence.lower(), (
+        f"must have decided from the TITLE, not the quoted invoice reference; got {evidence!r}"
+    )
 
-    with patch.object(dtc, "get_llm", return_value=MockInvoiceLLM()), patch.object(
-        dtc, "tracked_llm_call"
-    ):
+    with patch.object(dtc, "get_llm") as get_llm, patch.object(dtc, "tracked_llm_call"):
         result = classify_doc_type(text, {})
 
     assert result["doc_type"] == "OTHER"
+    assert result["doc_type_method"] == "deterministic"
+    get_llm.assert_not_called()
 
+
+
+# --- T-C-6 (A5/R7): the widened taxonomy, end to end -------------------------
+
+
+@pytest.mark.parametrize(
+    "printed_title,expected",
+    [
+        # The four new types, in their own words.
+        ("Auftragsbestätigung", "ORDER_CONFIRMATION"),
+        ("ORDER ACKNOWLEDGEMENT", "ORDER_CONFIRMATION"),
+        ("Conferma d'ordine", "ORDER_CONFIRMATION"),
+        ("Sales Order", "ORDER_CONFIRMATION"),
+        ("RECEIPT", "RECEIPT"),
+        ("Cash Memo", "RECEIPT"),
+        ("Kleinbetragsrechnung", "RECEIPT"),
+        ("Scontrino", "RECEIPT"),
+        ("Remittance Advice", "REMITTANCE_ADVICE"),
+        ("Zahlungsavis", "REMITTANCE_ADVICE"),
+        ("Avis de paiement", "REMITTANCE_ADVICE"),
+        ("STATEMENT OF ACCOUNT", "STATEMENT_OF_ACCOUNT"),
+        ("Kontoauszug", "STATEMENT_OF_ACCOUNT"),
+        ("Estratto conto", "STATEMENT_OF_ACCOUNT"),
+        ("Balance Confirmation", "STATEMENT_OF_ACCOUNT"),
+        # The PACKING_LIST fold -- these are DELIVERY_NOTE, not a 15th value.
+        ("Packing List", "DELIVERY_NOTE"),
+        ("Pick Ticket", "DELIVERY_NOTE"),
+        ("Packliste", "DELIVERY_NOTE"),
+        ("Liste de colisage", "DELIVERY_NOTE"),
+        ("Paklijst", "DELIVERY_NOTE"),
+        ("Dispatch Note", "DELIVERY_NOTE"),
+        # E5's deferred set -- recognised, and recognised as OUT of v1.
+        ("BILL OF LADING", "OTHER"),
+        ("Air Waybill", "OTHER"),
+        ("Lorry Receipt", "OTHER"),
+        ("e-Way Bill", "OTHER"),
+        ("Bill of Entry", "OTHER"),
+        ("Shipping Bill", "OTHER"),
+        ("Mahnung", "OTHER"),
+        ("Zahlungserinnerung", "OTHER"),
+        ("Timesheet", "OTHER"),
+    ],
+)
+def test_t_c_6_every_new_synonym_classifies_deterministically_with_no_model_call(
+    printed_title, expected
+):
+    """T-C-6. The widened vocabulary resolves from the printed title alone.
+
+    `get_llm` is patched and asserted NOT called, which is T-C-1's shape and is
+    the load-bearing half: a right answer reached by paying for a model call is a
+    DIFFERENT BEHAVIOUR from the one E7 specifies, and only the mock can tell the
+    two apart. A synonym that silently starts costing a call would otherwise pass.
+    """
+    with patch.object(dtc, "get_llm") as get_llm, patch.object(dtc, "tracked_llm_call"):
+        result = classify_doc_type(f"{printed_title}\nRef: ABC-123\n", {})
+
+    assert result["doc_type"] == expected, printed_title
+    assert result["doc_type_method"] == "deterministic"
+    get_llm.assert_not_called()
+
+
+def test_t_c_6_packing_list_is_folded_not_a_fifteenth_type():
+    """A5 folds PACKING_LIST into DELIVERY_NOTE rather than adding a value: same
+    quantity rubric, same absent-price expectation, so a separate type would split
+    one document class in two for no downstream difference. Asserted as an
+    absence, because that is the shape of the decision."""
+    assert "PACKING_LIST" not in DOC_TYPES
+    assert "packing list" in _SYNONYMS["DELIVERY_NOTE"]
+    assert DOC_TYPE_FAMILY["DELIVERY_NOTE"] == QUANTITY_FAMILY
+
+
+def test_t_c_6_the_two_advisory_types_never_reach_the_money_rubric():
+    """REMITTANCE_ADVICE and STATEMENT_OF_ACCOUNT must never be graded as
+    payables (research §5 trap 10). R9 gives them their own ADVISORY family; until
+    then they sit on OTHER_FAMILY, whose rubric is already `advisory_only`.
+
+    This test is written against the GUARANTEE, not the family name, so it keeps
+    passing when R9 moves them -- and fails if either is ever mapped to MONEY.
+    """
+    from agents.extraction_agent import _RUBRIC_BY_DOC_TYPE
+
+    for doc_type in ("REMITTANCE_ADVICE", "STATEMENT_OF_ACCOUNT"):
+        assert DOC_TYPE_FAMILY[doc_type] != MONEY_FAMILY, doc_type
+        rubric = _RUBRIC_BY_DOC_TYPE[doc_type]
+        assert rubric.advisory_only is True, doc_type
+        assert rubric.run_field_confidence is False, doc_type
+        assert rubric.run_di_tax_backfill is False, doc_type
 
 # --- §8 trap 2: the model must be constructible with no arguments ------------
 
