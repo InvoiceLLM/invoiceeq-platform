@@ -53,28 +53,38 @@ Part 1 and Part 2 are in genuinely different states and are never to be cited as
   `lib/chatAttachments.ts` (642), `hooks/useChatSession.ts` +532,
   `components/chat/MessageBubble.tsx` +353, `types/chat.ts` +85, three proxy routes,
   four `e2e/*.spec.ts`.
-- **Migration `d3e4f5a6b7c8` is not applied to the dev Postgres.** (H4's build note
-  records an up/down/up run on 2026-09-02 against Postgres 16.15; the dev container is
-  now paused and its schema does not carry `e4f5a6b7c8d9` above it — see Feature 27's
-  Build status. Treat the chain as unapplied until the shared Postgres run re-records it.)
+- **Migration `d3e4f5a6b7c8` IS applied to the dev Postgres.** *(Corrected 2026-09-02 by
+  task R3; this block previously said it was not, inferring it from Feature 27's own
+  stale claim about the revision above it.)* `chat_attachments` carries all three columns
+  — `chunk_count integer NOT NULL DEFAULT 0`, `indexed_at timestamp NULL`,
+  `expires_at timestamp NULL` — read back from `information_schema`, and they **survive a
+  `downgrade -1` of Feature 27's `e4f5a6b7c8d9` above them**, which is the isolation H4's
+  note claimed and R3 actually exercised. One naming trap recorded so it is not
+  re-tripped: the table is **`chat_attachments`**, not `chatattachment`; a check against
+  the latter returns zero columns and looks exactly like a missing table. Evidence:
+  `docs/test_evidence/f26_f27_shared_r3_r4_2026-09-02/01_r3_migration_postgres.md`.
 - **Tests, all SQLite / mocked-LLM / ephemeral-Chroma**: `tests/test_chat_attachments.py`
   → **33 passed**; `tests/test_chat_doc_content_branch.py` → **39 passed**;
   `tests/test_chat_document_search.py` → **11 passed**. Total 83.
 - **The full backend suite runs and is red — but nothing in it is this feature's.**
-  `uv run pytest -q --ignore=tests/us/run_chat_live_test.py` (2026-09-02, 48m47s):
-  **14 failed, 2280 passed, 26 skipped, 5 deselected.** `pytest -x -q` as written aborts
-  at collection instead, on a git-ignored basename collision
-  (`tests/us/` vs `tests/realworld_tenant/run_chat_live_test.py`) — fixing that is R2.
-  Of the 14: 9 × `test_ops_recommendation.py` (workbook bands), 4 × `test_rag.py`
-  (including `test_process_crash_during_agent_leaves_no_orphan_user_message`, the
-  pre-existing failure H3's and H2's build notes both record — **still that one, and now
-  joined by three siblings in the same file**), 1 × `test_chat_training.py`, and 1 ×
-  `test_documents_table.py` (Feature 27's, G10's collection-lifecycle assertion).
-  **Every Feature 26 test passed**: `test_chat_attachments.py`,
-  `test_chat_doc_content_branch.py`, `test_chat_document_search.py`,
-  `test_chat_queue.py`, `test_chat_progress.py` are all green inside that run. V-19's
-  regression bar is met for this feature; the three new `test_rag.py` failures are
-  outside it and need their own triage.
+  `uv run pytest -q --ignore=tests/us/run_chat_live_test.py` (2026-09-02, 48m47s, stack
+  down): **14 failed, 2280 passed, 26 skipped, 5 deselected.** `pytest -x -q` aborts at
+  collection instead, on a git-ignored basename collision (`tests/us/` vs
+  `tests/realworld_tenant/run_chat_live_test.py`) — R2.
+- **R4 — the targeted run with the full dev stack up (2026-09-02, 52s): 5 failed, 211
+  passed, ZERO skipped**, across the seven F26/F27 suites. **Every Feature 26 test
+  passed** — `test_chat_attachments.py` (33), `test_chat_doc_content_branch.py` (39),
+  `test_chat_document_search.py` (11), `test_chat_queue.py`, `test_chat_progress.py` —
+  this time with **real Postgres, real Redis and real Chroma running**, not merely
+  SQLite. **V-19's regression bar is met for this feature.**
+  The 5 failures are 1 × Feature 27 test-defect (**Gap 389**, fixed — the test asserted
+  on a docstring substring) and 4 × `test_rag.py`, of which 3 assert `200` and receive
+  `202 Accepted` because the local `.env` carries `ENABLE_ASYNC_CHAT_QUEUE=true` and
+  Redis is now reachable (**Gap 390** — they passed only while Redis was down), and 1 is
+  the long-known `background_tasks` `TypeError` that H2's, H3's and H4's build notes all
+  record. **None is a Feature 26 regression.**
+  **Still not verified for this feature**: V-24's warm-cache half, V-25's live probe, and
+  every V-16..V-18 async case — those need their own setup, not just a green suite.
 - **Playwright: never run.** 42 tests exist (`chat-attachment-contract.spec.ts` 17,
   `chat-attachment-guards.spec.ts` 13, `chat-attachment-upload.spec.ts` 12); H12's own
   note says no run is recorded, and none has been. `npx tsc --noEmit` → **exit 0**

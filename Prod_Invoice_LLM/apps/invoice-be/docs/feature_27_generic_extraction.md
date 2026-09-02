@@ -33,11 +33,19 @@ This block is the one place in this document that says what *exists* rather than
   `alembic/versions/e4f5a6b7c8d9_add_doc_type_and_documents_table.py` (154),
   `tests/test_generic_extraction.py` (2885), `tests/test_document_type_classifier.py`
   (501), `tests/test_documents_table.py` (1075), `tests/fixtures/doc_types/` (16 PDFs).
-- **Migration `e4f5a6b7c8d9` has never been applied to any Postgres instance.** The dev
-  container's own log shows a live app query failing on
-  `column invoice.doc_type does not exist` (2026-09-02 10:21 UTC) — the model and the only
-  real database are out of sync. Alembic single head is `e4f5a6b7c8d9` (down
-  `d3e4f5a6b7c8`), verified via the Python API.
+- **Migration `e4f5a6b7c8d9` IS applied to the dev Postgres, and is proven reversible.**
+  *(Corrected 2026-09-02 by task R3 — this block previously said it had never been
+  applied, on the strength of a container log line showing
+  `column invoice.doc_type does not exist` at 10:21 UTC. That log predates the migration;
+  it is not current state, and reading it as such was the error.)* Verified against
+  `invoice-postgres-local`: `alembic_version` = `e4f5a6b7c8d9`; `invoice.doc_type` /
+  `doc_type_evidence` present, varchar, nullable, no server default; `documents` present
+  with 35 columns and 7 indexes, both composite ones tenant-led. `downgrade -1` drops
+  `documents` and the two `invoice` columns **without touching Feature 26's
+  `d3e4f5a6b7c8` beneath it**, and `upgrade head` restores an identical shape. Evidence:
+  `docs/test_evidence/f26_f27_shared_r3_r4_2026-09-02/01_r3_migration_postgres.md`.
+  **R-27-26 is satisfied.** Alembic single head confirmed via the Python API —
+  `alembic.exe` is blocked by this machine's Application Control policy.
 - **Every executed test is SQLite or pure-Python with the LLM patched.**
   `tests/test_generic_extraction.py` + `tests/test_document_type_classifier.py` → **409
   passed** (in-memory SQLite at `test_generic_extraction.py:1965`; `_run_ocr` and
@@ -48,24 +56,34 @@ This block is the one place in this document that says what *exists* rather than
   correctly. (While the container was *paused-but-listening* it hung instead: the harness
   passes no `connect_timeout`, so a frozen-but-accepting socket blocks forever. Fixing
   that is R2 — the skip only works because the container is now fully down.)
-- **The full backend suite does run, and it is red.** `uv run pytest -q
-  --ignore=tests/us/run_chat_live_test.py` (2026-09-02, 48m47s):
-  **14 failed, 2280 passed, 26 skipped, 5 deselected.** Two caveats on the invocation:
-  `pytest -x -q` as written **aborts at collection** on a git-ignored basename collision
+- **The full backend suite runs.** `uv run pytest -q
+  --ignore=tests/us/run_chat_live_test.py` (2026-09-02, 48m47s, stack down):
+  **14 failed, 2280 passed, 26 skipped, 5 deselected.** `pytest -x -q` as written
+  **aborts at collection** on a git-ignored basename collision
   (`tests/us/run_chat_live_test.py` vs `tests/realworld_tenant/run_chat_live_test.py`),
   and `addopts = -m "not e2e"` deselects the 5 e2e tests.
-  **One of the 14 is this feature's**:
-  `tests/test_documents_table.py::test_the_lifecycle_functions_never_open_a_collection_without_the_metadata`
-  — G10's own §8-trap-3 assertion, and it is failing. It is a **no-database** test, so
-  the paused container is not the cause; it is a real defect in the documents-side
-  collection lifecycle, which is exactly what Gap 381 open item 2 / task **R6** covers.
-  Treat R6 as fixing a **failing test**, not as adding a missing one.
-  The other 13 are unrelated to Feature 27: 9 × `test_ops_recommendation.py`
-  (workbook threshold bands), 4 × `test_rag.py` (including the long-known
-  `test_process_crash_during_agent_leaves_no_orphan_user_message`), 1 ×
-  `test_chat_training.py`. **None is a Feature 27 regression** — every
-  `test_generic_extraction.py` and `test_document_type_classifier.py` test passed inside
-  this run, consistent with the 409 above.
+- **R4 — the targeted run with the full dev stack up (2026-09-02, 52s): 5 failed, 211
+  passed, ZERO skipped.** Seven suites: `test_documents_table.py`,
+  `test_chat_attachments.py`, `test_chat_doc_content_branch.py`,
+  `test_chat_document_search.py`, `test_chat_queue.py`, `test_chat_progress.py`,
+  `test_rag.py`. **Zero skips is the headline** — `pg_engine_or_skip()` did not skip, so
+  **T-E10-1..5 executed against real Postgres and passed**. That satisfies R-27-20
+  through R-27-24, which every prior record listed as "built, never run".
+  Of the 5 failures, **none is a Feature 27 defect**:
+  - `test_documents_table.py::test_the_lifecycle_functions_never_open_a_collection_without_the_metadata`
+    — **the test was wrong, not the code** (**Gap 389**, fixed): it asserted on a
+    substring of `inspect.getsource()`, and `delete_document_chunks`'s docstring *names*
+    `get_or_create_collection()` while explaining why it does not call it. Re-asserted
+    over the parsed call graph; now passes, with a negative control. **The earlier
+    reading of this as "a real G10 lifecycle defect" was wrong and is withdrawn** — the
+    documents-side lifecycle functions all exist (`chroma_client.py:639`, `:676`, `:704`,
+    `:723`) and all route through `get_document_collection()`.
+  - 4 × `test_rag.py` — 3 assert `200` from the chat endpoint and get `202 Accepted`
+    because the local `.env` sets `ENABLE_ASYNC_CHAT_QUEUE=true` and Redis is now up
+    (**Gap 390**); 1 is the long-known `background_tasks` `TypeError`. Neither touches
+    this feature.
+  Every `test_generic_extraction.py` and `test_document_type_classifier.py` test passed
+  in the 48-minute run, consistent with the 409 above.
 - **Task V not started.** No `docs/test_evidence/` folder exists for this feature.
   T-OFF-1, T-R-6 and T-E10-1..5 have no Postgres run — every T-E10 test **skipped** in
   the full-suite run above rather than passing.

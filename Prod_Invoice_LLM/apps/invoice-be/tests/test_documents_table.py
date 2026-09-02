@@ -69,7 +69,9 @@ def pg_engine_or_skip():
     if not url.startswith("postgresql"):
         pytest.skip("DATABASE_URL is not PostgreSQL")
     try:
-        psycopg2.connect(url).close()
+        psycopg2.connect(url, connect_timeout=5).close()  # R2: a paused-but-listening
+        # container accepts the TCP handshake and never answers; without a timeout
+        # this blocks the whole suite forever instead of skipping.
     except psycopg2.OperationalError as exc:
         pytest.skip(f"local Postgres not reachable: {exc}")
     engine = create_engine(url)
@@ -931,15 +933,41 @@ def test_the_lifecycle_functions_never_open_a_collection_without_the_metadata():
     `RELEVANCE_DISTANCE_THRESHOLD = 0.49` means nothing — recoverable only by a
     drop + re-embed. The invoice-side functions each pass the metadata themselves,
     four times; the document-side ones go through the single
-    `get_document_collection()` call site instead."""
+    `get_document_collection()` call site instead.
+
+    BE Gap 389: this asserted on `"get_or_create_collection(" not in source`, a
+    substring test over `inspect.getsource()` — which includes the docstring.
+    `delete_document_chunks`'s docstring *names* `get_or_create_collection()` in
+    the course of explaining why it does not call it, so the test failed against
+    correct code and had done since it was written. The assertion is now made
+    over the parsed call graph instead of the source text, which is what it
+    always meant: a mention in prose is not a call, and only a call can pin the
+    collection to `l2`."""
+    import ast
     import inspect
+    import textwrap
 
     import chroma_client
 
+    def _called_names(fn) -> set[str]:
+        """Every function name actually *invoked* in fn's body."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        out = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                f = node.func
+                out.add(f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", ""))
+        return out
+
     for name in ("delete_document_chunks", "has_document_chunks", "get_all_document_chunks"):
-        source = inspect.getsource(getattr(chroma_client, name))
-        assert "get_document_collection(" in source, name
-        assert "get_or_create_collection(" not in source, name
+        called = _called_names(getattr(chroma_client, name))
+        assert "get_document_collection" in called, (
+            f"{name} must obtain the collection through get_document_collection(); called {sorted(called)}"
+        )
+        assert "get_or_create_collection" not in called, (
+            f"{name} calls get_or_create_collection() directly, which can pin "
+            f"docs_{{tenant}} to l2 permanently (§8 trap 3); called {sorted(called)}"
+        )
 
 
 def test_delete_tenant_document_collection_drops_the_whole_collection():

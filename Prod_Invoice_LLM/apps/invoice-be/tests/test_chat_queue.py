@@ -499,7 +499,9 @@ def test_job_isolation_on_postgres():
     if not url.startswith("postgresql"):
         pytest.skip("DATABASE_URL is not PostgreSQL")
     try:
-        psycopg2.connect(url).close()
+        psycopg2.connect(url, connect_timeout=5).close()  # R2: a paused-but-listening
+        # container accepts the TCP handshake and never answers; without a timeout
+        # this blocks the whole suite forever instead of skipping.
     except psycopg2.OperationalError as exc:
         pytest.skip(f"local Postgres not reachable: {exc}")
 
