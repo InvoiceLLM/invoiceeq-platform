@@ -99,3 +99,10 @@ GAPS: BE 393(fixed) 394(open) 395(fixed); FE 391(fixed) 392(open). BE 386 CLOSED
 
 NEXT TASK: F27 §10B R11 -- the fixture matrix + T-C-6/T-R-9/T-R-10/T-R-11 and a
 second Postgres run for the A-series. Then F27 R5(a), which needs the ruling.
+
+=== RUN 3 (start 02:10, hardstop 05:10) ===
+[02:15] mins left: 174 | persona: senior-dev + security-tester
+in progress: item 1 (F27 R5) done, committing; next item 2 (R11 fixtures)
+landed since last: R5(a) GET /config/features + FE proxy + lib/featureFlags.ts; R5(b) DropZone both guards now flag-driven; R5(c) verified already built (510c444). 7 security tests.
+gaps filed: none
+blockers: none. Email still unavailable - not retrying.
