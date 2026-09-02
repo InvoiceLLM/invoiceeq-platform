@@ -20,3 +20,18 @@ landed since last: F27 R9 — ADVISORY_FAMILY + _ADVISORY_RUBRIC, ReferencedDocu
 gaps filed: none this task
 blockers: none
 note: A7 named its field `deductions[]`, which collides with InvoiceExtractionSchema's own `deductions` and broke A2's disjointness invariant. Renamed to `payment_deductions` -- deviation recorded in code + commit.
+
+[00:53] mins left: 154 | persona: senior-dev
+CORRECTION: the [01:05]/[02:00]/[02:25] timestamps above were ESTIMATED, not read
+from the clock, and all three were ~90 min ahead of real time. Actual elapsed at
+this point: 25 min since the 00:28 start. Every timestamp from here is $(date).
+in progress: F26 R9 (Tier 3 vector discovery)
+landed since last: F27 R7 f3ed94b, R8 9f87ab8, R9 0cda980 — all pushed
+gaps filed: 393
+blockers: none
+
+[00:59] mins left: 148 | persona: senior-dev
+in progress: F26 R9 done, committing; next F26 R10 (compare_documents modes)
+landed since last: F26 R9 — Tier 3 vector discovery, _tier3_candidates + tier-3 confirmation copy, 11 tests (V-12..V-15). 749 passed.
+gaps filed: none this task
+blockers: none

@@ -120,6 +120,93 @@ def _coerce_date(value: Any) -> Optional[date]:
 # ---------------------------------------------------------------------------
 # Tier 1 / Tier 2 candidate matching (decision D4)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tier 3 — vector discovery (E-4, task H6/R9)
+# ---------------------------------------------------------------------------
+
+# Tighter than Tier 2's 20, deliberately (E-4). A date-window list degrades
+# gracefully -- the 20th entry is still the same vendor in the same quarter. A
+# similarity list does not: past the first handful the entries are only "nearest
+# available", and a long one invites a user to scroll until something looks
+# plausible, which is the failure mode the confirmation gate exists to prevent.
+TIER3_CANDIDATE_LIMIT = 10
+
+
+def _tier3_candidates(
+    *,
+    tenant_id: str,
+    query_text: str,
+    db_session: Session,
+    limit: int = TIER3_CANDIDATE_LIMIT,
+) -> List[Invoice]:
+    """Nearest invoices by vector similarity over the tenant's OWN collection.
+
+    E-4's motivating case, which Tier 2 cannot serve: Tier 2 needs BOTH a party
+    name AND a date, so a scan with a smudged date finds nothing at all -- not a
+    poor match, nothing. That is the concrete mechanism behind the founder's
+    complaint, and this is the fallback for it.
+
+    WHAT MAKES THIS SAFE, and it is not the ranking. A vector search is
+    non-deterministic and this function's output is therefore never an answer: it
+    is a LIST OF PROPOSALS that goes through the same confirmation gate as
+    everything else (D4). The human decides; the arithmetic that follows is the
+    identical `compare_reference_to_invoices()` on the identical `Decimal` math.
+    Tier 3 changes only WHICH invoices get compared.
+
+    Tenant isolation is structural, not filtered: `query_invoice_chunks()` reads
+    `invoice_chunks_{tenant_id}`, a per-tenant collection (Gap 55), so another
+    tenant's invoice cannot appear in this list by construction rather than by a
+    predicate someone has to remember.
+
+    Soft-deleted invoices are excluded here rather than left to the caller --
+    Chroma has no idea a row was deleted (Gap 192's soft delete is a Postgres
+    concern), so a chunk for a deleted invoice is still indexed and would
+    otherwise be proposed.
+    """
+    if not query_text or not query_text.strip():
+        return []
+
+    try:
+        from chroma_client import query_invoice_chunks
+
+        # Over-fetch: several chunks routinely belong to one invoice (one per
+        # page), so `limit` chunks can collapse to far fewer distinct invoices.
+        chunks = query_invoice_chunks(str(tenant_id), query_text, limit=limit * 3)
+    except Exception as e:
+        # Never fail the turn on a retrieval problem. Tier 3 is a fallback for a
+        # case that already returned nothing; an unreachable Chroma means the
+        # user gets Part 1's honest "no matches found", which is exactly what
+        # they would have got before this tier existed.
+        logger.warning("Tier 3 vector discovery unavailable for tenant %s: %s", tenant_id, e)
+        return []
+
+    ordered_ids: List[str] = []
+    for chunk in chunks or []:
+        invoice_id = (chunk.get("metadata") or {}).get("invoice_id")
+        if invoice_id and invoice_id not in ordered_ids:
+            ordered_ids.append(invoice_id)
+        if len(ordered_ids) >= limit:
+            break
+
+    if not ordered_ids:
+        return []
+
+    # One query for the whole set, then reordered in Python to preserve SIMILARITY
+    # order -- SQL `IN` returns rows in whatever order it likes, and the ranking is
+    # the only thing Tier 3 has to offer. `tenant_id` is re-asserted here as a
+    # second, independent check: the collection is already per-tenant, but a row
+    # this function returns is about to be compared against money, and two
+    # independent guarantees is the right number for that.
+    rows = db_session.exec(
+        select(Invoice).where(
+            Invoice.tenant_id == tenant_id,
+            Invoice.deleted_at.is_(None),
+        )
+    ).all()
+    by_id = {str(row.id): row for row in rows}
+    return [by_id[i] for i in ordered_ids if i in by_id]
+
+
 def find_candidate_invoices(
     *,
     tenant_id: str,
@@ -177,6 +264,22 @@ def find_candidate_invoices(
         # Both halves of Tier 2 are required (AND, not OR). Without a date,
         # "every invoice from this vendor ever" is not a candidate set; without
         # a party, "every invoice in this quarter" is worse.
+        #
+        # Tier 3 (E-4) fires HERE as well as after an empty Tier 2, and this is
+        # the path that matters most: a scan with a smudged date lands on exactly
+        # this branch, and it is the founder's own motivating case. Returning
+        # tier 0 from here would have left the tier unreachable for the document
+        # it was designed for -- which is what the first implementation did, and
+        # what V-12's "fires only when both earlier tiers are empty" caught.
+        tier3 = _tier3_candidates(
+            tenant_id=tenant_id,
+            query_text=" ".join(
+                str(part) for part in (party_name, po_number, doc_date) if part
+            ),
+            db_session=db_session,
+        )
+        if tier3:
+            return {"tier": 3, "invoices": tier3, "truncated": False}
         return {"tier": 0, "invoices": [], "truncated": False}
 
     window_start = reference_date - timedelta(days=CANDIDATE_DATE_WINDOW_DAYS)
@@ -214,6 +317,19 @@ def find_candidate_invoices(
         matches = matches[:CANDIDATE_LIMIT]
 
     if not matches:
+        # Tier 3 (E-4): only when Tiers 1 AND 2 are both empty. Never a
+        # supplement -- running it alongside a real match would dilute an exact
+        # identifier join with a pile of "nearest available" guesses, which is
+        # the same reasoning that makes Tier 2 a fallback rather than an addition.
+        tier3 = _tier3_candidates(
+            tenant_id=tenant_id,
+            query_text=" ".join(
+                str(part) for part in (party_name, po_number, doc_date) if part
+            ),
+            db_session=db_session,
+        )
+        if tier3:
+            return {"tier": 3, "invoices": tier3, "truncated": False}
         return {"tier": 0, "invoices": [], "truncated": False}
     return {"tier": 2, "invoices": matches, "truncated": truncated}
 
@@ -506,11 +622,21 @@ def build_confirmation_payload(
             ),
         }
 
-    how = (
-        "by an exact PO-number match"
-        if tier == 1
-        else "by supplier name and date (no PO number matched), so please check these carefully"
-    )
+    # E-4: a Tier-3 proposal must NEVER read like a Tier-1 join. The tier is the
+    # user's only signal of how much the system actually knows, and the three
+    # strengths are genuinely different claims -- an exact identifier both
+    # documents were meant to share, a name-and-date heuristic, and "these came
+    # back nearest in a vector search". Presenting the third in the second's
+    # language is how a guess gets confirmed by someone skim-reading.
+    how = {
+        1: "by an exact PO-number match",
+        2: "by supplier name and date (no PO number matched), so please check these carefully",
+        3: (
+            "by similarity only — no PO number and no supplier-and-date match was found, "
+            "so these are the closest documents on record rather than a match. "
+            "Please confirm they are the right invoices before I compare anything"
+        ),
+    }.get(tier, "by supplier name and date (no PO number matched), so please check these carefully")
     return {
         "kind": "attachment_match_confirmation",
         "attachment_id": attachment_id,
