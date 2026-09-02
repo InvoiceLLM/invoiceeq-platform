@@ -7,6 +7,10 @@ No re-embedding — vectors, documents, and metadata are copied as-is.
 Safe to re-run: upsert is idempotent per id. The old shared collection is
 left in place; delete it manually once the new collections are verified.
 
+Target collections are created with `_collection_metadata()`
+(`{"hnsw:space": "cosine"}`) — see the comment at the `get_or_create_collection`
+call below for why that matters and what it does *not* fix.
+
 Usage:
     uv run python scripts/migrate_chroma_to_per_tenant.py
 """
@@ -16,7 +20,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from chroma_client import get_chroma_client, _tenant_collection_name
+from chroma_client import get_chroma_client, _tenant_collection_name, _collection_metadata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,7 +68,21 @@ def migrate():
 
     for tenant_id, bucket in by_tenant.items():
         target_name = _tenant_collection_name(tenant_id)
-        target = client.get_or_create_collection(name=target_name)
+        # Gap 244 / Feature 26 E-2: this call used to omit the metadata, which
+        # meant any per-tenant collection this script created was pinned to
+        # Chroma's default `l2` space forever -- and `RELEVANCE_DISTANCE_THRESHOLD`
+        # is derived in cosine space, so retrieval against such a collection
+        # scores on a scale the threshold does not describe. Fixed rather than
+        # left ambiguous, even though this is a one-shot legacy script off the
+        # live path. Note the limit of the fix: Chroma pins the space at
+        # *creation*, so this only helps collections this script creates. A
+        # target collection that already exists on `l2` is still returned on
+        # `l2`, silently -- that case is `scripts/reembed_chroma_collections.py`'s
+        # to repair (drop + re-embed), not this one's.
+        target = client.get_or_create_collection(
+            name=target_name,
+            metadata=_collection_metadata(),
+        )
         target.upsert(
             ids=bucket["ids"],
             embeddings=bucket["embeddings"],

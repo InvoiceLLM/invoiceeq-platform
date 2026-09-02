@@ -36,6 +36,15 @@ export default function ChatPage() {
     sendMessage,
     renameSession,
     deleteSession,
+    // Feature 26 Part 2, task H12 (§P2.6.6/§P2.6.1): these five are what make
+    // H10's composer control reachable by a real user. ChatWindow renders the
+    // paperclip ONLY when `onAttach` is supplied — until this line existed the
+    // button was deliberately never rendered rather than shipped dead.
+    attachment,
+    uploadAttachment,
+    removeAttachment,
+    cancelAttachment,
+    attachmentCount,
   } = useChatSession();
 
   return (
@@ -65,6 +74,11 @@ export default function ChatPage() {
         onSendMessage={sendMessage}
         onRenameSession={renameSession}
         onDeleteSession={deleteSession}
+        onAttach={uploadAttachment}
+        attachment={attachment}
+        onRemoveAttachment={removeAttachment}
+        onCancelAttachment={cancelAttachment}
+        attachmentCount={attachmentCount}
       />
     </div>
   );

@@ -26,7 +26,7 @@ from dependencies import (
     require_can_load_or_api_key,
     TenantContext,
 )
-from models import Invoice, Tenant, AuditLog, User
+from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
 from services.billing_quota import charge_free_quota, count_billable_uploads
@@ -77,37 +77,144 @@ async def _ingest_single_file(
         )
     ).first()
 
-    if existing_invoice:
+    # Feature 27 (BE Gap 385, closing §2A/A4/F5's never-made ingestion-dedup
+    # ruling). E10 moved non-invoice documents out of `invoice` into `documents`,
+    # and this check never followed them: re-uploading the same delivery note
+    # twice produced a second full DI + extraction run and a second row, because
+    # its first arrival had left no `Invoice.file_hash` to match. Meanwhile
+    # `services/billing_quota.py::count_billable_uploads` had *already* been
+    # widened to the union at G14 -- so the two halves of one rule disagreed:
+    # billing said "already paid for, not billable", ingestion said "never seen
+    # it, process it". The tenant got the work done for free and the row count
+    # stopped matching the invoice count. Same union, same shape, same file-order
+    # as `count_billable_uploads`, deliberately.
+    #
+    # **The tenant predicate is inside each side, never applied to a combined
+    # set** (§2A/A4/F2). An unscoped union would let one tenant's upload be
+    # marked DUPLICATE of another tenant's file -- a cross-tenant information
+    # leak through the duplicate alert, strictly worse here than in billing
+    # because the alert text is rendered to the user.
+    #
+    # Invoice is probed FIRST and short-circuits, so the pre-existing
+    # Invoice-vs-Invoice path is byte-identical to what it was; the Document
+    # probe only runs when there is no invoice match.
+    existing_document = None
+    if not existing_invoice:
+        existing_document = db_session.exec(
+            select(Document).where(
+                Document.tenant_id == context.tenant_id,
+                Document.file_hash == file_hash
+            )
+        ).first()
+
+    if existing_invoice or existing_document:
+        # WHAT GETS COPIED WHEN THE MATCH IS A `Document` (BE Gap 385's ruling).
+        #
+        # Only the storage pointer. `file_path` is the one column that means the
+        # same thing on both tables -- a blob location -- and copying it is what
+        # avoids re-uploading bytes already in storage, which is the whole reason
+        # the invoice-vs-invoice path copies it.
+        #
+        # Every extracted field is deliberately left NULL, and this is a decision
+        # against the obvious-looking mapping, not an omission:
+        #   - `Document.party_name` is NOT `Invoice.vendor_name`. `party_name` is
+        #     whoever ISSUED the document, so on a purchase order it is the
+        #     *buyer* -- our own tenant. Copying it into `vendor_name` would file
+        #     the tenant as its own vendor.
+        #   - `Document.doc_number` is NOT an `invoice_number`, and
+        #     `Document.doc_date` is not an `invoice_date`.
+        #   - Money is optional on `documents` by design (a delivery note prints
+        #     quantities and no prices). Copying `grand_total`/`tax_amount` would
+        #     either fabricate an invoice-shaped total from a non-invoice or, on
+        #     the common NULL, be a no-op that only looks like data.
+        # A DUPLICATE row is never re-extracted, so anything wrong copied in here
+        # is permanent -- exactly how FE Gap 183 (dropped currency) became real
+        # data loss. NULL is honest; a mislabelled value is not, which is the same
+        # call A1 made about not drawing invoice-field overlays on a PO.
+        #
+        # `duplicate_of_invoice_id` stays NULL for a document match: it is a
+        # pointer into `invoice.id` and putting a `documents.id` in it would make
+        # every reader that dereferences it (FE alert UI, Gap 195 consumers)
+        # look up an invoice that does not exist. The document origin goes in the
+        # `sa_alerts` payload instead, structured, so it is traceable without a
+        # new column and therefore without a migration.
+        if existing_invoice:
+            source_file_path = existing_invoice.file_path
+            copied = dict(
+                vendor_name=existing_invoice.vendor_name,
+                grand_total=existing_invoice.grand_total,
+                invoice_number=existing_invoice.invoice_number,
+                invoice_date=existing_invoice.invoice_date,
+                due_date=existing_invoice.due_date,
+                tax_amount=existing_invoice.tax_amount,
+                po_number=existing_invoice.po_number,
+                # FE Gap 183: currency was the one extracted field this copy
+                # dropped. A duplicate of an INR invoice landed with currency=NULL,
+                # so it was silently treated as USD by every reader downstream --
+                # real data loss, not just a display bug, because the duplicate row
+                # never goes through extraction again to recover it.
+                currency=existing_invoice.currency,
+                items=existing_invoice.items,
+            )
+            # Gap 195: structured pointer to the original, alongside the
+            # existing prose message below (kept for the alert UI).
+            duplicate_of_invoice_id = existing_invoice.id
+            duplicate_alert = {
+                "type": "duplicate",
+                "message": f"This file is a duplicate of a previously uploaded invoice (ID: {existing_invoice.id})."
+            }
+            sse_message = "Duplicate invoice signature detected. Copied data from previous upload."
+            sse_alert_message = (
+                f"Duplicate of invoice {existing_invoice.invoice_number or existing_invoice.id}."
+            )
+        else:
+            source_file_path = existing_document.file_path
+            copied = dict(
+                vendor_name=None,
+                grand_total=None,
+                invoice_number=None,
+                invoice_date=None,
+                due_date=None,
+                tax_amount=None,
+                po_number=None,
+                currency=None,
+                items=[],
+            )
+            duplicate_of_invoice_id = None
+            duplicate_alert = {
+                "type": "duplicate",
+                "message": (
+                    f"This file is a duplicate of a previously uploaded "
+                    f"{(existing_document.doc_type or 'document').replace('_', ' ').lower()} "
+                    f"(document ID: {existing_document.id})."
+                ),
+                # Structured origin pointer, the `documents` counterpart of
+                # Gap 195's `duplicate_of_invoice_id` column. Kept in the alert
+                # payload rather than promoted to a column so this ruling needs
+                # no migration; promote it if a reader ever needs to join on it.
+                "duplicate_of_document_id": str(existing_document.id),
+                "duplicate_of_doc_type": existing_document.doc_type,
+            }
+            sse_message = (
+                "Duplicate file signature detected -- this file was already ingested as a "
+                "non-invoice document, so no data was copied."
+            )
+            sse_alert_message = (
+                f"Duplicate of document {existing_document.doc_number or existing_document.id}."
+            )
+
         db_invoice = Invoice(
             id=invoice_id,
             tenant_id=context.tenant_id,
             batch_id=batch_id,
-            file_path=existing_invoice.file_path,
+            file_path=source_file_path,
             file_hash=file_hash,
-            vendor_name=existing_invoice.vendor_name,
-            grand_total=existing_invoice.grand_total,
-            invoice_number=existing_invoice.invoice_number,
-            invoice_date=existing_invoice.invoice_date,
-            due_date=existing_invoice.due_date,
-            tax_amount=existing_invoice.tax_amount,
-            po_number=existing_invoice.po_number,
-            # FE Gap 183: currency was the one extracted field this copy
-            # dropped. A duplicate of an INR invoice landed with currency=NULL,
-            # so it was silently treated as USD by every reader downstream --
-            # real data loss, not just a display bug, because the duplicate row
-            # never goes through extraction again to recover it.
-            currency=existing_invoice.currency,
             status="DUPLICATE",
-            # Gap 195: structured pointer to the original, alongside the
-            # existing prose message below (kept for the alert UI).
-            duplicate_of_invoice_id=existing_invoice.id,
-            sa_alerts=[{
-                "type": "duplicate",
-                "message": f"This file is a duplicate of a previously uploaded invoice (ID: {existing_invoice.id})."
-            }],
+            duplicate_of_invoice_id=duplicate_of_invoice_id,
+            sa_alerts=[duplicate_alert],
             tags=tags,
-            items=existing_invoice.items,
             submitted_by_email=submitter,
+            **copied,
         )
         db_session.add(db_invoice)
         await run_in_threadpool(db_session.commit)
@@ -115,13 +222,26 @@ async def _ingest_single_file(
 
         try:
             from services.webhooks import dispatch_webhook_event
+            # BE Gap 385: still `invoice.duplicate` -- the row created IS an
+            # Invoice row whichever table matched, and a new event type would
+            # break every existing subscriber's filter for no gain. But
+            # `duplicate_of_invoice_id` is NULL on a document match rather than
+            # carrying a `documents.id`, for the same dereferencing reason as the
+            # column; the origin is exposed under its own key so a subscriber
+            # keying on `duplicate_of_invoice_id` never receives a document id in
+            # an invoice-id field.
             dispatch_webhook_event(db_session, context.tenant_id, "invoice.duplicate", {
                 "invoice_id": str(invoice_id),
-                "duplicate_of_invoice_id": str(existing_invoice.id),
+                "duplicate_of_invoice_id": (
+                    str(existing_invoice.id) if existing_invoice else None
+                ),
+                "duplicate_of_document_id": (
+                    None if existing_invoice else str(existing_document.id)
+                ),
                 "status": "DUPLICATE",
-                "vendor_name": existing_invoice.vendor_name,
-                "grand_total": existing_invoice.grand_total,
-                "currency": existing_invoice.currency,
+                "vendor_name": copied["vendor_name"],
+                "grand_total": copied["grand_total"],
+                "currency": copied["currency"],
             })
         except Exception as we:
             logger.error("Webhook dispatch failed for invoice %s: %s", invoice_id, we)
@@ -129,25 +249,29 @@ async def _ingest_single_file(
         try:
             import redis
             r = redis.Redis.from_url(settings.REDIS_URL)
+            # The SSE payload is built from `copied`, not from the matched row, so
+            # it reports exactly what was persisted. On a document match that is
+            # all-NULL and the message says so -- the FE must not render an empty
+            # card as though extraction had produced nothing.
             event_data = {
                 "status": "DUPLICATE",
-                "message": "Duplicate invoice signature detected. Copied data from previous upload.",
+                "message": sse_message,
                 "invoice_id": str(invoice_id),
                 "data": {
-                    "vendor_name": existing_invoice.vendor_name,
-                    "invoice_number": existing_invoice.invoice_number,
-                    "invoice_date": str(existing_invoice.invoice_date) if existing_invoice.invoice_date else None,
-                    "due_date": str(existing_invoice.due_date) if existing_invoice.due_date else None,
-                    "grand_total": existing_invoice.grand_total,
-                    "currency": existing_invoice.currency,
-                    "tax_amount": existing_invoice.tax_amount,
-                    "po_number": existing_invoice.po_number,
-                    "items": existing_invoice.items,
+                    "vendor_name": copied["vendor_name"],
+                    "invoice_number": copied["invoice_number"],
+                    "invoice_date": str(copied["invoice_date"]) if copied["invoice_date"] else None,
+                    "due_date": str(copied["due_date"]) if copied["due_date"] else None,
+                    "grand_total": copied["grand_total"],
+                    "currency": copied["currency"],
+                    "tax_amount": copied["tax_amount"],
+                    "po_number": copied["po_number"],
+                    "items": copied["items"],
                     "tags": tags
                 },
                 "alerts": [{
                     "type": "duplicate",
-                    "message": f"Duplicate of invoice {existing_invoice.invoice_number or existing_invoice.id}."
+                    "message": sse_alert_message,
                 }]
             }
             r.publish(f"invoice.update.{batch_id}", json.dumps(event_data))

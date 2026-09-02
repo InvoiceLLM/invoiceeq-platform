@@ -9,6 +9,7 @@ data_extraction_pdf.ipynb
 
 # Scratch/session artifacts -- kept on disk for reference, not tracked
 scratch_transcripts.html
+local/
 .claude/agents/Buisness-analyst.md
 .claude/tasklists/functional-tester-novatech-seed.md
 .claude/tasklists/functional-tester-phase0-india-us-eu-groundtruth.md

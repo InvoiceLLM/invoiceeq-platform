@@ -2,7 +2,7 @@
 
 **Generated file. Do not edit.** Regenerate with `uv run python scripts/run_extraction_benchmark.py --artifacts-only`.
 
-Generated: `2026-08-27T11:38:36+00:00` from `tests/extraction_benchmark/{documents,mutations}.py`.
+Generated: `2026-09-02T17:30:21+00:00` from `tests/extraction_benchmark/{documents,mutations}.py`.
 
 This is the review artifact for Feature 23 Track 1. It exists so architect and a business analyst can check **what was planted and why** without reading the generator. Every seeded case states the field that was changed, the correct value, the value planted instead, and the exact alert type that must fire for the case to count as detected.
 

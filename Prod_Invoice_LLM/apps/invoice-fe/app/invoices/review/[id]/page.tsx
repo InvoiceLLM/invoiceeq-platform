@@ -68,6 +68,19 @@ interface InvoiceDetail {
   items: LineItem[] | null;
   field_confidence?: Record<string, number>;
   flow_direction?: string;
+  /**
+   * FE Gap 378 / BE Feature 27 (G11): the document type the extraction graph
+   * classified this record as, plus the verbatim phrase it decided from.
+   *
+   * Both optional and both absent today — BE task G9 (`Invoice.doc_type` /
+   * `Invoice.doc_type_evidence`) has not landed, and the columns are specified
+   * nullable even once it does, so a record with no classification must render
+   * exactly as it did before these fields existed. The evidence string is the
+   * point of showing this at all: a misclassification is only reportable if the
+   * auditor can see what the classifier read.
+   */
+  doc_type?: string | null;
+  doc_type_evidence?: string | null;
 }
 
 interface SuggestedRule {
@@ -763,12 +776,38 @@ export default function AuditorReviewPage() {
               </div>
 
               {/* Additional Extracted Metadata Panel */}
-              {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency) && (
+              {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency || invoice.doc_type) && (
                 <div
                   data-testid="extracted-metadata-panel"
                   className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
                 >
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
+
+                  {/* FE Gap 378 / BE Feature 27 (G11): document type + the
+                      phrase the classifier decided from. Rendered only when the
+                      backend actually returned a type — absent (every record
+                      today, since BE G9 hasn't landed) leaves this panel
+                      identical to before, including its visibility, because
+                      `doc_type` is part of the panel's own gate above.
+                      The evidence line renders separately: a type can exist
+                      without one (the deterministic synonym pass records the
+                      matched phrase, but a low-confidence fallback lands on
+                      OTHER with no phrase to quote). */}
+                  {invoice.doc_type && (
+                    <div data-testid="doc-type-row" className="flex justify-between gap-3 text-xs">
+                      <span className="min-w-0 break-words text-slate-500">Document Type</span>
+                      <span className="min-w-0 break-all text-right font-mono text-slate-300">{invoice.doc_type}</span>
+                    </div>
+                  )}
+
+                  {invoice.doc_type && invoice.doc_type_evidence && (
+                    <div data-testid="doc-type-evidence-row" className="flex justify-between gap-3 text-xs">
+                      <span className="min-w-0 break-words text-slate-500">Type Evidence</span>
+                      <span className="min-w-0 break-all text-right font-mono text-slate-400" title={invoice.doc_type_evidence}>
+                        &ldquo;{invoice.doc_type_evidence}&rdquo;
+                      </span>
+                    </div>
+                  )}
 
                   {invoice.currency && (
                     <div className="flex justify-between gap-3 text-xs">

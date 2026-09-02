@@ -25,14 +25,26 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, User, ThumbsUp, ThumbsDown, Loader2, Sparkles, AlertCircle } from "lucide-react";
+import { Bot, User, ThumbsUp, ThumbsDown, Loader2, Sparkles, AlertCircle, ArrowUpRight, Ban, Info } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import Link from "next/link";
 import CitationPill from "./CitationPill";
 import SqlAuditDrawer from "./SqlAuditDrawer";
 import ThumbsDownTriage from "./ThumbsDownTriage";
+import AttachmentMatchConfirm from "./AttachmentMatchConfirm";
+import DocumentEvidence from "./DocumentEvidence";
 import { apiClient } from "@/lib/apiClient";
 import { useAuth } from "@/hooks/useAuth";
+import {
+  buildComparisonRows,
+  capSuggestedActions,
+  clarificationOptions,
+  comparisonOutcomeLabel,
+  composeClarificationReply,
+  type AttachmentClarificationIntent,
+  type AttachmentComparisonEntry,
+} from "@/lib/chatAttachments";
 import type { ChatMessage } from "@/types/chat";
 
 // =============================================================================
@@ -208,11 +220,236 @@ function renderMarkdown(text: string): React.ReactNode {
 }
 
 // =============================================================================
+// Feature 26 Part 2, task H11 (§P2.6.4) — the attached-document answer contract
+//
+// Four render surfaces hang off an assistant turn that carried an attachment.
+// The contract they render is the one `agents/query_agent.py` ACTUALLY returns,
+// read from the source rather than from §P2.8's sketch — see the header note in
+// lib/chatAttachments.ts for the three places that sketch is stale.
+// =============================================================================
+
+/**
+ * The deterministic diff, as a TABLE — §P2.6.4 is explicit that it must not be
+ * left inside prose. The narration bubble above it says what the numbers mean;
+ * this says what they are, and every value in it was computed by
+ * `compare_reference_to_invoices()` in `Decimal`, not by the model (D5).
+ *
+ * A `currency_mismatch` renders as its own refusal row spanning the value
+ * columns. It is never a zero delta: the module refuses to compare a EUR
+ * document against an INR invoice at all, and a `0.00` in the delta column
+ * would report the opposite of that.
+ */
+function ComparisonEntryTable({ entry }: { entry: AttachmentComparisonEntry }) {
+  const rows = buildComparisonRows(entry);
+  const blocked = entry.outcome === "currency_mismatch";
+
+  return (
+    <div
+      data-testid="attachment-comparison-entry"
+      data-outcome={entry.outcome}
+      className="rounded-xl border border-[#222D3D] bg-[#0B1220] overflow-hidden"
+    >
+      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 border-b border-[#222D3D]">
+        <span className="font-medium text-slate-200 truncate">
+          {entry.invoice_number || "(no invoice number)"}
+        </span>
+        <span
+          data-testid="attachment-comparison-outcome"
+          className={`shrink-0 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+            blocked
+              ? "bg-rose-950/25 border-rose-800/40 text-rose-300"
+              : entry.outcome === "match"
+              ? "bg-emerald-900/20 border-emerald-800/40 text-emerald-300"
+              : "bg-amber-900/20 border-amber-800/40 text-amber-300"
+          }`}
+        >
+          {comparisonOutcomeLabel(entry.outcome)}
+        </span>
+      </div>
+
+      <table className="w-full text-[11px] border-collapse">
+        <thead>
+          <tr className="text-slate-500">
+            <th className="text-left font-medium px-2.5 py-1">Field</th>
+            <th className="text-right font-medium px-2.5 py-1">Document</th>
+            <th className="text-right font-medium px-2.5 py-1">Invoice</th>
+            <th className="text-right font-medium px-2.5 py-1">Delta</th>
+            <th className="text-left font-medium px-2.5 py-1">Outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) =>
+            row.kind === "refusal" ? (
+              <tr key={`refusal-${idx}`} data-testid="attachment-comparison-refusal-row">
+                <td className="px-2.5 py-2 align-top text-rose-300 font-medium whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1">
+                    <Ban className="w-3 h-3" />
+                    {row.label}
+                  </span>
+                </td>
+                {/* Deliberately spans the value columns: there is no document
+                    value, no invoice value and no delta to put in them. */}
+                <td className="px-2.5 py-2 text-slate-300 leading-relaxed" colSpan={4}>
+                  {row.reason}
+                </td>
+              </tr>
+            ) : (
+              <tr key={`${row.label}-${idx}`} data-testid="attachment-comparison-field-row">
+                <td className="px-2.5 py-1.5 text-slate-400">{row.label}</td>
+                <td className="px-2.5 py-1.5 text-right font-mono text-slate-200">{row.referenceValue}</td>
+                <td className="px-2.5 py-1.5 text-right font-mono text-slate-200">{row.invoiceValue}</td>
+                <td
+                  data-testid="attachment-comparison-delta"
+                  className={`px-2.5 py-1.5 text-right font-mono ${
+                    row.status === "match"
+                      ? "text-slate-500"
+                      : row.status === "missing"
+                      ? "text-slate-600"
+                      : "text-amber-300"
+                  }`}
+                >
+                  {row.delta}
+                </td>
+                <td className="px-2.5 py-1.5 text-slate-400">{row.outcome}</td>
+              </tr>
+            )
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AttachmentComparisonTables({ message }: { message: ChatMessage }) {
+  const comparison = message.attachment_comparison;
+  if (!comparison || !comparison.comparisons?.length) return null;
+
+  return (
+    <div id="chat-attachment-comparison" className="mt-2 w-full space-y-2">
+      {comparison.comparisons.map((entry, idx) => (
+        <ComparisonEntryTable key={`${entry.invoice_id}-${idx}`} entry={entry} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * D6: suggestions are LINKS. Not buttons, not a confirm dialog, not a fetch.
+ * Chat never invokes a mutating endpoint — `build_suggested_actions()` even
+ * carries the `endpoint` and `method` it checked the precondition against, and
+ * this component pointedly ignores both and navigates to `href` instead. The
+ * precedent is ThumbsDownTriage's handling of `triage_source_verdict()`'s
+ * `redirect` block.
+ */
+function SuggestedActionLinks({ message }: { message: ChatMessage }) {
+  const actions = capSuggestedActions(message.suggested_actions);
+  if (actions.length === 0) return null;
+
+  return (
+    <div id="chat-suggested-actions" className="mt-2 w-full flex flex-col gap-1 px-1">
+      <span className="text-[10px] uppercase tracking-wider text-slate-500">Next steps</span>
+      {actions.map((action, idx) => (
+        <Link
+          key={`${action.href}-${idx}`}
+          href={action.href}
+          data-testid="chat-suggested-action"
+          title={action.precondition ? `Allowed because: ${action.precondition}` : undefined}
+          className="inline-flex items-center gap-1.5 text-[11px] text-[#3B82F6] hover:text-[#60A5FA] underline underline-offset-2 w-fit"
+        >
+          <ArrowUpRight className="w-3 h-3 shrink-0" />
+          {action.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The clarifying turn's two choices (B2). Rendered INSIDE the bubble, because
+ * the user asked a question and is being asked one back — a separate card would
+ * read as a system panel rather than as part of the conversation.
+ *
+ * "Re-send with an explicit intent" is a phrase appended to the original
+ * question, not a structured field: `_classify_attachment_intent()` matches
+ * keywords over the message text and `MessageCreate` has no intent field. See
+ * `composeClarificationReply()` for the phrases and for the case that can loop.
+ */
+function ClarificationChoices({
+  message,
+  precedingUserQuestion,
+  onChoose,
+}: {
+  message: ChatMessage;
+  precedingUserQuestion?: string;
+  onChoose: (text: string, intent: AttachmentClarificationIntent) => void | Promise<void>;
+}) {
+  const options = clarificationOptions(message.attachment_clarification);
+  if (options.length === 0) return null;
+
+  return (
+    <div id="chat-attachment-clarification" className="mt-2 flex flex-wrap gap-2">
+      {options.map((option) => (
+        <button
+          key={option.intent}
+          type="button"
+          data-testid="attachment-clarification-choice"
+          data-intent={option.intent}
+          onClick={() =>
+            onChoose(
+              composeClarificationReply(
+                precedingUserQuestion,
+                option.intent as AttachmentClarificationIntent
+              ),
+              option.intent as AttachmentClarificationIntent
+            )
+          }
+          className="px-2.5 py-1 rounded-full text-[11px] bg-[#1E293B] border border-[#222D3D] text-slate-200 hover:border-blue-700/60 hover:bg-[#1e2d45] transition-colors focus:outline-none focus:ring-1 focus:ring-blue-600"
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Callbacks H12 supplies from `useChatSession`. Every one is optional and the
+ * surfaces that need one are not rendered without it — H10's precedent, for the
+ * same reason it gave: the alternative is a visible control that does nothing.
+ * The turn's prose still renders either way, so nothing the backend said is
+ * hidden by a missing handler.
+ */
+export interface AttachmentTurnHandlers {
+  /** POST /chat/attachments/{id}/confirm-matches */
+  onConfirmMatches?: (attachmentId: string, invoiceIds: string[]) => void | Promise<void>;
+  /** The zero-candidate path: a typed invoice NUMBER goes back as a chat message. */
+  onManualInvoiceEntry?: (attachmentId: string, invoiceNumber: string) => void | Promise<void>;
+  /** Re-sends the clarified question. `text` is already composed. */
+  onClarificationChoice?: (
+    text: string,
+    intent: AttachmentClarificationIntent
+  ) => void | Promise<void>;
+  /** The attachment whose confirm request is currently in flight. */
+  confirmingAttachmentId?: string | null;
+  /** The confirm endpoint's rejection detail, surfaced inline rather than swallowed. */
+  confirmError?: string | null;
+  /** Attachments whose matches have already been confirmed — the card locks. */
+  confirmedAttachmentIds?: string[];
+}
+
+// =============================================================================
 // MessageBubble — single message renderer
 // =============================================================================
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  /**
+   * The user turn this assistant message answered. Supplied by MessageStream,
+   * which is the only place that knows the ordering. Used solely to compose the
+   * clarification re-send, so the user does not have to retype their question.
+   */
+  precedingUserQuestion?: string;
+  attachmentHandlers?: AttachmentTurnHandlers;
 }
 
 function formatMessageTimestamp(dateStr?: string): string {
@@ -226,9 +463,21 @@ function formatMessageTimestamp(dateStr?: string): string {
   return `${datePart}, ${timePart}`;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export default function MessageBubble({
+  message,
+  precedingUserQuestion,
+  attachmentHandlers,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
   const formattedTime = formatMessageTimestamp(message.created_at);
+
+  // Feature 26 (H11). Same settled-assistant guard the citation pills already
+  // use, so an in-flight or failed turn never renders a half-built contract.
+  const isSettledAssistant = !isUser && message.status === "completed";
+  const confirmation = isSettledAssistant ? message.attachment_confirmation : undefined;
+  const evidence = isSettledAssistant ? message.evidence : undefined;
+  const onClarificationChoice = attachmentHandlers?.onClarificationChoice;
+  const onConfirmMatches = attachmentHandlers?.onConfirmMatches;
 
   return (
     // flex-row-reverse for user messages pushes avatar + bubble to the right
@@ -310,9 +559,73 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             // markdown now — bold/italic/code plus lists/tables/headings/links)
             <div className="space-y-0.5">
               {renderMarkdown(message.content)}
+
+              {/* Feature 26 (B2): the clarifying turn's two choices sit inside
+                  the bubble, under the question they answer. */}
+              {message.attachment_clarification && onClarificationChoice && (
+                <ClarificationChoices
+                  message={message}
+                  precedingUserQuestion={precedingUserQuestion}
+                  onChoose={onClarificationChoice}
+                />
+              )}
             </div>
           )}
         </div>
+
+        {/* ── Feature 26 — attached-document answer contract (§P2.6.4) ─────── */}
+
+        {/* The deterministic diff, as a table rather than inside the prose. */}
+        {isSettledAssistant && <AttachmentComparisonTables message={message} />}
+
+        {/* 0-3 deep-links, styled as links. Chat never invokes them (D6). */}
+        {isSettledAssistant && <SuggestedActionLinks message={message} />}
+
+        {/* Quoted spans from the attachment's own pages. NOT citation pills:
+            there is no audit record behind an attachment span (D2). */}
+        {evidence && evidence.length > 0 && <DocumentEvidence spans={evidence} />}
+
+        {/* `needs_confirmation` does NOT gate the card below — the live backend
+            only ever emits it as `false`, from the content branch. When it is
+            true it explains why a turn produced no figures; the composer is
+            deliberately left alone, per §P2.6.4 ("the composer's send is not
+            blocked"). */}
+        {isSettledAssistant && message.needs_confirmation && (
+          <p
+            data-testid="attachment-needs-confirmation"
+            className="mt-1 flex items-start gap-1.5 px-1 text-[11px] text-amber-300/90"
+          >
+            <Info className="w-3.5 h-3.5 shrink-0 mt-px" />
+            No figures were compared yet — confirm the matching invoices below first.
+          </p>
+        )}
+
+        {/* The confirmation gate (D4). Rendered on the payload's presence, and
+            only when H12 has supplied a handler for it. */}
+        {confirmation && onConfirmMatches && (
+          <AttachmentMatchConfirm
+            confirmation={confirmation}
+            onConfirm={(invoiceIds) => onConfirmMatches(confirmation.attachment_id, invoiceIds)}
+            onManualEntry={
+              attachmentHandlers?.onManualInvoiceEntry
+                ? (invoiceNumber) =>
+                    attachmentHandlers.onManualInvoiceEntry!(
+                      confirmation.attachment_id,
+                      invoiceNumber
+                    )
+                : undefined
+            }
+            isSubmitting={
+              attachmentHandlers?.confirmingAttachmentId === confirmation.attachment_id
+            }
+            error={attachmentHandlers?.confirmError ?? null}
+            isConfirmed={
+              attachmentHandlers?.confirmedAttachmentIds?.includes(
+                confirmation.attachment_id
+              ) ?? false
+            }
+          />
+        )}
 
         {/* ── Citation Pills — RAG path only ───────────────────────────── */}
         {/* WHY check citations?.length > 0: the field is undefined for SQL/CHAT
@@ -358,9 +671,17 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 interface MessageStreamProps {
   messages: ChatMessage[];
   isSending: boolean; // When true, shows the animated typing indicator
+  /**
+   * Feature 26 (H11). Optional, and threaded through to every bubble: this list
+   * is the only place that knows message ordering, which the clarification
+   * re-send needs (it re-sends the user's ORIGINAL question plus an explicit
+   * intent phrase). ChatWindow.tsx is not modified for this — H12 supplies the
+   * prop when it wires `useChatSession`.
+   */
+  attachmentHandlers?: AttachmentTurnHandlers;
 }
 
-export function MessageStream({ messages, isSending }: MessageStreamProps) {
+export function MessageStream({ messages, isSending, attachmentHandlers }: MessageStreamProps) {
   // bottomRef is attached to an empty div at the end of the list.
   // scrollIntoView fires whenever messages or isSending changes, keeping
   // the latest content in view automatically (equivalent to WhatsApp behaviour).
@@ -376,9 +697,29 @@ export function MessageStream({ messages, isSending }: MessageStreamProps) {
 
   return (
     <div className="flex flex-col gap-5 py-6 px-4">
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
-      ))}
+      {messages.map((msg, idx) => {
+        // The nearest preceding user turn. Walking back rather than taking
+        // `idx - 1` blindly: a failed or system-inserted assistant turn between
+        // the two would otherwise make the clarification re-send quote SAGE's
+        // own words back at it.
+        let precedingUserQuestion: string | undefined;
+        if (msg.role === "assistant" && msg.attachment_clarification) {
+          for (let i = idx - 1; i >= 0; i -= 1) {
+            if (messages[i].role === "user") {
+              precedingUserQuestion = messages[i].content;
+              break;
+            }
+          }
+        }
+        return (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            precedingUserQuestion={precedingUserQuestion}
+            attachmentHandlers={attachmentHandlers}
+          />
+        );
+      })}
 
       {/* ── Typing Indicator ────────────────────────────────────────────── */}
       {showTypingIndicator && (

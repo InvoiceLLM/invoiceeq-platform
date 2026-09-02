@@ -19,6 +19,7 @@ order contains another company's negotiated pricing — a worse leak than an
 invoice total.
 """
 import logging
+from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -183,6 +184,16 @@ async def upload_chat_attachment(
         data, str(tenant_context.tenant_id), f"chat-attachments/{attachment_id}"
     )
 
+    # E-7's TTL is stamped onto the row at creation, not computed at read time
+    # from `created_at`. Two reasons: the sweeper (H8) can then find expired rows
+    # with a plain indexed predicate instead of arithmetic over every row, and a
+    # later change to CHAT_ATTACHMENT_TTL_DAYS cannot retroactively expire a
+    # document a user attached under the old policy. `created_at` is passed
+    # explicitly rather than left to its default_factory so the two values are
+    # computed from the same instant and cannot disagree by a few microseconds.
+    from config import get_settings as _get_settings
+
+    created_at = datetime.utcnow()
     row = ChatAttachment(
         id=attachment_id,
         tenant_id=tenant_context.tenant_id,
@@ -191,6 +202,9 @@ async def upload_chat_attachment(
         blob_path=blob_path,
         file_size_bytes=len(data),
         extraction_status="PENDING",
+        created_at=created_at,
+        expires_at=created_at
+        + timedelta(days=_get_settings().CHAT_ATTACHMENT_TTL_DAYS),
     )
     db_session.add(row)
     db_session.commit()
@@ -201,7 +215,8 @@ async def upload_chat_attachment(
 
 
 def _extract_attachment(row: ChatAttachment, db_session: Session) -> None:
-    """Run the REFERENCE direction profile over the stored PDF and denormalise.
+    """Run the REFERENCE direction profile over the stored PDF and denormalise,
+    then (Feature 26 Part 2, task H4) embed the document's own text.
 
     Failure is recorded, not raised: the row exists and the user should be told
     "I couldn't read that document" on their next turn rather than getting a 500
@@ -245,6 +260,62 @@ def _extract_attachment(row: ChatAttachment, db_session: Session) -> None:
         logger.error("Chat attachment extraction failed for %s: %s", row.id, e)
         row.extraction_status = "EXTRACT_FAILED"
 
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
+    # The extraction result is committed above BEFORE indexing is attempted, so a
+    # crash inside the embed step cannot cost the extraction that already
+    # succeeded. The two are independent facts about the row and are persisted
+    # independently.
+    if row.extraction_status == "EXTRACTED":
+        _index_attachment(row, db_session)
+
+
+def _index_attachment(row: ChatAttachment, db_session: Session) -> None:
+    """Embed the attached document's text into `chat_docs_{tenant_id}` (E-2/E-6).
+
+    Only ever called for an EXTRACTED row. An EXTRACT_FAILED document is one we
+    could not read at all, so there is nothing to chunk and calling the indexer
+    would spend an embedding round trip to write zero chunks.
+
+    **Indexing failure does not fail the upload, and that is a deliberate
+    asymmetry.** The chunks serve Part 2's content branch ("what are the payment
+    terms?"); Part 1's whole comparison path -- the matcher, the confirmation
+    gate, `compare_reference_to_invoices()` -- reads the denormalised columns and
+    `extracted_json` and needs no chunks whatsoever. Failing an upload because a
+    Chroma write failed would take away a feature that works to protect one that
+    degrades.
+
+    It is not silently swallowed either: the failure is logged at ERROR, and the
+    row is left at `chunk_count=0` / `indexed_at=None`, which is the same state
+    an un-indexed row has. That pair on an EXTRACTED row is the inspectable
+    signal -- one SQL predicate finds every attachment whose embed step did not
+    take, without reading logs.
+    """
+    try:
+        from services.chat_document_search import index_attachment_chunks
+
+        written = index_attachment_chunks(row, row.tenant_id)
+    except Exception as e:
+        logger.error(
+            "Chat attachment indexing failed for %s (document remains usable for "
+            "comparison; content search is unavailable for it): %s",
+            row.id,
+            e,
+        )
+        return
+
+    if not written:
+        # A real outcome, not an error: a scanned PDF with no extractable text
+        # layer chunks to nothing. `index_attachment_chunks()` has already logged
+        # which of the two it was, and the row's `indexed_at` stays null so this
+        # is indistinguishable from "never attempted" only in the sense that both
+        # mean "no chunks exist" -- which is the fact any caller actually needs.
+        return
+
+    row.chunk_count = written
+    row.indexed_at = datetime.utcnow()
     db_session.add(row)
     db_session.commit()
     db_session.refresh(row)

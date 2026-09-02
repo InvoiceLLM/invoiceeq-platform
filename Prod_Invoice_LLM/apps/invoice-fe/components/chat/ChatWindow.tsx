@@ -31,8 +31,17 @@ import {
   X,
   PanelLeftClose,
   PanelLeftOpen,
+  Paperclip,
 } from "lucide-react";
 import { MessageStream } from "./MessageBubble";
+import AttachmentChip from "./AttachmentChip";
+import {
+  CHAT_ATTACHMENT_ACCEPT,
+  MAX_CHAT_ATTACHMENTS_PER_SESSION,
+  isAttachmentLimitReached,
+  validateChatAttachment,
+  type AttachmentState,
+} from "@/lib/chatAttachments";
 import type { ChatSession, ChatMessage } from "@/types/chat";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -347,11 +356,63 @@ interface InputBarProps {
   onSend: (text: string) => void;
   isSending: boolean;
   disabled: boolean; // True when no session is active — prevents orphan messages
+
+  // --- Feature 26 Part 2, task H10 (§P2.6.1) -------------------------------
+  // All optional, and the paperclip renders ONLY when `onAttach` is supplied.
+  // Task H12 wires these from useChatSession via page.tsx; until it does, the
+  // composer is byte-for-byte what it was, rather than growing a button that
+  // silently does nothing.
+  /** Called with a file that has already passed every client-side guard. */
+  onAttach?: (file: File) => void;
+  /** The one document attached to the turn being composed, if any. */
+  attachment?: AttachmentState | null;
+  /** Detach (ready/failed) — clears `attachment`. */
+  onRemoveAttachment?: () => void;
+  /** Abort the in-flight upload (uploading only). */
+  onCancelAttachment?: () => void;
+  /** How many attachments this SESSION already holds (backend cap is 5). */
+  attachmentCount?: number;
 }
 
-function InputBar({ onSend, isSending, disabled }: InputBarProps) {
+function InputBar({
+  onSend,
+  isSending,
+  disabled,
+  onAttach,
+  attachment = null,
+  onRemoveAttachment,
+  onCancelAttachment,
+  attachmentCount = 0,
+}: InputBarProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Client-side rejection copy (size/type/count). Kept local for the same
+  // reason `value` is: it matters until the next pick and nowhere else.
+  const [attachError, setAttachError] = useState<string | null>(null);
+
+  const sessionFull = isAttachmentLimitReached(attachmentCount);
+  const attachDisabled = disabled || isSending || sessionFull;
+
+  // WHY the guards run here as well as on the backend: the backend rejects with
+  // 413/415/409, but only after the whole file has been uploaded. Checking
+  // first means a user is not made to wait through a doomed upload. The caps
+  // are the backend's own constants, mirrored in lib/chatAttachments.ts — a
+  // client cap that disagrees with the server is worse than no client cap.
+  const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset immediately so picking the SAME file again still fires `change`.
+    e.target.value = "";
+    if (!file || !onAttach) return;
+
+    const rejection = validateChatAttachment(file, { attachmentCount });
+    if (rejection) {
+      setAttachError(rejection.message);
+      return;
+    }
+    setAttachError(null);
+    onAttach(file);
+  };
 
   // Auto-resize: reset height to "auto" first so shrinkage works correctly
   // (without the reset, removing text wouldn't shrink the box).
@@ -384,7 +445,58 @@ function InputBar({ onSend, isSending, disabled }: InputBarProps) {
   return (
     <div className="border-t border-[#222D3D] bg-[#080B12]/80 px-4 py-4">
       {/* Input container — focus-within highlights the border when typing */}
-      <div className="flex items-end gap-3 bg-[#0F172A] border border-[#222D3D] rounded-2xl px-4 py-3 focus-within:border-blue-700/60 transition-colors duration-200">
+      <div className="bg-[#0F172A] border border-[#222D3D] rounded-2xl px-4 py-3 focus-within:border-blue-700/60 transition-colors duration-200">
+        {/* Feature 26 §P2.6.2: the attached document sits INSIDE the composer,
+            above the textarea, so it reads as part of the message being
+            composed rather than a panel the user can forget about. */}
+        {attachment && (
+          <div className="mb-2.5">
+            <AttachmentChip
+              state={attachment}
+              onCancel={onCancelAttachment}
+              onRemove={onRemoveAttachment}
+            />
+          </div>
+        )}
+        <div className="flex items-end gap-3">
+        {/* Paperclip + hidden input — the same pattern DropZone.tsx uses
+            (a visually hidden <input type="file"> clicked from a real control).
+            Rendered only when a handler exists (see InputBarProps). */}
+        {onAttach && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              // NOT `multiple` — one document per turn.
+              accept={CHAT_ATTACHMENT_ACCEPT}
+              onChange={handleFilePicked}
+              className="hidden"
+              data-testid="chat-attach-input"
+            />
+            <button
+              id="chat-attach-btn" // e2e target, matching chat-input-textarea / chat-send-btn
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={attachDisabled}
+              title={
+                sessionFull
+                  ? `This conversation already has ${MAX_CHAT_ATTACHMENTS_PER_SESSION} attachments, which is the limit.`
+                  : "Attach a PDF (purchase order or quotation, max 10 MB)"
+              }
+              aria-label="Attach a document"
+              className="
+                shrink-0 w-9 h-9 flex items-center justify-center rounded-xl
+                text-slate-400 hover:text-blue-300 hover:bg-[#1E293B]
+                disabled:text-slate-600 disabled:hover:bg-transparent
+                transition-all duration-150
+                focus:outline-none focus:ring-2 focus:ring-blue-500
+                disabled:cursor-not-allowed
+              "
+            >
+              <Paperclip className="w-4 h-4" />
+            </button>
+          </>
+        )}
         <textarea
           ref={textareaRef}
           id="chat-input-textarea" // Unique ID for e2e test targeting
@@ -427,7 +539,19 @@ function InputBar({ onSend, isSending, disabled }: InputBarProps) {
             <Send className="w-4 h-4" />
           )}
         </button>
+        </div>
       </div>
+      {/* Client-side guard rejection (size / type / per-session count). Shown
+          here rather than as a toast so it sits next to the control that
+          produced it. */}
+      {attachError && (
+        <p
+          data-testid="chat-attach-error"
+          className="mt-2 text-[11px] text-rose-300 bg-rose-950/25 border border-rose-800/40 rounded-lg px-2.5 py-1.5"
+        >
+          {attachError}
+        </p>
+      )}
       {/* Disclaimer — important for a financial AI tool to set expectations */}
       <p className="text-[10px] text-slate-600 mt-2 text-center">
         AI may make mistakes. Always verify critical figures against source invoices.
@@ -455,6 +579,25 @@ interface ChatWindowProps {
   onSendMessage: (text: string) => void;
   onRenameSession: (id: string, newTitle: string) => void;
   onDeleteSession: (id: string) => void;
+
+  // --- Feature 26 Part 2, task H10 (§P2.6.1) -------------------------------
+  // Optional and threaded straight through to InputBar. Task H12 supplies them
+  // from useChatSession via page.tsx:
+  //   onAttach            → uploadAttachment(file): XHR POST to
+  //                         /api/chat/sessions/{id}/attachments, driving
+  //                         AttachmentState through uploading → extracting →
+  //                         ready | failed.
+  //   attachment          → that AttachmentState (null when nothing attached).
+  //   onRemoveAttachment  → clears it, so the next turn is not silently
+  //                         re-grounded on a stale document.
+  //   onCancelAttachment  → aborts the in-flight XHR.
+  //   attachmentCount     → count of attachments already on the SESSION (not
+  //                         the turn), which is what the backend's 409 counts.
+  onAttach?: (file: File) => void;
+  attachment?: AttachmentState | null;
+  onRemoveAttachment?: () => void;
+  onCancelAttachment?: () => void;
+  attachmentCount?: number;
 }
 
 export default function ChatWindow({
@@ -470,6 +613,11 @@ export default function ChatWindow({
   onSendMessage,
   onRenameSession,
   onDeleteSession,
+  onAttach,
+  attachment = null,
+  onRemoveAttachment,
+  onCancelAttachment,
+  attachmentCount = 0,
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
 
@@ -580,6 +728,11 @@ export default function ChatWindow({
           onSend={onSendMessage}
           isSending={isSending}
           disabled={!hasActiveSession}
+          onAttach={onAttach}
+          attachment={attachment}
+          onRemoveAttachment={onRemoveAttachment}
+          onCancelAttachment={onCancelAttachment}
+          attachmentCount={attachmentCount}
         />
       </div>
     </div>

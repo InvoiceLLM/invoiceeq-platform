@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 import redis
 from config import get_settings, Settings
@@ -10,8 +10,13 @@ from sqlmodel import Session, select
 from database import engine
 from uuid import UUID, uuid4
 from azure.storage.queue import QueueClient
-from models import Invoice, ExtractionTemplate, TenantConnection
+from models import Document, Invoice, ExtractionTemplate, TenantConnection
 from agents.extraction_agent import run_extraction_agent
+# Feature 27 (G7): the family table, imported at module level rather than inside
+# `_should_persist_coordinates` -- this module already imports
+# `agents.extraction_agent`, which imports this same module, so a local import
+# would imply a cycle that does not exist.
+from services.document_type_classifier import DOC_TYPE_FAMILY, MONEY_FAMILY
 from utils.rule_schema import merge_constraints
 
 
@@ -330,6 +335,222 @@ def _run_ocr(file_path: str, settings: Settings):
         "source_document_json": source_document_json,
     }
 
+
+
+def _should_persist_coordinates(doc_type: str | None) -> bool:
+    """Feature 27 (G7 / §2A A1): may Doc Intelligence's boxes go onto this row?
+
+    `_run_ocr` calls `prebuilt-invoice` for every document, in both flag states
+    (A1 — there is no OCR-model selector in this feature and no `prebuilt-layout`
+    branch). Every box it returns is therefore labelled with a DI *invoice* field
+    name, and that model force-fits those fields onto a document that is not an
+    invoice rather than declining to read it. Persisting them for a purchase
+    order means the auditor overlay (Task 2.15 / Gap 16, normalised by Gap 330)
+    draws a `grand_total` box around whatever DI guessed. **An empty overlay is
+    honest; a mislabelled one is not.**
+
+    Returns True — today's unconditional behaviour — for:
+      * `None`, which is every flag-OFF run (the classifier node is not in the
+        compiled graph, so `run_extraction_agent` returns no type) and also any
+        caller that patches `run_extraction_agent` with a dict that has no
+        `doc_type` key. Fail-closed to today's behaviour, the same default
+        `resolve_extraction_profile` / `resolve_verification_rubric` take.
+      * an out-of-vocabulary type, which means a caller defect rather than a
+        classified non-invoice — logged, for the same reason those two resolvers
+        log it.
+      * the money family (`INVOICE`, `PROFORMA_INVOICE`, `CREDIT_NOTE`,
+        `DEBIT_NOTE`) — A1's "the INVOICE family". The comparison is against the
+        imported `MONEY_FAMILY` constant, never a bare `"INVOICE"` literal, which
+        is a *value* in `DOC_TYPES` and would misroute the other three (Gap 369's
+        build note, naming note 1).
+
+    Nothing else is gated here: `field_confidence` and `source_document_json`
+    stay persisted for every row (A1 — the latter is diagnostic and is already
+    excluded from every LLM-visible projection).
+    """
+    if doc_type is None:
+        return True
+
+    family = DOC_TYPE_FAMILY.get(str(doc_type).strip().upper())
+    if family is None:
+        logger.warning(
+            "_should_persist_coordinates: doc_type %r is not in DOC_TYPES; persisting "
+            "coordinates unchanged (fail-closed).",
+            doc_type,
+        )
+        return True
+    return family == MONEY_FAMILY
+
+
+def _routes_to_documents_table(doc_type: str | None) -> bool:
+    """Feature 27 (G9 / E10): does this document belong in `documents`, not `invoice`?
+
+    True for exactly one case: a `doc_type` that is a **known value** in
+    `DOC_TYPES` whose family is **not** the money family. Everything else is
+    False, which means "today's behaviour: update the `Invoice` row":
+
+      * `doc_type is None` — every flag-OFF run (the classifier node is not in
+        the compiled graph at all), and any caller or test that patches
+        `run_extraction_agent` with a dict predating the key.
+      * an out-of-vocabulary type — a caller defect, not a classified
+        non-invoice. Logged, for the same reason `resolve_extraction_profile`
+        and `_should_persist_coordinates` log it.
+      * the money family (`INVOICE`, `PROFORMA_INVOICE`, `CREDIT_NOTE`,
+        `DEBIT_NOTE`).
+
+    Note this is deliberately **not** `not _should_persist_coordinates(...)`.
+    The two questions have the same answer today, but they fail closed towards
+    *different* things and must be allowed to diverge: getting coordinates wrong
+    draws a mislabelled box, getting this wrong deletes an `Invoice` row. The
+    comparison is against the imported `MONEY_FAMILY` constant, never a bare
+    `"INVOICE"` literal — `"INVOICE"` is a *value* in `DOC_TYPES`, and comparing
+    against it would route proformas, credit notes and debit notes into the
+    wrong table (Gap 369's build note, naming note 1).
+    """
+    if doc_type is None:
+        return False
+
+    family = DOC_TYPE_FAMILY.get(str(doc_type).strip().upper())
+    if family is None:
+        logger.warning(
+            "_routes_to_documents_table: doc_type %r is not in DOC_TYPES; keeping the "
+            "invoice row (fail-closed).",
+            doc_type,
+        )
+        return False
+    return family != MONEY_FAMILY
+
+
+def _parse_doc_date(value) -> Optional[date]:
+    """Best-effort ISO date parse for `Document.doc_date` / `.valid_until`.
+
+    Same shape as the inline date handling on the invoice branch below: the
+    generic schema returns dates as free-text strings because a document may
+    legitimately print one in any regional format, and a value we cannot parse
+    is left NULL rather than guessed at. A guessed date on a contract's
+    `valid_until` is a plausible wrong answer, which is the class E9 exists to
+    prevent.
+    """
+    if not value:
+        return None
+    try:
+        date_str = str(value).split("T")[0].split(" ")[0].strip()
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except Exception as de:
+        logger.warning("Could not parse document date %s: %s", value, de)
+        return None
+
+
+def _persist_non_invoice_document(
+    session: Session,
+    placeholder: Invoice,
+    extracted_data: dict,
+    status: str,
+    alerts: list,
+    doc_type: str | None,
+    doc_type_evidence: str | None,
+    doc_type_confidence: float | None,
+    source_document_json: dict | None,
+) -> Document:
+    """Feature 27 (G9 / E10): write the `documents` row and delete the placeholder
+    `invoice` row **in one transaction**.
+
+    Why a placeholder exists to delete at all: classification happens *inside*
+    the graph, after OCR, so the ingestion door cannot know the document's type
+    at row-creation time. `routers/invoices.py` therefore creates the `Invoice`
+    row exactly as it always has, and this is where the type finally becomes
+    known. The residual exposure is bounded and worth stating rather than
+    discovering later: between upload and classification the placeholder exists
+    with `status=PROCESSING` and `grand_total=NULL`, so during that window it
+    contributes **zero** to every money total (NULL coalesces to 0) and **one**
+    to a transient status count on `/dashboard/metrics`. That is the whole of
+    it, and it lasts one OCR + extract run.
+
+    Two implementation choices are load-bearing (§2A/A4/F4), not stylistic:
+
+    1. **`tenant_id` comes from the already-loaded `Invoice` DB row**, never from
+       `handle_process_invoice`'s raw `tenant_id` payload argument. That is the
+       pattern every other persistence write in that function already uses, and
+       it means the new row inherits a tenant value that was written by the
+       upload path and has been in the database ever since, rather than one that
+       arrived on a queue message.
+
+    2. **The placeholder is deleted by its resolved `id`**, with `tenant_id` as a
+       belt-and-braces second predicate — *never* by `file_path`. `file_path` is
+       not unique within a tenant: `routers/invoices.py`'s duplicate branch
+       copies the matched original's `file_path` onto the new `DUPLICATE` row,
+       so a `file_path`-keyed delete could remove an unrelated duplicate pointer
+       row that has nothing to do with this job.
+
+    One transaction, one commit: a crash before it leaves the placeholder intact
+    with its original, correct `tenant_id` (recoverable — the reconciliation
+    sweep re-enqueues it), and a crash after it leaves the document row with no
+    orphan. The one thing that must never happen is both rows existing at once
+    in a committed state, because that is a non-invoice counted in every invoice
+    aggregate, which is Gap 329 exactly.
+    """
+    items = extracted_data.get("items") or []
+    document = Document(
+        # (1) from the DB row, not the payload argument.
+        tenant_id=placeholder.tenant_id,
+        batch_id=placeholder.batch_id,
+        file_path=placeholder.file_path,
+        file_hash=placeholder.file_hash,
+        submitted_by_email=placeholder.submitted_by_email,
+        last_enqueued_at=placeholder.last_enqueued_at,
+        processing_attempts=placeholder.processing_attempts,
+        doc_type=doc_type,
+        doc_type_evidence=doc_type_evidence,
+        doc_type_confidence=doc_type_confidence,
+        party_name=extracted_data.get("party_name"),
+        counterparty_name=extracted_data.get("counterparty_name"),
+        doc_number=extracted_data.get("doc_number"),
+        po_number=extracted_data.get("po_number"),
+        reference_numbers=extracted_data.get("reference_numbers") or [],
+        doc_date=_parse_doc_date(extracted_data.get("doc_date")),
+        valid_until=_parse_doc_date(extracted_data.get("valid_until")),
+        currency=extracted_data.get("currency"),
+        # `.get()` with no `or 0` anywhere on these five: a delivery note that
+        # prints no prices must keep them NULL. Coercing absence to zero is the
+        # Gap 283 truthiness bug from the other side, and a fabricated 0.00
+        # reads exactly like a real one downstream.
+        subtotal=extracted_data.get("subtotal"),
+        tax_amount=extracted_data.get("tax_amount"),
+        discount_amount=extracted_data.get("discount_amount"),
+        grand_total=extracted_data.get("grand_total"),
+        items=items,
+        taxes=extracted_data.get("taxes") or [],
+        payment_terms=extracted_data.get("payment_terms"),
+        delivery_terms=extracted_data.get("delivery_terms"),
+        incoterms=extracted_data.get("incoterms"),
+        notes=extracted_data.get("notes"),
+        # EXTRACTED / EXTRACT_FAILED, straight from the GENERIC profile — the
+        # same pair the table's `status` column is documented against.
+        status=status,
+        sa_alerts=alerts,
+        source_document_json=source_document_json,
+        completed_at=datetime.utcnow(),
+    )
+    session.add(document)
+
+    # (2) delete by resolved id + tenant_id, never by file_path.
+    session.delete(
+        session.exec(
+            select(Invoice).where(
+                Invoice.id == placeholder.id,
+                Invoice.tenant_id == placeholder.tenant_id,
+            )
+        ).one()
+    )
+
+    session.commit()
+    session.refresh(document)
+    logger.info(
+        "Feature 27 (E10): %s classified as %s -- wrote documents row %s and removed "
+        "placeholder invoice row %s in one transaction.",
+        document.file_path, doc_type, document.id, placeholder.id,
+    )
+    return document
 
 
 def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | None) -> list:
@@ -655,6 +876,15 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
         status = agent_result["status"]
         alerts = agent_result["alerts"]
         extracted_data = agent_result["extracted_data"] or {}
+        # Feature 27 (G7): the classified document type, or None -- which is every
+        # flag-OFF run, and also any caller/test that patches
+        # `run_extraction_agent` with a dict predating this key. `.get()`, never
+        # `[...]`, for exactly that reason. G7 reads it to gate `coordinates`;
+        # G9 additionally routes persistence on it and writes all three onto the
+        # row.
+        doc_type = agent_result.get("doc_type")
+        doc_type_evidence = agent_result.get("doc_type_evidence")
+        doc_type_confidence = agent_result.get("doc_type_confidence")
 
         # Stage 2: now that the vendor is known, merge Global + vendor-specific
         # constraints (vendor wins on conflict) and re-run if a vendor template exists.
@@ -675,12 +905,98 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 status = agent_result["status"]
                 alerts = agent_result["alerts"]
                 extracted_data = agent_result["extracted_data"] or {}
+                # The second pass reclassifies from the same OCR text, so this is
+                # the same answer; read from the result that is actually being
+                # persisted rather than leaving a stale value from the first pass.
+                doc_type = agent_result.get("doc_type")
+                doc_type_evidence = agent_result.get("doc_type_evidence")
+                doc_type_confidence = agent_result.get("doc_type_confidence")
 
-        
+
         # Update invoice record in the database
         with Session(engine) as session:
             statement = select(Invoice).where(Invoice.file_path == file_path)
             invoice = session.exec(statement).first()
+
+            # ── Feature 27 (G9 / E10): persistence forks on the document family ──
+            # A non-INVOICE-family document is not an `Invoice` row. It gets a
+            # `documents` row and the upload-time placeholder is deleted in the
+            # same transaction; then this job is finished. Everything below this
+            # block -- the vendor/invoice-number duplicate check, the invoice
+            # field writes, the invoice.completed/audit_required webhooks, the
+            # staff notify, the insights-cache invalidation and the invoice RAG
+            # index -- is invoice-specific by construction and must not run for a
+            # delivery note. Skipping them is not an optimisation: firing
+            # `invoice.completed` for a purchase order, or indexing it into
+            # `invoice_chunks_{tenant}`, would be exactly the corruption E10
+            # exists to prevent, one layer up from the table itself.
+            #
+            # With the flag off `doc_type` is always None, so this branch is
+            # unreachable and the file behaves as it does today.
+            if invoice is not None and _routes_to_documents_table(doc_type):
+                # Read before the delete: the ORM object is expired afterwards,
+                # and this id is what an open SSE stream is keyed on.
+                invoice_id_for_event = invoice.id
+                document = _persist_non_invoice_document(
+                    session=session,
+                    placeholder=invoice,
+                    extracted_data=extracted_data,
+                    status=status,
+                    alerts=alerts,
+                    doc_type=doc_type,
+                    doc_type_evidence=doc_type_evidence,
+                    doc_type_confidence=doc_type_confidence,
+                    source_document_json=source_document_json,
+                )
+
+                # Embed into the SIBLING collection (§5 step 9 / G10), never the
+                # tenant's invoice collection. `should_index_status()` is reused
+                # rather than reimplemented so the "is this worth indexing?"
+                # answer stays in one place (Gaps 240/243) -- EXTRACTED passes it,
+                # EXTRACT_FAILED does not. Best-effort, like the invoice path: a
+                # `Document` row is fully usable without an index.
+                from chroma_client import index_document_chunks, should_index_status
+                if should_index_status(status):
+                    try:
+                        _publish_sse_events(batch_id, {
+                            "status": "INDEXING",
+                            "message": "Generating page embeddings and indexing document chunks...",
+                        })
+                        index_document_chunks(
+                            document_id=str(document.id),
+                            tenant_id=str(document.tenant_id),
+                            doc_type=document.doc_type,
+                            party_name=document.party_name,
+                            file_path=file_path,
+                            on_log=on_log,
+                        )
+                    except Exception as ie:
+                        logger.error("RAG indexing failed for document %s: %s", document.id, ie)
+
+                # The terminal event carries the placeholder's id as well as the
+                # new document id: an open SSE stream is keyed on the id the
+                # upload returned, so without it that row would sit on
+                # PROCESSING forever rather than reaching a terminal state.
+                # E10 states the product consequence openly -- once the
+                # placeholder is gone the upload is absent from the ingestion
+                # status table until `GET /documents` (G14) has an FE surface
+                # (G11). That is a rollout gate, not a bug in this path.
+                _publish_sse_events(batch_id, {
+                    "status": status,
+                    "message": f"Processing finished with status: {status}",
+                    "invoice_id": str(invoice_id_for_event),
+                    "document_id": str(document.id),
+                    "doc_type": document.doc_type,
+                    "data": extracted_data,
+                    "alerts": alerts,
+                })
+                return {
+                    "document_id": str(document.id),
+                    "doc_type": document.doc_type,
+                    "status": status,
+                    "alerts": alerts,
+                }
+
             if invoice:
                 vendor_name = extracted_data.get("vendor_name")
                 invoice_number = extracted_data.get("invoice_number")
@@ -724,7 +1040,21 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                             
                 invoice.tax_amount = extracted_data.get("tax_amount")
                 invoice.po_number = extracted_data.get("po_number")
-                invoice.coordinates = coordinates
+                # Feature 27 (G7 / §2A A1): the INVOICE family keeps DI's boxes;
+                # a non-invoice document persists `[]` rather than an overlay
+                # whose every box carries an invoice field's name. `doc_type` is
+                # None in every flag-OFF run, so this is today's line unchanged.
+                #
+                # **Status after G9, stated rather than left to be discovered:**
+                # `_routes_to_documents_table()` above returns True for exactly the
+                # types this gate returns False for, and it returns early, so on
+                # this line the gate now always resolves True. It is kept as the
+                # invoice branch's own guard -- the two questions fail closed
+                # towards different things (see `_routes_to_documents_table`'s
+                # docstring), and E10's routing is what makes the mislabelled
+                # overlay impossible one layer up rather than what makes this
+                # check wrong.
+                invoice.coordinates = coordinates if _should_persist_coordinates(doc_type) else []
                 invoice.field_confidence = field_confidence
                 invoice.source_document_json = source_document_json
                 invoice.currency = extracted_data.get("currency")

@@ -7,6 +7,30 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Feature 26 Part 2, task H1 (E-8 as replaced by amendment B5).
+#
+# CONTRACT FOR WHOEVER BUILDS H5 — read this before writing the content-branch
+# prompt in `agents/query_agent.py::_run_attached_document_turn()`:
+#
+#   The content-branch system prompt MUST open with (or otherwise contain,
+#   verbatim) the string below. `MockInvoiceLLM.invoke()` keys its canned
+#   document-content answer on it, and nothing else in the prompt identifies the
+#   branch. Import this constant rather than retyping the sentence — a
+#   re-typed variant that drifts by one word silently falls through to the SAGE
+#   greeting again, which is the exact failure H1 exists to remove.
+#
+#       from utils.llm import CONTENT_BRANCH_PROMPT_MARKER
+#
+# It is deliberately apostrophe-free and punctuation-free so no smart-quote or
+# comma edit in the prompt can break the match, and it is matched
+# case-insensitively (the whole `invoke()` body lowercases the prompt first).
+# ---------------------------------------------------------------------------
+CONTENT_BRANCH_PROMPT_MARKER = (
+    "You are answering a question about the content of an attached document"
+)
+
+
 class MockInvoiceLLM:
     """High-fidelity Mock LLM engine for local development, automated testing,
     and Gap 280 architecture verification without external cloud dependencies."""
@@ -67,6 +91,29 @@ class MockInvoiceLLM:
                 self.content = content
 
         p_lower = prompt.lower()
+
+        # Attached-document CONTENT branch (Feature 26 Part 2, H1).
+        #
+        # Checked FIRST, deliberately: the RAG branch below matches the bare
+        # substring "rag", which occurs inside ordinary English words
+        # ("storage", "average", "fragrance", "paragraph"). The content-branch
+        # prompt interpolates verbatim spans of a user-uploaded document, so it
+        # is a matter of time before one of those words appears and a document
+        # answer gets served the invoice-RAG canned text. Ordering, not a
+        # tightening of the RAG marker, because that marker is load-bearing for
+        # existing tests and is not this task's to change.
+        if CONTENT_BRANCH_PROMPT_MARKER.lower() in p_lower:
+            content = (
+                "### 📎 Attached Document — What It Says\n\n"
+                "Reading the document you attached to this conversation:\n\n"
+                "- **Payment terms**: Net 30 days from the date of issue.\n"
+                "- **Delivery**: Within 14 working days of order acceptance.\n"
+                "- **Validity**: The quoted prices hold for 30 days.\n\n"
+                "I can tell you what this document says. To check it against your "
+                "invoices, ask me to compare them.\n\n"
+                "The quoted passages below show where each point comes from in the document."
+            )
+            return MockResponse(content=content)
 
         # SQL summary / synthesis
         if any(marker in p_lower for marker in ["database query results", "columns returned", "sql query results", "query result:"]):

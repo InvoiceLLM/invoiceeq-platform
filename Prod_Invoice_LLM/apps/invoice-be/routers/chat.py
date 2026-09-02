@@ -21,7 +21,7 @@ from dependencies import (
     get_tenant_or_api_key_context,
     TenantContext,
 )
-from models import ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
+from models import ChatAttachment, ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
 from agents.query_agent import run_query_agent
 from services.online_quality_judge import submit_turn_judgement
 from utils.logging_config import request_id_ctx, trace_id_ctx
@@ -271,7 +271,7 @@ def delete_session(
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
-    """Delete a chat session and all its associated messages and feedback."""
+    """Delete a chat session and all its associated messages, feedback and attachments."""
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
     chat_session = db_session.exec(session_statement).first()
     
@@ -297,7 +297,32 @@ def delete_session(
         for f in feedbacks:
             db_session.delete(f)
         db_session.delete(msg)
-        
+
+    # Feature 26: attachments carry a real FK to `chatsession.id`, so they have
+    # to go before the session does -- on Postgres, leaving them is a
+    # ForeignKeyViolation and the delete fails outright; on SQLite it is a silent
+    # orphan, which is worse. This is the ONE place in the product where a
+    # ChatAttachment row is deleted today (task H8's TTL sweeper will be the
+    # second), so it is also where the vector chunks have to be removed: the row
+    # and its chunks in `chat_docs_{tenant_id}` are the same object stored twice,
+    # and deleting only the row leaves a searchable document nothing can ever
+    # reach or clean up (the reembed script scans `invoice_chunks_*` only and is
+    # structurally blind to chat-doc collections).
+    #
+    # Chunk deletion is best-effort by design: `delete_attachment_chunks()` logs
+    # and swallows its own errors, so an unreachable Chroma cannot turn "delete
+    # my conversation" into a 500 on a request whose real subject is Postgres
+    # rows. The residue in that case is orphaned chunks, which the sweeper can
+    # still remove; the alternative residue is a session the user cannot delete.
+    from services.chat_document_search import delete_attachment_chunks
+
+    attachments = db_session.exec(
+        select(ChatAttachment).where(ChatAttachment.session_id == session_id)
+    ).all()
+    for attachment in attachments:
+        delete_attachment_chunks(attachment.id, attachment.tenant_id)
+        db_session.delete(attachment)
+
     db_session.delete(chat_session)
     db_session.commit()
 

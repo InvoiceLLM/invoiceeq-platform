@@ -21,6 +21,34 @@ interface DropZoneProps {
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
+/**
+ * FE Gap 378 / BE Feature 27 (G11): the accept list is DELIBERATELY still
+ * PDF-only, and this is a recorded blocker rather than an oversight.
+ *
+ * Feature 27 §4 widens it to `.pdf,.png,.jpg,.jpeg,.tiff` **only when
+ * `ENABLE_GENERIC_EXTRACTION` is on**, "surfaced via the existing
+ * config/feature endpoint, not hardcoded". There is no such endpoint. Checked
+ * 2026-09-02, repo-wide: every `ENABLE_*` flag in `invoice-be/config.py` is
+ * read server-side only (`ENABLE_ASYNC_CHAT_QUEUE` is consumed inside
+ * `routers/chat.py`; the FE adapts to the response shape, never to a flag),
+ * `main.py` registers no `/config` or `/features` router, and the only
+ * flag-shaped values the FE sees are build-time `NEXT_PUBLIC_*` env vars —
+ * which cannot reflect a backend process setting.
+ *
+ * Widening the list unconditionally would let a user select a PNG that the
+ * backend, with the flag off, cannot extract (`pdf_to_base64_images()` returns
+ * `[]` for a non-PDF and the visual channel is silently lost). Inventing a
+ * `/features` endpoint is backend scope this change is not authorised for. So
+ * both guards below stay `.pdf`, matching the real backend state today, and
+ * the missing piece — a flag-exposure mechanism — is written down here and in
+ * `feature_27_generic_extraction.md`'s G11 build note for whoever picks it up.
+ *
+ * When it lands: the suffix check in `processFiles` and the `accept` attribute
+ * on the input are separate checks and BOTH must move together, or a dragged
+ * PNG gets past the picker and is rejected after selection.
+ */
+const ACCEPTED_EXTENSIONS = [".pdf"];
+
 export default function DropZone({ files = [], onChange, showQueue = true }: DropZoneProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -54,8 +82,9 @@ export default function DropZone({ files = [], onChange, showQueue = true }: Dro
     for (let i = 0; i < newFiles.length; i++) {
       const file = newFiles[i];
 
-      // Validate format
-      if (!file.name.toLowerCase().endsWith(".pdf")) {
+      // Validate format (guard 1 of 2 — see ACCEPTED_EXTENSIONS above)
+      const lowerName = file.name.toLowerCase();
+      if (!ACCEPTED_EXTENSIONS.some((ext) => lowerName.endsWith(ext))) {
         setErrorMessage("Invalid file format. Only PDF documents are allowed.");
         continue;
       }
@@ -118,7 +147,9 @@ export default function DropZone({ files = [], onChange, showQueue = true }: Dro
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf"
+          /* Guard 2 of 2 — must always agree with the suffix check in
+             processFiles. See ACCEPTED_EXTENSIONS above. */
+          accept={ACCEPTED_EXTENSIONS.join(",")}
           onChange={handleFileChange}
           className="hidden"
         />

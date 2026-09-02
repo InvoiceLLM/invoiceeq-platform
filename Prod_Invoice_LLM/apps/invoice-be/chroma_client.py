@@ -336,6 +336,100 @@ def _tenant_collection_name(tenant_id: str) -> str:
     """
     return f"invoice_chunks_{tenant_id}"
 
+
+def _chat_doc_collection_name(tenant_id: str) -> str:
+    """
+    Feature 26 Part 2 (E-2): the **sibling** collection holding chunks of
+    documents a user attached to a chat turn (a PO, a quotation, a delivery
+    note) -- never an `Invoice`. One per tenant, exactly like
+    `_tenant_collection_name()` above, so tenant isolation stays structural
+    (Gap 55) rather than a metadata filter.
+
+    Why a separate collection rather than a `where` filter on the invoice one:
+    the RAG answer path (`agents/query_agent.py`, Feature 6) builds the model's
+    context from **every** retrieved chunk and only filters *citations* against
+    real `Invoice` rows afterwards. An attachment chunk sitting in
+    `invoice_chunks_{tenant}` would therefore feed a quoted (not billed) price
+    into an unrelated chat answer and then have its source silently dropped --
+    a wrong number with no visible provenance. A filter that has to be
+    remembered at every call site cannot prevent that; a different collection
+    can, because `query_invoice_chunks()` has no way to name this one.
+    """
+    return f"chat_docs_{tenant_id}"
+
+
+def get_chat_doc_collection(tenant_id: str):
+    """
+    The one place `chat_docs_{tenant_id}` is created or opened.
+
+    Exists so the `_collection_metadata()` argument below is written **once**.
+    Gap 244, verified live against chromadb 1.5.9: Chroma pins a collection's
+    HNSW space at creation, and passing this metadata to a collection that
+    already exists silently returns it on its original space -- no error, no
+    warning. A single call site that forgets it leaves the collection
+    permanently on `l2`, where `RELEVANCE_DISTANCE_THRESHOLD = 0.49` (derived
+    empirically in cosine space) means nothing, and the only recovery is drop +
+    re-embed. Callers in `services/chat_document_search.py` (task H3) must go
+    through this function rather than calling `get_or_create_collection()`
+    themselves.
+    """
+    client = get_chroma_client()
+    return client.get_or_create_collection(
+        name=_chat_doc_collection_name(tenant_id),
+        metadata=_collection_metadata(),
+    )
+
+
+def _document_collection_name(tenant_id: str) -> str:
+    """
+    Feature 27 (G10 / decision E10): the **sibling** collection holding chunks of
+    a non-INVOICE-family document ingested through the normal upload path -- a
+    delivery note, a purchase order, a quotation, a contract, a GRN. One per
+    tenant, exactly like `_tenant_collection_name()` and
+    `_chat_doc_collection_name()` above, so tenant isolation stays structural
+    (Gap 55) rather than a metadata filter.
+
+    Three collections, three populations, no overlap:
+      * `invoice_chunks_{tenant}` -- money the tenant owes or is owed.
+      * `chat_docs_{tenant}`      -- a document attached to one chat turn (F26).
+      * `docs_{tenant}`           -- a non-invoice document ingested for real.
+
+    Why this is a different collection rather than a `where` filter on the
+    invoice one: `query_invoice_chunks()` builds the model's context from every
+    chunk it retrieves. A quotation's chunk sitting in `invoice_chunks_{tenant}`
+    would feed a *quoted* (not billed) price into an answer about spend, and the
+    citation would then be dropped for having no matching `Invoice` row -- a
+    wrong number with no visible provenance. A filter that has to be remembered
+    at every call site cannot prevent that; a different collection can, because
+    `query_invoice_chunks()` has no way to name this one. That
+    unreachability-by-construction is precisely what E10 buys and what 39
+    hand-maintained SQL filters would only approximate.
+    """
+    return f"docs_{tenant_id}"
+
+
+def get_document_collection(tenant_id: str):
+    """
+    The one place `docs_{tenant_id}` is created or opened.
+
+    Exists for the same reason `get_chat_doc_collection()` does: so the
+    `_collection_metadata()` argument below is written **once**. Gap 244,
+    verified live against chromadb 1.5.9 -- Chroma pins a collection's HNSW space
+    at creation, and passing this metadata to a collection that already exists
+    silently returns it on its original space, with no error and no warning. A
+    single call site that forgets it leaves the collection permanently on `l2`,
+    where `RELEVANCE_DISTANCE_THRESHOLD = 0.49` (derived empirically in cosine
+    space) means nothing, and the only recovery is a drop + re-embed. Callers go
+    through this function rather than calling `get_or_create_collection()`
+    themselves.
+    """
+    client = get_chroma_client()
+    return client.get_or_create_collection(
+        name=_document_collection_name(tenant_id),
+        metadata=_collection_metadata(),
+    )
+
+
 def get_embeddings(texts: list[str]) -> list[list[float]]:
     """
     Calculates embedding vectors for a list of texts (1024-dimensional, unit norm).
@@ -440,6 +534,231 @@ def index_invoice_document(
         metadatas=metadata_list
     )
     logger.info("Successfully indexed %d page chunks for invoice %s", len(chunks), invoice_id)
+
+def index_document_chunks(
+    document_id: str,
+    tenant_id: str,
+    doc_type: str | None,
+    party_name: str | None,
+    file_path: str,
+    on_log: Optional[Callable[[str], None]] = None,
+) -> int:
+    """
+    Feature 27 (G10 / E10): index a non-invoice `Document` row's pages into
+    `docs_{tenant_id}` -- the sibling of `index_invoice_document()` above, one
+    collection over, never the tenant's invoice collection.
+
+    Same page-per-chunk shape and the same structured header prefix as the
+    invoice path, with one difference that matters: the header names the
+    **document type** (`[DELIVERY_NOTE | Party: ... | Document ID: ... | Page n]`)
+    rather than a vendor. §5 step 9 asks for that explicitly, so a future
+    retrieval path can tell a quotation's price from an invoice's without having
+    to re-derive it from the row. In v1 nothing on the invoice side can see this
+    collection at all, which is the point.
+
+    There is deliberately **no `invoice_id` key** in the metadata. A document is
+    not an invoice (E10), so anything filtering on `invoice_id` must find
+    nothing here -- the same choice `services/chat_document_search.py` made for
+    the same reason.
+
+    Returns the number of chunks written, so a caller can record it on the row
+    rather than having to read a log line. Failure policy mirrors
+    `index_invoice_document()`: a missing blob or an unreadable PDF is logged and
+    returns 0 rather than raising -- the `Document` row itself is still valid and
+    fully usable without an index. A genuine Chroma write failure *does*
+    propagate, because silently reporting "0 chunks" would make an unsearchable
+    document indistinguishable from an empty one.
+    """
+    logger.info("Indexing document %s for tenant %s", document_id, tenant_id)
+    try:
+        pdf_bytes = download_pdf_from_storage(file_path)
+    except Exception as e:
+        logger.warning("PDF file not found for document indexing: %s (%s)", file_path, e)
+        return 0
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        logger.error("Failed to open PDF for document indexing: %s", e)
+        return 0
+
+    resolved_type = (doc_type or "OTHER").upper()
+    party = party_name or "Unknown"
+
+    chunks: list[str] = []
+    metadata_list: list[dict] = []
+    ids: list[str] = []
+
+    if on_log:
+        on_log("Chunking document pages...")
+
+    try:
+        for idx, page in enumerate(doc):
+            text = page.get_text()
+            if not text.strip():
+                continue
+
+            header = (
+                f"[{resolved_type} | Party: {party} | Document ID: {document_id} "
+                f"| Page {idx + 1}]\n"
+            )
+            chunks.append(header + text)
+            metadata_list.append({
+                "tenant_id": str(tenant_id),
+                "document_id": str(document_id),
+                "doc_type": resolved_type,
+                "party_name": party,
+                "page": idx + 1,
+            })
+            ids.append(f"{document_id}_page_{idx + 1}")
+    finally:
+        doc.close()
+
+    if not chunks:
+        logger.info("No extractable text found in document %s for indexing.", document_id)
+        return 0
+
+    if on_log:
+        on_log("Generating page embeddings...")
+    embeddings = get_embeddings(chunks)
+
+    collection = get_document_collection(str(tenant_id))
+    collection.upsert(
+        ids=ids,
+        embeddings=embeddings,
+        documents=chunks,
+        metadatas=metadata_list,
+    )
+    logger.info(
+        "Successfully indexed %d page chunks for document %s into docs_%s",
+        len(chunks), document_id, tenant_id,
+    )
+    return len(chunks)
+
+
+def delete_document_chunks(document_id: str, tenant_id: str) -> None:
+    """
+    Feature 27 (Gap 385, closing G10's open item): remove every indexed chunk of
+    one `Document` row from `docs_{tenant_id}`.
+
+    The sibling of `delete_invoice_chunks()` below, and deliberately **not** the
+    same policy about when to call it. That function is unwired from invoice
+    soft-delete on purpose (Gap 239: a restored invoice must keep its chunks);
+    this one has a caller from the day it is written, because
+    `scripts/sweep_sandbox_tenants.py` hard-deletes an expired sandbox
+    workspace's rows and, without this, `docs_{tenant_id}` outlives them --
+    full page text of that tenant's POs, contracts and negotiated pricing sitting
+    in a store nothing any longer associates with a live tenant (§2A/A4 item 3,
+    the same shape as Gap 239's orphan-citation problem).
+
+    Goes through `get_document_collection()` rather than a bare
+    `get_or_create_collection()`, per §8 trap 3: a collection opened without
+    `_collection_metadata()` is permanently on `l2`, silently, and the only
+    recovery is a drop + re-embed. That is one call site for the metadata, not
+    four.
+
+    Errors are logged and swallowed, matching
+    `services/chat_document_search.py::delete_attachment_chunks()`: a sweeper that
+    dies on one unreachable tenant collection leaves every later tenant unswept.
+    """
+    if document_id is None:
+        raise ValueError("delete_document_chunks requires a document_id.")
+    try:
+        collection = get_document_collection(str(tenant_id))
+        collection.delete(where={"document_id": str(document_id)})
+    except Exception as e:
+        logger.warning(
+            "Failed to delete document chunks for document %s (tenant %s): %s",
+            document_id, tenant_id, e,
+        )
+
+
+def delete_tenant_document_collection(tenant_id: str) -> None:
+    """
+    Feature 27 (Gap 385): drop a tenant's **entire** `docs_{tenant_id}` collection.
+
+    Distinct from `delete_document_chunks()` above and both are needed, for a
+    reason that is not obvious: deleting every row's chunks one at a time leaves
+    the collection itself behind, and an empty-but-present collection is
+    indistinguishable from a live tenant's to
+    `scripts/reembed_chroma_collections.py`'s orphan sweep. The tenant-expiry path
+    is deleting the tenant, not a document, so it should say that.
+
+    Used by `scripts/sweep_sandbox_tenants.py`. Errors are logged and swallowed
+    for the same reason as above, and a collection that does not exist is not an
+    error -- a sandbox visitor who never uploaded a non-invoice document has no
+    `docs_` collection, which is the common case.
+    """
+    try:
+        client = get_chroma_client()
+        client.delete_collection(name=_document_collection_name(str(tenant_id)))
+    except Exception as e:
+        # Chroma raises for a missing collection rather than returning quietly, so
+        # this is logged at DEBUG-worthy severity but kept at INFO: an unswept
+        # collection is the failure worth seeing, not a nonexistent one.
+        logger.info(
+            "No document collection dropped for tenant %s (%s)", tenant_id, e,
+        )
+
+
+def has_document_chunks(document_id: str, tenant_id: str) -> bool:
+    """
+    Feature 27 (Gap 385): cheap "is this document already in the index?" probe --
+    the sibling of `has_invoice_chunks()` below and the same contract.
+
+    Returns False on any Chroma error: callers treat that as "index it", and
+    `index_document_chunks()` upserts by a deterministic id
+    (`{document_id}_page_{n}`), so a redundant call is idempotent rather than
+    duplicating chunks.
+    """
+    try:
+        collection = get_document_collection(str(tenant_id))
+        existing = collection.get(where={"document_id": str(document_id)}, limit=1)
+        return bool(existing and existing.get("ids"))
+    except Exception as e:
+        logger.warning("Chroma chunk-presence probe failed for document %s: %s", document_id, e)
+        return False
+
+
+def get_all_document_chunks(document_id: str, tenant_id: str) -> list[dict]:
+    """Every indexed page of ONE document, by direct metadata filter.
+
+    Feature 27 (Gap 385): the sibling of `get_all_invoice_chunks()` below, with
+    the same reasoning for why it ranks nothing and thresholds nothing -- once the
+    document is already identified, "the page carrying the delivery quantities
+    didn't score high enough" is silent data loss, not a relevance decision.
+
+    Returns `[]` on any Chroma error. `matched_by` is `"document_id"`, not
+    `"invoice_id"`: a `Document` is not an `Invoice` (E10), and
+    `index_document_chunks()` deliberately writes no `invoice_id` key at all, so
+    anything filtering on one must find nothing here.
+    """
+    try:
+        collection = get_document_collection(str(tenant_id))
+        found = collection.get(where={"document_id": str(document_id)})
+    except Exception as e:
+        logger.warning("Chroma chunk fetch failed for document %s: %s", document_id, e)
+        return []
+
+    if not found or not found.get("ids"):
+        return []
+
+    documents = found.get("documents") or []
+    metadatas = found.get("metadatas") or []
+    chunks = []
+    for idx, chunk_id in enumerate(found["ids"]):
+        metadata = metadatas[idx] if idx < len(metadatas) else {}
+        chunks.append(
+            {
+                "id": chunk_id,
+                "document": documents[idx] if idx < len(documents) else "",
+                "metadata": metadata or {},
+                "matched_by": "document_id",
+            }
+        )
+    chunks.sort(key=lambda c: (c.get("metadata") or {}).get("page") or 0)
+    return chunks
+
 
 def delete_invoice_chunks(invoice_id: str, tenant_id: str) -> None:
     """

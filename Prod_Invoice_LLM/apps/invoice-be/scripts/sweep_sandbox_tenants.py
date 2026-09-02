@@ -48,9 +48,11 @@ from sqlmodel import Session, select  # noqa: E402
 
 from database import engine  # noqa: E402
 from models import (  # noqa: E402
+    ChatAttachment,
     ChatFeedback,
     ChatMessage,
     ChatSession,
+    Document,
     Invoice,
     SandboxTenant,
     Tenant,
@@ -65,13 +67,15 @@ logger = logging.getLogger(__name__)
 def _purge_sandbox(session: Session, sandbox: SandboxTenant) -> dict:
     """Delete one sandbox workspace and everything scoped to it.
 
-    Rows are removed child-first because `SandboxTenant`, `Invoice` and
-    `TenantWorkflowConfig` all carry a foreign key to `tenant.id` -- dropping
-    the tenant first is a ForeignKeyViolation on Postgres (and, on SQLite, a
-    silent orphan, which is worse).
+    Rows are removed child-first because `SandboxTenant`, `Invoice`, `Document`
+    (Feature 27 E10, added at Gap 385) and `TenantWorkflowConfig` all carry a
+    foreign key to `tenant.id` -- dropping the tenant first is a
+    ForeignKeyViolation on Postgres (and, on SQLite, a silent orphan, which is
+    worse).
 
     Chat is deleted through its own chain (`ChatSession` -> `ChatMessage` ->
-    `ChatFeedback`) rather than by tenant id, because `ChatMessage` is scoped by
+    `ChatFeedback`, plus `ChatAttachment` since Feature 26) rather than by
+    tenant id, because `ChatMessage` is scoped by
     `session_id` and not by tenant -- the same asymmetry
     `routers/auth.py::_TENANT_SCOPED_TABLES` records and
     `routers/chat.py::delete_session()` already walks.
@@ -83,13 +87,38 @@ def _purge_sandbox(session: Session, sandbox: SandboxTenant) -> dict:
     larger change than this gap. Recorded as a known residue rather than left
     implicit; see the feature doc's "Not done, and not claimed".
     """
-    counts = {"chat_sessions": 0, "chat_messages": 0, "chat_feedback": 0, "invoices": 0}
+    counts = {
+        "chat_sessions": 0,
+        "chat_messages": 0,
+        "chat_feedback": 0,
+        "chat_attachments": 0,
+        "invoices": 0,
+        "documents": 0,
+    }
     tenant_id = sandbox.tenant_id
 
     sessions = session.exec(
         select(ChatSession).where(ChatSession.tenant_id == tenant_id)
     ).all()
     for chat_session in sessions:
+        # Feature 26: `ChatAttachment.session_id` is a real FK to
+        # `chatsession.id`, so an attachment has to go before its session --
+        # otherwise this is a ForeignKeyViolation on Postgres and the whole
+        # sweep dies on the first sandbox visitor who attached a PO. Its vector
+        # chunks go with it for the same reason `routers/chat.py::delete_session`
+        # removes them: the row and its chunks in `chat_docs_{tenant_id}` are one
+        # object stored twice, and nothing else in the system ever cleans a
+        # chat-doc collection up. `delete_attachment_chunks()` logs and swallows
+        # its own errors, so an unreachable Chroma cannot abort the sweep.
+        from services.chat_document_search import delete_attachment_chunks
+
+        for attachment in session.exec(
+            select(ChatAttachment).where(ChatAttachment.session_id == chat_session.id)
+        ).all():
+            delete_attachment_chunks(attachment.id, attachment.tenant_id)
+            session.delete(attachment)
+            counts["chat_attachments"] += 1
+
         messages = session.exec(
             select(ChatMessage).where(ChatMessage.session_id == chat_session.id)
         ).all()
@@ -114,6 +143,42 @@ def _purge_sandbox(session: Session, sandbox: SandboxTenant) -> dict:
     ).all():
         session.delete(invoice)
         counts["invoices"] += 1
+
+    # Feature 27 (Gap 385, §2A/A4 item 3). E10 moved non-invoice documents out of
+    # `invoice` and into their own table with their own Chroma collection, and
+    # neither half was reaching this sweep. Two distinct failures, not one:
+    #
+    #   1. `Document` rows carry `tenant_id`, so leaving them here means the
+    #      `session.delete(tenant)` below is a ForeignKeyViolation on Postgres the
+    #      first time a sandbox visitor uploads a delivery note. The SQLite runs
+    #      this script's tests use would not have shown it -- the same fidelity
+    #      gap CONVENTIONS hard rule 2 exists for. This is why the deletion is
+    #      here, child-first, exactly where the `Invoice` loop above is and for
+    #      exactly the reason the docstring above already gives.
+    #   2. `docs_{tenant_id}` outlives the workspace entirely. That collection
+    #      holds full page text of the tenant's POs, contracts and negotiated
+    #      pricing; orphaned from any live tenant it is retained personal/
+    #      commercial data nothing will ever look at again or delete. Same shape
+    #      as Gap 239, and the precedent for cleaning it up is four lines above:
+    #      `delete_attachment_chunks()` for `chat_docs_`.
+    #
+    # The collection is dropped **once for the tenant**, not per row, and after
+    # the row loop: this is a tenant going away, not a document being removed, and
+    # a per-row delete would leave an empty-but-present collection that the orphan
+    # sweep in `scripts/reembed_chroma_collections.py` cannot tell from a live
+    # tenant's. `delete_tenant_document_collection()` logs and swallows its own
+    # errors, so an unreachable Chroma cannot abort the sweep.
+    documents = session.exec(
+        select(Document).where(Document.tenant_id == tenant_id)
+    ).all()
+    for document in documents:
+        session.delete(document)
+        counts["documents"] += 1
+
+    if documents:
+        from chroma_client import delete_tenant_document_collection
+
+        delete_tenant_document_collection(str(tenant_id))
 
     for config in session.exec(
         select(TenantWorkflowConfig).where(TenantWorkflowConfig.tenant_id == tenant_id)
@@ -176,10 +241,10 @@ def main() -> int:
                 continue
             reaped += 1
             logger.info(
-                "Deleted sandbox tenant=%s (invoices=%s chat_sessions=%s "
-                "chat_messages=%s)",
-                tenant_id, counts["invoices"], counts["chat_sessions"],
-                counts["chat_messages"],
+                "Deleted sandbox tenant=%s (invoices=%s documents=%s "
+                "chat_sessions=%s chat_messages=%s)",
+                tenant_id, counts["invoices"], counts["documents"],
+                counts["chat_sessions"], counts["chat_messages"],
             )
 
         logger.info(
