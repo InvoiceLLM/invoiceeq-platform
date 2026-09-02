@@ -2918,6 +2918,40 @@ each built a renderer for a contract the API does not emit (`MessageResponse` dr
 attachment key — Gap 386). Their code is correct and their `[x]` records that; the
 **feature** is not done until B12 is built.
 
+### P2.11B-STATUS — run 2, 2026-09-03 (00:28–03:28)
+
+What actually happened, so a reader need not diff this against the plan below.
+
+| Task | Status | Commit |
+|---|---|---|
+| **R5 = H16** — `MessageResponse` + persisted contract (B12, Gap 386) | `[x]` — migration `f5a6b7c8d9e0` applied to Postgres; **Gap 386 CLOSED** | `4572f0e` |
+| **R6** — thread `attachmentHandlers`; first Playwright run | `[x]` — 47/48 passing (was never run at all); FE Gap 391 fixed, FE Gap 392 filed | `3ed5767`, `5d90f90` |
+| **R7** — V-25 live injection probe | `[x]` **run**, and it found something else entirely — see Gap 395 | `8a0fe15` |
+| **R8** — H8 TTL sweeper / H9 bicep | H8 `[x]`; **H9 `[ ]`** | `84e3a85` |
+| **R9** — Tier 3 discovery (E-4) | `[x]` | `30dce18` |
+| **R10** — B3/B7/B8/B9/B10 | `[x]` all five | `7abe5d3`, `f5e1a6d`, `900105a` |
+| **R11** — H7 async wiring | `[x]`, flag NOT flipped | `7674c0d` |
+| **R12** — H13 FE spec section | `[ ]` | — |
+| **R13** — B11 removal criterion in the docstring | `[ ]` (the text is written in B11) | — |
+
+**Two things this run deliberately did NOT do.**
+
+**H9, the Container Apps job.** E-7 records that three jobs are fully coded in
+`08-apps.bicep` and *none has ever existed in Azure* (Gaps 126/298/357). Writing
+bicep that cannot be deployed or verified with `az containerapp job show` in this
+session would have made it a fourth declared-but-never-deployed job — the exact
+anti-pattern E-7 exists to warn about. It stays infra-devops', unwritten.
+
+**V-25's actual question.** The probe ran and the model never saw the prompt:
+Azure's own jailbreak classifier refused it with HTTP 400 (`jailbreak:
+detected=true`). That is a real and previously unrecorded defence layer, and it
+exposed a genuine user-facing defect (Gap 395, fixed) — but it says **nothing**
+about whether B6's framing would have held. The probe needs a payload realistic
+enough to pass the provider filter while still attempting the injection. Recorded
+as the next step rather than marked passing.
+
+**Gaps filed this run:** BE 393, 394, 395; FE 391, 392. BE 386 closed.
+
 ### P2.11B — Remaining tasks, sequenced
 
 Honest sizes for one specialist. **R0–R4 are shared with Feature 27's §10B R0–R4** — same

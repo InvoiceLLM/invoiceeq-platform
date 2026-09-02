@@ -65,3 +65,37 @@ in progress: F26 R7 (V-25) done; next F26 R8 (H8 sweeper) then wrap-up
 landed since last: F27 R10 c82a751; V-25 probe committed + run LIVE for the first time -> Azure's own jailbreak filter blocks it (400, jailbreak detected). Gap 395 filed AND fixed (misleading "try asking again" on a permanent failure).
 gaps filed: 395
 blockers: R5(a) founder ruling; V-25's actual question still open (model never saw the prompt)
+
+================================================================
+CLOSING SUMMARY — run 2, 01:41 (started 00:28, hardstop 03:28)
+================================================================
+persona: senior-dev (build) + functional-tester (runs) + security-tester (V-25)
+
+LANDED — 12 commits, all pushed to origin/feature/f27-f26-uncommitted-2026-09-02
+  f3ed94b F27 R7   14-value taxonomy (A5)
+  9f87ab8 F27 R8   doc_attributes + services/doc_attributes.py (A6); Gap 393
+  0cda980 F27 R9   ADVISORY family (A7)
+  c82a751 F27 R10  classifier pre-checks, Gutschrift, rule_era (A8)
+  30dce18 F26 R9   Tier 3 vector discovery (E-4)
+  7abe5d3 F26 R10  compare_documents 4 modes + L1-L3 matcher + list_reconcile
+  f5e1a6d F26 R10  B9 doc-type-aware intent, 14 types + reconcile family
+  900105a F26 R10  B10 reconcile branch + ReconciliationTable.tsx
+  510c444 F27 R5c  documents-list surface (half the rollout gate)
+  7674c0d F26 R11  H7 async wiring; Gap 394
+  8a0fe15 F26 R7   V-25 live probe; Gap 395 found AND fixed
+  84e3a85 F26 R8   H8 TTL sweeper
+
+FINAL SUITE: 16 failed / 2607 passed / 1 skipped (105s, all containers up).
+IDENTICAL failure set to the pre-work baseline -> NO REGRESSIONS from this run.
+(9 ops_recommendation, 4 rag, 1 chat_training, 2 Postgres-only. Gaps 390/394.)
+
+ARE THE FLAGS FLIPPABLE IN DEV? ENABLE_GENERIC_EXTRACTION: NOT YET -- R5(a)
+still needs a founder ruling and R5(b) depends on it, so DropZone still rejects
+images. ENABLE_GENERIC_DOC_CHAT: technically yes for dev testing -- H16 landed,
+the contract reaches the browser, 47/48 Playwright pass -- but B11's removal
+criterion is not met and no one has driven the UI end to end.
+
+GAPS: BE 393(fixed) 394(open) 395(fixed); FE 391(fixed) 392(open). BE 386 CLOSED.
+
+NEXT TASK: F27 §10B R11 -- the fixture matrix + T-C-6/T-R-9/T-R-10/T-R-11 and a
+second Postgres run for the A-series. Then F27 R5(a), which needs the ruling.

@@ -1718,6 +1718,35 @@ status header).
 | G13 tracker entries | `[~]` | — | 369/371/372/375/377/379/381 filed; **384 and 385 not filed** → §10B R0 |
 | V Postgres verification (§9) | `[ ]` | — | no `test_evidence/` folder; `test_documents_table.py` never completed → §10B R4 |
 
+### 10B-STATUS — run 2, 2026-09-03 (00:28–03:28)
+
+**R7, R8, R9, R10 are BUILT and pushed.** The table below is the original plan;
+this block is what actually happened, so a reader does not have to diff them.
+
+| Task | Status | Commit |
+|---|---|---|
+| **R7** — 14-value `DOC_TYPES` (A5) | `[x]` | `f3ed94b` |
+| **R8** — `doc_attributes` + `services/doc_attributes.py` (A6) | `[x]`, migration `a6b7c8d9e0f1` **applied to Postgres** | `9f87ab8` |
+| **R9** — `ADVISORY` family (A7) | `[x]` | `0cda980` |
+| **R10** — classifier pre-checks, Gutschrift, `rule_era` (A8) | `[x]` | `c82a751` |
+| **R11** — fixture matrix + A-series tests | `[~]` — the **Postgres run** is done (16 failed / 2575 passed / 1 skipped, evidence file 05); the fixture matrix and T-C-6/T-R-9/T-R-10/T-R-11 are NOT | — |
+| **R5** — rollout gate | `[~]` — **(c) documents-list surface BUILT** (`510c444`); **(a) needs a FOUNDER RULING**, (b) blocked on (a) | `510c444` |
+| **R6** — `docs_` lifecycle | `[~]` — the functions all exist (`chroma_client.py:639/676/704/723`) and Gap 389 withdrew the "defect"; what remains is the **sweep wiring** (reembed prefix set, sandbox sweep) | — |
+| **R12** — flag-removal criterion text | `[ ]` | — |
+
+**R5(a) is the one thing this run could not decide and did not invent.** The spec
+names two options — a new `GET /config/features` endpoint, or the response-shape
+adaptation `ENABLE_ASYNC_CHAT_QUEUE` uses — and picks neither, and the task row
+assigns it to *architect*. R5(b)'s `DropZone` widening depends on the answer:
+widening the accept list without the mechanism would let a user select a PNG
+that, with the flag off, silently loses the multimodal channel — the exact
+degradation §4 calls the real defect.
+
+**New gaps filed this run:** 393 (`Invoice.doc_type` never written since G9 —
+fixed), 394 (two Postgres-only tests silently skipping — filed, not fixed),
+395 (Azure's own jailbreak filter blocks the content branch, and the retry copy
+was wrong — fixed).
+
 ### 10B. Remaining tasks — the only open items, sequenced
 
 Sizes are honest working-day estimates for one specialist not debugging anything else.
