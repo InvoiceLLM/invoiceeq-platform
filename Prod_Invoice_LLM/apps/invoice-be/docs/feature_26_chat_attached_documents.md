@@ -2932,7 +2932,7 @@ What actually happened, so a reader need not diff this against the plan below.
 | **R10** — B3/B7/B8/B9/B10 | `[x]` all five | `7abe5d3`, `f5e1a6d`, `900105a` |
 | **R11** — H7 async wiring | `[x]`, flag NOT flipped | `7674c0d` |
 | **R12** — H13 FE spec section | `[ ]` | — |
-| **R13** — B11 removal criterion in the docstring | `[ ]` (the text is written in B11) | — |
+| **R13** — B11 removal criterion in the docstring | `[x]` — B11's five-part criterion (a)–(e) is now in `config.py`'s `ENABLE_GENERIC_DOC_CHAT` block, together with B11 item 1's restatement that `attachment_id` presence is the routing switch and this flag must never grow into a gate on attachments as such | — |
 
 **Two things this run deliberately did NOT do.**
 

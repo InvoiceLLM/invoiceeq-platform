@@ -112,6 +112,35 @@ class Settings(BaseSettings):
     # Default False for the same fail-closed reason as every other flag in this
     # file: a deployment that has not thought about this must get today's
     # behaviour.
+    #
+    # ── REMOVAL CRITERION (Feature 27 task R12) ───────────────────────────────
+    # The condition under which this flag is DELETED rather than merely flipped
+    # on. It is written down because the alternative is what actually happens to
+    # feature flags: they are flipped, they work, and the flag-OFF branch lives
+    # forever as a second code path nobody exercises and nobody dares remove.
+    #
+    # Remove when all of:
+    #   (a) R4's and R11's Postgres runs are recorded (hard rule 2 -- a recorded
+    #       run, not a passing test on SQLite);
+    #   (b) R5's rollout gate is closed: the FE surface exists and a classified
+    #       non-invoice is visible to whoever uploaded it;
+    #   (c) one dev soak of >= 7 days with ZERO `doc_type_reason == "llm_error"`
+    #       and ZERO misrouted `documents` rows;
+    #   (d) T-R-3's equality still holds on the THEN-CURRENT invoice suite --
+    #       re-run at removal time, not cited from this run, because the point of
+    #       that test is that the invoice path did not move and the invoice path
+    #       keeps moving.
+    #
+    # At that point the flag-OFF graph is DELETED, not kept. A branch retained
+    # "just in case" after the criterion is met is a branch that will be wrong
+    # the first time anyone edits the other one.
+    #
+    # Build-gate item 3 above is now SATISFIED, recorded here because it names a
+    # number that has since changed: the threshold was recalibrated 0.6 -> 0.75
+    # on 2026-09-03 (task R11) against six measured LLM-path confidences
+    # (0.90/0.92/0.93/0.95/0.95/0.95 -- nothing observed between 0.60 and 0.90).
+    # See `services/document_type_classifier.py::DOC_TYPE_CONFIDENCE_THRESHOLD`
+    # for the basis and `tests/fixtures/doc_types/MANIFEST.md` for both numbers.
     ENABLE_GENERIC_EXTRACTION: bool = False
     # Gap 117: which deployment this process is. Read only by ops scripts that
     # must never touch production data (scripts/grant_test_plan.py), never by
@@ -256,6 +285,30 @@ class Settings(BaseSettings):
     # deployment that has not thought about this must get today's behaviour --
     # which for this feature means Part 1's, the one with the deterministic
     # `Decimal` comparison and the explicit confirmation gate.
+    #
+    # ── REMOVAL CRITERION (Feature 26 amendment B11, task R13) ────────────────
+    # The condition under which this flag is DELETED rather than flipped, copied
+    # verbatim in substance from B11 so the two cannot drift:
+    #
+    #   Removed when all of: (a) H16 has landed and the answer contract is
+    #   verified reaching the browser against real Postgres (V-27); (b) V-25's
+    #   live injection probe is recorded with the structural control holding;
+    #   (c) the intent split's keyword lists have been measured against a real
+    #   transcript sample -- at least 50 real attachment turns -- with the
+    #   misroute rate RECORDED, not estimated; (d) the FE surface has been driven
+    #   end to end by a person, once, and a screenshot filed; (e) one dev soak of
+    #   >= 7 days with zero turns landing on
+    #   `stop_reason="attachment_no_indexed_text"` for a document that did index.
+    #
+    # At that point the flag-off path is deleted and Part 1's comparison branch
+    # becomes the `comparison` arm of the intent split rather than a separate
+    # reachable path -- which is the real prize here. Two reachable paths through
+    # one feature is the state B11 exists to make temporary.
+    #
+    # What this flag gates, restated because it is narrower than the name
+    # suggests: Part 2's intent split and content branch, and nothing else.
+    # `attachment_id` presence remains the ROUTING switch and is not a flag
+    # (B11 item 1), and this must never grow into a gate on attachments as such.
     ENABLE_GENERIC_DOC_CHAT: bool = False
 
     AZURE_STORAGE_CONNECTION_STRING: str = ""
