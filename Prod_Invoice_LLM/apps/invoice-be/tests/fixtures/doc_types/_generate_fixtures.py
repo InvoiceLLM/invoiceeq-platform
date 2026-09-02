@@ -830,6 +830,387 @@ def gen_us_delivery_note_01():
     return path
 
 
+# ---------------------------------------------------------------------------
+# A5/R11 — the four document types A5 added, which had no fixtures at all.
+#
+# Every one is SYNTHETIC and declared as such in MANIFEST.md. Section 7's rule
+# is that synthetic must be REALISTIC, not schematic: real layout, real regional
+# tax structure, real title-band wording, real regional date and number formats.
+# A fixture that is trivially easy to classify proves nothing about the
+# classifier, so each of these carries the ambiguity the real document carries --
+# an order confirmation that looks like a PO, a receipt missing the fields a full
+# invoice must have, a statement whose rows are other documents' numbers.
+# ---------------------------------------------------------------------------
+
+
+def gen_de_order_confirmation_01():
+    """Germany inbound ORDER_CONFIRMATION -- "Auftragsbestaetigung", the label
+    A5 adds this type for.
+
+    THE HARD PART, deliberately included: this document is structurally a
+    purchase order seen from the other side. Same parties, same line items, a
+    quoted PO number. What separates it is DIRECTION -- the seller issued it --
+    and the printed title. A classifier that keys on layout gets this wrong, and
+    that is exactly what the fixture is for.
+
+    It also carries a CONFIRMED price that differs from the ordered price, which
+    is the commercial reason the type matters at all (research §6.1: the
+    confirmation is often the real agreed price, not the PO).
+    """
+    path = os.path.join(HERE, "order_confirmation", "eu_inbound", "EU-OC-01_auftragsbestaetigung.pdf")
+    _build(
+        path=path,
+        title="AUFTRAGSBESTAETIGUNG",
+        header_lines=[
+            "Hoffmann Praezisionstechnik GmbH",
+            "Industriestrasse 44, 70565 Stuttgart, Deutschland",
+            "USt-IdNr: DE811234567",
+        ],
+        meta_lines=[
+            "<b>AB-Nr:</b> AB-2026-4471 &nbsp;&nbsp; <b>Datum:</b> 03.09.2026",
+            "<b>Ihre Bestellung:</b> PO-DE-9930 vom 28.08.2026",
+            "<b>Lieferdatum (bestaetigt):</b> 24.09.2026",
+            "<b>Zahlungsziel:</b> 30 Tage netto, 2% Skonto bei Zahlung innerhalb 10 Tagen",
+        ],
+        party_label="Kunde:",
+        party_lines=[
+            "Infinevo Cloud GmbH",
+            "Rosenheimer Strasse 12, 81669 Muenchen, Deutschland",
+            "USt-IdNr: DE298877341",
+        ],
+        columns=["Pos", "Artikel", "Menge", "Einheit", "Preis/Einheit", "Betrag"],
+        rows=[
+            ["1", "Praezisionswelle 40x300 mm", "120", "Stk", "48,50", "5.820,00"],
+            ["2", "Lagerbock Typ B", "60", "Stk", "112,00", "6.720,00"],
+            ["3", "Montagesatz (Schrauben, Dichtungen)", "60", "Satz", "18,90", "1.134,00"],
+        ],
+        summary_rows=[
+            ["Zwischensumme", "13.674,00"],
+            ["USt 19%", "2.598,06"],
+            ["Gesamtbetrag", "16.272,06"],
+        ],
+        notes=[
+            "Hinweis: Der bestaetigte Einzelpreis fuer Position 2 weicht von Ihrer Bestellung "
+            "ab (bestellt 108,00 / bestaetigt 112,00) aufgrund gestiegener Materialkosten.",
+            "Diese Auftragsbestaetigung ist keine Rechnung.",
+            "Es gelten unsere Allgemeinen Geschaeftsbedingungen.",
+        ],
+    )
+    return path
+
+
+def gen_in_order_confirmation_01():
+    """India inbound ORDER_CONFIRMATION -- the "Sales Order" synonym, which is
+    how this document is almost always labelled in Indian ERPs. Included because
+    the English label is the one most likely to collide with PURCHASE_ORDER in a
+    naive classifier."""
+    path = os.path.join(HERE, "order_confirmation", "india_inbound", "IN-OC-01_sales_order.pdf")
+    _build(
+        path=path,
+        title="SALES ORDER CONFIRMATION",
+        header_lines=[
+            "Ashoka Precision Components Pvt Ltd",
+            "Plot 47, MIDC Industrial Area, Pune, MH 411019, India",
+            "GSTIN: 27AAJCA9988P1Z3",
+        ],
+        meta_lines=[
+            "<b>Sales Order No:</b> SO-2026-1188 &nbsp;&nbsp; <b>Date:</b> 03/09/2026",
+            "<b>Against Your PO:</b> PO-IN-6102 dated 29/08/2026",
+            "<b>Confirmed Delivery:</b> 26/09/2026, Ex-works Pune",
+            "<b>Payment Terms:</b> 30% advance, balance against delivery",
+        ],
+        party_label="Buyer:",
+        party_lines=[
+            "Infinevo Cloud Pvt Ltd",
+            "Tower B, Cyber Hub, Gurugram, HR 122002, India",
+            "GSTIN: 06AABCI5678F1Z9",
+        ],
+        columns=["S.No", "Description", "HSN", "Qty", "UOM", "Rate", "Amount"],
+        rows=[
+            ["1", "CNC Machined Bracket - Type A", "8479", "250", "Nos", "1,240.00", "3,10,000.00"],
+            ["2", "Mounting Plate Assembly", "8479", "60", "Nos", "2,180.00", "1,30,800.00"],
+        ],
+        summary_rows=[
+            ["Taxable Value", "4,40,800.00"],
+            ["CGST 9%", "39,672.00"],
+            ["SGST 9%", "39,672.00"],
+            ["Grand Total", "5,20,144.00"],
+        ],
+        notes=[
+            "This Sales Order confirms acceptance of your purchase order. It is not a Tax Invoice "
+            "and no input tax credit may be claimed against it.",
+            "Prices confirmed as per our quotation QT-2026-0442.",
+        ],
+    )
+    return path
+
+
+def gen_de_receipt_01():
+    """Germany RECEIPT -- a Kleinbetragsrechnung (small-amount invoice, <= EUR
+    250, section 33 UStDV).
+
+    THE POINT OF THIS FIXTURE is what it legally OMITS: no buyer name, no unit
+    price, and VAT shown as a RATE rather than a computed amount. Research §5
+    trap 9. A money rubric that demands those fields flags a perfectly valid
+    document, which is the false-failure class this feature exists to remove --
+    so this is the fixture that proves RECEIPT's relaxed rubric is needed.
+    """
+    path = os.path.join(HERE, "receipt", "eu_inbound", "EU-RC-01_kleinbetragsrechnung.pdf")
+    _build(
+        path=path,
+        title="RECHNUNG (Kleinbetragsrechnung)",
+        header_lines=[
+            "Cafe am Rosenheimer Platz",
+            "Rosenheimer Strasse 5, 81667 Muenchen",
+            "USt-IdNr: DE145998220",
+        ],
+        meta_lines=[
+            "<b>Beleg-Nr:</b> 2026-09-03-0447 &nbsp;&nbsp; <b>Datum:</b> 03.09.2026 14:22",
+            "<b>Kasse:</b> 2 &nbsp;&nbsp; <b>Bediener:</b> 07",
+            "(Kleinbetragsrechnung gemaess Paragraph 33 UStDV)",
+        ],
+        party_label="",
+        party_lines=[],
+        columns=["Menge", "Artikel", "Betrag"],
+        rows=[
+            ["4", "Kaffee", "13,60"],
+            ["2", "Belegtes Broetchen", "9,80"],
+            ["1", "Mineralwasser 0,5l", "3,20"],
+        ],
+        summary_rows=[
+            ["Gesamtbetrag (brutto)", "26,60"],
+            ["darin enthalten USt 19%", ""],
+        ],
+        notes=[
+            "Zahlung: EC-Karte. TSE-Signatur: 4471-AA92-33F1-0088.",
+            "Kein gesonderter Steuerausweis erforderlich (Kleinbetragsrechnung).",
+        ],
+    )
+    return path
+
+
+def gen_in_receipt_01():
+    """India RECEIPT -- a cash memo, the common B2C counterpart. Prints a total
+    paid and a payment reference and NOTHING a tax invoice would carry: no
+    GSTIN for the buyer, no HSN, no per-line tax."""
+    path = os.path.join(HERE, "receipt", "india_inbound", "IN-RC-01_cash_memo.pdf")
+    _build(
+        path=path,
+        title="CASH MEMO",
+        header_lines=[
+            "Sharma Stationers & Office Supplies",
+            "Shop 14, Sector 29 Market, Gurugram, HR 122001",
+            "GSTIN: 06AAGFS1122K1ZQ",
+        ],
+        meta_lines=[
+            "<b>Memo No:</b> CM-2026-3391 &nbsp;&nbsp; <b>Date:</b> 03/09/2026",
+            "<b>Payment Mode:</b> UPI &nbsp;&nbsp; <b>UTR:</b> 402611887744",
+        ],
+        party_label="",
+        party_lines=[],
+        columns=["S.No", "Particulars", "Qty", "Amount"],
+        rows=[
+            ["1", "A4 Copier Paper (Ream)", "10", "2,450.00"],
+            ["2", "Whiteboard Marker (Box)", "4", "640.00"],
+            ["3", "Box File", "12", "1,080.00"],
+        ],
+        summary_rows=[
+            ["Total Paid (incl. GST)", "4,170.00"],
+        ],
+        notes=[
+            "Goods once sold will not be taken back. This is a cash memo, not a tax invoice.",
+        ],
+    )
+    return path
+
+
+def gen_in_remittance_advice_01():
+    """India REMITTANCE_ADVICE, carrying TDS -- the case that makes this type
+    worth its own value.
+
+    The payment (INR 4,68,130) is LESS than the invoices it settles
+    (INR 4,77,000) and the difference is not an error: it is TDS under section
+    194C plus a short-payment against a quality claim, both printed. A system
+    that reads only the payment total reports a discrepancy; one that reads the
+    deductions has the answer. That is precisely what
+    `reconcile_referenced_documents()` reports per kind and never nets.
+    """
+    path = os.path.join(HERE, "remittance_advice", "india_inbound", "IN-RA-01_payment_advice_tds.pdf")
+    _build(
+        path=path,
+        title="PAYMENT ADVICE / REMITTANCE ADVICE",
+        header_lines=[
+            "Infinevo Cloud Pvt Ltd",
+            "Tower B, Cyber Hub, Gurugram, HR 122002, India",
+            "GSTIN: 06AABCI5678F1Z9",
+        ],
+        meta_lines=[
+            "<b>Advice No:</b> RA-2026-0912 &nbsp;&nbsp; <b>Date:</b> 03/09/2026",
+            "<b>Payment Ref (UTR):</b> HDFC0402699187744 &nbsp;&nbsp; <b>Value Date:</b> 03/09/2026",
+            "<b>Bank:</b> HDFC Bank, Cyber City Branch",
+        ],
+        party_label="Paid To (Vendor):",
+        party_lines=[
+            "Ashoka Precision Components Pvt Ltd",
+            "Plot 47, MIDC Industrial Area, Pune, MH 411019",
+            "GSTIN: 27AAJCA9988P1Z3",
+        ],
+        columns=["Invoice No", "Invoice Date", "Invoice Amount", "Deduction", "Net Paid"],
+        rows=[
+            ["INV-2026-1188", "12/08/2026", "2,36,000.00", "4,720.00", "2,31,280.00"],
+            ["INV-2026-1204", "19/08/2026", "1,41,000.00", "2,820.00", "1,38,180.00"],
+            ["INV-2026-1219", "26/08/2026", "1,00,000.00", "1,330.00", "98,670.00"],
+        ],
+        summary_rows=[
+            ["Gross Invoice Value", "4,77,000.00"],
+            ["Less: TDS u/s 194C @ 2%", "8,870.00"],
+            ["Net Amount Remitted", "4,68,130.00"],
+        ],
+        notes=[
+            "TDS of INR 8,870.00 has been deducted under section 194C and will be deposited "
+            "against your PAN AAJCA9988P. Form 16A will be issued for Q2 FY 2026-27.",
+            "This advice is for information only. It is not an invoice and creates no liability.",
+        ],
+    )
+    return path
+
+
+def gen_us_remittance_advice_01():
+    """US REMITTANCE_ADVICE with retail deductions -- the EDI 820 shape, where
+    the deductions are chargebacks rather than withholding tax. Included because
+    the DEDUCTION KINDS differ by region and `deductions[].kind` has to carry
+    both."""
+    path = os.path.join(HERE, "remittance_advice", "us_inbound", "US-RA-01_remittance_deductions.pdf")
+    _build(
+        path=path,
+        title="REMITTANCE ADVICE",
+        header_lines=[
+            "Northbridge Retail Group, Inc.",
+            "2200 Commerce Parkway, Columbus, OH 43219",
+            "EIN: 34-2299104",
+        ],
+        meta_lines=[
+            "<b>Advice #:</b> RA-88214 &nbsp;&nbsp; <b>Payment Date:</b> 09/03/2026",
+            "<b>Check / ACH Trace:</b> 0449213387 &nbsp;&nbsp; <b>Method:</b> ACH CTX",
+        ],
+        party_label="Remit To (Supplier):",
+        party_lines=[
+            "Infinevo Supply Co.",
+            "418 Harbor Point Rd, Stamford, CT 06902",
+        ],
+        columns=["Invoice #", "Date", "Gross", "Deduction Code", "Deduction", "Net"],
+        rows=[
+            ["INV-55012", "08/06/2026", "18,400.00", "-", "0.00", "18,400.00"],
+            ["INV-55090", "08/14/2026", "9,250.00", "OTIF-SHORT", "462.50", "8,787.50"],
+            ["INV-55133", "08/21/2026", "12,000.00", "CB-ASN-LATE", "240.00", "11,760.00"],
+        ],
+        summary_rows=[
+            ["Gross Invoiced", "39,650.00"],
+            ["Total Deductions", "702.50"],
+            ["Net Payment", "38,947.50"],
+        ],
+        notes=[
+            "Deduction OTIF-SHORT relates to on-time in-full compliance for PO 774120.",
+            "Deduction CB-ASN-LATE is an ASN compliance chargeback per vendor agreement s.7.2.",
+            "Disputes must be submitted with POD/BOL evidence within 30 days.",
+        ],
+    )
+    return path
+
+
+def gen_in_statement_of_account_01():
+    """India STATEMENT_OF_ACCOUNT -- a vendor ledger with a running balance.
+
+    Two things make this the right fixture for the ADVISORY rubric. First, it
+    has NO subtotal/tax/total triple at all -- it has a running balance, which is
+    research §5 trap 6 and the reason `_ADVISORY_RUBRIC` switches both arithmetic
+    checks off. Second, it lists an invoice the buyer has no record of
+    (INV-2026-1301), which is exactly the `not_found` outcome `list_reconcile`
+    exists to surface.
+    """
+    path = os.path.join(HERE, "statement_of_account", "india_inbound", "IN-SOA-01_vendor_statement.pdf")
+    _build(
+        path=path,
+        title="STATEMENT OF ACCOUNT",
+        header_lines=[
+            "Ashoka Precision Components Pvt Ltd",
+            "Plot 47, MIDC Industrial Area, Pune, MH 411019, India",
+            "GSTIN: 27AAJCA9988P1Z3",
+        ],
+        meta_lines=[
+            "<b>Statement Date:</b> 31/08/2026 &nbsp;&nbsp; <b>Period:</b> 01/08/2026 to 31/08/2026",
+            "<b>Account Code:</b> INFC-0042 &nbsp;&nbsp; <b>Currency:</b> INR",
+        ],
+        party_label="Account Of:",
+        party_lines=[
+            "Infinevo Cloud Pvt Ltd",
+            "Tower B, Cyber Hub, Gurugram, HR 122002, India",
+            "GSTIN: 06AABCI5678F1Z9",
+        ],
+        columns=["Date", "Document", "Type", "Debit", "Credit", "Balance"],
+        rows=[
+            ["01/08/2026", "Opening Balance", "", "", "", "1,12,000.00"],
+            ["12/08/2026", "INV-2026-1188", "Invoice", "2,36,000.00", "", "3,48,000.00"],
+            ["19/08/2026", "INV-2026-1204", "Invoice", "1,41,000.00", "", "4,89,000.00"],
+            ["22/08/2026", "CN-2026-0071", "Credit Note", "", "18,000.00", "4,71,000.00"],
+            ["26/08/2026", "INV-2026-1219", "Invoice", "1,00,000.00", "", "5,71,000.00"],
+            ["29/08/2026", "INV-2026-1301", "Invoice", "64,500.00", "", "6,35,500.00"],
+            ["31/08/2026", "RCPT-4471", "Receipt", "", "1,12,000.00", "5,23,500.00"],
+        ],
+        summary_rows=[
+            ["Closing Balance Outstanding", "5,23,500.00"],
+            ["Of which overdue (>30 days)", "0.00"],
+        ],
+        notes=[
+            "Please reconcile and confirm the closing balance. Discrepancies to be reported "
+            "within 7 days of receipt of this statement.",
+            "This statement is not a demand for payment and is not a tax invoice.",
+        ],
+    )
+    return path
+
+
+def gen_de_statement_of_account_01():
+    """Germany STATEMENT_OF_ACCOUNT -- "Kontoauszug", the synonym A8 adds. Same
+    running-balance shape, different vocabulary, so the classifier has to reach
+    the same type from a word it shares with a bank statement."""
+    path = os.path.join(HERE, "statement_of_account", "eu_inbound", "EU-SOA-01_kontoauszug.pdf")
+    _build(
+        path=path,
+        title="KONTOAUSZUG / SALDENBESTAETIGUNG",
+        header_lines=[
+            "Hoffmann Praezisionstechnik GmbH",
+            "Industriestrasse 44, 70565 Stuttgart, Deutschland",
+            "USt-IdNr: DE811234567",
+        ],
+        meta_lines=[
+            "<b>Stichtag:</b> 31.08.2026 &nbsp;&nbsp; <b>Zeitraum:</b> 01.08.2026 - 31.08.2026",
+            "<b>Debitoren-Nr:</b> 40021 &nbsp;&nbsp; <b>Waehrung:</b> EUR",
+        ],
+        party_label="Konto von:",
+        party_lines=[
+            "Infinevo Cloud GmbH",
+            "Rosenheimer Strasse 12, 81669 Muenchen",
+            "USt-IdNr: DE298877341",
+        ],
+        columns=["Datum", "Beleg", "Art", "Soll", "Haben", "Saldo"],
+        rows=[
+            ["01.08.2026", "Saldovortrag", "", "", "", "8.400,00"],
+            ["09.08.2026", "RE-2026-3312", "Rechnung", "16.272,06", "", "24.672,06"],
+            ["18.08.2026", "GS-2026-0044", "Gutschrift", "", "1.190,00", "23.482,06"],
+            ["27.08.2026", "RE-2026-3390", "Rechnung", "7.140,00", "", "30.622,06"],
+        ],
+        summary_rows=[
+            ["Offener Saldo zum 31.08.2026", "30.622,06"],
+        ],
+        notes=[
+            "Bitte bestaetigen Sie den Saldo zum Stichtag. Dieser Kontoauszug ist keine "
+            "Rechnung und begruendet keine eigenstaendige Zahlungsverpflichtung.",
+        ],
+    )
+    return path
+
+
 if __name__ == "__main__":
     generated = [
         gen_in_delivery_note_01(),
@@ -848,6 +1229,15 @@ if __name__ == "__main__":
         gen_in_other_eway_bill_01(),
         gen_in_credit_note_01(),
         gen_in_debit_note_01(),
+        # A5/R11 -- the four types A5 added, which had no fixtures at all.
+        gen_de_order_confirmation_01(),
+        gen_in_order_confirmation_01(),
+        gen_de_receipt_01(),
+        gen_in_receipt_01(),
+        gen_in_remittance_advice_01(),
+        gen_us_remittance_advice_01(),
+        gen_in_statement_of_account_01(),
+        gen_de_statement_of_account_01(),
     ]
     for p in generated:
         print("wrote " + p)

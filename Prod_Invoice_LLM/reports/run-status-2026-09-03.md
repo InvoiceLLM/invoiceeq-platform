@@ -106,3 +106,9 @@ in progress: item 1 (F27 R5) done, committing; next item 2 (R11 fixtures)
 landed since last: R5(a) GET /config/features + FE proxy + lib/featureFlags.ts; R5(b) DropZone both guards now flag-driven; R5(c) verified already built (510c444). 7 security tests.
 gaps filed: none
 blockers: none. Email still unavailable - not retrying.
+
+[02:22] mins left: 167 | persona: functional-tester
+in progress: item 2 (F27 R11) done, committing; next item 3 (F27 R6 sweep wiring)
+landed since last: 8 new fixtures (A5's four types, 14/14 covered); 24/24 classify correctly AND deterministically; threshold 0.6 -> 0.75 on 6 measured points; T-C-6/T-R-8/T-R-9/T-R-11/T-A-1 = 55 tests.
+gaps filed: 396 (German umlaut transliteration missing from synonyms - fixed)
+blockers: none

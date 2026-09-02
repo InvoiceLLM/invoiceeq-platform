@@ -226,6 +226,10 @@ _DOC_TYPE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
         "service agreement",
         "master service agreement",
         "framework agreement",
+        # BE Gap 396: the German for it, absent until now -- EU-CT-01 is titled
+        # RAHMENVERTRAG and reached CONTRACT only via a paid model call.
+        "rahmenvertrag",
+        "abrufauftrag",
         "rate contract",
     ),
     "DELIVERY_NOTE": (
@@ -309,7 +313,16 @@ _DOC_TYPE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
         # "ab" and "oa" are deliberately ABSENT: two letters match too much
         # ordinary text for the title-band coverage guard to redeem, which is the
         # same call G2 made for PURCHASE_ORDER's "po".
+        # BOTH German spellings. `_normalize()` folds an umlaut to its base
+        # letter ("Auftragsbestätigung" -> "auftragsbestatigung") but leaves the
+        # ASCII TRANSLITERATION alone ("AUFTRAGSBESTAETIGUNG" ->
+        # "auftragsbestaetigung"). Both are correct German and the transliteration
+        # is what every system that cannot emit umlauts produces -- which is most
+        # ERP exports, and was every one of this repo's own generated fixtures.
+        # BE Gap 396: carrying only the folded form made the classifier pay for an
+        # LLM call on a document whose title it should have recognised outright.
         "auftragsbestatigung",
+        "auftragsbestaetigung",
         # Written in the NORMALISED form: `_normalize()` strips the apostrophe
         # rather than turning it into a space, so "Conferma d'ordine" folds to
         # "conferma dordine". Synonyms are matched post-normalisation, so this is
@@ -351,6 +364,7 @@ _DOC_TYPE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
         "balance confirmation",
         "kontoauszug",
         "saldenbestatigung",
+        "saldenbestaetigung",  # BE Gap 396, see ORDER_CONFIRMATION above
         "releve de compte",
         "estratto conto",
         "extracto de cuenta",
@@ -419,12 +433,37 @@ _TITLE_BAND_LINES = 20
 _TITLE_LINE_COVERAGE = 0.6
 
 # E7: below this, the LLM fallback's answer is discarded and the document is
-# `OTHER` with the reason recorded. **This is a placeholder, not a calibrated
-# number (§2A/N2)** — chosen before any real fixture existed. It must be
-# validated against §7 task F's real India delivery-challan and EU synonym
-# fixtures, whose manifest records the returned confidence per file for exactly
-# this purpose, before it is treated as settled.
-DOC_TYPE_CONFIDENCE_THRESHOLD = 0.6
+# `OTHER` with the reason recorded.
+#
+# RECALIBRATED 2026-09-03 (task R11), 0.6 -> 0.75. §2A/N2 recorded 0.6 as an
+# explicit PLACEHOLDER chosen before any fixture existed, and required it be
+# validated against real measurements before being treated as settled. It now is.
+#
+# THE MEASUREMENT. Every fixture in `tests/fixtures/doc_types/` was run through
+# the real `classify_doc_type()`, twice: once in run 2 (16 fixtures) and once in
+# run 3 (24, after A5's four new types were given fixtures). Across both, the
+# LLM-fallback path returned exactly six real confidences:
+#
+#     0.90, 0.92, 0.93, 0.95, 0.95, 0.95        (minimum 0.90)
+#
+# and NOT ONE observation landed between 0.60 and 0.90. The model is either
+# confident or it declines; the band the old threshold sat in is empty.
+#
+# WHY 0.75 AND NOT 0.90. Picking a value just under the observed minimum would
+# be overfitting six points -- the next genuinely-correct-but-harder document
+# would be demoted to OTHER by a threshold tuned to a small sample. 0.75 sits
+# clear of every observation (a 0.15 margin below the minimum) while being far
+# above the old guess, so it rejects a real low-confidence answer without
+# demoting anything measured.
+#
+# WHAT IT CHANGES ON TODAY'S FIXTURES: nothing. All six observations are >= 0.90
+# and all 24 fixtures classify identically at 0.6 and at 0.75, so this is not a
+# re-baseline dressed as a calibration -- both numbers and the full per-fixture
+# table are in `tests/fixtures/doc_types/MANIFEST.md`.
+#
+# STILL WORTH RE-RUNNING when the fixture set grows: six points is enough to
+# retire a placeholder, not enough to call the distribution known.
+DOC_TYPE_CONFIDENCE_THRESHOLD = 0.75
 
 # How much of the document the fallback prompt sees. The decision is made from
 # the title band and the overall shape; the whole document would cost tokens for

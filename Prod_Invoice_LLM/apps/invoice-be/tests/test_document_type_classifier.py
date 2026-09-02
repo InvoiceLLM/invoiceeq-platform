@@ -329,16 +329,24 @@ def test_a_confident_in_vocabulary_answer_from_the_fallback_is_kept():
 def test_the_fallback_call_is_telemetered_once_under_its_own_agent_name():
     """E7: `tracked_llm_call` wraps the fallback path only, so the event count is
     a direct measure of how often the title band was not enough. A deterministic
-    hit must cost nothing and show as nothing."""
+    hit must cost nothing and show as nothing.
+
+    The unrecognised title was "Rahmenvertrag" until 2026-09-03, chosen because
+    it was NOT in the synonym table. BE Gap 396 then added it (a real German
+    framework agreement is exactly what CONTRACT is for), so it now resolves
+    deterministically and never reaches the fallback this test is about. Swapped
+    for a genuinely unrecognised German accounting term -- and the swap is the
+    point: this test needs a title the table does not know, not a specific word.
+    """
     llm = MagicMock()
     llm.with_structured_output.return_value.invoke.return_value = DocTypeClassification(
-        doc_type="CONTRACT", confidence=0.88, evidence="Rahmenvertrag"
+        doc_type="CONTRACT", confidence=0.88, evidence="Betriebsabrechnungsbogen"
     )
 
     with patch.object(dtc, "get_llm", return_value=llm), patch.object(
         dtc, "tracked_llm_call"
     ) as tracked:
-        classify_doc_type(_document("Rahmenvertrag"), {}, tenant_id="tenant-1")
+        classify_doc_type(_document("Betriebsabrechnungsbogen"), {}, tenant_id="tenant-1")
     assert tracked.call_args.args[0] == "extraction.classify_doc_type"
     assert tracked.call_args.kwargs["tenant_id"] == "tenant-1"
 
