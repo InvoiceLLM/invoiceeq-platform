@@ -512,7 +512,7 @@ test.describe("Feature 26 H11 — rendered on /chat", () => {
     await expect(page.locator('[data-testid="attachment-needs-confirmation"]')).toHaveCount(0);
   });
 
-  test("the clarifying turn shows its question; the choices stay dark until the handlers are threaded", async ({
+  test("the clarifying turn shows its question AND its two choices, now that the handlers are threaded", async ({
     page,
   }) => {
     await openStubbedChat(page);
@@ -522,18 +522,33 @@ test.describe("Feature 26 H11 — rendered on /chat", () => {
       page.getByText("Would you like me to read the document, or compare it to your invoices?")
     ).toBeVisible();
 
-    // ChatWindow renders `<MessageStream messages isSending />` and passes no
-    // `attachmentHandlers` (L722 as of this commit — H12 landed the composer,
-    // the hook and the proxy routes in parallel with H11 and could not thread a
-    // prop that did not exist yet). So the two choice buttons and the
-    // confirmation card are not rendered at all rather than rendered dead,
-    // which is H10's precedent and the same reasoning.
+    // INVERTED 2026-09-03 by task R6, exactly as the previous version of this
+    // test instructed ("THIS ASSERTION IS MEANT TO FLIP"), and by the same
+    // precedent H12 followed when it lit H10's paperclip.
     //
-    // THIS ASSERTION IS MEANT TO FLIP. Whoever threads
-    // `attachmentHandlers={...}` from `useChatSession` into `<MessageStream>`
-    // should invert these two counts and drive the buttons for real — exactly
-    // as H12 inverted H10's `#chat-attach-btn` count when it lit the paperclip.
-    await expect(page.locator("#chat-attachment-clarification")).toHaveCount(0);
+    // `app/chat/page.tsx` now builds `attachmentHandlers` from
+    // `useChatSession` and `ChatWindow` threads it into `<MessageStream>`, so
+    // the clarification block renders its choices instead of being omitted.
+    // Until this commit the D4 confirmation gate had no operable control in the
+    // product at all: the card was built (H11), the callback was built (H12),
+    // and nothing connected them.
+    await expect(page.locator("#chat-attachment-clarification")).toHaveCount(1);
+
+    // Both choices are real buttons, in the order §P2.6.4 specifies (read, then
+    // compare) — the order matters because it is the order the intent keywords
+    // are matched in, and a user reading left to right should meet the
+    // non-destructive option first.
+    const clarification = page.locator("#chat-attachment-clarification");
+    await expect(clarification.getByRole("button", { name: /read the document/i })).toBeVisible();
+    await expect(
+      clarification.getByRole("button", { name: /compare to my invoices/i })
+    ).toBeVisible();
+
+    // The confirmation card still does not render on THIS turn: a clarifying
+    // turn carries `attachment_clarification` and none of
+    // `attachment_confirmation` / `attachment_comparison` / `evidence`
+    // (§P2.8's clarifying-turn rule). Its absence here is the contract holding,
+    // not a handler still missing.
     await expect(page.locator("#chat-attachment-match-confirm")).toHaveCount(0);
   });
 });

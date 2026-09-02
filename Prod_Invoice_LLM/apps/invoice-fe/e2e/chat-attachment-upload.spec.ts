@@ -471,25 +471,53 @@ test.describe("Feature 26 H12 — reload/reattach (§P2.6.6, decision D2)", () =
 });
 
 test.describe("Feature 26 H12 — the JSON proxy routes exist in Next's router", () => {
-  // WHAT THIS PROVES AND WHAT IT DOES NOT, stated because the distinction
-  // matters: a 404 here would mean the route file is missing or misnamed (a
-  // real and easy mistake with bracketed dynamic segments). Anything else means
-  // Next matched the handler and ran it — at which point it tries to reach a
-  // FastAPI backend that is not running in this environment, so the status it
-  // returns says nothing about backend behaviour and nothing is asserted about
-  // it. The upload route's own shape is covered for real above, through the UI.
-  test("GET /api/chat/attachments/{id} is routed, not 404", async ({ request }) => {
-    const res = await request.get(`/api/chat/attachments/${ATTACHMENT_ID}`);
-    expect(res.status()).not.toBe(404);
-  });
+  // WHAT THIS PROVES AND WHAT IT DOES NOT.
+  //
+  // The question is whether Next matched the handler — a real and easy mistake
+  // with bracketed dynamic segments. The original form of these two tests
+  // asserted `status !== 404`, on the stated assumption that "a FastAPI backend
+  // is not running in this environment". FE Gap 391: when the backend IS
+  // running, `_require_owned_attachment` answers an unknown id with a genuine
+  // **404** (deliberately, not 403 — confirming another tenant's attachment
+  // exists is itself a disclosure), that 404 is proxied straight through, and
+  // the assertion fails against a route that is working perfectly. A status code
+  // cannot distinguish "Next has no such route" from "the backend says no such
+  // attachment", because both are 404. These tests were unrunnable-as-written
+  // either way round: they passed only while no backend answered.
+  //
+  // The discriminator that actually separates the two is the RESPONSE SHAPE.
+  // Next's own unmatched-route 404 is a rendered HTML page
+  // (`text/html; charset=utf-8`). A matched handler returns whatever
+  // `proxyJson` forwarded, which is FastAPI JSON (`application/json`, body
+  // `{"detail": ...}`). Verified by hand 2026-09-03 against a fresh dev server:
+  //   /api/chat/attachments/<uuid>      -> 404 application/json {"detail":"Attachment not found."}
+  //   /api/chat/definitely-not-a-route  -> 404 text/html  <!DOCTYPE html>...
+  // So the assertion is on content-type, and it holds whether or not a backend
+  // is up: with one, JSON comes back; without one, `proxyJson` still fails as
+  // JSON rather than as Next's HTML 404.
+  const expectRoutedByNext = (res: { status: () => number; headers: () => Record<string, string> }) => {
+    const contentType = res.headers()["content-type"] ?? "";
+    expect(
+      contentType,
+      `expected a proxied JSON response (Next matched the handler); got ` +
+        `${res.status()} ${contentType} — an HTML body means Next never matched ` +
+        `the route, i.e. the file is missing or the [segment] is misnamed`
+    ).toContain("application/json");
+  };
 
-  test("POST /api/chat/attachments/{id}/confirm-matches is routed, not 404", async ({
+  test("GET /api/chat/attachments/{id} is routed by Next, not an unmatched 404", async ({
     request,
   }) => {
-    const res = await request.post(
-      `/api/chat/attachments/${ATTACHMENT_ID}/confirm-matches`,
-      { data: { invoice_ids: [] } }
+    expectRoutedByNext(await request.get(`/api/chat/attachments/${ATTACHMENT_ID}`));
+  });
+
+  test("POST /api/chat/attachments/{id}/confirm-matches is routed by Next, not an unmatched 404", async ({
+    request,
+  }) => {
+    expectRoutedByNext(
+      await request.post(`/api/chat/attachments/${ATTACHMENT_ID}/confirm-matches`, {
+        data: { invoice_ids: [] },
+      })
     );
-    expect(res.status()).not.toBe(404);
   });
 });
