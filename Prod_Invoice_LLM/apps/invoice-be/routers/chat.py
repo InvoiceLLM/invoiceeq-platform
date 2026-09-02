@@ -183,7 +183,80 @@ class MessageResponse(BaseModel):
     job_id: str | None = None  # Gap 280
     error_message: str | None = None  # Gap 280
 
+    # Feature 26 task H16 / amendment B12 (Gap 386): the attached-document answer
+    # contract (P2.8). Every key is Optional and every one defaults to None, so a
+    # turn that is not an attachment turn serialises byte-identically to before
+    # this change -- `exclude_none=True` on the model_dump below drops them
+    # entirely rather than emitting a wall of nulls.
+    #
+    # These are FLATTENED out of `ChatMessage.attachment_payload` by
+    # `_with_attachment_payload()` rather than nested under one key, because the
+    # FE types were written against P2.8's wire shape months before the column
+    # existed (`apps/invoice-fe/types/chat.ts:133/136/152`) and nesting would have
+    # forced an FE change for a backend storage decision.
+    attachment_confirmation: dict | None = None
+    attachment_comparison: dict | None = None
+    attachment_clarification: dict | None = None
+    suggested_actions: list | None = None
+    evidence: list | None = None
+    needs_confirmation: bool | None = None
+    # B10's three, declared now so the shape does not change again when H6b/H6c
+    # land. The agent does not emit them yet; they stay absent until it does.
+    line_items: list | None = None
+    unmatched: dict | None = None
+    reconciliation: dict | None = None
+
     model_config = ConfigDict(from_attributes=True)
+
+
+# Feature 26 H16 (Gap 386). The keys the agent may put on an attachment turn.
+# Kept as one tuple so the persist side and the serialise side cannot drift --
+# a key added to the agent and to only one of these two lists is exactly how the
+# contract silently loses a field again.
+ATTACHMENT_CONTRACT_KEYS: tuple[str, ...] = (
+    "attachment_confirmation",
+    "attachment_comparison",
+    "attachment_clarification",
+    "suggested_actions",
+    "evidence",
+    "needs_confirmation",
+    "line_items",
+    "unmatched",
+    "reconciliation",
+)
+
+
+def extract_attachment_payload(agent_output: dict) -> dict | None:
+    """Pull the answer-contract keys out of an agent result, or None.
+
+    None rather than {} when the turn produced no attachment keys: the column
+    means "not an attachment turn" in that case, and an empty dict would read as
+    "an attachment turn that answered nothing", which P2.8 defines as a bug
+    rather than a state. Keys the agent did not emit are ABSENT rather than null
+    -- P2.8's contract rule turns on absence (`attachment_comparison` absent on
+    the content branch is the assertion that no comparison ran).
+    """
+    payload = {k: agent_output[k] for k in ATTACHMENT_CONTRACT_KEYS if k in agent_output}
+    return payload or None
+
+
+def _with_attachment_payload(msg: ChatMessage) -> dict:
+    """Row -> MessageResponse kwargs, with the contract flattened back out."""
+    data = {
+        "id": msg.id,
+        "session_id": msg.session_id,
+        "role": msg.role,
+        "content": msg.content,
+        "generated_sql": msg.generated_sql,
+        "citations": msg.citations or [],
+        "created_at": msg.created_at,
+        "feedback": getattr(msg, "feedback", None),
+        "status": msg.status,
+        "job_id": msg.job_id,
+        "error_message": msg.error_message,
+    }
+    data.update(getattr(msg, "attachment_payload", None) or {})
+    return data
 
 @router.get("/sessions", response_model=list[SessionResponse])
 def list_sessions(
@@ -364,8 +437,15 @@ def get_session_messages(
     ).all()
     feedback_by_message = {f.message_id: f.vote for f in feedback_rows}
 
+    # Feature 26 H16 (Gap 386): `_with_attachment_payload()` rather than
+    # `model_validate(m)` -- the contract is stored as one `attachment_payload`
+    # dict on the row but serialises FLAT, per P2.8's wire shape, so it has to be
+    # spread back out here. `model_validate` reads attributes and would find no
+    # `attachment_confirmation` on the row, silently returning a reload with no
+    # confirmation card: the exact symptom Gap 386 exists to fix, reintroduced one
+    # layer down. This is the reload path P2.6.6 depends on.
     return [
-        MessageResponse.model_validate(m).model_copy(update={"feedback": feedback_by_message.get(m.id)})
+        MessageResponse(**{**_with_attachment_payload(m), "feedback": feedback_by_message.get(m.id)})
         for m in messages
     ]
 
@@ -540,7 +620,13 @@ def post_chat_message(
         attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
     )
 
-    return MessageResponse.model_validate(assistant_msg)
+    # Feature 26 H16 (Gap 386): flatten the stored contract back onto the wire,
+    # exactly as the reload path does. `model_validate(assistant_msg)` reads
+    # attributes off the row and would find no `attachment_confirmation` there --
+    # the contract lives in the row's `attachment_payload` dict -- so it returned
+    # every key as null. That is Gap 386 surviving its own fix, one layer down,
+    # and it is why V-27 asserts on the response body rather than on the agent.
+    return MessageResponse(**_with_attachment_payload(assistant_msg))
 
 
 def run_sync_chat_turn(
@@ -636,6 +722,10 @@ def run_sync_chat_turn(
         citations=agent_output["citations"],
         result_invoice_ids=agent_output.get("result_invoice_ids") or [],
         status="completed",
+        # Feature 26 H16 (Gap 386): persist the answer contract with the turn that
+        # produced it. Before this, every attachment key the agent computed was
+        # dropped here and again at serialisation.
+        attachment_payload=extract_attachment_payload(agent_output),
     )
     db_session.add(assistant_msg)
     db_session.commit()

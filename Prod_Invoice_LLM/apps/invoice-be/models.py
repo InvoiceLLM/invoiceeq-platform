@@ -372,6 +372,38 @@ class ChatMessage(SQLModel, table=True):
     # were involved". The triage API treats empty as "ask the user which invoice"
     # rather than asserting a claim it can't back.
     result_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # Feature 26 task H16 / amendment B12 (Gap 386): the attached-document answer
+    # contract, persisted.
+    #
+    # `agents/query_agent.py` computes `attachment_confirmation`,
+    # `attachment_comparison`, `suggested_actions`, `evidence`,
+    # `needs_confirmation` and `attachment_clarification` -- and before this column
+    # every one of them was dropped twice over: `MessageResponse` declared none of
+    # them, so FastAPI stripped them at serialisation, and this row had nowhere to
+    # put them, so a session reload had nothing to restore. The FE renderers
+    # (FE Gaps 376/380/383) were wired to a contract the API did not emit.
+    #
+    # ONE column rather than six, and rather than a side table:
+    #   * They are one object -- the turn's answer contract. Six nullable columns
+    #     would be six migrations as the contract grows (B10 already adds three
+    #     more: `line_items`, `unmatched`, `reconciliation`).
+    #   * Persisted, not transient, for the three reasons B12 states: the reload
+    #     path (P2.6.6) must restore the confirmation card; the async worker
+    #     computes the answer in a DIFFERENT PROCESS from the request, so there is
+    #     no response object to hang a transient field on; and the D4 confirmation
+    #     gate is a two-turn interaction where turn 2 must know what turn 1 offered.
+    #   * A side table would fork the ownership check, which is the Gap 341 shape
+    #     E-6 already refused for `chat_attachments` itself.
+    #
+    # NULL means "not an attachment turn" -- the overwhelming majority of rows, and
+    # every row written before this migration. It never means "an attachment turn
+    # that produced nothing": the contract rule in P2.8 makes an answer with no
+    # evidence and no comparison a bug, so an attachment turn always writes a dict.
+    # Bounded by the caps that already exist: <=3 suggested actions, Tier-2 <=20 /
+    # Tier-3 <=10 candidates, DEFAULT_SEARCH_LIMIT=6 evidence spans.
+    attachment_payload: dict | None = Field(
+        default=None, sa_column=Column(JSON_VARIANT, nullable=True)
+    )
     # Gap 280: Queue-based Async Chat Architecture
     # Lifecycle status: 'queued' | 'processing' | 'completed' | 'failed'
     status: str = Field(default="completed", max_length=32)

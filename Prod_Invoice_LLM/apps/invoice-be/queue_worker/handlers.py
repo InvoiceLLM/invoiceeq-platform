@@ -1524,6 +1524,14 @@ def handle_process_chat_job(
             on_progress("saving")
 
             # 4. Save Assistant ChatMessage & update User message
+            #
+            # Feature 26 H16 (Gap 386): local import, not module-level. This module
+            # is imported by the worker entrypoint and `routers/chat.py` imports
+            # from `services.chat_queue`, so a top-level import here risks a cycle
+            # for one helper. The same local-import shape `delete_attachment_chunks`
+            # already uses in `routers/chat.py::delete_session()`.
+            from routers.chat import extract_attachment_payload as _extract_attachment_payload
+
             assistant_msg = ChatMessage(
                 id=uuid4(),
                 session_id=UUID(session_id),
@@ -1534,6 +1542,13 @@ def handle_process_chat_job(
                 result_invoice_ids=agent_output.get("result_invoice_ids", []),
                 status="completed",
                 job_id=job_id,
+                # Feature 26 H16 (Gap 386). The async path persists the answer
+                # contract too -- H7 will make attachment turns reachable through
+                # this worker, and wiring it only on the sync side would lose the
+                # contract again the moment that flag flips, in a different process
+                # where the symptom looks nothing like the cause. Imported from the
+                # router so the key list has exactly one definition.
+                attachment_payload=_extract_attachment_payload(agent_output),
             )
             session.add(assistant_msg)
 

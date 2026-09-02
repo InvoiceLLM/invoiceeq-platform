@@ -12,3 +12,10 @@ landed since last: R0 (gaps 384/385/387/388), R1 commit 40c0097 + PUSHED to orig
 gaps filed: 384, 385, 387, 388
 blockers: none
 note: BOTH SPECS WERE WRONG — migration was already applied at head e4f5a6b7c8d9. Correcting the two Build status blocks. chat_attachments (not chatattachment) present with all 3 columns.
+
+[23:50] mins left: 87
+persona: functional-tester -> senior-dev
+in progress: R5 (=H16) MessageResponse + persisted attachment_payload, Gap 386
+landed since last: R2 connect_timeout x4; R3 migration reversible on real Postgres (R-27-26 SATISFIED); R4 5 failed/211 passed/ZERO skipped -> T-E10-1..5 ran on real Postgres, R-27-20..24 SATISFIED, V-19 met; R6/Gap389 the "G10 defect" was a bad test, withdrawn. Commits 40c0097, f47b708 both pushed.
+gaps filed: 384,385,387,388,389,390
+blockers: none
