@@ -26,6 +26,7 @@ from dependencies import (
     require_can_load_or_api_key,
     TenantContext,
 )
+from chroma_client import delete_document_chunks
 from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
@@ -798,6 +799,22 @@ async def rollback_batch(
 ):
     """
     Soft-deletes all active invoices in the specified batch, acting as a rollback.
+
+    Gap 397 (Feature 27 task R6): **and every `Document` row from the same
+    batch**, dropping their Chroma chunks as it goes. E10 (Gap 381) made a batch
+    upload heterogeneous -- a classified delivery note leaves `invoice` entirely
+    and becomes a `documents` row carrying the same `batch_id` -- and this
+    endpoint kept querying only `Invoice`. So "rollback the batch" silently rolled
+    back part of it, and a mixed upload of ten files where three classified as
+    non-invoices left those three live and indexed after the user had been told
+    the batch was undone. A batch of *only* non-invoice documents was worse
+    still: zero rows matched, so the endpoint returned 404 -- "no such batch" --
+    about a batch that plainly existed.
+
+    Chunks go here but not on the invoice branch, and that asymmetry is
+    deliberate; `routers/documents.py::delete_document` states the reason (Gap 239
+    retains invoice chunks for a restore path; nothing reads `docs_` yet, so
+    nothing post-filters it either).
     """
     if context.db_user_id is None:
         raise HTTPException(
@@ -811,10 +828,24 @@ async def rollback_batch(
         invoice_not_deleted()
     )
     invoices = db_session.exec(query).all()
-    if not invoices:
+
+    # Gap 397: the other half of the batch. Tenant-scoped and soft-delete aware
+    # on the same three predicates, so a cross-tenant batch_id finds nothing here
+    # for the same reason it finds nothing above.
+    documents = db_session.exec(
+        select(Document).where(
+            Document.batch_id == batch_id,
+            Document.tenant_id == context.tenant_id,
+            Document.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+    ).all()
+
+    # The 404 now asks about the BATCH, not about one of its two tables -- a
+    # batch that classified entirely to non-invoice documents is a real batch.
+    if not invoices and not documents:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active invoices found for the specified batch_id."
+            detail="No active invoices or documents found for the specified batch_id."
         )
 
     now = datetime.utcnow()
@@ -839,8 +870,33 @@ async def rollback_batch(
                 timestamp=now,
             )
         )
+    for document in documents:
+        # No AuditLog row: `AuditLog.invoice_id` is non-nullable and a document id
+        # in it would be a lie by column name (Gap 398 tracks giving documents
+        # their own audit trail). Logged instead, so the action is not invisible.
+        document.deleted_at = now
+        db_session.add(document)
+
     await run_in_threadpool(db_session.commit)
-    return {"success": True, "count": len(invoices)}
+
+    # After the commit, and swallowing its own errors (chroma_client.py:639): an
+    # unreachable Chroma must not turn a completed rollback into a 500 the caller
+    # would retry against rows that are already deleted.
+    for document in documents:
+        delete_document_chunks(str(document.id), str(context.tenant_id))
+    if documents:
+        logger.info(
+            "Batch rollback %s also soft-deleted %d document(s) and dropped their chunks.",
+            batch_id, len(documents),
+        )
+
+    return {
+        "success": True,
+        "count": len(invoices),
+        # Reported separately rather than folded into `count`: an existing caller
+        # reads `count` as "invoices rolled back" and must keep meaning that.
+        "document_count": len(documents),
+    }
 
 
 @router.get("/{invoice_id}", response_model=Invoice)

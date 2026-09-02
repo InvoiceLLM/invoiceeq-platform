@@ -1729,9 +1729,9 @@ this block is what actually happened, so a reader does not have to diff them.
 | **R8** — `doc_attributes` + `services/doc_attributes.py` (A6) | `[x]`, migration `a6b7c8d9e0f1` **applied to Postgres** | `9f87ab8` |
 | **R9** — `ADVISORY` family (A7) | `[x]` | `0cda980` |
 | **R10** — classifier pre-checks, Gutschrift, `rule_era` (A8) | `[x]` | `c82a751` |
-| **R11** — fixture matrix + A-series tests | `[~]` — the **Postgres run** is done (16 failed / 2575 passed / 1 skipped, evidence file 05); the fixture matrix and T-C-6/T-R-9/T-R-10/T-R-11 are NOT | — |
+| **R11** — fixture matrix + A-series tests | `[x]` — **8 new fixtures for A5's four uncovered types (24 total, 13/14 values), all 24 measured through the real classifier: 24/24 correct, 24/24 deterministic, zero model calls.** `DOC_TYPE_CONFIDENCE_THRESHOLD` recalibrated 0.6 → 0.75 on six measured confidences (0.90/0.92/0.93/0.95/0.95/0.95, nothing between 0.60 and 0.90); both numbers kept in `MANIFEST.md` per the standing ruling. Found and fixed **Gap 396** (German transliteration missing from the synonym table — three fixtures were paying for an LLM call and getting the right answer by luck). `tests/test_a_series_fixtures.py` → 55 passed | `478fb89` |
 | **R5** — rollout gate | `[~]` — **(c) documents-list surface BUILT** (`510c444`); **(a) needs a FOUNDER RULING**, (b) blocked on (a) | `510c444` |
-| **R6** — `docs_` lifecycle | `[~]` — the functions all exist (`chroma_client.py:639/676/704/723`) and Gap 389 withdrew the "defect"; what remains is the **sweep wiring** (reembed prefix set, sandbox sweep) | — |
+| **R6** — `docs_` lifecycle | `[x]` — the functions exist (`chroma_client.py:639/676/704/723`), Gap 389 withdrew the "defect", and the **sweep wiring landed at Gap 385** (`ORPHAN_SWEEP_PREFIXES`, `delete_tenant_document_collection()` in the sandbox sweep). What was genuinely missing was the **soft-delete path itself** — `deleted_at` existed on the model and nothing ever set it. Now `DELETE /documents/{id}` plus **Gap 397**'s batch-rollback fix, both dropping chunks. Gap 381 item 3 → explicitly deferred as **Gap 399**, anchored by a test | see §10B R6 build note |
 | **R12** — flag-removal criterion text | `[ ]` | — |
 
 **R5(a) is the one thing this run could not decide and did not invent.** The spec
@@ -2788,6 +2788,92 @@ that actually returns `doc_type`, because none does — that end-to-end claim be
 functional-tester after G9.
 
 ---
+
+### Build note — R6 (`docs_` lifecycle + soft-delete), 2026-09-03 (tracker Gaps 397/398/399)
+
+Additive per hard rule 4; §1–§9 and every earlier build note are unchanged.
+
+**Two thirds of R6 were already done, and the row said so imprecisely.** The
+lifecycle functions landed at Gap 385, and so did both pieces of "sweep wiring"
+the task named: `scripts/reembed_chroma_collections.py` carries
+`DOCUMENT_COLLECTION_PREFIX = "docs_"` in `ORPHAN_SWEEP_PREFIXES` (`:101–102`,
+with the scope note explaining why `docs_` sweeps but does not *rebuild*), and
+`scripts/sweep_sandbox_tenants.py` drops the whole collection per tenant via
+`delete_tenant_document_collection()` (`:179–181`). Re-checked against the code
+before writing anything, per the audit rule that a doc claim must be shown, not
+paraphrased.
+
+**What was genuinely missing was the third clause — "soft-delete of a `Document`
+removes its chunks" — and it was missing at the root: there was no soft-delete of
+a `Document` at all.** G14 shipped `deleted_at` on the model and a
+`deleted_at IS NULL` predicate on both read endpoints, so every reader was
+correct about a state nothing could ever produce. The column was dead weight and
+a tenant who uploaded the wrong contract had no way to withdraw it.
+
+- **`routers/documents.py::delete_document`** — `DELETE /documents/{id}`,
+  resolved through the existing `_require_owned_document()` so the cross-tenant
+  answer is 404 and not 403, identical to the two read endpoints. Soft-deletes,
+  then drops the row's chunks.
+- **Order is load-bearing: commit first, chunks second.**
+  `delete_document_chunks()` logs and swallows its own failures, so a Chroma
+  outage after the commit leaves orphaned chunks that the reembed sweep can still
+  reach. The reverse order, on a failed commit, would leave a **live** document
+  that had silently stopped being retrievable — the failure nobody would notice.
+  `test_the_row_is_committed_before_the_chunks_are_touched` asserts this from a
+  second Postgres connection, since the request's own session would see the
+  pending change either way.
+- **Chunks are deleted here even though `delete_invoice` deliberately retains
+  them.** Gap 239 settled the invoice policy the other way — retention serves a
+  restore path, and `agents/query_agent.py` (`~:4198`) checks citation
+  *existence* rather than visibility, so a soft-deleted invoice stays a
+  legitimate citation. That reasoning does not transfer, for a specific reason:
+  **nothing reads `docs_{tenant}` yet.** It is write-only today, so there is no
+  retrieval path carrying an equivalent guard, and a retained chunk of a
+  withdrawn document would become answerable the moment someone adds the first
+  reader — silently, in their code, not here. Deleting now creates no obligation
+  on a future author.
+
+**Gap 397, found while writing the above and fixed in the same change.**
+`DELETE /invoices/batches/{id}` had been rolling back only half of every mixed
+batch since E10: it selects `Invoice` rows by `batch_id`, and a classified
+non-invoice leaves that table while keeping the same `batch_id`. Worse, a batch
+whose files *all* classified as non-invoices matched zero rows and returned
+**404 — "no such batch"** about a batch that was entirely live. Both halves are
+dormant with the flag off (no `documents` row can exist) and activate on the flip,
+which is the class of defect this run exists to find first. The endpoint now
+covers both tables on the same three predicates, drops document chunks after the
+commit, and reports `document_count` as a **separate** key so `count` keeps
+meaning "invoices" for existing callers.
+
+**Gap 398, filed and deliberately not fixed.** A document can now be deleted and
+the product's audit trail does not record it, because `AuditLog.invoice_id` is
+non-nullable and a document id in a column of that name is exactly the type
+confusion E10 exists to prevent. The honest fix is a migration plus a sweep of
+every audit reader — its own change. Both delete paths log at INFO in the
+meantime, and `delete_document`'s docstring names the gap so the omission is a
+recorded decision.
+
+**Gap 381 open item 3 — the re-enqueue sweep for stuck `Document` rows — is
+deferred as Gap 399, and the deferral is anchored rather than promised.** A
+`Document` has exactly one construction site (`queue_worker/handlers.py:494`,
+called at `:944`); it runs *after* the extraction graph returns and builds the row
+with `status` already EXTRACTED or EXTRACT_FAILED and `completed_at` stamped.
+There is no window in which a `Document` exists and is still owed an answer — a
+stall in a non-invoice upload is a stall of the **placeholder `Invoice`**, which
+the existing sweep already finds and whose retry re-runs the same handler and
+reaches the same fork. Because that is true of the code rather than of the
+design, `test_a_document_row_is_only_ever_created_in_a_terminal_status` fails
+with a message naming Gap 399 if a `Document` is ever created at upload time, and
+the reasoning sits beside `STUCK_STATUSES` in
+`services/invoice_reconciliation.py` where the person building the second sweep
+will look.
+
+**Evidence.** `tests/test_document_delete.py` → **11 passed against real
+Postgres** (hard rule 2), covering the soft delete and both read endpoints, the
+chunk call and its exact arguments, commit ordering, an unreachable Chroma not
+failing the request, a repeated delete not re-hitting Chroma, a cross-tenant
+delete destroying nothing, all four batch-rollback cases and the Gap 399 anchor.
+`tests/test_batches.py` + `tests/test_documents_table.py` → 39 passed, unchanged.
 
 ## 11. Size estimate — realistic, multi-day
 

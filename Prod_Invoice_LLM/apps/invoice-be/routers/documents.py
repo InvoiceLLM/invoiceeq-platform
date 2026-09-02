@@ -33,6 +33,7 @@ new document population is a product decision with its own scope question, not a
 side effect of adding a read endpoint. Narrower is the reversible direction.
 """
 import logging
+from datetime import datetime
 from typing import Any, List, Optional
 from uuid import UUID
 
@@ -41,6 +42,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from chroma_client import delete_document_chunks
 from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import Document
 
@@ -213,3 +215,62 @@ def get_document(
 ):
     """One document, resolved through `_require_owned_document()`."""
     return _to_out(_require_owned_document(document_id, db_session, tenant_context))
+
+
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: UUID,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session),
+):
+    """Feature 27 task R6 — soft-delete one document AND drop its chunks.
+
+    THE REQUIREMENT HAD NOWHERE TO LAND. §10 R6 says "soft-delete of a
+    `Document` removes its chunks", and until this endpoint there was no path in
+    the codebase that soft-deleted a `Document` at all: G14 shipped the two read
+    endpoints, `deleted_at` was mirrored onto the model from `Invoice` (models.py
+    ~line 350) and every read filters on it, but nothing ever set it. So the
+    column was dead weight and a tenant who uploaded the wrong contract had no
+    way to withdraw it.
+
+    WHY THIS DELETES CHUNKS WHEN `delete_invoice` DELIBERATELY DOES NOT. Gap 239
+    settled the invoice policy in the other direction -- `routers/invoices.py`
+    retains chunks on soft-delete so a restore path stays possible, and
+    `agents/query_agent.py` (~line 4198) deliberately checks citation EXISTENCE
+    rather than visibility, so a soft-deleted invoice remains a legitimate
+    citation. That reasoning does not transfer, for a concrete reason: nothing
+    reads `docs_{tenant}` yet. It is a write-only collection today, so there is
+    no retrieval path carrying an equivalent guard, and a retained chunk of a
+    withdrawn document would become answerable the moment someone adds the first
+    reader -- silently, and in whatever code they write, not here. Deleting now
+    is the choice that creates no obligation on a future author. The document is
+    also the worse thing to leak: a purchase order or contract holds another
+    company's negotiated pricing and penalty terms (this module's header).
+
+    ORDER MATTERS: commit the row first, chunks second. `delete_document_chunks`
+    logs and swallows (chroma_client.py:639), so a Chroma failure after the
+    commit leaves a deleted row whose orphaned chunks the reembed sweep can still
+    reach. The reverse order -- chunks first -- would, on a failed commit, leave a
+    LIVE document that has silently stopped being retrievable, which is the
+    failure nobody would ever notice.
+
+    NO `AuditLog` ROW, stated rather than left as an omission. `AuditLog.invoice_id`
+    is non-nullable (models.py) and is what the invoice audit-trail endpoints key
+    on; writing a document id into a column named `invoice_id` is exactly the
+    type confusion E10 exists to prevent, and making it nullable is a migration
+    plus a sweep of every reader -- its own change, filed as Gap 398. The delete
+    is logged with the same fields in the meantime.
+    """
+    row = _require_owned_document(document_id, db_session, tenant_context)
+
+    row.deleted_at = datetime.utcnow()
+    db_session.add(row)
+    db_session.commit()
+
+    delete_document_chunks(str(document_id), str(tenant_context.tenant_id))
+
+    logger.info(
+        "Soft-deleted document %s (tenant %s, doc_type %s) and dropped its chunks.",
+        document_id, tenant_context.tenant_id, row.doc_type,
+    )
+    return {"success": True}
