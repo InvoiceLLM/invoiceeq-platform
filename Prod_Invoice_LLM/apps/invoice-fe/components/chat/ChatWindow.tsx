@@ -33,7 +33,7 @@ import {
   PanelLeftOpen,
   Paperclip,
 } from "lucide-react";
-import { MessageStream } from "./MessageBubble";
+import { MessageStream, type AttachmentTurnHandlers } from "./MessageBubble";
 import AttachmentChip from "./AttachmentChip";
 import {
   CHAT_ATTACHMENT_ACCEPT,
@@ -598,6 +598,14 @@ interface ChatWindowProps {
   onRemoveAttachment?: () => void;
   onCancelAttachment?: () => void;
   attachmentCount?: number;
+  // Feature 26 task H16/R6. H11 built the confirmation card, the clarification
+  // buttons and the manual-entry field behind this prop, and H12 built the
+  // callbacks that feed it -- but the two shipped in parallel and neither could
+  // thread a prop the other had not merged yet, so `<MessageStream>` below was
+  // rendered without it and every one of those controls stayed dark. Optional,
+  // matching H10's precedent: absent means the bubbles render read-only rather
+  // than showing a button that does nothing.
+  attachmentHandlers?: AttachmentTurnHandlers;
 }
 
 export default function ChatWindow({
@@ -618,6 +626,7 @@ export default function ChatWindow({
   onRemoveAttachment,
   onCancelAttachment,
   attachmentCount = 0,
+  attachmentHandlers,
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
 
@@ -719,7 +728,11 @@ export default function ChatWindow({
             // optimistic user bubble is added, so this never flickers mid-send.
             <SuggestionChips onSelect={onSendMessage} disabled={isSending} />
           ) : (
-            <MessageStream messages={messages} isSending={isSending} />
+            <MessageStream
+              messages={messages}
+              isSending={isSending}
+              attachmentHandlers={attachmentHandlers}
+            />
           )}
         </div>
 

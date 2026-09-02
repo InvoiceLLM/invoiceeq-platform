@@ -92,11 +92,21 @@ Part 1 and Part 2 are in genuinely different states and are never to be cited as
 - **Flag**: `config.py:259 ENABLE_GENERIC_DOC_CHAT: bool = False` (BE Gap 382). Part 2's
   intent split, clarifying turn and content branch are unreachable with it off; Part 1's
   comparison path is byte-identical to Gap 366 in that state.
-- **The blocker that makes H10–H12 undeliverable as-is**: `routers/chat.py::MessageResponse`
-  (`:173`) and the persisted `ChatMessage` row (`:630–637`, `models.py:355–380`) carry
-  **none** of the six attachment keys the agent emits (`query_agent.py:3220`, `:3281`,
-  `:3351–3352`, `:3460–3461`, `:3542–3550`). Filed 2026-09-02 as **BE Gap 386**, task
-  **H16**, amendment **B12** — and H10/H11/H12 are **not "done" until H16 lands**.
+- **~~The blocker that makes H10–H12 undeliverable~~ — CLOSED 2026-09-03, commit
+  `4572f0e` (task H16, BE Gap 386).** `ChatMessage.attachment_payload` (JSON_VARIANT,
+  nullable) + migration `f5a6b7c8d9e0`, **applied to the dev Postgres**; nine optional
+  fields on `MessageResponse`; `ATTACHMENT_CONTRACT_KEYS` as the one definition both the
+  persist side and the wire side read; persistence on the sync **and** async write paths;
+  flattening on both the POST return and the `GET /chat/sessions/{id}` reload. **The
+  contract now reaches the browser and survives a reload** — `tests/test_h16_answer_contract.py`,
+  6 passing, each asserting on the HTTP body *and* the reloaded session; regression sweep
+  159 passed. Worth knowing: the first pass flattened on the reload path only, so the POST
+  still returned nine nulls — the same defect one layer down, caught because V-27 asserts
+  on the response rather than on the agent mock.
+  **H10/H11/H12 are still not fully delivered**, for a smaller reason: their Playwright
+  suites have never run, and `ChatWindow.tsx:722` still renders `<MessageStream>` without
+  the `attachmentHandlers` prop, so the confirmation card and clarification buttons stay
+  dark. That is R6, not H16.
 
 ---
 

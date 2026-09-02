@@ -3,6 +3,8 @@
 //   and calls apiClient (browser Axios).  Next.js requires the client directive
 //   on any component that uses browser-only React hooks or browser APIs.
 
+import { useCallback, useMemo, useState } from "react";
+
 import { useChatSession } from "@/hooks/useChatSession";
 import ChatWindow from "@/components/chat/ChatWindow";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
@@ -45,7 +47,86 @@ export default function ChatPage() {
     removeAttachment,
     cancelAttachment,
     attachmentCount,
+    // Feature 26 task R6: H12 built this and nothing consumed it, so H11's
+    // confirmation card and clarification buttons rendered read-only. The
+    // handlers below are what make the D4 confirmation gate operable from the UI.
+    confirmMatches,
   } = useChatSession();
+
+  // R6. `AttachmentTurnHandlers` (components/chat/MessageBubble.tsx:422) is the
+  // contract H11 built the card against; these are the callbacks that satisfy it.
+  const [confirmingAttachmentId, setConfirmingAttachmentId] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirmedAttachmentIds, setConfirmedAttachmentIds] = useState<string[]>([]);
+
+  const onConfirmMatches = useCallback(
+    async (attachmentId: string, invoiceIds: string[]) => {
+      setConfirmingAttachmentId(attachmentId);
+      setConfirmError(null);
+      try {
+        await confirmMatches(attachmentId, invoiceIds);
+        // Lock the card. The backend rejects any id it did not offer as a
+        // candidate (routers/chat_attachments.py), so a second confirm on the
+        // same attachment is not merely redundant -- it can 400.
+        setConfirmedAttachmentIds((prev) =>
+          prev.includes(attachmentId) ? prev : [...prev, attachmentId]
+        );
+      } catch (e: unknown) {
+        // Surfaced inline on the card rather than swallowed: the 400 detail is
+        // the only thing that tells a user WHY an invoice could not be confirmed.
+        const detail =
+          (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+          (e as Error)?.message ??
+          "Could not confirm those invoices.";
+        setConfirmError(detail);
+      } finally {
+        setConfirmingAttachmentId(null);
+      }
+    },
+    [confirmMatches]
+  );
+
+  // Both of these go back as an ordinary chat message, which is not a shortcut:
+  // `MessageCreate` carries only `content` and `attachment_id`, and
+  // `_classify_attachment_intent()` is a pure keyword match over the text, so a
+  // phrase in the message IS the mechanism for making an intent explicit.
+  // MessageBubble has already composed `text` via composeClarificationReply().
+  const onClarificationChoice = useCallback(
+    async (text: string) => {
+      await sendMessage(text);
+    },
+    [sendMessage]
+  );
+
+  // The zero-candidate path. The confirm endpoint takes invoice IDs and rejects
+  // anything the matcher did not propose, so a typed invoice NUMBER cannot go
+  // there -- it goes back as a message, which is what the backend's own
+  // zero-candidate copy asks the user to do.
+  const onManualInvoiceEntry = useCallback(
+    async (_attachmentId: string, invoiceNumber: string) => {
+      await sendMessage(`Compare it against invoice ${invoiceNumber}.`);
+    },
+    [sendMessage]
+  );
+
+  const attachmentHandlers = useMemo(
+    () => ({
+      onConfirmMatches,
+      onManualInvoiceEntry,
+      onClarificationChoice,
+      confirmingAttachmentId,
+      confirmError,
+      confirmedAttachmentIds,
+    }),
+    [
+      onConfirmMatches,
+      onManualInvoiceEntry,
+      onClarificationChoice,
+      confirmingAttachmentId,
+      confirmError,
+      confirmedAttachmentIds,
+    ]
+  );
 
   return (
     // WHY -m-8: the Shell component (components/layout/Shell.tsx) wraps
@@ -78,6 +159,7 @@ export default function ChatPage() {
         attachment={attachment}
         onRemoveAttachment={removeAttachment}
         onCancelAttachment={cancelAttachment}
+        attachmentHandlers={attachmentHandlers}
         attachmentCount={attachmentCount}
       />
     </div>

@@ -19,3 +19,10 @@ in progress: R5 (=H16) MessageResponse + persisted attachment_payload, Gap 386
 landed since last: R2 connect_timeout x4; R3 migration reversible on real Postgres (R-27-26 SATISFIED); R4 5 failed/211 passed/ZERO skipped -> T-E10-1..5 ran on real Postgres, R-27-20..24 SATISFIED, V-19 met; R6/Gap389 the "G10 defect" was a bad test, withdrawn. Commits 40c0097, f47b708 both pushed.
 gaps filed: 384,385,387,388,389,390
 blockers: none
+
+[00:22] mins left: 55
+persona: senior-dev
+in progress: R6 — thread attachmentHandlers into MessageStream, then Playwright
+landed since last: R5/H16 (Gap 386 CLOSED) — attachment_payload column + migration f5a6b7c8d9e0 applied to Postgres, 9 fields on MessageResponse, both write paths, both read paths. V-27 6/6; regression 159 passed. Commit 4572f0e pushed.
+gaps filed: 384,385,387,388,389,390 (386 now [x])
+blockers: none
