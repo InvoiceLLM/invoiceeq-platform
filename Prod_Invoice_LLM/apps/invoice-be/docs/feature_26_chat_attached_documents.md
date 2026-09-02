@@ -2908,7 +2908,7 @@ Everything in the ledger except Part 1 is **uncommitted** (Build status header).
 | H7 async wiring | `[ ]` | — | not built; `routers/chat.py:437` still forces sync |
 | H8 `scripts/sweep_chat_attachments.py` | `[ ]` | — | **NOT FOUND** — `scripts/` has 6 other `sweep_*` files |
 | H9 `infra/chat-doc-ttl-job-only.bicep` | `[ ]` | — | **NOT FOUND** — 18 `.bicep` files, none matches |
-| H13 FE spec section | `[ ]` | — | `feature_5_chat.md` has the Gap 366 section; the additive Part 2 section is not written |
+| H13 FE spec section | `[x]` | — | Written 2026-09-03: `feature_5_chat.md` gains "Part 2: the attached-document answer contract", with the Gap 366 section annotated as superseded in place rather than edited (hard rule 4). Carries a per-file built/not-built table, the contract-key dispatch table, rules 1–4 carried forward plus five of Part 2's own, and names the one open verification item — no human has driven the surface end to end |
 | H14 narrow tests / full suite at boundary | `[~]` | — | narrow tests done per task; full suite **run 2026-09-02**: 14 failed / 2280 passed / 26 skipped, **none of the 14 in this feature** — V-19's bar met. R2 makes the run repeatable (`-x` collection abort, connect-timeout) |
 | H15 deferral gaps (B3/B4, RAG raw chunks) | `[ ]` | — | neither filed |
 | V §P2.10 against Postgres + Redis | `[ ]` | — | Part 1's T3 is recorded; **nothing in Part 2 has a Postgres run** |
@@ -2931,7 +2931,7 @@ What actually happened, so a reader need not diff this against the plan below.
 | **R9** — Tier 3 discovery (E-4) | `[x]` | `30dce18` |
 | **R10** — B3/B7/B8/B9/B10 | `[x]` all five | `7abe5d3`, `f5e1a6d`, `900105a` |
 | **R11** — H7 async wiring | `[x]`, flag NOT flipped | `7674c0d` |
-| **R12** — H13 FE spec section | `[ ]` | — |
+| **R12** — H13 FE spec section | `[x]` — additive Part 2 section in `apps/invoice-fe/docs/feature_5_chat.md`; Gap 366 section annotated as superseded, not rewritten | — |
 | **R13** — B11 removal criterion in the docstring | `[x]` — B11's five-part criterion (a)–(e) is now in `config.py`'s `ENABLE_GENERIC_DOC_CHAT` block, together with B11 item 1's restatement that `attachment_id` presence is the routing switch and this flag must never grow into a gate on attachments as such | — |
 
 **Two things this run deliberately did NOT do.**

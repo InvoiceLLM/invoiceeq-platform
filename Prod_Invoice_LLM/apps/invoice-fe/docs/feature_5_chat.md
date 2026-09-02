@@ -97,6 +97,16 @@ Inline thread rename (the pencil icon in `ChatWindow.tsx`'s `ThreadSidebar`, add
 
 ## Additive section — attached reference documents (BE Feature 26 / Gap 366, 2026-09-01)
 
+> **SUPERSEDED (2026-09-03) by "Part 2: the attached-document answer contract"
+> below (BE Feature 26 §P2.6 / §P2.1).** Nothing here is deleted or edited — this
+> section is the accurate record of the Gap 366 design and is still exactly right
+> about the `comparison` arm, which Part 2 keeps whole. What it does not know
+> about is the intent split (a user who attaches a delivery note usually wants to
+> *read* it, not compare it), the clarifying turn, the nine-key answer contract,
+> or the fact that most of the surface it describes as "specified, NOT built" has
+> since been built. Read Part 2 for the current shape; read this for why the
+> confirmation gate exists.
+
 Additive only, per hard rule 4 — nothing above this line is changed. The
 backend design record for this is `apps/invoice-be/docs/feature_26_chat_attached_documents.md`;
 this section specifies only the chat FE surface.
@@ -165,3 +175,112 @@ deterministically in Python (the LLM only narrates it).
   figure appears.
 - A case asserting an oversized file and a non-PDF are both rejected with the
   server's message surfaced, not swallowed.
+
+---
+
+## Additive section — Part 2: the attached-document answer contract (BE Feature 26 Part 2 / §P2.6, 2026-09-03)
+
+Additive only, per hard rule 4 — nothing above this line is changed, including
+the Gap 366 section, which is annotated as superseded rather than rewritten. The
+backend design record is
+`apps/invoice-be/docs/feature_26_chat_attached_documents.md` §P2.6; this section
+specifies only the chat FE surface, and no new FE feature number: this is
+Feature 5's surface.
+
+**Why there is a Part 2 at all.** The Gap 366 section above specified one
+question — *does this bill match what we agreed?* — and one shape of answer: a
+mandatory confirmation, then a deterministic diff. Real use was narrower than the
+document. A user who attaches a delivery note usually wants to **read** it
+("what's the delivery date?"), a user who attaches a statement wants to
+**reconcile** it against several invoices at once, and only the third wants the
+one-to-one comparison Part 1 built. Part 2 splits the turn on intent and gives
+each arm its own rendering, which is why this section exists as a superset rather
+than as a correction: everything Part 1 specified is still true of the
+`comparison` arm.
+
+### Status, per file — what is built and what is not
+
+| File | State |
+|---|---|
+| `components/chat/ChatWindow.tsx` | **Built.** Paperclip + hidden input in the co-located `InputBar`; renders ONLY when `onAttach` is supplied, so a caller that has not wired attachments gets today's composer unchanged |
+| `components/chat/AttachmentChip.tsx` | **Built.** Upload progress and the attached state |
+| `components/chat/AttachmentMatchConfirm.tsx` | **Built.** The confirmation UI, with `onManualEntry` as a callback separate from `onConfirm` |
+| `components/chat/DocumentEvidence.tsx` | **Built.** Renders the `evidence` spans |
+| `components/chat/ReconciliationTable.tsx` | **Built.** B10's `list_reconcile` table |
+| `components/chat/MessageBubble.tsx` | **Built (modified).** Dispatches on the contract keys — see the table below |
+| `types/chat.ts` | **Built (modified).** The nine optional contract keys |
+| `hooks/useChatSession.ts` | **Built (modified).** Sends `attachment_id`, carries it across the confirmation turn, handles the clarification reply |
+| `lib/chatAttachments.ts` | **Built.** Caps, types and copy shared by the three attachment surfaces |
+| `app/api/chat/attachments/…` | **Built.** Proxy routes; `invoice-be`'s ingress is `external: false`, so the browser cannot reach it directly |
+| `lib/featureFlags.ts` + `app/api/config/features/route.ts` | **Built** (BE Feature 27 R5(a)). How this surface learns whether a backend capability exists |
+
+### The answer contract, and how `MessageBubble` dispatches on it
+
+The backend persists nine optional keys on the assistant message
+(`ChatMessage.attachment_payload`, B12) and flattens them onto `MessageResponse`
+(H16), so the wire shape is flat and the reload path restores the same rendering
+the live turn produced.
+
+| Key | Present on | Rendered as |
+|---|---|---|
+| `attachment_confirmation` | a confirmation turn | `AttachmentMatchConfirm` |
+| `attachment_clarification` | an ambiguous-intent turn | inline options, `read` then `compare`, in that order |
+| `attachment_comparison` | a `comparison` turn | the deterministic diff |
+| `line_items` / `unmatched` | a `comparison` turn | the L1/L2/L3 line match, with unmatched lines shown, never dropped |
+| `reconciliation` | a `list_reconcile` turn **only** | `ReconciliationTable` |
+| `evidence` | any grounded turn | `DocumentEvidence` spans |
+| `suggested_actions` | any turn | 0–3 deep links |
+| `needs_confirmation` | a turn awaiting confirmation | **does not gate** the confirmation card — see rule 6 |
+
+### Rules this surface must respect
+
+Rules 1–4 are carried forward from the Gap 366 section unchanged and still bind
+the `comparison` arm; 5–9 are Part 2's.
+
+1. **The confirmation step is not skippable.** Until the user confirms, the
+   backend returns a confirmation payload and no figures at all. Render it as a
+   prompt, never as an answer, and never auto-confirm a single candidate — a
+   one-candidate tier-2 guess is still a guess.
+2. **Zero matches offers manual entry**, via `requires_manual_entry`, not an
+   empty list.
+3. **Suggested actions are links, never buttons that act.** The backend has
+   already checked each one's preconditions. Chat never invokes a mutating
+   endpoint.
+4. **Client-side caps mirror the server, they do not replace it.** 10 MB, PDF
+   only, 5 per session are all enforced server-side (413 / 415 / 409); the client
+   check exists for a fast message, and the server's response still needs
+   surfacing.
+5. **An absent key means absent, not empty.** Every contract key is optional and
+   a turn carries only the ones its intent produced. Rendering an empty table for
+   a missing `reconciliation`, or "0 differences" for a missing
+   `attachment_comparison`, states something the backend did not say — the same
+   Gap 283 discipline the backend applies to money (`None` is "not stated", never
+   zero) applied to the rendering layer.
+6. **`needs_confirmation` does not gate the confirmation card.** The card renders
+   from `attachment_confirmation`'s presence. The two came from different layers
+   and a turn can carry the card without the boolean; gating on the boolean loses
+   the card and leaves the user with prose and no way forward.
+7. **Flag reads fail closed.** `lib/featureFlags.ts` returns `false` for a flag
+   that has not resolved, failed to fetch, or is absent. A flag read asks whether
+   a *backend capability exists*, and answering "yes" while unsure walks the user
+   into a path the backend cannot serve.
+8. **The reload path must restore the contract, not just the prose.**
+   `GET /chat/sessions/{id}` returns the persisted payload; a reload that renders
+   only text silently downgrades a confirmation turn into an unanswerable
+   message. This is why the backend persists rather than returning transiently.
+9. **The clarification turn carries the same `attachment_id`.** Turn 2 of a
+   clarified exchange must re-send it, or the backend has no document to answer
+   about and answers about none.
+
+### Verification Plan for this section
+
+- `npx tsc --noEmit` clean.
+- `e2e/chat-attachment-guards.spec.ts` — the caps and the rejection copy.
+- `e2e/chat-attachment-upload.spec.ts` — real file input → real XHR, asserting
+  the call shape with the backend stubbed via `page.route()`.
+- `e2e/chat-attachment-contract.spec.ts` — each contract key renders its own
+  component, and an absent key renders nothing at all (rule 5).
+- Still open, and named so it is not mistaken for done: **no human has driven this
+  surface end to end and filed a screenshot.** That is item (d) of
+  `ENABLE_GENERIC_DOC_CHAT`'s removal criterion in `apps/invoice-be/config.py`,
+  and no automated case substitutes for it.
