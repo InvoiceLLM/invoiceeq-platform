@@ -6,6 +6,7 @@ import Sidebar from "./Sidebar";
 import Header from "./Header";
 import { PageHeaderProvider } from "./PageHeaderContext";
 import WorkflowSetupBanner from "@/components/settings/WorkflowSetupBanner";
+import { RouteGuard } from "./RouteGuard";
 
 interface ShellProps {
   children: React.ReactNode;
@@ -60,7 +61,12 @@ export default function Shell({ children }: ShellProps) {
               to overlap instead of scrolling. overflow-auto lets it scroll
               horizontally too, same as it already does vertically. */}
           <main className="flex-1 overflow-auto p-8 bg-gradient-to-b from-[#0B0F19] to-[#080B12]">
-            {children}
+            {/* Gap 423: permissions filtered nav links but nothing guarded the
+                routes -- middleware.ts only calls auth().protect(), which checks
+                that a session exists and nothing about what it may do. Typing a
+                URL reached any screen. Wrapped here rather than per-page so a
+                new route cannot be added without inheriting the guard. */}
+            <RouteGuard>{children}</RouteGuard>
           </main>
         </div>
       </div>

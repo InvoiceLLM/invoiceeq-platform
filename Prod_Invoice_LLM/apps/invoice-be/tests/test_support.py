@@ -1245,3 +1245,114 @@ class TestRateLimiterStateBounds:
             assert res.status_code == 429, "limiter failed open when Redis died"
         finally:
             _rate_limiter._redis_client = original
+
+
+# ---------------------------------------------------------------------------
+# Gap 422: prose embeddings, the margin guard, and the re-seeding fix
+# ---------------------------------------------------------------------------
+
+class TestSupportRetrievalTuning:
+    """The Gap 403 fallback shipped dead: threshold 0.35 against genuine
+    matches measured at 0.31-0.53. These pin the corrected behaviour."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_collection(self):
+        import agents.support_agent as sa
+
+        def _reset():
+            try:
+                sa.get_chroma_client().delete_collection(name=sa._SUPPORT_COLLECTION_NAME)
+            except Exception:
+                pass
+            sa._support_collection_seeded = False
+
+        _reset()
+        yield
+        _reset()
+
+    def test_topics_are_embedded_as_prose_not_a_keyword_dump(self):
+        """The ranking inversion that made this feature useless came from
+        embedding a bag of keywords: a question matched whichever bag shared
+        vocabulary rather than the topic that answers it."""
+        import agents.support_agent as sa
+
+        topic = next(t for t in sa.KNOWLEDGE_TOPICS if t["id"] == "autopilot")
+        text = sa._topic_embedding_text(topic)
+
+        assert topic["guidance"] in text, "the prose answer must be what is embedded"
+        assert topic["title"] in text
+        # The keyword list must NOT be appended -- that reintroduces the exact
+        # vocabulary collision this change removes.
+        assert "sync now" not in text.replace(topic["guidance"], "")
+
+    def test_thresholds_are_internally_consistent(self):
+        """Guards against a future 'tidy-up' silently re-breaking this: the
+        measured genuine band tops out at 0.5320 and the closest false positive
+        sits at 0.5228, so the distance cutoff must sit between them, and the
+        margin must stay below the tightest genuine gap (0.0193)."""
+        import agents.support_agent as sa
+
+        assert 0.50 <= sa.SUPPORT_RELEVANCE_DISTANCE_THRESHOLD <= 0.5228
+        assert 0.0061 < sa.SUPPORT_RELEVANCE_MARGIN < 0.0193
+
+    def test_ambiguous_match_returns_no_answer(self, monkeypatch):
+        """Two topics scoring near-identically means the question belongs to
+        neither. Answering with whichever won by a hair is how a confidently
+        wrong article gets shown -- worse than the honest miss it replaced."""
+        import agents.support_agent as sa
+
+        # Two topics at effectively the same distance -> inside the margin.
+        def near_identical(texts):
+            out = []
+            for t in texts:
+                if t.startswith("QUERY"):
+                    out.append([1.0, 0.0] + [0.0] * 1022)
+                elif "Autopilot" in t:
+                    out.append([0.78, 0.62] + [0.0] * 1022)
+                else:
+                    out.append([0.775, 0.632] + [0.0] * 1022)
+            return out
+
+        monkeypatch.setattr(sa, "get_embeddings", near_identical)
+        assert sa._vector_match_topic("QUERY something ambiguous") is None
+
+    def test_editing_the_knowledge_base_reseeds_the_index(self, monkeypatch):
+        """The latent bug: seeding was guarded by `count() == 0`, so once the
+        collection existed it was NEVER refreshed. Editing a topic left the
+        index serving stale vectors forever, silently, in every environment."""
+        import agents.support_agent as sa
+
+        first = sa._topics_content_fingerprint()
+        sa._get_support_collection()
+        assert sa._support_collection_seeded is True
+
+        # Simulate an edit to the knowledge base.
+        original_title = sa.KNOWLEDGE_TOPICS[0]["title"]
+        try:
+            sa.KNOWLEDGE_TOPICS[0]["title"] = original_title + " (edited)"
+            assert sa._topics_content_fingerprint() != first, "fingerprint must track content"
+
+            # A new process would start with the module flag cleared.
+            sa._support_collection_seeded = False
+            collection = sa._get_support_collection()
+
+            found = collection.get(ids=[sa._SUPPORT_VERSION_DOC_ID])
+            stored = (found["metadatas"] or [{}])[0].get("fingerprint")
+            assert stored == sa._topics_content_fingerprint(), "index must be re-seeded after an edit"
+        finally:
+            sa.KNOWLEDGE_TOPICS[0]["title"] = original_title
+
+    def test_version_sentinel_is_never_returned_as_an_answer(self, monkeypatch):
+        """The fingerprint marker is a zero vector living in the same
+        collection. If it ever ranked, the user would get a blank answer."""
+        import agents.support_agent as sa
+
+        sa._get_support_collection()
+
+        def all_equal(texts):
+            return [[0.0] * 1024 for _ in texts]
+
+        monkeypatch.setattr(sa, "get_embeddings", all_equal)
+        result = sa._vector_match_topic("anything at all")
+        # Either no answer, or a real topic -- never the sentinel.
+        assert result is None or result["id"] != sa._SUPPORT_VERSION_DOC_ID

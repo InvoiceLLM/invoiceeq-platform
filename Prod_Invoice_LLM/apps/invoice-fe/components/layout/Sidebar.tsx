@@ -18,6 +18,7 @@ import {
   ChevronsRight,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { canAccessRoute } from "@/lib/routePermissions";
 
 // FE Gap 273: persisted so the collapsed/expanded choice survives a reload.
 const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
@@ -92,9 +93,25 @@ export default function Sidebar() {
   // While identity is still in flight, show only the three universal items.
   // Rendering the full list optimistically would flash Trainer/Audit/Settings
   // at users who are not allowed to see them.
-  const visibleItems = menuItems.filter((item) =>
-    loading ? item.href === "/dashboard" || item.href === "/chat" || item.href === "/help" : item.visible
-  );
+  // Gap 423: `visible` above and the route guard must never disagree -- a link
+  // you can see leading to a screen that refuses you (or the reverse) is worse
+  // than either alone. Both now consult lib/routePermissions.ts, and this
+  // assertion is the tripwire: if the two ever diverge for a route, the nav
+  // item is hidden (the safe direction) and it is logged rather than silently
+  // rendering a link the guard will block.
+  const visibleItems = menuItems.filter((item) => {
+    if (loading) {
+      return item.href === "/dashboard" || item.href === "/chat" || item.href === "/help";
+    }
+    const guardAllows = canAccessRoute(item.href, { role, canLoad, canAudit, canTrain });
+    if (item.visible !== guardAllows && process.env.NODE_ENV !== "production") {
+      console.warn(
+        `[Gap 423] Sidebar/RouteGuard disagree for ${item.href}: ` +
+        `sidebar=${item.visible} guard=${guardAllows}. Reconcile lib/routePermissions.ts.`
+      );
+    }
+    return item.visible && guardAllows;
+  });
 
   // FE Gap 143: the most specific matching item wins. "Settings" (/settings)
   // and "Subscriptions" (/settings/subscriptions) both prefix-match while the

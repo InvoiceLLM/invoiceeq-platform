@@ -29,6 +29,7 @@ are exactly as deterministic as before. See `_vector_match_topic()` below.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
@@ -365,49 +366,147 @@ def _score_topic(topic: dict[str, Any], lower_query: str) -> tuple[int, int]:
 # (Gap 55), so there is nothing to isolate.
 
 _SUPPORT_COLLECTION_NAME = "support_knowledge_topics"
+_SUPPORT_VERSION_DOC_ID = "__content_version__"
 _support_collection_lock = threading.Lock()
 _support_collection_seeded = False
 
-# Conservative starting point, not an empirically derived constant. Gap 244
-# derived its 0.49 invoice-chunk threshold from a labelled retrieval dataset;
-# there is no equivalent labelled dataset for support topics yet, so this is
-# deliberately strict (only accept a confident match) and needs live tuning
-# against real traffic rather than being treated as scientifically grounded.
-SUPPORT_RELEVANCE_DISTANCE_THRESHOLD = 0.35
+# Gap 422: derived by measurement, not chosen. Method mirrors Gap 244's --
+# embed every topic, run a labelled set of real paraphrases, and place the
+# cutoff between the hardest genuine match and the closest false positive.
+#
+# Measured against the real BAAI/bge-m3 model with the prose embedding text
+# below (`scripts/measure_support_retrieval.py`; full output in the Gap 422
+# tracker entry). The previous value, 0.35, was a guess set stricter than this
+# repo's own already-measured invoice-chunk threshold (0.49) and was
+# **unreachable** -- genuine matches sit at 0.31-0.53, so the vector fallback
+# could never fire at all. It shipped dead.
+#
+# THE BANDS OVERLAP, and that is why there are two constants rather than one.
+# Measured: hardest genuine match 0.5320; closest false positive 0.5228
+# ("how do I train for a marathon" -> the AI *Trainer* topic, on the word
+# "train"). No single distance separates them.
+#
+# 0.52 sits just below that false positive, so every measured negative is
+# rejected on distance alone. The deliberate cost: one genuine query
+# ("what do the different states on a bill actually mean", 0.5320) now returns
+# no answer. That trade is taken knowingly -- answering a marathon-training
+# question with the AI Trainer guide is a worse product than saying nothing,
+# and the neutral "didn't find an answer" card still offers a ticket.
+SUPPORT_RELEVANCE_DISTANCE_THRESHOLD = 0.52
+
+# Gap 422: a match must also beat the runner-up by this much.
+#
+# This is what actually catches wrong-topic answers, and the measurement is
+# unusually clean: every correct match had a runner-up gap of >= 0.0193, while
+# both wrong-topic cases sat at 0.0061 and 0.0052 -- a 3x separation. 0.012 is
+# the midpoint of that gap.
+#
+# A first guess of 0.03 was wrong in the other direction: it would have
+# rejected genuine matches at 0.0193 and 0.0228. Set from the data, not taste.
+SUPPORT_RELEVANCE_MARGIN = 0.012
 
 
 def _topic_embedding_text(topic: dict[str, Any]) -> str:
-    """Text embedded to represent a topic in the vector index: title plus its
-    curated keyword phrases, which are closer in register to how a user
-    actually phrases a question than the prose `guidance` answer is."""
-    return f"{topic['title']}. {' '.join(topic['keywords'])}"
+    """Text embedded to represent a topic: title plus the prose answer.
+
+    Gap 422 changed this from title + keyword list. Embedding a bag of
+    keywords made a question match whichever bag shared vocabulary rather than
+    the topic that actually answers it -- the ranking inversion above. The
+    `guidance` prose is real language about the real subject, which is what a
+    sentence-embedding model is built to compare a question against.
+
+    The keywords are deliberately NOT appended as well. They are optimised for
+    the exact-match pass in `_score_topic()`, and mixing them back in here
+    reintroduces exactly the vocabulary-collision effect this change removes.
+    """
+    return f"{topic['title']}\n\n{topic['guidance']}"
+
+
+def _topics_content_fingerprint() -> str:
+    """Hash of everything that goes into the index.
+
+    Gap 422 bug fix. Seeding used to be guarded by `collection.count() == 0`,
+    so once a collection existed it was **never re-seeded** -- editing
+    `KNOWLEDGE_TOPICS`, or changing `_topic_embedding_text()` as this gap does,
+    left the index serving the old vectors forever, in every environment, with
+    no error and no way to notice. Any future edit to the knowledge base would
+    silently do nothing.
+    """
+    payload = " || ".join(f"{t['id']}::{_topic_embedding_text(t)}" for t in KNOWLEDGE_TOPICS)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _get_support_collection():
-    """Returns the shared support-topics Chroma collection, seeding it from
-    `KNOWLEDGE_TOPICS` on first use in this process. Seeding is idempotent
-    (guarded by `collection.count()`) and reruns automatically if a new
-    process starts with an empty collection — there is no separate migration
-    step to keep in sync with `KNOWLEDGE_TOPICS` edits."""
+    """Returns the shared support-topics Chroma collection, seeding or
+    **re-seeding** it from `KNOWLEDGE_TOPICS` whenever the content changes.
+
+    Gap 422: the previous version seeded only `if collection.count() == 0`, so
+    an existing collection was never refreshed. Editing a topic, adding one, or
+    changing how topics are embedded left the index serving stale vectors
+    permanently and silently. The fingerprint below is stored as a sentinel
+    document inside the collection itself (rather than collection metadata,
+    which Chroma fixes at creation time), so a mismatch on any process start
+    triggers a full rebuild.
+    """
     global _support_collection_seeded
     client = get_chroma_client()
     collection = client.get_or_create_collection(
         name=_SUPPORT_COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
-    if not _support_collection_seeded:
-        with _support_collection_lock:
-            if not _support_collection_seeded:
-                if collection.count() == 0:
-                    texts = [_topic_embedding_text(t) for t in KNOWLEDGE_TOPICS]
-                    embeddings = get_embeddings(texts)
-                    collection.upsert(
-                        ids=[t["id"] for t in KNOWLEDGE_TOPICS],
-                        embeddings=embeddings,
-                        documents=texts,
-                        metadatas=[{"topic_id": t["id"]} for t in KNOWLEDGE_TOPICS],
-                    )
-                _support_collection_seeded = True
+    if _support_collection_seeded:
+        return collection
+
+    with _support_collection_lock:
+        if _support_collection_seeded:
+            return collection
+
+        fingerprint = _topics_content_fingerprint()
+        stored = None
+        try:
+            found = collection.get(ids=[_SUPPORT_VERSION_DOC_ID])
+            metas = (found or {}).get("metadatas") or []
+            if metas:
+                stored = (metas[0] or {}).get("fingerprint")
+        except Exception:  # pragma: no cover - treated as "needs seeding"
+            stored = None
+
+        if stored != fingerprint:
+            texts = [_topic_embedding_text(t) for t in KNOWLEDGE_TOPICS]
+            ids = [t["id"] for t in KNOWLEDGE_TOPICS]
+            # Drop anything from a previous content version, including topics
+            # that no longer exist -- an upsert alone would leave a deleted
+            # topic in the index answering questions forever.
+            try:
+                existing = (collection.get() or {}).get("ids") or []
+                stale = [i for i in existing if i not in ids and i != _SUPPORT_VERSION_DOC_ID]
+                if stale:
+                    collection.delete(ids=stale)
+            except Exception:  # pragma: no cover - best effort
+                logger.warning("Gap 422: could not prune stale support topics", exc_info=True)
+
+            embeddings = get_embeddings(texts)
+            collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=texts,
+                metadatas=[{"topic_id": t["id"]} for t in KNOWLEDGE_TOPICS],
+            )
+            # Sentinel last: if anything above fails we do not record the new
+            # version, so the next process retries rather than trusting a
+            # half-written index.
+            collection.upsert(
+                ids=[_SUPPORT_VERSION_DOC_ID],
+                embeddings=[[0.0] * len(embeddings[0])],
+                documents=["support knowledge base content version marker"],
+                metadatas=[{"fingerprint": fingerprint, "topic_id": _SUPPORT_VERSION_DOC_ID}],
+            )
+            logger.info(
+                "Gap 422: support knowledge index seeded/refreshed (%d topics, fingerprint %s)",
+                len(ids), fingerprint[:12],
+            )
+
+        _support_collection_seeded = True
     return collection
 
 
@@ -426,20 +525,40 @@ def _vector_match_topic(query: str) -> dict[str, Any] | None:
     try:
         collection = _get_support_collection()
         query_embedding = get_embeddings([query])
-        results = collection.query(query_embeddings=query_embedding, n_results=1)
+        # Gap 422: 3, not 1 -- the margin check needs a runner-up, and the
+        # content-version sentinel may occupy one slot.
+        results = collection.query(query_embeddings=query_embedding, n_results=3)
     except Exception:
-        logger.warning("Gap 403 vector fallback failed; treating as a miss", exc_info=True)
+        logger.warning("Gap 422 vector fallback failed; treating as a miss", exc_info=True)
         return None
 
     ids = (results.get("ids") or [[]])[0]
     distances = (results.get("distances") or [[]])[0]
-    if not ids or not distances:
+
+    # Drop the content-version sentinel: it is a zero vector carrying no
+    # meaning, and letting it rank would be a silent wrong answer.
+    ranked = [(d, i) for i, d in zip(ids, distances) if i != _SUPPORT_VERSION_DOC_ID]
+    if not ranked:
         return None
 
-    if distances[0] > SUPPORT_RELEVANCE_DISTANCE_THRESHOLD:
+    best_distance, best_id = ranked[0]
+    if best_distance > SUPPORT_RELEVANCE_DISTANCE_THRESHOLD:
         return None
 
-    return _topic_by_id(ids[0])
+    # Gap 422: the margin guard. Two topics scoring near-identically means the
+    # question does not clearly belong to either, and answering with whichever
+    # won by a hair is how a confidently wrong article gets shown. Returning
+    # nothing routes the user to the neutral "didn't find an answer" card,
+    # which is honest and still offers a ticket.
+    if len(ranked) > 1 and (ranked[1][0] - best_distance) < SUPPORT_RELEVANCE_MARGIN:
+        logger.info(
+            "Gap 422: ambiguous support match (%s %.4f vs %s %.4f) -- returning no answer",
+            best_id, best_distance, ranked[1][1], ranked[1][0],
+        )
+        return None
+
+    logger.info("Gap 422: support topic %s matched at distance %.4f", best_id, best_distance)
+    return _topic_by_id(best_id)
 
 
 _FOLLOW_UP_PHRASES = (
