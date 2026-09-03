@@ -602,7 +602,8 @@ async def upload_transient_file(
     tenant_context: TenantContext = Depends(require_paid_plan),
 ):
     """Scope #3 (New Vendor): cold-start from a freshly uploaded sample PDF (Task 10.4)."""
-    if not file.filename.lower().endswith(".pdf"):
+    fname = (file.filename or "").strip()
+    if not fname.lower().endswith(".pdf"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only PDF files are supported for training.")
 
     session_id = str(uuid4())
@@ -612,8 +613,12 @@ async def upload_transient_file(
 
     try:
         content_bytes = await file.read()
+        if not content_bytes.startswith(b"%PDF"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid PDF content. Only valid PDF files are supported for training.")
         with open(file_path, "wb") as f:
             f.write(content_bytes)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to save transient training file: %s", e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save uploaded file.")
