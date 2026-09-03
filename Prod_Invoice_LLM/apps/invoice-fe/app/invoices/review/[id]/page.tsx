@@ -108,6 +108,21 @@ interface StandingRuleResult {
   rules_added?: string[];
 }
 
+/**
+ * Gap 424: the fix plan's "show who/when/why" item — `AuditLog` has always
+ * recorded actor + target_status, but nothing on this console surfaced it.
+ * Mirrors `GET /invoices/{id}/last-action`.
+ */
+interface LastAction {
+  action: string;
+  actor_name: string;
+  actor_role: string;
+  target_status: string | null;
+  previous_status: string | null;
+  reason: string | null;
+  timestamp: string;
+}
+
 // Task 7.3's correctable field set, each mapped to the Azure prebuilt-invoice
 // confidence key that verify_field_confidence() (Gap 3) already populates on
 // invoice.field_confidence — same mapping, kept in sync manually since this is
@@ -283,6 +298,7 @@ export default function AuditorReviewPage() {
   const isAdmin = role === "Admin";
 
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
+  const [lastAction, setLastAction] = useState<LastAction | null>(null);
   const [alerts, setAlerts] = useState<{ type: string; message: string; field?: string }[]>([]);
   // FE Gap 112 item 4: which field an alert last asked to open, and a
   // monotonic nonce so re-clicking the same alert chip re-focuses.
@@ -452,6 +468,17 @@ export default function AuditorReviewPage() {
         setLoading(false);
       });
   }, [id, router]);
+
+  // Gap 424: who/when/why for the most recent park/reopen/resubmit decision.
+  // Best-effort — a 404 (no history yet, e.g. a fresh AUDIT_REQUIRED invoice)
+  // or any other failure just means the panel stays hidden below.
+  useEffect(() => {
+    if (!id) return;
+    apiClient
+      .get<LastAction | null>(`/invoices/${id}/last-action`)
+      .then((res) => setLastAction(res.data ?? null))
+      .catch(() => setLastAction(null));
+  }, [id]);
 
   // Current display value for a field: the in-progress correction if dirty, else the original.
   const displayValue = (key: keyof InvoiceDetail): string => {
@@ -752,6 +779,26 @@ export default function AuditorReviewPage() {
             {replaceError && (
               <p className="text-[11px] text-red-300">{replaceError}</p>
             )}
+          </div>
+        )}
+        {/* Gap 424: who parked this invoice, and when — the fix plan's
+            "show who/when/why" item. Reason is omitted here on
+            NEEDS_RESUBMISSION because the card above already shows
+            `resubmission_reason`; showing it twice would just be noise. */}
+        {isParked && lastAction && (
+          <div className="flex items-start gap-3 rounded-xl border border-[#222D3D] bg-[#151E2C] px-4 py-2.5 text-xs">
+            <Clock size={14} className="mt-0.5 shrink-0 text-slate-400" />
+            <div className="min-w-0 text-slate-300">
+              <span className="font-semibold text-slate-200">{lastAction.actor_name}</span>
+              <span className="text-slate-500"> ({lastAction.actor_role})</span> set this to{" "}
+              <span className="font-semibold text-slate-200">
+                {lastAction.target_status === "NEEDS_RESUBMISSION" ? "Needs Resubmission" : "Review Later"}
+              </span>{" "}
+              on {new Date(lastAction.timestamp).toLocaleString()}
+              {lastAction.reason && lastAction.target_status !== "NEEDS_RESUBMISSION" && (
+                <span className="text-slate-400"> — {lastAction.reason}</span>
+              )}
+            </div>
           </div>
         )}
         {/* FE Gap 110: title/subtitle/Back all moved into the shared header

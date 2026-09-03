@@ -1,7 +1,7 @@
 import io
 import pytest
 from unittest.mock import patch
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
@@ -718,3 +718,70 @@ def test_replace_writes_an_audit_log_naming_both_invoices(db_session):
     assert len(replace_logs) == 1
     assert replace_logs[0].details["replacement_invoice_id"] == new_id
     assert replace_logs[0].details["replaced_invoice_id"] == str(old.id)
+
+
+# ---------------------------------------------------------------------------
+# Gap 424: GET /invoices/{id}/last-action -- the fix plan's "show who/when/why"
+# item. AuditLog has always recorded actor + target_status; nothing served it
+# to the frontend. These go through the real resolve endpoint rather than
+# hand-inserting an AuditLog row, since the risk that matters is a key-name
+# mismatch between what routers/audit.py writes into `details` and what this
+# endpoint reads back out of it.
+# ---------------------------------------------------------------------------
+
+def test_last_action_is_null_before_any_resolution(db_session):
+    """A freshly-parked... no, a freshly-AUDIT_REQUIRED invoice has no
+    resolve/reopen/replace history yet -- must not 404, must return null."""
+    inv = _parked_invoice(db_session, status_value="AUDIT_REQUIRED")
+    client = TestClient(app)
+    res = client.get(f"/api/v1/invoices/{inv.id}/last-action")
+    assert res.status_code == 200
+    assert res.json() is None
+
+
+def test_last_action_reports_who_when_why_for_needs_resubmission(db_session):
+    from models import User
+
+    inv = _parked_invoice(db_session, status_value="AUDIT_REQUIRED")
+    client = TestClient(app)
+    resolve = client.put(
+        f"/api/v1/audit/resolve/{inv.id}",
+        json={"status": "NEEDS_RESUBMISSION", "resubmission_reason": "Vendor name is wrong."},
+    )
+    assert resolve.status_code == 200, resolve.text
+
+    res = client.get(f"/api/v1/invoices/{inv.id}/last-action")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["action"] == "RESOLVE_INVOICE"
+    assert body["target_status"] == "NEEDS_RESUBMISSION"
+    assert body["previous_status"] == "AUDIT_REQUIRED"
+    assert body["actor_role"] == "Admin"  # MOCK_ROLE
+    # Falls back to invoice.resubmission_reason since no reject_reason was sent.
+    assert body["reason"] == "Vendor name is wrong."
+
+    db_user = db_session.exec(select(User).where(User.tenant_id == MOCK_TENANT_ID)).first()
+    assert db_user is not None
+    assert body["actor_name"]  # resolved to a real name/email, not the "Unknown user" fallback
+
+
+def test_last_action_reflects_the_most_recent_of_several_resolutions(db_session):
+    """Park, then un-park -- must report the un-park, not the original park."""
+    inv = _parked_invoice(db_session, status_value="AUDIT_REQUIRED")
+    client = TestClient(app)
+    client.put(f"/api/v1/audit/resolve/{inv.id}", json={"status": "REVIEW_LATER"})
+    reopen = client.put(f"/api/v1/audit/resolve/{inv.id}", json={"status": "AUDIT_REQUIRED"})
+    assert reopen.status_code == 200, reopen.text
+
+    res = client.get(f"/api/v1/invoices/{inv.id}/last-action")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["action"] == "REOPEN_INVOICE"
+    assert body["target_status"] == "AUDIT_REQUIRED"
+    assert body["previous_status"] == "REVIEW_LATER"
+
+
+def test_last_action_404s_for_a_missing_invoice(db_session):
+    client = TestClient(app)
+    res = client.get(f"/api/v1/invoices/{uuid4()}/last-action")
+    assert res.status_code == 404

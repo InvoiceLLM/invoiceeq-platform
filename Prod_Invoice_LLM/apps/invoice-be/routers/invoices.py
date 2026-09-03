@@ -5,6 +5,7 @@ import hashlib
 import asyncio
 from uuid import uuid4, UUID
 from datetime import date, datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -943,6 +944,82 @@ async def get_invoice(
             detail="Invoice not found or access denied."
         )
     return invoice
+
+
+class InvoiceLastActionOut(BaseModel):
+    action: str
+    actor_name: str
+    actor_role: str
+    target_status: Optional[str] = None
+    previous_status: Optional[str] = None
+    reason: Optional[str] = None
+    timestamp: datetime
+
+
+_LAST_ACTION_RESOLUTION_ACTIONS = ("RESOLVE_INVOICE", "REOPEN_INVOICE", "REPLACE_INVOICE")
+
+
+@router.get("/{invoice_id}/last-action", response_model=Optional[InvoiceLastActionOut])
+async def get_invoice_last_action(
+    invoice_id: UUID,
+    # Gap 424: same gate as the replace endpoint -- this is audit-console
+    # context, not general invoice read access.
+    context: TenantContext = Depends(require_can_audit),
+    db_session: Session = Depends(get_db_session),
+):
+    """
+    Gap 424 (Phase 1 completion): the plan's "show who/when/why" item was
+    never built -- `AuditLog` has always recorded `actor_user_id`/`actor_role`
+    and (since Gap 419/420) `target_status`/`previous_status` in `details`,
+    but nothing on the review console surfaced it. Returns the most recent
+    resolution/reopen/replace entry for this invoice, or `null` if none
+    exists yet (e.g. an invoice still `AUDIT_REQUIRED` for the first time).
+    """
+    invoice = db_session.exec(
+        select(Invoice).where(
+            Invoice.id == invoice_id,
+            Invoice.tenant_id == context.tenant_id,
+            invoice_not_deleted(),
+        )
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
+
+    log = db_session.exec(
+        select(AuditLog)
+        .where(
+            AuditLog.tenant_id == context.tenant_id,
+            AuditLog.invoice_id == invoice_id,
+            AuditLog.action.in_(_LAST_ACTION_RESOLUTION_ACTIONS),
+        )
+        .order_by(AuditLog.timestamp.desc())
+    ).first()
+    if log is None:
+        return None
+
+    actor = db_session.get(User, log.actor_user_id)
+    actor_name = "Unknown user"
+    if actor:
+        full_name = " ".join(part for part in [actor.first_name, actor.last_name] if part)
+        actor_name = full_name or actor.email
+
+    details = log.details or {}
+    # `reject_reason` covers both the Reject modal and the Needs Resubmission
+    # modal (assumption 4 in the fix plan: it deliberately mirrors that
+    # modal). `resubmission_reason` on the invoice itself is the durable copy
+    # used elsewhere on this page; kept as a fallback so history still reads
+    # correctly on data written before that fallback existed.
+    reason = details.get("reject_reason") or invoice.resubmission_reason
+
+    return InvoiceLastActionOut(
+        action=log.action,
+        actor_name=actor_name,
+        actor_role=log.actor_role,
+        target_status=details.get("target_status"),
+        previous_status=details.get("previous_status"),
+        reason=reason,
+        timestamp=log.timestamp,
+    )
 
 
 @router.post("/{invoice_id}/replace", status_code=status.HTTP_201_CREATED)

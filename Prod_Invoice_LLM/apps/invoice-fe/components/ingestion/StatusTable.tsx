@@ -1,16 +1,18 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { 
-  CheckCircle2, 
-  AlertTriangle, 
-  Loader2, 
-  ChevronDown, 
+import {
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
+  ChevronDown,
   ChevronUp,
   FileText,
   ExternalLink,
   Info,
-  Tag
+  Tag,
+  Clock,
+  RotateCcw
 } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "../../lib/utils";
@@ -19,7 +21,7 @@ export interface StatusItem {
   id: string;
   name: string;
   size: number;
-  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED" | "PAID" | "REJECTED";
+  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED" | "PAID" | "REJECTED" | "REVIEW_LATER" | "NEEDS_RESUBMISSION";
   progress: number;
   alerts?: any[];
   vendorName?: string;
@@ -51,7 +53,12 @@ interface StatusTableProps {
 // Gap 207: statuses that mean "the pipeline is done with this file" -- these
 // jump straight to 100% progress instead of sitting at the SSE stream's
 // default in-progress value.
-const TERMINAL_STATUSES = ["COMPLETED", "AUDIT_REQUIRED", "DUPLICATE", "FAILED", "PAID", "REJECTED"];
+// Gap 424: REVIEW_LATER/NEEDS_RESUBMISSION are audit-queue decisions, not
+// pipeline outcomes, but a row can still land here at one of them if this
+// view is reopened (or reconnects via SSE) after the invoice was already
+// parked in another tab -- without both listed, that row was stuck at the
+// spinning "Processing" fallback below forever.
+const TERMINAL_STATUSES = ["COMPLETED", "AUDIT_REQUIRED", "DUPLICATE", "FAILED", "PAID", "REJECTED", "REVIEW_LATER", "NEEDS_RESUBMISSION"];
 
 export default function StatusTable({
   batchId,
@@ -260,6 +267,22 @@ export default function StatusTable({
           >
             <AlertTriangle className="w-3 h-3" />
             Duplicate
+          </span>
+        );
+      case "REVIEW_LATER":
+        // Gap 424: colours match RecentInvoicesTable.tsx / the Auditor Review
+        // Console's own badges -- same status, same look everywhere it renders.
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/10 border border-sky-500/20 text-sky-400">
+            <Clock className="w-3 h-3" />
+            Review Later
+          </span>
+        );
+      case "NEEDS_RESUBMISSION":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/10 border border-orange-500/20 text-orange-400">
+            <RotateCcw className="w-3 h-3" />
+            Needs Resubmission
           </span>
         );
       case "PROCESSING":
