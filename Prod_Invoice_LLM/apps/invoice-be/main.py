@@ -257,6 +257,21 @@ def health_readiness():
     else:
         checks["redis"] = "disabled"
 
+    # 3. Chroma client kind (Gap 415, non-fatal). Deliberately reports the client
+    # this process HOLDS rather than pinging it: a local PersistentClient answers
+    # a heartbeat perfectly while finding nothing, which is exactly how five
+    # consecutive revisions ran with empty vector search and a green health line.
+    # Non-fatal on purpose -- flipping readiness to unhealthy would make ACA stop
+    # routing traffic to a replica whose SQL route is entirely fine.
+    try:
+        from chroma_client import get_chroma_client_kind
+
+        kind = get_chroma_client_kind()
+        checks["chroma"] = "ok" if kind == "http" else f"degraded: {kind}"
+    except Exception as e:
+        logger.warning(f"Readiness probe Chroma check warning: {e}")
+        checks["chroma"] = f"unknown: {str(e)}"
+
     if not is_healthy:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

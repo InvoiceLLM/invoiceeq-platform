@@ -1540,7 +1540,18 @@ def test_warm_rag_dependencies_primes_both_lazy_singletons(monkeypatch):
     stub_client.heartbeat.side_effect = lambda: heartbeats.append(1)
 
     monkeypatch.setattr(cc, "_chroma_client", None)
-    monkeypatch.setattr(cc, "_build_chroma_client", lambda: stub_client)
+    monkeypatch.setattr(cc, "_chroma_client_kind", None)
+
+    # Gap 415: `_build_chroma_client` now takes an optional warm-up connect budget
+    # and records which client it produced -- warm-up reports the *kind*, because
+    # a local PersistentClient answers `heartbeat()` just as happily as the real
+    # server, which is how five consecutive revisions ran with empty vector search
+    # behind a green `chroma=ok`. A stub therefore has to declare what it is.
+    def _stub_build(connect_timeout=None):
+        cc._chroma_client_kind = "http"
+        return stub_client
+
+    monkeypatch.setattr(cc, "_build_chroma_client", _stub_build)
     monkeypatch.setattr(cc, "get_embedding_model", lambda: model_loads.append(1) or object())
 
     results = cc.warm_rag_dependencies()

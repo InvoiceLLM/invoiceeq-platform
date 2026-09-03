@@ -631,6 +631,41 @@ from an empty local store. **Is `--0000120` affected now?** Undetermined —
 nothing exposes the client type (`/health/readiness` does not report it).
 **Does it explain RAG being 1 of 13?** No — see Q1; that is routing.
 
+### B2 correction — measured 2026-09-03, after the section above was written
+
+The paragraphs above are left intact as the record of what was believed, and are
+**wrong on two points**. Log Analytics (`ContainerAppConsoleLogs_CL`,
+`ca-invoice-be-dev`, 12 h) shows the fallback on **every** revision, not one:
+
+| revision | attempt | outcome | warm-up then logged |
+|---|---|---|---|
+| `--0000116` | 04:12:16 | `timed out` -> PersistentClient | `chroma=ok (3.4s)` |
+| `--0000117` | 04:23:28 | `timed out` -> PersistentClient | `chroma=ok (3.2s)` |
+| `--0000118` | 05:01:37 | `timed out` -> PersistentClient | `chroma=ok (3.5s)` |
+| `--0000119` | 05:07:52 | `timed out` -> PersistentClient | `chroma=ok (3.2s)` |
+| `--0000120` | 05:50:45 | `timed out` -> PersistentClient | `chroma=ok (3.2s)` |
+
+**Correction 1 — "are the measured turns affected? No."** They are. The section
+argued `--0000117` was clean because its one RAG turn carried 3,078 input tokens,
+"consistent with five retrieved chunks, impossible from an empty local store".
+`--0000117` fell back at 04:23:31, before those turns ran. The 3,078 tokens are
+history plus prompt, not chunks. That inference was the weakest link in the
+section and it did not hold.
+
+**Correction 2 — "a single slow connect at startup."** It is not a race. Five out
+of five, always ~3.1 s against a 3.0 s budget: the internal ACA connect path is
+simply slower than the budget on a cold replica. Nothing is intermittent here.
+
+**And a third finding the section did not anticipate:** the health signal was
+false. `warm_rag_dependencies()` heartbeats whatever `get_chroma_client()`
+returned, and a local `PersistentClient` answers a heartbeat perfectly well — so
+it logged `chroma=ok` about three seconds after logging that the HttpClient had
+failed. The diagnosis step the section proposed (expose the client kind) turned
+out to be the fix for the monitoring bug as much as an instrument.
+
+Filed as **Gap 415**, with **Gap 416** for the missing `.dockerignore` found
+alongside it. Both are in `be_features_tracker.md`.
+
 **Diagnosis steps (0.5 d):** expose the client class in `warm_rag_dependencies()`'s
 result and `/health/readiness`; query it on the live revision. **Fix if
 confirmed (0.5 d):** retry `HttpClient` on the next call instead of caching the
@@ -833,6 +868,32 @@ not shipped behaviour.
 **Not done, carried to run 2:** B2 and B1 (both documented above, neither
 started). C1 itself is complete.
 
+### C1 correction — Gap 417, found after `ab4a986` was pushed
+
+The first cut of the guard compared the SQL literal to `tenant_id` as raw text.
+Under the `OR` rule (safe only when both branches are safe) that rejected
+
+    WHERE (tenant_id = '<dashed uuid>' OR tenant_id = '<dashless hex>') AND ...
+
+— the same tenant written two ways, which binds one tenant and is safe. Four
+`tests/test_rag.py` cases failed on it. `_normalized_tenant_literal()` now strips
+quotes and dashes and case-folds both sides; a different tenant still fails on its
+hex however it is punctuated, so isolation is unchanged.
+
+**Why the Gap 414 run missed it, kept here because the lesson outlives the bug.**
+The witness chosen was `tests/test_chat_sql_quality.py` alone, on the reasoning
+that it is the suite exercising real generated SQL. `tests/test_rag.py` also calls
+`execute_generated_sql` directly and was not run — and the code was committed and
+pushed on that evidence. A guard added to a shared choke point takes **every**
+suite that touches that choke point as its witness, found by grepping the function
+name, not by picking the suite that seems most relevant.
+
+**What was live in between.** `ab4a986` deployed as revision `--0000121`
+(Healthy, so the new `sqlglot` dependency imports cleanly). The production prompt
+emits a single dashed spelling (`tenant_id = '{tenant_id}'`), so the over-rejection
+was not reachable from the normal generation path; the dual spelling came from the
+test helper `_tenant_filter()`. The corrected code is in the working tree.
+
 ## B2 — Chroma fallback: diagnose, then fix if confirmed — *documented, not started*
 
 **What changes, step 1 (diagnosis only, no behaviour change).**
@@ -860,6 +921,35 @@ required — this is not a DB path.
 **Gap.** Filed **when confirmed on the live revision**, not before — the
 current-revision state is still unproven, and a gap for a condition that may not
 exist is noise.
+
+### B2 result — run 2 (2026-09-03)
+
+**Landed, uncommitted.** The item was specced as "diagnose, then fix if
+confirmed". The logs confirmed it before any instrument was built, so this run
+went straight to the fix.
+
+**Built.** `chroma_client.py`: `_chroma_client_kind` / `_chroma_fallback_at`;
+`_build_chroma_client(connect_timeout=None)` records the kind it produced;
+`get_chroma_client()` retries the real server once the fallback is older than
+`CHROMA_FALLBACK_RETRY_COOLDOWN_SECONDS` (60 s) and promotes the singleton on
+success; new `get_chroma_client_kind()`; `CHROMA_WARMUP_CONNECT_TIMEOUT_SECONDS`
+(15 s) used only by `warm_rag_dependencies()`, which now reports `ok` only when
+the kind is `http`. `main.py`: `/health/readiness` reports the client kind,
+non-fatal.
+
+| run | command | result |
+|---|---|---|
+| new B2 tests | `uv run pytest tests/test_chroma_fallback_retry.py -p no:randomly -q` | `10 passed in 7.96s` |
+| regression witness | `pytest tests/test_rag.py tests/test_chat_document_search.py tests/test_documents_table.py tests/test_chat_sql_quality.py` on Postgres | `4 failed, 256 passed in 89.27s` — down from `9 failed, 103 passed` before the Gap 417 fix; the 4 that remain are Gap 418, pre-existing |
+
+**What must not change, and did not:** the 3.0 s request-path connect budget
+(Gap 278) is pinned by its own test; per-tenant collection naming and
+`_collection_metadata()`'s cosine space (Gap 244) are untouched.
+
+**Not claimable yet.** The fix is green in tests but **unobserved on Azure** — it
+needs a deploy. The evidence to look for afterwards is `RAG warm-up complete:
+chroma=ok` with no preceding `HttpClient failed` line, and `/health/readiness`
+returning `"chroma": "ok"`. Until then dev is still on the fallback.
 
 ## B1 — dependency spans + two token fields — *documented, not started*
 

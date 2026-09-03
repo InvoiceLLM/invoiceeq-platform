@@ -1358,6 +1358,24 @@ def _sqlglot_dialect_for(dialect_name: str) -> str:
     return "sqlite" if (dialect_name or "").startswith("sqlite") else "postgres"
 
 
+def _normalized_tenant_literal(value: str) -> str:
+    """A tenant UUID reduced to the one form both spellings share.
+
+    Gap 417. The first cut of this guard compared the literal to `tenant_id` as
+    raw text, which rejected
+
+        WHERE (tenant_id = '<dashed uuid>' OR tenant_id = '<dashless uuid>')
+
+    -- a disjunction of the *same* tenant written two ways, which binds exactly
+    one tenant and is therefore safe. It is a real shape: Postgres stores the
+    UUID dashed while some paths carry the 32-char dashless hex, so a query that
+    has to work against both writes both. Comparing on the dash-stripped,
+    case-folded form accepts it while still rejecting a different tenant, whose
+    hex differs no matter how it is punctuated.
+    """
+    return (value or "").strip().strip("'\"").replace("-", "").lower()
+
+
 def _ast_leaf_is_tenant_predicate(node, tenant_id: str) -> bool:
     """True only for `tenant_id = '<tenant_id>'` (either operand order)."""
     import sqlglot.expressions as sg_exp
@@ -1382,7 +1400,10 @@ def _ast_leaf_is_tenant_predicate(node, tenant_id: str) -> bool:
         if _column_name(column_side) != _TENANT_COLUMN:
             continue
         value = _literal_value(value_side)
-        if value is not None and value.strip() == str(tenant_id).strip():
+        if value is None:
+            continue
+        normalized = _normalized_tenant_literal(value)
+        if normalized and normalized == _normalized_tenant_literal(str(tenant_id)):
             return True
     return False
 

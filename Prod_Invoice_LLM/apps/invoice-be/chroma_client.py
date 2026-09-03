@@ -13,6 +13,12 @@ from services.storage import download_pdf_from_storage
 logger = logging.getLogger(__name__)
 
 _chroma_client = None
+# Gap 415: which client the process actually holds -- "http" (the real server) or
+# "persistent-fallback" (a local, in-container, empty store). Nothing outside
+# this module could previously tell the difference, which is how RAG ran against
+# an empty store across five revisions while warm-up logged `chroma=ok`.
+_chroma_client_kind: str | None = None
+_chroma_fallback_at: float | None = None
 _embedding_model = None
 _embedding_lock = threading.Lock()
 _chroma_lock = threading.Lock()
@@ -27,6 +33,24 @@ _chroma_lock = threading.Lock()
 # another.
 CHROMA_CONNECT_TIMEOUT_SECONDS = 3.0
 CHROMA_READ_TIMEOUT_SECONDS = 30.0
+
+# Gap 415: 3.0s is the right budget for a *request-path* connect -- a live chat
+# turn must not sit behind a handshake. It is the wrong budget at warm-up, and
+# measurably so: on ca-invoice-be-dev every revision from --0000116 to --0000120
+# logged `Chroma HttpClient failed: timed out` about 3.1s after the attempt, then
+# fell back to a local PersistentClient that is empty in a Container App. Five
+# revisions out of five is not a race being lost occasionally; the internal ACA
+# DNS + connect path simply takes longer than 3s on a cold replica. Warm-up runs
+# in a background thread at startup and blocks no request, so it can afford to
+# wait properly.
+CHROMA_WARMUP_CONNECT_TIMEOUT_SECONDS = 15.0
+
+# Gap 415: how long a fallback client is allowed to stand before the next call
+# retries the real server. Without this the first failed connect decided RAG for
+# the whole process lifetime -- there was no retry anywhere. The cooldown is what
+# keeps the retry from putting a 3s connect in front of every single request
+# while Chroma is genuinely down.
+CHROMA_FALLBACK_RETRY_COOLDOWN_SECONDS = 60.0
 
 # Gap 244: relevance cutoff for `query_invoice_chunks()`, expressed in **cosine
 # distance** (0 = identical, 1 = orthogonal, 2 = opposite). Replaces the old 0.4,
@@ -188,20 +212,26 @@ class _TimeoutBoundHttpx:
         return getattr(self._module, name)
 
 
-def _chroma_http_timeout():
-    """The `httpx.Timeout` applied to chromadb's HTTP session (Gap 278)."""
+def _chroma_http_timeout(connect_timeout: float | None = None):
+    """The `httpx.Timeout` applied to chromadb's HTTP session (Gap 278).
+
+    `connect_timeout` (Gap 415) lets warm-up buy a longer handshake than the
+    request path is willing to wait for; omitted, the request-path budget is used
+    and behaviour is exactly as before.
+    """
     import httpx
 
+    connect = CHROMA_CONNECT_TIMEOUT_SECONDS if connect_timeout is None else connect_timeout
     return httpx.Timeout(
-        connect=CHROMA_CONNECT_TIMEOUT_SECONDS,
+        connect=connect,
         read=CHROMA_READ_TIMEOUT_SECONDS,
         write=CHROMA_READ_TIMEOUT_SECONDS,
-        pool=CHROMA_CONNECT_TIMEOUT_SECONDS,
+        pool=connect,
     )
 
 
 @contextlib.contextmanager
-def _bounded_chroma_http_timeout():
+def _bounded_chroma_http_timeout(connect_timeout: float | None = None):
     """
     Gap 278: makes the timeout above apply to the `chromadb.HttpClient(...)`
     call itself, not just to later requests.
@@ -226,19 +256,29 @@ def _bounded_chroma_http_timeout():
         return
 
     original = chroma_fastapi.httpx
-    chroma_fastapi.httpx = _TimeoutBoundHttpx(original, _chroma_http_timeout())
+    chroma_fastapi.httpx = _TimeoutBoundHttpx(original, _chroma_http_timeout(connect_timeout))
     try:
         yield
     finally:
         chroma_fastapi.httpx = original
 
 
-def _build_chroma_client():
-    """Constructs the Chroma client, falling back to a persistent local db."""
+def _build_chroma_client(connect_timeout: float | None = None):
+    """Constructs the Chroma client, falling back to a persistent local db.
+
+    Gap 415: also records *which* of the two it returned in `_chroma_client_kind`,
+    and stamps `_chroma_fallback_at` when it falls back. The fallback is a local
+    on-disk store inside the container: in a Container App it is empty on every
+    new revision and is discarded with the replica, so a process holding one is
+    not "Chroma, slightly degraded" -- it is a vector search that returns nothing
+    and says nothing. That state has to be visible.
+    """
+    global _chroma_client_kind, _chroma_fallback_at
+
     settings = get_settings()
     try:
         logger.info("Initializing Chroma HttpClient at %s:%s (ssl=%s)", settings.CHROMA_HOST, settings.CHROMA_PORT, settings.CHROMA_USE_SSL)
-        with _bounded_chroma_http_timeout():
+        with _bounded_chroma_http_timeout(connect_timeout):
             client = chromadb.HttpClient(
                 host=settings.CHROMA_HOST,
                 port=settings.CHROMA_PORT,
@@ -246,9 +286,17 @@ def _build_chroma_client():
             )
             # Verify connection
             client.heartbeat()
+        _chroma_client_kind = "http"
+        _chroma_fallback_at = None
         return client
     except Exception as e:
-        logger.warning("Chroma HttpClient failed: %s. Falling back to PersistentClient.", e)
+        logger.warning(
+            "Chroma HttpClient failed: %s. Falling back to PersistentClient -- "
+            "vector search in this process will find nothing until a retry succeeds.",
+            e,
+        )
+        _chroma_client_kind = "persistent-fallback"
+        _chroma_fallback_at = time.monotonic()
         return chromadb.PersistentClient(path=os.path.join(os.path.dirname(__file__), "temp_chroma_db"))
 
 
@@ -268,7 +316,51 @@ def get_chroma_client():
         with _chroma_lock:
             if _chroma_client is None:
                 _chroma_client = _build_chroma_client()
+        return _chroma_client
+
+    # Gap 415: a fallback client is a temporary state, not a decision. Before
+    # this, the first failed connect at startup was final for the life of the
+    # process -- and since that connect failed on every observed revision, RAG
+    # searched an empty local store until the next deploy. Retry, but only after
+    # a cooldown, so a genuinely-down Chroma does not put a connect attempt in
+    # front of every request.
+    if _chroma_client_kind != "persistent-fallback":
+        return _chroma_client
+
+    since = _chroma_fallback_at
+    if since is not None and (time.monotonic() - since) < CHROMA_FALLBACK_RETRY_COOLDOWN_SECONDS:
+        return _chroma_client
+
+    with _chroma_lock:
+        # Re-check under the lock: another thread may have just promoted us.
+        if _chroma_client_kind != "persistent-fallback":
+            return _chroma_client
+        since = _chroma_fallback_at
+        if since is not None and (time.monotonic() - since) < CHROMA_FALLBACK_RETRY_COOLDOWN_SECONDS:
+            return _chroma_client
+
+        logger.info("Chroma fallback in effect; retrying the real server.")
+        candidate = _build_chroma_client()
+        if _chroma_client_kind == "http":
+            logger.info("Chroma HttpClient recovered; vector search is live again.")
+            _chroma_client = candidate
+        # On a failed retry `_build_chroma_client` has already re-stamped
+        # `_chroma_fallback_at`, which restarts the cooldown. Keep the client we
+        # had rather than swapping in an identical second fallback.
     return _chroma_client
+
+
+def get_chroma_client_kind() -> str:
+    """Which client this process holds: "http", "persistent-fallback", or "uninitialised".
+
+    Gap 415. Exists so warm-up and `/health/readiness` can tell the difference --
+    a PersistentClient answers `heartbeat()` perfectly well, so heartbeating the
+    client proves only that an object exists, not that vector search can find
+    anything.
+    """
+    if _chroma_client is None:
+        return "uninitialised"
+    return _chroma_client_kind or "uninitialised"
 
 
 def warm_rag_dependencies() -> dict:
@@ -291,9 +383,29 @@ def warm_rag_dependencies() -> dict:
 
     started = time.monotonic()
     try:
+        # Gap 415: build here, under the warm-up connect budget, rather than
+        # letting the first request-path call decide with 3s. Warm-up runs in a
+        # background thread and blocks nothing.
+        global _chroma_client
+        if _chroma_client is None:
+            with _chroma_lock:
+                if _chroma_client is None:
+                    _chroma_client = _build_chroma_client(
+                        connect_timeout=CHROMA_WARMUP_CONNECT_TIMEOUT_SECONDS
+                    )
         client = get_chroma_client()
         client.heartbeat()
-        results["chroma"] = "ok"
+        # `heartbeat()` succeeding proves nothing about which client answered it:
+        # a local PersistentClient answers it too. Report the kind, not the ping.
+        kind = get_chroma_client_kind()
+        if kind == "http":
+            results["chroma"] = "ok"
+        else:
+            results["chroma"] = "degraded: using local PersistentClient fallback (vector search will find nothing)"
+            logger.warning(
+                "RAG warm-up: Chroma server unreachable; this process is on the local "
+                "PersistentClient fallback. Vector search will return no results until a retry succeeds."
+            )
     except Exception as e:
         results["chroma"] = f"degraded: {e}"
         logger.warning("RAG warm-up: Chroma unavailable (%s)", e)

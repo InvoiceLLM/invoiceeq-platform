@@ -150,3 +150,13 @@ done since last: local Postgres started on 5433; guard tests re-run against it,
   and negative execution paths. Founder approved commit + push to master.
 gaps filed: none new
 blockers: none
+
+[13:05] mins left: n/a | phase 3 - approval gate | senior-dev
+in progress: B2 complete, uncommitted; C1 defect Gap 417 fixed, uncommitted
+done since last: B2 built (chroma_client.py retry + honest health, main.py readiness);
+  10 new tests pass; Gap 417 found via a WIDER regression than Gap 414 used and fixed;
+  regression 4 failed / 256 passed, down from 9 failed / 103 passed
+gaps filed: 415 (chroma fallback + false ok), 416 (.dockerignore), 417 (C1 over-reject),
+  418 (pre-existing test_rag async-flag + signature failures)
+blockers: B2 unverified on Azure until a deploy; revision --0000121 carries the
+  pre-Gap-417 guard
