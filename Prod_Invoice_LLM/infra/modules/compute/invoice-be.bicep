@@ -110,6 +110,9 @@ param enableGenericExtraction bool = false
 @description('Feature 26 Part 2 — the attached-document intent split and content branch. With it off an attachment turn is Part 1\'s deterministic comparison path, byte-identical to Gap 366. NOT a gate on attachments as such (B11 item 1: `attachment_id` presence is the routing switch and is not a flag).')
 param enableGenericDocChat bool = false
 
+@description('Feature 26 E-5 / task H7 — route an attachment chat turn through the Redis-backed async queue instead of answering it synchronously. REQUIRES a reachable REDIS_URL: `services/chat_queue.py::get_redis_client()` returns None when it is empty, so enabling this without Redis enqueues into nothing. Declared here for documentation and later rollout; dev has no Redis deployed as of 2026-09-03, so it stays false.')
+param enableAsyncChatQueue bool = false
+
 @description('Subscription ID services/azure_cost.py and ops_recommendation.py read Cost Management / Resource Graph from. Declared in config.py but never wired here until now -- without it, the cost sweep and the nightly recommendation pass cost/container_health categories both fail with "not configured".')
 param azureSubscriptionId string = subscription().subscriptionId
 
@@ -428,6 +431,17 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'ENABLE_GENERIC_DOC_CHAT'
               value: enableGenericDocChat ? 'true' : 'false'
+            }
+            {
+              // Feature 26 E-5 / H7. The wiring is BUILT and tested -- H7 removed
+              // the force-sync clause in `routers/chat.py` -- but this stays false
+              // until a Redis instance exists in the environment. `REDIS_URL` is
+              // empty on both apps today and there is no Redis container in
+              // rg-invoice-llm-dev, so flipping this would enqueue turns nothing
+              // ever dequeues. Declared so the switch is visible and versioned
+              // rather than discovered later (the BE Gap 402 lesson).
+              name: 'ENABLE_ASYNC_CHAT_QUEUE'
+              value: enableAsyncChatQueue ? 'true' : 'false'
             }
           ]
           probes: [

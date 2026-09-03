@@ -148,6 +148,9 @@
     },
     "enableGenericDocChat": {
       "value": true
+    },
+    "enableAsyncChatQueue": {
+      "value": true
     }
   }
 }

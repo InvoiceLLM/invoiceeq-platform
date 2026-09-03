@@ -891,6 +891,109 @@ _TAX_COMPONENT_PATTERN = re.compile(
 )
 
 
+# --- Gap 413: invoice ATTRIBUTE terms, derived from the ORM, not hand-typed ---
+#
+# Rule 6d fires on "a product/service phrase together with a money word" and
+# cannot tell a thing you buy ("training") from a property of the invoice
+# document ("discount"). Gap 310 carved out exactly one class of attribute --
+# tax terms -- and `_full_record_block_for()`'s docstring predicted the next one
+# in so many words: "Which discounts were applied ... the same gap wearing
+# different words." Found live 2026-09-03: "discount amount for apex consulting
+# group" became `WHERE item->>'description' LIKE '%discount%'` -- zero rows, so
+# NO invoice was identified, so the full record (which carries
+# `discount_amount`) was never handed to the answering step. The answer was a
+# clean, successful, empty result.
+#
+# The term list is DERIVED from `Invoice.model_fields`, so a column added
+# tomorrow is covered the day it is added -- the founder's objection to fixing
+# this by hand-listing one more column was exactly that it would fail again on
+# the next field. A small alias map covers the phrasings a person uses that are
+# not a column name spelled with spaces. Tax columns are excluded here because
+# `detect_tax_component_term()` owns them and its note is richer; ops/internal
+# columns because nobody asks for them; identifiers because they are WHERE
+# columns, not attributes to look up.
+_INVOICE_ATTRIBUTE_EXCLUDED_FIELDS = frozenset({
+    "id", "tenant_id", "batch_id", "file_path", "file_hash", "created_at",
+    "deleted_at", "last_enqueued_at", "processing_attempts", "coordinates",
+    "source_document_json", "field_confidence", "overdue_notified_at",
+    "duplicate_of_invoice_id", "completed_at", "sent_at", "sa_alerts",
+    "doc_type_evidence", "doc_attributes", "flow_direction", "items", "tags",
+    "customer_id", "submitted_by_email", "status",
+    # owned by detect_tax_component_term()
+    "tax_amount", "taxes", "tax_ids",
+    # identifiers: legitimately WHERE columns, already in the schema block
+    "vendor_name", "customer_name", "invoice_number", "invoice_date",
+})
+_INVOICE_ATTRIBUTE_ALIASES = {
+    "discount": "discount_amount",
+    "discounted": "discount_amount",
+    "sub total": "subtotal",
+    "sub-total": "subtotal",
+    "net amount": "subtotal",
+    "deduction": "deductions",
+    "reference": "references",
+    "purchase order": "po_number",
+    "po no": "po_number",
+    "payment terms": "payment_instructions",
+    "bank details": "payment_instructions",
+    "payment details": "payment_instructions",
+    "compliance": "compliance_metadata",
+    "address": "addresses",
+    "billing address": "addresses",
+    "shipping address": "addresses",
+    "document type": "doc_type",
+}
+_invoice_attribute_terms_cache: dict[str, str] | None = None
+_invoice_attribute_pattern_cache = None
+
+
+def _invoice_attribute_terms() -> dict[str, str]:
+    """term (lower-case, as a person types it) -> `invoice` column name.
+
+    Built lazily: `models` is imported function-locally throughout this module
+    to avoid an import cycle, and this is no exception.
+    """
+    global _invoice_attribute_terms_cache
+    if _invoice_attribute_terms_cache is None:
+        from models import Invoice
+
+        terms: dict[str, str] = {}
+        for field in Invoice.model_fields:
+            if field in _INVOICE_ATTRIBUTE_EXCLUDED_FIELDS:
+                continue
+            terms[field.replace("_", " ")] = field  # "discount amount"
+            terms[field] = field                    # "discount_amount", typed as-is
+        terms.update(_INVOICE_ATTRIBUTE_ALIASES)
+        _invoice_attribute_terms_cache = terms
+    return _invoice_attribute_terms_cache
+
+
+def _invoice_attribute_pattern():
+    global _invoice_attribute_pattern_cache
+    if _invoice_attribute_pattern_cache is None:
+        # Longest first, so "discount amount" wins over "discount".
+        terms = sorted(_invoice_attribute_terms(), key=len, reverse=True)
+        _invoice_attribute_pattern_cache = re.compile(
+            r"\b(" + "|".join(re.escape(t) for t in terms) + r")\b",
+            re.IGNORECASE,
+        )
+    return _invoice_attribute_pattern_cache
+
+
+def detect_invoice_attribute_term(message: str) -> tuple[str, str] | None:
+    """Returns (term as found, column name), or None.
+
+    Deterministic, the same shape as `detect_tax_component_term()`: the same
+    input always gives the same answer, and coverage grows with the ORM rather
+    than with prompt prose.
+    """
+    match = _invoice_attribute_pattern().search(message)
+    if not match:
+        return None
+    found = match.group(1)
+    return found, _invoice_attribute_terms()[found.lower()]
+
+
 def detect_tax_component_term(message: str) -> str | None:
     """Returns the exact tax-component term found in `message`, or None.
 
@@ -948,7 +1051,7 @@ def detect_payment_status_question(message: str) -> str | None:
 #   3. select `currency` alongside the monetary columns (rule 7),
 #   4. filter on the un-nested item's own description, not the invoice's text blob.
 _LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is PostgreSQL -- use exactly the syntax below). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
+DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist. The SAME EXEMPTION applies to ANY attribute of the invoice document itself, not only tax (Gap 413, found live 2026-09-03: "discount amount for <vendor>" was turned into a line-item search for the word "discount" -- zero rows, so no invoice was identified and an answerable question failed): discount / discount amount / discount percent, subtotal, deductions, payment instructions or terms, references, addresses, due date, PO number, currency, document type -- and every other column in the schema block above, including the ones marked as derived from the ORM. Ask the same CONCEPT question as for tax: is this word a good or service that could appear as a line on the invoice, or a property of the invoice as a document? A property is NEVER a description keyword. For such a question identify the invoice(s) from the vendor/customer/number/date given, SELECT that column (plus `currency` per rule 7) with the identifying columns, and let the answering step -- which is handed every identified invoice's full record -- read it. If the column is NULL, the answer is that the invoice does not state it, never that the invoice does not exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and jsonb_array_elements() raises on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true
@@ -965,7 +1068,7 @@ SELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item->>'de
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
 _LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist.
+DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist. The SAME EXEMPTION applies to ANY attribute of the invoice document itself, not only tax (Gap 413, found live 2026-09-03: "discount amount for <vendor>" was turned into a line-item search for the word "discount" -- zero rows, so no invoice was identified and an answerable question failed): discount / discount amount / discount percent, subtotal, deductions, payment instructions or terms, references, addresses, due date, PO number, currency, document type -- and every other column in the schema block above, including the ones marked as derived from the ORM. Ask the same CONCEPT question as for tax: is this word a good or service that could appear as a line on the invoice, or a property of the invoice as a document? A property is NEVER a description keyword. For such a question identify the invoice(s) from the vendor/customer/number/date given, SELECT that column (plus `currency` per rule 7) with the identifying columns, and let the answering step -- which is handed every identified invoice's full record -- read it. If the column is NULL, the answer is that the invoice does not state it, never that the invoice does not exist.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and json_each() raises "malformed JSON" on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1
@@ -2051,6 +2154,30 @@ def _tax_term_block_for(user_message: str) -> str:
     return tax_term_block
 
 
+def _attribute_term_block_for(user_message: str) -> str:
+    # Gap 413 -- the generic sibling of `_tax_term_block_for()`, for the same
+    # reason it exists: ground the model with the SPECIFIC word from the user's
+    # own question and the column it maps to, deterministically, instead of
+    # asking it to recognise an open-ended category from prose on every call.
+    #
+    # The tax block is deliberately not folded into this one. Tax carries richer
+    # guidance (the itemized `taxes` breakdown) and its own detector and tests.
+    detected = detect_invoice_attribute_term(user_message)
+    if not detected:
+        return ""
+    term, column = detected
+    return (
+        f"\nNOTE: this question names the invoice attribute \"{term}\" (column `{column}`). "
+        f"Per rule 6d's attribute exemption, do NOT search line-item descriptions for it -- "
+        f"that is guaranteed zero rows, and a zero-row result here means NO invoice gets "
+        f"identified at all. Identify the invoice(s) from the vendor/customer/number/date the "
+        f"user gave, and SELECT `{column}` (and `currency` per rule 7) together with the "
+        f"columns that identify the invoice. The answering step is also handed each identified "
+        f"invoice's full record and reads the attribute from there; if `{column}` is NULL, say "
+        f"the invoice does not state it -- never that the invoice does not exist.\n"
+    )
+
+
 def _payment_status_block_for(user_message: str) -> str:
     # Q24 of the NovaTech live test, 2026-08-19: same deterministic-grounding
     # pattern as the tax-term block above, for the same reason -- caught the
@@ -2489,6 +2616,94 @@ _DETERMINISTIC_TOTALS_INSTRUCTION = (
 )
 
 
+# Gap 413: the hand-typed schema block, lifted out of the f-string so the
+# ORM-derived supplement below can see which columns it already covers.
+_HAND_TYPED_SCHEMA_BLOCK = """Given the 'invoice' table schema:
+- id: UUID (Primary Key)
+- tenant_id: UUID
+- batch_id: UUID
+- file_path: VARCHAR(1024)
+- vendor_name: VARCHAR (the vendor who sent this tenant an INBOUND invoice; NULL for OUTBOUND rows)
+- grand_total: FLOAT
+- currency: VARCHAR (ISO 4217 currency code of this invoice's amounts, e.g. 'USD', 'INR', 'EUR')
+- invoice_number: VARCHAR
+- invoice_date: DATE
+- due_date: DATE
+- tax_amount: FLOAT
+- po_number: VARCHAR
+- status: VARCHAR (e.g. 'COMPLETED', 'AUDIT_REQUIRED', 'PROCESSING' for INBOUND; 'VERIFIED', 'NEEDS_REVIEW', 'SENT', 'PAID' for OUTBOUND). CRITICAL, found live 2026-08-19: for an INBOUND row, this is ONLY the OCR/extraction pipeline's own processing state -- 'AUDIT_REQUIRED' means the pipeline flagged a math/data issue, NOT that the invoice is unpaid, and 'COMPLETED' means extraction finished cleanly, NOT that it was paid. Never say "paid" or "not paid" or "unpaid" for an INBOUND row based on this column, no matter which value it holds -- that is a real mistake this model has made live, twice, both directions ('COMPLETED' -> confidently "yes paid"; 'AUDIT_REQUIRED' -> confidently "no, not paid"). Only OUTBOUND's literal 'PAID' value is a real payment signal.
+- sa_alerts: JSONB
+- created_at: DATETIME
+- flow_direction: VARCHAR ('INBOUND' = a vendor's invoice sent to this tenant; 'OUTBOUND' = this tenant's own invoice sent to a customer)
+- customer_name: VARCHAR (the customer this tenant sent an OUTBOUND invoice to; NULL for INBOUND rows)
+- customer_id: UUID (reserved, currently unused)
+- tags: JSONB (list of tags as strings, e.g. ["urgent", "software"])
+- items: JSONB (list of line item objects, each having: description, quantity, unit_price, amount)
+"""
+
+# Columns that must NOT be advertised to the SQL model even though they are
+# on the ORM: internal/ops bookkeeping nobody asks for (and rule 11's column
+# hygiene exists to keep out of answers), plus the two JSONB tax structures
+# that rule 6d's tax paragraph deliberately keeps out of this route.
+_SCHEMA_SUPPLEMENT_EXCLUDED_FIELDS = frozenset({
+    "id", "tenant_id", "batch_id", "file_path", "file_hash", "created_at",
+    "deleted_at", "last_enqueued_at", "processing_attempts", "coordinates",
+    "source_document_json", "field_confidence", "overdue_notified_at",
+    "duplicate_of_invoice_id", "completed_at", "sent_at", "submitted_by_email",
+    "doc_type_evidence", "taxes", "tax_ids",
+})
+_JSONB_READ_FROM_RECORD_NOTE = (
+    "JSONB -- do not un-nest or filter on this in SQL; the answering step reads it "
+    "from the identified invoice's full record"
+)
+
+
+def _sql_type_for(annotation) -> str:
+    name = str(annotation)
+    if "datetime" in name:
+        return "DATETIME"
+    if "date" in name:
+        return "DATE"
+    if "float" in name or "Decimal" in name:
+        return "FLOAT"
+    if "bool" in name:
+        return "BOOLEAN"
+    if "UUID" in name:
+        return "UUID"
+    if "dict" in name or "list" in name:
+        return _JSONB_READ_FROM_RECORD_NOTE
+    if "str" in name:
+        return "VARCHAR"
+    return "JSONB"
+
+
+def _derived_schema_supplement() -> str:
+    """Every `invoice` column the hand-typed block does not list, from the ORM.
+
+    Gap 413. `_full_record_block_for()` recorded on 2026-08-24 that the schema
+    block was "~19 hand-typed columns" that extraction had "long ago grown
+    past" -- and then the next question about one of the missing columns
+    failed live. This closes the class: a column is visible to the SQL model
+    the moment it exists on the model, and a column someone later hand-types
+    above simply drops out of this list. Order is the ORM's, for stability.
+    """
+    from models import Invoice
+
+    listed = set(re.findall(r"^- (\w+):", _HAND_TYPED_SCHEMA_BLOCK, re.M))
+    lines = []
+    for field, info in Invoice.model_fields.items():
+        if field in listed or field in _SCHEMA_SUPPLEMENT_EXCLUDED_FIELDS:
+            continue
+        lines.append(f"- {field}: {_sql_type_for(info.annotation)}")
+    if not lines:
+        return ""
+    header = (
+        "- (the following columns are derived from the ORM at runtime -- every "
+        "`invoice` column not hand-listed above, so nothing is invisible; Gap 413)\n"
+    )
+    return header + "\n".join(lines) + "\n"
+
+
 def build_sql_system_prompt(
     user_message: str,
     tenant_id: str,
@@ -2515,6 +2730,8 @@ def build_sql_system_prompt(
     line_item_rule = _line_item_rule(tenant_id, db_session)
     tax_term_block = _tax_term_block_for(user_message)
     payment_status_block = _payment_status_block_for(user_message)
+    attribute_term_block = _attribute_term_block_for(user_message)  # Gap 413
+    derived_schema_supplement = _derived_schema_supplement()  # Gap 413
     system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
 For THIS step you produce SQL, not prose: you are a database SQL query expert and the only thing you
@@ -2522,28 +2739,7 @@ return here is one read-only query. Everything above still governs the query -- 
 query has to be able to answer (a tax question needs the invoice identified, not a guess; a
 mixed-currency question is grouped, never blended; a category question is judged on the vendor's own
 name as readily as on a tag).
-Given the 'invoice' table schema:
-- id: UUID (Primary Key)
-- tenant_id: UUID
-- batch_id: UUID
-- file_path: VARCHAR(1024)
-- vendor_name: VARCHAR (the vendor who sent this tenant an INBOUND invoice; NULL for OUTBOUND rows)
-- grand_total: FLOAT
-- currency: VARCHAR (ISO 4217 currency code of this invoice's amounts, e.g. 'USD', 'INR', 'EUR')
-- invoice_number: VARCHAR
-- invoice_date: DATE
-- due_date: DATE
-- tax_amount: FLOAT
-- po_number: VARCHAR
-- status: VARCHAR (e.g. 'COMPLETED', 'AUDIT_REQUIRED', 'PROCESSING' for INBOUND; 'VERIFIED', 'NEEDS_REVIEW', 'SENT', 'PAID' for OUTBOUND). CRITICAL, found live 2026-08-19: for an INBOUND row, this is ONLY the OCR/extraction pipeline's own processing state -- 'AUDIT_REQUIRED' means the pipeline flagged a math/data issue, NOT that the invoice is unpaid, and 'COMPLETED' means extraction finished cleanly, NOT that it was paid. Never say "paid" or "not paid" or "unpaid" for an INBOUND row based on this column, no matter which value it holds -- that is a real mistake this model has made live, twice, both directions ('COMPLETED' -> confidently "yes paid"; 'AUDIT_REQUIRED' -> confidently "no, not paid"). Only OUTBOUND's literal 'PAID' value is a real payment signal.
-- sa_alerts: JSONB
-- created_at: DATETIME
-- flow_direction: VARCHAR ('INBOUND' = a vendor's invoice sent to this tenant; 'OUTBOUND' = this tenant's own invoice sent to a customer)
-- customer_name: VARCHAR (the customer this tenant sent an OUTBOUND invoice to; NULL for INBOUND rows)
-- customer_id: UUID (reserved, currently unused)
-- tags: JSONB (list of tags as strings, e.g. ["urgent", "software"])
-- items: JSONB (list of line item objects, each having: description, quantity, unit_price, amount)
-
+{_HAND_TYPED_SCHEMA_BLOCK}{derived_schema_supplement}
 Write a SQL query to answer the user's question.
 CRITICAL RULES:
 1. You MUST filter by tenant_id = '{tenant_id}'.
@@ -2575,6 +2771,7 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
 {line_item_rule}
 {tax_term_block}
 {payment_status_block}
+{attribute_term_block}
 7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
@@ -3981,6 +4178,7 @@ def _run_query_agent(
         # reach BOTH prompts -- injecting it only into SQL generation is what made
         # the first fix attempt fail live).
         payment_status_block = _payment_status_block_for(user_message)
+        attribute_term_block = _attribute_term_block_for(user_message)  # Gap 413
         max_attempts = 3
         outcome = run_sql_generation_loop(
             llm=llm,
@@ -4115,6 +4313,7 @@ where <currency> is that ROW'S OWN `currency` value (e.g. "Training & Onboarding
 EXCEPTION -- reconciliation/mismatch questions: the template above asserts an equation (qty × price = amount) that is only true when the row's stored `line_amount` actually equals qty × unit_price. Found live, 2026-08-19 (US tenant test): asked to check whether a line reconciles, the query results included both the stored amount and a separately computed one (e.g. `computed_line_amount`, `line_amount_matches`) precisely because they DIFFER -- and applying the "=" template anyway printed a false equation ("5000.00 units × USD 0.08 = USD 420.00", when 5000 × 0.08 is actually 400.00, not 420.00). If the query results contain a computed/expected amount that does NOT equal the stored `line_amount` for a row, do NOT use the "=" template for that row -- it would state a false equation. Instead say both figures plainly and name the mismatch: "<line_description>: printed amount <currency> <line_amount>, but <line_qty> × <currency> <line_unit_price> computes to <currency> <computed_amount> -- a <currency> <difference> mismatch." Only use the "=" template when the stored amount and the computed one genuinely agree (the normal case).
 
 {payment_status_block}
+{attribute_term_block}
 Results:
 {db_result}{computed_figures_block}{full_record_block}
 {rules_block}{chat_rules_block}

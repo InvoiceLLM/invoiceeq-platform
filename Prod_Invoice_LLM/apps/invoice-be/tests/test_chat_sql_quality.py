@@ -2601,3 +2601,83 @@ def test_the_executed_clause_casts_json_columns_for_postgres():
             assert "CAST(" not in compiled
         # The phrase is bound, never interpolated -- on either dialect.
         assert "packaging" not in compiled
+
+
+# ---------------------------------------------------------------------------
+# Gap 413 — rule 6d's attribute exemption, generic and ORM-derived
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("message, expected", [
+    ("discount amount for apex consulting group", ("discount amount", "discount_amount")),
+    ("what discount did acme give us", ("discount", "discount_amount")),
+    ("what's the subtotal before tax on INV-9", ("subtotal", "subtotal")),
+    ("due date on the northwind invoice", ("due date", "due_date")),
+    ("payment terms for acme", ("payment terms", "payment_instructions")),
+    # Genuine line-item questions must NOT trigger it -- rule 6d is still right
+    # about these, and over-triggering would break the case it was written for.
+    ("what is the training amount", None),
+    ("the amount only for training and onboarding from the total invoice", None),
+    ("invoice amount for the server line", None),
+])
+def test_detect_invoice_attribute_term_is_deterministic_and_orm_derived(message, expected):
+    """The live failure of 2026-09-03, and its siblings. `discount amount` is
+    the exact phrasing that produced `item->>'description' LIKE '%discount%'`
+    and an empty answer. Deterministic for the same reason as the tax
+    detector: same input, same answer, and coverage grows by adding a column to
+    the ORM (or an alias), not by rewording a paragraph and hoping."""
+    assert query_agent.detect_invoice_attribute_term(message) == expected
+
+
+def test_every_orm_column_a_user_could_ask_for_is_in_the_sql_schema_block(db_session):
+    """The drift guard. Gap 310's own docstring called the schema block "~19
+    hand-typed columns" that extraction "long ago grew past" -- and the very
+    next question about one of the missing columns failed live. This asserts
+    the PROPERTY rather than a list: every column not deliberately excluded is
+    visible to the SQL model, whether hand-typed or derived."""
+    from models import Invoice
+
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT discount_amount, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "discount amount for apex consulting group", uuid4())
+    prompt = llm.prompts[0]
+    missing = [
+        field for field in Invoice.model_fields
+        if field not in query_agent._SCHEMA_SUPPLEMENT_EXCLUDED_FIELDS
+        and not re.search(rf"^- {re.escape(field)}:", prompt, re.M)
+    ]
+    assert missing == [], f"invisible to the SQL model: {missing}"
+    # And the one that started this is there by name.
+    assert re.search(r"^- discount_amount: FLOAT", prompt, re.M)
+
+
+def test_attribute_term_block_reaches_both_prompts(db_session):
+    """Gap 267's lesson applied from the start: the block must reach the SQL
+    prompt AND the summary prompt. Injecting it only into SQL generation is
+    what made Gap 267's first fix fail live."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT discount_amount, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "discount amount for apex consulting group", uuid4())
+    note = 'names the invoice attribute "discount amount" (column `discount_amount`)'
+    assert note in llm.prompts[0]
+    assert "do NOT search line-item descriptions" in llm.prompts[0]
+    assert llm.summary_prompts, "summary prompt was never built"
+    assert note in llm.summary_prompts[0]
+
+
+def test_attribute_term_block_is_absent_for_a_genuine_line_item_question(db_session):
+    """Rule 6d's original purpose must survive: a real product phrase still
+    goes to the line-item join, with no attribute note steering it away."""
+    llm = _RecordingLLM([
+        MagicMock(sql=f"SELECT invoice_number, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
+    ])
+    _run(db_session, llm, "what is the training amount on the acme invoice", uuid4())
+    assert "names the invoice attribute" not in llm.prompts[0]
+
+
+def test_rule_6d_attribute_exemption_is_present_in_both_dialects():
+    """Rule 6d is built per engine (Gap 253); the exemption has to be in both
+    spellings or the SQLite test path and the Postgres live path diverge."""
+    for rule in (query_agent._LINE_ITEM_RULE_POSTGRES, query_agent._LINE_ITEM_RULE_SQLITE):
+        assert "The SAME EXEMPTION applies to ANY attribute of the invoice document itself" in rule
+        assert "A property is NEVER a description keyword" in rule

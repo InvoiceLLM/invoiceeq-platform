@@ -88,6 +88,9 @@ param enableGenericExtraction bool = false
 @description('Feature 26 Part 2 — the attached-document intent split and content branch. With it off an attachment turn is Part 1\'s deterministic comparison path, byte-identical to Gap 366. NOT a gate on attachments as such (B11 item 1: `attachment_id` presence is the routing switch and is not a flag).')
 param enableGenericDocChat bool = false
 
+@description('Feature 26 E-5 / task H7 — route an attachment chat turn through the Redis-backed async queue instead of answering it synchronously. REQUIRES a reachable REDIS_URL: `services/chat_queue.py::get_redis_client()` returns None when it is empty, so enabling this without Redis enqueues into nothing. Declared here for documentation and later rollout; dev has no Redis deployed as of 2026-09-03, so it stays false.')
+param enableAsyncChatQueue bool = false
+
 @description('Subscription ID for services/azure_cost.py and ops_recommendation.py -- see invoice-be.bicep for why this was missing.')
 param azureSubscriptionId string = subscription().subscriptionId
 
@@ -314,6 +317,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     enableProductionQualityJudge: enableProductionQualityJudge
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
+    enableAsyncChatQueue: enableAsyncChatQueue
     azureSubscriptionId: azureSubscriptionId
     azureCostResourceGroup: azureCostResourceGroup
   }
@@ -340,6 +344,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     location: location
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
+    enableAsyncChatQueue: enableAsyncChatQueue
     caeId: cae.id
     appName: 'ca-queue-worker-${environment}'
     userAssignedIdentityId: identity.id

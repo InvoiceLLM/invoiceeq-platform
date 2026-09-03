@@ -12,6 +12,8 @@
 * App startup: [apps/invoice-be/main.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/main.py) → `lifespan()`, `_start_rag_warmup()` (Gap 278) — primes the RAG singletons off the request path
 * Re-embed migration: [apps/invoice-be/scripts/reembed_chroma_collections.py](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-be/scripts/reembed_chroma_collections.py) → `reembed()`, `_orphan_chunk_invoice_ids()` (Gap 239), `_current_space()`, `_existing_collection_names()`
 
+> **Gap 413 (2026-09-03) — Gap 310's exemption generalised.** Rule 6d's tax carve-out was the only one; "discount amount for <vendor>" became a line-item search for the word "discount", matched nothing, and so identified no invoice for the full-record hand-off to work with. Now: `detect_invoice_attribute_term()` maps any ORM column (or alias) named in the question to its column, `_attribute_term_block_for()` grounds both prompts, and `_derived_schema_supplement()` makes every non-ops `invoice` column visible to the SQL model from the ORM at runtime. The full-record hand-off itself is unchanged. Tracker Gap 413.
+
 ### Functionality (folder → file → function → functionality)
 1. `routers/chat.py` → `post_chat_message()` — the FE's main write endpoint (`POST /chat/sessions/{id}/message`): stages the user's message row, calls `agents/query_agent.py::run_query_agent()`, then saves the returned assistant message (`content`, `generated_sql`, `citations`) — **both rows in one commit** (Gap 209, below).
 1a. `routers/chat.py` → `rename_session()` — `PUT /chat/sessions/{session_id}`, title-only thread rename (FE Gap 216, below).
