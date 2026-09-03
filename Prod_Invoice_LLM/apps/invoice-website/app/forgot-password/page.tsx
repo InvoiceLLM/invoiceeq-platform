@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSignIn } from "@clerk/nextjs";
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
@@ -65,6 +65,68 @@ export default function ForgotPasswordPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState<string | null>(null);
+
+  // OTP countdown timer — Clerk's reset_password_email_code OTP expires after 10 minutes.
+  const OTP_LIFETIME_SECONDS = 10 * 60;
+  const [otpSecondsLeft, setOtpSecondsLeft] = useState(OTP_LIFETIME_SECONDS);
+  const [otpExpired, setOtpExpired] = useState(false);
+  const [resending, setResending] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /** Start (or restart) the OTP countdown. */
+  const startOtpTimer = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setOtpSecondsLeft(OTP_LIFETIME_SECONDS);
+    setOtpExpired(false);
+
+    timerRef.current = setInterval(() => {
+      setOtpSecondsLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current!);
+          timerRef.current = null;
+          setOtpExpired(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, [OTP_LIFETIME_SECONDS]);
+
+  // Kick off the countdown when the verify step appears.
+  useEffect(() => {
+    if (step === "verify") {
+      startOtpTimer();
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [step, startOtpTimer]);
+
+  /** Resend a fresh reset code and restart the countdown. */
+  const handleResendCode = async () => {
+    if (!isLoaded || resending) return;
+    setResending(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await signIn.create({
+        strategy: "reset_password_email_code",
+        identifier: email,
+      });
+      setCode("");
+      setNewPassword("");
+      startOtpTimer();
+      setSuccess("✓ New reset code sent! Check your email.");
+    } catch (err: any) {
+      setError(
+        err?.errors?.[0]?.longMessage ||
+          err?.message ||
+          "Failed to resend code. Please try again."
+      );
+    } finally {
+      setResending(false);
+    }
+  };
 
   const inputStyle = (id: string) => ({ ...S.input, ...(focused === id ? S.inputFocusBlue : {}) });
 
@@ -203,6 +265,47 @@ export default function ForgotPasswordPage() {
               </form>
             ) : (
               <form onSubmit={handleResetPassword}>
+                {/* ---------- OTP countdown timer ---------- */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    marginBottom: "16px",
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    background: otpExpired
+                      ? "rgba(239,68,68,0.08)"
+                      : "rgba(59,130,246,0.08)",
+                    border: otpExpired
+                      ? "1px solid rgba(239,68,68,0.25)"
+                      : "1px solid rgba(59,130,246,0.20)",
+                    color: otpExpired ? T.red : T.blue,
+                    transition: "background 0.3s, border-color 0.3s, color 0.3s",
+                  }}
+                >
+                  {otpExpired ? (
+                    <>
+                      <span>⏰</span>
+                      <span>Code expired — please resend</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>⏱️</span>
+                      <span>
+                        Code expires in{" "}
+                        <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                          {String(Math.floor(otpSecondsLeft / 60)).padStart(2, "0")}:
+                          {String(otpSecondsLeft % 60).padStart(2, "0")}
+                        </span>
+                      </span>
+                    </>
+                  )}
+                </div>
+
                 <div style={S.sectionLabel}>Verification Code</div>
                 <div style={{ fontSize: "13px", color: T.textMuted, marginBottom: "12px" }}>
                   We sent a 6-digit code to <strong>{email}</strong>.
@@ -226,6 +329,7 @@ export default function ForgotPasswordPage() {
                     style={inputStyle("code")}
                     required
                     autoFocus
+                    disabled={otpExpired}
                   />
                 </div>
 
@@ -244,6 +348,7 @@ export default function ForgotPasswordPage() {
                     onBlur={() => setFocused(null)}
                     style={{ ...inputStyle("password"), paddingRight: "40px" }}
                     required
+                    disabled={otpExpired}
                   />
                   <button
                     type="button"
@@ -286,8 +391,44 @@ export default function ForgotPasswordPage() {
                   </div>
                 )}
 
-                <button type="submit" disabled={loading} style={{ ...S.btn, opacity: loading ? 0.7 : 1 }}>
-                  {loading ? "⏳ Resetting password…" : "✓ Reset Password"}
+                {/* Reset button — disabled when code has expired */}
+                <button
+                  type="submit"
+                  disabled={loading || otpExpired}
+                  style={{
+                    ...S.btn,
+                    opacity: loading || otpExpired ? 0.5 : 1,
+                    cursor: otpExpired ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {loading ? "⏳ Resetting password…" : otpExpired ? "Code expired" : "✓ Reset Password"}
+                </button>
+
+                {/* Resend code button */}
+                <button
+                  type="button"
+                  onClick={handleResendCode}
+                  disabled={resending}
+                  style={{
+                    width: "100%",
+                    marginTop: "10px",
+                    padding: "10px",
+                    borderRadius: "10px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: resending ? "not-allowed" : "pointer",
+                    background: otpExpired
+                      ? "rgba(59,130,246,0.14)"
+                      : "transparent",
+                    border: otpExpired
+                      ? "1px solid rgba(59,130,246,0.35)"
+                      : `1px solid ${T.border}`,
+                    color: otpExpired ? T.blue : T.textMuted,
+                    transition: "all 0.2s",
+                    opacity: resending ? 0.6 : 1,
+                  }}
+                >
+                  {resending ? "⏳ Sending…" : "📩 Resend reset code"}
                 </button>
 
                 <button
@@ -309,7 +450,7 @@ export default function ForgotPasswordPage() {
                     cursor: "pointer",
                   }}
                 >
-                  ← Didn&apos;t receive a code?
+                  ← Back to email entry
                 </button>
               </form>
             )}

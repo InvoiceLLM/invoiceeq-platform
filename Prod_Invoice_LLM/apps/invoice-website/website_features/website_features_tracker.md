@@ -269,6 +269,13 @@ Highest number in use anywhere in the repo as of this check: **334**. The block 
     - Idempotency & duplicate callback resilience.
   - Verified: `pytest tests/test_billing_sandbox.py -v` (7/7 passed), combined billing suite `pytest tests/test_billing.py tests/test_billing_sandbox.py -v` (35/35 passed).
 
+- [x] **Gap 419 (Website, Feature 4): OTP verification screens on Signup and Forgot Password lack a countdown timer, expiry state, and resend capability** — opened and closed 2026-09-03. **Gap number collision-checked fresh immediately before writing**, repo-wide across all three trackers: max in use was 418, so this entry is 419.
+  - **Problem**: both the signup email-verification screen (`app/signup/page.tsx`, Gap 182's OTP pane) and the forgot-password code-entry screen (`app/forgot-password/page.tsx`) accepted the OTP code indefinitely with no visual indication of the 10-minute Clerk expiry window. Users had no way to know when a code had expired, leading to silent verification failures. There was also no resend button on either screen.
+  - **Fix — Signup (`app/signup/page.tsx`)**: added `useEffect`/`useRef`/`useCallback` imports; `OTP_LIFETIME_SECONDS = 600` constant; `otpSecondsLeft`, `otpExpired`, `resending` state; `startOtpTimer()` callback using `setInterval`; `useEffect` that starts the timer when `needsVerification` becomes true (with cleanup on unmount); `handleResendOtp()` that calls `prepareEmailAddressVerification({ strategy: "email_code" })` and restarts the timer. UI: green countdown bar (`⏱️ Code expires in MM:SS`) switches to red (`⏰ Code expired — please resend`) at 0; code input and verify button disabled when expired; dedicated "📩 Resend verification code" button always visible, highlighted blue when expired.
+  - **Fix — Forgot Password (`app/forgot-password/page.tsx`)**: identical timer pattern, triggered when `step` transitions to `"verify"`. `handleResendCode()` calls `signIn.create({ strategy: "reset_password_email_code", identifier: email })` and restarts the timer. UI: blue countdown bar (matching the page's blue colour scheme) with the same expiry/resend pattern. Code input, password input, and reset button all disabled when expired. The old "← Didn't receive a code?" button replaced by the dedicated resend button + a "← Back to email entry" button.
+  - **Verified**: visual inspection of both pages. `tabular-nums` font-variant ensures the countdown digits don't jitter. Timer cleanup on unmount/navigation prevents stale intervals.
+  - Spec doc updated: `feature_4_auth_gateway.md` Functionality items 1 and 6.
+
 ## Gap Items (Future)
 
 | # | Item | Status | Notes |
