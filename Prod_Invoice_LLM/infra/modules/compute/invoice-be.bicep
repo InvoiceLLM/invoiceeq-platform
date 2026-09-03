@@ -104,6 +104,12 @@ param appInsightsConnectionString string = ''
 @description('Score every real production chat turn with the online quality judge (Gap 304), writing an agent_eval_run row tagged run_source=production. Default false -- opt in per environment.')
 param enableProductionQualityJudge bool = false
 
+@description('Feature 27 — generic (non-invoice) extraction. Gates the classifier node in the extraction graph; with it off `doc_type` is always None and no `documents` row is ever created. Opt in per environment, exactly like enableProductionQualityJudge above.')
+param enableGenericExtraction bool = false
+
+@description('Feature 26 Part 2 — the attached-document intent split and content branch. With it off an attachment turn is Part 1\'s deterministic comparison path, byte-identical to Gap 366. NOT a gate on attachments as such (B11 item 1: `attachment_id` presence is the routing switch and is not a flag).')
+param enableGenericDocChat bool = false
+
 @description('Subscription ID services/azure_cost.py and ops_recommendation.py read Cost Management / Resource Graph from. Declared in config.py but never wired here until now -- without it, the cost sweep and the nightly recommendation pass cost/container_health categories both fail with "not configured".')
 param azureSubscriptionId string = subscription().subscriptionId
 
@@ -405,6 +411,23 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
               // opt in per environment, never on by default.
               name: 'ENABLE_PRODUCTION_QUALITY_JUDGE'
               value: enableProductionQualityJudge ? 'true' : 'false'
+            }
+            {
+              // Feature 27 E1/E2 and Feature 26 B11. Process-wide, never
+              // per-tenant. Both default false in `config.py` for the same
+              // fail-closed reason every flag here does -- a deployment that has
+              // not thought about this gets today's behaviour.
+              //
+              // WHY THESE MUST BE DECLARED EVEN WHEN FALSE: before this, neither
+              // name existed as an env var on the container app at all, so there
+              // was nothing an operator could flip and no way to see from Azure
+              // what the running process believed (BE Gap 402).
+              name: 'ENABLE_GENERIC_EXTRACTION'
+              value: enableGenericExtraction ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_GENERIC_DOC_CHAT'
+              value: enableGenericDocChat ? 'true' : 'false'
             }
           ]
           probes: [

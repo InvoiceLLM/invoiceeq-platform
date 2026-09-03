@@ -82,6 +82,12 @@ param payuMode string = 'test'
 @description('Score every real production chat turn with the online quality judge (Gap 304). Default false -- see invoice-be.bicep for the cost/latency tradeoff this opts into. Set true only where wanted, per environment (params.dev.json/params.prod.json).')
 param enableProductionQualityJudge bool = false
 
+@description('Feature 27 — generic (non-invoice) extraction. Gates the classifier node in the extraction graph; with it off `doc_type` is always None and no `documents` row is ever created. Opt in per environment, exactly like enableProductionQualityJudge above.')
+param enableGenericExtraction bool = false
+
+@description('Feature 26 Part 2 — the attached-document intent split and content branch. With it off an attachment turn is Part 1\'s deterministic comparison path, byte-identical to Gap 366. NOT a gate on attachments as such (B11 item 1: `attachment_id` presence is the routing switch and is not a flag).')
+param enableGenericDocChat bool = false
+
 @description('Subscription ID for services/azure_cost.py and ops_recommendation.py -- see invoice-be.bicep for why this was missing.')
 param azureSubscriptionId string = subscription().subscriptionId
 
@@ -306,6 +312,8 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     minReplicas: backendMinReplicas
     maxReplicas: backendMaxReplicas
     enableProductionQualityJudge: enableProductionQualityJudge
+    enableGenericExtraction: enableGenericExtraction
+    enableGenericDocChat: enableGenericDocChat
     azureSubscriptionId: azureSubscriptionId
     azureCostResourceGroup: azureCostResourceGroup
   }
@@ -330,6 +338,8 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
   name: 'worker-deploy'
   params: {
     location: location
+    enableGenericExtraction: enableGenericExtraction
+    enableGenericDocChat: enableGenericDocChat
     caeId: cae.id
     appName: 'ca-queue-worker-${environment}'
     userAssignedIdentityId: identity.id

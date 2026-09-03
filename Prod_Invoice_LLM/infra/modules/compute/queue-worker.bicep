@@ -73,6 +73,12 @@ param emailAppAddress string = ''
 @description('Support / ops alert destination inbox -- see invoice-be.bicep')
 param supportNotifyEmail string = ''
 
+@description('Feature 27 — generic (non-invoice) extraction. Gates the classifier node in the extraction graph; with it off `doc_type` is always None and no `documents` row is ever created. Opt in per environment, exactly like enableProductionQualityJudge above.')
+param enableGenericExtraction bool = false
+
+@description('Feature 26 Part 2 — the attached-document intent split and content branch. With it off an attachment turn is Part 1\'s deterministic comparison path, byte-identical to Gap 366. NOT a gate on attachments as such (B11 item 1: `attachment_id` presence is the routing switch and is not a flag).')
+param enableGenericDocChat bool = false
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 var baseSecrets = [
@@ -325,6 +331,23 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
               value: appInsightsConnectionString
+            }
+            {
+              // Feature 27 E1/E2 and Feature 26 B11. Process-wide, never
+              // per-tenant. Both default false in `config.py` for the same
+              // fail-closed reason every flag here does -- a deployment that has
+              // not thought about this gets today's behaviour.
+              //
+              // WHY THESE MUST BE DECLARED EVEN WHEN FALSE: before this, neither
+              // name existed as an env var on the container app at all, so there
+              // was nothing an operator could flip and no way to see from Azure
+              // what the running process believed (BE Gap 402).
+              name: 'ENABLE_GENERIC_EXTRACTION'
+              value: enableGenericExtraction ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_GENERIC_DOC_CHAT'
+              value: enableGenericDocChat ? 'true' : 'false'
             }
           ], docIntel2Env, docIntel3Env)
           // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence
