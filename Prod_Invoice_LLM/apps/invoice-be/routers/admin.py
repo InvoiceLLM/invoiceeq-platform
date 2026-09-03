@@ -52,6 +52,7 @@ class AdminUserOut(BaseModel):
     can_train: bool
     can_audit: bool
     can_load: bool
+    can_send_invoices: bool  # Gap 405
     created_at: datetime
     last_login: datetime | None = None
 
@@ -65,6 +66,7 @@ class PermissionsUpdate(BaseModel):
     can_train: bool
     can_audit: bool
     can_load: bool
+    can_send_invoices: bool = False  # Gap 405 — defaulted so an older FE build omitting the field still validates
     email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -200,13 +202,14 @@ async def set_user_permissions(
     user.can_train = payload.can_train
     user.can_audit = payload.can_audit
     user.can_load = payload.can_load
+    user.can_send_invoices = payload.can_send_invoices  # Gap 405
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
 
     logger.info(
-        "Admin %s set permissions for user %s: train=%s audit=%s load=%s",
-        context.user_id, user.clerk_user_id, user.can_train, user.can_audit, user.can_load,
+        "Admin %s set permissions for user %s: train=%s audit=%s load=%s send_invoices=%s",
+        context.user_id, user.clerk_user_id, user.can_train, user.can_audit, user.can_load, user.can_send_invoices,
     )
     return AdminUserOut.model_validate(user, from_attributes=True)
 

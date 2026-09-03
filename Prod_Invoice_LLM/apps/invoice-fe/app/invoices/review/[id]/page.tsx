@@ -15,6 +15,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  Clock,
+  RotateCcw,
 } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
 import { formatCurrency } from "@/lib/utils";
@@ -277,7 +279,8 @@ export default function AuditorReviewPage() {
   const [focusRequest, setFocusRequest] = useState<{ field: string; nonce: number } | null>(null);
   const [corrections, setCorrections] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | null>(null);
+  // Gap 407: two more non-terminal deferral actions alongside paid/rejected.
+  const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | "review_later" | "needs_resubmission" | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("Invoice Error");
@@ -487,7 +490,13 @@ export default function AuditorReviewPage() {
     alerts.map((a) => a.field).filter((f): f is string => Boolean(f))
   );
 
-  const handleResolve = async (targetStatus?: "PAID" | "REJECTED", reasonText?: string) => {
+  // Gap 407: widened from "PAID" | "REJECTED" to also accept the two new
+  // non-terminal deferral statuses -- same endpoint, same payload shape,
+  // backend already validates all four (routers/audit.py).
+  const handleResolve = async (
+    targetStatus?: "PAID" | "REJECTED" | "REVIEW_LATER" | "NEEDS_RESUBMISSION",
+    reasonText?: string
+  ) => {
     if (!invoice) return;
     // Gap 53/FE 26: this can now also be called with no targetStatus and no
     // dismissed alerts -- just persisting a field correction on an invoice
@@ -497,7 +506,13 @@ export default function AuditorReviewPage() {
     // both optional) -- the "Save Correction" button below was the missing
     // entry point, not a new endpoint.
     if (targetStatus) {
-      setActionLoading(targetStatus === "PAID" ? "paid" : "rejected");
+      const loadingKey = {
+        PAID: "paid",
+        REJECTED: "rejected",
+        REVIEW_LATER: "review_later",
+        NEEDS_RESUBMISSION: "needs_resubmission",
+      } as const;
+      setActionLoading(loadingKey[targetStatus]);
     } else {
       setSavingCorrection(true);
     }
@@ -614,6 +629,12 @@ export default function AuditorReviewPage() {
                 ? "border-red-600/50 bg-red-500/10 text-red-300"
                 : invoice.status === "AUDIT_REQUIRED"
                 ? "border-yellow-600/50 bg-yellow-500/10 text-yellow-300"
+                // Gap 407: distinct from AUDIT_REQUIRED's yellow so a deferred
+                // decision doesn't read as "still needs a first look."
+                : invoice.status === "REVIEW_LATER"
+                ? "border-sky-600/50 bg-sky-500/10 text-sky-300"
+                : invoice.status === "NEEDS_RESUBMISSION"
+                ? "border-orange-600/50 bg-orange-500/10 text-orange-300"
                 : "border-slate-600/50 bg-slate-700/30 text-slate-300"
             }`}
           >
@@ -640,6 +661,42 @@ export default function AuditorReviewPage() {
             >
               <Undo2 size={13} />
               Reopen Audit
+            </button>
+          )}
+          {/* Gap 407: two non-terminal deferral actions, distinct from the
+              terminal Reject/Approve pair below -- picking either leaves
+              isResolved false, so this whole action row (including these two
+              buttons) stays visible afterward rather than the invoice
+              disappearing into a "finalized" state it was never meant to
+              reach yet. */}
+          {!isResolved && invoice.status !== "REVIEW_LATER" && (
+            <button
+              onClick={() => handleResolve("REVIEW_LATER")}
+              disabled={!!actionLoading}
+              title="Defer a decision on this invoice without finalizing it"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-sky-500/50 bg-sky-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-sky-300 transition hover:bg-sky-600/30 disabled:opacity-50"
+            >
+              {actionLoading === "review_later" ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Clock size={13} />
+              )}
+              Review Later
+            </button>
+          )}
+          {!isResolved && invoice.status !== "NEEDS_RESUBMISSION" && (
+            <button
+              onClick={() => handleResolve("NEEDS_RESUBMISSION")}
+              disabled={!!actionLoading}
+              title="Flag as disputed and queue for vendor correction / resubmission"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-orange-500/50 bg-orange-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-orange-300 transition hover:bg-orange-600/30 disabled:opacity-50"
+            >
+              {actionLoading === "needs_resubmission" ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <RotateCcw size={13} />
+              )}
+              Needs Resubmission
             </button>
           )}
           {!isResolved && (
@@ -1078,9 +1135,9 @@ export default function AuditorReviewPage() {
               )}
             </div>
 
-            <div className="flex-1 overflow-auto custom-scrollbar p-3">
+            <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar p-3">
               {isEditingItems ? (
-                <table className="w-full border-collapse text-left">
+                <table className="w-full min-w-[460px] border-collapse text-left">
                   <thead>
                     <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
                       <th className="pb-2 pr-2 font-medium w-6">#</th>
@@ -1170,21 +1227,21 @@ export default function AuditorReviewPage() {
                 </table>
               ) : (
                 invoice.items && invoice.items.length > 0 ? (
-                  <table className="w-full border-collapse text-left">
+                  <table className="w-full min-w-[460px] border-collapse text-left">
                     <thead>
                       <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="pb-2 pr-2 font-medium">#</th>
+                        <th className="pb-2 pr-2 font-medium w-6">#</th>
                         <th className="pb-2 pr-2 font-medium">Description</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Qty</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Unit Price</th>
-                        <th className="pb-2 text-right font-medium">Total</th>
+                        <th className="pb-2 pr-2 text-right font-medium w-16">Qty</th>
+                        <th className="pb-2 pr-2 text-right font-medium w-24">Unit Price</th>
+                        <th className="pb-2 text-right font-medium w-24">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#222D3D]/60">
                       {invoice.items.map((item, idx) => (
                         <tr key={idx} className="text-xs text-slate-300">
                           <td className="py-2 pr-2 text-slate-500">{idx + 1}</td>
-                          <td className="py-2 pr-2">{item.description}</td>
+                          <td className="py-2 pr-2 break-words max-w-[200px]">{item.description}</td>
                           <td className="py-2 pr-2 text-right text-slate-400">
                             {item.quantity ?? "—"}
                           </td>

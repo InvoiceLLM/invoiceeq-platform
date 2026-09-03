@@ -38,6 +38,11 @@ class TenantContext(BaseModel):
     can_train: bool = False
     can_audit: bool = False
     can_load: bool = False
+    # Gap 405: granular per-user Send Invoices visibility, layered on top of
+    # Tenant.send_invoices_enabled's tenant-wide gate. Defaults False, so
+    # every existing TenantContext(...) construction site that predates this
+    # field is unaffected, same pattern as auth_method/key_scope below.
+    can_send_invoices: bool = False
     # Feature 25 (Gap 335): which door this request came through -- "clerk" for a
     # browser session, "api_key" for an `inv_live_...` credential.
     #
@@ -292,9 +297,10 @@ def get_authenticated_clerk_identity(
     )
 
 
-def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool]:
+def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool, bool]:
     """
-    Feature 1.1 (Task 1.1.3) / Gap 73: resolve (can_train, can_audit, can_load).
+    Feature 1.1 (Task 1.1.3) / Gap 73: resolve (can_train, can_audit, can_load,
+    can_send_invoices — the last added by Gap 405).
     Delegates to RoleMapper for enterprise-scale role mapping and fallback permissions.
     """
     return RoleMapper.resolve_permissions(role, user)
@@ -713,7 +719,7 @@ def get_tenant_context_allow_unpaid(
     # permissions -- on the user's real tenant. See reconcile_role_with_org().
     role = reconcile_role_with_org(role, user, tenant, clerk_org_id, is_mock_identity)
 
-    can_train, can_audit, can_load = resolve_permissions(role, user)
+    can_train, can_audit, can_load, can_send_invoices = resolve_permissions(role, user)
 
     # Gap 71: lazy lapse check. PayU's classic API has no recurring object and
     # no cancellation webhook, so a lapse can only be inferred from a date --
@@ -754,6 +760,7 @@ def get_tenant_context_allow_unpaid(
         can_train=can_train,
         can_audit=can_audit,
         can_load=can_load,
+        can_send_invoices=can_send_invoices,
     )
 
     return context
@@ -821,9 +828,10 @@ KEY_SCOPE_VALUES = (KEY_SCOPE_READONLY, KEY_SCOPE_ACTIONS)
 API_KEY_SERVICE_USER_EMAIL_DOMAIN = "service.invoice-llm.internal"
 
 
-def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool]:
+def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool, bool]:
     """
-    Feature 25 (Gap 335): (can_train, can_audit, can_load) for an API-key scope.
+    Feature 25 (Gap 335): (can_train, can_audit, can_load, can_send_invoices —
+    the last added by Gap 405) for an API-key scope.
 
     Replaces Gap 184's hardcoded `role = "Viewer"` -> resolve_permissions(). The
     readonly row below is the SAME effective permission set that Viewer label
@@ -833,8 +841,8 @@ def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool]:
     from scope rather than from a role string mattered: nothing here had to
     change when the role vocabulary did.)
 
-        readonly -> (False, False, False)
-        actions  -> (False, True,  True)
+        readonly -> (False, False, False, False)
+        actions  -> (False, True,  True,  True)
 
     can_train is False at BOTH scopes, deliberately. The founder's description
     of full automation named approve/reject/verify/send (and mark-paid);
@@ -842,13 +850,18 @@ def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool]:
     extraction rules is a much larger claim than letting it finish an invoice,
     and it will not arrive here as a side effect.
 
+    can_send_invoices is True at `actions` scope (Gap 405) -- "send" is one of
+    the exact actions the founder's full-automation description named, so an
+    actions-scoped key is granted the same outbound-visibility permission a
+    human Admin gets, consistent with how can_audit/can_load already work here.
+
     Anything unrecognised (including None, i.e. a row predating the migration on
     a database that somehow skipped the server_default) falls to readonly --
     fail closed, never open.
     """
     if scope == KEY_SCOPE_ACTIONS:
-        return False, True, True
-    return False, False, False
+        return False, True, True, True
+    return False, False, False, False
 
 
 def api_key_service_clerk_id(tenant_id: UUID) -> str:
@@ -911,6 +924,7 @@ def resolve_api_key_service_user(tenant: Tenant, db_session: Session) -> UUID:
         can_train=False,
         can_audit=False,
         can_load=False,
+        can_send_invoices=False,
         tenant_id=tenant.id,
         last_login=datetime.utcnow(),
     )
@@ -1046,7 +1060,7 @@ def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
                 headers={"WWW-Authenticate": "Bearer"},
             )
         scope = KEY_SCOPE_READONLY
-    can_train, can_audit, can_load = permissions_for_key_scope(scope)
+    can_train, can_audit, can_load, can_send_invoices = permissions_for_key_scope(scope)
 
     # Only an actions-scoped key can reach a route that writes an AuditLog, so
     # only it needs the FK-satisfying service user. A readonly key keeps
@@ -1063,6 +1077,7 @@ def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
         can_train=can_train,
         can_audit=can_audit,
         can_load=can_load,
+        can_send_invoices=can_send_invoices,
         auth_method="api_key",
         key_scope=scope,
     )
@@ -1200,6 +1215,7 @@ _PERMISSION_LABELS = {
     "can_train": "AI Trainer",
     "can_audit": "the Audit Queue",
     "can_load": "invoice ingestion",
+    "can_send_invoices": "Send Invoices",
 }
 
 
@@ -1228,6 +1244,7 @@ def require_permission(permission: str):
 require_can_train = require_permission("can_train")
 require_can_audit = require_permission("can_audit")
 require_can_load = require_permission("can_load")
+require_can_send_invoices = require_permission("can_send_invoices")  # Gap 405
 
 
 # --- Feature 25 (Gap 335): dual-credential gates ---------------------------

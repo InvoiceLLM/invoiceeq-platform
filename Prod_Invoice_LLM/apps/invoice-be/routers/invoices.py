@@ -378,25 +378,32 @@ async def upload_invoices(
             detail="No files uploaded."
         )
 
-    # 1. Validate that all files are PDFs
+    # 1. Validate that all files are PDFs and contain valid PDF headers (Gap 355)
     for file in files:
-        if not file.filename.lower().endswith(".pdf"):
+        fname = (file.filename or "").strip()
+        if not fname.lower().endswith(".pdf"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid file format: {file.filename}. Only PDF is allowed."
+                detail=f"Invalid file format: {file.filename or 'unnamed'}. Only PDF is allowed."
             )
 
-    # 2. Read all bytes up front so we can classify duplicates before charging.
+    # 2. Read all bytes up front so we can classify duplicates before charging and validate magic bytes.
     payloads: list[tuple[str, bytes]] = []
     for file in files:
+        fname = file.filename or "invoice.pdf"
         try:
             file_bytes = await file.read()
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to read file {file.filename}: {str(e)}"
+                detail=f"Failed to read file {fname}: {str(e)}"
             )
-        payloads.append((file.filename, file_bytes))
+        if not file_bytes.startswith(b"%PDF"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid PDF content in file {fname}. Only valid PDF documents are supported."
+            )
+        payloads.append((fname, file_bytes))
 
     # 3. Gap 189: count billable hashes, then lock Tenant and charge that count only.
     billable = count_billable_uploads(

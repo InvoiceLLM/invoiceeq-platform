@@ -42,6 +42,9 @@ export interface AuthContextType {
   canTrain: boolean;
   canAudit: boolean;
   canLoad: boolean;
+  /** Gap 405: per-user Send Invoices visibility, on top of the tenant-wide
+   * send_invoices_enabled plan/email gate (ServiceFlowToggles.tsx). */
+  canSendInvoices: boolean;
   billingPlan: string;
   loading: boolean;
 }
@@ -56,6 +59,7 @@ interface AuthMeResponse {
   can_train?: boolean;
   can_audit?: boolean;
   can_load?: boolean;
+  can_send_invoices?: boolean;
 }
 
 /**
@@ -73,6 +77,7 @@ const ANONYMOUS: AuthContextType = {
   canTrain: false,
   canAudit: false,
   canLoad: false,
+  canSendInvoices: false,
   billingPlan: "",
   loading: false,
 };
@@ -98,6 +103,7 @@ function normalise(data: AuthMeResponse): AuthContextType {
     canTrain: data.can_train === true,
     canAudit: data.can_audit === true,
     canLoad: data.can_load === true,
+    canSendInvoices: data.can_send_invoices === true,
     billingPlan: data.billing_plan ?? "",
     loading: false,
   };

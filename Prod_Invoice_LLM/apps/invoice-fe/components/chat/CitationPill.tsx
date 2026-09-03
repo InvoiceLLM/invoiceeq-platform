@@ -34,9 +34,9 @@ export default function CitationPill({ citation }: CitationPillProps) {
   //   props (invoice_id, page) at runtime, not at render time.
   //   router.push is cleaner here than constructing an href string in JSX.
   const handleClick = () => {
-    router.push(
-      `/invoices/review/${citation.invoice_id}?page=${citation.page}`
-    );
+    if (!citation.invoice_id) return;
+    const pageParam = citation.page != null ? `?page=${citation.page}` : "";
+    router.push(`/invoices/review/${citation.invoice_id}${pageParam}`);
   };
 
   return (

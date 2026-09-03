@@ -82,6 +82,15 @@ def test_upload_rejects_non_pdf(db_session):
     files = {"file": ("out1.txt", io.BytesIO(b"not a pdf"), "text/plain")}
     response = client.post("/api/v1/outbound-invoices/upload", files=files)
     assert response.status_code == 400
+    assert "Only PDF is allowed" in response.json()["detail"]
+
+
+def test_upload_rejects_invalid_pdf_magic_bytes(db_session):
+    _seed_tenant(db_session)
+    files = {"file": ("corrupt.pdf", io.BytesIO(b"plain text without pdf header"), "application/pdf")}
+    response = client.post("/api/v1/outbound-invoices/upload", files=files)
+    assert response.status_code == 400
+    assert "Invalid PDF content" in response.json()["detail"]
 
 
 # ── Confirm-send endpoint ─────────────────────────────────────────────────────

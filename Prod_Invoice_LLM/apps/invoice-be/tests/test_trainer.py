@@ -355,13 +355,20 @@ def test_commit_new_vendor_creates_vendor_template(trainer_mocks, db_session):
 
 # ── Versioning + history + rollback (Task 10.10) ─────────────────────────────
 
+# Gap 408: the upload doors now check the `%PDF` magic bytes, not just the
+# filename suffix, so a placeholder body of b"x" is correctly a 400. These
+# tests are about versioning and rollback, not about upload validation --
+# they need a body that gets PAST the door, which is what this is.
+_VALID_PDF = b"%PDF-1.4 mock"
+
+
 def test_versioning_history_and_rollback(trainer_mocks, db_session):
     # Commit v1 (rules = R1) for the vendor.
     trainer_mocks["trainer"].return_value = {
         "constraints": ["R1"], "extracted_data": {"vendor_name": "ACME Corporation"},
         "status": "COMPLETED", "alerts": [],
     }
-    sid1 = client.post("/api/v1/trainer/upload", files={"file": ("i.pdf", b"x", "application/pdf")}).json()["sessionId"]
+    sid1 = client.post("/api/v1/trainer/upload", files={"file": ("i.pdf", _VALID_PDF, "application/pdf")}).json()["sessionId"]
     client.post(f"/api/v1/trainer/sessions/{sid1}/chat", json={"content": "r1"})
     assert client.post(f"/api/v1/trainer/sessions/{sid1}/commit").json()["version"] == 1
 
@@ -370,7 +377,7 @@ def test_versioning_history_and_rollback(trainer_mocks, db_session):
         "constraints": ["R1", "R2"], "extracted_data": {"vendor_name": "ACME Corporation"},
         "status": "COMPLETED", "alerts": [],
     }
-    sid2 = client.post("/api/v1/trainer/upload", files={"file": ("i.pdf", b"x", "application/pdf")}).json()["sessionId"]
+    sid2 = client.post("/api/v1/trainer/upload", files={"file": ("i.pdf", _VALID_PDF, "application/pdf")}).json()["sessionId"]
     client.post(f"/api/v1/trainer/sessions/{sid2}/chat", json={"content": "r2"})
     assert client.post(f"/api/v1/trainer/sessions/{sid2}/commit").json()["version"] == 2
 
@@ -1374,3 +1381,21 @@ def test_qa_test_passes_a_real_uuid_so_chat_history_actually_loads(trainer_mocks
     # It is now a real ChatSession UUID, and history for it resolves to real turns.
     chat_session_id = UUID(captured["session_id"])
     assert get_chat_history(str(chat_session_id), db_session) != ""
+
+
+def test_trainer_upload_rejects_non_pdf(db_session):
+    """Gap 355 (BE): /trainer/upload rejects non-PDF file extensions."""
+    import io
+    files = {"file": ("training.docx", io.BytesIO(b"PK\x03\x04 fake docx content"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    response = client.post("/api/v1/trainer/upload", files=files)
+    assert response.status_code == 400
+    assert "Only PDF files are supported" in response.json()["detail"]
+
+
+def test_trainer_upload_rejects_invalid_pdf_magic_bytes(db_session):
+    """Gap 355 (BE): /trainer/upload rejects corrupt files without %PDF magic bytes."""
+    import io
+    files = {"file": ("corrupt.pdf", io.BytesIO(b"plain text without pdf header"), "application/pdf")}
+    response = client.post("/api/v1/trainer/upload", files=files)
+    assert response.status_code == 400
+    assert "Invalid PDF content" in response.json()["detail"]

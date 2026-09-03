@@ -82,9 +82,11 @@ _RULE_SUGGESTION_LOOKBACK_DAYS = 90
 class AuditResolutionPayload(BaseModel):
     status: Optional[str] = Field(
         default=None,
-        description="Target status: PAID, REJECTED, or AUDIT_REQUIRED (Gap 193: "
-                     "Admin-only reopen of an already-resolved invoice). Omit to "
-                     "just dismiss alerts and/or save corrections without "
+        description="Target status: PAID, REJECTED, AUDIT_REQUIRED (Gap 193: "
+                     "Admin-only reopen of an already-resolved invoice), "
+                     "REVIEW_LATER, or NEEDS_RESUBMISSION (Gap 407: non-terminal "
+                     "deferrals, not usable directly on a PAID/REJECTED invoice). "
+                     "Omit to just dismiss alerts and/or save corrections without "
                      "finalizing the invoice.",
     )
     dismissed_alerts: Optional[List[str]] = Field(default=None, description="Alert messages, types, or IDs to dismiss")
@@ -387,15 +389,26 @@ async def resolve_audit_invoice(
     invoice — Admin-only, since it undoes another auditor's finalized decision,
     and only valid from a terminal state (reopening a non-terminal invoice is a
     no-op the FE should never send, rejected here rather than silently accepted).
+
+    Gap 407: `status=REVIEW_LATER` / `status=NEEDS_RESUBMISSION` are two more
+    non-terminal states — an auditor deferring a decision, or flagging a
+    disputed invoice as queued back for vendor correction. Unlike
+    AUDIT_REQUIRED's reopen, setting either is **not** Admin-gated (neither
+    undoes a prior finalization, so the same restriction doesn't apply), but
+    both are blocked from an already-terminal invoice (see the check below) —
+    un-finalizing a PAID/REJECTED invoice must still go through the Admin
+    reopen path first. Inbound only in this pass: outbound invoices
+    (`routers/outbound_invoices.py`) have their own separate status machine
+    (`NEEDS_REVIEW`/`VERIFIED`/`SENT`/`PAID`) and are not touched here.
     """
     # 1. Validate status, if one was actually provided
     target_status = None
     if payload.status is not None:
         target_status = payload.status.upper()
-        if target_status not in ["PAID", "REJECTED", "AUDIT_REQUIRED"]:
+        if target_status not in ["PAID", "REJECTED", "AUDIT_REQUIRED", "REVIEW_LATER", "NEEDS_RESUBMISSION"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid target status '{payload.status}'. Must be PAID, REJECTED, or AUDIT_REQUIRED."
+                detail=f"Invalid target status '{payload.status}'. Must be PAID, REJECTED, AUDIT_REQUIRED, REVIEW_LATER, or NEEDS_RESUBMISSION."
             )
         if target_status == "AUDIT_REQUIRED" and context.role != "Admin":
             raise HTTPException(
@@ -433,6 +446,16 @@ async def resolve_audit_invoice(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot reopen an invoice with status '{invoice.status}' — only PAID or REJECTED invoices can be reopened."
+        )
+
+    # Gap 407: REVIEW_LATER / NEEDS_RESUBMISSION are non-terminal deferrals, not
+    # finalizations — they must not be reachable directly from an already
+    # terminal invoice, or this would silently un-finalize a PAID/REJECTED
+    # invoice with no Admin involved. Reopen it via AUDIT_REQUIRED first.
+    if target_status in ("REVIEW_LATER", "NEEDS_RESUBMISSION") and invoice.status in ("PAID", "REJECTED"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot set '{target_status}' on a {invoice.status} invoice — reopen it first (Admin-only)."
         )
 
     # 3. Dismiss specified warnings
