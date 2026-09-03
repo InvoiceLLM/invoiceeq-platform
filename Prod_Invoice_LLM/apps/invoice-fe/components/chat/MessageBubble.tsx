@@ -554,6 +554,17 @@ export default function MessageBubble({
                 </p>
               </div>
             </div>
+          ) : message.status === "processing" && message.content ? (
+            // Feature 6.1 A3: the answer is being streamed. Render what has
+            // arrived as markdown -- the same renderer the finished message
+            // uses -- with a pulsing caret so it reads as in-progress rather
+            // than as a truncated final answer.
+            <div className="flex flex-col gap-1 py-0.5" data-testid="chat-streaming-partial">
+              <div className="prose prose-invert prose-sm max-w-none">
+                {renderMarkdown(message.content)}
+                <span className="inline-block w-1.5 h-4 ml-0.5 align-text-bottom bg-purple-400 animate-pulse" aria-hidden="true" />
+              </div>
+            </div>
           ) : message.status === "queued" || message.status === "processing" ? (
             <div className="flex flex-col gap-2 py-0.5">
               <div className="flex items-center gap-2 text-purple-300">

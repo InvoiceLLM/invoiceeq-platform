@@ -25,8 +25,8 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocke
 |---|---|---|
 | 7 | **A4** — reorder `build_sql_system_prompt` so a ≥1,024-token static prefix precedes every per-tenant / per-turn block | `[~]` code + tests green (10 + 333 passed); shared prefix 1,809 → 5,002 tokens; golden before/after pending |
 | 10 | **C3** — zero rows → deterministic diagnosis → vector probe → "Did you mean X?" proposal (BE + FE) | `[x]` Gap 424; 19 + 17 e2e; 572-test regression, 5 old-contract tests updated |
-| 8 | **A3** — stream the summary and F26 narration (BE SSE + FE) | `[~]` patch + tests written; applying after C3 is pushed |
-| 11 | **C4** — rules → structure; write SQL for the golden cases; golden before/after | `[ ]` |
+| 8 | **A3** — stream the summary and F26 narration (BE SSE + FE) | `[x]` shipped OFF; 11 passed in 15.87s; e2e 3 passed (37.7s) |
+| 11 | **C4** — rules → structure; write SQL for the golden cases; golden before/after | `[~]` evidence gathering |
 
 ## A4 — design, written before code
 
@@ -84,6 +84,6 @@ Golden "before" run started against Azure `gpt-5-mini` on the pre-A4 prompt:
 
 ## Azure changes in this build
 
-None yet.
+None. Three new settings are DECLARED (bicep + params.dev.json) and deliberately NOT set live: `AZURE_OPENAI_FAST_DEPLOYMENT_NAME` (A2), the A1 pair, `ENABLE_CHAT_STREAMING` (A3). Each is a latency claim that gets switched on against a measurement.
 
 **Status: in progress.** Created 2026-09-03.

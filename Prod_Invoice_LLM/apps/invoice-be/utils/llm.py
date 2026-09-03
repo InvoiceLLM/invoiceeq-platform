@@ -235,6 +235,12 @@ def build_llm(
             # `max_completion_tokens` for reasoning deployments itself.
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
+            # Feature 6.1 A3: with streaming, Azure only reports token usage if
+            # asked to put it on the final chunk. Without this, every streamed
+            # call would log tokens_in=0 and B1's cached/reasoning counts would
+            # go dark on exactly the calls A1/A2/A4 are measured by. Harmless
+            # for `.invoke()`.
+            kwargs["stream_usage"] = True
             return AzureChatOpenAI(**kwargs)
         except Exception as e:
             if not allow_mock_fallback:

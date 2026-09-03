@@ -94,6 +94,10 @@ def _progress_emitter(on_progress: Optional[ProgressCallback]):
         except Exception as e:  # pragma: no cover - defensive only
             logger.debug("on_progress callback failed for step %s: %s", step, e)
 
+    # A3: streaming is pointless with nobody listening (the synchronous HTTP
+    # path). The helper below reads this rather than streaming into a void.
+    emit.enabled = on_progress is not None
+
     return emit
 
 
@@ -247,6 +251,86 @@ def _generation_llm():
             exc_info=True,
         )
         return get_llm()
+
+
+
+# ---------------------------------------------------------------------------
+# A3 (Feature 6.1): stream the phrasing calls.
+# ---------------------------------------------------------------------------
+
+#: Publish a `streaming` progress event at most every this many characters --
+#: each event is a Redis publish, and per-token publishes would be noise.
+_STREAM_FLUSH_CHARS = 48
+
+
+def _content_text(content) -> str:
+    """Model content as plain text, whatever shape the provider used."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(str(block.get("text") or ""))
+        return "".join(parts)
+    return str(content)
+
+
+class _StreamedAnswer:
+    """What `_answer_text()` returns: the one attribute every call site reads."""
+
+    __slots__ = ("content",)
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+def _answer_text(llm, prompt: str, progress) -> "_StreamedAnswer":
+    """Run one phrasing call, streaming its text out as progress if it can.
+
+    Streams only when all three hold: `ENABLE_CHAT_STREAMING` is on, someone is
+    listening (`progress.enabled` -- the async path), and the model can stream.
+    Otherwise this is exactly `llm.invoke(prompt)`, so a mock, a recording LLM
+    in a test, or the synchronous HTTP path behave as they always did.
+
+    The returned object has `.content`, like the `AIMessage` the call sites
+    already read. Token usage still reaches `tracked_llm_call` through the
+    LangChain callback on the run -- `build_llm` sets `stream_usage=True` so
+    Azure puts it on the final chunk.
+
+    Hard rule 3 is untouched by construction: every figure a summary or
+    narration can state was computed before this function was called.
+    """
+    from config import get_settings
+
+    enabled = bool(getattr(get_settings(), "ENABLE_CHAT_STREAMING", False))
+    listening = bool(getattr(progress, "enabled", False))
+    if not (enabled and listening and hasattr(llm, "stream")):
+        res = llm.invoke(prompt)
+        return _StreamedAnswer(_content_text(getattr(res, "content", res)))
+
+    acc: list[str] = []
+    since_flush = 0
+    total = 0
+    for chunk in llm.stream(prompt):
+        piece = _content_text(getattr(chunk, "content", chunk))
+        if not piece:
+            continue
+        acc.append(piece)
+        since_flush += len(piece)
+        total += len(piece)
+        if since_flush >= _STREAM_FLUSH_CHARS:
+            progress("streaming", partial="".join(acc))
+            since_flush = 0
+    text = "".join(acc)
+    # The final event carries the complete text and says so, so a consumer that
+    # only ever saw this one event still has the whole answer.
+    progress("streaming", partial=text, final=True, chars=total)
+    return _StreamedAnswer(text)
 
 
 def _fast_llm():
@@ -4266,7 +4350,7 @@ def _run_attached_document_turn(
     )
     try:
         with tracked_llm_call("chat.attachment_compare", llm=llm, tenant_id=tenant_id):
-            res = llm.invoke(system_prompt)
+            res = _answer_text(llm, system_prompt, progress)  # A3: streams when it can
         response_text = res.content
         turn.status = telemetry.TURN_STATUS_SUCCESS
     except Exception as e:
@@ -4552,7 +4636,7 @@ The user asked: {_wrap_user_input(user_message, tenant_id)}
             tenant_id=tenant_id,
             chunk_count=len(spans),
         ):
-            res = llm.invoke(system_prompt)
+            res = _answer_text(llm, system_prompt, progress)  # A3: streams when it can
         response_text = res.content
         turn.status = telemetry.TURN_STATUS_SUCCESS
         turn.stop_reason = "attachment_content_answered"
@@ -5025,7 +5109,7 @@ User Query: {user_message}
                         zero_result=outcome.zero_result,
                         zero_result_fallback_recovered=outcome.zero_result_fallback_recovered,
                     ):
-                        final_res = fast_llm.invoke(summary_prompt)
+                        final_res = _answer_text(fast_llm, summary_prompt, progress)  # A3
                     # One blank line before the heading, one after -- db_result
                     # itself now starts directly with the table (see
                     # execute_generated_sql's own comment on why the leading
@@ -5166,7 +5250,7 @@ Conversation History (Short-term context):
             with tracked_llm_call(
                 "chat.rag_answer", llm=fast_llm, tenant_id=tenant_id, chunk_count=len(chunks)
             ):
-                res = fast_llm.invoke(f"{system_prompt}\nUser Query: {wrapped_user_message}")
+                res = _answer_text(fast_llm, f"{system_prompt}\nUser Query: {wrapped_user_message}", progress)  # A3
             response_text = res.content
 
             # Append clean formatted citations list to answer text

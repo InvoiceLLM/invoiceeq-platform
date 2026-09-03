@@ -550,6 +550,29 @@ export function useChatSession(): UseChatSessionReturn {
             const data: ChatStreamEvent = JSON.parse(e.data);
 
             if (data.status === "processing") {
+              // Feature 6.1 A3: a `streaming` step carries the answer so far in
+              // `details.partial`. It becomes the placeholder's content, rendered
+              // as markdown while the bubble is still "processing"; the
+              // `completed` event that follows replaces it with the persisted
+              // message exactly as before. Any other step is a status line.
+              const partial =
+                data.step === "streaming" &&
+                data.details &&
+                typeof data.details === "object" &&
+                typeof (data.details as { partial?: unknown }).partial === "string"
+                  ? ((data.details as { partial: string }).partial)
+                  : null;
+              if (partial !== null) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === placeholderId
+                      ? { ...m, status: "processing", content: partial, error_message: undefined }
+                      : m
+                  )
+                );
+                return;
+              }
+
               const stepDetail =
                 typeof data.details === "string"
                   ? data.details

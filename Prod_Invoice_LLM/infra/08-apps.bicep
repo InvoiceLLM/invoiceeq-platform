@@ -94,6 +94,9 @@ param enableGenericDocChat bool = false
 @description('Feature 26 E-5 / task H7 — route an attachment chat turn through the Redis-backed async queue instead of answering it synchronously. REQUIRES a reachable REDIS_URL: `services/chat_queue.py::get_redis_client()` returns None when it is empty, so enabling this without Redis enqueues into nothing. Declared here for documentation and later rollout; dev has no Redis deployed as of 2026-09-03, so it stays false.')
 param enableAsyncChatQueue bool = false
 
+@description('Feature 6.1 A3: stream the summary/RAG/narration text as `streaming` progress events on the async chat path. Off = every site uses .invoke(). Inert on the synchronous path regardless.')
+param enableChatStreaming bool = false
+
 @description('Subscription ID for services/azure_cost.py and ops_recommendation.py -- see invoice-be.bicep for why this was missing.')
 param azureSubscriptionId string = subscription().subscriptionId
 
@@ -322,6 +325,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
     enableAsyncChatQueue: enableAsyncChatQueue
+    enableChatStreaming: enableChatStreaming
     azureSubscriptionId: azureSubscriptionId
     azureCostResourceGroup: azureCostResourceGroup
   }
@@ -349,6 +353,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
     enableAsyncChatQueue: enableAsyncChatQueue
+    enableChatStreaming: enableChatStreaming
     caeId: cae.id
     appName: 'ca-queue-worker-${environment}'
     userAssignedIdentityId: identity.id

@@ -85,6 +85,9 @@ param enableGenericDocChat bool = false
 @description('Feature 26 E-5 / task H7 — route an attachment chat turn through the Redis-backed async queue instead of answering it synchronously. REQUIRES a reachable REDIS_URL: `services/chat_queue.py::get_redis_client()` returns None when it is empty, so enabling this without Redis enqueues into nothing. Declared here for documentation and later rollout; dev has no Redis deployed as of 2026-09-03, so it stays false.')
 param enableAsyncChatQueue bool = false
 
+@description('Feature 6.1 A3: stream phrasing calls as progress events. Off = .invoke().')
+param enableChatStreaming bool = false
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 var baseSecrets = [
@@ -385,6 +388,10 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               // rather than discovered later (the BE Gap 402 lesson).
               name: 'ENABLE_ASYNC_CHAT_QUEUE'
               value: enableAsyncChatQueue ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_CHAT_STREAMING'
+              value: enableChatStreaming ? 'true' : 'false'
             }
           ], docIntel2Env, docIntel3Env)
           // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence

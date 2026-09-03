@@ -59,6 +59,24 @@ class Settings(BaseSettings):
     # the bar and clearing it are two different jobs, and the second one belongs
     # to whoever holds the verification evidence.
     ENABLE_ASYNC_CHAT_QUEUE: bool = False
+
+    # Feature 6.1 item A3: stream the four *phrasing* calls of a chat turn --
+    # the SQL summary, the RAG answer and both Feature 26 narrations -- as
+    # `streaming` progress events carrying the partial text, so the browser
+    # renders the answer as it is written instead of after it is finished.
+    #
+    # Only those four. SQL generation is structured output (a schema, not prose)
+    # and every figure a summary can state was computed by
+    # `_computed_figures_block_for()` / `_full_record_block_for()` before the
+    # call began (hard rule 3), so streaming changes WHEN text arrives, never
+    # what it says.
+    #
+    # OFF by default and inert when off: every site falls back to `.invoke()`.
+    # It is also inert on the synchronous HTTP path, which has no progress
+    # consumer to stream to -- only the async queue path (`ENABLE_ASYNC_CHAT_QUEUE`)
+    # has an SSE channel. Measured value is bounded: about 2s of *perceived*
+    # latency on a 27.8s median turn, which is why it is last in Block A.
+    ENABLE_CHAT_STREAMING: bool = False
     # Feature 27 (`docs/feature_27_generic_extraction.md`): make document type an
     # explicit, deterministic decision made *before* extraction, and make the
     # schema, the prompt and the verification rubric a function of it. Off, the

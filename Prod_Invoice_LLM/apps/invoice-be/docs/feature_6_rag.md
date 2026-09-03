@@ -1733,3 +1733,33 @@ and re-run green. Evidence in `docs/test_evidence/f6_c3_zero_rows_2026-09-03/`.
 **Found on the way:** one test had been passing on a zero-row result for as long
 as it existed (details in Gap 424). C3 exposed it because an ask-back has no
 `### Query Results` heading.
+
+### A3 result — 2026-09-03
+
+**Built, BE + FE, shipped OFF** behind `ENABLE_CHAT_STREAMING` (declared in
+`08-apps.bicep`, both compute modules and `params.dev.json`; live env not set).
+The four phrasing calls — `chat.sql_summary`, `chat.rag_answer` and both Feature
+26 narrations — go through `_answer_text()`, which streams when the flag is on,
+someone is listening (`progress.enabled`, i.e. the async path) and the model can
+stream; otherwise it is exactly `.invoke()`. Partial text is published as
+`streaming` progress events at most every 48 characters, with a final event
+carrying the whole answer. The FE renders the partial as markdown in the
+processing bubble with a caret; the `completed` event replaces it as before.
+
+**Only those four.** SQL generation is structured output and is asserted never to
+route through the helper; every figure a summary can state was computed by the
+deterministic blocks before the call began (hard rule 3).
+
+**One thing that would otherwise have gone dark:** `build_llm` now sets
+`stream_usage=True` on the Azure client, so token usage — and B1's
+`cached_tokens` / `reasoning_tokens` — still reach `tracked_llm_call` on a
+streamed call. Without it every streamed call would log `tokens_in=0` on exactly
+the calls A1/A2/A4 are measured by.
+
+**Verified:** `tests/test_a3_streaming.py` 11 passed in 15.87s; FE `tsc` clean;
+`e2e/chat-async-queue.spec.ts` (incl. the new streaming case) 3 passed (37.7s); wide
+regression 587 passed in 167.75s (0:02:47).
+
+**Value stays bounded, as scoped:** ~2 s of *perceived* latency on a 27.8 s median
+turn. The measured half — time-to-first-visible-token on the async path — needs
+real traffic with the flag on; recorded in `docs/test_evidence/` when it exists.
