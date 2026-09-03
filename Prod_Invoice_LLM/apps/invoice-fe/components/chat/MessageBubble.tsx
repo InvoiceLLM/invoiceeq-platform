@@ -403,7 +403,7 @@ function ClarificationChoices({
     <div id="chat-attachment-clarification" className="mt-2 flex flex-wrap gap-2">
       {options.map((option) => (
         <button
-          key={option.intent}
+          key={option.text ?? option.intent}
           type="button"
           data-testid="attachment-clarification-choice"
           data-intent={option.intent}
@@ -411,7 +411,8 @@ function ClarificationChoices({
             onChoose(
               composeClarificationReply(
                 precedingUserQuestion,
-                option.intent as AttachmentClarificationIntent
+                option.intent as AttachmentClarificationIntent,
+                option.text
               ),
               option.intent as AttachmentClarificationIntent
             )
@@ -551,6 +552,17 @@ export default function MessageBubble({
                 <p className="text-xs text-red-300/80">
                   {message.error_message || message.content || "Something went wrong while processing your request."}
                 </p>
+              </div>
+            </div>
+          ) : message.status === "processing" && message.content ? (
+            // Feature 6.1 A3: the answer is being streamed. Render what has
+            // arrived as markdown -- the same renderer the finished message
+            // uses -- with a pulsing caret so it reads as in-progress rather
+            // than as a truncated final answer.
+            <div className="flex flex-col gap-1 py-0.5" data-testid="chat-streaming-partial">
+              <div className="prose prose-invert prose-sm max-w-none">
+                {renderMarkdown(message.content)}
+                <span className="inline-block w-1.5 h-4 ml-0.5 align-text-bottom bg-purple-400 animate-pulse" aria-hidden="true" />
               </div>
             </div>
           ) : message.status === "queued" || message.status === "processing" ? (

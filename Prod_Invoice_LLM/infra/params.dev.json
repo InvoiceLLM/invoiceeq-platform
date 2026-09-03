@@ -59,6 +59,9 @@
     "azureOpenAiDeploymentName": {
       "value": "gpt-5-mini"
     },
+    "azureOpenAiFastDeploymentName": {
+      "value": "gpt-4o"
+    },
     "azureOpenAiModelVersion": {
       "value": "2025-08-07"
     },
@@ -150,6 +153,9 @@
       "value": true
     },
     "enableAsyncChatQueue": {
+      "value": true
+    },
+    "enableChatStreaming": {
       "value": true
     }
   }

@@ -23,6 +23,9 @@ param nextPublicClerkPublishableKey string
 @description('Azure OpenAI Model Deployment Name')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
+@description('Feature 6.1 item A2: deployment for the non-reasoning half of a chat turn -- routing, summarising already-computed rows, answering from retrieved text, narrating a diff table. Empty means "use azureOpenAiDeploymentName", which is exactly the behaviour before A2 existed. SQL generation never uses this: it is the one call that genuinely reasons, and item A1 tunes its reasoning_effort separately.')
+param azureOpenAiFastDeploymentName string = ''
+
 @description('Image tag for backend API container')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -90,6 +93,9 @@ param enableGenericDocChat bool = false
 
 @description('Feature 26 E-5 / task H7 — route an attachment chat turn through the Redis-backed async queue instead of answering it synchronously. REQUIRES a reachable REDIS_URL: `services/chat_queue.py::get_redis_client()` returns None when it is empty, so enabling this without Redis enqueues into nothing. Declared here for documentation and later rollout; dev has no Redis deployed as of 2026-09-03, so it stays false.')
 param enableAsyncChatQueue bool = false
+
+@description('Feature 6.1 A3: stream the summary/RAG/narration text as `streaming` progress events on the async chat path. Off = every site uses .invoke(). Inert on the synchronous path regardless.')
+param enableChatStreaming bool = false
 
 @description('Subscription ID for services/azure_cost.py and ops_recommendation.py -- see invoice-be.bicep for why this was missing.')
 param azureSubscriptionId string = subscription().subscriptionId
@@ -286,6 +292,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     image: backendImage
@@ -318,6 +325,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
     enableAsyncChatQueue: enableAsyncChatQueue
+    enableChatStreaming: enableChatStreaming
     azureSubscriptionId: azureSubscriptionId
     azureCostResourceGroup: azureCostResourceGroup
   }
@@ -345,6 +353,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
     enableAsyncChatQueue: enableAsyncChatQueue
+    enableChatStreaming: enableChatStreaming
     caeId: cae.id
     appName: 'ca-queue-worker-${environment}'
     userAssignedIdentityId: identity.id
@@ -353,6 +362,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     storageAccountName: storageAccountName
@@ -458,6 +468,7 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -494,6 +505,7 @@ module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -598,6 +610,7 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     // Both scripts emit telemetry (extraction's tracked_llm_call() sites,
     // Track 2's track_eval_result()/track_agent_call()) -- without this it
     // would silently no-op to stdout instead of reaching appi-invoicellm-dev.

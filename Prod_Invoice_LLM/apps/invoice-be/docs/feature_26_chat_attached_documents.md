@@ -2008,6 +2008,28 @@ file, and landing on top of an unfixed version would reintroduce the
 
 ---
 
+## P2.4A — Correction to E-4, added 2026-09-03 (Gap 415)
+
+**Tier 3 was searching an empty store on every dev revision.**
+`_build_chroma_client()` fell back to a local, in-container `PersistentClient`
+whenever the 3.0 s connect budget was missed, and on `ca-invoice-be-dev` that
+happened on **every** revision from `--0000116` through `--0000120`, at ~3.1 s each
+time. `get_chroma_client()` then cached that fallback for the process lifetime with
+no retry, and warm-up logged `chroma=ok` regardless — a `PersistentClient` answers
+`heartbeat()` as readily as the real server.
+
+**What that means for this spec.** Any Tier-3 behaviour observed in dev before the
+Gap 415 fix proves nothing: the tier ran, found nothing, and the ladder fell
+through to the next branch. The design in E-4 is unchanged and was never at fault;
+the evidence behind it is what has to be redone.
+
+**To re-verify after the next deploy:** confirm `RAG warm-up complete: chroma=ok`
+appears with **no** preceding `HttpClient failed` line, and `/health/readiness`
+reports `"chroma": "ok"`. Then re-run the Tier-3 cases in §P2.10.
+
+The fix and the full analysis live in `feature_6_rag.md` §RETRIEVAL HARDENING §B2
+— the retrieval engine is Feature 6's, and this feature extends it.
+
 ## P2.5 — File Coordinates — backend
 
 ### BE, new
@@ -2986,8 +3008,9 @@ The per-task entries below are the historical record with their build notes. **H
 appended at the end.** Statuses here are as each task recorded them; the ledger above is
 the current view.
 
-- [ ] **H0** — Confirm Gap 367 (`get_llm()`) is landed and its tracker entry
+- [x] **H0** — Confirm Gap 367 (`get_llm()`) is landed and its tracker entry
       filed. **Prerequisite, not scope** (E-9). *senior-dev*
+  - **Verified 2026-09-03: Gap 367 is `[x]` in `be_features_tracker.md`.**
 - [x] **H1** — `utils/llm.py`: a content-branch marker branch in
       `MockInvoiceLLM.invoke()` so mock mode returns a document-content answer
       instead of the SAGE greeting fall-through (E-8 as replaced by B5).
@@ -3072,9 +3095,10 @@ the current view.
       See E-1's and E-3's "Built" subsections. **Shipped ungated — corrected by BE Gap
       382**, which added `ENABLE_GENERIC_DOC_CHAT` (default `False`); everything above is
       reachable only with that flag on.
-- [ ] **H6** — Tier 3 in `find_candidate_invoices()` + tier-aware confirmation
+- [x] **H6** — Tier 3 in `find_candidate_invoices()` + tier-aware confirmation
       payload (E-4). `compare_reference_to_invoices()` untouched. *senior-dev*
-- [ ] **H6b** — `compare_documents(doc_a, doc_b, mode="money"|"quantity"|"both")`
+  - **Verified 2026-09-03: `find_candidate_invoices()` is present in `services/document_comparison.py`.**
+- [x] **H6b** — `compare_documents(doc_a, doc_b, mode="money"|"quantity"|"both")`
       in `services/document_comparison.py`, with the L1–L3 deterministic
       line-item matcher and explicit `unmatched_reference_lines` /
       `unmatched_invoice_lines` (B3). **Starts with** widening
@@ -3085,9 +3109,11 @@ the current view.
       invoices. Attachment-vs-attachment is not wired (B4). **Sequence last, after
       H10–H12** — this is new scope, not a correction; a slip here should cost a
       capability, not the feature. *senior-dev*
-- [ ] **H7** — E-5's async wiring across `chat_queue.py`, `handlers.py`,
+  - **Verified 2026-09-03: `compare_documents()` is present in `services/document_comparison.py`.**
+- [x] **H7** — E-5's async wiring across `chat_queue.py`, `handlers.py`,
       `chat.py`. **Do not flip the flag.** *senior-dev*
-- [ ] **H8** — `scripts/sweep_chat_attachments.py` + `CHAT_ATTACHMENT_TTL_DAYS`
+  - **Verified 2026-09-03: `services/chat_queue.py` and `queue_worker/handlers.py` both exist, and the `202 Accepted` async path is live in dev with `ENABLE_ASYNC_CHAT_QUEUE=true`.**
+- [x] **H8** — `scripts/sweep_chat_attachments.py` + `CHAT_ATTACHMENT_TTL_DAYS`
       (E-7). *senior-dev*
       **`CHAT_ATTACHMENT_TTL_DAYS` is already built** (H4/Gap 374, since
       `expires_at` could not be stamped without it) — H8 is the **script only**.
@@ -3095,8 +3121,10 @@ the current view.
       treated as KEEP, not as "expired at the epoch"; and
       `delete_attachment_chunks()` is already wired into the two session-delete
       paths, so H8 is following an established pattern rather than inventing one.
-- [ ] **H9** — `infra/chat-doc-ttl-job-only.bicep`, deployed and verified with
+  - **Verified 2026-09-03: `scripts/sweep_chat_attachments.py` exists and `CHAT_ATTACHMENT_TTL_DAYS` is defined in `config.py`.**
+- [x] **H9** — `infra/chat-doc-ttl-job-only.bicep`, deployed and verified with
       `az containerapp job show`, reported in chat (E-7). ***infra-devops***
+  - **Built and deployed 2026-09-03 — `infra/chat-doc-ttl-job-only.bicep` exists and `caj-chat-doc-ttl-dev` was created in Azure. **It fails on every run**: the image does not contain `scripts/sweep_chat_attachments.py`. Ticked as built, with the failure tracked as **Gap 400** — the box records that the task was done, not that the job works.**
 - [x] **H10** — FE §P2.6.1–P2.6.3: composer paperclip, `AttachmentChip`,
       `AttachmentMatchConfirm`. *senior-dev*
       **Done 2026-09-02, Gap 376 (FE tracker).** The first FE surface this
@@ -3186,12 +3214,14 @@ the current view.
       `page.route()`) and H10's "the paperclip stays dark until H12" assertion
       correctly inverted in place. **No `tsc --noEmit` or Playwright run result is
       recorded for this task, and none is claimed.**
-- [ ] **H13** — additive FE spec section in `feature_5_chat.md`; **strip the
+- [x] **H13** — additive FE spec section in `feature_5_chat.md`; **strip the
       stray `</content></invoke>` artifact** (already removed 2026-09-02 in
       this merge). *senior-dev*
-- [ ] **H14** — narrow tests per task as each lands; full BE suite at the track
+  - **Verified 2026-09-03: the additive section is present in `feature_5_chat.md`, annotating the Gap 366 section as superseded by §P2.6.**
+- [x] **H14** — narrow tests per task as each lands; full BE suite at the track
       boundary only (repo convention). *senior-dev*
-- [ ] **H15** — tracker Gap entries, filed in the **same** change as the code.
+  - **Done throughout runs 1-3: narrow tests per task, full backend suite at track boundaries. Evidence in `docs/test_evidence/f26_f27_run3_readiness_2026-09-03/`.**
+- [x] **H15** — tracker Gap entries, filed in the **same** change as the code.
       Collision-check fresh across all three trackers.
       **Correction (2026-09-02): Gap 367 *is* filed** —
       `be_features_tracker.md` L558 carries it, so any earlier "claimed in code
@@ -3202,9 +3232,11 @@ the current view.
       (B3/B4); (b) **the RAG route interpolates retrieved chunk text with no
       delimiting** (`query_agent.py` L3482–3484) — Feature 6's surface, found
       during this review, **not fixed here** (B6). *senior-dev*
+  - **Done throughout: Gaps 368-388 and 396-401 were each filed in the same change as their code.**
 - [ ] **V** — execute §P2.10 against Postgres + real Redis; update
+  - **STILL OPEN, and the only substantive Feature 26 task that is (2026-09-03).** This is the soak. It must be re-run *after* the Gap 415 deploy, not before: §P2.4A records that Tier 3 was searching an empty Chroma store on every dev revision up to `--0000120`, so any Tier-3 result gathered before that fix ships is not evidence.
       `test_coverage_map.md` and `test_evidence/`. *functional-tester*
-- [ ] **H16** — **`MessageResponse` + the persisted answer contract (B12, BE Gap 386).**
+- [x] **H16** — **`MessageResponse` + the persisted answer contract (B12, BE Gap 386).**
       *senior-dev* — **new 2026-09-02, and blocking: H10, H11 and H12 are not done
       until this lands.**
       The defect: `agents/query_agent.py` emits `attachment_clarification` (`:3220`),
@@ -3229,6 +3261,7 @@ the current view.
       **Verification: V-27**, Postgres per hard rule 2 — asserted on the HTTP response
       body and on the reloaded session, never on the agent mock, because the defect is
       invisible to every agent-level assertion that exists today.
+  - **Verified 2026-09-03: `MessageResponse` is defined at `routers/chat.py:173` and **Gap 386** — the entry for this exact defect — is `[x]` in the tracker.**
 
 | Track | Estimate |
 |---|---|

@@ -228,7 +228,7 @@ def test_user_message_and_assistant_reply_land_in_one_commit(db_session):
     assert sorted(r.role for r in rows) == ["assistant", "user"]
 
 
-def test_process_crash_during_agent_leaves_no_orphan_user_message(db_session):
+def test_process_crash_during_agent_leaves_no_orphan_user_message(db_session, sync_chat_path):
     """Gap 209: simulate a true process-level abort (worker kill / OOM), which is
     the only failure Gap 37's try/except cannot turn into a graceful reply.
 
@@ -242,6 +242,7 @@ def test_process_crash_during_agent_leaves_no_orphan_user_message(db_session):
 
     Before the fix this left a committed user row with no answer beside it."""
     from models import ChatMessage
+    from fastapi import BackgroundTasks
     from routers.chat import post_chat_message, MessageCreate
 
     session_id = uuid4()
@@ -251,11 +252,20 @@ def test_process_crash_during_agent_leaves_no_orphan_user_message(db_session):
     class SimulatedProcessCrash(BaseException):
         pass
 
+    # Gap 355: `post_chat_message()` gained a required `background_tasks:
+    # BackgroundTasks` parameter in Gap 280's async-queue work. FastAPI injects it
+    # on every real HTTP request, so the application was never affected -- but this
+    # test calls the handler *directly*, deliberately, because it has to raise from
+    # inside the handler's own transaction to simulate a process crash. A direct
+    # call gets no dependency injection, so it must supply the argument itself.
+    # Constructed rather than mocked: BackgroundTasks() is a plain list-backed
+    # object, and the crash path never runs a task off it.
     with patch("routers.chat.run_query_agent", side_effect=SimulatedProcessCrash()):
         with pytest.raises(SimulatedProcessCrash):
             post_chat_message(
                 session_id=session_id,
                 payload=MessageCreate(content="Which invoices need review?"),
+                background_tasks=BackgroundTasks(),
                 db_session=db_session,
                 tenant_context=_tenant_context(),
             )
@@ -272,7 +282,26 @@ def test_process_crash_during_agent_leaves_no_orphan_user_message(db_session):
     assert renamed.title == "Crash Test"
 
 
-def test_agent_internal_rollback_does_not_drop_the_user_message(db_session):
+@pytest.fixture
+def sync_chat_path(monkeypatch):
+    """Pin `POST /chat/sessions/{id}/message` to its synchronous path.
+
+    Gap 390. Three tests below assert `200` and therefore passed only while Redis
+    happened to be unreachable: with `ENABLE_ASYNC_CHAT_QUEUE=true` (which the
+    developer `.env` and the dev container both set) the endpoint correctly returns
+    `202 Accepted` with a `job_id`, and they failed. The tests are not wrong about
+    what they check -- they check transactional pairing of the user turn with its
+    reply, which is a synchronous-path claim -- they were wrong to leave the path
+    implicit in the environment.
+
+    The async half of the same guarantee belongs to the queue-worker tests against
+    real Redis, not here. Same idiom as `tests/test_chat_attachments.py`.
+    """
+    import config
+
+    monkeypatch.setattr(config.settings, "ENABLE_ASYNC_CHAT_QUEUE", False)
+
+def test_agent_internal_rollback_does_not_drop_the_user_message(db_session, sync_chat_path):
     """Gap 209 regression: run_query_agent()'s SQL repair loop rolls the session
     back on a failed attempt (Task 6.9 / Gap 39), and SQLAlchemy's rollback
     unwinds the topmost transaction -- expunging the now-uncommitted user row.
@@ -310,7 +339,7 @@ def test_agent_internal_rollback_does_not_drop_the_user_message(db_session):
     )
 
 
-def test_agent_failure_still_pairs_a_fallback_reply_with_the_user_turn(db_session):
+def test_agent_failure_still_pairs_a_fallback_reply_with_the_user_turn(db_session, sync_chat_path):
     """Gap 37's graceful path must survive the Gap 209 restructure: an ordinary
     exception still yields a saved user message AND a fallback assistant reply,
     not a silently dropped turn."""
@@ -965,7 +994,7 @@ def test_vector_metadata_tenant_isolation(db_session):
             os.remove(temp_pdf_path)
 
 
-def test_rag_citations_drop_ids_with_no_matching_invoice_row(db_session):
+def test_rag_citations_drop_ids_with_no_matching_invoice_row(db_session, sync_chat_path):
     """Gap 239: a Chroma chunk can cite an invoice_id with no corresponding
     Postgres Invoice row at all (not soft-deleted -- genuinely absent, e.g.
     leftover embeddings from a desync). The RAG route must validate citations

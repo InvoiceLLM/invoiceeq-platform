@@ -160,3 +160,13 @@ gaps filed: 415 (chroma fallback + false ok), 416 (.dockerignore), 417 (C1 over-
   418 (pre-existing test_rag async-flag + signature failures)
 blockers: B2 unverified on Azure until a deploy; revision --0000121 carries the
   pre-Gap-417 guard
+
+[14:20] mins left: n/a | phase 3 - approval gate | senior-dev
+in progress: B1 complete, uncommitted
+done since last: track_dependency + decorator; cached_tokens/reasoning_tokens on
+  LlmUsage, span and llm_agent_call; 7 definitions wrapped; 13 new tests pass;
+  wide regression 14 failed / 799 passed across all 18 suites touching them
+gaps filed: 419 (workbook band test broken since the table split), 420 (turn-event
+  test takes caplog index 0 and is order-dependent)
+blockers: B1 acceptance (sum of spans within 10% of latency_ms) and B2 both need a
+  deployed revision; enqueue->pickup span deliberately out of scope

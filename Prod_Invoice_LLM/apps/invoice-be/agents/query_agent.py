@@ -7,8 +7,8 @@ from typing import Callable, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 import telemetry
-from telemetry import tracked_llm_call
-from utils.llm import get_llm
+from telemetry import tracked_dependency, tracked_llm_call
+from utils.llm import build_llm, get_llm
 from utils.rule_schema import normalize_constraints
 from services.turn_drift import detect_turn_drift
 from chroma_client import query_invoice_chunks
@@ -93,6 +93,10 @@ def _progress_emitter(on_progress: Optional[ProgressCallback]):
             on_progress(step, details or None)
         except Exception as e:  # pragma: no cover - defensive only
             logger.debug("on_progress callback failed for step %s: %s", step, e)
+
+    # A3: streaming is pointless with nobody listening (the synchronous HTTP
+    # path). The helper below reads this rather than streaming into a void.
+    emit.enabled = on_progress is not None
 
     return emit
 
@@ -208,6 +212,373 @@ _SQL_KEYWORDS = ("total", "spent", "sum", "average", "how many", "count", "mean"
 _CHAT_KEYWORDS = ("hello", "hi ", "hey", "who are you", "what is your name")
 
 
+def _generation_llm():
+    """The LLM for SQL generation (Feature 6.1 item A1).
+
+    Generation is the one call in a chat turn that genuinely reasons, so it stays
+    on the reasoning deployment -- `_fast_llm()` must never be used here, and
+    `tests/test_a2_fast_deployment.py` asserts that at the source. What A1 changes
+    is the *budget*: `reasoning_effort` and an output cap, both read from settings
+    and both unset by default.
+
+    Unset means the parameters are not sent at all, so this returns exactly what
+    `get_llm()` returns and the turn behaves as it does today. That is deliberate:
+    the claim A1 makes is a latency claim, and it cannot be checked until B1's
+    `reasoning_tokens` field is live in Azure. Shipping it off means the switch is
+    thrown against a measurement instead of an expectation.
+    """
+    from config import get_settings
+
+    settings = get_settings()
+    effort = (getattr(settings, "AZURE_OPENAI_SQL_REASONING_EFFORT", "") or "").strip()
+    cap = int(getattr(settings, "AZURE_OPENAI_SQL_MAX_COMPLETION_TOKENS", 0) or 0)
+    provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+
+    if provider != "azure" or (not effort and cap <= 0):
+        return get_llm()
+    try:
+        return build_llm(
+            "azure",
+            max_tokens=cap if cap > 0 else None,
+            reasoning_effort=effort or None,
+        )
+    except Exception:  # pragma: no cover - a tuned budget is never worth a dead turn
+        logger.warning(
+            "A1: could not build the generation LLM with effort=%r cap=%s; "
+            "falling back to the default.",
+            effort,
+            cap,
+            exc_info=True,
+        )
+        return get_llm()
+
+
+
+# ---------------------------------------------------------------------------
+# A3 (Feature 6.1): stream the phrasing calls.
+# ---------------------------------------------------------------------------
+
+#: Publish a `streaming` progress event at most every this many characters --
+#: each event is a Redis publish, and per-token publishes would be noise.
+_STREAM_FLUSH_CHARS = 48
+
+
+def _content_text(content) -> str:
+    """Model content as plain text, whatever shape the provider used."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(str(block.get("text") or ""))
+        return "".join(parts)
+    return str(content)
+
+
+class _StreamedAnswer:
+    """What `_answer_text()` returns: the one attribute every call site reads."""
+
+    __slots__ = ("content",)
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+def _answer_text(llm, prompt: str, progress) -> "_StreamedAnswer":
+    """Run one phrasing call, streaming its text out as progress if it can.
+
+    Streams only when all three hold: `ENABLE_CHAT_STREAMING` is on, someone is
+    listening (`progress.enabled` -- the async path), and the model can stream.
+    Otherwise this is exactly `llm.invoke(prompt)`, so a mock, a recording LLM
+    in a test, or the synchronous HTTP path behave as they always did.
+
+    The returned object has `.content`, like the `AIMessage` the call sites
+    already read. Token usage still reaches `tracked_llm_call` through the
+    LangChain callback on the run -- `build_llm` sets `stream_usage=True` so
+    Azure puts it on the final chunk.
+
+    Hard rule 3 is untouched by construction: every figure a summary or
+    narration can state was computed before this function was called.
+    """
+    from config import get_settings
+
+    enabled = bool(getattr(get_settings(), "ENABLE_CHAT_STREAMING", False))
+    listening = bool(getattr(progress, "enabled", False))
+    if not (enabled and listening and hasattr(llm, "stream")):
+        res = llm.invoke(prompt)
+        return _StreamedAnswer(_content_text(getattr(res, "content", res)))
+
+    acc: list[str] = []
+    since_flush = 0
+    total = 0
+    for chunk in llm.stream(prompt):
+        piece = _content_text(getattr(chunk, "content", chunk))
+        if not piece:
+            continue
+        acc.append(piece)
+        since_flush += len(piece)
+        total += len(piece)
+        if since_flush >= _STREAM_FLUSH_CHARS:
+            progress("streaming", partial="".join(acc))
+            since_flush = 0
+    text = "".join(acc)
+    # The final event carries the complete text and says so, so a consumer that
+    # only ever saw this one event still has the whole answer.
+    progress("streaming", partial=text, final=True, chars=total)
+    return _StreamedAnswer(text)
+
+
+# ---------------------------------------------------------------------------
+# C4.1 (Feature 6.1): schema linking before generation.
+#
+# Deterministic, ORM-derived where it can be, and computed before the model
+# runs. The output is handed to the model as FACTS about this question, in the
+# request tail, so the model does not have to re-derive from prose rules what a
+# word in the question is. Hard rule 3 is untouched: this links terms to
+# columns; it computes nothing.
+# ---------------------------------------------------------------------------
+
+#: Named metrics: what a person calls a figure -> how the schema expresses it.
+#: Each is one column expression, direction-aware where the schema is. Defined
+#: once here so the prompt, the linking block and the tests read one source.
+_NAMED_METRICS: dict[str, dict] = {
+    "spend": {
+        "pattern": r"\b(spend|spent|spending|paid out|what did we pay|how much (?:did|have) we (?:pay|spend)|billed us|owe)\b",
+        "column": "grand_total",
+        "note": "sum of `grand_total` over INBOUND rows (what vendors billed this tenant); always select `currency` and never blend currencies",
+    },
+    "revenue": {
+        "pattern": r"\b(owed to us|owes us|we billed|we invoiced|our invoice(?:s)? to|revenue|receivable)\b",
+        "column": "grand_total",
+        "note": "sum of `grand_total` over OUTBOUND rows (what this tenant billed customers); always select `currency`",
+    },
+    "tax": {
+        "pattern": None,  # detect_tax_component_term() decides; listed so the block can name it
+        "column": "tax_amount",
+        "note": "select `tax_amount` with the identifying columns; the itemised components live in the record's `taxes` field, which the answering step reads -- never search line items for a tax term",
+    },
+    "subtotal": {
+        "pattern": r"\b(sub[- ]?total|net amount|before tax|pre-tax)\b",
+        "column": "subtotal",
+        "note": "select `subtotal` with the identifying columns",
+    },
+    "discount": {
+        "pattern": r"\b(discount(?:s|ed)?|rebate)\b",
+        "column": "discount_amount",
+        "note": "select `discount_amount` (and `discount_percent` if asked) with the identifying columns; NULL means the invoice does not state one",
+    },
+    "count": {
+        "pattern": r"\b(how many (?:invoices|bills|vendors|customers)|number of (?:invoices|bills|vendors|customers)|count of)\b",
+        "column": "COUNT(*)",
+        "note": "COUNT(*) (or COUNT(DISTINCT vendor_name) / COUNT(DISTINCT customer_name) for entities) with the tenant and direction filters",
+    },
+    "outstanding": {
+        "pattern": r"\b(outstanding|overdue|past due|unpaid|not (?:yet )?paid|still owe|due soon|coming due)\b",
+        "column": "due_date",
+        "note": "OUTBOUND rows: `due_date < CURRENT_DATE AND status <> 'PAID'` is overdue and `status = 'PAID'` is settled. INBOUND rows: this table holds NO payment signal -- `status` is the extraction pipeline's state, never a payment state -- so answer with `due_date` only and say the table does not record whether it was paid",
+    },
+}
+
+#: Rule 11's "details" projection, as a named set the linking block can hand over.
+_DETAILS_PROJECTION = "invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number"
+_DETAILS_PATTERN = re.compile(r"\b(details? (?:of|for|on)|tell me about|pull up|show me (?:the )?invoice|look up invoice|what(?:'s| is) on (?:the )?invoice)\b", re.IGNORECASE)
+_MONEY_WORD_PATTERN = re.compile(r"\b(amount|cost|costs|price|priced|charge|charged|charges|fee|fees|quantity|qty|how much|total|totals|figure)\b", re.IGNORECASE)
+_METRIC_PATTERNS = {name: re.compile(m["pattern"], re.IGNORECASE) for name, m in _NAMED_METRICS.items() if m["pattern"]}
+
+
+def link_question_to_schema(user_message: str) -> dict:
+    """What the question's terms ARE, against the schema. Deterministic.
+
+    Returns `{attribute: (term, column)|None, tax_term: str|None, metrics: [name],
+    details: bool, payment_status: str|None, line_item_fallback: bool}`.
+
+    `line_item_fallback` is the inverted default from the C4 design: it is True
+    only when NOTHING linked to a column and the question still carries a money
+    or quantity word -- the one case where a product/service phrase should be
+    searched as a line-item description (rule 6d). "The amount only for training
+    and onboarding" links to no column and keeps that path; "discount amount for
+    Apex" links to `discount_amount` and never reaches it.
+    """
+    text = user_message or ""
+    attribute = detect_invoice_attribute_term(text)
+    tax_term = detect_tax_component_term(text)
+    payment = detect_payment_status_question(text)
+    metrics = [name for name, pat in _METRIC_PATTERNS.items() if pat.search(text)]
+    if tax_term and "tax" not in metrics:
+        metrics.append("tax")
+    if payment and "outstanding" not in metrics:
+        metrics.append("outstanding")
+    details = bool(_DETAILS_PATTERN.search(text))
+    linked = bool(attribute or tax_term or metrics or details)
+    line_item_fallback = (not linked) and bool(_MONEY_WORD_PATTERN.search(text))
+    return {
+        "attribute": attribute,
+        "tax_term": tax_term,
+        "metrics": metrics,
+        "details": details,
+        "payment_status": payment,
+        "line_item_fallback": line_item_fallback,
+    }
+
+
+def _schema_linking_block_for(user_message: str) -> str:
+    """The linking result as prompt text, or "" when there is nothing to say.
+
+    Lives in the request tail (below `SQL_PROMPT_TENANT_SECTION_MARKER`), so the
+    cacheable prefix from A4 is untouched.
+    """
+    link = link_question_to_schema(user_message)
+    lines: list[str] = []
+    if link["attribute"]:
+        term, column = link["attribute"]
+        lines.append(f"- attribute: \"{term}\" -> column `{column}`. Identify the invoice(s) from the vendor/customer/number/date given and SELECT `{column}` with the identifying columns and `currency`. A NULL means the invoice does not state it -- never that the invoice does not exist. Do NOT search line items for this word.")
+    for name in link["metrics"]:
+        m = _NAMED_METRICS[name]
+        label = f"\"{link['tax_term']}\"" if name == "tax" and link["tax_term"] else name
+        lines.append(f"- metric: {label} -> `{m['column']}`: {m['note']}.")
+    if link["details"]:
+        lines.append(f"- details question -> select exactly this projection, nothing else: {_DETAILS_PROJECTION}.")
+    if link["line_item_fallback"]:
+        lines.append("- no attribute or metric linked, and the question carries a money/quantity word -> the product/service phrase IS a line-item description: use rule 6d's un-nest shape and filter on the un-nested item's own description. Retrieval only, no SUM.")
+    if not lines:
+        return ""
+    return (
+        "\nSCHEMA LINK (computed deterministically before you ran -- these are facts about THIS question, apply them directly):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C4.3 (Feature 6.1): retrieved few-shot examples.
+# ---------------------------------------------------------------------------
+
+#: How many examples to show, and how similar the nearest must be to show any.
+#: Below the floor the examples would be noise -- a greeting has no neighbour.
+_SQL_EXAMPLES_K = 3
+_SQL_EXAMPLES_MIN_SIMILARITY = 0.45
+_sql_example_vectors_cache: dict | None = None
+
+
+def _curated_sql_examples() -> list[dict]:
+    """The curated set, imported lazily so `benchmarks/` is not a hard import."""
+    try:
+        from benchmarks.golden_sql_examples import GOLDEN_SQL_EXAMPLES
+
+        return list(GOLDEN_SQL_EXAMPLES)
+    except Exception:  # noqa: BLE001 -- no examples is a degraded prompt, not a dead turn
+        logger.debug("C4.3: curated SQL examples unavailable", exc_info=True)
+        return []
+
+
+def _sql_example_vectors() -> tuple[list[dict], list[list[float]]]:
+    """Embed the curated questions once per process."""
+    global _sql_example_vectors_cache
+    examples = _curated_sql_examples()
+    key = tuple(e["question"] for e in examples)
+    if _sql_example_vectors_cache is not None and _sql_example_vectors_cache.get("key") == key:
+        return _sql_example_vectors_cache["examples"], _sql_example_vectors_cache["vectors"]
+    if not examples:
+        return [], []
+    from chroma_client import get_embeddings
+
+    vectors = get_embeddings([e["question"] for e in examples])
+    _sql_example_vectors_cache = {"key": key, "examples": examples, "vectors": vectors}
+    return examples, vectors
+
+
+def _retrieve_sql_examples(user_message: str, dialect_name: str, k: int = _SQL_EXAMPLES_K) -> list[dict]:
+    """The curated examples nearest to the question, best first.
+
+    Cosine over unit-norm vectors is the dot product (Gap 244 guarantees the
+    norm). Returns `[]` on any failure -- the prompt then simply has no examples,
+    which is exactly the pre-C4 prompt.
+    """
+    if not (user_message or "").strip():
+        return []
+    try:
+        examples, vectors = _sql_example_vectors()
+        if not examples:
+            return []
+        from chroma_client import get_embeddings
+
+        qv = get_embeddings([user_message])[0]
+        scored = []
+        for ex, v in zip(examples, vectors):
+            sim = sum(a * b for a, b in zip(qv, v))
+            scored.append((sim, ex))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        picked = [ex for sim, ex in scored[:k] if sim >= _SQL_EXAMPLES_MIN_SIMILARITY]
+        sqlite = (dialect_name or "").startswith("sqlite")
+        out = []
+        for ex in picked:
+            sql = ex.get("sql_sqlite") if sqlite and ex.get("sql_sqlite") else ex["sql"]
+            out.append({"case_id": ex["case_id"], "question": ex["question"], "why": ex.get("why", ""), "sql": sql})
+        return out
+    except Exception:  # noqa: BLE001
+        logger.debug("C4.3: example retrieval failed; prompt continues without examples", exc_info=True)
+        return []
+
+
+def _sql_examples_block_for(user_message: str, dialect_name: str) -> str:
+    """The retrieved examples as prompt text, or "" when none clear the floor."""
+    examples = _retrieve_sql_examples(user_message, dialect_name)
+    if not examples:
+        return ""
+    lines = [
+        "\nEXAMPLES (retrieved from a curated, verified set by similarity to this question -- reference SHAPES; keep the shape, replace the filters with THIS question's entities; the tenant predicate is always this request's):"
+    ]
+    for ex in examples:
+        lines.append(f"Q: {ex['question']}")
+        if ex["why"]:
+            lines.append(f"   why this shape: {ex['why']}")
+        lines.append(f"   SQL: {ex['sql'].replace('{tenant_id}', '<TENANT_ID>')}")
+    return "\n".join(lines) + "\n"
+
+
+def _fast_llm():
+    """The LLM for work that does not reason (Feature 6.1 item A2).
+
+    Returns the deployment named by `AZURE_OPENAI_FAST_DEPLOYMENT_NAME`, or --
+    when that is empty, when the provider is not Azure, or when anything at all
+    goes wrong constructing it -- plain `get_llm()`. Three separate routes back to
+    today's behaviour, because a routing call that raises is a dead chat turn and
+    a slightly slower one is not.
+
+    Mock mode is covered by the provider check: `get_llm()` returns
+    `MockInvoiceLLM` and so does this, which is why the test suite is unaffected
+    whether the setting is set or not.
+
+    **Never use this for SQL generation.** That call reasons -- schema, joins, the
+    three-attempt repair loop -- and item A1 tunes its `reasoning_effort`
+    separately. `_run_query_agent` keeps its own `llm` for exactly that reason.
+    """
+    # Local import, matching `_redis()` and the other settings readers in this
+    # module: read at call time so a test's monkeypatch is seen, never captured
+    # at import.
+    from config import get_settings
+
+    settings = get_settings()
+    fast = (getattr(settings, "AZURE_OPENAI_FAST_DEPLOYMENT_NAME", "") or "").strip()
+    provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+    if not fast or provider != "azure":
+        return get_llm()
+    try:
+        return build_llm("azure", model=fast)
+    except Exception:  # pragma: no cover - never fail a turn over a deployment name
+        logger.warning(
+            "A2: could not build the fast deployment %r; falling back to the default.",
+            fast,
+            exc_info=True,
+        )
+        return get_llm()
+
+
 def classify_query(query: str, tenant_id: str = "") -> str:
     """Classifies user queries into RAG, SQL, or CHAT.
 
@@ -245,7 +616,8 @@ def classify_query(query: str, tenant_id: str = "") -> str:
         return "CHAT"
 
     # No confident keyword match -- genuinely ambiguous, worth the LLM call.
-    llm = get_llm()
+    # A2: routing produces a label, not a deduction. Fast deployment.
+    llm = _fast_llm()
     try:
         structured_llm = llm.with_structured_output(QueryRoutingSchema)
         # Feature 23 Phase 1. Only the LLM fallback is instrumented: the keyword
@@ -350,34 +722,42 @@ def _normalize_string_equality(sql: str) -> str:
     quietly keep the old case-sensitive behaviour. `ILIKE` is left alone — it is already
     case-insensitive.
     """
+    # Gap 426: `\b{column}` also matches the column inside `invoice.invoice_number`
+    # (a dot is a word boundary), and the rewrite used to emit the bare column,
+    # leaving the qualifier dangling in front of the function call --
+    # `invoice.TRIM(LOWER(invoice_number))`, a syntax error on both engines. Rule
+    # 6d's own taught shape qualifies every column with `invoice.`, so a model
+    # following it and filtering by number hit this on every attempt. The optional
+    # qualifier is now captured and kept INSIDE the call.
+    qualifier = r"((?:\b\w+\.)?)"
     for column in _FUZZY_STRING_COLUMNS:
-        equality = re.compile(rf"\b{column}\s*=\s*'([^']*)'", re.IGNORECASE)
+        equality = re.compile(rf"{qualifier}\b{column}\s*=\s*'([^']*)'", re.IGNORECASE)
         if column in _SUBSTRING_FUZZY_COLUMNS:
             sql = equality.sub(
-                lambda m, col=column: f"TRIM(LOWER({col})) LIKE LOWER('%{m.group(1)}%')",
+                lambda m, col=column: f"TRIM(LOWER({m.group(1)}{col})) LIKE LOWER('%{m.group(2)}%')",
                 sql,
             )
         else:
             sql = equality.sub(
-                lambda m, col=column: f"TRIM(LOWER({col})) = TRIM(LOWER('{m.group(1)}'))",
+                lambda m, col=column: f"TRIM(LOWER({m.group(1)}{col})) = TRIM(LOWER('{m.group(2)}'))",
                 sql,
             )
 
         def _rewrite_in(m, col=column):
-            negation = "NOT " if m.group(1) else ""
-            values = re.findall(r"'([^']*)'", m.group(2))
+            negation = "NOT " if m.group(2) else ""
+            values = re.findall(r"'([^']*)'", m.group(3))
             rendered = ", ".join(f"TRIM(LOWER('{value}'))" for value in values)
-            return f"TRIM(LOWER({col})) {negation}IN ({rendered})"
+            return f"TRIM(LOWER({m.group(1)}{col})) {negation}IN ({rendered})"
 
         in_clause = re.compile(
-            rf"\b{column}\s+(NOT\s+)?IN\s*\(\s*({_IN_STRING_LIST})\s*\)", re.IGNORECASE
+            rf"{qualifier}\b{column}\s+(NOT\s+)?IN\s*\(\s*({_IN_STRING_LIST})\s*\)", re.IGNORECASE
         )
         sql = in_clause.sub(_rewrite_in, sql)
 
-        like_clause = re.compile(rf"\b{column}\s+(NOT\s+)?LIKE\s*'([^']*)'", re.IGNORECASE)
+        like_clause = re.compile(rf"{qualifier}\b{column}\s+(NOT\s+)?LIKE\s*'([^']*)'", re.IGNORECASE)
         sql = like_clause.sub(
             lambda m, col=column: (
-                f"TRIM(LOWER({col})) {'NOT ' if m.group(1) else ''}LIKE LOWER('{m.group(2)}')"
+                f"TRIM(LOWER({m.group(1)}{col})) {'NOT ' if m.group(2) else ''}LIKE LOWER('{m.group(3)}')"
             ),
             sql,
         )
@@ -1050,8 +1430,7 @@ def detect_payment_status_question(message: str) -> str | None:
 #      a scalar" -- and an abort here burns an attempt of the 3-try repair loop),
 #   3. select `currency` alongside the monetary columns (rule 7),
 #   4. filter on the un-nested item's own description, not the invoice's text blob.
-_LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is PostgreSQL -- use exactly the syntax below). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist. The SAME EXEMPTION applies to ANY attribute of the invoice document itself, not only tax (Gap 413, found live 2026-09-03: "discount amount for <vendor>" was turned into a line-item search for the word "discount" -- zero rows, so no invoice was identified and an answerable question failed): discount / discount amount / discount percent, subtotal, deductions, payment instructions or terms, references, addresses, due date, PO number, currency, document type -- and every other column in the schema block above, including the ones marked as derived from the ORM. Ask the same CONCEPT question as for tax: is this word a good or service that could appear as a line on the invoice, or a property of the invoice as a document? A property is NEVER a description keyword. For such a question identify the invoice(s) from the vendor/customer/number/date given, SELECT that column (plus `currency` per rule 7) with the identifying columns, and let the answering step -- which is handed every identified invoice's full record -- read it. If the column is NULL, the answer is that the invoice does not state it, never that the invoice does not exist.
+_LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION (this database is PostgreSQL -- use exactly the syntax below). Use this shape ONLY when the SCHEMA LINK below says the question's product/service phrase is a line-item description (no attribute or metric linked). When the SCHEMA LINK names a column, select that column with the identifying columns and do NOT search line items. Retrieval only: fetch every matching line; totals, per-vendor subtotals and reconciliation arithmetic are done deterministically after retrieval, never with SUM/GROUP BY here.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and jsonb_array_elements() raises on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true
@@ -1067,8 +1446,7 @@ The one and only shape for rule 6d, whether the user wants one line, a list, or 
 SELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item->>'description' AS line_description, (item->>'quantity')::numeric AS line_qty, (item->>'unit_price')::numeric AS line_unit_price, (item->>'amount')::numeric AS line_amount FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '{tenant_id}' AND LOWER(item->>'description') LIKE LOWER('%training%')
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
-_LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist. The SAME EXEMPTION applies to ANY attribute of the invoice document itself, not only tax (Gap 413, found live 2026-09-03: "discount amount for <vendor>" was turned into a line-item search for the word "discount" -- zero rows, so no invoice was identified and an answerable question failed): discount / discount amount / discount percent, subtotal, deductions, payment instructions or terms, references, addresses, due date, PO number, currency, document type -- and every other column in the schema block above, including the ones marked as derived from the ORM. Ask the same CONCEPT question as for tax: is this word a good or service that could appear as a line on the invoice, or a property of the invoice as a document? A property is NEVER a description keyword. For such a question identify the invoice(s) from the vendor/customer/number/date given, SELECT that column (plus `currency` per rule 7) with the identifying columns, and let the answering step -- which is handed every identified invoice's full record -- read it. If the column is NULL, the answer is that the invoice does not state it, never that the invoice does not exist.
+_LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION (this database is SQLite -- use exactly the syntax below). Use this shape ONLY when the SCHEMA LINK below says the question's product/service phrase is a line-item description (no attribute or metric linked). When the SCHEMA LINK names a column, select that column with the identifying columns and do NOT search line items. Retrieval only: fetch every matching line; totals, per-vendor subtotals and reconciliation arithmetic are done deterministically after retrieval, never with SUM/GROUP BY here.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and json_each() raises "malformed JSON" on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1
@@ -1516,6 +1894,7 @@ def assert_tenant_isolation_on_ast(sql_clean: str, tenant_id: str, dialect_name:
         )
 
 
+@tracked_dependency("sql.execute", "PostgreSQL")
 def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list | None = None) -> str:
     """Safely execute generated SQL statement on the database session.
 
@@ -2095,7 +2474,29 @@ def _wrap_retrieved_document_text(spans, tenant_id: str = "", attachment_id: str
                 "(tenant %s, attachment %s, page %s): %r",
                 tenant_id, attachment_id, page, text_value[:200],
             )
-        header = f"[Page {page}]\n" if page is not None else ""
+        # Gap 388: provenance, not just a boundary. An answer built from five
+        # chunks with no attribution cannot be checked by the reader, and the
+        # model cannot say which document a claim came from. F26 spans carry
+        # `page`; RAG spans carry `invoice_id` and sometimes `invoice_number`.
+        # Emit whichever are present, in one header, so the same wrapper serves
+        # both callers without either needing to know about the other.
+        # Two shapes reach this wrapper: `search_attachment_chunks()` spans carry
+        # their fields at the top level, `query_invoice_chunks()` chunks carry
+        # them under `metadata`. Read both rather than making either caller
+        # reshape its result to suit the other.
+        meta = (span or {}).get("metadata") or {}
+        source_bits = []
+        invoice_number = (span or {}).get("invoice_number") or meta.get("invoice_number")
+        invoice_id = (span or {}).get("invoice_id") or meta.get("invoice_id")
+        if invoice_number:
+            source_bits.append(f"Invoice {invoice_number}")
+        elif invoice_id:
+            source_bits.append(f"Invoice id {invoice_id}")
+        if page is None:
+            page = meta.get("page")
+        if page is not None:
+            source_bits.append(f"Page {page}")
+        header = f"[{' | '.join(source_bits)}]\n" if source_bits else ""
         blocks.append(
             f"{_DOCUMENT_TEXT_MARKER_START}\n{header}{text_value}\n{_DOCUMENT_TEXT_MARKER_END}"
         )
@@ -2105,6 +2506,7 @@ def _wrap_retrieved_document_text(spans, tenant_id: str = "", attachment_id: str
 _TENANT_STATS_CACHE_TTL_SECONDS = 300  # orientation only -- exact figures always come from a live SQL query, not this snapshot
 
 
+@tracked_dependency("chat.tenant_stats", "PostgreSQL")
 def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
     """Gap 13: a small tenant-wide data snapshot (row count, total spend, status
     breakdown, vendor count, date range) injected into every route's system
@@ -2253,6 +2655,7 @@ def get_prior_turn_sql(session_id: str, db_session) -> str | None:
     return prior.generated_sql.strip()[:_PRIOR_SQL_MAX_CHARS]
 
 
+@tracked_dependency("chat.history", "PostgreSQL")
 def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str:
     """Retrieve short-term conversational context from the database, bounded by token length (Gap 23)."""
     import tiktoken
@@ -2443,6 +2846,7 @@ MAX_FULL_RECORD_BLOCK_CHARS = 12_000
 _PROMPT_EXCLUDED_RECORD_FIELDS = ("id", "tenant_id")
 
 
+@tracked_dependency("chat.full_record_block", "PostgreSQL")
 def _full_record_block_for(
     invoice_ids: list[str] | None, tenant_id: str, db_session
 ) -> str:
@@ -2597,6 +3001,7 @@ def _cells_are_numeric(cells: list[str]) -> bool:
     return seen_any
 
 
+@tracked_dependency("chat.computed_figures_block", "InProc")
 def _computed_figures_block_for(db_result: str | None) -> str:
     """Every total this answer might state, added up in Python before the model runs.
 
@@ -2907,6 +3312,20 @@ def _derived_schema_supplement() -> str:
     return header + "\n".join(lines) + "\n"
 
 
+# Feature 6.1 item A4. Everything ABOVE this line in the rendered SQL prompt is
+# identical for every request in the process: persona, schema, rules 1-11 with no
+# interpolated values, and the injection guard. Everything BELOW it is per-tenant
+# or per-turn. Azure prompt caching keys on the longest identical prefix (>= 1,024
+# tokens, in 128-token steps), so the line is the boundary the cache sees.
+#
+# `tests/test_a4_prompt_prefix.py` splits on this string and asserts the two halves
+# behave: prefix byte-identical across tenants and questions, and long enough.
+SQL_PROMPT_TENANT_SECTION_MARKER = (
+    "\n=== TENANT AND REQUEST CONTEXT "
+    "(everything above this line is the same for every request) ===\n"
+)
+
+
 def build_sql_system_prompt(
     user_message: str,
     tenant_id: str,
@@ -2924,6 +3343,22 @@ def build_sql_system_prompt(
     history, the previous turn's SQL) defaults to empty, so a standalone tool call
     with no conversation behind it renders the same prompt minus those sections --
     the rules themselves are never conditional on any of them.
+
+    Shape (Feature 6.1 item A4, 2026-09-03). The prompt is two halves separated by
+    `SQL_PROMPT_TENANT_SECTION_MARKER`:
+
+      * ABOVE the marker: persona, schema, rules 1-11 and the injection guard, with
+        no interpolated values at all. Byte-identical for every request in the
+        process, which is what lets Azure serve it from the prompt cache.
+      * BELOW the marker: the tenant id (restated as the rule-1 predicate so the
+        model has the literal to copy), rule 6d (its executable example embeds the
+        tenant literal), the three per-question blocks, tenant stats, trainer and
+        chat rules, the previous turn's SQL, and the conversation history.
+
+    Before this, the tenant id was inlined in rule 1 -- a few hundred tokens in --
+    so the cacheable prefix ended there: 1,809 of 6,694 tokens (o200k_base). Do
+    not move any per-request value back above the marker; the test that guards
+    the boundary is `tests/test_a4_prompt_prefix.py`.
     """
     prior_sql_block = _prior_sql_block_for(prior_turn_sql)
     # Gap 253: rule 6d is the one rule with no portable spelling, so it is
@@ -2934,6 +3369,8 @@ def build_sql_system_prompt(
     tax_term_block = _tax_term_block_for(user_message)
     payment_status_block = _payment_status_block_for(user_message)
     attribute_term_block = _attribute_term_block_for(user_message)  # Gap 413
+    schema_linking_block = _schema_linking_block_for(user_message)  # C4.1
+    sql_examples_block = _sql_examples_block_for(user_message, _sql_dialect_name(db_session))  # C4.3
     derived_schema_supplement = _derived_schema_supplement()  # Gap 413
     system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
@@ -2945,7 +3382,8 @@ name as readily as on a tag).
 {_HAND_TYPED_SCHEMA_BLOCK}{derived_schema_supplement}
 Write a SQL query to answer the user's question.
 CRITICAL RULES:
-1. You MUST filter by tenant_id = '{tenant_id}'.
+(C4.2, 2026-09-03: the prose that taught you to guess what a word IS was retired. The SCHEMA LINK section at the end of this prompt states it as fact -- apply that section first.)
+1. You MUST filter by tenant_id = '<TENANT_ID>', where <TENANT_ID> is the exact value given in the TENANT AND REQUEST CONTEXT section at the end of this prompt -- copy it verbatim into the WHERE clause. Never invent, shorten or omit it.
 2. You MUST only generate a read-only SELECT statement.
 3. IMPORTANT: Audit status lives exclusively in the `status` enum and `sa_alerts` column. There is no `audit_flags`, `audit_logs`, or `audit_reasons` table. Do not hallucinate columns like `is_flagged_for_audit`.
 4. IMPORTANT: a question about a vendor/bill received ("who do I owe", "what did I pay X") means flow_direction='INBOUND', filtered by vendor_name. A question about a customer/invoice sent ("who owes me", "what did I bill X") means flow_direction='OUTBOUND', filtered by customer_name. Never mix the two columns for the wrong direction.
@@ -2954,14 +3392,9 @@ CRITICAL RULES:
 SELECT
   SUM(CASE WHEN flow_direction='INBOUND'  THEN grand_total ELSE 0 END) AS total_owed_by_us,
   SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_owed_to_us
-FROM invoice WHERE tenant_id = '{tenant_id}'
+FROM invoice WHERE tenant_id = '<TENANT_ID>'
 
-6. If the user query refers to a tag or line-item description/detail, you can query the tags and items JSONB columns using simple LIKE filters. Two rules apply to EVERY such filter:
-   (a) A JSONB column (tags, items, sa_alerts) MUST be cast to text before LOWER/LIKE touches it: write LOWER(CAST(tags AS TEXT)), NEVER LOWER(tags). There is no lower(jsonb) function -- an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. CAST(... AS TEXT) is the portable form and works in both SQLite and Postgres. Plain VARCHAR columns (vendor_name, customer_name, status, invoice_number) are already text and must NOT be cast.
-   (b) ALWAYS wrap both sides in LOWER(...) -- tags and line-item descriptions are free text and are not reliably lowercase (e.g. "Ergonomic Office Chair"), and a case-sensitive match will silently miss real rows.
-   - To check if a specific named tag (e.g. 'hardware') is in tags: LOWER(CAST(tags AS TEXT)) LIKE LOWER('%"hardware"%')
-   - To search for a keyword (e.g. 'laptop') in line-item descriptions: LOWER(CAST(items AS TEXT)) LIKE LOWER('%laptop%')
-   - To search the audit alerts free text (e.g. 'duplicate'): LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')
+6. JSONB columns (tags, items, sa_alerts) MUST be cast before LOWER/LIKE -- LOWER(CAST(tags AS TEXT)) LIKE LOWER('%"hardware"%'), LOWER(CAST(items AS TEXT)) LIKE LOWER('%laptop%'), LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') -- never LOWER(tags): an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. VARCHAR columns (vendor_name, customer_name, status, invoice_number) are text already and must NOT be cast. Always LOWER both sides. Searching these JSON columns is the fallback for a phrase the SCHEMA LINK below did not link to a column.
 6a. IMPORTANT -- vendor_name/customer_name filters: NEVER use exact equality (=) to filter by vendor_name or customer_name. Users routinely refer to a vendor/customer by a shortened or informal name (e.g. "Cascade Manufacturing" when the stored value is "Cascade Manufacturing Co") -- an exact match will silently return zero rows for a real, existing vendor. ALWAYS use a case-insensitive partial match instead: LOWER(vendor_name) LIKE LOWER('%Cascade Manufacturing%'). This applies even when the user's question phrases it as if it were an exact name.
 6b. CATEGORY / SUBJECT-MATTER QUESTIONS -- one standard shape, use it every time. When the user asks about a category, spend area or subject rather than a named entity ("how much did we spend on office supplies", "logistics or freight costs", "anything cloud related", "printing costs"), the matching text may live in ANY of several columns and which one it happens to live in varies per invoice -- a vendor can be identifiable by its name alone ("Blue Ridge Logistics"), by its tags, or only by a line-item description. So ALWAYS check the SAME four columns, in ONE parenthesised OR group, never a subset of them:
    (LOWER(CAST(tags AS TEXT)) LIKE LOWER('%<phrase>%')
@@ -2971,20 +3404,23 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
    Note the CAST on the two JSONB columns and its absence on the two VARCHAR ones -- this exact shape, per rule 6(a). Checking only item descriptions (or only tags) is a bug: it silently misses real matches that qualify through one of the other columns.
    NOT THIS RULE when the question asks for a dollar amount PER VENDOR/ENTITY for a specific charge type ("which vendors billed us for freight, delivery, or shipping charges, and how much per vendor"): found live, 2026-08-19 (US tenant test) -- this rule's own examples above ("logistics or freight costs") make "freight" look like a 6b trigger word, and the model answered with SUM(grand_total) (whole invoice totals for any invoice merely CONTAINING a matching line) grouped by vendor -- every vendor's figure came back 10-40x too large, because it included every unrelated line and tax on that invoice. "Which invoices relate to X" (this rule, 6b) and "how much did each vendor charge specifically for X" (rule 6d) are different questions with the same surface words. If the answer must be a dollar figure attributable ONLY to the named charge/product/service (not the whole invoice), that is rule 6d -- fetch the matching LINES (rule 6d never aggregates in SQL, see its own text), and let the per-vendor grouping and subtotals happen in the answer, not this rule, no matter how similar the trigger phrase looks to the examples above.
 6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
-{line_item_rule}
-{tax_term_block}
-{payment_status_block}
-{attribute_term_block}
-7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
+7. Always select `currency` alongside any monetary column (grand_total, tax_amount, subtotal, discount_amount, line amounts).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
 9. FOLLOW-UP QUESTIONS THAT NARROW A PREVIOUS ANSWER ("explain the 3 USD ones", "which of those are overdue", "show me their line items"): if a PREVIOUS TURN'S SQL block appears below, that is the exact query that produced the answer the user is referring to. Start from ITS WHERE clause VERBATIM and only ADD the new restriction with AND. Do NOT re-derive the predicate from the conversation text, and do NOT drop, merge or simplify away any branch of an existing OR group -- each branch is there because some real row matches ONLY through it, so removing one silently deletes rows from the very answer the user asked you to expand on. The SELECT list is yours to change freely (e.g. from an aggregate to per-invoice detail columns); only the WHERE clause is fixed. EXCEPTION -- the FROM clause: if the follow-up narrows from an invoice-level answer down to a specific LINE ITEM's own figure (e.g. after "what's the total on invoice X", the user asks "I want the amount only for training and onboarding from the total invoice"), you MUST add rule 6d's line-item join to the FROM clause and switch the SELECT to the line's own columns -- reusing the previous turn's invoice-level FROM would return the whole grand_total again, which is exactly the wrong answer. Adding that join is the ONLY FROM change allowed here: every tenant/invoice-identifying predicate from the previous WHERE clause still carries over verbatim, and you then AND on the new line-item description filter. If the follow-up is about a genuinely different subject rather than a narrowing of the previous answer, ignore the previous SQL and compose a fresh query as normal. A STRONG signal that it is a different subject, not a narrowing: the new question names a SPECIFIC invoice number or a SPECIFIC entity that was not part of what the previous turn was about ("give me the details of invoice X" naming an invoice never mentioned before is a fresh lookup, not a narrowing of a prior category/spend question, even in the same session). Found live, 2026-08-19: a "give me the details of invoice TSD-620458" question, asked right after an unrelated freight/delivery spend question, wrongly carried over that question's freight/delivery/shipping WHERE clause fragment onto the new invoice's lookup -- harmless that time only because the named invoice happened to also have a matching line, not because the reuse was correct. Naming a specific, different invoice/vendor/customer than the previous turn discussed means start over.
 10. COMPARISON QUESTIONS NAMING TWO OR MORE SPECIFIC ENTITIES ("between X and Y, whose total was bigger", "compare A vs B", "X, Y, or Z -- which cost more"): the query MUST return a row for EVERY named entity, never `ORDER BY ... LIMIT 1`. Found live, 2026-08-19: "between DataPipe Solutions and StratEdge Partners, whose invoice had the bigger total" generated `ORDER BY grand_total DESC LIMIT 1`, which returned only the winning row -- the losing vendor's real, existing invoice was silently excluded from the result set before the summary step ever saw it, and the reply then described the loser as having "no invoice in the returned results," which reads as false to the user even though the row was only ever truncated, not actually missing. Filter on the named entities explicitly (`WHERE vendor_name IN (...)` or an OR'd set of `LOWER(vendor_name) LIKE ...` per rule 6a, one per named entity) and let ALL their rows come back; a superlative in the question ("bigger", "which one", "the most") tells you which value to call out in the summary prose, it is never an instruction to LIMIT the query itself. This applies to any question naming a specific, countable set of entities to compare -- not to open-ended ranking questions ("show me the top 5 invoices"), where LIMIT is the correct, intended shape.
-11. "DETAILS" QUESTIONS ABOUT ONE SPECIFIC INVOICE ("give me the details of invoice X", "tell me about invoice X", "pull up invoice X"): SELECT only the columns a person actually reads for this -- invoice_number, vendor_name/customer_name (per rule 4/4a's direction), invoice_date, due_date, grand_total, currency, status, po_number. Do NOT select `items`, `tags`, or `sa_alerts` by default -- found live, 2026-08-19: a plain "pull up this invoice" answer selected every column including raw JSONB fields, and even correctly formatted (rule 6d/column-hygiene fixes elsewhere already stop `file_path`/`batch_id` leaking and stop raw Python-repr dumps), a wide table with an embedded JSON blob column is not what "details" means to a person -- it reads as a database export, not an answer. Only select `items` when the question is actually about line items (then rule 6d applies instead), only select `sa_alerts` when the question is actually about audit/flagged issues, only select `tags` when asked about categorization. The answer to a plain "details" question should be phrased as a short prose summary of the fields above, not a dump of the full row.
+11. A "details"/"tell me about"/"pull up" question about one invoice selects exactly the projection the SCHEMA LINK names (invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number) -- never items, tags or sa_alerts unless the question is about line items, categories or audit flags respectively.
 
+{_INJECTION_GUARD_INSTRUCTION}{SQL_PROMPT_TENANT_SECTION_MARKER}
+TENANT_ID for this request (rule 1): tenant_id = '{tenant_id}'
+Every query you write MUST contain exactly this predicate: tenant_id = '{tenant_id}'
+{schema_linking_block}{sql_examples_block}
+{line_item_rule}
+{tax_term_block}
+{payment_status_block}
+{attribute_term_block}
 {tenant_stats}
-{rules_block}{chat_rules_block}
-{_INJECTION_GUARD_INSTRUCTION}{prior_sql_block}
+{rules_block}{chat_rules_block}{prior_sql_block}
 Conversation History for Context:
 {chat_history}
 """
@@ -3033,6 +3469,258 @@ class SqlGenerationOutcome:
     #: events, and a declined turn's retry (Gap 237's one regeneration) is part
     #: of it. 1 for the normal case; 0 only if the loop never ran.
     attempts: int = 0
+    #: C3 (Feature 6.1). One of "", "narrowing_dropped", "vector_answered",
+    #: "clarified_with_candidates", "no_candidates". Empty when the query found
+    #: rows or an earlier Gap 305 fallback recovered it.
+    zero_result_diagnosis: str = ""
+    #: C3. A proposal or an ask-back for the user, in the Feature 26 clarification
+    #: shape (`message` + optional `options`). Set => the turn has no answer yet.
+    clarification: Optional[dict] = None
+    #: C3. Chunks from the vector probe, when the textual question is answerable
+    #: from documents. The RAG branch narrates them; this loop never does.
+    vector_chunks: Optional[list] = None
+
+
+# ---------------------------------------------------------------------------
+# C3 (Feature 6.1): zero rows is a diagnosis, never an answer.
+#
+# Everything below is deterministic. The only model call anywhere on this ladder
+# is the RAG narration a `vector_answered` outcome hands off to -- and that
+# narrates document text, it never supplies a figure. Hard rule 3.
+# ---------------------------------------------------------------------------
+
+# Predicates on these columns say WHICH invoices the question is about. Every
+# other predicate narrows within them (a line-item word, a status, an amount)
+# and is the part most likely to be wrong when the model turned an invoice
+# attribute into a line-item keyword (the Gap 413 shape).
+_ZERO_ROW_IDENTIFYING_COLUMNS = frozenset(
+    {"vendor_name", "customer_name", "invoice_number", "po_number", "invoice_date", "due_date"}
+)
+# Columns the probe carries over untouched, because dropping them would widen
+# the question, not narrow it.
+_ZERO_ROW_CARRIED_COLUMNS = frozenset({"tenant_id", "flow_direction"})
+# The two columns a typo'd name could have been meant for.
+_ZERO_ROW_ENTITY_COLUMNS = ("vendor_name", "customer_name")
+_ZERO_ROW_NAME_MATCH_CUTOFF = 0.75
+_ZERO_ROW_MAX_CANDIDATES = 3
+_ZERO_ROW_PROBE_LIMIT = 25
+
+
+def _strip_like_wildcards(value: str) -> str:
+    return (value or "").strip().strip("%").strip()
+
+
+def _diagnose_zero_rows(generated_sql: str | None, dialect_name: str) -> dict:
+    """Split a zero-row query's WHERE clause into what identifies and what narrows.
+
+    Returns `{"identifying": [sql, ...], "narrowing": bool, "entities":
+    [(column, literal), ...], "parsed": bool}`. `identifying` are the predicate
+    SQL strings (rendered back in the bound dialect) on the columns in
+    `_ZERO_ROW_IDENTIFYING_COLUMNS`; `entities` are the vendor/customer literals
+    they compared against, wildcards stripped, for the name-matching step.
+
+    Only top-level AND-joined predicates are read. An OR group is treated as one
+    opaque predicate and classified by whether every column it touches is
+    identifying -- rule 4a's `(INBOUND AND vendor LIKE) OR (OUTBOUND AND customer
+    LIKE)` shape counts as identifying, a rule 6b four-column category group
+    (tags/items in it) counts as narrowing. Parse failure returns
+    `parsed=False` and empty lists: the ladder then skips straight to the vector
+    probe and the ask-back, it never guesses at the SQL.
+    """
+    # `identifying_entities` counts predicates on the entity-identifying columns
+    # specifically (not the carried tenant/flow_direction ones). The probe only
+    # makes sense when it is >= 1: with nothing identifying, "drop the
+    # narrowing" would mean "return every invoice the tenant has".
+    out = {"identifying": [], "identifying_entities": 0, "narrowing": False, "entities": [], "parsed": False}
+    if not generated_sql:
+        return out
+    try:
+        import sqlglot
+        import sqlglot.expressions as sg_exp
+
+        dialect = _sqlglot_dialect_for(dialect_name)
+        tree = sqlglot.parse_one(generated_sql, read=dialect)
+        select = next(iter(tree.find_all(sg_exp.Select)), None)
+        where = select.args.get("where") if select is not None else None
+        if where is None:
+            return out
+        out["parsed"] = True
+
+        def _columns_in(node) -> set:
+            return {c.name.lower() for c in node.find_all(sg_exp.Column) if c.name}
+
+        def _conjuncts(node):
+            if isinstance(node, sg_exp.Paren):
+                yield from _conjuncts(node.this)
+            elif isinstance(node, sg_exp.And):
+                yield from _conjuncts(node.this)
+                yield from _conjuncts(node.expression)
+            else:
+                yield node
+
+        for pred in _conjuncts(where.this):
+            cols = _columns_in(pred)
+            if not cols:
+                out["narrowing"] = True
+                continue
+            if cols <= _ZERO_ROW_CARRIED_COLUMNS:
+                # tenant_id / flow_direction: kept by the probe, not classified.
+                out["identifying"].append(pred.sql(dialect=dialect))
+                continue
+            if cols <= (_ZERO_ROW_IDENTIFYING_COLUMNS | _ZERO_ROW_CARRIED_COLUMNS):
+                out["identifying"].append(pred.sql(dialect=dialect))
+                out["identifying_entities"] += 1
+                # Pull the literal a vendor/customer name was compared against.
+                for leaf in pred.find_all(sg_exp.Like, sg_exp.ILike, sg_exp.EQ):
+                    leaf_cols = _columns_in(leaf)
+                    if not (leaf_cols & set(_ZERO_ROW_ENTITY_COLUMNS)):
+                        continue
+                    col = next(iter(leaf_cols & set(_ZERO_ROW_ENTITY_COLUMNS)))
+                    lit = next(iter(leaf.expression.find_all(sg_exp.Literal)), None) \
+                        if leaf.expression is not None else None
+                    if lit is None:
+                        lit = next(iter(leaf.find_all(sg_exp.Literal)), None)
+                    if lit is not None and lit.is_string:
+                        value = _strip_like_wildcards(str(lit.this))
+                        if value:
+                            out["entities"].append((col, value))
+            else:
+                out["narrowing"] = True
+    except Exception:  # noqa: BLE001 -- a diagnosis that cannot parse says so
+        logger.debug("C3: zero-row diagnosis could not parse the query", exc_info=True)
+        return {"identifying": [], "identifying_entities": 0, "narrowing": False, "entities": [], "parsed": False}
+    return out
+
+
+def _probe_identifiers(
+    identifying: list, tenant_id: str, db_session, snapshot: list | None = None
+) -> str | None:
+    """Re-run only the identifying predicates. Rows => the narrowing was wrong.
+
+    Goes through `execute_generated_sql`, not a raw execute, so the AST tenant
+    guard (Gaps 414/417) applies to the probe exactly as it does to the model's
+    own query -- and because the probe's WHERE is built from the model's own
+    predicates, a query the guard would have rejected is never probed either.
+    The tenant predicate is added explicitly rather than trusted to be among the
+    carried-over predicates.
+    """
+    if not identifying:
+        return None
+    where = " AND ".join(f"({p})" for p in identifying)
+    sql = (
+        "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, "
+        "due_date, status, grand_total, currency FROM invoice "
+        f"WHERE tenant_id = '{tenant_id}' AND {where} "
+        f"ORDER BY invoice_date DESC LIMIT {_ZERO_ROW_PROBE_LIMIT}"
+    )
+    try:
+        result = execute_generated_sql(sql, tenant_id, db_session, snapshot=snapshot)
+    except Exception as e:  # noqa: BLE001 -- the probe is best effort, never fatal
+        logger.info("C3: identifier probe did not run (%s)", type(e).__name__)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return None
+    if not result or result.strip() == NO_RECORDS_FOUND:
+        return None
+    return result
+
+
+def _distinct_entity_names(tenant_id: str, db_session) -> list[str]:
+    """Every vendor and customer name this tenant has, for the typo matcher."""
+    try:
+        import sqlalchemy as _sa
+        from uuid import UUID as _UUID  # local, matching this module's other helpers
+
+        from models import Invoice
+
+        tenant_uuid = tenant_id if not isinstance(tenant_id, str) else _UUID(tenant_id)
+        names: set[str] = set()
+        for column in (Invoice.vendor_name, Invoice.customer_name):
+            rows = db_session.execute(
+                _sa.select(column).where(Invoice.tenant_id == tenant_uuid).distinct()
+            ).all()
+            names.update(str(r[0]).strip() for r in rows if r[0])
+        return sorted(names)
+    except Exception:  # noqa: BLE001
+        logger.debug("C3: could not list entity names", exc_info=True)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return []
+
+
+def _nearest_entity_names(literal: str, names: list[str]) -> list[str]:
+    """The stored names closest to what the user typed, best first.
+
+    `difflib` on lower-cased text, cutoff 0.75. Deliberately no auto-correction
+    at any score: the founder's rule is that every recovery ends in a proposal
+    the user confirms, because a confident answer about the wrong vendor is
+    worse than one extra click.
+    """
+    import difflib
+
+    if not literal or not names:
+        return []
+    lowered = {n.lower(): n for n in names}
+    hits = difflib.get_close_matches(
+        literal.lower(), list(lowered), n=_ZERO_ROW_MAX_CANDIDATES, cutoff=_ZERO_ROW_NAME_MATCH_CUTOFF
+    )
+    return [lowered[h] for h in hits]
+
+
+def _resend_text(user_message: str, literal: str, candidate: str) -> str:
+    """The user's question with the typo replaced -- what one click will send."""
+    if literal:
+        pattern = re.compile(re.escape(literal), re.IGNORECASE)
+        if pattern.search(user_message or ""):
+            return pattern.sub(candidate, user_message, count=1)
+    return f"{user_message} (vendor: {candidate})"
+
+
+def _zero_rows_clarification(user_message: str, entities: list, candidates_by_literal: dict) -> dict:
+    """The proposal or ask-back, in the Feature 26 clarification wire shape."""
+    options = []
+    for _col, literal in entities:
+        for candidate in candidates_by_literal.get(literal, []):
+            options.append(
+                {
+                    "intent": "resend",
+                    "label": f"Yes \u2014 {candidate}",
+                    "text": _resend_text(user_message, literal, candidate),
+                }
+            )
+    # Dedupe by text, keep order, cap.
+    seen, deduped = set(), []
+    for o in options:
+        if o["text"] not in seen:
+            seen.add(o["text"])
+            deduped.append(o)
+    options = deduped[:_ZERO_ROW_MAX_CANDIDATES]
+
+    typed = ", ".join(f"'{lit}'" for _c, lit in entities) if entities else ""
+    if options:
+        names = ", ".join(o["label"].replace("Yes \u2014 ", "") for o in options)
+        message = (
+            f"I couldn't find any invoices for {typed}. Did you mean {names}? "
+            "Pick one and I'll answer for that name."
+        )
+    elif typed:
+        message = (
+            f"No vendor or customer resembles {typed}, and nothing in your documents "
+            "mentions it. Check the spelling, or give me an invoice number."
+        )
+    else:
+        message = (
+            "No invoices matched that question. Try naming a vendor, an invoice number, "
+            "or a wider date range."
+        )
+    payload = {"message": message}
+    if options:
+        payload["options"] = options
+    return payload
 
 
 def run_sql_generation_loop(
@@ -3198,6 +3886,53 @@ def run_sql_generation_loop(
             fallback_recovered = True
             zero_result = False
 
+    # C3 (Feature 6.1): zero rows is a diagnosis, never an answer. Runs only
+    # when both Gap 305 fallbacks above came up empty. Every step is
+    # deterministic; the only model call is the RAG narration a
+    # `vector_answered` outcome hands off to, and that narrates text.
+    # A Gap 305 fallback that already recovered the turn is labelled too, so the
+    # diagnosis field describes every zero-row turn, not only the ones this
+    # ladder handled -- Q1 (is RAG rare because the router over-routes?) needs
+    # the whole population.
+    diagnosis = "gap305_fallback" if fallback_recovered else ""
+    clarification = None
+    vector_chunks = None
+    if zero_result and generated_sql:
+        dx = _diagnose_zero_rows(generated_sql, _sql_dialect_name(db_session))
+        # 1-2. Identifying predicates alone. Rows => the narrowing was the wrong
+        # part, and the full-record path downstream answers from the whole row.
+        if dx["narrowing"] and dx["identifying_entities"] >= 1:
+            probed = _probe_identifiers(dx["identifying"], tenant_id, db_session, snapshot=snapshot)
+            if probed:
+                logger.info("C3: zero rows; identifying predicates alone matched -- narrowing dropped")
+                db_result = probed
+                fallback_recovered = True
+                zero_result = False
+                diagnosis = "narrowing_dropped"
+        # 3. The documents. Only when nothing was identified.
+        if zero_result:
+            try:
+                chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
+            except Exception:  # noqa: BLE001 -- a probe that fails is a probe that found nothing
+                logger.debug("C3: vector probe failed", exc_info=True)
+                chunks = []
+            if chunks:
+                logger.info("C3: zero rows; %d document chunks answer the textual question", len(chunks))
+                vector_chunks = list(chunks)
+                diagnosis = "vector_answered"
+        # 4-5. A proposal, or an ask-back.
+        if zero_result and diagnosis != "vector_answered":
+            candidates_by_literal = {}
+            if dx["entities"]:
+                names = _distinct_entity_names(tenant_id, db_session)
+                for _col, literal in dx["entities"]:
+                    found = _nearest_entity_names(literal, names)
+                    if found:
+                        candidates_by_literal[literal] = found
+            clarification = _zero_rows_clarification(user_message, dx["entities"], candidates_by_literal)
+            diagnosis = "clarified_with_candidates" if candidates_by_literal else "no_candidates"
+            logger.info("C3: zero rows; %s", diagnosis)
+
     return SqlGenerationOutcome(
         generated_sql=generated_sql,
         db_result=db_result,
@@ -3205,6 +3940,9 @@ def run_sql_generation_loop(
         zero_result=zero_result,
         zero_result_fallback_recovered=fallback_recovered,
         attempts=attempts_made,
+        zero_result_diagnosis=diagnosis,
+        clarification=clarification,
+        vector_chunks=vector_chunks,
     )
 
 
@@ -3799,7 +4537,7 @@ def _run_attached_document_turn(
     # `compare_reference_to_invoices()` above and is handed to the model as JSON
     # it is forbidden to add to. That is the control (hard rule 3); a temperature
     # would only have looked like one.
-    llm = get_llm()
+    llm = _fast_llm()  # A2: narration only -- every figure comes from compare_reference_to_invoices()
     system_prompt = (
         f"{PERSONA_BLOCK}\n\n"
         "You are reporting the result of a comparison between a reference document "
@@ -3824,7 +4562,7 @@ def _run_attached_document_turn(
     )
     try:
         with tracked_llm_call("chat.attachment_compare", llm=llm, tenant_id=tenant_id):
-            res = llm.invoke(system_prompt)
+            res = _answer_text(llm, system_prompt, progress)  # A3: streams when it can
         response_text = res.content
         turn.status = telemetry.TURN_STATUS_SUCCESS
     except Exception as e:
@@ -4067,7 +4805,7 @@ def _run_attachment_content_branch(
     # Plain `get_llm()`, no sampling parameters — Gap 367. What makes this
     # branch safe is that it produces no computed figure at all, not a
     # temperature.
-    llm = get_llm()
+    llm = _fast_llm()  # A2: narration only -- this branch produces no computed figure at all
     system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
 {CONTENT_BRANCH_PROMPT_MARKER}. The user attached it to this conversation; it is
@@ -4110,7 +4848,7 @@ The user asked: {_wrap_user_input(user_message, tenant_id)}
             tenant_id=tenant_id,
             chunk_count=len(spans),
         ):
-            res = llm.invoke(system_prompt)
+            res = _answer_text(llm, system_prompt, progress)  # A3: streams when it can
         response_text = res.content
         turn.status = telemetry.TURN_STATUS_SUCCESS
         turn.stop_reason = "attachment_content_answered"
@@ -4245,7 +4983,20 @@ def _run_query_agent(
             progress=progress,
         )
 
-    cached = get_cached_answer(tenant_id, user_message)
+    # C2 (Feature 6.1): a narrowing follow-up is not cacheable and must not be
+    # answered from the cache. The key is `(tenant_id, normalized_query)` with no
+    # session and no turn history, so "what about the second one?" asked in this
+    # session would be served the answer another session got for the same six
+    # words -- about entirely different rows. `_is_narrowing_followup()` already
+    # exists and already recognises exactly this shape; it simply was never
+    # consulted here.
+    #
+    # A skipped cache read costs one normal turn. A wrong cache hit is a confident
+    # answer about someone else's question, which is the failure mode this whole
+    # review exists to remove.
+    cached = None if _is_narrowing_followup(user_message) else get_cached_answer(
+        tenant_id, user_message
+    )
     if cached is not None:
         logger.info("Serving cached answer for tenant %s (Task 6.11 semantic cache hit)", tenant_id)
         # Gap 302: a cache hit is a real turn the user took and must appear in
@@ -4300,6 +5051,10 @@ def _run_query_agent(
     route = classify_query(user_message, tenant_id=str(tenant_id))
     logger.info("Selected Route: %s", route)
     turn.route = route
+    # C3 (Feature 6.1): set by the SQL branch when zero rows were diagnosed as
+    # a textual question (chunks to narrate) or as needing the user's confirmation.
+    forced_chunks = None
+    c3_clarification = None
     progress("route_selected", route=route)
 
     # Gap 237 step 2: the previous turn's exact query, when there was one. Needed
@@ -4342,7 +5097,13 @@ def _run_query_agent(
         turn.route = route
         turn.stop_reason = "route_override_followup"
 
-    llm = get_llm()
+    llm = _generation_llm()  # A1: reasoning budget for generation; A2 must never touch it
+    # A2: a SECOND handle, not a replacement. `llm` above stays on the
+    # reasoning deployment because `run_sql_generation_loop()` uses it and
+    # generation is the one call in this turn that genuinely reasons -- item A1
+    # tunes its `reasoning_effort` separately. Only the two calls that phrase
+    # an already-computed answer move: `chat.sql_summary` and `chat.rag_answer`.
+    fast_llm = _fast_llm()
     response_text = ""
     generated_sql = None
     citations = []
@@ -4407,6 +5168,27 @@ def _run_query_agent(
         turn.sql_attempts = outcome.attempts
         turn.zero_result = outcome.zero_result
         turn.zero_result_fallback_recovered = outcome.zero_result_fallback_recovered
+        turn.zero_result_diagnosis = outcome.zero_result_diagnosis
+
+        # C3 (Feature 6.1): a zero-row query was diagnosed, not answered.
+        if outcome.clarification is not None:
+            # A proposal ("Did you mean X?") or an ask-back. No summary call: there
+            # is nothing to summarise, and narrating the sentinel is exactly the
+            # failure this replaces. Declined, because no fresh answer was given;
+            # the stop reason carries which rung of the ladder it stopped on.
+            c3_clarification = outcome.clarification
+            response_text = c3_clarification["message"]
+            route_succeeded = True
+            turn.status = telemetry.TURN_STATUS_DECLINED
+            turn.stop_reason = f"zero_rows_{outcome.zero_result_diagnosis}"
+        elif outcome.vector_chunks:
+            # The question is textual and the documents can answer it. Re-dispatch
+            # into the RAG branch with the chunks already fetched; that branch
+            # narrates text with citations and never computes a figure.
+            forced_chunks = outcome.vector_chunks
+            route = "RAG"
+            turn.route = route
+            turn.stop_reason = "zero_rows_vector_answered"
         # Gap 304 half (2). Both halves of the evidence, in the same shape
         # `scripts/run_agent_eval.py::_ToolOutputRecorder` renders for the golden
         # bank ("DATABASE RESULTS:" / the raw SQL), so a production faithfulness
@@ -4534,12 +5316,12 @@ User Query: {user_message}
                     # a well-formed rate with no separate denominator to build.
                     with tracked_llm_call(
                         "chat.sql_summary",
-                        llm=llm,
+                        llm=fast_llm,
                         tenant_id=tenant_id,
                         zero_result=outcome.zero_result,
                         zero_result_fallback_recovered=outcome.zero_result_fallback_recovered,
                     ):
-                        final_res = llm.invoke(summary_prompt)
+                        final_res = _answer_text(fast_llm, summary_prompt, progress)  # A3
                     # One blank line before the heading, one after -- db_result
                     # itself now starts directly with the table (see
                     # execute_generated_sql's own comment on why the leading
@@ -4571,17 +5353,29 @@ User Query: {user_message}
                     turn.error_type = type(e).__name__
                     turn.stop_reason = "sql_summary_failed"
 
-    elif route == "RAG":
+    if route == "RAG":  # a plain `if`, not `elif`: C3 re-dispatches here from the SQL branch
         # Vector search (Long-term semantic facts)
         progress("searching_documents")
-        chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
+        # C3: chunks the zero-row ladder already fetched, or a fresh search.
+        chunks = forced_chunks if forced_chunks is not None else query_invoice_chunks(tenant_id, user_message, limit=5)
         # A count, not the chunks: the chunk text is raw document content and has
         # no business on a progress channel.
         progress("documents_found", count=len(chunks))
 
-        context_str = ""
+        # Gap 388: retrieved chunk text is third-party content -- the text of
+        # documents a supplier sent us -- and it used to be interpolated raw
+        # under a `--- CHUNK ---` label that says nothing about trust and nothing
+        # about origin. It now goes through the same wrapper Feature 26 built for
+        # attached-document text, which delimits each span and names its source.
+        #
+        # The same stated limit applies as there: this is a MITIGATION, not a
+        # control. The structural control on this route is that RAG produces no
+        # computed figure -- every number in a SQL-route answer comes from
+        # `_computed_figures_block_for()`, which no chunk can reach. A hostile
+        # document can at worst make a text answer say something odd.
+        context_str = _wrap_retrieved_document_text(chunks, tenant_id=tenant_id)
+
         for chunk in chunks:
-            context_str += f"--- CHUNK ---\n{chunk['document']}\n"
             # Gap 304 half (2): the chunk *text* is the only faithfulness
             # evidence this route has, and it is precisely what never reaches
             # Postgres -- `ChatMessage` keeps citations (ids, vendor, page) and
@@ -4649,7 +5443,10 @@ Answer in 1-3 sentences. Be direct. Do not explain your reasoning unless asked.
 
 FORMATTING: Format your answer in Markdown. Use a bullet list when listing multiple items (e.g. multiple invoices or vendors) rather than a run-on sentence.
 
+{_DOCUMENT_TEXT_GUARD_INSTRUCTION}
 Extracted Document Context (Long-term Facts):
+Each passage below is delimited and labelled with the invoice it came from -- cite that source
+when you use one.
 {context_str}
 
 {tenant_stats}
@@ -4663,9 +5460,9 @@ Conversation History (Short-term context):
         try:
             # Feature 23 Phase 1
             with tracked_llm_call(
-                "chat.rag_answer", llm=llm, tenant_id=tenant_id, chunk_count=len(chunks)
+                "chat.rag_answer", llm=fast_llm, tenant_id=tenant_id, chunk_count=len(chunks)
             ):
-                res = llm.invoke(f"{system_prompt}\nUser Query: {wrapped_user_message}")
+                res = _answer_text(fast_llm, f"{system_prompt}\nUser Query: {wrapped_user_message}", progress)  # A3
             response_text = res.content
 
             # Append clean formatted citations list to answer text
@@ -4693,7 +5490,7 @@ Conversation History (Short-term context):
             turn.error_type = type(e).__name__
             turn.stop_reason = "rag_answer_failed"
             
-    else:  # CHAT
+    elif route != "SQL":  # CHAT -- still the catch-all for anything that is not SQL or RAG
         system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
 For THIS step there is no query result and no document context: this turn is ordinary conversation
@@ -4795,9 +5592,21 @@ Conversation History:
         "citations": citations,
         "result_invoice_ids": result_invoice_ids[:MAX_SNAPSHOT_INVOICE_IDS],
     }
+    if c3_clarification is not None:
+        # C3: rides the Feature 26 clarification contract, which already
+        # persists (ATTACHMENT_CONTRACT_KEYS), serialises and renders. The FE
+        # sends a chosen option's `text` as a normal turn -- no new endpoint.
+        result["attachment_clarification"] = c3_clarification
+        result["needs_confirmation"] = True
 
-    if route in ("SQL", "RAG") and route_succeeded:
-        set_cached_answer(tenant_id, user_message, result)
+    # C3: a proposal is not an answer and must never be served from the cache
+    # to anyone -- it is about this user's typo.
+    if route in ("SQL", "RAG") and route_succeeded and c3_clarification is None:
+        # C2: symmetric with the read guard above. Skipping only the read would
+        # still let this session's answer to "and the other one?" sit in the cache
+        # under a key that means something different to every other session.
+        if not _is_narrowing_followup(user_message):
+            set_cached_answer(tenant_id, user_message, result)
 
     # Gap 304 half (2): attached AFTER the cache write, deliberately. Two
     # consequences, both wanted:

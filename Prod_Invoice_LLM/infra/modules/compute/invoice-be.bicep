@@ -9,6 +9,9 @@ param keyVaultName string
 param chromaHost string
 param azureOpenAiEndpoint string
 param azureOpenAiDeploymentName string
+
+@description('Feature 6.1 A2: fast, non-reasoning deployment for routing, summarising and narration. Empty = use azureOpenAiDeploymentName.')
+param azureOpenAiFastDeploymentName string = ''
 param azureDocIntelEndpoint string
 
 // Gap 8: required for Clerk JWT verification. Without CLERK_JWKS_URL,
@@ -112,6 +115,9 @@ param enableGenericDocChat bool = false
 
 @description('Feature 26 E-5 / task H7 — route an attachment chat turn through the Redis-backed async queue instead of answering it synchronously. REQUIRES a reachable REDIS_URL: `services/chat_queue.py::get_redis_client()` returns None when it is empty, so enabling this without Redis enqueues into nothing. Declared here for documentation and later rollout; dev has no Redis deployed as of 2026-09-03, so it stays false.')
 param enableAsyncChatQueue bool = false
+
+@description('Feature 6.1 A3: stream phrasing calls as progress events. Off = .invoke().')
+param enableChatStreaming bool = false
 
 @description('Subscription ID services/azure_cost.py and ops_recommendation.py read Cost Management / Resource Graph from. Declared in config.py but never wired here until now -- without it, the cost sweep and the nightly recommendation pass cost/container_health categories both fail with "not configured".')
 param azureSubscriptionId string = subscription().subscriptionId
@@ -258,8 +264,24 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: chromaHost
             }
             {
+              // Gap 422: 80, NOT 8000. `chromaHost` is an Azure Container Apps
+              // *internal ingress* FQDN, and ACA publishes internal ingress on 80
+              // (http) and 443 (https). The chromadb app's `targetPort: 8000` is
+              // the port its container listens on inside the replica -- it is not
+              // what the FQDN serves. Connecting to <fqdn>:8000 reaches nothing
+              // and hangs until the client timeout fires.
+              //
+              // This was 8000 from at least revision --0000116 to --0000122, and
+              // every one of those revisions fell back to an empty in-container
+              // PersistentClient, so dev vector search returned nothing for the
+              // whole period. It looked like a cold-start race because the
+              // failure landed at ~3.1s against a 3.0s connect budget; raising
+              // that budget to 15s changed nothing except how long it took to
+              // fail, which is what finally ruled the race out.
+              //
+              // If this is ever changed to 443, set CHROMA_USE_SSL true with it.
               name: 'CHROMA_PORT'
-              value: '8000'
+              value: '80'
             }
             {
               name: 'CLERK_SECRET_KEY'
@@ -300,6 +322,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
               value: azureOpenAiDeploymentName
+            }
+            {
+              name: 'AZURE_OPENAI_FAST_DEPLOYMENT_NAME'
+              value: azureOpenAiFastDeploymentName
             }
             {
               name: 'AZURE_DOC_INTEL_ENDPOINT'
@@ -442,6 +468,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
               // rather than discovered later (the BE Gap 402 lesson).
               name: 'ENABLE_ASYNC_CHAT_QUEUE'
               value: enableAsyncChatQueue ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_CHAT_STREAMING'
+              value: enableChatStreaming ? 'true' : 'false'
             }
           ]
           probes: [

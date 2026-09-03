@@ -874,22 +874,32 @@ def test_rule_6d_excludes_tax_component_terms(db_session):
     slightly longer list of literals was pasted in -- a plain re-list would
     pass a test that only checks "GST" is present without fixing the actual
     defect class."""
+    # Feature 6.1 C4.2 (2026-09-03): the CONCEPT no longer lives as prose inside
+    # rule 6d. It lives in code -- `detect_tax_component_term()` recognises the
+    # term, and the SCHEMA LINK block states the column as a fact before the
+    # model runs. Rule 6d itself now defers to that block. Same defect class
+    # guarded, one level earlier: a re-list of literals in the prompt cannot pass
+    # this, only a detector that generalises can.
+    for term in ("GST", "CGST", "SGST", "IGST", "VAT", "sales tax"):
+        assert query_agent.detect_tax_component_term(f"what {term} did we pay Rajesh Steel") == term, term
+    block = query_agent._schema_linking_block_for("whats the CGST we paid to Rajesh Steel")
+    assert "tax_amount" in block
+    assert "never search line items for a tax term" in block
     rule_sqlite = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
-    assert re.search(r"\bGST\b", rule_sqlite)  # plain "GST", not just as a substring of CGST/SGST/IGST
-    assert "CGST" in rule_sqlite and "SGST" in rule_sqlite and "IGST" in rule_sqlite
-    assert "tax_amount" in rule_sqlite
-    assert "no invoice found" in rule_sqlite.lower() or "doesn't exist" in rule_sqlite.lower()
+    assert "When the SCHEMA LINK names a column, select that column" in rule_sqlite
+    assert "do NOT search line items" in rule_sqlite
     # The generalizing instruction itself, not just a longer list of named terms --
     # this is what should catch the NEXT unlisted tax term too (TDS, cess, duty, ...).
-    assert "not just the specific ones" in rule_sqlite or "not a fixed list" in rule_sqlite
+    # (C4.2: the "principle, not a fixed list" language moved with the concept into
+    # `detect_tax_component_term`, whose parametrised check above IS the test of it.)
 
     pg_session = MagicMock()
     pg_session.get_bind.return_value.dialect.name = "postgresql"
     rule_pg = query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
-    assert re.search(r"\bGST\b", rule_pg)
-    assert "CGST" in rule_pg and "SGST" in rule_pg and "IGST" in rule_pg
-    assert "tax_amount" in rule_pg
-    assert "not just the specific ones" in rule_pg or "not a fixed list" in rule_pg
+    # Both dialect rules defer to the same dialect-independent SCHEMA LINK fact,
+    # so the SQLite test path and the Postgres live path cannot diverge on it.
+    assert "When the SCHEMA LINK names a column, select that column" in rule_pg
+    assert "do NOT search line items" in rule_pg
 
 
 @pytest.mark.parametrize("message,expected", [
@@ -1436,12 +1446,23 @@ def test_query_results_have_exactly_one_blank_line_before_and_after_heading(db_s
     against a real seeded row, so this checks actual end-to-end formatting,
     not an isolated function in a vacuum."""
     _seed_invoice(db_session, invoice_number="US-1", grand_total=100.0)
+    # Both UUID spellings, deliberately (the repo's SQLite idiom -- see
+    # `_tenant_filter()` in test_rag.py): SQLite stores the tenant id dashless,
+    # so a dashed-only literal matches NOTHING here. Found 2026-09-03 by Feature
+    # 6.1 C3: this test had been passing on a zero-row result all along, because
+    # the heading it checks was appended even to the "No records found" sentinel.
+    # C3 turns a zero-row turn into an ask-back with no heading, which exposed it.
+    # With the row actually found, the test checks what its docstring says.
     llm = _RecordingLLM(
-        [MagicMock(sql=f"SELECT invoice_number, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")],
+        [MagicMock(sql=(
+            "SELECT invoice_number, grand_total, currency FROM invoice WHERE "
+            f"(tenant_id = '{MOCK_TENANT_ID}' OR tenant_id = '{MOCK_TENANT_ID.hex}')"
+        ))],
         summary="The total is USD 100.00.",
     )
     result = _run(db_session, llm, "what is the total", uuid4())
     content = result["content"]
+    assert "US-1" in content, "the seeded row was not found -- the test is not exercising a real result"
     assert "### Query Results\n\n" in content  # exactly one blank line after the heading
     assert "\n\n\n" not in content  # no triple-newline (= 2 blank lines) anywhere
 
@@ -1727,9 +1748,13 @@ def test_rule_11_curates_columns_for_plain_details_questions(db_session):
     ])
     _run(db_session, llm, "give me the details of this invoice", uuid4())
     prompt = llm.prompts[0]
-    assert '11. "DETAILS" QUESTIONS ABOUT ONE SPECIFIC INVOICE' in prompt
-    assert "Do NOT select `items`, `tags`, or `sa_alerts` by default" in prompt
-    assert "short prose summary" in prompt
+    # Feature 6.1 C4.2 (2026-09-03): rule 11 is one line naming the projection,
+    # and the SCHEMA LINK block states it per question as a fact. Both must reach
+    # the SQL prompt for a details question.
+    assert '11. A "details"/"tell me about"/"pull up" question' in prompt
+    assert "never items, tags or sa_alerts unless" in prompt
+    assert "details question -> select exactly this projection" in prompt
+    assert query_agent._DETAILS_PROJECTION in prompt
 
 
 def test_chat_route_declines_off_topic_requests(db_session):
@@ -1848,10 +1873,10 @@ def test_persona_reaches_the_sql_generation_prompt(db_session):
     # prepended to this prompt, it did not replace any of it.
     assert "Given the 'invoice' table schema:" in prompt
     assert "CRITICAL RULES:" in prompt
-    assert "11. \"DETAILS\" QUESTIONS ABOUT ONE SPECIFIC INVOICE" in prompt
+    assert '11. A "details"/"tell me about"/"pull up" question' in prompt  # C4.2 one-liner
     # Rule 7 is NOT the presentation rule and was deliberately kept: "also SELECT
     # the currency column" is SQL mechanics, not a persona statement.
-    assert "you MUST ALSO select the `currency` column" in prompt
+    assert "Always select `currency` alongside any monetary column" in prompt  # C4.2 one-liner
 
 
 def test_persona_reaches_the_sql_summary_prompt(db_session):
@@ -2418,7 +2443,18 @@ def test_a_name_lookup_that_genuinely_found_nothing_is_left_alone(db_session):
     )
 
     assert query_agent.category_search_phrases(name_lookup) == []
-    assert query_agent.NO_RECORDS_FOUND in result["content"]
+    # Feature 6.1 C3 (2026-09-03): the honest "no" is no longer the bare sentinel
+    # narrated as an answer. A name that matches nothing and resembles nothing the
+    # tenant has becomes an ask-back -- the user is told what was looked for and
+    # invited to correct it -- and the turn waits. The anti-false-positive point
+    # of this test is unchanged: nothing was re-searched to manufacture a match
+    # (no candidates were proposed, because "reverse charge mechanism" resembles
+    # no stored vendor), and no figure was invented.
+    assert query_agent.NO_RECORDS_FOUND not in result["content"]
+    assert "reverse charge mechanism" in result["content"].lower()
+    assert "spelling" in result["content"].lower()
+    assert result.get("needs_confirmation") is True
+    assert "options" not in (result.get("attachment_clarification") or {})
 
 
 def test_a_line_item_query_does_not_trigger_the_fallback():
@@ -2657,7 +2693,11 @@ def test_attribute_term_block_reaches_both_prompts(db_session):
     llm = _RecordingLLM([
         MagicMock(sql=f"SELECT discount_amount, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
-    _run(db_session, llm, "discount amount for apex consulting group", uuid4())
+    # `surfaced_rows=1`: a row must come back for the summary prompt to be built
+    # at all. Since Feature 6.1 C3 a zero-row turn is diagnosed and ends in an
+    # ask-back with no summary call -- which is correct, and not what this test
+    # is about. It is about the block reaching BOTH prompts on a normal turn.
+    _run(db_session, llm, "discount amount for apex consulting group", uuid4(), surfaced_rows=1)
     note = 'names the invoice attribute "discount amount" (column `discount_amount`)'
     assert note in llm.prompts[0]
     assert "do NOT search line-item descriptions" in llm.prompts[0]
@@ -2678,6 +2718,14 @@ def test_attribute_term_block_is_absent_for_a_genuine_line_item_question(db_sess
 def test_rule_6d_attribute_exemption_is_present_in_both_dialects():
     """Rule 6d is built per engine (Gap 253); the exemption has to be in both
     spellings or the SQLite test path and the Postgres live path diverge."""
+    # Feature 6.1 C4.2 (2026-09-03): the exemption is no longer a paragraph
+    # duplicated into two dialect constants -- it is one dialect-independent fact
+    # in the SCHEMA LINK block, and both dialect rules defer to it. The property
+    # being guarded is unchanged: the two engines cannot diverge on it.
     for rule in (query_agent._LINE_ITEM_RULE_POSTGRES, query_agent._LINE_ITEM_RULE_SQLITE):
-        assert "The SAME EXEMPTION applies to ANY attribute of the invoice document itself" in rule
-        assert "A property is NEVER a description keyword" in rule
+        assert "When the SCHEMA LINK names a column, select that column" in rule
+        assert "do NOT search line items" in rule
+    block = query_agent._schema_linking_block_for("discount amount for apex consulting group")
+    assert "`discount_amount`" in block
+    assert "never that the invoice does not exist" in block
+    assert "Do NOT search line items for this word" in block

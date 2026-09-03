@@ -59,6 +59,24 @@ class Settings(BaseSettings):
     # the bar and clearing it are two different jobs, and the second one belongs
     # to whoever holds the verification evidence.
     ENABLE_ASYNC_CHAT_QUEUE: bool = False
+
+    # Feature 6.1 item A3: stream the four *phrasing* calls of a chat turn --
+    # the SQL summary, the RAG answer and both Feature 26 narrations -- as
+    # `streaming` progress events carrying the partial text, so the browser
+    # renders the answer as it is written instead of after it is finished.
+    #
+    # Only those four. SQL generation is structured output (a schema, not prose)
+    # and every figure a summary can state was computed by
+    # `_computed_figures_block_for()` / `_full_record_block_for()` before the
+    # call began (hard rule 3), so streaming changes WHEN text arrives, never
+    # what it says.
+    #
+    # OFF by default and inert when off: every site falls back to `.invoke()`.
+    # It is also inert on the synchronous HTTP path, which has no progress
+    # consumer to stream to -- only the async queue path (`ENABLE_ASYNC_CHAT_QUEUE`)
+    # has an SSE channel. Measured value is bounded: about 2s of *perceived*
+    # latency on a 27.8s median turn, which is why it is last in Block A.
+    ENABLE_CHAT_STREAMING: bool = False
     # Feature 27 (`docs/feature_27_generic_extraction.md`): make document type an
     # explicit, deterministic decision made *before* extraction, and make the
     # schema, the prompt and the verification rubric a function of it. Off, the
@@ -355,6 +373,53 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_API_VERSION: str = "2024-02-15-preview"
+    # Feature 6.1 item A2: the deployment used for the *non-reasoning* half of a
+    # chat turn -- routing, summarising rows already computed, answering from
+    # retrieved text, and narrating a diff table deterministic code built. None of
+    # those reasons about anything, so paying a reasoning model's thinking tokens
+    # for them buys nothing and costs seconds: measured 2026-09-03, classify 3.1s
+    # and summary 3.6s of a 27.8s median turn.
+    #
+    # EMPTY BY DEFAULT, deliberately -- empty means `_fast_llm()` returns exactly
+    # what `get_llm()` returns, so an unset environment behaves bit-identically to
+    # before this existed. Set it to `gpt-4o` to turn A2 on.
+    #
+    # What must stay on the reasoning deployment: SQL generation. It is the one
+    # call in the turn that genuinely reasons -- schema, joins, the repair loop --
+    # and item A1 tunes its `reasoning_effort` separately. Never point this at the
+    # generation path.
+    #
+    # Safe because no figure is at stake: `_computed_figures_block_for()` and
+    # `_full_record_block_for()` compute every number before the model sees it,
+    # and Feature 26's narration rule forbids stating a figure absent from the
+    # diff table. The model phrases; it does not decide (hard rule 3).
+    AZURE_OPENAI_FAST_DEPLOYMENT_NAME: str = ""
+
+    # Feature 6.1 item A1: the reasoning budget for SQL GENERATION only.
+    #
+    # Generation is the one call in a chat turn that genuinely reasons -- schema,
+    # joins, the three-attempt repair loop -- so unlike A2 it stays on the
+    # reasoning deployment. What it does not need is the *default* budget:
+    # measured 2026-09-03, generation was 15.6s of a 27.8s median turn and emitted
+    # 1,688 output tokens, most of them thinking rather than SQL.
+    #
+    # Valid values are whatever the deployment accepts ("low" / "medium" /
+    # "high"). EMPTY MEANS UNSET -- the parameter is not sent at all and the
+    # deployment's own default applies, which is exactly today's behaviour.
+    #
+    # The risk this carries, stated rather than discovered later: a cheaper
+    # reasoning budget still returns *a* query. It does not fail loudly; it fails
+    # by generating subtly worse SQL. The golden set is the only control, which is
+    # why this ships empty and is turned on against a measured before/after.
+    AZURE_OPENAI_SQL_REASONING_EFFORT: str = ""
+
+    # Feature 6.1 item A1, second half: an upper bound on generation output.
+    # 0 means unset -- no cap is sent, which is today's behaviour. A cap bounds
+    # the tail case where the model reasons at length and the turn stalls; it
+    # cannot make a correct query incorrect, only truncate an overlong one, and a
+    # truncated query fails loudly in `execute_generated_sql` rather than quietly.
+    AZURE_OPENAI_SQL_MAX_COMPLETION_TOKENS: int = 0
+
     AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-4o-mini"  # Azure uses deployment name instead of model name
     AZURE_DOC_INTEL_ENDPOINT: str = ""
     AZURE_DOC_INTEL_KEY: str = ""

@@ -8,6 +8,10 @@ import threading
 from typing import Callable, Optional
 from sentence_transformers import SentenceTransformer
 from config import get_settings
+# B1 (Feature 6.1): telemetry imports only `utils.logging_config`, so this is
+# not a cycle -- chroma_client is already imported by query_agent, which
+# imports telemetry itself.
+from telemetry import tracked_dependency
 from services.storage import download_pdf_from_storage
 
 logger = logging.getLogger(__name__)
@@ -563,6 +567,7 @@ def get_document_collection(tenant_id: str):
     )
 
 
+@tracked_dependency("rag.embeddings", "InProc")
 def get_embeddings(texts: list[str]) -> list[list[float]]:
     """
     Calculates embedding vectors for a list of texts (1024-dimensional, unit norm).
@@ -984,6 +989,7 @@ def get_all_invoice_chunks(invoice_id: str, tenant_id: str) -> list[dict]:
     return chunks
 
 
+@tracked_dependency("rag.vector_query", "Chroma")
 def query_invoice_chunks(tenant_id: str, query_text: str, limit: int = 5) -> list[dict]:
     """
     Query indexed invoice chunks. Isolation is structural (Gap 55) — each tenant has

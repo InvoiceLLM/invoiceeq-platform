@@ -100,7 +100,7 @@ test.describe("Gap 280: Async Chat Queue & Thinking States", () => {
     await page.getByText("Async Queue Test").click();
 
     // Type a question in the chat input
-    const input = page.getByPlaceholder("Ask a question about your invoices...");
+    const input = page.locator("#chat-input-textarea");
     await input.fill("What is hardware spend?");
     await page.keyboard.press("Enter");
 
@@ -109,6 +109,52 @@ test.describe("Gap 280: Async Chat Queue & Thinking States", () => {
 
     // Verify completed response renders
     await expect(page.getByText("Hardware spend is $45,000.00")).toBeVisible();
+  });
+
+  test("renders streamed partial text while the job is still processing (Feature 6.1 A3)", async ({ page }) => {
+    await stubShell(page);
+
+    await page.route(`**/api/chat/sessions/${SESSION_ID}/message`, (route) =>
+      route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "usr-2",
+          session_id: SESSION_ID,
+          role: "assistant",
+          content: "",
+          status: "queued",
+          job_id: JOB_ID,
+          created_at: new Date().toISOString(),
+        }),
+      })
+    );
+
+    // A stream that never completes: only `streaming` progress events. The
+    // bubble must show the partial answer, not a spinner label, and must not
+    // show it as a finished message.
+    await page.route(`**/api/chat/jobs/${JOB_ID}/stream`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          `data: {"job_id":"${JOB_ID}","status":"processing","step":"summarizing_results","details":"Summarizing results..."}\n\n` +
+          `data: {"job_id":"${JOB_ID}","status":"processing","step":"streaming","details":{"partial":"Hardware spend so far is"}}\n\n` +
+          `data: {"job_id":"${JOB_ID}","status":"processing","step":"streaming","details":{"partial":"Hardware spend so far is $45,000.00 across 3 invoices"}}\n\n`,
+      })
+    );
+
+    await page.goto("/chat");
+    await page.getByText("Async Queue Test").click();
+    const input = page.locator("#chat-input-textarea");
+    await input.fill("What is hardware spend?");
+    await page.keyboard.press("Enter");
+
+    const partial = page.getByTestId("chat-streaming-partial");
+    await expect(partial).toBeVisible();
+    await expect(partial).toContainText("Hardware spend so far is $45,000.00 across 3 invoices");
+    // Still in progress: no thumbs/feedback controls yet, and no completed bubble.
+    await expect(page.getByText("Analyzing query and documents...")).toHaveCount(0);
   });
 
   test("polling fallback activates when SSE connection is blocked", async ({ page }) => {
@@ -154,7 +200,7 @@ test.describe("Gap 280: Async Chat Queue & Thinking States", () => {
     await page.goto("/chat");
     await page.getByText("Async Queue Test").click();
 
-    const input = page.getByPlaceholder("Ask a question about your invoices...");
+    const input = page.locator("#chat-input-textarea");
     await input.fill("Test polling recovery");
     await page.keyboard.press("Enter");
 

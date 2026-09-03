@@ -232,6 +232,22 @@ CASES: list[GoldenCase] = [
         expected_invoice_numbers=(),  # no such vendor exists -- fetching anything is the bug
     ),
     GoldenCase(
+        case_id="zero_result_typo_vendor",
+        question="what is the total we were billed by Titan Steel Distributers",
+        expected_answer=(
+            "The vendor name is misspelt (Distributers / Distributors). A correct answer does "
+            "NOT invent a figure and does NOT say no such vendor exists: it says it could not "
+            "find that name and proposes 'Titan Steel Distributors' for the user to confirm. "
+            "A total, a zero, or a flat 'no records found' are all wrong."
+        ),
+        source="feature_6_rag.md RETRIEVAL HARDENING / C3 (test that proves it)",
+        why_on_file=(
+            "C3: zero rows is a diagnosis, never an answer. The founder's rule: every "
+            "recovery ends in a proposal the user confirms -- no silent auto-correction."
+        ),
+        expected_invoice_numbers=(),  # nothing is fetched until the user confirms the name
+    ),
+    GoldenCase(
         case_id="payment_terms_document",
         question="what does the vendor say about payment terms",
         expected_answer=(

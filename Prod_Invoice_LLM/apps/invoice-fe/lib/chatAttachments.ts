@@ -376,11 +376,19 @@ export interface AttachmentEvidenceSpan {
   distance?: number | null;
 }
 
-export type AttachmentClarificationIntent = "read" | "compare";
-
+/**
+ * "resend" (Feature 6.1 item C3): the SQL route's zero-row proposal -- "Did you
+ * mean Apex Consulting Group?" -- rides this same contract. Its options carry
+ * `text`, the user's question with the typo corrected, and the button sends that
+ * verbatim as a normal turn. The backend never auto-corrects; the click is the
+ * confirmation.
+ */
+export type AttachmentClarificationIntent = "read" | "compare" | "resend";
 export interface AttachmentClarificationOption {
   intent: string;
   label: string;
+  /** Present on "resend" options only: the exact message to send when chosen. */
+  text?: string;
 }
 
 /** The clarifying turn (E-1 as amended by B2), `query_agent.py` L3199. */
@@ -422,6 +430,10 @@ export const DEFAULT_CLARIFICATION_OPTIONS: AttachmentClarificationOption[] = [
 export const ATTACHMENT_INTENT_PHRASE: Record<AttachmentClarificationIntent, string> = {
   read: "Read the document and tell me what it says.",
   compare: "Compare it to my invoices.",
+  // Not used to compose: a "resend" option carries its own `text`. Kept so the
+  // Record stays exhaustive and a resend option with no text still sends something
+  // that reads as a confirmation rather than an empty message.
+  resend: "Yes, use that.",
 };
 
 /**
@@ -439,8 +451,11 @@ export const ATTACHMENT_INTENT_PHRASE: Record<AttachmentClarificationIntent, str
  */
 export function composeClarificationReply(
   originalQuestion: string | null | undefined,
-  intent: AttachmentClarificationIntent
+  intent: AttachmentClarificationIntent,
+  text?: string | null
 ): string {
+  // C3: a "resend" option IS the message. Nothing to compose.
+  if (intent === "resend" && text && text.trim()) return text.trim();
   const phrase = ATTACHMENT_INTENT_PHRASE[intent];
   const question = (originalQuestion ?? "").trim();
   if (!question) return phrase;
@@ -466,7 +481,7 @@ export function clarificationOptions(
 export function isKnownClarificationIntent(
   intent: string
 ): intent is AttachmentClarificationIntent {
-  return intent === "read" || intent === "compare";
+  return intent === "read" || intent === "compare" || intent === "resend";
 }
 
 // -----------------------------------------------------------------------------

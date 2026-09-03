@@ -170,6 +170,7 @@ def build_llm(
     *,
     model: str | None = None,
     max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
     api_version: str | None = None,
     allow_mock_fallback: bool = True,
 ):
@@ -227,6 +228,19 @@ def build_llm(
             }
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
+            # Feature 6.1 A1. Only passed when a caller actually asked for it:
+            # sending `reasoning_effort` to a non-reasoning deployment is an error,
+            # and every existing caller omits it, so omission has to stay the
+            # default. langchain-openai maps `max_tokens` to
+            # `max_completion_tokens` for reasoning deployments itself.
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            # Feature 6.1 A3: with streaming, Azure only reports token usage if
+            # asked to put it on the final chunk. Without this, every streamed
+            # call would log tokens_in=0 and B1's cached/reasoning counts would
+            # go dark on exactly the calls A1/A2/A4 are measured by. Harmless
+            # for `.invoke()`.
+            kwargs["stream_usage"] = True
             return AzureChatOpenAI(**kwargs)
         except Exception as e:
             if not allow_mock_fallback:
