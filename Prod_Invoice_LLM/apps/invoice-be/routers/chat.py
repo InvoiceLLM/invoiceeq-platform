@@ -21,7 +21,7 @@ from dependencies import (
     get_tenant_or_api_key_context,
     TenantContext,
 )
-from models import ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
+from models import ChatAttachment, ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
 from agents.query_agent import run_query_agent
 from services.online_quality_judge import submit_turn_judgement
 from utils.logging_config import request_id_ctx, trace_id_ctx
@@ -183,7 +183,80 @@ class MessageResponse(BaseModel):
     job_id: str | None = None  # Gap 280
     error_message: str | None = None  # Gap 280
 
+    # Feature 26 task H16 / amendment B12 (Gap 386): the attached-document answer
+    # contract (P2.8). Every key is Optional and every one defaults to None, so a
+    # turn that is not an attachment turn serialises byte-identically to before
+    # this change -- `exclude_none=True` on the model_dump below drops them
+    # entirely rather than emitting a wall of nulls.
+    #
+    # These are FLATTENED out of `ChatMessage.attachment_payload` by
+    # `_with_attachment_payload()` rather than nested under one key, because the
+    # FE types were written against P2.8's wire shape months before the column
+    # existed (`apps/invoice-fe/types/chat.ts:133/136/152`) and nesting would have
+    # forced an FE change for a backend storage decision.
+    attachment_confirmation: dict | None = None
+    attachment_comparison: dict | None = None
+    attachment_clarification: dict | None = None
+    suggested_actions: list | None = None
+    evidence: list | None = None
+    needs_confirmation: bool | None = None
+    # B10's three, declared now so the shape does not change again when H6b/H6c
+    # land. The agent does not emit them yet; they stay absent until it does.
+    line_items: list | None = None
+    unmatched: dict | None = None
+    reconciliation: dict | None = None
+
     model_config = ConfigDict(from_attributes=True)
+
+
+# Feature 26 H16 (Gap 386). The keys the agent may put on an attachment turn.
+# Kept as one tuple so the persist side and the serialise side cannot drift --
+# a key added to the agent and to only one of these two lists is exactly how the
+# contract silently loses a field again.
+ATTACHMENT_CONTRACT_KEYS: tuple[str, ...] = (
+    "attachment_confirmation",
+    "attachment_comparison",
+    "attachment_clarification",
+    "suggested_actions",
+    "evidence",
+    "needs_confirmation",
+    "line_items",
+    "unmatched",
+    "reconciliation",
+)
+
+
+def extract_attachment_payload(agent_output: dict) -> dict | None:
+    """Pull the answer-contract keys out of an agent result, or None.
+
+    None rather than {} when the turn produced no attachment keys: the column
+    means "not an attachment turn" in that case, and an empty dict would read as
+    "an attachment turn that answered nothing", which P2.8 defines as a bug
+    rather than a state. Keys the agent did not emit are ABSENT rather than null
+    -- P2.8's contract rule turns on absence (`attachment_comparison` absent on
+    the content branch is the assertion that no comparison ran).
+    """
+    payload = {k: agent_output[k] for k in ATTACHMENT_CONTRACT_KEYS if k in agent_output}
+    return payload or None
+
+
+def _with_attachment_payload(msg: ChatMessage) -> dict:
+    """Row -> MessageResponse kwargs, with the contract flattened back out."""
+    data = {
+        "id": msg.id,
+        "session_id": msg.session_id,
+        "role": msg.role,
+        "content": msg.content,
+        "generated_sql": msg.generated_sql,
+        "citations": msg.citations or [],
+        "created_at": msg.created_at,
+        "feedback": getattr(msg, "feedback", None),
+        "status": msg.status,
+        "job_id": msg.job_id,
+        "error_message": msg.error_message,
+    }
+    data.update(getattr(msg, "attachment_payload", None) or {})
+    return data
 
 @router.get("/sessions", response_model=list[SessionResponse])
 def list_sessions(
@@ -271,7 +344,7 @@ def delete_session(
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
-    """Delete a chat session and all its associated messages and feedback."""
+    """Delete a chat session and all its associated messages, feedback and attachments."""
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
     chat_session = db_session.exec(session_statement).first()
     
@@ -297,7 +370,32 @@ def delete_session(
         for f in feedbacks:
             db_session.delete(f)
         db_session.delete(msg)
-        
+
+    # Feature 26: attachments carry a real FK to `chatsession.id`, so they have
+    # to go before the session does -- on Postgres, leaving them is a
+    # ForeignKeyViolation and the delete fails outright; on SQLite it is a silent
+    # orphan, which is worse. This is the ONE place in the product where a
+    # ChatAttachment row is deleted today (task H8's TTL sweeper will be the
+    # second), so it is also where the vector chunks have to be removed: the row
+    # and its chunks in `chat_docs_{tenant_id}` are the same object stored twice,
+    # and deleting only the row leaves a searchable document nothing can ever
+    # reach or clean up (the reembed script scans `invoice_chunks_*` only and is
+    # structurally blind to chat-doc collections).
+    #
+    # Chunk deletion is best-effort by design: `delete_attachment_chunks()` logs
+    # and swallows its own errors, so an unreachable Chroma cannot turn "delete
+    # my conversation" into a 500 on a request whose real subject is Postgres
+    # rows. The residue in that case is orphaned chunks, which the sweeper can
+    # still remove; the alternative residue is a session the user cannot delete.
+    from services.chat_document_search import delete_attachment_chunks
+
+    attachments = db_session.exec(
+        select(ChatAttachment).where(ChatAttachment.session_id == session_id)
+    ).all()
+    for attachment in attachments:
+        delete_attachment_chunks(attachment.id, attachment.tenant_id)
+        db_session.delete(attachment)
+
     db_session.delete(chat_session)
     db_session.commit()
 
@@ -339,8 +437,15 @@ def get_session_messages(
     ).all()
     feedback_by_message = {f.message_id: f.vote for f in feedback_rows}
 
+    # Feature 26 H16 (Gap 386): `_with_attachment_payload()` rather than
+    # `model_validate(m)` -- the contract is stored as one `attachment_payload`
+    # dict on the row but serialises FLAT, per P2.8's wire shape, so it has to be
+    # spread back out here. `model_validate` reads attributes and would find no
+    # `attachment_confirmation` on the row, silently returning a reload with no
+    # confirmation card: the exact symptom Gap 386 exists to fix, reintroduced one
+    # layer down. This is the reload path P2.6.6 depends on.
     return [
-        MessageResponse.model_validate(m).model_copy(update={"feedback": feedback_by_message.get(m.id)})
+        MessageResponse(**{**_with_attachment_payload(m), "feedback": feedback_by_message.get(m.id)})
         for m in messages
     ]
 
@@ -398,19 +503,31 @@ def post_chat_message(
             db_session.add(chat_session)
 
     from config import get_settings
-    # Feature 26 (Gap 366): an attached-document turn runs synchronously. The
-    # queue path carries only (session_id, user_msg_id, content, tenant_id,
-    # job_id) -- `ChatQueueService.enqueue_chat_job()` and
-    # `handle_process_chat_job()` have no attachment parameter -- so enqueuing
-    # one would drop the attachment on the floor and answer the question as an
-    # ordinary chat turn, which is worse than answering it a bit more slowly.
-    # Threading the id through the worker is its own change to those two files
-    # and is deliberately not done here.
-    use_async_queue = (
-        get_settings().ENABLE_ASYNC_CHAT_QUEUE
-        and not sync
-        and payload.attachment_id is None
-    )
+    # Feature 26 E-5 / task H7. The `payload.attachment_id is None` condition is
+    # GONE, and this comment records what it was for rather than deleting the
+    # reasoning with it.
+    #
+    # Gap 366 forced attachment turns synchronous because the queue payload
+    # carried only (session_id, user_msg_id, content, tenant_id, job_id): with no
+    # attachment parameter anywhere in `enqueue_chat_job()`,
+    # `handle_process_chat_job()` or the worker's dispatch, enqueuing one would
+    # have dropped the attachment and answered the question as an ordinary chat
+    # turn -- the exact silent-drop failure the pre-route gate exists to prevent,
+    # and worse than answering a bit more slowly.
+    #
+    # H7 threads the id through all three, so the condition has nothing left to
+    # protect against. The CONSEQUENCE of removing it is the point (E-5): until
+    # now attachment turns bypassed Gap 364's per-tenant concurrency ceiling
+    # entirely, because that ceiling lives only in `enqueue_chat_job()` -- and
+    # this feature's content branch made those turns MORE expensive than the ones
+    # the ceiling governs (an embedding call, a vector search and a narration
+    # call). Leaving them unwired was widening an existing noisy-neighbour hole.
+    #
+    # `ENABLE_ASYNC_CHAT_QUEUE` is NOT flipped by this change and stays False
+    # until Gap 365 / D7's five criteria are cleared against real Postgres and
+    # real Redis. Wiring it means that when someone does flip it, attachment
+    # turns are already correct; it does not flip anything.
+    use_async_queue = get_settings().ENABLE_ASYNC_CHAT_QUEUE and not sync
     if use_async_queue:
         # Gap 280: Asynchronous Queue-based Dispatch
         from services.chat_queue import ChatQueueCapacityError, ChatQueueService
@@ -436,6 +553,11 @@ def post_chat_message(
                 content=payload.content,
                 tenant_id=str(tenant_context.tenant_id),
                 job_id=job_id,
+                # E-5/H7. The fourth and last site: payload key, handler
+                # parameter, worker dispatch, and here -- the caller that
+                # actually supplies it. Missing this one would leave the other
+                # three carrying a value nobody ever sets.
+                attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
             )
         except ChatQueueCapacityError as exc:
             # Gap 364: the tenant is at PER_TENANT_MAX_ACTIVE_CHAT. Undo the row
@@ -515,7 +637,13 @@ def post_chat_message(
         attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
     )
 
-    return MessageResponse.model_validate(assistant_msg)
+    # Feature 26 H16 (Gap 386): flatten the stored contract back onto the wire,
+    # exactly as the reload path does. `model_validate(assistant_msg)` reads
+    # attributes off the row and would find no `attachment_confirmation` there --
+    # the contract lives in the row's `attachment_payload` dict -- so it returned
+    # every key as null. That is Gap 386 surviving its own fix, one layer down,
+    # and it is why V-27 asserts on the response body rather than on the agent.
+    return MessageResponse(**_with_attachment_payload(assistant_msg))
 
 
 def run_sync_chat_turn(
@@ -611,6 +739,10 @@ def run_sync_chat_turn(
         citations=agent_output["citations"],
         result_invoice_ids=agent_output.get("result_invoice_ids") or [],
         status="completed",
+        # Feature 26 H16 (Gap 386): persist the answer contract with the turn that
+        # produced it. Before this, every attachment key the agent computed was
+        # dropped here and again at serialisation.
+        attachment_payload=extract_attachment_payload(agent_output),
     )
     db_session.add(assistant_msg)
     db_session.commit()

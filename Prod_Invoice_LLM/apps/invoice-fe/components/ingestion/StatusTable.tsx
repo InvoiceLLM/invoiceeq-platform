@@ -6,10 +6,11 @@ import {
   AlertTriangle, 
   Loader2, 
   ChevronDown, 
-  ChevronUp, 
-  FileText, 
+  ChevronUp,
+  FileText,
   ExternalLink,
-  Info
+  Info,
+  Tag
 } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "../../lib/utils";
@@ -30,6 +31,15 @@ export interface StatusItem {
    * grand_total so the real one can be threaded through.
    */
   currency?: string | null;
+  /**
+   * FE Gap 378 / BE Feature 27 (G11): the classified document type, when the
+   * backend has one. `GET /invoices/status/{id}` and the SSE payload both
+   * return `doc_type` only once BE task G9 (`Invoice.doc_type`) has landed and
+   * `ENABLE_GENERIC_EXTRACTION` is on -- so today it is always absent, and
+   * absent must render exactly as it did before this field existed. Optional,
+   * never defaulted: "the backend did not tell us" is not "OTHER".
+   */
+  docType?: string | null;
 }
 
 interface StatusTableProps {
@@ -104,7 +114,8 @@ export default function StatusTable({
             data.alerts || [],
             data.vendor_name,
             data.grand_total,
-            data.currency
+            data.currency,
+            data.doc_type
           );
         })
         .catch(() => {
@@ -150,7 +161,11 @@ export default function StatusTable({
             payload.invoice_id,
             payload.status,
             TERMINAL_STATUSES.includes(payload.status) ? 100 : 60,
-            payload.alerts || []
+            payload.alerts || [],
+            undefined,
+            undefined,
+            undefined,
+            payload.doc_type
           );
         }
       } catch (e) {
@@ -174,7 +189,8 @@ export default function StatusTable({
     alerts: any[] = [],
     vendorName?: string,
     total?: number,
-    currency?: string | null
+    currency?: string | null,
+    docType?: string | null
   ) => {
     setItems((prev) =>
       prev.map((item) =>
@@ -187,6 +203,12 @@ export default function StatusTable({
               vendorName,
               total,
               currency,
+              // FE Gap 378: unlike the fields above, a doc type already on the
+              // row is kept when the caller doesn't supply one. The SSE stream
+              // sends status transitions and nothing else, so overwriting with
+              // `undefined` here would make the badge appear on the mount
+              // reconciliation fetch and then vanish on the next SSE tick.
+              docType: docType ?? item.docType,
             }
           : item
       )
@@ -249,6 +271,40 @@ export default function StatusTable({
           </span>
         );
     }
+  };
+
+  /**
+   * FE Gap 378 / BE Feature 27 (G11): the classified document type, shown as a
+   * neutral slate pill beside the file's size line -- same pill geometry as the
+   * status badges above (rounded-full, 10px, bordered, colour/10 fill), a
+   * deliberately quieter colour because this is a fact about the document, not
+   * a pipeline outcome.
+   *
+   * Returns null for a missing/blank type, which is the case on every row today
+   * (BE G9 has not landed, so nothing persists or returns `doc_type` yet). No
+   * column header is added: the "Type" column was removed on purpose in FE Gap
+   * 113 item 6 because it was the constant string "PDF" on every row, and a
+   * header that is empty for every row would repeat that mistake.
+   */
+  const getDocTypeBadge = (docType?: string | null) => {
+    if (!docType || !docType.trim()) return null;
+    const label = docType
+      .trim()
+      .toLowerCase()
+      .split("_")
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+    return (
+      <span
+        data-testid="doc-type-badge"
+        title={`Document type classified by extraction: ${docType}`}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/10 border border-slate-500/20 text-slate-300"
+      >
+        <Tag className="w-3 h-3" />
+        {label}
+      </span>
+    );
   };
 
   const toggleRowExpansion = (id: string) => {
@@ -343,6 +399,12 @@ export default function StatusTable({
                           <div className="text-[10px] text-slate-500 font-mono">
                             PDF &middot; {formatFileSize(item.size)}
                           </div>
+                          {/* FE Gap 378: only rendered when the backend
+                              actually returned a doc_type -- absent (every row
+                              today) leaves this cell byte-identical to before. */}
+                          {item.docType && (
+                            <div className="mt-1">{getDocTypeBadge(item.docType)}</div>
+                          )}
                         </div>
                       </div>
                     </td>

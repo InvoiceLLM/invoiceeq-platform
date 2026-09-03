@@ -1,0 +1,38 @@
+=== run 3, 2026-09-03 (16 failed / 2684 passed / 1 skipped) ===
+FAILED tests/test_chat_training.py::test_snapshot_is_persisted_on_the_assistant_message
+FAILED tests/test_connectors.py::test_connectors_status_google_drive_only_on_postgres
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[cost_health_workbook.json-container-status-90.0-70.0]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[cost_health_workbook.json-cost-trend-budget-100.0-80.0]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d1-latest-pass-rate-0.6-0.75]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d2-faithfulness-0.7-0.85]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d2-accuracy-0.75-0.9]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d4-cost-per-turn-0.02-0.01]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-e1-alert-recall-80.0-100.0]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-b1-error-rate-5.0-2.0]
+FAILED tests/test_rag.py::test_process_crash_during_agent_leaves_no_orphan_user_message
+FAILED tests/test_rag.py::test_agent_internal_rollback_does_not_drop_the_user_message
+FAILED tests/test_rag.py::test_agent_failure_still_pairs_a_fallback_reply_with_the_user_turn
+FAILED tests/test_rag.py::test_rag_citations_drop_ids_with_no_matching_invoice_row
+FAILED tests/test_workflow_drive_archive.py::test_approve_archives_to_drive_on_postgres
+FAILED tests/test_workflow_email_summary.py::test_approve_sends_email_summary_on_postgres
+
+=== baseline, end of run 2 (16 failed / 2607 passed / 1 skipped) ===
+FAILED tests/test_chat_training.py::test_snapshot_is_persisted_on_the_assistant_message
+FAILED tests/test_connectors.py::test_connectors_status_google_drive_only_on_postgres
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[cost_health_workbook.json-container-status-90.0-70.0]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[cost_health_workbook.json-cost-trend-budget-100.0-80.0]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d1-latest-pass-rate-0.6-0.75]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d2-faithfulness-0.7-0.85]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d2-accuracy-0.75-0.9]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-d4-cost-per-turn-0.02-0.01]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-e1-alert-recall-80.0-100.0]
+FAILED tests/test_ops_recommendation.py::test_each_band_is_still_the_live_panels_band[ai_control_tower_workbook.json-b1-error-rate-5.0-2.0]
+FAILED tests/test_rag.py::test_process_crash_during_agent_leaves_no_orphan_user_message
+FAILED tests/test_rag.py::test_agent_internal_rollback_does_not_drop_the_user_message
+FAILED tests/test_rag.py::test_agent_failure_still_pairs_a_fallback_reply_with_the_user_turn
+FAILED tests/test_rag.py::test_rag_citations_drop_ids_with_no_matching_invoice_row
+FAILED tests/test_workflow_drive_archive.py::test_approve_archives_to_drive_on_postgres
+FAILED tests/test_workflow_email_summary.py::test_approve_sends_email_summary_on_postgres
+
+=== diff of the two sets ===
+IDENTICAL - no new failures, none removed

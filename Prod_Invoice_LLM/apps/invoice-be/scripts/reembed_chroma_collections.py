@@ -22,7 +22,10 @@ What it does, per tenant
    Soft-deleted rows (Gap 192) are re-indexed too: their chunks are retained on
    purpose so a restore stays possible.
 3. Reports Gap 239 orphans at **both** granularities:
-   * whole collections whose tenant no longer exists in Postgres at all, and
+   * whole collections whose tenant no longer exists in Postgres at all —
+     **since Gap 385 this covers `docs_{tenant}` (Feature 27 E10) as well as
+     `invoice_chunks_{tenant}`**; see `ORPHAN_SWEEP_PREFIXES` below for why the
+     re-embed half deliberately did not follow, and
    * individual chunks inside a *live* tenant's collection whose `invoice_id`
      matches no `Invoice` row — the exact shape Gap 239 was filed for (a chat
      citation pointing at an invoice id that returns zero rows).
@@ -74,15 +77,50 @@ logger = logging.getLogger("reembed")
 
 COLLECTION_PREFIX = "invoice_chunks_"
 
+# Feature 27 (Gap 385, closing G10's open item / §2A/A4 item 3). E10 gave
+# non-invoice documents their own per-tenant sibling collection, `docs_{tenant}`,
+# and nothing swept it: a tenant deleted from Postgres left its POs, contracts and
+# negotiated pricing indexed here forever, in a store nothing any longer
+# associates with a live tenant. That is the same shape as Gap 239, which is what
+# this script's orphan sweep exists for, so it belongs here rather than in a
+# second script.
+#
+# **Scope, stated so it is not over-read: the `docs_` prefix participates in the
+# whole-collection orphan sweep only.** The re-embed half below stays
+# invoice-only. Rebuilding a `docs_` collection would mean walking `Document`
+# rows through `index_document_chunks()`, which is a real feature, not a prefix
+# addition, and the distance-space migration this script was written for
+# (Gap 244) does not apply to `docs_`: every one of those collections was created
+# after `_collection_metadata()` shipped, via `get_document_collection()`, so none
+# of them is on the wrong space to begin with.
+#
+# `chat_docs_{tenant}` (Feature 26) is deliberately NOT here. It has its own
+# lifecycle -- a TTL sweeper (task H8) and per-attachment deletes -- and, unlike
+# `docs_`, its rows are transient by design. Note the prefixes do not collide:
+# "chat_docs_x".startswith("docs_") is False.
+DOCUMENT_COLLECTION_PREFIX = "docs_"
+ORPHAN_SWEEP_PREFIXES: tuple[str, ...] = (COLLECTION_PREFIX, DOCUMENT_COLLECTION_PREFIX)
 
-def _existing_collection_names(client) -> dict[str, str]:
-    """Maps tenant_id -> collection name for every invoice_chunks_* collection."""
+
+def _collection_names_for_prefix(client, prefix: str) -> dict[str, str]:
+    """Maps tenant_id -> collection name for every `{prefix}*` collection."""
     out = {}
     for col in client.list_collections():
         name = col if isinstance(col, str) else col.name
-        if name.startswith(COLLECTION_PREFIX):
-            out[name[len(COLLECTION_PREFIX):]] = name
+        if name.startswith(prefix):
+            out[name[len(prefix):]] = name
     return out
+
+
+def _existing_collection_names(client) -> dict[str, str]:
+    """Maps tenant_id -> collection name for every invoice_chunks_* collection.
+
+    Unchanged in meaning: the re-embed path below is invoice-only and this is what
+    it iterates. The document collections are swept for orphans separately, via
+    `ORPHAN_SWEEP_PREFIXES` -- folding them into this dict would have silently
+    added every `docs_` tenant to the rebuild loop.
+    """
+    return _collection_names_for_prefix(client, COLLECTION_PREFIX)
 
 
 def _current_space(client, name: str) -> str:
@@ -140,18 +178,29 @@ def reembed(apply_changes: bool, only_tenant: str | None, prune_orphans: bool,
         tenants = session.exec(select(Tenant)).all()
         tenant_ids = {str(t.id) for t in tenants}
 
-        orphans = sorted(set(collections) - tenant_ids)
-        if orphans:
+        # Gap 385: the whole-collection sweep now covers every prefix in
+        # `ORPHAN_SWEEP_PREFIXES`, not just `invoice_chunks_`. The per-prefix maps
+        # are merged into one flat {collection_name: tenant_id} view so the
+        # reporting and pruning below stay a single loop -- two near-identical
+        # blocks is how one of them later stops being maintained.
+        orphan_collections: dict[str, str] = {}
+        for prefix in ORPHAN_SWEEP_PREFIXES:
+            for tid, name in _collection_names_for_prefix(client, prefix).items():
+                if tid not in tenant_ids:
+                    orphan_collections[name] = tid
+
+        if orphan_collections:
             logger.warning(
                 "Gap 239: %d Chroma collection(s) belong to a tenant with no Postgres row "
-                "— every chunk in them is an orphan citation waiting to happen.", len(orphans)
+                "— every chunk in them is an orphan citation waiting to happen.",
+                len(orphan_collections),
             )
-            for tid in orphans:
-                logger.warning("  orphan collection %s", collections[tid])
+            for name in sorted(orphan_collections):
+                logger.warning("  orphan collection %s", name)
             if prune_orphans and apply_changes:
-                for tid in orphans:
-                    client.delete_collection(collections[tid])
-                    logger.info("  dropped %s", collections[tid])
+                for name in sorted(orphan_collections):
+                    client.delete_collection(name)
+                    logger.info("  dropped %s", name)
             elif prune_orphans:
                 logger.info("  (dry run — pass --apply to actually drop these)")
             else:

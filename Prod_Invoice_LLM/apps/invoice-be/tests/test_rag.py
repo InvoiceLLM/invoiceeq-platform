@@ -1110,6 +1110,165 @@ def test_new_collections_are_created_in_cosine_space():
             os.remove(temp_pdf_path)
 
 
+# ---------------------------------------------------------------------------
+# Feature 26 Part 2, task H2 (E-2): the chat-attachment sibling collection.
+#
+# These cover the naming/creation primitive in `chroma_client.py` only. The
+# retrieval-side assertions -- V-1 (an attachment's chunks are absent from
+# `invoice_chunks_{tenant}`), V-3 (`attachment_id` scoping) and V-4 (cross-tenant
+# retrieval) -- belong to `tests/test_chat_document_search.py` and task H3, which
+# builds the module that writes and reads those chunks. Nothing here claims them.
+#
+# Real chromadb 1.5.9 is exercised (the `hnsw:space` behaviour cannot be faked --
+# see `_collection_metadata()`'s docstring); embeddings are mocked, as everywhere
+# else in this file.
+# ---------------------------------------------------------------------------
+
+def test_chat_doc_collection_name_is_a_per_tenant_sibling_of_the_invoice_one():
+    """Feature 26 E-2: attachment chunks live in `chat_docs_{tenant_id}`.
+
+    The two names must be per-tenant *and* disjoint: isolation here is
+    structural, not a metadata filter, so the guarantee is only worth as much as
+    the names being impossible to confuse."""
+    from chroma_client import _chat_doc_collection_name, _tenant_collection_name
+
+    tenant_id = uuid4()
+    other_tenant = uuid4()
+
+    assert _chat_doc_collection_name(tenant_id) == f"chat_docs_{tenant_id}"
+    assert _chat_doc_collection_name(tenant_id) != _tenant_collection_name(tenant_id)
+    # Per tenant, like the invoice collection -- one shared chat-doc collection
+    # would reintroduce exactly the cross-tenant leak Gap 55 removed.
+    assert _chat_doc_collection_name(tenant_id) != _chat_doc_collection_name(other_tenant)
+    # Neither name is a prefix of the other, so the `startswith()` scan in
+    # scripts/reembed_chroma_collections.py (COLLECTION_PREFIX = "invoice_chunks_")
+    # can never pick up a chat-doc collection and drop or rebuild it.
+    invoice_name = _tenant_collection_name(tenant_id)
+    chat_name = _chat_doc_collection_name(tenant_id)
+    assert not chat_name.startswith(invoice_name)
+    assert not invoice_name.startswith(chat_name)
+
+
+def test_chat_doc_collection_is_created_in_cosine_space():
+    """Feature 26 E-2 / V-2, the same assertion shape as
+    `test_new_collections_are_created_in_cosine_space` above.
+
+    Chroma fixes the HNSW space at creation and silently ignores the metadata on
+    an already-existing collection, so a first creation that forgets
+    `_collection_metadata()` leaves `chat_docs_{tenant}` on `l2` permanently --
+    where `RELEVANCE_DISTANCE_THRESHOLD = 0.49`, derived in cosine space, means
+    nothing. There is no recovery except drop and re-embed, which is why this is
+    asserted on the primitive rather than left to the search module (H3)."""
+    from chroma_client import (
+        _chat_doc_collection_name,
+        _collection_space,
+        get_chat_doc_collection,
+        get_chroma_client,
+    )
+
+    tenant_id = uuid4()
+    get_chat_doc_collection(tenant_id)
+
+    client = get_chroma_client()
+    collection = client.get_collection(_chat_doc_collection_name(tenant_id))
+    assert _collection_space(collection) == "cosine"
+
+
+def test_indexing_an_invoice_does_not_write_into_the_chat_doc_collection():
+    """Feature 26 E-2: the two collections are separate stores, not two views of
+    one.
+
+    Deliberately the weaker half of the isolation claim -- it proves the invoice
+    write path cannot reach `chat_docs_{tenant}`. The half that matters more,
+    that an *attachment's* chunks never reach `invoice_chunks_{tenant}`, needs
+    the write path H3/H4 build and is V-1's, asserted in
+    `tests/test_chat_document_search.py`, not here."""
+    import fitz
+    from chroma_client import get_chat_doc_collection
+
+    temp_pdf_path = "temp_chat_doc_sibling_test.pdf"
+    doc = fitz.open()
+    doc.new_page().insert_text((50, 50), "Freight and logistics charges for delivery")
+    doc.save(temp_pdf_path)
+    doc.close()
+
+    tenant_id = uuid4()
+    try:
+        index_invoice_document(
+            invoice_id="inv-sibling-1", tenant_id=tenant_id,
+            vendor_name="Blue Ridge Logistics", file_path=temp_pdf_path,
+        )
+        assert query_invoice_chunks(tenant_id=tenant_id, query_text="freight", limit=5)
+        assert get_chat_doc_collection(tenant_id).count() == 0
+    finally:
+        if os.path.exists(temp_pdf_path):
+            os.remove(temp_pdf_path)
+
+
+def test_per_tenant_migration_script_creates_collections_in_cosine_space():
+    """Gap 244's trap, found latent in `scripts/migrate_chroma_to_per_tenant.py`
+    during Feature 26 E-2's call-site audit and fixed in the same pass.
+
+    The script's `get_or_create_collection(name=target_name)` passed no metadata,
+    so every per-tenant collection it created was pinned to `l2` for good. Driven
+    through `migrate()` with a recording fake client rather than asserted against
+    the source text, so the check survives a refactor of how the call is written.
+    A fake is used because the script's real input is a *pre-Gap-55* shared
+    collection that no longer exists anywhere."""
+    import scripts.migrate_chroma_to_per_tenant as migrate_script
+    from chroma_client import _tenant_collection_name
+
+    tenant_id = str(uuid4())
+
+    class _FakeOldCollection:
+        def count(self):
+            return 1
+
+        def get(self, limit=None, offset=0, include=None):
+            if offset:
+                return {"ids": [], "embeddings": [], "documents": [], "metadatas": []}
+            return {
+                "ids": ["inv-legacy-1_page_1"],
+                "embeddings": [[0.1] * 1024],
+                "documents": ["[Vendor: Acme | Document ID: inv-legacy-1 | Page 1]\ntext"],
+                "metadatas": [{"tenant_id": tenant_id, "invoice_id": "inv-legacy-1"}],
+            }
+
+    class _FakeTargetCollection:
+        def __init__(self):
+            self.upserted = []
+
+        def upsert(self, **kwargs):
+            self.upserted.append(kwargs)
+
+    class _FakeClient:
+        def __init__(self):
+            self.created = []
+            self.target = _FakeTargetCollection()
+
+        def get_collection(self, name):
+            assert name == migrate_script.OLD_COLLECTION_NAME
+            return _FakeOldCollection()
+
+        def get_or_create_collection(self, **kwargs):
+            self.created.append(kwargs)
+            return self.target
+
+    fake_client = _FakeClient()
+    with patch.object(migrate_script, "get_chroma_client", return_value=fake_client):
+        migrate_script.migrate()
+
+    assert len(fake_client.created) == 1
+    created = fake_client.created[0]
+    assert created["name"] == _tenant_collection_name(tenant_id)
+    # The defect: this key was absent, so Chroma created the collection on its
+    # default `l2` space and no later call could change it.
+    assert created.get("metadata") == {"hnsw:space": "cosine"}
+    # The migration itself must still do its job -- the metadata fix is not
+    # allowed to be "satisfied" by skipping the copy.
+    assert fake_client.target.upserted[0]["ids"] == ["inv-legacy-1_page_1"]
+
+
 def test_query_reports_which_channel_admitted_each_chunk():
     """Gap 244: retrieval has two channels -- the vector threshold and the
     literal-keyword fallback -- and before this fix the vector one contributed

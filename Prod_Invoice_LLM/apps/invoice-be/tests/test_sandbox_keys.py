@@ -562,6 +562,92 @@ class TestExpiry:
             select(SandboxTenant).where(SandboxTenant.tenant_id == tenant.id)
         ).first() is None
 
+    def test_reaper_deletes_document_rows_and_drops_the_document_collection(
+        self, db_session: Session
+    ):
+        """Feature 27 (BE Gap 385, §2A/A4 item 3). E10 gave non-invoice documents
+        their own table and their own `docs_{tenant_id}` Chroma collection, and
+        neither half reached this sweep — so an expired sandbox left its POs,
+        contracts and negotiated pricing indexed indefinitely, orphaned from any
+        live tenant. Same shape as Gap 239; the precedent is `delete_attachment_chunks()`
+        for `chat_docs_` in Feature 26 H4.
+
+        Two assertions, because there were two separate failures: the row is gone
+        (which is also what stops `session.delete(tenant)` being a
+        ForeignKeyViolation on Postgres), and the collection is dropped **once for
+        the tenant**, not once per row.
+        """
+        from unittest.mock import patch
+
+        from models import Document
+        from scripts.sweep_sandbox_tenants import _purge_sandbox
+
+        _, issued = _issue(db_session)
+        tenant, sandbox = issued
+        for n in range(2):
+            db_session.add(Document(
+                id=uuid4(), tenant_id=tenant.id,
+                file_path=f"{tenant.id}/po-{n}.pdf",
+                doc_type="PURCHASE_ORDER", status="EXTRACTED",
+            ))
+        db_session.commit()
+
+        with patch("chroma_client.delete_tenant_document_collection") as drop:
+            counts = _purge_sandbox(db_session, sandbox)
+
+        assert counts["documents"] == 2
+        assert db_session.exec(
+            select(Document).where(Document.tenant_id == tenant.id)
+        ).all() == []
+        assert db_session.get(Tenant, tenant.id) is None
+        drop.assert_called_once_with(str(tenant.id))
+
+    def test_reaper_does_not_touch_chroma_for_a_tenant_with_no_documents(
+        self, db_session: Session
+    ):
+        """The common case — a sandbox visitor who only uploaded invoices, or
+        nothing. Dropping a collection that was never created is not an error, but
+        making the call anyway would put a pointless Chroma round trip (and a
+        misleading "no document collection dropped" log line) in the sweep's
+        hottest path."""
+        from unittest.mock import patch
+
+        from scripts.sweep_sandbox_tenants import _purge_sandbox
+
+        _, issued = _issue(db_session)
+        tenant, sandbox = issued
+
+        with patch("chroma_client.delete_tenant_document_collection") as drop:
+            counts = _purge_sandbox(db_session, sandbox)
+
+        assert counts["documents"] == 0
+        drop.assert_not_called()
+        assert db_session.get(Tenant, tenant.id) is None
+
+    def test_reaper_survives_an_unreachable_chroma(self, db_session: Session):
+        """A sweeper that dies on one unreachable tenant collection leaves every
+        later tenant unswept — the same failure policy
+        `delete_attachment_chunks()` states. The DB half of the purge must still
+        commit."""
+        from unittest.mock import patch
+
+        from models import Document
+        from scripts.sweep_sandbox_tenants import _purge_sandbox
+
+        _, issued = _issue(db_session)
+        tenant, sandbox = issued
+        db_session.add(Document(
+            id=uuid4(), tenant_id=tenant.id, file_path=f"{tenant.id}/po.pdf",
+            doc_type="PURCHASE_ORDER", status="EXTRACTED",
+        ))
+        db_session.commit()
+
+        with patch("chroma_client.get_chroma_client", side_effect=RuntimeError("chroma down")):
+            counts = _purge_sandbox(db_session, sandbox)
+
+        assert counts["documents"] == 1
+        assert db_session.get(Tenant, tenant.id) is None
+
     def test_reaper_skips_a_claimed_row_even_if_handed_one(self, db_session: Session):
         """The per-row re-assertion in the sweep loop: "it was in the list" is
         not a good enough reason to delete a customer's workspace."""

@@ -85,6 +85,10 @@ class ChatQueueService:
         content: str,
         tenant_id: str,
         job_id: str | None = None,
+        # E-5 / task H7. Optional with a None default, so every existing caller
+        # and every existing test body stays valid byte-for-byte -- the same
+        # shape C5b used when it threaded the id onto MessageCreate.
+        attachment_id: str | None = None,
         client: redis.Redis | None = None,
     ) -> dict:
         """Enqueues a chat query into the Redis task queue with fair-share throttling.
@@ -118,6 +122,13 @@ class ChatQueueService:
             "user_msg_id": user_msg_id,
             "content": content,
             "tenant_id": tenant_id,
+            # E-5/H7: WITHOUT this key the worker answers an attached-document
+            # question as an ordinary chat turn -- the attachment silently
+            # dropped, a plausible answer returned, and nothing to show for it.
+            # That is the exact silent-drop failure the pre-route gate exists to
+            # prevent, which is why C5b routed these turns AWAY from the queue
+            # rather than through it while the key was missing.
+            "attachment_id": attachment_id,
             "status": "queued",
             "created_at": now_iso,
         }

@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
-from models import Invoice, Tenant
+from models import Document, Invoice, Tenant
 
 # Setup an in-memory SQLite database for testing isolation
 sqlite_url = "sqlite:///:memory:"
@@ -337,6 +337,215 @@ def test_duplicate_upload_copies_currency_from_original(db_session):
     assert duplicate.tax_amount == 7200.0
     # ...and the one that wasn't.
     assert duplicate.currency == "INR"
+
+
+# ---------------------------------------------------------------------------
+# BE Gap 385 — ingestion dedup widened to the Invoice ∪ Document union
+# ---------------------------------------------------------------------------
+# Feature 27 §2A/A4/F5's ruling, which had never been made in code or prose.
+# E10 moved non-invoice documents into `documents`, and
+# `_ingest_single_file`'s dedup probe stayed `Invoice`-only -- so a re-uploaded
+# delivery note was processed from scratch every time, while
+# `services/billing_quota.py::count_billable_uploads` (already widened at G14)
+# was simultaneously declaring it non-billable. Two halves of one rule
+# disagreeing: work done, not charged, row count drifting from invoice count.
+#
+# SQLite, like the rest of this file. The union and the tenant predicates are
+# plain SQL that behaves the same on both engines, but the FK-shaped concerns
+# around `duplicate_of_invoice_id` are NOT proven here (CONVENTIONS hard rule 2).
+
+_DOC_PDF = b"%PDF-1.4 delivery note DN-88213"
+
+
+def _seed_document(db_session, tenant_id=MOCK_TENANT_ID, content=_DOC_PDF, **overrides):
+    """One `documents` row carrying `content`'s hash, the way E10's routing writes it."""
+    import hashlib
+
+    fields = dict(
+        tenant_id=tenant_id,
+        file_path="mock/original-delivery-note.pdf",
+        file_hash=hashlib.sha256(content).hexdigest(),
+        doc_type="DELIVERY_NOTE",
+        doc_number="DN-88213",
+        party_name="Bharat Steels",
+        status="EXTRACTED",
+        sa_alerts=[],
+    )
+    fields.update(overrides)
+    document = Document(**fields)
+    db_session.add(document)
+    db_session.commit()
+    db_session.refresh(document)
+    return document
+
+
+def _upload(content=_DOC_PDF, filename="reupload.pdf"):
+    """Posts `content` to /upload with storage + queue mocked, returning
+    (response, storage_mock, queue_mock)."""
+    files = {"files": (filename, io.BytesIO(content), "application/pdf")}
+    with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
+         patch("routers.invoices.QueueClient") as mock_queue_cls:
+        mock_storage.return_value = "mock/path/reupload.pdf"
+        client = TestClient(app)
+        response = client.post("/api/v1/invoices/upload", files=files)
+    return response, mock_storage, mock_queue_cls
+
+
+def test_reuploading_a_non_invoice_document_is_now_a_duplicate(db_session):
+    """The bug itself. Before this, the `documents` row was invisible to the
+    dedup probe, so the file was stored again and re-queued for a second full
+    Doc Intelligence + extraction run."""
+    _seed_document(db_session)
+
+    response, mock_storage, mock_queue_cls = _upload()
+
+    assert response.status_code == 201
+    duplicate = db_session.get(Invoice, UUID(response.json()["job_ids"][0]))
+    assert duplicate is not None
+    assert duplicate.status == "DUPLICATE"
+    # The two things that make this a real fix rather than a label: the bytes
+    # were not re-uploaded to storage, and no extraction was queued.
+    mock_storage.assert_not_called()
+    mock_queue_cls.from_connection_string.return_value.send_message.assert_not_called()
+
+
+def test_a_document_match_copies_the_storage_pointer_and_nothing_else(db_session):
+    """BE Gap 385's copy ruling, asserted field by field.
+
+    `file_path` is the one column that means the same thing on both tables. Every
+    extracted field stays NULL on purpose: `Document.party_name` is the *issuer*
+    (on a PO, our own tenant -- copying it into `vendor_name` would file the
+    tenant as its own vendor), `doc_number` is not an `invoice_number`, and money
+    is optional on `documents` by design. A DUPLICATE row is never re-extracted,
+    so a wrong value copied here is permanent -- that is how FE Gap 183 became
+    real data loss, from the other direction."""
+    document = _seed_document(db_session)
+
+    response, _storage, _queue = _upload()
+    duplicate = db_session.get(Invoice, UUID(response.json()["job_ids"][0]))
+
+    assert duplicate.file_path == document.file_path
+    assert duplicate.vendor_name is None
+    assert duplicate.invoice_number is None
+    assert duplicate.invoice_date is None
+    assert duplicate.due_date is None
+    assert duplicate.grand_total is None
+    assert duplicate.tax_amount is None
+    assert duplicate.po_number is None
+    assert duplicate.currency is None
+    assert duplicate.items == []
+    # NULL, not the `documents.id`: this column is a pointer into `invoice.id`
+    # and every reader that dereferences it (Gap 195 consumers, the FE alert UI)
+    # would look up an invoice that does not exist.
+    assert duplicate.duplicate_of_invoice_id is None
+
+
+def test_a_document_match_records_its_origin_in_sa_alerts(db_session):
+    """The origin still has to be traceable. It goes in the alert payload rather
+    than a new column, so this ruling needs no migration."""
+    document = _seed_document(db_session)
+
+    response, _storage, _queue = _upload()
+    duplicate = db_session.get(Invoice, UUID(response.json()["job_ids"][0]))
+
+    alert = duplicate.sa_alerts[0]
+    assert alert["type"] == "duplicate"
+    assert alert["duplicate_of_document_id"] == str(document.id)
+    assert alert["duplicate_of_doc_type"] == "DELIVERY_NOTE"
+    # The prose names the document, not "a previously uploaded invoice" -- the
+    # user is told what it actually matched.
+    assert "delivery note" in alert["message"]
+    assert str(document.id) in alert["message"]
+
+
+def test_an_invoice_match_still_wins_and_is_byte_identical(db_session):
+    """The pre-existing path is unchanged. `Invoice` is probed first and
+    short-circuits, so when a file matches BOTH tables the invoice copy runs
+    exactly as it did before -- including FE Gap 183's currency."""
+    import hashlib
+
+    content = b"%PDF-1.4 matches both tables"
+    file_hash = hashlib.sha256(content).hexdigest()
+    _seed_document(db_session, content=content, file_path="mock/doc-copy.pdf")
+    db_session.add(Invoice(
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/original-inr.pdf",
+        file_hash=file_hash,
+        vendor_name="Mumbai Supplies Pvt Ltd",
+        grand_total=40000.0,
+        currency="INR",
+        status="COMPLETED",
+        sa_alerts=[],
+    ))
+    db_session.commit()
+
+    response, _storage, _queue = _upload(content=content)
+    duplicate = db_session.get(Invoice, UUID(response.json()["job_ids"][0]))
+
+    assert duplicate.status == "DUPLICATE"
+    assert duplicate.file_path == "mock/original-inr.pdf"
+    assert duplicate.vendor_name == "Mumbai Supplies Pvt Ltd"
+    assert duplicate.grand_total == 40000.0
+    assert duplicate.currency == "INR"
+    assert duplicate.duplicate_of_invoice_id is not None
+    assert "previously uploaded invoice" in duplicate.sa_alerts[0]["message"]
+
+
+def test_another_tenants_document_is_not_a_duplicate(db_session):
+    """§2A/A4/F2's tenant predicate, on the new side of the union.
+
+    Unscoped, a file two tenants happen to share -- a common vendor's standard
+    PO template -- would mark tenant B's genuine first upload DUPLICATE of
+    tenant A's row, and the alert text is rendered to the user, so it would leak
+    the existence of another tenant's document. Strictly worse here than in
+    billing, where the same predicate only moved a counter."""
+    from uuid import uuid4
+
+    _seed_document(db_session, tenant_id=uuid4())  # someone else's document
+
+    response, mock_storage, mock_queue_cls = _upload()
+    invoice = db_session.get(Invoice, UUID(response.json()["job_ids"][0]))
+
+    assert invoice.status == "PROCESSING"
+    assert invoice.sa_alerts == []
+    # It really was treated as new: stored and queued.
+    mock_storage.assert_called_once()
+    mock_queue_cls.from_connection_string.return_value.send_message.assert_called_once()
+
+
+def test_a_soft_deleted_document_still_dedups(db_session):
+    """Same rule as Gap 192 / `count_billable_uploads`: the dedup set includes
+    soft-deleted rows. The tenant already paid the DI + extraction cost for
+    these bytes; deleting the row does not refund it, so a re-upload must not
+    buy a second free run."""
+    from datetime import datetime
+
+    _seed_document(db_session, deleted_at=datetime.utcnow())
+
+    response, mock_storage, _queue = _upload()
+    duplicate = db_session.get(Invoice, UUID(response.json()["job_ids"][0]))
+
+    assert duplicate.status == "DUPLICATE"
+    mock_storage.assert_not_called()
+
+
+def test_ingestion_and_billing_now_agree_on_the_same_file(db_session):
+    """The consistency this gap exists to restore.
+
+    `count_billable_uploads` was widened to the union at G14 and this probe was
+    not, so for a re-uploaded delivery note billing said "already paid for" while
+    ingestion said "never seen it". Both halves are asserted here together, on one
+    file, because that disagreement is the defect -- either answer alone looks
+    correct in isolation."""
+    from services.billing_quota import count_billable_uploads
+
+    _seed_document(db_session)
+
+    assert count_billable_uploads(db_session, MOCK_TENANT_ID, [_DOC_PDF]) == 0
+
+    response, _storage, _queue = _upload()
+    duplicate = db_session.get(Invoice, UUID(response.json()["job_ids"][0]))
+    assert duplicate.status == "DUPLICATE"
 
 
 def test_invoice_status_endpoint_returns_currency(db_session):

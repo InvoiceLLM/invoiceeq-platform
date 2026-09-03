@@ -1,0 +1,13 @@
+WARNING: The behavior of this command has been altered by the following extension: containerapp
+{
+  "args": [
+    "--limit",
+    "500"
+  ],
+  "cron": "0 5 * * *",
+  "image": "acrinvoicellmdev2.azurecr.io/invoice-be:latest",
+  "name": "caj-chat-doc-ttl-dev",
+  "provisioningState": "Succeeded",
+  "replicaTimeout": 1800,
+  "triggerType": "Schedule"
+}

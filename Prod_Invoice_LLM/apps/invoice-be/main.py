@@ -14,6 +14,11 @@ from routers import settings as settings_router
 # Feature 26 (Gap 366): chat reference-document attachments. A separate module
 # from `chat` on purpose -- see that file's header.
 from routers import chat_attachments
+# Feature 27 (G14 / E10): read access to the `documents` table. A separate
+# module from `invoices` because it reads a different table with a different
+# status vocabulary -- see that file's header.
+from routers import documents
+from routers import config_features  # Feature 27 R5(a)
 from utils.logging_config import TracingAndLoggingMiddleware, setup_structured_logging
 
 logger = logging.getLogger(__name__)
@@ -174,6 +179,8 @@ app.include_router(auth.router)
 app.include_router(invoices.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(chat_attachments.router, prefix="/api/v1")  # Feature 26: PO/quotation attachments
+app.include_router(documents.router, prefix="/api/v1")  # Feature 27 (E10): non-invoice documents
+app.include_router(config_features.router, prefix="/api/v1")  # Feature 27 R5(a): read-only ENABLE_* flags for the FE
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(connectors.router, prefix="/api/v1")

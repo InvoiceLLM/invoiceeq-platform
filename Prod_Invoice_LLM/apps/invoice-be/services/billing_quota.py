@@ -28,7 +28,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
-from models import Invoice, Tenant
+from models import Document, Invoice, Tenant
 
 
 def count_billable_uploads(
@@ -36,11 +36,33 @@ def count_billable_uploads(
     tenant_id: UUID,
     file_payloads: list[bytes],
 ) -> int:
-    """How many files in this batch would create a new (non-DUPLICATE) invoice.
+    """How many files in this batch would create a new (non-DUPLICATE) row.
 
-    A file is billable when its SHA-256 is not already on any invoice for the
-    tenant (including soft-deleted rows — same dedup rule as Gap 192) and is
-    not a repeat of an earlier file in this same batch.
+    A file is billable when its SHA-256 is not already on any invoice **or any
+    document** for the tenant (including soft-deleted rows — same dedup rule as
+    Gap 192) and is not a repeat of an earlier file in this same batch.
+
+    Feature 27 (G14 / E10): the `Document` half is the one filter this feature
+    **widens** rather than narrows, and it is easy to get backwards. Once a
+    non-invoice document leaves `invoice` for `documents`, an `Invoice`-only
+    dedup set stops recognising a re-uploaded delivery note as something the
+    tenant has already paid for, and every re-upload is charged again. A
+    non-invoice upload *is* billable on its first arrival — it consumed a real
+    Document Intelligence page and a real extraction call — but exactly once.
+    Gap 343 established that every door which creates a row shares this logic;
+    the same rule applies to the new one.
+
+    **The tenant predicate is inside each side of the union, never applied to a
+    combined set** (§2A/A4/F2, from the security review of E10). An unscoped
+    union does two bad things at once, and the second is worse than the first:
+      1. A file two tenants happen to share — a common vendor's standard PO
+         template — makes tenant B's genuine first upload look like a duplicate,
+         so real DI + extraction spend goes unbilled.
+      2. It turns the quota counter into a cross-tenant oracle. B can learn
+         whether *anyone else* has uploaded a given file's bytes purely by
+         watching whether its own `free_invoices_remaining` moves.
+    Both `.where()` clauses below therefore carry `tenant_id == tenant_id`
+    themselves, and the union happens only after each side is already scoped.
     """
     existing = {
         h
@@ -48,6 +70,16 @@ def count_billable_uploads(
             select(Invoice.file_hash).where(
                 Invoice.tenant_id == tenant_id,
                 Invoice.file_hash.is_not(None),  # type: ignore[arg-type]
+            )
+        ).all()
+        if h
+    }
+    existing |= {
+        h
+        for h in db_session.exec(
+            select(Document.file_hash).where(
+                Document.tenant_id == tenant_id,
+                Document.file_hash.is_not(None),  # type: ignore[arg-type]
             )
         ).all()
         if h

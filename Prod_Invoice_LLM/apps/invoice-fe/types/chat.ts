@@ -22,6 +22,40 @@ export interface Citation {
   invoice_number?: string; // Optional — used as a human-friendly fallback label
 }
 
+// -----------------------------------------------------------------------------
+// Attached-document contract (BE Feature 26 Part 2, §P2.6.5 — task H11)
+//
+// The shapes themselves live in lib/chatAttachments.ts and are re-exported here
+// rather than moved. §P2.6.5 asks for them in this file and H10's build note
+// says "H11 may re-home them"; re-exporting keeps ONE definition sitting next to
+// the caps and copy that mirror the same backend module, while still making
+// `@/types/chat` the import everything else uses. The dependency runs one way
+// (types/chat.ts → lib/chatAttachments.ts) and is type-only, so there is no
+// runtime cycle.
+// -----------------------------------------------------------------------------
+export type {
+  AttachmentCandidate,
+  AttachmentClarification,
+  AttachmentClarificationIntent,
+  AttachmentClarificationOption,
+  AttachmentComparison,
+  AttachmentComparisonEntry,
+  AttachmentConfirmation,
+  AttachmentEvidenceSpan,
+  AttachmentState,
+  ChatAttachmentSummary,
+  ComparisonFieldRow,
+  SuggestedAction,
+} from "@/lib/chatAttachments";
+
+import type {
+  AttachmentClarification,
+  AttachmentComparison,
+  AttachmentConfirmation,
+  AttachmentEvidenceSpan,
+  SuggestedAction,
+} from "@/lib/chatAttachments";
+
 export type ChatJobStatus = "queued" | "processing" | "completed" | "failed";
 
 export interface ChatJobResponse {
@@ -73,6 +107,55 @@ export interface ChatMessage {
   status?: ChatJobStatus;
   job_id?: string;
   error_message?: string;
+
+  // ---------------------------------------------------------------------------
+  // Feature 26 Part 2 (§P2.6.4/§P2.6.5, task H11) — the attached-document answer
+  // contract. EVERY field is optional, so every message shape that renders today
+  // stays valid and nothing about the SQL/RAG/CHAT routes changes.
+  //
+  // Which turn emits which (verified in agents/query_agent.py, not taken from
+  // §P2.8's sketch):
+  //   confirmation turn  → attachment_confirmation           (L3257)
+  //   comparison answer  → attachment_comparison + suggested_actions (L3327-8)
+  //   content branch     → evidence + needs_confirmation      (L3518, L3526)
+  //   clarifying turn    → attachment_clarification           (L3199)
+  // and never more than one of those groups on the same turn.
+  //
+  // NOT REACHABLE END TO END YET, and that is a backend gap rather than a
+  // frontend one: `routers/chat.py::MessageResponse` (L173) has no field for any
+  // of these and the assistant `ChatMessage` row persists only content /
+  // generated_sql / citations / result_invoice_ids (L630), so the agent's extra
+  // keys are dropped before the HTTP response is built. H12 wires the hook; it
+  // does not fix that. See the Gap 379 entry in fe_features_tracker.md.
+  // ---------------------------------------------------------------------------
+
+  /** The match-confirmation gate (D4). Its presence is what renders the card. */
+  attachment_confirmation?: AttachmentConfirmation;
+
+  /** The deterministic diff table from `compare_reference_to_invoices()` (D5). */
+  attachment_comparison?: AttachmentComparison;
+
+  /** 0-3 deep-links (D6). Rendered as links; chat never invokes them. */
+  suggested_actions?: SuggestedAction[];
+
+  /** Content branch: verbatim spans from the attached document's own pages. */
+  evidence?: AttachmentEvidenceSpan[];
+
+  /**
+   * Emitted by the content branch only, and only ever `false` in the live
+   * backend today. Treated as "this turn deliberately produced no figures",
+   * never as the confirmation card's render condition.
+   */
+  needs_confirmation?: boolean;
+  /**
+   * B10/R10. Present only on a `list_reconcile` turn (an advisory document);
+   * ABSENT on every other branch, per §P2.8's rule that a key's presence is
+   * itself a claim about what ran.
+   */
+  reconciliation?: AttachmentReconciliation;
+
+  /** The clarifying turn (B2): two choices, no answer, no LLM call behind it. */
+  attachment_clarification?: AttachmentClarification;
 }
 
 // -----------------------------------------------------------------------------
@@ -115,7 +198,69 @@ export type GetSessionResponse = ChatMessage[];
 /** POST /chat/sessions/{id}/message — body: backend's MessageCreate requires `content` */
 export interface SendMessageRequest {
   content: string; // Raw user text; the backend handles classification
+
+  // Feature 26 (§P2.6.5): when present, `post_chat_message()` hands it to
+  // `run_query_agent()` and the deterministic pre-route gate (D4) takes the
+  // attached-document branch — `classify_query()` is never called. Optional, so
+  // every ordinary turn is byte-identical to what it sends today. H12 is what
+  // actually populates it; the field is declared here so the hook has a type to
+  // fill rather than widening the request shape ad hoc.
+  attachment_id?: string;
 }
 
 /** POST /chat/sessions/{id}/message — response: returns either ChatJobResponse (202 async) or ChatMessage (sync) */
 export type SendMessageResponse = ChatMessage | ChatJobResponse;
+
+/**
+ * B10/R10 — the `list_reconcile` answer shape (BE amendment B8).
+ *
+ * An ADVISORY document (statement of account, remittance advice) is a list of
+ * pointers at other documents, so it is answered by reconciliation rather than
+ * by the field-by-field diff `AttachmentComparison` carries. Mirrors
+ * `services/document_comparison.py::reconcile_referenced_documents()`.
+ *
+ * Amounts are Decimal-derived STRINGS from the backend and must be rendered as
+ * given -- never `Number()`-parsed, which would reintroduce the float error the
+ * backend went to some trouble to avoid.
+ */
+export type ReconciliationOutcome =
+  | "found_matching"
+  | "amount_mismatch"
+  | "status_mismatch"
+  | "not_found";
+
+export interface ReconciliationReference {
+  doc_number?: string | null;
+  invoice_id?: string | null;
+  outcome: ReconciliationOutcome;
+  /** Decimal-derived string. Null when either side did not state an amount. */
+  delta?: string | null;
+  stated_amount?: string | number | null;
+  invoice_amount?: string | number | null;
+  /** What THEIR document claims -- never our finding. */
+  stated_status?: string | null;
+  invoice_status?: string | null;
+}
+
+export interface ReconciliationDeduction {
+  kind?: string | null;
+  amount?: string | number | null;
+  currency?: string | null;
+  reference?: string | null;
+}
+
+export interface UnreferencedInvoice {
+  invoice_id: string;
+  invoice_number?: string | null;
+  grand_total?: string | number | null;
+}
+
+export interface AttachmentReconciliation {
+  mode: "list_reconcile";
+  party_name?: string | null;
+  references: ReconciliationReference[];
+  /** Reported per kind and NEVER netted into one figure. */
+  deductions: ReconciliationDeduction[];
+  /** The reverse direction: open invoices of ours their document omits. */
+  unreferenced_invoices: UnreferencedInvoice[];
+}

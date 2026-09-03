@@ -173,6 +173,43 @@ class Invoice(SQLModel, table=True):
     # Never used to email end customers from the app.
     submitted_by_email: str | None = Field(default=None, max_length=255)
 
+    # Feature 27 (G9 / E10): the classified document type and the verbatim
+    # printed phrase the classifier decided from.
+    #
+    # On THIS table these are always an INVOICE-family value -- "INVOICE",
+    # "PROFORMA_INVOICE", "CREDIT_NOTE", "DEBIT_NOTE" -- or NULL. A non-invoice
+    # document is never an `Invoice` row (E10): it goes to `Document` below, and
+    # `queue_worker/handlers.py` deletes the upload-time placeholder row in the
+    # same transaction that writes it. So this column records an invoice's own
+    # *sub-type*, which is real information (a proforma creates no receivable and
+    # a credit note reverses one), not "which of ten kinds of paper is this".
+    #
+    # Both are nullable with a `None` default, deliberately: every row that
+    # already exists stays valid with no backfill, and a flag-OFF run writes
+    # NULL exactly as it writes nothing today (the classifier node is not in the
+    # compiled graph at all when `ENABLE_GENERIC_EXTRACTION` is false). NULL here
+    # means "never classified", never "not an invoice".
+    doc_type: str | None = Field(default=None, max_length=32)
+    doc_type_evidence: str | None = Field(default=None)
+
+    # Feature 27 A6 / task R8: the classification attributes derived from the
+    # document's own text by `services/doc_attributes.py` -- `direction`,
+    # `invoice_subtype`, `correction_method`, `fiscal_markers`, `regional_ids`,
+    # `cumulative`, each with its evidence.
+    #
+    # ONE JSON COLUMN, not six typed ones, and the reason is not convenience:
+    # these attributes are a SET THAT GROWS (A8 adds `rule_era`; the research
+    # names several more as v2 candidates), every one of them is optional, and
+    # none is ever queried on. A typed column per attribute would be a migration
+    # per amendment for fields nothing filters by.
+    #
+    # KEYS ARE OMITTED WHEN UNDETERMINED rather than stored as null. `{}` and NULL
+    # both mean "nothing established"; a key present with a null value would be a
+    # third state nobody wants. NULL on the column itself means never classified.
+    doc_attributes: dict | None = Field(
+        default=None, sa_column=Column(JSON_VARIANT, nullable=True)
+    )
+
     # FE Gap 29: dashboard/list filters are always tenant-scoped plus one of
     # status/date/vendor, so composite indexes led by tenant_id (rather than
     # single-column ones) are what the query planner actually uses here.
@@ -181,6 +218,149 @@ class Invoice(SQLModel, table=True):
         sa.Index("ix_invoice_tenant_invoice_date", "tenant_id", "invoice_date"),
         sa.Index("ix_invoice_tenant_vendor_name", "tenant_id", "vendor_name"),
         sa.Index("ix_invoice_tenant_flow_direction", "tenant_id", "flow_direction"),
+    )
+
+
+class Document(SQLModel, table=True):
+    __tablename__ = "documents"
+    # Feature 27 (G9), decision E10 / amendment A3: a non-INVOICE-family
+    # commercial document -- a delivery note, a purchase order, a quotation, a
+    # contract, a GRN -- extracted through the same graph as an invoice and
+    # stored HERE, never in `invoice`.
+    #
+    # Why a separate table rather than a `doc_type` filter on `invoice`: the
+    # alternative was measured, not estimated. Keeping these rows in `invoice`
+    # means adding a doc_type predicate to **39 tenant-scoped Invoice query sites
+    # across 19 files**, plus a new obligation on every Invoice query anyone
+    # writes from now on, forever -- and one of those 39 cannot be filtered
+    # deterministically at all: the chat NL->SQL route generates free-form
+    # `SELECT ... FROM invoice`, and `execute_generated_sql` is a validator, not
+    # a rewriter (the execution-time rewriter was deleted at Gap 253 and is the
+    # origin of CONVENTIONS hard rule 3). "How much did we spend last month?"
+    # would count delivery notes every time the model omitted a filter it was
+    # merely *asked* to add.
+    #
+    # The same decision was already taken and shipped for chat attachments
+    # (Feature 26 D2 -- see `ChatAttachment`'s docstring below), so option (a)
+    # would have made the same purchase order a `chat_attachments` row when
+    # attached in chat and an `Invoice` row when uploaded through ingestion:
+    # two contradictory answers to one question inside one codebase. And the
+    # failure mode is not hypothetical -- Gap 329 is exactly this, on exactly
+    # this table: `flow_direction` was added to `Invoice`, `/dashboard/metrics`
+    # was never filtered on it, and OUTBOUND rows blended into every inbound
+    # aggregate until the founder spotted it on screen. That was ONE new
+    # row-kind and ONE missed file. This feature adds nine kinds.
+    #
+    # The columns are `GenericDocumentSchema`'s spine (Feature 27 E8) plus
+    # `Invoice`'s *operational* columns -- Gap 192's soft delete and FE Gap
+    # 81/84's re-enqueue bookkeeping -- so the existing sweeps and audit-trail
+    # patterns transfer unchanged. Nothing money-specific beyond what a PO or a
+    # contract genuinely prints: no `compliance_metadata`, no `tax_ids`, no
+    # `round_off`, no `coordinates` (Doc Intelligence labels every box with an
+    # *invoice* field name, so an overlay drawn over a purchase order would
+    # mislabel it -- A1; an empty overlay is honest, a mislabelled one is not).
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    batch_id: UUID | None = Field(default=None, index=True)
+    file_path: str = Field(max_length=1024)
+    file_hash: str | None = Field(default=None, index=True, max_length=64)
+
+    # The classified type (one of the nine non-INVOICE values in `DOC_TYPES`),
+    # the verbatim printed phrase it was decided from, and the classifier's
+    # confidence. The evidence is persisted so a misclassification is
+    # *reviewable* after the fact rather than only being a wrong answer, and the
+    # confidence because §2A/N2's 0.6 threshold is an uncalibrated placeholder
+    # and has nothing to calibrate against without the distribution.
+    doc_type: str | None = Field(default=None, max_length=32, index=True)
+    doc_type_evidence: str | None = Field(default=None)
+    doc_type_confidence: float | None = Field(default=None)
+
+    # Feature 27 A6 / task R8: the classification attributes derived from the
+    # document's own text by `services/doc_attributes.py` -- `direction`,
+    # `invoice_subtype`, `correction_method`, `fiscal_markers`, `regional_ids`,
+    # `cumulative`, each with its evidence.
+    #
+    # ONE JSON COLUMN, not six typed ones, and the reason is not convenience:
+    # these attributes are a SET THAT GROWS (A8 adds `rule_era`; the research
+    # names several more as v2 candidates), every one of them is optional, and
+    # none is ever queried on. A typed column per attribute would be a migration
+    # per amendment for fields nothing filters by.
+    #
+    # KEYS ARE OMITTED WHEN UNDETERMINED rather than stored as null. `{}` and NULL
+    # both mean "nothing established"; a key present with a null value would be a
+    # third state nobody wants. NULL on the column itself means never classified.
+    doc_attributes: dict | None = Field(
+        default=None, sa_column=Column(JSON_VARIANT, nullable=True)
+    )
+
+    # Roles, not document-type words. `party_name` is whoever ISSUED the
+    # document; `counterparty_name` is whoever it is addressed to. Defined once,
+    # here and in `GenericDocumentSchema`, because nine types with nine
+    # word-pairs for the same two roles (vendor/buyer, supplier/consignee,
+    # quoting party/prospect) is how one column acquires a different meaning per
+    # row.
+    party_name: str | None = Field(default=None)
+    counterparty_name: str | None = Field(default=None)
+    doc_number: str | None = Field(default=None)
+    po_number: str | None = Field(default=None)
+    reference_numbers: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    doc_date: date | None = Field(default=None)
+    valid_until: date | None = Field(default=None)
+
+    # Money is OPTIONAL on this table and that is the point of the feature. A
+    # delivery note prints quantities and no prices *by design* (so the
+    # recipient's warehouse staff cannot see pricing) and a framework contract
+    # frequently has no grand total at all. NULL means "the document did not
+    # state it" and must never be read as, or coerced to, zero -- Gap 283 is the
+    # truthiness bug where a real 0.00 was read as missing, and this is the same
+    # distinction from the other side.
+    currency: str | None = Field(default=None, max_length=8)
+    subtotal: float | None = Field(default=None)
+    tax_amount: float | None = Field(default=None)
+    discount_amount: float | None = Field(default=None)
+    grand_total: float | None = Field(default=None)
+    items: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    taxes: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    payment_terms: str | None = Field(default=None)
+    delivery_terms: str | None = Field(default=None)
+    incoterms: str | None = Field(default=None, max_length=32)
+    notes: str | None = Field(default=None)
+
+    # "EXTRACTED" | "EXTRACT_FAILED" -- the same two-value vocabulary the
+    # REFERENCE direction profile uses (`agents/extraction_agent.py`), and the
+    # same one the `GENERIC` extraction profile emits, so the profile and the
+    # table agree by construction rather than through a mapping table someone
+    # has to maintain. Deliberately NOT the invoice vocabulary: a delivery note
+    # has no audit lifecycle. It is never approved, sent or paid, so
+    # COMPLETED/AUDIT_REQUIRED/PAID would be three states it can never reach and
+    # one (AUDIT_REQUIRED) that would put it into a review queue it does not
+    # belong in.
+    status: str = Field(default="EXTRACTED", max_length=32)
+    sa_alerts: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # Gap 178's raw Doc Intelligence snapshot, kept for the same diagnostic
+    # reason it is kept on `Invoice` and safe for the same one: it is already
+    # excluded from every LLM-visible projection (`agents/query_tools.py`,
+    # `agents/sage_prompts.py`), so a misfit DI read of a non-invoice cannot
+    # reach an answer.
+    source_document_json: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
+    # Gap 192's soft delete, mirrored: NULL = live.
+    deleted_at: datetime | None = Field(default=None, index=True)
+    # FE Gaps 81/84's stuck-row reconciliation bookkeeping, mirrored so the
+    # existing sweep pattern transfers if this table ever needs one.
+    last_enqueued_at: datetime | None = Field(default=None)
+    processing_attempts: int = Field(default=0)
+    # Gap 125's process-complete notify target, mirrored.
+    submitted_by_email: str | None = Field(default=None, max_length=255)
+
+    # Same reasoning as `Invoice.__table_args__` (FE Gap 29): every product
+    # query on this table is tenant-scoped plus one more predicate, so the
+    # composite index led by tenant_id is what a planner can actually use.
+    __table_args__ = (
+        sa.Index("ix_documents_tenant_doc_type", "tenant_id", "doc_type"),
+        sa.Index("ix_documents_tenant_created_at", "tenant_id", "created_at"),
     )
 
 
@@ -228,6 +408,38 @@ class ChatMessage(SQLModel, table=True):
     # were involved". The triage API treats empty as "ask the user which invoice"
     # rather than asserting a claim it can't back.
     result_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # Feature 26 task H16 / amendment B12 (Gap 386): the attached-document answer
+    # contract, persisted.
+    #
+    # `agents/query_agent.py` computes `attachment_confirmation`,
+    # `attachment_comparison`, `suggested_actions`, `evidence`,
+    # `needs_confirmation` and `attachment_clarification` -- and before this column
+    # every one of them was dropped twice over: `MessageResponse` declared none of
+    # them, so FastAPI stripped them at serialisation, and this row had nowhere to
+    # put them, so a session reload had nothing to restore. The FE renderers
+    # (FE Gaps 376/380/383) were wired to a contract the API did not emit.
+    #
+    # ONE column rather than six, and rather than a side table:
+    #   * They are one object -- the turn's answer contract. Six nullable columns
+    #     would be six migrations as the contract grows (B10 already adds three
+    #     more: `line_items`, `unmatched`, `reconciliation`).
+    #   * Persisted, not transient, for the three reasons B12 states: the reload
+    #     path (P2.6.6) must restore the confirmation card; the async worker
+    #     computes the answer in a DIFFERENT PROCESS from the request, so there is
+    #     no response object to hang a transient field on; and the D4 confirmation
+    #     gate is a two-turn interaction where turn 2 must know what turn 1 offered.
+    #   * A side table would fork the ownership check, which is the Gap 341 shape
+    #     E-6 already refused for `chat_attachments` itself.
+    #
+    # NULL means "not an attachment turn" -- the overwhelming majority of rows, and
+    # every row written before this migration. It never means "an attachment turn
+    # that produced nothing": the contract rule in P2.8 makes an answer with no
+    # evidence and no comparison a bug, so an attachment turn always writes a dict.
+    # Bounded by the caps that already exist: <=3 suggested actions, Tier-2 <=20 /
+    # Tier-3 <=10 candidates, DEFAULT_SEARCH_LIMIT=6 evidence spans.
+    attachment_payload: dict | None = Field(
+        default=None, sa_column=Column(JSON_VARIANT, nullable=True)
+    )
     # Gap 280: Queue-based Async Chat Architecture
     # Lifecycle status: 'queued' | 'processing' | 'completed' | 'failed'
     status: str = Field(default="completed", max_length=32)
@@ -280,6 +492,25 @@ class ChatAttachment(SQLModel, table=True):
     candidate_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     confirmed_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Feature 26 Part 2 (E-6, task H4): the document's own text is embedded into
+    # the sibling Chroma collection `chat_docs_{tenant_id}` so an open-ended
+    # question ("what are the payment terms?") has something to read -- the ~15
+    # denormalised fields above cannot answer one.
+    #
+    # These three are the *observable* half of that. Indexing is best-effort and
+    # never fails an upload (the Part 1 comparison path needs no chunks at all),
+    # so "did it work?" has to be answerable from the row rather than only from a
+    # log line: `chunk_count == 0` with `indexed_at is None` on an EXTRACTED row
+    # means the embed step ran and did not succeed, and is inspectable with a
+    # single query instead of a log search.
+    chunk_count: int = Field(default=0)
+    indexed_at: datetime | None = Field(default=None)
+    # E-7's TTL. Written at upload time as `created_at + CHAT_ATTACHMENT_TTL_DAYS`
+    # so a row's lifetime is fixed when the user attaches it and does not move if
+    # the config knob is retuned later. Null means no expiry, which is what every
+    # row written before this column existed reads as -- the sweeper (H8) must
+    # therefore treat null as "keep", not as "expired at the epoch".
+    expires_at: datetime | None = Field(default=None)
 
 
 class ChatFeedback(SQLModel, table=True):

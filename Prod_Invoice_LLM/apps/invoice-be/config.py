@@ -59,6 +59,89 @@ class Settings(BaseSettings):
     # the bar and clearing it are two different jobs, and the second one belongs
     # to whoever holds the verification evidence.
     ENABLE_ASYNC_CHAT_QUEUE: bool = False
+    # Feature 27 (`docs/feature_27_generic_extraction.md`): make document type an
+    # explicit, deterministic decision made *before* extraction, and make the
+    # schema, the prompt and the verification rubric a function of it. Off, the
+    # pipeline is what it is today -- implicitly an invoice pipeline, which grades
+    # a delivery challan against a money rubric it was never going to satisfy and
+    # returns a perfectly correct document looking broken (E3: flag OFF is
+    # byte-identical to today, with E9's fail-loud as the one stated exception).
+    #
+    # THIS IS A SOFTWARE-LEVEL SWITCH, NOT A PER-TENANT ONE. Founder decision,
+    # recorded as E2 in that document: one global env-driven boolean, resolved
+    # once through `get_settings()`, identical for every tenant in the deployment.
+    # There is deliberately no `Tenant` column, no rules-table row, no workflow
+    # config entry and no header override, and one must not be added -- the
+    # extraction graph carries `tenant_id` for telemetry only and never reads
+    # per-tenant configuration, so a per-tenant flag would have to be resolved at
+    # all eight `run_extraction_agent()` call sites, and mixed-mode data (two
+    # tenants' rows extracted under different schemas and verified under
+    # different rubrics, with nothing on the row saying which) is worse than
+    # either mode. If a per-tenant rollout is ever wanted the shape is a separate
+    # deployment, which `infra/params.*.json` already supports.
+    #
+    # What it costs when on: one extra classification step per document. The
+    # deterministic title-band pass (`services/document_type_classifier.py`)
+    # costs nothing and is the common case; only an ambiguous or untitled
+    # document pays for one extra structured-output call
+    # (`extraction.classify_doc_type`). Non-invoice documents then leave the
+    # `invoice` table entirely (E10) for `documents` + a `docs_{tenant_id}`
+    # Chroma collection, which is why this is not a free flip.
+    #
+    # What flips it -- all required, and none of it is cleared yet:
+    #   1. T-OFF-1: a fixture through the pipeline with the flag OFF produces an
+    #      extracted dict equal, field for field, to the recorded pre-change
+    #      golden. Equality, not "the tests still pass".
+    #   2. T-R-6: the ON-case mirror -- an INVOICE-family fixture with the flag ON
+    #      equals that same golden. This is the one that proves turning it on does
+    #      not silently drop `compliance_metadata`, `tax_ids`, `round_off` or
+    #      per-line `hsn_sac_code` while still returning a plausible-looking
+    #      `vendor_name` and `grand_total`.
+    #   3. §7 task F's real fixtures exist, and the classifier's `0.6` confidence
+    #      threshold has been calibrated against their measured distribution --
+    #      that number is a placeholder chosen before any real document existed
+    #      (N2), not a validated one.
+    #   4. T-E10-1/2/3 against real Postgres (hard rule 2): a `DELIVERY_NOTE`
+    #      leaves zero `invoice` rows, `/dashboard/insights` is byte-identical
+    #      before and after ingesting one, and a re-upload is not billed twice.
+    # Rollout gate on top of the build gate: G11 (FE) and G14 (`GET /documents`)
+    # must both exist before this is turned on anywhere a user can see, because
+    # E10 deletes the placeholder `invoice` row and without them a classified
+    # delivery note is invisible to whoever uploaded it.
+    #
+    # Default False for the same fail-closed reason as every other flag in this
+    # file: a deployment that has not thought about this must get today's
+    # behaviour.
+    #
+    # ── REMOVAL CRITERION (Feature 27 task R12) ───────────────────────────────
+    # The condition under which this flag is DELETED rather than merely flipped
+    # on. It is written down because the alternative is what actually happens to
+    # feature flags: they are flipped, they work, and the flag-OFF branch lives
+    # forever as a second code path nobody exercises and nobody dares remove.
+    #
+    # Remove when all of:
+    #   (a) R4's and R11's Postgres runs are recorded (hard rule 2 -- a recorded
+    #       run, not a passing test on SQLite);
+    #   (b) R5's rollout gate is closed: the FE surface exists and a classified
+    #       non-invoice is visible to whoever uploaded it;
+    #   (c) one dev soak of >= 7 days with ZERO `doc_type_reason == "llm_error"`
+    #       and ZERO misrouted `documents` rows;
+    #   (d) T-R-3's equality still holds on the THEN-CURRENT invoice suite --
+    #       re-run at removal time, not cited from this run, because the point of
+    #       that test is that the invoice path did not move and the invoice path
+    #       keeps moving.
+    #
+    # At that point the flag-OFF graph is DELETED, not kept. A branch retained
+    # "just in case" after the criterion is met is a branch that will be wrong
+    # the first time anyone edits the other one.
+    #
+    # Build-gate item 3 above is now SATISFIED, recorded here because it names a
+    # number that has since changed: the threshold was recalibrated 0.6 -> 0.75
+    # on 2026-09-03 (task R11) against six measured LLM-path confidences
+    # (0.90/0.92/0.93/0.95/0.95/0.95 -- nothing observed between 0.60 and 0.90).
+    # See `services/document_type_classifier.py::DOC_TYPE_CONFIDENCE_THRESHOLD`
+    # for the basis and `tests/fixtures/doc_types/MANIFEST.md` for both numbers.
+    ENABLE_GENERIC_EXTRACTION: bool = False
     # Gap 117: which deployment this process is. Read only by ops scripts that
     # must never touch production data (scripts/grant_test_plan.py), never by
     # request-handling code -- nothing about the product's behaviour should
@@ -111,6 +194,122 @@ class Settings(BaseSettings):
     # DEFAULT_FREE_INVOICES_LIMIT so tightening the sandbox does not tighten the
     # free tier a paying-adjacent customer is on.
     SANDBOX_INVOICE_LIMIT: int = 5
+
+    # --- Feature 26 Part 2 (E-7): chat attachment retention -----------------
+    #
+    # How long a document a user attached to a chat turn is kept before the
+    # sweeper (`scripts/sweep_chat_attachments.py`, task H8) deletes the row, its
+    # blob and its chunks from `chat_docs_{tenant_id}`. Written onto every new
+    # row as `ChatAttachment.expires_at = created_at + this`, so the expiry of a
+    # row is fixed at upload time and does not silently move when this value is
+    # changed -- an already-uploaded document keeps the lifetime the user was
+    # given, and re-tuning the knob only affects what is attached after it.
+    #
+    # Deliberately its OWN knob rather than reusing SANDBOX_KEY_TTL_HOURS or
+    # FREE_QUOTA_CYCLE_DAYS. Those two answer different questions ("how long does
+    # an anonymous credential live", "how often does the free allowance refill"),
+    # and an attachment is the first thing in this system with a genuine finite
+    # lifetime for a third reason again: it is a transient artifact of one
+    # conversation that carries a vector footprint in a second Chroma collection,
+    # which nothing else in the product ever removes (invoice chunks deliberately
+    # have no TTL -- `delete_invoice_chunks()` is unwired from soft-delete so a
+    # restored invoice keeps its chunks). Sharing a knob would mean tightening
+    # one of those unrelated policies silently re-times this one.
+    #
+    # 30 days, matching E-7's stated default. The value is not fail-closed the
+    # way the flags above are -- a shorter value deletes a user's attachment out
+    # from under a conversation they are still having, so the conservative
+    # direction here is longer, not shorter.
+    CHAT_ATTACHMENT_TTL_DAYS: int = 30
+    # Feature 26 Part 2 (`docs/feature_26_chat_attached_documents.md`, E-1/E-3):
+    # let an attached document be asked open-ended questions about its own
+    # CONTENT -- "what are the payment terms?", "who signed it?" -- instead of
+    # only "does this agree with our invoices?".
+    #
+    # FILED RETROACTIVELY (BE Gap 382 — this comment read "Gap 380" until BE
+    # Gap 384's close-out pass; 380 is FE Gap 380, Feature 26 task H11, which is
+    # unrelated FE work. Always write the "BE"/"FE" prefix on a 378-385 number).
+    # Task H5 shipped the whole intent-split /
+    # clarifying-turn / content-branch mechanism with no gate at all, which is
+    # why this docstring reads like a correction rather than a design note: the
+    # founder's original brief for this feature asked for exactly this flag and
+    # it was dropped somewhere between the brief and the spec. Every other
+    # ENABLE_* in this file defaults False and gates its own code path; this one
+    # did not exist, so H5's new logic was live in every deployment the moment
+    # it merged.
+    #
+    # WHAT OFF MEANS, EXACTLY -- and this is the whole point of the flag:
+    # `_run_attached_document_turn()` does not call
+    # `_classify_attachment_intent()` at all. Not "classifies and then ignores
+    # the result", not "the content branch happens never to trigger" -- the
+    # classifier is never invoked, the clarifying turn is unreachable, and
+    # `_run_attachment_content_branch()` has no caller. Every attachment turn
+    # goes straight to Part 1's confirmation gate and comparison path, which is
+    # byte-identical to the pre-H5 behaviour shipped under Gap 366. Same
+    # guarantee shape as Feature 27's E3, and asserted the same way: a named
+    # test (`test_chat_doc_content_branch.py`'s flag-OFF parity block), not
+    # "the tests still pass".
+    #
+    # What it costs when on: one vector search plus one narration call per
+    # content-branch turn, against `chat_docs_{tenant_id}` -- i.e. an embedding
+    # call and an Azure OpenAI call on turns that previously made neither
+    # (the confirmation turn composes its prose in Python). It also puts
+    # retrieved document text in front of the model, which is a second
+    # untrusted channel: mitigated by `_wrap_retrieved_document_text()` + its
+    # guard instruction (B6), and structurally bounded by the content branch
+    # computing no figures at all, but a mitigation is not a control.
+    #
+    # What flips it -- none of it cleared yet:
+    #   1. The FE surface exists and is shipped. H10/H11/H12 render the
+    #      clarifying turn's two choice buttons and the `evidence[]` block; with
+    #      the flag on and those absent, a clarifying turn is a question the
+    #      user has no way to answer.
+    #   2. A real-document pass over the intent split's keyword lists. The two
+    #      alternations in `agents/query_agent.py` are hand-written English and
+    #      have never been measured against real user phrasing; a comparison
+    #      question misread as content is a financial question answered from
+    #      narration instead of `Decimal`.
+    #   3. V-25's live-model injection probe (functional-tester's), i.e. a real
+    #      hostile PDF through the real model, not the committed unit test that
+    #      only proves the markers are in the prompt.
+    #   4. Feature 27's `ENABLE_GENERIC_EXTRACTION` is on, per the founder's
+    #      original brief -- E-1's family-bias table keys on `doc_type`, and
+    #      with that flag off every attachment is PO/QUOTATION/OTHER, so the
+    #      DELIVERY_NOTE/GRN/CONTRACT rows the content branch exists for are
+    #      unreachable. This is a rollout ordering, not an import-time
+    #      dependency: nothing here reads that flag, deliberately, because two
+    #      flags reading each other is how a deployment ends up in a state
+    #      neither was tested in.
+    #
+    # Default False for the same fail-closed reason as every other flag here: a
+    # deployment that has not thought about this must get today's behaviour --
+    # which for this feature means Part 1's, the one with the deterministic
+    # `Decimal` comparison and the explicit confirmation gate.
+    #
+    # ── REMOVAL CRITERION (Feature 26 amendment B11, task R13) ────────────────
+    # The condition under which this flag is DELETED rather than flipped, copied
+    # verbatim in substance from B11 so the two cannot drift:
+    #
+    #   Removed when all of: (a) H16 has landed and the answer contract is
+    #   verified reaching the browser against real Postgres (V-27); (b) V-25's
+    #   live injection probe is recorded with the structural control holding;
+    #   (c) the intent split's keyword lists have been measured against a real
+    #   transcript sample -- at least 50 real attachment turns -- with the
+    #   misroute rate RECORDED, not estimated; (d) the FE surface has been driven
+    #   end to end by a person, once, and a screenshot filed; (e) one dev soak of
+    #   >= 7 days with zero turns landing on
+    #   `stop_reason="attachment_no_indexed_text"` for a document that did index.
+    #
+    # At that point the flag-off path is deleted and Part 1's comparison branch
+    # becomes the `comparison` arm of the intent split rather than a separate
+    # reachable path -- which is the real prize here. Two reachable paths through
+    # one feature is the state B11 exists to make temporary.
+    #
+    # What this flag gates, restated because it is narrower than the name
+    # suggests: Part 2's intent split and content branch, and nothing else.
+    # `attachment_id` presence remains the ROUTING switch and is not a flag
+    # (B11 item 1), and this must never grow into a gate on attachments as such.
+    ENABLE_GENERIC_DOC_CHAT: bool = False
 
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"

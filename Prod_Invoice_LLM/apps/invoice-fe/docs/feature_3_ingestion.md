@@ -67,3 +67,106 @@ Regression coverage: `e2e/group-a-layout-overflow.spec.ts` — geometry assertio
 
 ### Verification Plan
 * **Manual Verification**: Drop multiple PDFs, check that tags are sent, and confirm the progress bars update based on SSE socket triggers.
+
+---
+
+### Document type on the ingestion surfaces — BE Feature 27 task G11 (2026-09-02, FE Gap 378)
+
+Additive section (hard rule 4). Nothing above is rewritten. Design owner is
+`apps/invoice-be/docs/feature_27_generic_extraction.md` §4's FE row; this section records
+what was actually built here, including the one piece that could not be.
+
+**Context, stated plainly because it governs every choice below.** BE Feature 27 makes
+document type an explicit decision before extraction. Its persistence half — task **G9**,
+`Invoice.doc_type` / `Invoice.doc_type_evidence` — **has not landed** (`models.py` carries
+no such column as of 2026-09-02; the only `doc_type` in that file is `ChatAttachment`'s,
+Feature 26). The flag `ENABLE_GENERIC_EXTRACTION` exists and defaults `False`. So **no API
+response in this app returns `doc_type` today**, and Feature 27 requires the field stay
+nullable/optional even after G9. Everything here is therefore written to the same rule:
+*present → show it; absent → render byte-identical to what shipped before this change.*
+The absent case is not a fallback, it is the only case that currently executes.
+
+**`components/ingestion/StatusTable.tsx`**
+* `StatusItem` gains `docType?: string | null`. Named camelCase, not `doc_type`, because
+  `StatusItem` is this component's view model rather than a wire shape — the reconciliation
+  fetch already maps `data.vendor_name` → `vendorName`. The wire key read is `doc_type`.
+* `updateItemStatus()` gains a trailing `docType` parameter, threaded from `data.doc_type`
+  on the mount reconciliation fetch (Gap 269's `GET /invoices/status/{id}`) and from
+  `payload.doc_type` on the SSE branch.
+* **It is merged, not overwritten**: `docType: docType ?? item.docType`. The other mapped
+  fields (`vendorName`, `total`, `currency`) are assigned unconditionally, so an SSE tick —
+  which carries only a status transition — blanks them. Copying that would make the badge
+  appear on the reconciliation fetch and vanish on the next stream event. The existing
+  fields' behaviour was deliberately left alone; it is pre-existing and out of this scope.
+* `getDocTypeBadge()` renders a slate pill in the **File** cell, under the `PDF · size`
+  line, with the same geometry as the status badges (`rounded-full`, `text-[10px]`,
+  `bordered`, `colour/10` fill) and a deliberately quieter colour, because a document type
+  is a fact about the file, not a pipeline outcome. `DELIVERY_NOTE` renders as
+  "Delivery Note"; the raw enum value stays in the `title` attribute so a misclassification
+  can be reported verbatim. `data-testid="doc-type-badge"`.
+* **No new column was added, on purpose.** FE Gap 113 item 6 removed the old "Type" column
+  precisely because it was the constant string "PDF" on every row. A fourth header that is
+  empty on every row — which is every row today — would repeat that mistake. The table is
+  still File / Stage / Status.
+
+**`components/ingestion/DropZone.tsx` — the accept list is unchanged, and that is a
+recorded blocker, not an oversight.** Feature 27 §4 widens `.pdf` to
+`.pdf,.png,.jpg,.jpeg,.tiff` **only when the flag is on**, "surfaced via the existing
+config/feature endpoint, not hardcoded". **There is no such endpoint.** Verified repo-wide
+2026-09-02: every `ENABLE_*` in `invoice-be/config.py` is consumed server-side only
+(`ENABLE_ASYNC_CHAT_QUEUE` is read inside `routers/chat.py`; this app adapts to the
+*response shape*, never to a flag value), `main.py` registers no `/config` or `/features`
+router, `routers/settings.py` exposes tenant configuration and credentials but no software
+flags, and the only flag-shaped values this app sees are build-time `NEXT_PUBLIC_*` env
+vars, which cannot reflect a backend process setting. Widening unconditionally would let a
+user select a PNG the backend cannot extract with the flag off — `pdf_to_base64_images()`
+returns `[]` for a non-PDF and the visual channel is lost silently. Inventing a `/features`
+endpoint is backend scope. So: **both guards stay `.pdf`**, and they were refactored to
+share one `ACCEPTED_EXTENSIONS` constant so the suffix check in `processFiles` and the
+`accept` attribute on the input cannot drift apart when the flag exposure does arrive —
+§4 is explicit that a mismatch means a dragged PNG gets past the picker and is rejected only
+after selection. Behaviour is identical to before: PDF-only, same error string, same
+`MAX_FILE_SIZE`.
+
+**`app/invoices/review/[id]/page.tsx` (auditor console) — the evidence display.**
+`InvoiceDetail` gains `doc_type?: string | null` and `doc_type_evidence?: string | null`
+(snake_case here: this interface *is* the `GET /invoices/{id}` wire shape). Two rows were
+added to the existing "Additional Extracted Metadata" panel — `Document Type` (raw enum
+value, because this console is where a misclassification gets reported) and `Type Evidence`
+(the verbatim printed phrase the classifier decided from, quoted). `doc_type` was added to
+that panel's own visibility condition, so a record whose *only* extended metadata is a
+document type still shows the panel; a record with none still shows nothing. The two rows
+are independently conditional: Feature 27 E7's low-confidence path lands on `OTHER` with no
+phrase to quote, so a type can legitimately exist without evidence. `data-testid`s
+`doc-type-row` / `doc-type-evidence-row`.
+
+**Not built, deliberately.** No documents-list page. Feature 27 E10 routes non-invoice
+uploads to a separate `documents` table and G14's `GET /documents` endpoint does not exist
+yet — building a page against an absent endpoint would be fiction. The outbound review
+console (`app/invoices/outbound-review/[id]/page.tsx`) was not touched either: Feature 27
+amendment A2 leaves the OUTBOUND direction on its existing schema in both flag states.
+
+**Stale File Coordinate, corrected here rather than in §4.** Feature 27 §4 names
+`apps/invoice-fe/types/invoice.ts` as the place to add `doc_type?: string`. **That file does
+not exist.** `types/` contains only `chat.ts` (Feature 5). The ingestion status shape lives
+as the exported `StatusItem` in `StatusTable.tsx` and the auditor shape as `InvoiceDetail`
+in the review page — both were extended in place. No new `types/invoice.ts` was created:
+inventing a shared types module for one optional field, when neither consumer imports from
+the other, would be a refactor nobody asked for.
+
+**Verification — real, and bounded.** `npx tsc --noEmit` exit 0. New Playwright spec
+`e2e/feature27-doc-type.spec.ts`, **6 tests, all passing** against a real `next dev` server
+with every `/api/**` call stubbed (the house pattern here — see
+`e2e/gaps-282-284-286.spec.ts`): ledger renders with no badge and still exactly three column
+headers when the status payload has no `doc_type` key at all; badge renders once, humanised,
+with the raw value in `title`, when it does; the DropZone input's `accept` is still exactly
+`.pdf` **and** a `.png` selection is still rejected by the suffix guard with the original
+error string (both guards asserted, so a future one-sided widening fails loudly); the
+auditor console shows neither row *and no panel* for a metadata-free record, shows both rows
+plus the panel when type and evidence are present, and shows the type alone when evidence is
+`null`. The four pre-existing failures in `e2e/audit-review-console.spec.ts` and
+`e2e/gaps-282-284-286.spec.ts` were confirmed **pre-existing** by stashing these three file
+changes and re-running: identical 4 failed / 11 passed at HEAD without them. **Not verified:**
+nothing was run against a backend that actually returns `doc_type`, because none exists —
+the present-case tests prove the rendering, not the wiring to a real payload, and that
+end-to-end claim belongs to functional-tester after G9 lands.

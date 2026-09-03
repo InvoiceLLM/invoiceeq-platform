@@ -58,10 +58,13 @@ def run_outbound_extraction_agent(
 ) -> dict:
     """Runs the shared extraction graph in OUTBOUND mode.
 
-    Returns the same `{status, alerts, extracted_data}` shape as before, with
+    Returns the same `{status, alerts, extracted_data}` keys as before, with
     the same `VERIFIED`/`NEEDS_REVIEW` status vocabulary — the graph resolves
     those from the OUTBOUND direction profile, so nothing downstream
     (`queue_worker/outbound_handlers.py`, `routers/outbound_audit.py`) changes.
+    Feature 27 (G7) added a fourth key, `doc_type`, which is `None` unless the
+    flag is on; no outbound consumer reads it, and A2/G5 keep the OUTBOUND
+    schema and rubric unchanged whatever it says.
     """
     return run_extraction_agent(
         file_path=file_path,

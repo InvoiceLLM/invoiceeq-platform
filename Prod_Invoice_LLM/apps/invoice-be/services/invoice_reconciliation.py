@@ -53,6 +53,30 @@ QUEUE_NAME = "extraction-tasks-queue"
 # of them is ever persisted.
 STUCK_STATUSES = ("PROCESSING", "PROCESSING_OCR", "EXTRACTING_DATA", "UPLOADED")
 
+# --- Why this sweep covers `Invoice` and not `Document` (Gap 399) -------------
+# Feature 27 E10 (Gap 381) gave non-invoice documents their own table, and Gap
+# 381's open item 3 asked whether they needed their own re-enqueue sweep. They do
+# not, and the reason is a property of the code rather than a judgement call:
+# a `Document` row has exactly ONE construction site
+# (`queue_worker/handlers.py:494`, called at :944), it runs AFTER the extraction
+# graph returns, and it is built with `status` already EXTRACTED or
+# EXTRACT_FAILED and `completed_at` already stamped. There is no window in which
+# a `Document` exists and is still owed an answer.
+#
+# A stall in a non-invoice upload is therefore a stall of the placeholder
+# `Invoice` row -- which is created at the door, is what `find_stuck_invoices()`
+# below already finds, and whose re-enqueue re-runs the same handler and reaches
+# the same fork. The document branch is downstream of the retry, not parallel to
+# it. Building a second sweep would be building it for a state nothing can
+# produce.
+#
+# THE DEFERRAL IS NOT PERMANENT AND IS NOT ON TRUST. If a `Document` is ever
+# created at upload time -- the obvious next move, and the one that makes this
+# wrong -- `tests/test_document_delete.py::
+# test_a_document_row_is_only_ever_created_in_a_terminal_status` goes red and
+# says so. That is the trigger to build the sweep, and until it fires there is
+# nothing for one to do.
+
 FAILED_STATUS = "FAILED"
 
 
