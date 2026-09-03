@@ -23,7 +23,7 @@ from models import (
     TenantChatSettings,
     User,
 )
-from services.invoice_visibility import invoice_not_deleted
+from services.invoice_visibility import invoice_is_live
 from queue_worker.handlers import _run_ocr
 from agents.extraction_agent import run_extraction_agent
 from agents.trainer_agent import run_trainer_agent, ConstraintRefinementError
@@ -811,7 +811,7 @@ def start_session_from_invoice(
         select(Invoice).where(
             Invoice.id == payload.invoice_id,
             Invoice.tenant_id == tenant_context.tenant_id,
-            invoice_not_deleted(),
+            invoice_is_live(),
         )
     ).first()
     if not invoice:
@@ -933,7 +933,7 @@ def list_trainer_vendors(
     stmt = select(Invoice).where(
         Invoice.tenant_id == tenant_context.tenant_id,
         Invoice.vendor_name.is_not(None),
-        invoice_not_deleted(),
+        invoice_is_live(),
     )
     invoices = db_session.exec(stmt).all()
 

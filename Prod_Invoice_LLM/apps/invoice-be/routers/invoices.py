@@ -24,12 +24,15 @@ from dependencies import (
     # upload is ingestion, not one of the actions `actions` scope governs.
     get_tenant_or_api_key_context,
     require_can_load_or_api_key,
+    # Gap 421: the replace flow is an auditor decision about a flagged
+    # invoice, not an ingestion action -- same permission that parked it.
+    require_can_audit,
     TenantContext,
 )
 from chroma_client import delete_document_chunks
 from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
-from services.invoice_visibility import invoice_not_deleted
+from services.invoice_visibility import invoice_not_deleted, invoice_is_live
 from services.billing_quota import charge_free_quota, count_billable_uploads
 from azure.storage.queue import QueueClient
 from config import get_settings
@@ -60,12 +63,21 @@ async def _ingest_single_file(
     context: TenantContext,
     db_session: Session,
     submitted_by_email: str | None = None,
+    supersedes_invoice_id: UUID | None = None,
 ) -> str:
     """
     Shared per-file ingestion logic (dedup check, blob upload, DB row, queue
     dispatch) used by both the direct upload endpoint and the directory
     watcher (Gap 12) — one path, not two copies to keep in sync. Returns the
     new invoice_id as a string.
+
+    Gap 421: `supersedes_invoice_id` is the third caller — the replace flow for
+    a NEEDS_RESUBMISSION invoice. Threaded through as a parameter rather than
+    given its own copy of this function, for the reason stated above: this is
+    the one place that knows how to dedup, store, row and queue a file, and a
+    second copy would drift. **Billing is deliberately not touched here** — it
+    never was; `upload_invoices` charges quota before calling this, which is
+    exactly why the replace flow can reuse this path and skip the charge.
     """
     invoice_id = uuid4()
     file_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -299,6 +311,9 @@ async def _ingest_single_file(
         status="PROCESSING",
         tags=tags,
         submitted_by_email=submitter,
+        # Gap 421: set only by the replace flow, so the corrected invoice knows
+        # which one it replaced. None for every ordinary upload.
+        supersedes_invoice_id=supersedes_invoice_id,
     )
     db_session.add(db_invoice)
     await run_in_threadpool(db_session.commit)
@@ -691,7 +706,7 @@ async def list_invoices(
     conditions = [
         Invoice.tenant_id == context.tenant_id,
         Invoice.flow_direction == "INBOUND",
-        invoice_not_deleted(),
+        invoice_is_live(),
     ]
     if batch_id:
         conditions.append(Invoice.batch_id == batch_id)
@@ -742,7 +757,7 @@ async def list_batches(
         .where(
             Invoice.tenant_id == context.tenant_id,
             Invoice.batch_id != None,
-            invoice_not_deleted()
+            invoice_is_live()
         )
     )
     total = db_session.exec(total_statement).one()
@@ -759,7 +774,7 @@ async def list_batches(
         .where(
             Invoice.tenant_id == context.tenant_id,
             Invoice.batch_id != None,
-            invoice_not_deleted()
+            invoice_is_live()
         )
         .group_by(Invoice.batch_id, Invoice.flow_direction)
         .order_by(func.min(Invoice.created_at).desc())
@@ -775,7 +790,7 @@ async def list_batches(
     # Get status breakdown for the batch_ids
     invoices_statement = (
         select(Invoice.batch_id, Invoice.status, func.count(Invoice.id))
-        .where(Invoice.batch_id.in_(batch_ids), invoice_not_deleted())
+        .where(Invoice.batch_id.in_(batch_ids), invoice_is_live())
         .group_by(Invoice.batch_id, Invoice.status)
     )
     invoice_rows = db_session.exec(invoices_statement).all()
@@ -928,6 +943,153 @@ async def get_invoice(
             detail="Invoice not found or access denied."
         )
     return invoice
+
+
+@router.post("/{invoice_id}/replace", status_code=status.HTTP_201_CREATED)
+async def replace_invoice(
+    invoice_id: UUID,
+    file: UploadFile = File(...),
+    # Gap 421: replacing is an auditor decision about a specific flagged
+    # invoice, not an ingestion action, so it is gated on can_audit rather
+    # than can_load -- the same permission that put the invoice into
+    # NEEDS_RESUBMISSION in the first place.
+    context: TenantContext = Depends(require_can_audit),
+    db_session: Session = Depends(get_db_session),
+):
+    """
+    Gap 421: replace a NEEDS_RESUBMISSION invoice with a corrected upload.
+
+    WHAT MOVES AND WHAT DOES NOT -- this is the whole design in one place:
+
+      * The OLD row is **kept**, stamped `superseded_at`. Its alerts and its
+        extracted data survive untouched, because they are the record of what
+        was wrong. `invoice_is_live()` drops it from every list, dashboard
+        aggregate and chat query, so it stops affecting results without being
+        destroyed.
+      * The OLD PDF in blob storage is **never deleted**. It is the evidence.
+      * The OLD Chroma vectors **are** hard-deleted. This is the one place
+        something is genuinely removed, and it has to be: a superseded invoice
+        must never be able to answer a chat question, and unlike SQL there is
+        no per-query predicate to filter it out at read time.
+        `delete_invoice_chunks()` has existed unwired since Gap 239 for exactly
+        this case -- its docstring says "If a hard delete is ever added, it
+        must call this."
+      * The NEW row is a normal invoice that runs the normal extraction
+        pipeline, linked back via `supersedes_invoice_id`.
+      * **No billing charge.** A correction is not a second invoice. This is an
+        assumption, recorded in the plan and cheap to reverse: add a
+        `charge_free_quota()` call here.
+    """
+    invoice = db_session.exec(
+        select(Invoice).where(
+            Invoice.id == invoice_id,
+            Invoice.tenant_id == context.tenant_id,
+            invoice_not_deleted(),
+        )
+    ).first()
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found or access denied.",
+        )
+
+    if invoice.status != "NEEDS_RESUBMISSION":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Only an invoice marked NEEDS_RESUBMISSION can be replaced; "
+                f"this one is '{invoice.status}'."
+            ),
+        )
+    if invoice.superseded_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This invoice has already been replaced.",
+        )
+
+    fname = (file.filename or "").strip()
+    if not fname.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file format: {file.filename or 'unnamed'}. Only PDF is allowed.",
+        )
+    try:
+        file_bytes = await file.read()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read file {fname}: {str(e)}",
+        )
+    # Gap 355's magic-byte check, same as the upload path -- a .pdf name is not
+    # a PDF.
+    if not file_bytes.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid PDF content in file {fname}. Only valid PDF documents are supported.",
+        )
+
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+
+    batch_id = uuid4()
+    new_invoice_id = await _ingest_single_file(
+        file_bytes,
+        fname,
+        list(invoice.tags or []),
+        batch_id,
+        tenant,
+        context,
+        db_session,
+        supersedes_invoice_id=invoice.id,
+    )
+
+    # Stamp the old row only after the replacement actually exists -- if
+    # ingestion above raised, the invoice stays live and replaceable rather
+    # than being orphaned into a superseded state with nothing superseding it.
+    invoice.superseded_at = datetime.utcnow()
+    db_session.add(invoice)
+
+    db_session.add(
+        AuditLog(
+            tenant_id=context.tenant_id,
+            invoice_id=invoice.id,
+            actor_user_id=context.db_user_id,
+            actor_role=context.role,
+            action="REPLACE_INVOICE",
+            details={
+                "replaced_invoice_id": str(invoice.id),
+                "replacement_invoice_id": str(new_invoice_id),
+                "resubmission_reason": invoice.resubmission_reason,
+                "previous_status": "NEEDS_RESUBMISSION",
+                "filename": fname,
+            },
+            timestamp=datetime.utcnow(),
+        )
+    )
+    db_session.commit()
+
+    # Best-effort, and deliberately after the commit: the replacement is a fact
+    # in Postgres by now, and a Chroma outage must not roll it back or 500 the
+    # request. The cost of failing here is a stale vector that can still answer
+    # a chat question -- logged loudly so it can be reconciled, never silent.
+    try:
+        from chroma_client import delete_invoice_chunks
+        await run_in_threadpool(
+            delete_invoice_chunks, str(invoice.id), str(context.tenant_id)
+        )
+    except Exception as ce:
+        logger.error(
+            "Gap 421: superseded invoice %s was NOT removed from the vector index "
+            "(%s). Chat may still answer from replaced data until this is reconciled.",
+            invoice.id, ce,
+        )
+
+    return {
+        "replaced_invoice_id": str(invoice.id),
+        "replacement_invoice_id": new_invoice_id,
+        "batch_id": str(batch_id),
+    }
 
 
 @router.get("/{invoice_id}/pdf")

@@ -105,6 +105,27 @@ def should_index_status(status: str | None) -> bool:
     return bool(status) and status.upper() not in NON_INDEXABLE_STATUSES
 
 
+def should_index_invoice(invoice) -> bool:
+    """Gap 421: `should_index_status()` plus "and it has not been superseded".
+
+    Status alone is not enough once the replace workflow exists. A superseded
+    invoice keeps its original status (NEEDS_RESUBMISSION), which
+    `should_index_status()` correctly treats as indexable -- so any re-index
+    path would silently restore the very vectors `replace_invoice()` deleted,
+    and the assistant would start answering from the replaced document again.
+
+    Takes the row rather than the status string precisely because the status
+    cannot express this: superseded-ness lives in a different column, and the
+    whole point of keeping it separate is that a superseded invoice is still
+    a NEEDS_RESUBMISSION invoice for every other purpose.
+    """
+    if invoice is None:
+        return False
+    if getattr(invoice, "superseded_at", None) is not None:
+        return False
+    return should_index_status(getattr(invoice, "status", None))
+
+
 def _collection_metadata() -> dict:
     """
     Gap 244: Chroma defaults a collection's HNSW index to raw (squared) L2

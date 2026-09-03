@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime
 from uuid import uuid4
 from unittest.mock import patch
 from sqlmodel import SQLModel, create_engine, Session, select
@@ -688,3 +689,102 @@ def test_cannot_unpark_an_invoice_that_was_never_parked(db_session):
     )
     assert response.status_code == 400
     assert "Cannot reopen" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Gap 421: resubmission reason, and superseded invoices are read-only
+# ---------------------------------------------------------------------------
+
+def test_resubmission_reason_is_persisted(db_session):
+    """Without this the column is dead and the vendor is told to resend with
+    no statement of what to fix."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=["Total mismatch"],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "NEEDS_RESUBMISSION", "resubmission_reason": "Line items do not sum to the total."},
+    )
+    assert response.status_code == 200, response.text
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "NEEDS_RESUBMISSION"
+    assert db_invoice.resubmission_reason == "Line items do not sum to the total."
+
+
+def test_resubmission_reason_is_cleared_when_the_invoice_moves_on(db_session):
+    """A stale reason from a previous round must never be shown against a
+    later decision."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="NEEDS_RESUBMISSION", sa_alerts=[], resubmission_reason="Old reason",
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "AUDIT_REQUIRED"},
+    )
+    assert response.status_code == 200
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "AUDIT_REQUIRED"
+    assert db_invoice.resubmission_reason is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"status": "PAID"},
+        {"status": "REVIEW_LATER"},
+        {"corrections": {"grand_total": 99.0}},
+        {"dismissed_alerts": ["Total mismatch"]},
+    ],
+)
+def test_superseded_invoice_is_read_only(db_session, payload):
+    """A replaced invoice is frozen history. Acting on it would write decisions
+    onto a version nobody uses, and those writes would be invisible in every
+    list because invoice_is_live() filters it out."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="NEEDS_RESUBMISSION", sa_alerts=["Total mismatch"],
+        superseded_at=datetime.utcnow(),
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+    assert response.status_code == 409
+    assert "replaced" in response.json()["detail"].lower()
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "NEEDS_RESUBMISSION"
+    assert db_invoice.sa_alerts == ["Total mismatch"]
+
+
+def test_should_index_invoice_excludes_superseded():
+    """Gap 421: status alone cannot express superseded-ness, so a re-index
+    keyed on status would silently restore the vectors replace_invoice()
+    deleted."""
+    from chroma_client import should_index_invoice, should_index_status
+
+    live = Invoice(tenant_id=MOCK_TENANT_ID, file_path="x.pdf", status="NEEDS_RESUBMISSION")
+    superseded = Invoice(
+        tenant_id=MOCK_TENANT_ID, file_path="x.pdf", status="NEEDS_RESUBMISSION",
+        superseded_at=datetime.utcnow(),
+    )
+
+    # The status itself is indexable -- which is exactly why the status-only
+    # check was not enough.
+    assert should_index_status("NEEDS_RESUBMISSION") is True
+    assert should_index_invoice(live) is True
+    assert should_index_invoice(superseded) is False
+    assert should_index_invoice(None) is False

@@ -47,7 +47,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from models import Invoice
-from services.invoice_visibility import invoice_not_deleted
+from services.invoice_visibility import invoice_is_live
 from utils.rule_schema import (
     KIND_ALERT_OVERRIDE,
     KIND_CONFIDENCE,
@@ -206,7 +206,7 @@ def _fetch_invoices(
     scope: str,
     vendor_name: str | None,
 ) -> list[Invoice]:
-    stmt = select(Invoice).where(Invoice.tenant_id == tenant_id, invoice_not_deleted())
+    stmt = select(Invoice).where(Invoice.tenant_id == tenant_id, invoice_is_live())
     if scope == SCOPE_OUTBOUND_GLOBAL:
         stmt = stmt.where(Invoice.flow_direction == "OUTBOUND")
     elif vendor_name:

@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from dependencies import get_tenant_context, get_db_session, TenantContext
 from models import Invoice, ExtractionTemplate, AuditLog
-from services.invoice_visibility import invoice_not_deleted
+from services.invoice_visibility import invoice_is_live
 from telemetry import tracked_llm_call
 from utils.llm import get_llm
 
@@ -154,7 +154,7 @@ async def get_dashboard_metrics(
     conditions = [
         Invoice.tenant_id == context.tenant_id,
         Invoice.flow_direction == "INBOUND",
-        invoice_not_deleted(),
+        invoice_is_live(),
     ]
     if start_date:
         conditions.append(func.date(Invoice.created_at) >= start_date)
@@ -413,7 +413,7 @@ async def get_trainer_impact(
     # "recurring, not a one-off" reasoning as the Gap 27 suggested-rule
     # threshold, just applied at the vendor level instead of per-field.
     invoices = db_session.exec(
-        select(Invoice).where(Invoice.tenant_id == context.tenant_id, invoice_not_deleted())
+        select(Invoice).where(Invoice.tenant_id == context.tenant_id, invoice_is_live())
     ).all()
 
     flagged_counts: dict[str, int] = {}
@@ -509,7 +509,7 @@ def get_dashboard_insights(
         logger.warning("Dashboard insights cache lookup failed, proceeding without cache: %s", e)
 
     invoices = db_session.exec(
-        select(Invoice).where(Invoice.tenant_id == context.tenant_id, invoice_not_deleted())
+        select(Invoice).where(Invoice.tenant_id == context.tenant_id, invoice_is_live())
     ).all()
 
     if not invoices:

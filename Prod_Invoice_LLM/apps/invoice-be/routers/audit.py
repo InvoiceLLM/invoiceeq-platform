@@ -89,6 +89,13 @@ class AuditResolutionPayload(BaseModel):
                      "Omit to just dismiss alerts and/or save corrections without "
                      "finalizing the invoice.",
     )
+    resubmission_reason: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Gap 421: why the invoice is being sent back, persisted on "
+                    "the invoice when status=NEEDS_RESUBMISSION. Without it the "
+                    "vendor is told to resend with no statement of what to fix.",
+    )
     dismissed_alerts: Optional[List[str]] = Field(default=None, description="Alert messages, types, or IDs to dismiss")
     corrections: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -436,6 +443,21 @@ async def resolve_audit_invoice(
         invoice_not_deleted(),
     )
     invoice = db_session.exec(statement).first()
+    # Gap 421: a superseded invoice is frozen history -- it has been replaced by
+    # a corrected upload, and its row survives only so the old data and alerts
+    # stay reviewable. Acting on it (approve/reject/park/correct) would write
+    # decisions onto a version nobody is using, and those writes would be
+    # invisible in every list because `invoice_is_live()` filters it out.
+    # Fetched with `invoice_not_deleted()` above rather than `invoice_is_live()`
+    # deliberately, so this returns an explicit 409 instead of a misleading 404.
+    if invoice is not None and invoice.superseded_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This invoice has been replaced by a resubmitted version and is now "
+                "read-only. Act on the replacement instead."
+            ),
+        )
     if not invoice:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -514,6 +536,16 @@ async def resolve_audit_invoice(
     invoice.sa_alerts = new_alerts
     if target_status is not None:
         invoice.status = target_status
+
+    # Gap 421: persist why it is being sent back. Only meaningful on
+    # NEEDS_RESUBMISSION -- this is the text a human will act on when they open
+    # the replaced version to see what was wrong. Cleared when the invoice
+    # leaves that state (including on un-park), so a stale reason from a
+    # previous round can never be shown against a later decision.
+    if target_status == "NEEDS_RESUBMISSION":
+        invoice.resubmission_reason = (payload.resubmission_reason or "").strip() or None
+    elif target_status is not None:
+        invoice.resubmission_reason = None
 
     # 3b. Apply field corrections (Task 7.3), capturing a before/after diff.
     vendor_name_for_pattern = invoice.vendor_name  # capture before a vendor_name correction itself changes it

@@ -108,6 +108,23 @@ class Invoice(SQLModel, table=True):
     # gives webhook subscribers and any future UI a structured pointer to
     # the original invoice instead of the prose inside sa_alerts.
     duplicate_of_invoice_id: UUID | None = Field(default=None, foreign_key="invoice.id", nullable=True, index=True)
+    # Gap 421: the resubmission replace workflow. When a NEEDS_RESUBMISSION
+    # invoice is replaced by a corrected upload, the OLD row is kept -- its
+    # alerts and its blob are the record of what was wrong -- but stamped
+    # `superseded_at` so `invoice_is_live()` drops it from every list,
+    # aggregate and chat query. The NEW row points back via
+    # `supersedes_invoice_id`. Nothing is destroyed in Postgres or blob
+    # storage; only the Chroma vectors are hard-deleted, so the assistant can
+    # never answer from a superseded invoice.
+    #
+    # Deliberately NOT reusing `deleted_at` for this (which would have been
+    # free, since every query already filters on it): both this router and
+    # routers/documents.py document an intended restore path, and a restore
+    # built later would silently resurrect superseded invoices into live
+    # totals. Keeping the two concepts separate is the point.
+    superseded_at: datetime | None = Field(default=None, index=True)
+    supersedes_invoice_id: UUID | None = Field(default=None, foreign_key="invoice.id", nullable=True, index=True)
+    resubmission_reason: str | None = Field(default=None, max_length=500)
     status: str = Field(default="PROCESSING")
     sa_alerts: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     tags: list = Field(default=[], sa_column=Column(JSON_VARIANT))

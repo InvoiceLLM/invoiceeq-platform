@@ -587,3 +587,134 @@ def test_rejects_invalid_pdf_magic_bytes(db_session):
     assert response.status_code == 400
     assert "Invalid PDF content" in response.json()["detail"]
 
+
+
+# ---------------------------------------------------------------------------
+# Gap 421: replace a NEEDS_RESUBMISSION invoice with a corrected upload
+#
+# The design in one line: nothing is destroyed except the vector chunks. The
+# old row, its alerts and its blob all survive; it is merely stamped
+# `superseded_at` so `invoice_is_live()` drops it from results.
+# ---------------------------------------------------------------------------
+
+REPLACE_PDF = b"%PDF-1.4 corrected invoice"
+
+
+def _parked_invoice(db_session, status_value="NEEDS_RESUBMISSION", alerts=None):
+    """A tenant + one invoice sitting in the given status."""
+    if db_session.get(Tenant, MOCK_TENANT_ID) is None:
+        db_session.add(Tenant(id=MOCK_TENANT_ID, name="T", domain="t.example.com", billing_plan="pro"))
+    inv = Invoice(
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/original.pdf",
+        file_hash="originalhash",
+        status=status_value,
+        sa_alerts=alerts if alerts is not None else ["Total mismatch"],
+        tags=["#q1"],
+    )
+    db_session.add(inv)
+    db_session.commit()
+    db_session.refresh(inv)
+    return inv
+
+
+def _do_replace(invoice_id, filename="corrected.pdf", content=REPLACE_PDF):
+    files = {"file": (filename, io.BytesIO(content), "application/pdf")}
+    with patch("routers.invoices.upload_pdf_to_blob_storage") as mock_storage, \
+         patch("routers.invoices.QueueClient") as mock_queue_cls, \
+         patch("chroma_client.delete_invoice_chunks") as mock_del:
+        mock_storage.return_value = "mock/path/corrected.pdf"
+        mock_queue_cls.from_connection_string.return_value
+        client = TestClient(app)
+        res = client.post(f"/api/v1/invoices/{invoice_id}/replace", files=files)
+        return res, mock_del
+
+
+def test_replace_supersedes_the_old_invoice_and_links_the_new_one(db_session):
+    old = _parked_invoice(db_session)
+    res, _ = _do_replace(old.id)
+    assert res.status_code == 201, res.text
+
+    body = res.json()
+    assert body["replaced_invoice_id"] == str(old.id)
+    new_id = UUID(body["replacement_invoice_id"])
+
+    db_session.refresh(old)
+    assert old.superseded_at is not None, "old row must be stamped superseded"
+
+    new = db_session.get(Invoice, new_id)
+    assert new is not None
+    assert new.supersedes_invoice_id == old.id
+    assert new.status == "PROCESSING", "replacement runs the normal pipeline"
+
+
+def test_replace_preserves_the_old_invoice_its_alerts_and_its_blob(db_session):
+    """The whole point: the old version stays reviewable. Nothing about the
+    old row is cleared, and its blob pointer is untouched."""
+    old = _parked_invoice(db_session, alerts=["Total mismatch", "Bad GST"])
+    original_path = old.file_path
+    res, _ = _do_replace(old.id)
+    assert res.status_code == 201
+
+    db_session.refresh(old)
+    assert old.sa_alerts == ["Total mismatch", "Bad GST"], "alerts are the evidence"
+    assert old.file_path == original_path, "original PDF must never be deleted"
+    assert old.deleted_at is None, "superseded is not deleted"
+
+
+def test_replace_removes_the_old_invoice_from_the_vector_index(db_session):
+    """The one thing that IS hard-deleted -- otherwise chat keeps answering
+    from an invoice a human already declared wrong."""
+    old = _parked_invoice(db_session)
+    res, mock_del = _do_replace(old.id)
+    assert res.status_code == 201
+    mock_del.assert_called_once()
+    assert mock_del.call_args[0][0] == str(old.id)
+
+
+@pytest.mark.parametrize("bad_status", ["AUDIT_REQUIRED", "PAID", "REJECTED", "REVIEW_LATER", "COMPLETED"])
+def test_replace_rejected_unless_needs_resubmission(db_session, bad_status):
+    old = _parked_invoice(db_session, status_value=bad_status)
+    res, mock_del = _do_replace(old.id)
+    assert res.status_code == 400
+    assert "NEEDS_RESUBMISSION" in res.json()["detail"]
+    mock_del.assert_not_called()
+
+    db_session.refresh(old)
+    assert old.superseded_at is None
+
+
+def test_replace_twice_is_refused(db_session):
+    old = _parked_invoice(db_session)
+    first, _ = _do_replace(old.id)
+    assert first.status_code == 201
+
+    second, _ = _do_replace(old.id, filename="again.pdf", content=b"%PDF-1.4 again")
+    assert second.status_code == 409
+    assert "already been replaced" in second.json()["detail"]
+
+
+def test_replace_rejects_a_non_pdf(db_session):
+    """Same magic-byte check as the upload path -- a .pdf name is not a PDF."""
+    old = _parked_invoice(db_session)
+    res, mock_del = _do_replace(old.id, filename="evil.pdf", content=b"MZ not a pdf")
+    assert res.status_code == 400
+    assert "Invalid PDF content" in res.json()["detail"]
+    mock_del.assert_not_called()
+
+    db_session.refresh(old)
+    assert old.superseded_at is None, "a rejected replace must not supersede anything"
+
+
+def test_replace_writes_an_audit_log_naming_both_invoices(db_session):
+    from models import AuditLog
+    old = _parked_invoice(db_session)
+    res, _ = _do_replace(old.id)
+    assert res.status_code == 201
+    new_id = res.json()["replacement_invoice_id"]
+
+    logs = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == old.id)).all()
+    replace_logs = [l for l in logs if l.action == "REPLACE_INVOICE"]
+    assert len(replace_logs) == 1
+    assert replace_logs[0].details["replacement_invoice_id"] == new_id
+    assert replace_logs[0].details["replaced_invoice_id"] == str(old.id)
