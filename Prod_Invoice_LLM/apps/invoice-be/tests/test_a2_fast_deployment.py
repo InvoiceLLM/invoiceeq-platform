@@ -106,7 +106,13 @@ def test_sql_generation_is_never_handed_the_fast_model():
     source = inspect.getsource(query_agent._run_query_agent)
 
     assert "fast_llm = _fast_llm()" in source, "the A2 handle is gone"
-    assert "llm = get_llm()" in source, "the reasoning handle is gone"
+    # Item A1 later replaced the bare `get_llm()` here with `_generation_llm()`,
+    # which returns exactly `get_llm()` unless a reasoning budget is configured.
+    # Either spelling means "the reasoning handle is still separate"; neither
+    # being present means A2 swallowed generation.
+    assert (
+        "llm = _generation_llm()" in source or "llm = get_llm()" in source
+    ), "the reasoning handle is gone"
 
     # Every generation-loop call in this function must receive the reasoning handle.
     for call in ("run_sql_generation_loop(", "build_sql_system_prompt("):

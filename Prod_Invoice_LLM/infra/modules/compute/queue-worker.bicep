@@ -243,8 +243,24 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: chromaHost
             }
             {
+              // Gap 422: 80, NOT 8000. `chromaHost` is an Azure Container Apps
+              // *internal ingress* FQDN, and ACA publishes internal ingress on 80
+              // (http) and 443 (https). The chromadb app's `targetPort: 8000` is
+              // the port its container listens on inside the replica -- it is not
+              // what the FQDN serves. Connecting to <fqdn>:8000 reaches nothing
+              // and hangs until the client timeout fires.
+              //
+              // This was 8000 from at least revision --0000116 to --0000122, and
+              // every one of those revisions fell back to an empty in-container
+              // PersistentClient, so dev vector search returned nothing for the
+              // whole period. It looked like a cold-start race because the
+              // failure landed at ~3.1s against a 3.0s connect budget; raising
+              // that budget to 15s changed nothing except how long it took to
+              // fail, which is what finally ruled the race out.
+              //
+              // If this is ever changed to 443, set CHROMA_USE_SSL true with it.
               name: 'CHROMA_PORT'
-              value: '8000'
+              value: '80'
             }
             {
               name: 'CLERK_SECRET_KEY'

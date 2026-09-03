@@ -208,6 +208,47 @@ _SQL_KEYWORDS = ("total", "spent", "sum", "average", "how many", "count", "mean"
 _CHAT_KEYWORDS = ("hello", "hi ", "hey", "who are you", "what is your name")
 
 
+def _generation_llm():
+    """The LLM for SQL generation (Feature 6.1 item A1).
+
+    Generation is the one call in a chat turn that genuinely reasons, so it stays
+    on the reasoning deployment -- `_fast_llm()` must never be used here, and
+    `tests/test_a2_fast_deployment.py` asserts that at the source. What A1 changes
+    is the *budget*: `reasoning_effort` and an output cap, both read from settings
+    and both unset by default.
+
+    Unset means the parameters are not sent at all, so this returns exactly what
+    `get_llm()` returns and the turn behaves as it does today. That is deliberate:
+    the claim A1 makes is a latency claim, and it cannot be checked until B1's
+    `reasoning_tokens` field is live in Azure. Shipping it off means the switch is
+    thrown against a measurement instead of an expectation.
+    """
+    from config import get_settings
+
+    settings = get_settings()
+    effort = (getattr(settings, "AZURE_OPENAI_SQL_REASONING_EFFORT", "") or "").strip()
+    cap = int(getattr(settings, "AZURE_OPENAI_SQL_MAX_COMPLETION_TOKENS", 0) or 0)
+    provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+
+    if provider != "azure" or (not effort and cap <= 0):
+        return get_llm()
+    try:
+        return build_llm(
+            "azure",
+            max_tokens=cap if cap > 0 else None,
+            reasoning_effort=effort or None,
+        )
+    except Exception:  # pragma: no cover - a tuned budget is never worth a dead turn
+        logger.warning(
+            "A1: could not build the generation LLM with effort=%r cap=%s; "
+            "falling back to the default.",
+            effort,
+            cap,
+            exc_info=True,
+        )
+        return get_llm()
+
+
 def _fast_llm():
     """The LLM for work that does not reason (Feature 6.1 item A2).
 
@@ -4408,7 +4449,7 @@ def _run_query_agent(
         turn.route = route
         turn.stop_reason = "route_override_followup"
 
-    llm = get_llm()
+    llm = _generation_llm()  # A1: reasoning budget for generation; A2 must never touch it
     # A2: a SECOND handle, not a replacement. `llm` above stays on the
     # reasoning deployment because `run_sql_generation_loop()` uses it and
     # generation is the one call in this turn that genuinely reasons -- item A1
@@ -4733,8 +4774,9 @@ Answer in 1-3 sentences. Be direct. Do not explain your reasoning unless asked.
 FORMATTING: Format your answer in Markdown. Use a bullet list when listing multiple items (e.g. multiple invoices or vendors) rather than a run-on sentence.
 
 {_DOCUMENT_TEXT_GUARD_INSTRUCTION}
-Extracted Document Context (Long-term Facts) -- each passage is delimited and labelled with the
-invoice it came from, so cite the source when you use one:
+Extracted Document Context (Long-term Facts):
+Each passage below is delimited and labelled with the invoice it came from -- cite that source
+when you use one.
 {context_str}
 
 {tenant_stats}

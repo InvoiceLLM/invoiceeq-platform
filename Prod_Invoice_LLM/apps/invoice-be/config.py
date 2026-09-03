@@ -377,6 +377,31 @@ class Settings(BaseSettings):
     # diff table. The model phrases; it does not decide (hard rule 3).
     AZURE_OPENAI_FAST_DEPLOYMENT_NAME: str = ""
 
+    # Feature 6.1 item A1: the reasoning budget for SQL GENERATION only.
+    #
+    # Generation is the one call in a chat turn that genuinely reasons -- schema,
+    # joins, the three-attempt repair loop -- so unlike A2 it stays on the
+    # reasoning deployment. What it does not need is the *default* budget:
+    # measured 2026-09-03, generation was 15.6s of a 27.8s median turn and emitted
+    # 1,688 output tokens, most of them thinking rather than SQL.
+    #
+    # Valid values are whatever the deployment accepts ("low" / "medium" /
+    # "high"). EMPTY MEANS UNSET -- the parameter is not sent at all and the
+    # deployment's own default applies, which is exactly today's behaviour.
+    #
+    # The risk this carries, stated rather than discovered later: a cheaper
+    # reasoning budget still returns *a* query. It does not fail loudly; it fails
+    # by generating subtly worse SQL. The golden set is the only control, which is
+    # why this ships empty and is turned on against a measured before/after.
+    AZURE_OPENAI_SQL_REASONING_EFFORT: str = ""
+
+    # Feature 6.1 item A1, second half: an upper bound on generation output.
+    # 0 means unset -- no cap is sent, which is today's behaviour. A cap bounds
+    # the tail case where the model reasons at length and the turn stalls; it
+    # cannot make a correct query incorrect, only truncate an overlong one, and a
+    # truncated query fails loudly in `execute_generated_sql` rather than quietly.
+    AZURE_OPENAI_SQL_MAX_COMPLETION_TOKENS: int = 0
+
     AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-4o-mini"  # Azure uses deployment name instead of model name
     AZURE_DOC_INTEL_ENDPOINT: str = ""
     AZURE_DOC_INTEL_KEY: str = ""
