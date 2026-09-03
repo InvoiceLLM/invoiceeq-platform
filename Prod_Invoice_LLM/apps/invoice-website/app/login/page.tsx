@@ -193,11 +193,8 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
     try {
-      // @ts-expect-error -- Clerk types only list "phone_code"/"totp"/"backup_code"
-      // as second-factor strategies; "email_code" works at runtime (same pattern
-      // as prepareSecondFactor above). Suppressed to unblock `next build`.
       const result = await signIn.attemptSecondFactor({
-        strategy: "email_code",
+        strategy: "email_code" as any,
         code: otpCode,
       });
 
