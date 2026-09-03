@@ -3014,6 +3014,20 @@ def _derived_schema_supplement() -> str:
     return header + "\n".join(lines) + "\n"
 
 
+# Feature 6.1 item A4. Everything ABOVE this line in the rendered SQL prompt is
+# identical for every request in the process: persona, schema, rules 1-11 with no
+# interpolated values, and the injection guard. Everything BELOW it is per-tenant
+# or per-turn. Azure prompt caching keys on the longest identical prefix (>= 1,024
+# tokens, in 128-token steps), so the line is the boundary the cache sees.
+#
+# `tests/test_a4_prompt_prefix.py` splits on this string and asserts the two halves
+# behave: prefix byte-identical across tenants and questions, and long enough.
+SQL_PROMPT_TENANT_SECTION_MARKER = (
+    "\n=== TENANT AND REQUEST CONTEXT "
+    "(everything above this line is the same for every request) ===\n"
+)
+
+
 def build_sql_system_prompt(
     user_message: str,
     tenant_id: str,
@@ -3031,6 +3045,22 @@ def build_sql_system_prompt(
     history, the previous turn's SQL) defaults to empty, so a standalone tool call
     with no conversation behind it renders the same prompt minus those sections --
     the rules themselves are never conditional on any of them.
+
+    Shape (Feature 6.1 item A4, 2026-09-03). The prompt is two halves separated by
+    `SQL_PROMPT_TENANT_SECTION_MARKER`:
+
+      * ABOVE the marker: persona, schema, rules 1-11 and the injection guard, with
+        no interpolated values at all. Byte-identical for every request in the
+        process, which is what lets Azure serve it from the prompt cache.
+      * BELOW the marker: the tenant id (restated as the rule-1 predicate so the
+        model has the literal to copy), rule 6d (its executable example embeds the
+        tenant literal), the three per-question blocks, tenant stats, trainer and
+        chat rules, the previous turn's SQL, and the conversation history.
+
+    Before this, the tenant id was inlined in rule 1 -- a few hundred tokens in --
+    so the cacheable prefix ended there: 1,809 of 6,694 tokens (o200k_base). Do
+    not move any per-request value back above the marker; the test that guards
+    the boundary is `tests/test_a4_prompt_prefix.py`.
     """
     prior_sql_block = _prior_sql_block_for(prior_turn_sql)
     # Gap 253: rule 6d is the one rule with no portable spelling, so it is
@@ -3052,7 +3082,7 @@ name as readily as on a tag).
 {_HAND_TYPED_SCHEMA_BLOCK}{derived_schema_supplement}
 Write a SQL query to answer the user's question.
 CRITICAL RULES:
-1. You MUST filter by tenant_id = '{tenant_id}'.
+1. You MUST filter by tenant_id = '<TENANT_ID>', where <TENANT_ID> is the exact value given in the TENANT AND REQUEST CONTEXT section at the end of this prompt -- copy it verbatim into the WHERE clause. Never invent, shorten or omit it.
 2. You MUST only generate a read-only SELECT statement.
 3. IMPORTANT: Audit status lives exclusively in the `status` enum and `sa_alerts` column. There is no `audit_flags`, `audit_logs`, or `audit_reasons` table. Do not hallucinate columns like `is_flagged_for_audit`.
 4. IMPORTANT: a question about a vendor/bill received ("who do I owe", "what did I pay X") means flow_direction='INBOUND', filtered by vendor_name. A question about a customer/invoice sent ("who owes me", "what did I bill X") means flow_direction='OUTBOUND', filtered by customer_name. Never mix the two columns for the wrong direction.
@@ -3061,7 +3091,7 @@ CRITICAL RULES:
 SELECT
   SUM(CASE WHEN flow_direction='INBOUND'  THEN grand_total ELSE 0 END) AS total_owed_by_us,
   SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_owed_to_us
-FROM invoice WHERE tenant_id = '{tenant_id}'
+FROM invoice WHERE tenant_id = '<TENANT_ID>'
 
 6. If the user query refers to a tag or line-item description/detail, you can query the tags and items JSONB columns using simple LIKE filters. Two rules apply to EVERY such filter:
    (a) A JSONB column (tags, items, sa_alerts) MUST be cast to text before LOWER/LIKE touches it: write LOWER(CAST(tags AS TEXT)), NEVER LOWER(tags). There is no lower(jsonb) function -- an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. CAST(... AS TEXT) is the portable form and works in both SQLite and Postgres. Plain VARCHAR columns (vendor_name, customer_name, status, invoice_number) are already text and must NOT be cast.
@@ -3078,10 +3108,6 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
    Note the CAST on the two JSONB columns and its absence on the two VARCHAR ones -- this exact shape, per rule 6(a). Checking only item descriptions (or only tags) is a bug: it silently misses real matches that qualify through one of the other columns.
    NOT THIS RULE when the question asks for a dollar amount PER VENDOR/ENTITY for a specific charge type ("which vendors billed us for freight, delivery, or shipping charges, and how much per vendor"): found live, 2026-08-19 (US tenant test) -- this rule's own examples above ("logistics or freight costs") make "freight" look like a 6b trigger word, and the model answered with SUM(grand_total) (whole invoice totals for any invoice merely CONTAINING a matching line) grouped by vendor -- every vendor's figure came back 10-40x too large, because it included every unrelated line and tax on that invoice. "Which invoices relate to X" (this rule, 6b) and "how much did each vendor charge specifically for X" (rule 6d) are different questions with the same surface words. If the answer must be a dollar figure attributable ONLY to the named charge/product/service (not the whole invoice), that is rule 6d -- fetch the matching LINES (rule 6d never aggregates in SQL, see its own text), and let the per-vendor grouping and subtotals happen in the answer, not this rule, no matter how similar the trigger phrase looks to the examples above.
 6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
-{line_item_rule}
-{tax_term_block}
-{payment_status_block}
-{attribute_term_block}
 7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
@@ -3089,9 +3115,16 @@ FROM invoice WHERE tenant_id = '{tenant_id}'
 10. COMPARISON QUESTIONS NAMING TWO OR MORE SPECIFIC ENTITIES ("between X and Y, whose total was bigger", "compare A vs B", "X, Y, or Z -- which cost more"): the query MUST return a row for EVERY named entity, never `ORDER BY ... LIMIT 1`. Found live, 2026-08-19: "between DataPipe Solutions and StratEdge Partners, whose invoice had the bigger total" generated `ORDER BY grand_total DESC LIMIT 1`, which returned only the winning row -- the losing vendor's real, existing invoice was silently excluded from the result set before the summary step ever saw it, and the reply then described the loser as having "no invoice in the returned results," which reads as false to the user even though the row was only ever truncated, not actually missing. Filter on the named entities explicitly (`WHERE vendor_name IN (...)` or an OR'd set of `LOWER(vendor_name) LIKE ...` per rule 6a, one per named entity) and let ALL their rows come back; a superlative in the question ("bigger", "which one", "the most") tells you which value to call out in the summary prose, it is never an instruction to LIMIT the query itself. This applies to any question naming a specific, countable set of entities to compare -- not to open-ended ranking questions ("show me the top 5 invoices"), where LIMIT is the correct, intended shape.
 11. "DETAILS" QUESTIONS ABOUT ONE SPECIFIC INVOICE ("give me the details of invoice X", "tell me about invoice X", "pull up invoice X"): SELECT only the columns a person actually reads for this -- invoice_number, vendor_name/customer_name (per rule 4/4a's direction), invoice_date, due_date, grand_total, currency, status, po_number. Do NOT select `items`, `tags`, or `sa_alerts` by default -- found live, 2026-08-19: a plain "pull up this invoice" answer selected every column including raw JSONB fields, and even correctly formatted (rule 6d/column-hygiene fixes elsewhere already stop `file_path`/`batch_id` leaking and stop raw Python-repr dumps), a wide table with an embedded JSON blob column is not what "details" means to a person -- it reads as a database export, not an answer. Only select `items` when the question is actually about line items (then rule 6d applies instead), only select `sa_alerts` when the question is actually about audit/flagged issues, only select `tags` when asked about categorization. The answer to a plain "details" question should be phrased as a short prose summary of the fields above, not a dump of the full row.
 
+{_INJECTION_GUARD_INSTRUCTION}{SQL_PROMPT_TENANT_SECTION_MARKER}
+TENANT_ID for this request (rule 1): tenant_id = '{tenant_id}'
+Every query you write MUST contain exactly this predicate: tenant_id = '{tenant_id}'
+
+{line_item_rule}
+{tax_term_block}
+{payment_status_block}
+{attribute_term_block}
 {tenant_stats}
-{rules_block}{chat_rules_block}
-{_INJECTION_GUARD_INSTRUCTION}{prior_sql_block}
+{rules_block}{chat_rules_block}{prior_sql_block}
 Conversation History for Context:
 {chat_history}
 """
