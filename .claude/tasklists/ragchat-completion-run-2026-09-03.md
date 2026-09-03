@@ -58,7 +58,7 @@ that the moment the push lands, the deploy-dependent rows are all that remain.
 | 16 | F6 | 23 | Task 6.12 — real conversational memory | `[ ]` |
 | 17 | F26 | — | **Task V** — §P2.10 soak, Postgres + real Redis | `[ ]` needs 1 |
 | 18 | F26 | 415 | Re-run Tier 3 cases | `[ ]` needs 1 |
-| 19 | F26 | 400 | TTL job stale image → rebuild, re-run job | `[ ]` needs 1 |
+| 19 | F26 | 400 | TTL job | `[x]` was already fixed — see below |
 | 20 | F6/F26 | — | `test_coverage_map.md` — add 3 missing suites (4 added) | `[x]` |
 
 ## Order for this run
@@ -89,7 +89,7 @@ Recorded here as they happen, and repeated in every status mail.
 | `caj-benchmark-eval-dev` | `0 3 * * *` — 03:00 daily | nightly extraction/eval benchmark | healthy |
 | `caj-sandbox-sweep-dev` | `0 4 * * *` intended | reaps expired unclaimed sandbox tenants (Gap 340) | **not deployed** — Gap 357, not RAG-chat scope |
 
-**Status: in progress.** Created 2026-09-03 15:23 IST.
+**Status: COMPLETE — run ended at the 16:53 hard stop.** Created 15:23 IST.
 
 ## 15:34 update
 
@@ -181,3 +181,44 @@ Three commits pushed this run: `308dd55`, `d7bd02e`, `948d0bb`. Eleven of twenty
 rows done. Two CI/CD deploys are still building — rows 3, 4, 17 and 19 all wait on
 them, and there are 31 minutes left, so some of those will not close inside this
 run.
+
+
+## FINAL — 16:42, run ended at the hard stop
+
+**12 of 20 rows done, plus three gaps that were not on the original list** (422, 423,
+and 400 which turned out to need no work at all).
+
+**Five commits pushed to master:** `308dd55`, `d7bd02e`, `948d0bb`, `2fc7cdc`,
+`4bedde7`.
+
+### The two findings that mattered more than the plan
+
+**Gap 422 — dev vector search had been dead the whole time.** `CHROMA_PORT` was
+8000, the chromadb container's `targetPort`, against an ACA *internal ingress* FQDN
+that only serves 80/443. Every revision from `--0000116` on fell back to an empty
+in-container store. It was never the cold-start race everyone assumed: the failure
+landed at ~3.1 s against a 3.0 s budget, which *looked* like a near-miss, and
+raising the budget to 15 s changed nothing except how long it took to fail. Fixed
+to `443` + SSL; revision `--0000125` now reports `chroma=ok (0.1s)`.
+
+It was only findable because the Gap 415 fix — shipped this morning — replaced a
+false `chroma=ok` with an honest one. The instrumentation found the bug the same day
+it shipped.
+
+**Gap 400 — I reported it wrong five times.** Every status mail called the TTL job
+"fails every run", carried forward from one failure on 2026-09-02, without ever
+listing the executions. It succeeded at 05:00 today and again on a manual run at
+11:02. `az containerapp job execution list` answers it in one call.
+
+### What is deliberately not done
+
+- **Rows 3 and 4** — B1 is deployed but no chat turn has run on `--0000125`, so
+  there are no `dependency_call` events to measure. Both need one real user turn.
+- **Row 7 (A4)** — reorders a 7,000-token prompt whose only control is a golden set
+  that cannot measure anything until B1 has real turns behind it.
+- **Rows 8, 10, 11, 16** — multi-day items, left clean rather than half-built.
+- **Rows 17, 18 (live half)** — need a driven session against the live API.
+
+**A1 and A2 are shipped OFF.** Both settings default inert, so deployed behaviour is
+unchanged. Their claims are latency claims and cannot be measured until B1 has
+turns. Turning them on now would assert the improvement rather than measure it.
