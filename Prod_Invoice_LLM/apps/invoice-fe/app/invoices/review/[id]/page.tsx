@@ -36,6 +36,16 @@ interface LineItem {
 interface InvoiceDetail {
   id: string;
   status: string;
+  /**
+   * Gap 421: the resubmission replace workflow. `superseded_at` non-null means
+   * this invoice has been replaced by a corrected upload — it is frozen
+   * history, kept so the original data and alerts stay reviewable, and the
+   * backend 409s any attempt to act on it. `supersedes_invoice_id` is set on
+   * the *replacement*, pointing back at what it replaced.
+   */
+  superseded_at?: string | null;
+  supersedes_invoice_id?: string | null;
+  resubmission_reason?: string | null;
   vendor_name: string | null;
   invoice_number: string | null;
   invoice_date: string | null;
@@ -285,6 +295,17 @@ export default function AuditorReviewPage() {
   >(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  // Gap 421: sending an invoice back needs a reason -- "resubmit this" with no
+  // statement of what is wrong is not actionable for whoever has to fix it.
+  // Mirrors the reject modal's structured-reason pattern rather than a free
+  // text box, so the reasons stay countable.
+  const [showResubmitModal, setShowResubmitModal] = useState(false);
+  const [resubmitReason, setResubmitReason] = useState("Line items do not match the total");
+  const [resubmitNote, setResubmitNote] = useState("");
+  // Gap 421: the corrected-file upload that replaces a NEEDS_RESUBMISSION invoice.
+  const [replaceFile, setReplaceFile] = useState<File | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  const [replaceError, setReplaceError] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("Invoice Error");
   const [error, setError] = useState<string | null>(null);
   const [suggestedRule, setSuggestedRule] = useState<SuggestedRule | null>(null);
@@ -548,7 +569,12 @@ export default function AuditorReviewPage() {
     try {
       const res = await apiClient.put(`/audit/resolve/${invoice.id}`, {
         ...(targetStatus ? { status: targetStatus } : {}),
-        ...(reasonText ? { reject_reason: reasonText } : {}),
+        ...(reasonText && targetStatus === "REJECTED" ? { reject_reason: reasonText } : {}),
+        // Gap 421: same argument carries the resubmission reason, routed to its
+        // own field so the two never get confused in the audit trail.
+        ...(reasonText && targetStatus === "NEEDS_RESUBMISSION"
+          ? { resubmission_reason: reasonText }
+          : {}),
         ...(isParkingAction ? {} : { dismissed_alerts: alerts.map((a) => a.message) }),
         corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
@@ -571,6 +597,38 @@ export default function AuditorReviewPage() {
     } finally {
       setActionLoading(null);
       setSavingCorrection(false);
+    }
+  };
+
+  /**
+   * Gap 421: upload a corrected PDF in place of a NEEDS_RESUBMISSION invoice.
+   *
+   * The backend supersedes this invoice (keeping it, its alerts and its blob),
+   * hard-deletes only its vector chunks, and creates the replacement linked
+   * back to it. On success we navigate to the replacement, because this page is
+   * now showing frozen history that the API will refuse to act on.
+   */
+  const handleReplace = async () => {
+    if (!invoice || !replaceFile) return;
+    setReplacing(true);
+    setReplaceError(null);
+    try {
+      const form = new FormData();
+      form.append("file", replaceFile);
+      const res = await apiClient.post(`/invoices/${invoice.id}/replace`, form);
+      const replacementId = res.data?.replacement_invoice_id;
+      if (replacementId) {
+        router.push(`/invoices/review/${replacementId}`);
+      } else {
+        router.push("/invoices");
+      }
+    } catch (err: any) {
+      console.error("Replace failed:", err);
+      setReplaceError(
+        err?.response?.data?.detail || "Failed to replace this invoice. Please try again."
+      );
+    } finally {
+      setReplacing(false);
     }
   };
 
@@ -609,9 +667,93 @@ export default function AuditorReviewPage() {
   // Reject / the other parking action), and only adds a way back to the queue.
   const isParked = ["REVIEW_LATER", "NEEDS_RESUBMISSION"].includes(invoice.status);
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
+  // Gap 421: this invoice has been replaced. It is frozen history — the API
+  // 409s any attempt to act on it — so the page must say so rather than
+  // presenting action buttons that will all fail.
+  const isSuperseded = Boolean(invoice.superseded_at);
+  const canReplace = invoice.status === "NEEDS_RESUBMISSION" && !isSuperseded;
 
   return (
     <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto custom-scrollbar">
+        {/* Gap 421: superseded banner. Deliberately the first thing on the page
+            — everything below it describes a version that is no longer in use,
+            and without this the screen looks like a normal editable invoice. */}
+        {isSuperseded && (
+          <div className="flex items-start gap-3 rounded-xl border border-slate-600/50 bg-slate-800/40 px-4 py-3">
+            <Undo2 size={16} className="mt-0.5 shrink-0 text-slate-400" />
+            <div className="min-w-0 text-xs text-slate-300">
+              <p className="font-semibold text-slate-200">
+                This version was replaced by a resubmitted invoice.
+              </p>
+              <p className="mt-0.5 text-slate-400">
+                It is kept read-only so the original data and its alerts stay reviewable.
+                It no longer appears in lists, dashboard totals or chat answers.
+              </p>
+              {invoice.resubmission_reason && (
+                <p className="mt-1.5 text-slate-300">
+                  <span className="text-slate-500">Sent back because:</span>{" "}
+                  {invoice.resubmission_reason}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Gap 421: on a replacement, link back to the version it replaced —
+            this is the "review the previous wrong invoice fast" path. */}
+        {invoice.supersedes_invoice_id && (
+          <div className="flex items-center gap-3 rounded-xl border border-blue-600/40 bg-blue-950/20 px-4 py-2.5 text-xs">
+            <RotateCcw size={14} className="shrink-0 text-blue-300" />
+            <span className="text-slate-300">This invoice replaced an earlier version.</span>
+            <button
+              onClick={() => router.push(`/invoices/review/${invoice.supersedes_invoice_id}`)}
+              className="ml-auto whitespace-nowrap rounded-lg border border-blue-500/50 px-2.5 py-1 font-semibold text-blue-300 transition hover:bg-blue-600/20"
+            >
+              View previous version
+            </button>
+          </div>
+        )}
+
+        {/* Gap 421: replace control, only on an invoice actually awaiting one. */}
+        {canReplace && (
+          <div className="flex flex-col gap-2 rounded-xl border border-orange-600/40 bg-orange-950/20 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-orange-200">
+              <RotateCcw size={14} />
+              Awaiting a corrected invoice
+            </div>
+            {invoice.resubmission_reason && (
+              <p className="text-xs text-slate-300">
+                <span className="text-slate-500">Reason:</span> {invoice.resubmission_reason}
+              </p>
+            )}
+            <p className="text-[11px] text-slate-400">
+              Uploading a replacement keeps this version and its alerts for the record, and
+              removes its data from totals and chat answers.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(e) => {
+                  setReplaceFile(e.target.files?.[0] ?? null);
+                  setReplaceError(null);
+                }}
+                className="max-w-xs text-[11px] text-slate-300 file:mr-2 file:rounded-lg file:border file:border-[#222D3D] file:bg-[#1E293B] file:px-2 file:py-1 file:text-[11px] file:text-slate-200"
+              />
+              <button
+                onClick={handleReplace}
+                disabled={!replaceFile || replacing}
+                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-orange-500/50 bg-orange-600/20 px-3 py-1.5 text-xs font-semibold text-orange-200 transition hover:bg-orange-600/40 disabled:opacity-40"
+              >
+                {replacing ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                Replace Invoice
+              </button>
+            </div>
+            {replaceError && (
+              <p className="text-[11px] text-red-300">{replaceError}</p>
+            )}
+          </div>
+        )}
         {/* FE Gap 110: title/subtitle/Back all moved into the shared header
             above; the live status badge rides up there too rather than holding
             a row down here.
@@ -676,7 +818,7 @@ export default function AuditorReviewPage() {
             {invoice.status.replace("_", " ")}
           </span>
           {/* Gap 193: Reopen Audit / Undo Decision button for Admins when invoice is terminal (PAID or REJECTED) */}
-          {isResolved && isAdmin && (
+          {isResolved && isAdmin && !isSuperseded && (
             <button
               onClick={async () => {
                 if (!window.confirm("Reopen this invoice for audit? Its status will be reset to AUDIT_REQUIRED.")) return;
@@ -705,7 +847,7 @@ export default function AuditorReviewPage() {
               could park it can put it back (the backend enforces the same
               split). Without this, parking was a one-way door -- both backend
               guards rejected the transition, so no role could un-park. */}
-          {isParked && (
+          {isParked && !isSuperseded && (
             <button
               onClick={async () => {
                 setActionLoading("unpark");
@@ -742,7 +884,7 @@ export default function AuditorReviewPage() {
               buttons) stays visible afterward rather than the invoice
               disappearing into a "finalized" state it was never meant to
               reach yet. */}
-          {!isResolved && invoice.status !== "REVIEW_LATER" && (
+          {!isResolved && !isSuperseded && invoice.status !== "REVIEW_LATER" && (
             <button
               onClick={() => handleResolve("REVIEW_LATER")}
               disabled={!!actionLoading}
@@ -757,9 +899,9 @@ export default function AuditorReviewPage() {
               Review Later
             </button>
           )}
-          {!isResolved && invoice.status !== "NEEDS_RESUBMISSION" && (
+          {!isResolved && !isSuperseded && invoice.status !== "NEEDS_RESUBMISSION" && (
             <button
-              onClick={() => handleResolve("NEEDS_RESUBMISSION")}
+              onClick={() => setShowResubmitModal(true)}
               disabled={!!actionLoading}
               title="Flag as disputed and queue for vendor correction / resubmission"
               className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-orange-500/50 bg-orange-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-orange-300 transition hover:bg-orange-600/30 disabled:opacity-50"
@@ -772,7 +914,7 @@ export default function AuditorReviewPage() {
               Needs Resubmission
             </button>
           )}
-          {!isResolved && (
+          {!isResolved && !isSuperseded && (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowRejectModal(true)}
@@ -1389,6 +1531,76 @@ export default function AuditorReviewPage() {
                   className="px-4 py-2 bg-red-600 hover:bg-red-700 text-sm font-semibold text-white rounded-lg transition"
                 >
                   Confirm Rejection
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Gap 421: sending an invoice back requires saying what is wrong.
+            Structured reason first (so the reasons stay countable, same as the
+            reject modal) with an optional free-text detail appended — "resubmit
+            this" with no explanation is not actionable for whoever must fix it. */}
+        {showResubmitModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="glass-panel w-full max-w-md p-6 rounded-2xl border border-slate-700/50 bg-[#0F172A]/90 shadow-2xl flex flex-col gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-white">Send Back for Resubmission</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  This invoice stays on record with its alerts. Once a corrected version is
+                  uploaded, this one stops counting toward totals and chat answers.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-semibold text-slate-300">What is wrong?</label>
+                <select
+                  value={resubmitReason}
+                  onChange={(e) => setResubmitReason(e.target.value)}
+                  className="w-full bg-[#1E293B] border border-[#222D3D] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                >
+                  <option value="Line items do not match the total">Line items do not match the total</option>
+                  <option value="Incorrect tax or GST details">Incorrect tax or GST details</option>
+                  <option value="Wrong or missing PO number">Wrong or missing PO number</option>
+                  <option value="Incorrect vendor or bank details">Incorrect vendor or bank details</option>
+                  <option value="Illegible or incomplete document">Illegible or incomplete document</option>
+                  <option value="Duplicate of an invoice already submitted">Duplicate of an invoice already submitted</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-semibold text-slate-300">
+                  Detail <span className="font-normal text-slate-500">(optional)</span>
+                </label>
+                <textarea
+                  value={resubmitNote}
+                  onChange={(e) => setResubmitNote(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. line 3 is priced at 1,200 but the total assumes 1,020"
+                  className="w-full resize-y bg-[#1E293B] border border-[#222D3D] rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-orange-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 mt-2">
+                <button
+                  onClick={() => setShowResubmitModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowResubmitModal(false);
+                    const reason = resubmitNote.trim()
+                      ? `${resubmitReason} — ${resubmitNote.trim()}`
+                      : resubmitReason;
+                    handleResolve("NEEDS_RESUBMISSION", reason.slice(0, 500));
+                    setResubmitNote("");
+                  }}
+                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-sm font-semibold text-white rounded-lg transition"
+                >
+                  Send Back
                 </button>
               </div>
             </div>
