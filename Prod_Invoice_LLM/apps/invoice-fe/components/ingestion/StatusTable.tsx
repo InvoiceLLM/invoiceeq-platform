@@ -53,7 +53,7 @@ interface StatusTableProps {
 // Gap 207: statuses that mean "the pipeline is done with this file" -- these
 // jump straight to 100% progress instead of sitting at the SSE stream's
 // default in-progress value.
-// Gap 424: REVIEW_LATER/NEEDS_RESUBMISSION are audit-queue decisions, not
+// Gap 432: REVIEW_LATER/NEEDS_RESUBMISSION are audit-queue decisions, not
 // pipeline outcomes, but a row can still land here at one of them if this
 // view is reopened (or reconnects via SSE) after the invoice was already
 // parked in another tab -- without both listed, that row was stuck at the
@@ -270,7 +270,7 @@ export default function StatusTable({
           </span>
         );
       case "REVIEW_LATER":
-        // Gap 424: colours match RecentInvoicesTable.tsx / the Auditor Review
+        // Gap 432: colours match RecentInvoicesTable.tsx / the Auditor Review
         // Console's own badges -- same status, same look everywhere it renders.
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/10 border border-sky-500/20 text-sky-400">

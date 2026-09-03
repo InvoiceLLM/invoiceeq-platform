@@ -106,7 +106,7 @@ def should_index_status(status: str | None) -> bool:
 
 
 def should_index_invoice(invoice) -> bool:
-    """Gap 421: `should_index_status()` plus "and it has not been superseded".
+    """Gap 429: `should_index_status()` plus "and it has not been superseded".
 
     Status alone is not enough once the replace workflow exists. A superseded
     invoice keeps its original status (NEEDS_RESUBMISSION), which

@@ -93,7 +93,7 @@ export default function Sidebar() {
   // While identity is still in flight, show only the three universal items.
   // Rendering the full list optimistically would flash Trainer/Audit/Settings
   // at users who are not allowed to see them.
-  // Gap 423: `visible` above and the route guard must never disagree -- a link
+  // Gap 431: `visible` above and the route guard must never disagree -- a link
   // you can see leading to a screen that refuses you (or the reverse) is worse
   // than either alone. Both now consult lib/routePermissions.ts, and this
   // assertion is the tripwire: if the two ever diverge for a route, the nav
@@ -106,7 +106,7 @@ export default function Sidebar() {
     const guardAllows = canAccessRoute(item.href, { role, canLoad, canAudit, canTrain });
     if (item.visible !== guardAllows && process.env.NODE_ENV !== "production") {
       console.warn(
-        `[Gap 423] Sidebar/RouteGuard disagree for ${item.href}: ` +
+        `[Gap 431] Sidebar/RouteGuard disagree for ${item.href}: ` +
         `sidebar=${item.visible} guard=${guardAllows}. Reconcile lib/routePermissions.ts.`
       );
     }

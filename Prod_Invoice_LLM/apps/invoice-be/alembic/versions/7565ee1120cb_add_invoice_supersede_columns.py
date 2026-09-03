@@ -4,7 +4,7 @@ Revision ID: 7565ee1120cb
 Revises: dfcfbb60ef1c
 Create Date: 2026-09-03
 
-Gap 421 (Phase 2 of the parked-invoice workflow). Adds the three columns the
+Gap 429 (Phase 2 of the parked-invoice workflow). Adds the three columns the
 "replace a NEEDS_RESUBMISSION invoice with a corrected one" flow needs.
 
 Shape deliberately mirrors two existing precedents rather than inventing one:

@@ -37,7 +37,7 @@ interface InvoiceDetail {
   id: string;
   status: string;
   /**
-   * Gap 421: the resubmission replace workflow. `superseded_at` non-null means
+   * Gap 429: the resubmission replace workflow. `superseded_at` non-null means
    * this invoice has been replaced by a corrected upload — it is frozen
    * history, kept so the original data and alerts stay reviewable, and the
    * backend 409s any attempt to act on it. `supersedes_invoice_id` is set on
@@ -109,7 +109,7 @@ interface StandingRuleResult {
 }
 
 /**
- * Gap 424: the fix plan's "show who/when/why" item — `AuditLog` has always
+ * Gap 432: the fix plan's "show who/when/why" item — `AuditLog` has always
  * recorded actor + target_status, but nothing on this console surfaced it.
  * Mirrors `GET /invoices/{id}/last-action`.
  */
@@ -311,14 +311,14 @@ export default function AuditorReviewPage() {
   >(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
-  // Gap 421: sending an invoice back needs a reason -- "resubmit this" with no
+  // Gap 429: sending an invoice back needs a reason -- "resubmit this" with no
   // statement of what is wrong is not actionable for whoever has to fix it.
   // Mirrors the reject modal's structured-reason pattern rather than a free
   // text box, so the reasons stay countable.
   const [showResubmitModal, setShowResubmitModal] = useState(false);
   const [resubmitReason, setResubmitReason] = useState("Line items do not match the total");
   const [resubmitNote, setResubmitNote] = useState("");
-  // Gap 421: the corrected-file upload that replaces a NEEDS_RESUBMISSION invoice.
+  // Gap 429: the corrected-file upload that replaces a NEEDS_RESUBMISSION invoice.
   const [replaceFile, setReplaceFile] = useState<File | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [replaceError, setReplaceError] = useState<string | null>(null);
@@ -358,7 +358,7 @@ export default function AuditorReviewPage() {
     return () => {
       cancelled = true;
     };
-    // Gap 420: `invoice?.status` added to the deps. Keying on `id` alone meant
+    // Gap 428: `invoice?.status` added to the deps. Keying on `id` alone meant
     // the list was only refreshed when you navigated to a DIFFERENT invoice --
     // so parking (or resolving) the one you were looking at left the "N of M"
     // counter and the Previous/Next targets describing a queue this invoice had
@@ -469,7 +469,7 @@ export default function AuditorReviewPage() {
       });
   }, [id, router]);
 
-  // Gap 424: who/when/why for the most recent park/reopen/resubmit decision.
+  // Gap 432: who/when/why for the most recent park/reopen/resubmit decision.
   // Best-effort — a 404 (no history yet, e.g. a fresh AUDIT_REQUIRED invoice)
   // or any other failure just means the panel stays hidden below.
   useEffect(() => {
@@ -573,7 +573,7 @@ export default function AuditorReviewPage() {
     } else {
       setSavingCorrection(true);
     }
-    // Gap 419: parking an invoice must NOT dismiss its alerts.
+    // Gap 427: parking an invoice must NOT dismiss its alerts.
     //
     // This function was written for *terminal* actions, where clearing the
     // alerts is correct -- you are closing the invoice out, so they are
@@ -597,7 +597,7 @@ export default function AuditorReviewPage() {
       const res = await apiClient.put(`/audit/resolve/${invoice.id}`, {
         ...(targetStatus ? { status: targetStatus } : {}),
         ...(reasonText && targetStatus === "REJECTED" ? { reject_reason: reasonText } : {}),
-        // Gap 421: same argument carries the resubmission reason, routed to its
+        // Gap 429: same argument carries the resubmission reason, routed to its
         // own field so the two never get confused in the audit trail.
         ...(reasonText && targetStatus === "NEEDS_RESUBMISSION"
           ? { resubmission_reason: reasonText }
@@ -628,7 +628,7 @@ export default function AuditorReviewPage() {
   };
 
   /**
-   * Gap 421: upload a corrected PDF in place of a NEEDS_RESUBMISSION invoice.
+   * Gap 429: upload a corrected PDF in place of a NEEDS_RESUBMISSION invoice.
    *
    * The backend supersedes this invoice (keeping it, its alerts and its blob),
    * hard-deletes only its vector chunks, and creates the replacement linked
@@ -689,12 +689,12 @@ export default function AuditorReviewPage() {
   }
 
   const isResolved = ["PAID", "REJECTED"].includes(invoice.status);
-  // Gap 420: parked = deferred, not decided. Deliberately NOT folded into
+  // Gap 428: parked = deferred, not decided. Deliberately NOT folded into
   // isResolved -- a parked invoice must keep the full action row (Approve /
   // Reject / the other parking action), and only adds a way back to the queue.
   const isParked = ["REVIEW_LATER", "NEEDS_RESUBMISSION"].includes(invoice.status);
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
-  // Gap 421: this invoice has been replaced. It is frozen history — the API
+  // Gap 429: this invoice has been replaced. It is frozen history — the API
   // 409s any attempt to act on it — so the page must say so rather than
   // presenting action buttons that will all fail.
   const isSuperseded = Boolean(invoice.superseded_at);
@@ -702,7 +702,7 @@ export default function AuditorReviewPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto custom-scrollbar">
-        {/* Gap 421: superseded banner. Deliberately the first thing on the page
+        {/* Gap 429: superseded banner. Deliberately the first thing on the page
             — everything below it describes a version that is no longer in use,
             and without this the screen looks like a normal editable invoice. */}
         {isSuperseded && (
@@ -726,7 +726,7 @@ export default function AuditorReviewPage() {
           </div>
         )}
 
-        {/* Gap 421: on a replacement, link back to the version it replaced —
+        {/* Gap 429: on a replacement, link back to the version it replaced —
             this is the "review the previous wrong invoice fast" path. */}
         {invoice.supersedes_invoice_id && (
           <div className="flex items-center gap-3 rounded-xl border border-blue-600/40 bg-blue-950/20 px-4 py-2.5 text-xs">
@@ -741,7 +741,7 @@ export default function AuditorReviewPage() {
           </div>
         )}
 
-        {/* Gap 421: replace control, only on an invoice actually awaiting one. */}
+        {/* Gap 429: replace control, only on an invoice actually awaiting one. */}
         {canReplace && (
           <div className="flex flex-col gap-2 rounded-xl border border-orange-600/40 bg-orange-950/20 px-4 py-3">
             <div className="flex items-center gap-2 text-xs font-semibold text-orange-200">
@@ -781,7 +781,7 @@ export default function AuditorReviewPage() {
             )}
           </div>
         )}
-        {/* Gap 424: who parked this invoice, and when — the fix plan's
+        {/* Gap 432: who parked this invoice, and when — the fix plan's
             "show who/when/why" item. Reason is omitted here on
             NEEDS_RESUBMISSION because the card above already shows
             `resubmission_reason`; showing it twice would just be noise. */}
@@ -887,7 +887,7 @@ export default function AuditorReviewPage() {
               Reopen Audit
             </button>
           )}
-          {/* Gap 420: return a PARKED invoice to the audit queue. Distinct from
+          {/* Gap 428: return a PARKED invoice to the audit queue. Distinct from
               Gap 193's Reopen Audit above in both condition and permission:
               that one undoes a *finalization* and is Admin-only; this one
               undoes a deferral, which was never a decision, so any auditor who
@@ -1584,7 +1584,7 @@ export default function AuditorReviewPage() {
           </div>
         )}
 
-        {/* Gap 421: sending an invoice back requires saying what is wrong.
+        {/* Gap 429: sending an invoice back requires saying what is wrong.
             Structured reason first (so the reasons stay countable, same as the
             reject modal) with an optional free-text detail appended — "resubmit
             this" with no explanation is not actionable for whoever must fix it. */}

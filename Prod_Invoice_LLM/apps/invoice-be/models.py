@@ -108,7 +108,7 @@ class Invoice(SQLModel, table=True):
     # gives webhook subscribers and any future UI a structured pointer to
     # the original invoice instead of the prose inside sa_alerts.
     duplicate_of_invoice_id: UUID | None = Field(default=None, foreign_key="invoice.id", nullable=True, index=True)
-    # Gap 421: the resubmission replace workflow. When a NEEDS_RESUBMISSION
+    # Gap 429: the resubmission replace workflow. When a NEEDS_RESUBMISSION
     # invoice is replaced by a corrected upload, the OLD row is kept -- its
     # alerts and its blob are the record of what was wrong -- but stamped
     # `superseded_at` so `invoice_is_live()` drops it from every list,

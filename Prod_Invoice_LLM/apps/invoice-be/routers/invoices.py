@@ -25,7 +25,7 @@ from dependencies import (
     # upload is ingestion, not one of the actions `actions` scope governs.
     get_tenant_or_api_key_context,
     require_can_load_or_api_key,
-    # Gap 421: the replace flow is an auditor decision about a flagged
+    # Gap 429: the replace flow is an auditor decision about a flagged
     # invoice, not an ingestion action -- same permission that parked it.
     require_can_audit,
     TenantContext,
@@ -72,7 +72,7 @@ async def _ingest_single_file(
     watcher (Gap 12) — one path, not two copies to keep in sync. Returns the
     new invoice_id as a string.
 
-    Gap 421: `supersedes_invoice_id` is the third caller — the replace flow for
+    Gap 429: `supersedes_invoice_id` is the third caller — the replace flow for
     a NEEDS_RESUBMISSION invoice. Threaded through as a parameter rather than
     given its own copy of this function, for the reason stated above: this is
     the one place that knows how to dedup, store, row and queue a file, and a
@@ -312,7 +312,7 @@ async def _ingest_single_file(
         status="PROCESSING",
         tags=tags,
         submitted_by_email=submitter,
-        # Gap 421: set only by the replace flow, so the corrected invoice knows
+        # Gap 429: set only by the replace flow, so the corrected invoice knows
         # which one it replaced. None for every ordinary upload.
         supersedes_invoice_id=supersedes_invoice_id,
     )
@@ -962,15 +962,15 @@ _LAST_ACTION_RESOLUTION_ACTIONS = ("RESOLVE_INVOICE", "REOPEN_INVOICE", "REPLACE
 @router.get("/{invoice_id}/last-action", response_model=Optional[InvoiceLastActionOut])
 async def get_invoice_last_action(
     invoice_id: UUID,
-    # Gap 424: same gate as the replace endpoint -- this is audit-console
+    # Gap 432: same gate as the replace endpoint -- this is audit-console
     # context, not general invoice read access.
     context: TenantContext = Depends(require_can_audit),
     db_session: Session = Depends(get_db_session),
 ):
     """
-    Gap 424 (Phase 1 completion): the plan's "show who/when/why" item was
+    Gap 432 (Phase 1 completion): the plan's "show who/when/why" item was
     never built -- `AuditLog` has always recorded `actor_user_id`/`actor_role`
-    and (since Gap 419/420) `target_status`/`previous_status` in `details`,
+    and (since Gap 427/428) `target_status`/`previous_status` in `details`,
     but nothing on the review console surfaced it. Returns the most recent
     resolution/reopen/replace entry for this invoice, or `null` if none
     exists yet (e.g. an invoice still `AUDIT_REQUIRED` for the first time).
@@ -1026,7 +1026,7 @@ async def get_invoice_last_action(
 async def replace_invoice(
     invoice_id: UUID,
     file: UploadFile = File(...),
-    # Gap 421: replacing is an auditor decision about a specific flagged
+    # Gap 429: replacing is an auditor decision about a specific flagged
     # invoice, not an ingestion action, so it is gated on can_audit rather
     # than can_load -- the same permission that put the invoice into
     # NEEDS_RESUBMISSION in the first place.
@@ -1034,7 +1034,7 @@ async def replace_invoice(
     db_session: Session = Depends(get_db_session),
 ):
     """
-    Gap 421: replace a NEEDS_RESUBMISSION invoice with a corrected upload.
+    Gap 429: replace a NEEDS_RESUBMISSION invoice with a corrected upload.
 
     WHAT MOVES AND WHAT DOES NOT -- this is the whole design in one place:
 
@@ -1157,7 +1157,7 @@ async def replace_invoice(
         )
     except Exception as ce:
         logger.error(
-            "Gap 421: superseded invoice %s was NOT removed from the vector index "
+            "Gap 429: superseded invoice %s was NOT removed from the vector index "
             "(%s). Chat may still answer from replaced data until this is reconciled.",
             invoice.id, ce,
         )

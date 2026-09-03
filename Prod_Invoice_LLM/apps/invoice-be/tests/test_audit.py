@@ -528,7 +528,7 @@ def test_deferral_status_not_reachable_via_invalid_status_message(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Gap 419: parking an invoice must NOT dismiss its alerts
+# Gap 427: parking an invoice must NOT dismiss its alerts
 #
 # The FE's handleResolve() sent `dismissed_alerts` on every action, so parking
 # an invoice permanently deleted every alert on it -- you parked it to review
@@ -567,7 +567,7 @@ def test_parking_without_dismissed_alerts_preserves_them(db_session, target_stat
 
 
 def test_terminal_resolve_still_dismisses_alerts(db_session):
-    """Regression guard on the other side: Gap 419 must not stop a genuine
+    """Regression guard on the other side: Gap 427 must not stop a genuine
     finalization from clearing the alerts it resolved."""
     invoice_id = uuid4()
     db_invoice = Invoice(
@@ -589,7 +589,7 @@ def test_terminal_resolve_still_dismisses_alerts(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Gap 420: a parked invoice can be returned to the audit queue
+# Gap 428: a parked invoice can be returned to the audit queue
 #
 # Before this, BOTH guards rejected the transition -- the Admin check AND the
 # "only PAID/REJECTED can be reopened" check -- so a parked invoice could not
@@ -648,7 +648,7 @@ def test_unpark_records_where_it_came_from(db_session, parked_status):
 
 
 def test_unpark_does_not_weaken_the_admin_only_reopen(db_session):
-    """The security-relevant half of Gap 420: relaxing the gate for parked
+    """The security-relevant half of Gap 428: relaxing the gate for parked
     invoices must not let a non-Admin undo a genuine finalization."""
     invoice_id = uuid4()
     db_invoice = Invoice(
@@ -692,7 +692,7 @@ def test_cannot_unpark_an_invoice_that_was_never_parked(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Gap 421: resubmission reason, and superseded invoices are read-only
+# Gap 429: resubmission reason, and superseded invoices are read-only
 # ---------------------------------------------------------------------------
 
 def test_resubmission_reason_is_persisted(db_session):
@@ -771,7 +771,7 @@ def test_superseded_invoice_is_read_only(db_session, payload):
 
 
 def test_should_index_invoice_excludes_superseded():
-    """Gap 421: status alone cannot express superseded-ness, so a re-index
+    """Gap 429: status alone cannot express superseded-ness, so a re-index
     keyed on status would silently restore the vectors replace_invoice()
     deleted."""
     from chroma_client import should_index_invoice, should_index_status

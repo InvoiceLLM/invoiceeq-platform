@@ -1,5 +1,5 @@
 /**
- * Gap 423: one place that decides which permission a route needs.
+ * Gap 431: one place that decides which permission a route needs.
  *
  * WHY THIS FILE EXISTS. `Sidebar.tsx` filtered nav links by permission, but
  * nothing guarded the routes themselves — `middleware.ts` calls only

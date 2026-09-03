@@ -2,7 +2,7 @@
 
 **Status:** Built 2026-08-17 (commit `fc48ef0`) — all 5 tasks landed, with two deviations from this spec recorded in §4. Status/verification state lives in `fe_features_tracker.md` (Gaps 246/247/248); this doc is the design record.  
 **Gap 403 (BE, built 2026-09-02):** RAG-based accuracy tuning for the Support Assistant, replacing part of the keyword-matched knowledge base described in Task 15.2 below with a semantic fallback. See `be_features_tracker.md` Gap 403.  
-**Gap 422 (BE, built 2026-09-03):** Gap 403's semantic fallback shipped dead — its 0.35 threshold was unreachable by real embeddings, and its keyword-dump corpus mis-ranked topics. Fixed with a re-embedded prose corpus and an empirically measured 0.52 threshold + 0.012 margin. See `be_features_tracker.md` Gap 422.  
+**Gap 430 (BE, built 2026-09-03):** Gap 403's semantic fallback shipped dead — its 0.35 threshold was unreachable by real embeddings, and its keyword-dump corpus mis-ranked topics. Fixed with a re-embedded prose corpus and an empirically measured 0.52 threshold + 0.012 margin. See `be_features_tracker.md` Gap 430.  
 **Gap 404 (FE, built 2026-09-02):** Ticket History & Status portal — see Task 15.6 below.  
 **Target Application:** `invoice-fe`  
 **Related Backend Spec:** `apps/invoice-be/docs/feature_19_support_tickets_and_notifications.md`  

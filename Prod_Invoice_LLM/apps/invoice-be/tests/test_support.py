@@ -1248,7 +1248,7 @@ class TestRateLimiterStateBounds:
 
 
 # ---------------------------------------------------------------------------
-# Gap 422: prose embeddings, the margin guard, and the re-seeding fix
+# Gap 430: prose embeddings, the margin guard, and the re-seeding fix
 # ---------------------------------------------------------------------------
 
 class TestSupportRetrievalTuning:

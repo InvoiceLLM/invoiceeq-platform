@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Gap 423: block a route the signed-in user has no permission for.
+ * Gap 431: block a route the signed-in user has no permission for.
  *
  * Before this, permissions filtered nav *links* but nothing guarded the routes
  * — `middleware.ts` only calls `auth().protect()`, which asserts a session

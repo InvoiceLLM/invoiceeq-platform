@@ -18,7 +18,7 @@ function tabToStatusParams(tab: StatusTab): { status?: string; status_in?: strin
   if (tab === "paid") return { status: "PAID" };
   if (tab === "rejected") return { status: "REJECTED" };
   if (tab === "audit_required") return { status: "AUDIT_REQUIRED" };
-  // Gap 420: the two parked states get their own filters. They are deliberately
+  // Gap 428: the two parked states get their own filters. They are deliberately
   // NOT folded into `pending` below -- that list is "still moving through the
   // pipeline on its own", whereas a parked invoice is stopped and waiting on a
   // human. Bundling them would hide exactly the invoices this feature exists to

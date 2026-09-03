@@ -1,4 +1,4 @@
-"""Gap 422: derive the Support Assistant's relevance threshold from measurement.
+"""Gap 430: derive the Support Assistant's relevance threshold from measurement.
 
 Mirrors Gap 244's method for the invoice-chunk threshold: embed the corpus,
 run a labelled set of real paraphrases, and place the cutoff between the

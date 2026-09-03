@@ -47,7 +47,7 @@ export interface InvoiceRecord {
 // finalized as Paid/Rejected (Processing, Completed, Audit Required,
 // Duplicate) -- matches the AP mental model of "still in the pipeline"
 // vs. a closed-out invoice, rather than mapping 1:1 to every raw status enum.
-// Gap 420: "review_later" and "needs_resubmission" added. Before this the two
+// Gap 428: "review_later" and "needs_resubmission" added. Before this the two
 // parked states appeared under NO tab -- `pending` is a hardcoded
 // PROCESSING/COMPLETED/DUPLICATE list (see tabToStatusParams in
 // app/invoices/page.tsx) -- so a parked invoice was only reachable via "All",
@@ -79,7 +79,7 @@ interface RecentInvoicesTableProps {
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "all", label: "All" },
   { key: "audit_required", label: "Review Required" },
-  // Gap 420: the two parked states, each its own filter -- they mean different
+  // Gap 428: the two parked states, each its own filter -- they mean different
   // things operationally ("I'll come back to this" vs "the vendor must resend").
   { key: "review_later", label: "Review Later" },
   { key: "needs_resubmission", label: "Needs Resubmission" },
@@ -176,7 +176,7 @@ export default function RecentInvoicesTable({
             Rejected
           </span>
         );
-      // Gap 420: both parked states need explicit cases. Without them they hit
+      // Gap 428: both parked states need explicit cases. Without them they hit
       // `default:` below and rendered as "Processing" with a spinner that never
       // stops -- a parked invoice looked permanently stuck mid-extraction.
       // Colours deliberately match the Auditor Review Console's own badges.

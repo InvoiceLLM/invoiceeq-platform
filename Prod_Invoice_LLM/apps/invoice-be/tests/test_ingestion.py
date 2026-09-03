@@ -590,7 +590,7 @@ def test_rejects_invalid_pdf_magic_bytes(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Gap 421: replace a NEEDS_RESUBMISSION invoice with a corrected upload
+# Gap 429: replace a NEEDS_RESUBMISSION invoice with a corrected upload
 #
 # The design in one line: nothing is destroyed except the vector chunks. The
 # old row, its alerts and its blob all survive; it is merely stamped
@@ -721,7 +721,7 @@ def test_replace_writes_an_audit_log_naming_both_invoices(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Gap 424: GET /invoices/{id}/last-action -- the fix plan's "show who/when/why"
+# Gap 432: GET /invoices/{id}/last-action -- the fix plan's "show who/when/why"
 # item. AuditLog has always recorded actor + target_status; nothing served it
 # to the frontend. These go through the real resolve endpoint rather than
 # hand-inserting an AuditLog row, since the risk that matters is a key-name

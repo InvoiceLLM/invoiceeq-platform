@@ -92,7 +92,7 @@ class AuditResolutionPayload(BaseModel):
     resubmission_reason: Optional[str] = Field(
         default=None,
         max_length=500,
-        description="Gap 421: why the invoice is being sent back, persisted on "
+        description="Gap 429: why the invoice is being sent back, persisted on "
                     "the invoice when status=NEEDS_RESUBMISSION. Without it the "
                     "vendor is told to resend with no statement of what to fix.",
     )
@@ -417,7 +417,7 @@ async def resolve_audit_invoice(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid target status '{payload.status}'. Must be PAID, REJECTED, AUDIT_REQUIRED, REVIEW_LATER, or NEEDS_RESUBMISSION."
             )
-        # Gap 420: the Admin gate on AUDIT_REQUIRED moved below, to after the
+        # Gap 428: the Admin gate on AUDIT_REQUIRED moved below, to after the
         # invoice is loaded. It cannot be decided here any more because it now
         # depends on the invoice's CURRENT status: undoing a finalization is
         # Admin-only (Gap 193), but returning a *parked* invoice to the queue
@@ -443,7 +443,7 @@ async def resolve_audit_invoice(
         invoice_not_deleted(),
     )
     invoice = db_session.exec(statement).first()
-    # Gap 421: a superseded invoice is frozen history -- it has been replaced by
+    # Gap 429: a superseded invoice is frozen history -- it has been replaced by
     # a corrected upload, and its row survives only so the old data and alerts
     # stay reviewable. Acting on it (approve/reject/park/correct) would write
     # decisions onto a version nobody is using, and those writes would be
@@ -476,7 +476,7 @@ async def resolve_audit_invoice(
                     detail="Only an Admin can reopen a resolved invoice."
                 )
         elif invoice.status in ("REVIEW_LATER", "NEEDS_RESUBMISSION"):
-            # Gap 420 un-park: parking was never a finalization, so Gap 193's
+            # Gap 428 un-park: parking was never a finalization, so Gap 193's
             # Admin gate does not apply -- whoever could park an invoice can
             # put it back in the queue. Before this, BOTH guards rejected it
             # (the Admin check above, and the PAID/REJECTED-only check below),
@@ -503,7 +503,7 @@ async def resolve_audit_invoice(
             detail=f"Cannot set '{target_status}' on a {invoice.status} invoice — reopen it first (Admin-only)."
         )
 
-    # Gap 420: capture the status we are transitioning FROM, before it is
+    # Gap 428: capture the status we are transitioning FROM, before it is
     # overwritten below. The audit trail records `target_status` but never
     # recorded where the invoice came from, so a log entry could not tell an
     # Admin undoing a finalization apart from an auditor returning a parked
@@ -537,7 +537,7 @@ async def resolve_audit_invoice(
     if target_status is not None:
         invoice.status = target_status
 
-    # Gap 421: persist why it is being sent back. Only meaningful on
+    # Gap 429: persist why it is being sent back. Only meaningful on
     # NEEDS_RESUBMISSION -- this is the text a human will act on when they open
     # the replaced version to see what was wrong. Cleared when the invoice
     # leaves that state (including on un-park), so a stale reason from a
@@ -567,7 +567,7 @@ async def resolve_audit_invoice(
     # exactly what a human changed and why.
     log_details = {
         "target_status": target_status,
-        # Gap 420: where the invoice came from. Distinguishes an Admin undoing
+        # Gap 428: where the invoice came from. Distinguishes an Admin undoing
         # a finalization (PAID/REJECTED -> AUDIT_REQUIRED) from an auditor
         # returning a parked invoice to the queue (REVIEW_LATER /
         # NEEDS_RESUBMISSION -> AUDIT_REQUIRED), which are otherwise identical

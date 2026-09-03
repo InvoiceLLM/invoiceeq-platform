@@ -1147,7 +1147,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
             # the arithmetic-verification outcome, so the gate is now
             # `should_index_status()` (everything except the not-yet-extracted /
             # failed / duplicate statuses).
-            # Gap 421: superseded invoices must not be re-indexed -- see
+            # Gap 429: superseded invoices must not be re-indexed -- see
             # should_index_invoice(); status alone cannot express this.
             from chroma_client import index_invoice_document, should_index_invoice
             if should_index_invoice(invoice):

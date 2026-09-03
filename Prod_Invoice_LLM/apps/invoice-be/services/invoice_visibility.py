@@ -18,7 +18,7 @@ def invoice_not_deleted() -> ColumnElement[bool]:
 
 
 def invoice_is_live() -> ColumnElement[bool]:
-    """Gap 421: not deleted AND not superseded.
+    """Gap 429: not deleted AND not superseded.
 
     Use this for anything that produces a **result** -- lists, dashboard
     aggregates, batch counts, trainer sample selection, rule-impact replay,
