@@ -4352,7 +4352,20 @@ def _run_query_agent(
             progress=progress,
         )
 
-    cached = get_cached_answer(tenant_id, user_message)
+    # C2 (Feature 6.1): a narrowing follow-up is not cacheable and must not be
+    # answered from the cache. The key is `(tenant_id, normalized_query)` with no
+    # session and no turn history, so "what about the second one?" asked in this
+    # session would be served the answer another session got for the same six
+    # words -- about entirely different rows. `_is_narrowing_followup()` already
+    # exists and already recognises exactly this shape; it simply was never
+    # consulted here.
+    #
+    # A skipped cache read costs one normal turn. A wrong cache hit is a confident
+    # answer about someone else's question, which is the failure mode this whole
+    # review exists to remove.
+    cached = None if _is_narrowing_followup(user_message) else get_cached_answer(
+        tenant_id, user_message
+    )
     if cached is not None:
         logger.info("Serving cached answer for tenant %s (Task 6.11 semantic cache hit)", tenant_id)
         # Gap 302: a cache hit is a real turn the user took and must appear in
@@ -4924,7 +4937,11 @@ Conversation History:
     }
 
     if route in ("SQL", "RAG") and route_succeeded:
-        set_cached_answer(tenant_id, user_message, result)
+        # C2: symmetric with the read guard above. Skipping only the read would
+        # still let this session's answer to "and the other one?" sit in the cache
+        # under a key that means something different to every other session.
+        if not _is_narrowing_followup(user_message):
+            set_cached_answer(tenant_id, user_message, result)
 
     # Gap 304 half (2): attached AFTER the cache write, deliberately. Two
     # consequences, both wanted:

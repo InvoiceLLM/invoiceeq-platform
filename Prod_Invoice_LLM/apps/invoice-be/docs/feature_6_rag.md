@@ -1617,3 +1617,95 @@ emit never fails a turn (`test_a_broken_emitter_never_breaks_the_wrapped_work`),
 and no new inline network call was added to the request path — the inline App
 Insights post remains hypothesis 2 for the unexplained 5.5 s, now measurable
 against the seven spans rather than argued about.
+
+
+### A2 result — 2026-09-03
+
+**Built, shipped OFF.** `AZURE_OPENAI_FAST_DEPLOYMENT_NAME` (empty by default) and
+`_fast_llm()`; five call sites moved, not the four this section listed.
+
+**The fifth site is why this needed care.** `_run_query_agent` holds ONE `llm` that
+`run_sql_generation_loop`, `chat.sql_summary` and `chat.rag_answer` all share.
+Switching it wholesale would have dragged SQL generation onto the non-reasoning
+deployment — and A1 tunes `reasoning_effort` on that same call, so the two items
+would have silently cancelled each other out. A second handle (`fast_llm`) was added
+instead, and `tests/test_a2_fast_deployment.py` now fails at the source if anyone
+hands the fast model to the generation loop.
+
+**Both caveats closed before any code was written.** Capacity: `gpt-4o` raised
+10 → 100, written back into `infra/gpt4o-deployment.bicep`. Structured output:
+asked directly on the real deployment — `with_structured_output(QueryRoutingSchema)`
+works and agrees with `gpt-5-mini` 3/3.
+
+**Why OFF.** The setting defaults empty, which makes `_fast_llm()` return exactly
+`get_llm()` — bit-identical to before A2 existed. The live env var was **not** set.
+Turning it on without the 35-question classify-agreement run would assert the
+improvement rather than measure it.
+
+**Verified:** `tests/test_a2_fast_deployment.py` 7 passed; nine-suite chat
+regression 427 passed, 0 failed, real Postgres.
+
+### A1 result — 2026-09-03
+
+**Built, shipped OFF.** `build_llm()` accepts `reasoning_effort`, passed to
+`AzureChatOpenAI` only when a caller asks — sending it to a non-reasoning deployment
+is an error and every existing caller omits it. `_generation_llm()` reads
+`AZURE_OPENAI_SQL_REASONING_EFFORT` and `AZURE_OPENAI_SQL_MAX_COMPLETION_TOKENS`;
+both inert by default.
+
+**The risk, stated rather than discovered later:** a cheaper reasoning budget still
+returns *a* query. It does not fail loudly; it fails by generating subtly worse SQL.
+The golden set is the only control for that, and it has not run.
+
+**Verified:** `tests/test_a1_generation_budget.py` + `test_a2_fast_deployment.py`
+16 passed, real Postgres.
+
+### C2 result — 2026-09-03
+
+**Built and on by default**, because it is a correctness fix rather than a
+performance switch. The answer cache now consults `_is_narrowing_followup()` on both
+read and write: a narrowing follow-up is neither served from the cache nor written
+to it. Filed as **Gap 423**.
+
+**Not done, and recorded because this section proposed it:** moving the cache read
+after `classify_query()`. The defect is not *where* the read happens — it is that
+the key `(tenant_id, normalized_query)` does not capture session state. Moving the
+read would put an LLM call in front of every cache hit and fix nothing the guard
+does not.
+
+**Known hole, pinned by a test:** ordinal back-references ("what about the second
+one") are not caught by the detector and are equally session-dependent. Widening
+`_FOLLOWUP_BACKREF_PATTERNS` is its own change with its own false-positive risk.
+
+**Verified:** `tests/test_c2_cache_correctness.py` 14 passed, real Postgres. The F26
+attachment gate still precedes the cache, asserted at the source.
+
+### B2 closed on Azure, and it found something bigger — 2026-09-03
+
+The §B2 fix deployed on revision `--0000122` and reported, honestly for the first
+time, `chroma=degraded: using local PersistentClient fallback (15.3s)` — where the
+old code had logged `chroma=ok` three seconds after logging a failure. The retry
+fired and also failed.
+
+That made the real cause findable: **`CHROMA_PORT` was 8000**, the chromadb
+container's `targetPort`, against an Azure Container Apps *internal ingress* FQDN.
+ACA publishes internal ingress on 80/443. Diagnosed in three steps:
+
+| port | result |
+|---|---|
+| `:8000` | hung 15.3 s — nothing listening at the FQDN on that port |
+| `:80`, ssl=False | `301 Moved Permanently` in 0.2 s — ACA forces HTTPS, the client does not follow |
+| `:443`, ssl=True | full v2 handshake: auth/identity, tenants, databases, heartbeat |
+
+Fixed live on `ca-invoice-be-dev` and `ca-queue-worker-dev`, written back into
+`infra/modules/compute/invoice-be.bicep` and `queue-worker.bicep` where the port was
+hardcoded. Revision `--0000124` reports **`RAG warm-up complete: chroma=ok (0.2s)`**
+with no preceding failure line — the exact evidence §B2 specified. Filed as
+**Gap 422**.
+
+**It was never a cold-start race.** The failure landed at ~3.1 s against a 3.0 s
+budget, which looked like a near-miss; raising the budget to 15 s changed nothing
+except how long it took to fail, and that is what ruled the race out. The 15 s
+warm-up budget added by Gap 415 is therefore treating a symptom that does not
+exist — recorded here rather than reverted in the same change, so the two effects
+stay separable.
