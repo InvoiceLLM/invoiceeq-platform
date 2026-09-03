@@ -40,6 +40,24 @@ Any task expected to take more than a few steps (multi-gap repro, a multi-file b
 
 Leave the file in place once the task completes, with every item checked and a one-line final status at the bottom — don't delete it (unlike the ephemeral infra reports pattern). The user can clean these up manually once reviewed.
 
+## Chat answers are brief — the default, not the exception
+
+Answer in chat with the shortest thing that is complete: a direct answer, then only
+what changes the user's next action. No recap of what was just done, no restating the
+question, no narration of the search that produced the answer.
+
+- **Tables over prose** for anything with more than two facts. Name + tiny description
+  + recommendation. No explanatory paragraph under each row.
+- **Reasoning appears only when the answer is counter-intuitive or a premise is wrong.**
+  One or two sentences, then stop.
+- **Detail belongs in the file, not the reply.** Build notes, rationale and evidence go
+  in the spec, the tracker gap or the commit message — those are read deliberately;
+  chat is read in passing.
+- Length is earned by consequence, not by effort spent. A 40-minute investigation with
+  one actionable finding is a three-line answer.
+
+This applies to every agent's chat output, architect and infra-devops included.
+
 ## Scope vs. output — the pattern every non-architect agent follows
 
 1. State scope first: what will be done, to which files, and why. This is what the user approves before execution.

@@ -149,9 +149,10 @@ async function setupChat(
       contentType: request.headers()["content-type"] ?? "",
       body: request.postData() ?? "",
     });
-    // A real upload is not instantaneous, and the chip's "extracting" state is
-    // a real server-side wait (Document Intelligence runs inside this request).
-    // The delay makes that observable instead of a frame the test can never see.
+    // A real upload is not instantaneous. The delay holds the request open so
+    // the chip's pending state is observable at all -- but see FE Gap 392 at the
+    // assertion site: it cannot separate `xhr.upload.onload` from `xhr.onload`,
+    // so the "extracting" paint specifically stays out of reach here.
     if (opts.uploadDelayMs) {
       await new Promise((resolve) => setTimeout(resolve, opts.uploadDelayMs));
     }
@@ -244,9 +245,32 @@ test.describe("Feature 26 H12 — a real upload through the real UI", () => {
 
     const chip = page.locator("#chat-attachment-chip");
     await expect(chip).toBeVisible();
-    // The server-side wait is a real state, not a frame: the request is held
-    // open for 1.2s above and the chip must say what is happening during it.
-    await expect(chip).toHaveAttribute("data-attachment-status", "extracting");
+
+    // FE Gap 392. This used to assert `data-attachment-status="extracting"` here
+    // and failed against CORRECT product behaviour, which is worth writing down
+    // rather than just deleting.
+    //
+    // The hook drives two transitions from two different browser events
+    // (`hooks/useChatSession.ts`): `xhr.upload.onload` -> "extracting", meaning
+    // the bytes are sent and the server is now reading the document; `xhr.onload`
+    // -> "ready", meaning the response arrived. Against a real backend those are
+    // seconds apart -- Document Intelligence runs synchronously inside that
+    // request -- so "extracting" is a real state a real user really sees.
+    //
+    // Under `page.route()` they are not. Playwright fulfils the request itself,
+    // so Chromium raises both events in the same task and React batches the two
+    // `setAttachment` calls into one render: "extracting" is entered and left
+    // without ever painting. The 1.2s delay above does not help, because it
+    // happens BEFORE the fulfil -- it postpones the pair, it does not separate
+    // them.
+    //
+    // So this test asserts what this harness can actually prove: the chip is
+    // present and NOT yet ready while the request is outstanding, then reaches
+    // ready. That the "extracting" branch renders correctly is a claim about a
+    // paint against a real server, and it belongs to the human end-to-end pass
+    // (B11 removal criterion (d)) -- not to an automated case that can only
+    // pass by asserting something the harness fabricates.
+    await expect(chip).not.toHaveAttribute("data-attachment-status", "ready");
     await expect(chip).toHaveAttribute("data-attachment-status", "ready");
 
     // The five fields AttachmentOut returns are what the ready chip renders.
