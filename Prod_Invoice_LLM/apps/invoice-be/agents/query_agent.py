@@ -1320,6 +1320,181 @@ def user_safe_error_detail(exc, tenant_id: str = "") -> str:
     return detail
 
 
+# ---------------------------------------------------------------------------
+# Gap 414 (C1): tenant isolation decided on the parse tree, not on the text.
+#
+# Safety Check 3 below asks only whether `tenant_id = '<this tenant>'` appears
+# somewhere in the statement. That is true of
+# `... WHERE tenant_id = '<t>' OR 1=1`, which the engine satisfies without the
+# predicate -- every row of every tenant comes back. The regex cannot see the
+# boolean structure, so a second layer reads it off the AST.
+#
+# The rule is deterministic and total (hard rule 3 -- nothing here is a
+# heuristic and no model adjudicates it):
+#
+#   leaf `tenant_id = '<this tenant>'` -> safe
+#   any other leaf                     -> unsafe
+#   A AND B  -> safe if A is safe or B is safe
+#   A OR B   -> safe only if A is safe and B is safe
+#   NOT X    -> unsafe (a negated guard guards nothing)
+#   no WHERE -> unsafe
+#
+# A SELECT is in scope only if it reads at least one physical table; a select
+# over functions alone (the LATERAL jsonb_array_elements shape, `SELECT 1`) has
+# no tenant column to filter and is exempt. Parse failure is a rejection, not a
+# pass-through -- an unreadable statement is never executed.
+# ---------------------------------------------------------------------------
+
+_TENANT_COLUMN = "tenant_id"
+
+
+def _sqlglot_dialect_for(dialect_name: str) -> str:
+    """Map this repo's engine name onto sqlglot's dialect name.
+
+    Only the *parse* uses it. Nothing is transpiled: the 2026-09-03 probe showed
+    sqlglot renders `jsonb_array_elements` as `JSONB_ARRAY_ELEMENTS` for SQLite,
+    which is exactly why rule 6d still ships one variant per engine.
+    """
+    return "sqlite" if (dialect_name or "").startswith("sqlite") else "postgres"
+
+
+def _ast_leaf_is_tenant_predicate(node, tenant_id: str) -> bool:
+    """True only for `tenant_id = '<tenant_id>'` (either operand order)."""
+    import sqlglot.expressions as sg_exp
+
+    if not isinstance(node, sg_exp.EQ):
+        return False
+
+    def _column_name(side):
+        return side.name.lower() if isinstance(side, sg_exp.Column) else None
+
+    def _literal_value(side):
+        if isinstance(side, sg_exp.Literal):
+            return str(side.this)
+        # A bare UUID sometimes parses as an unquoted identifier/column.
+        if isinstance(side, sg_exp.Column) and not side.args.get("table"):
+            return side.name
+        return None
+
+    left, right = node.this, node.expression
+    pairs = ((left, right), (right, left))
+    for column_side, value_side in pairs:
+        if _column_name(column_side) != _TENANT_COLUMN:
+            continue
+        value = _literal_value(value_side)
+        if value is not None and value.strip() == str(tenant_id).strip():
+            return True
+    return False
+
+
+def _ast_predicate_is_tenant_safe(node, tenant_id: str) -> bool:
+    """Walk the boolean tree of a WHERE clause under the table above."""
+    import sqlglot.expressions as sg_exp
+
+    if node is None:
+        return False
+    if isinstance(node, sg_exp.Where):
+        return _ast_predicate_is_tenant_safe(node.this, tenant_id)
+    if isinstance(node, sg_exp.Paren):
+        return _ast_predicate_is_tenant_safe(node.this, tenant_id)
+    if isinstance(node, sg_exp.Not):
+        return False
+    if isinstance(node, sg_exp.And):
+        return _ast_predicate_is_tenant_safe(
+            node.this, tenant_id
+        ) or _ast_predicate_is_tenant_safe(node.expression, tenant_id)
+    if isinstance(node, sg_exp.Or):
+        return _ast_predicate_is_tenant_safe(
+            node.this, tenant_id
+        ) and _ast_predicate_is_tenant_safe(node.expression, tenant_id)
+    return _ast_leaf_is_tenant_predicate(node, tenant_id)
+
+
+def _select_reads_physical_table(select_node) -> bool:
+    """Does this SELECT read a named table, as opposed to functions/subqueries?
+
+    `FROM invoice` and `JOIN documents` are physical. `jsonb_array_elements(...)`,
+    `json_each(...)`, a derived subquery and a CTE reference are not -- a CTE name
+    resolves to a select that is itself checked, so requiring the predicate again
+    at the reference would reject correct SQL.
+    """
+    import sqlglot.expressions as sg_exp
+
+    cte_names = set()
+    root = select_node.parent_select
+    scope = select_node
+    while scope is not None:
+        with_clause = scope.args.get("with_") or scope.args.get("with")
+        if with_clause is not None:
+            for cte in with_clause.expressions:
+                alias = cte.args.get("alias")
+                if alias is not None and alias.name:
+                    cte_names.add(alias.name.lower())
+        scope = scope.parent_select
+    del root
+
+    sources = []
+    # sqlglot renamed this arg to "from_" at v26; accept both so a dependency
+    # bump cannot silently turn this guard into a no-op.
+    from_clause = select_node.args.get("from_") or select_node.args.get("from")
+    if from_clause is not None:
+        sources.append(from_clause.this)
+    for join in select_node.args.get("joins") or []:
+        sources.append(join.this)
+
+    for source in sources:
+        if isinstance(source, sg_exp.Table) and source.name:
+            if source.name.lower() not in cte_names:
+                return True
+    return False
+
+
+def assert_tenant_isolation_on_ast(sql_clean: str, tenant_id: str, dialect_name: str) -> None:
+    """Reject any statement whose parse tree does not force this tenant.
+
+    Raises `ValueError` with the same "Access Denied" prefix Safety Check 3 uses,
+    so the generation retry loop and `user_safe_error_detail` treat it exactly as
+    they already treat an isolation failure -- no new error path, no statement
+    text in the user-facing message.
+    """
+    import sqlglot
+    import sqlglot.expressions as sg_exp
+
+    dialect = _sqlglot_dialect_for(dialect_name)
+    try:
+        statements = sqlglot.parse(sql_clean, read=dialect)
+    except Exception as exc:  # noqa: BLE001 -- any parse failure fails closed
+        logger.warning("Tenant AST guard: statement did not parse (%s); rejecting.", type(exc).__name__)
+        raise ValueError(
+            "Access Denied: SQL query could not be parsed for tenant isolation verification."
+        ) from None
+
+    statements = [stmt for stmt in statements if stmt is not None]
+    if not statements:
+        raise ValueError(
+            "Access Denied: SQL query could not be parsed for tenant isolation verification."
+        )
+
+    checked_any = False
+    for statement in statements:
+        for select_node in statement.find_all(sg_exp.Select):
+            if not _select_reads_physical_table(select_node):
+                continue
+            checked_any = True
+            if not _ast_predicate_is_tenant_safe(select_node.args.get("where"), tenant_id):
+                raise ValueError(
+                    "Access Denied: SQL query does not force tenant isolation on every table read."
+                )
+
+    if not checked_any:
+        # Nothing read a physical table, yet Safety Check 2 established this is a
+        # SELECT. Rather than guess, refuse: the guard must never be a no-op on a
+        # statement it did not understand.
+        raise ValueError(
+            "Access Denied: SQL query does not force tenant isolation on every table read."
+        )
+
+
 def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list | None = None) -> str:
     """Safely execute generated SQL statement on the database session.
 
@@ -1351,6 +1526,13 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     isolation_pattern = rf"\btenant_id\s*=\s*['\"]?{tenant_id}['\"]?\b"
     if not re.search(isolation_pattern, sql_clean, re.IGNORECASE):
         raise ValueError("Access Denied: SQL query does not contain valid tenant isolation predicate.")
+
+    # Safety Check 4: the predicate must actually *bind* (Gap 414). Check 3 is a
+    # text match, so `... WHERE tenant_id = '<t>' OR 1=1` satisfies it while
+    # returning every tenant's rows. This second layer decides on the parse tree.
+    # The regex above is deliberately kept: it is the cheap pass, and two
+    # independent checks is the point.
+    assert_tenant_isolation_on_ast(sql_clean, tenant_id, _sql_dialect_name(db_session))
         
     result = db_session.execute(text(sql_clean))
     rows = result.fetchall()

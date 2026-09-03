@@ -9,6 +9,12 @@ Shared rules for every persona under `.claude/agents/`. Each persona file refere
 3. **Deterministic over prompt for correctness.** Any check that decides correctness (math, reconciliation, sign handling, validation) must be deterministic code. Prompt rules alone are not a control — Gaps 220–225/253 all share this failure mode. LLMs explain exceptions; they do not adjudicate them.
 4. **Never delete, never rewrite approved specs.** Existing files carry institutional history behind prior fixes. New design goes in new `feature_N.x` sub-files; approved spec bodies get additive updates only.
 5. **Check in-flight work first.** Before starting, list `.claude/tasklists/` files modified in the last 7 days and read `active-work.md` (workspace root). If your task overlaps their files or contradicts the current direction, stop and surface the conflict — do not proceed in parallel.
+6. **Never commit. Never push. The founder does both.** The end state of every task is changes sitting **uncommitted in the working tree**, visible in the editor's Changes panel — that panel is how the founder reviews work, and a commit removes it from there before it has been read. Concretely:
+   - `git commit`, `git push`, `git merge`, `git cherry-pick` (without `-n`), `git reset`, `git stash`: **do not run them** unless the founder's *current* message contains an explicit instruction naming that action for *this* change. "Push the code" earlier in the session authorises nothing later. "Finish the feature", "fix it", "run the tests", "start recovery" are not commit instructions.
+   - Before running any of those commands, the agent must be able to quote the founder's sentence that authorised it. If it cannot, it does not run.
+   - A task that would "naturally" end in a commit (a merge, a release, a run loop) still ends uncommitted; the agent reports "ready to commit on your word" and stops.
+   - If a commit was made by mistake and **not pushed**: say so immediately and offer `git reset --mixed HEAD~1` — the founder runs it or approves it. If it **was** pushed: say so immediately; do not try to rewrite history.
+   - This rule exists because it was broken 18 times, most recently on Gap 413 (2026-09-03). It is a hard rule, not a preference: an agent that commits has removed the founder's ability to review.
 
 ## Repo layout
 
@@ -39,6 +45,23 @@ Application code and `Prod_Invoice_LLM/infra/` bicep/ps1 themselves are the reco
 Any task expected to take more than a few steps (multi-gap repro, a multi-file build, a multi-stage infra change) creates `.claude/tasklists/<agent>-<short-topic>.md` **before starting work** — a plain markdown checklist of the concrete steps planned, one line per step. Update it (check items off, add detail inline) as each step actually completes, not in a batch at the end — the point is that the user can open this file at any time mid-run and see real current status, not just get a summary once the whole thing finishes. This is separate from the final deliverable (tracker/report/coverage-map per the table above); the tasklist is working-state, the tracker/report is the record.
 
 Leave the file in place once the task completes, with every item checked and a one-line final status at the bottom — don't delete it (unlike the ephemeral infra reports pattern). The user can clean these up manually once reviewed.
+
+## Tool orchestration — execution latency rules (founder, 2026-09-03)
+
+Priority: **fast useful answers > exhaustive investigation > perfect certainty.**
+
+1. **Tool budget.** List every independent piece of evidence first; batch independent reads, searches and commands into one call. Never one tool call per turn when calls can be grouped. At most **2–4 evidence rounds** before producing useful output.
+2. **Cache everything slow.** Azure logs and App Insights: fetch once per task into the scratchpad, query locally; combine KQL queries. Never re-read a code region whose relevant lines are already inspected. Keep a task ledger: files inspected, line ranges, facts established, commands/results, unresolved questions.
+3. **No duplicate investigation.** Before any read or command: "do I already have this evidence?" If yes, reuse it.
+4. **Testing strategy.** Never run the full suite first unless asked. Smallest relevant test first; widen only when targeted tests pass and it is justified. No Playwright unless browser behaviour is directly relevant.
+5. **Communication deadline.** More than ~2 tool rounds or ~60 s of gathering ⇒ a progress update or partial answer ("here is what I have confirmed so far…"). Never a long silent sequence.
+6. **Tool failure.** The same approach failing twice ⇒ stop, diagnose, switch approaches.
+7. **Escaping.** Regex- or backslash-heavy content never goes through a shell heredoc — use the Write/Edit tool or a written script. Verify once; do not retry the same escaping.
+8. **Expensive commands** (>30 s): state internally what question it answers, whether a cheaper command exists, and whether existing evidence already answers it.
+9. **Partial-first.** Large task ⇒ gather enough for the first part, answer it, continue only for what is unresolved.
+10. **Do not over-investigate.** Stop at confident, not exhaustive.
+
+**Before every non-trivial task, show a short execution plan:** independent evidence to gather · which calls are batched · slow operations expected · what is cached · test strategy · when the first partial answer lands. Then follow it.
 
 ## Chat answers are brief — the default, not the exception
 

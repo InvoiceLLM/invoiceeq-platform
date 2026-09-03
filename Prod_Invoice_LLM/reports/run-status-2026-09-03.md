@@ -130,3 +130,23 @@ in progress: item 7 DONE — readiness note written, evidence filed
 landed since last: H9 b24aa73 (job DEPLOYED, execution FAILED on stale image = Gap 400); Gap 401 fixed
 gaps filed: 400 (~, image rebuild needed), 401 (fixed)
 blockers: none. BE 16 failed/2684 passed — failure set IDENTICAL to baseline, diff recorded. tsc clean. Playwright 122/137, 1 in-scope failure = known FE Gap 392
+
+[12:31] mins left: 0 (hardstop reached) | phase 3 - approval gate | senior-dev
+in progress: C1 AST tenant guard (Gap 414, P0) - code + tests landed, uncommitted
+done since last: §Execution record written for C1/B2/B1 (analysis doc L712-847);
+  C1 implemented (query_agent.py +182, sqlglot==30.17.0 pinned); new
+  tests/test_sql_tenant_guard_ast.py 30 passed/2 skipped, 31 passed/1 failed with
+  DATABASE_URL set; regression witness test_chat_sql_quality.py 143 passed/5 skipped
+  = baseline unchanged
+gaps filed: none new (Gap 414 already open and now addressed)
+blockers: local Postgres not listening on 5432, so the POSITIVE execution path is
+  not yet hard-rule-2 verified; Phase 1 email failed first attempt (wrong vault
+  name - correct vault is kv-invoicellm-dev)
+
+[12:38] mins left: n/a (post-gate) | phase 3 - approved | senior-dev
+in progress: none - C1 closed
+done since last: local Postgres started on 5433; guard tests re-run against it,
+  32 passed in 8.87s, no skips. Hard rule 2 now satisfied for both the positive
+  and negative execution paths. Founder approved commit + push to master.
+gaps filed: none new
+blockers: none
