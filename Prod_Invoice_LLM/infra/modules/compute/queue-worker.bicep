@@ -9,6 +9,9 @@ param keyVaultName string
 param chromaHost string
 param azureOpenAiEndpoint string
 param azureOpenAiDeploymentName string
+
+@description('Feature 6.1 A2: fast, non-reasoning deployment for routing, summarising and narration. Empty = use azureOpenAiDeploymentName.')
+param azureOpenAiFastDeploymentName string = ''
 param azureDocIntelEndpoint string
 param acrName string
 param storageAccountName string
@@ -270,6 +273,10 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
               value: azureOpenAiDeploymentName
+            }
+            {
+              name: 'AZURE_OPENAI_FAST_DEPLOYMENT_NAME'
+              value: azureOpenAiFastDeploymentName
             }
             {
               name: 'AZURE_DOC_INTEL_ENDPOINT'

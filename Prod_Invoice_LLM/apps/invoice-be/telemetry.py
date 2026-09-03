@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import json
 import logging
+import functools
 import time
 import uuid
 from contextlib import contextmanager
@@ -1449,17 +1450,51 @@ class LlmUsage:
     generate/repair loop), and the cost of that block is the sum of them.
     """
 
-    __slots__ = ("tokens_in", "tokens_out", "llm_calls")
+    __slots__ = ("tokens_in", "tokens_out", "llm_calls", "cached_tokens", "reasoning_tokens")
 
     def __init__(self) -> None:
         self.tokens_in = 0
         self.tokens_out = 0
         self.llm_calls = 0
+        # B1 (Feature 6.1): the two counts every latency claim in Block A rests
+        # on. `cached_tokens` is Azure's prompt-cache hit count -- A4 reorders the
+        # prompt to raise it, and without this field "the prefix is cached now" is
+        # an assertion, not a measurement. `reasoning_tokens` is what a reasoning
+        # deployment burns before the first visible token -- A1 lowers
+        # `reasoning_effort` to shrink it, and the whole 15.6s -> 5.6s projection
+        # is unverifiable while it is invisible.
+        self.cached_tokens = 0
+        self.reasoning_tokens = 0
 
-    def add(self, tokens_in: int, tokens_out: int) -> None:
+    def add(
+        self,
+        tokens_in: int,
+        tokens_out: int,
+        cached_tokens: int = 0,
+        reasoning_tokens: int = 0,
+    ) -> None:
         self.tokens_in += int(tokens_in or 0)
         self.tokens_out += int(tokens_out or 0)
+        self.cached_tokens += int(cached_tokens or 0)
+        self.reasoning_tokens += int(reasoning_tokens or 0)
         self.llm_calls += 1
+
+
+def _detail(container: Any, group: str, key: str) -> int:
+    """One nested token-detail count, or 0 when the provider did not send it.
+
+    B1. Every field this reads is optional: a non-reasoning deployment sends no
+    `completion_tokens_details`, and a prompt below Azure's 1,024-token cache
+    minimum sends no `cached_tokens`. Absent must read as zero, never as a
+    failure -- this runs inside the token-capture path of every LLM call.
+    """
+    try:
+        group_value = (container or {}).get(group) or {}
+        if not isinstance(group_value, dict):
+            group_value = getattr(group_value, "__dict__", {}) or {}
+        return int(group_value.get(key) or 0)
+    except Exception:  # pragma: no cover - telemetry must never break a call
+        return 0
 
 
 def _record_llm_result(usage: LlmUsage, response: Any) -> None:
@@ -1472,9 +1507,14 @@ def _record_llm_result(usage: LlmUsage, response: Any) -> None:
     llm_output = getattr(response, "llm_output", None) or {}
     token_usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
     if token_usage:
+        # B1: the OpenAI/Azure shape nests these one level down, and both
+        # sub-objects are absent on a non-reasoning deployment or a cache miss --
+        # hence `_detail()`, which treats "absent" as zero rather than as an error.
         usage.add(
             token_usage.get("prompt_tokens") or token_usage.get("input_tokens") or 0,
             token_usage.get("completion_tokens") or token_usage.get("output_tokens") or 0,
+            _detail(token_usage, "prompt_tokens_details", "cached_tokens"),
+            _detail(token_usage, "completion_tokens_details", "reasoning_tokens"),
         )
         return
 
@@ -1483,7 +1523,15 @@ def _record_llm_result(usage: LlmUsage, response: Any) -> None:
             message = getattr(generation, "message", None)
             metadata = getattr(message, "usage_metadata", None) or {}
             if metadata:
-                usage.add(metadata.get("input_tokens") or 0, metadata.get("output_tokens") or 0)
+                # LangChain's provider-neutral shape spells the same two counts
+                # differently: `input_token_details.cache_read` and
+                # `output_token_details.reasoning`.
+                usage.add(
+                    metadata.get("input_tokens") or 0,
+                    metadata.get("output_tokens") or 0,
+                    _detail(metadata, "input_token_details", "cache_read"),
+                    _detail(metadata, "output_token_details", "reasoning"),
+                )
 
 
 def _build_usage_handler(usage: LlmUsage) -> Optional[Any]:
@@ -1703,6 +1751,11 @@ def _end_llm_dependency_span(
             span.set_attribute(_GEN_AI_INPUT_TOKENS_ATTRIBUTE, int(usage.tokens_in))
             span.set_attribute(_GEN_AI_OUTPUT_TOKENS_ATTRIBUTE, int(usage.tokens_out))
             span.set_attribute("llm_calls", int(usage.llm_calls))
+            # B1: on the span as well as the event, so an AppDependencies query
+            # can compare cache hit rate against the dependency's own duration
+            # without joining back to customEvents.
+            span.set_attribute("cached_tokens", int(usage.cached_tokens))
+            span.set_attribute("reasoning_tokens", int(usage.reasoning_tokens))
         if status == _STATUS_ERROR:
             # The exporter reads `span.status.is_ok` for the dependency's
             # `Success` column, so this is what makes a failed call show as a
@@ -1797,6 +1850,139 @@ def tracked_llm_call(
             tenant_id or "",
             request_id,
             llm_calls=usage.llm_calls,
+            cached_tokens=usage.cached_tokens,
+            reasoning_tokens=usage.reasoning_tokens,
             error_type=error_type,
             **extra_attributes,
         )
+
+
+# ---------------------------------------------------------------------------
+# Non-LLM dependency spans (B1, Feature 6.1)
+#
+# The chat-latency measurement of 2026-09-03 put a median SQL turn at 27.8s and
+# could account for only 22.3s of it -- classify 3.1s, generation 15.6s, summary
+# 3.6s. The remaining ~5.5s is real time inside the turn that no telemetry
+# describes, and Block A's config changes do not touch any of it, which is why
+# A1-A4 land at ~13-14s rather than the 8-10s the founder asked for.
+#
+# `dependencies` is empty for invoice-be today: the only spans the app emits are
+# `tracked_llm_call`'s (Gap 300). These wrap the non-model work of a turn --
+# embeddings, vector query, SQL execution, the two block builders, history and
+# tenant stats -- as sibling CLIENT spans under the same request, so the
+# breakdown becomes a query rather than an argument.
+#
+# Exporter contract: a CLIENT span exports as `RemoteDependencyData`. Without
+# `gen_ai.system` the `DependencyType` is generic, so the field to group by is
+# `dependency_name` in `customDimensions` -- set deliberately, not incidentally.
+# ---------------------------------------------------------------------------
+
+DEPENDENCY_EVENT_NAME = "dependency_call"
+_DEPENDENCY_TRACER_NAME = "invoice_be.dependency"
+
+
+@contextmanager
+def track_dependency(
+    dependency_name: str,
+    *,
+    dependency_type: str = "InProc",
+    tenant_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+    **extra_attributes: Any,
+) -> Iterator[None]:
+    """Time one non-LLM dependency; emit a CLIENT span and a custom event.
+
+    Never raises, and re-raises whatever the block raised completely unchanged --
+    the same contract `tracked_llm_call` holds, for the same reason: a call site's
+    error handling must behave exactly as it did before instrumentation.
+
+    The event is emitted as well as the span because the span needs a configured
+    tracer provider to go anywhere, and local runs, tests and CI have none; the
+    event reaches stdout through Feature 19's structured formatter either way,
+    which is what makes the sum-of-spans assertion testable without Azure.
+    """
+    started = time.perf_counter()
+    status = _STATUS_SUCCESS
+    error_type: Optional[str] = None
+    span = None
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        span = _otel_trace.get_tracer(_DEPENDENCY_TRACER_NAME).start_span(
+            dependency_name,
+            kind=_otel_trace.SpanKind.CLIENT,
+            attributes={
+                "dependency_name": dependency_name,
+                "dependency_type": dependency_type,
+                "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
+                "request_id": str(request_id or request_id_ctx.get() or ""),
+                "run_source": _resolve_run_source(None),
+            },
+        )
+    except Exception:  # pragma: no cover - telemetry must never break a call
+        logger.debug("Could not start dependency span %s", dependency_name, exc_info=True)
+
+    try:
+        yield
+    except BaseException as exc:
+        status = _STATUS_ERROR
+        error_type = type(exc).__name__
+        raise
+    finally:
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        if span is not None:
+            try:
+                from opentelemetry.trace import Status, StatusCode
+
+                if status == _STATUS_ERROR:
+                    span.set_status(Status(StatusCode.ERROR, error_type or ""))
+                    if error_type:
+                        span.set_attribute(_ERROR_TYPE_ATTRIBUTE, error_type)
+                else:
+                    span.set_status(Status(StatusCode.OK))
+            except Exception:  # pragma: no cover
+                logger.debug("Could not annotate dependency span", exc_info=True)
+            finally:
+                try:
+                    span.end()
+                except Exception:  # pragma: no cover
+                    logger.debug("Could not end dependency span", exc_info=True)
+        try:
+            attributes: Dict[str, Any] = {
+                "dependency_name": dependency_name,
+                "dependency_type": dependency_type,
+                "duration_ms": round(duration_ms, 2),
+                "status": status,
+                "tenant_id": str(tenant_id or tenant_id_ctx.get() or ""),
+                "request_id": str(request_id or request_id_ctx.get() or ""),
+                "trace_id": str(trace_id_ctx.get() or ""),
+                "run_source": _resolve_run_source(None),
+            }
+            if error_type:
+                attributes["error_type"] = error_type
+            for key, value in extra_attributes.items():
+                if value is None or key in _RESERVED_LOG_RECORD_KEYS or key in attributes:
+                    continue
+                attributes[key] = value
+            _emit_event(DEPENDENCY_EVENT_NAME, attributes)
+        except Exception:  # pragma: no cover - telemetry must never break a call
+            logger.debug("track_dependency failed for %s", dependency_name, exc_info=True)
+
+
+def tracked_dependency(dependency_name: str, dependency_type: str = "InProc"):
+    """Decorator form of `track_dependency`, for wrapping at the definition.
+
+    Applied at the definition rather than at each call site on purpose: a wrapped
+    definition covers every caller, including ones added later, and it cannot
+    drift the way seven separately-edited call sites can. `functools.wraps` keeps
+    the name and docstring, so `patch("module.name")` at a call site still works.
+    """
+    def decorate(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with track_dependency(dependency_name, dependency_type=dependency_type):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorate

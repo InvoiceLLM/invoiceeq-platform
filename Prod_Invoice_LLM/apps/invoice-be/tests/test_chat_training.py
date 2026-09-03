@@ -164,7 +164,14 @@ def test_companion_query_refuses_sql_it_cannot_safely_rebuild(db_session):
     ) == []
 
 
-def test_snapshot_is_persisted_on_the_assistant_message(db_session):
+def test_snapshot_is_persisted_on_the_assistant_message(db_session, monkeypatch):
+    # Gap 390: this asserts `200`, which is only true on the synchronous
+    # path. With the async queue on the endpoint returns `202 Accepted`.
+    # State the path rather than inherit it from whether Redis is running.
+    import config
+
+    monkeypatch.setattr(config.settings, "ENABLE_ASYNC_CHAT_QUEUE", False)
+
     invoice = _seed_invoice(db_session)
     chat_session = ChatSession(id=uuid4(), tenant_id=MOCK_TENANT_ID, title="T")
     db_session.add(chat_session)

@@ -7,8 +7,8 @@ from typing import Callable, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 import telemetry
-from telemetry import tracked_llm_call
-from utils.llm import get_llm
+from telemetry import tracked_dependency, tracked_llm_call
+from utils.llm import build_llm, get_llm
 from utils.rule_schema import normalize_constraints
 from services.turn_drift import detect_turn_drift
 from chroma_client import query_invoice_chunks
@@ -208,6 +208,44 @@ _SQL_KEYWORDS = ("total", "spent", "sum", "average", "how many", "count", "mean"
 _CHAT_KEYWORDS = ("hello", "hi ", "hey", "who are you", "what is your name")
 
 
+def _fast_llm():
+    """The LLM for work that does not reason (Feature 6.1 item A2).
+
+    Returns the deployment named by `AZURE_OPENAI_FAST_DEPLOYMENT_NAME`, or --
+    when that is empty, when the provider is not Azure, or when anything at all
+    goes wrong constructing it -- plain `get_llm()`. Three separate routes back to
+    today's behaviour, because a routing call that raises is a dead chat turn and
+    a slightly slower one is not.
+
+    Mock mode is covered by the provider check: `get_llm()` returns
+    `MockInvoiceLLM` and so does this, which is why the test suite is unaffected
+    whether the setting is set or not.
+
+    **Never use this for SQL generation.** That call reasons -- schema, joins, the
+    three-attempt repair loop -- and item A1 tunes its `reasoning_effort`
+    separately. `_run_query_agent` keeps its own `llm` for exactly that reason.
+    """
+    # Local import, matching `_redis()` and the other settings readers in this
+    # module: read at call time so a test's monkeypatch is seen, never captured
+    # at import.
+    from config import get_settings
+
+    settings = get_settings()
+    fast = (getattr(settings, "AZURE_OPENAI_FAST_DEPLOYMENT_NAME", "") or "").strip()
+    provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+    if not fast or provider != "azure":
+        return get_llm()
+    try:
+        return build_llm("azure", model=fast)
+    except Exception:  # pragma: no cover - never fail a turn over a deployment name
+        logger.warning(
+            "A2: could not build the fast deployment %r; falling back to the default.",
+            fast,
+            exc_info=True,
+        )
+        return get_llm()
+
+
 def classify_query(query: str, tenant_id: str = "") -> str:
     """Classifies user queries into RAG, SQL, or CHAT.
 
@@ -245,7 +283,8 @@ def classify_query(query: str, tenant_id: str = "") -> str:
         return "CHAT"
 
     # No confident keyword match -- genuinely ambiguous, worth the LLM call.
-    llm = get_llm()
+    # A2: routing produces a label, not a deduction. Fast deployment.
+    llm = _fast_llm()
     try:
         structured_llm = llm.with_structured_output(QueryRoutingSchema)
         # Feature 23 Phase 1. Only the LLM fallback is instrumented: the keyword
@@ -1516,6 +1555,7 @@ def assert_tenant_isolation_on_ast(sql_clean: str, tenant_id: str, dialect_name:
         )
 
 
+@tracked_dependency("sql.execute", "PostgreSQL")
 def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list | None = None) -> str:
     """Safely execute generated SQL statement on the database session.
 
@@ -2095,7 +2135,29 @@ def _wrap_retrieved_document_text(spans, tenant_id: str = "", attachment_id: str
                 "(tenant %s, attachment %s, page %s): %r",
                 tenant_id, attachment_id, page, text_value[:200],
             )
-        header = f"[Page {page}]\n" if page is not None else ""
+        # Gap 388: provenance, not just a boundary. An answer built from five
+        # chunks with no attribution cannot be checked by the reader, and the
+        # model cannot say which document a claim came from. F26 spans carry
+        # `page`; RAG spans carry `invoice_id` and sometimes `invoice_number`.
+        # Emit whichever are present, in one header, so the same wrapper serves
+        # both callers without either needing to know about the other.
+        # Two shapes reach this wrapper: `search_attachment_chunks()` spans carry
+        # their fields at the top level, `query_invoice_chunks()` chunks carry
+        # them under `metadata`. Read both rather than making either caller
+        # reshape its result to suit the other.
+        meta = (span or {}).get("metadata") or {}
+        source_bits = []
+        invoice_number = (span or {}).get("invoice_number") or meta.get("invoice_number")
+        invoice_id = (span or {}).get("invoice_id") or meta.get("invoice_id")
+        if invoice_number:
+            source_bits.append(f"Invoice {invoice_number}")
+        elif invoice_id:
+            source_bits.append(f"Invoice id {invoice_id}")
+        if page is None:
+            page = meta.get("page")
+        if page is not None:
+            source_bits.append(f"Page {page}")
+        header = f"[{' | '.join(source_bits)}]\n" if source_bits else ""
         blocks.append(
             f"{_DOCUMENT_TEXT_MARKER_START}\n{header}{text_value}\n{_DOCUMENT_TEXT_MARKER_END}"
         )
@@ -2105,6 +2167,7 @@ def _wrap_retrieved_document_text(spans, tenant_id: str = "", attachment_id: str
 _TENANT_STATS_CACHE_TTL_SECONDS = 300  # orientation only -- exact figures always come from a live SQL query, not this snapshot
 
 
+@tracked_dependency("chat.tenant_stats", "PostgreSQL")
 def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
     """Gap 13: a small tenant-wide data snapshot (row count, total spend, status
     breakdown, vendor count, date range) injected into every route's system
@@ -2253,6 +2316,7 @@ def get_prior_turn_sql(session_id: str, db_session) -> str | None:
     return prior.generated_sql.strip()[:_PRIOR_SQL_MAX_CHARS]
 
 
+@tracked_dependency("chat.history", "PostgreSQL")
 def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str:
     """Retrieve short-term conversational context from the database, bounded by token length (Gap 23)."""
     import tiktoken
@@ -2443,6 +2507,7 @@ MAX_FULL_RECORD_BLOCK_CHARS = 12_000
 _PROMPT_EXCLUDED_RECORD_FIELDS = ("id", "tenant_id")
 
 
+@tracked_dependency("chat.full_record_block", "PostgreSQL")
 def _full_record_block_for(
     invoice_ids: list[str] | None, tenant_id: str, db_session
 ) -> str:
@@ -2597,6 +2662,7 @@ def _cells_are_numeric(cells: list[str]) -> bool:
     return seen_any
 
 
+@tracked_dependency("chat.computed_figures_block", "InProc")
 def _computed_figures_block_for(db_result: str | None) -> str:
     """Every total this answer might state, added up in Python before the model runs.
 
@@ -3799,7 +3865,7 @@ def _run_attached_document_turn(
     # `compare_reference_to_invoices()` above and is handed to the model as JSON
     # it is forbidden to add to. That is the control (hard rule 3); a temperature
     # would only have looked like one.
-    llm = get_llm()
+    llm = _fast_llm()  # A2: narration only -- every figure comes from compare_reference_to_invoices()
     system_prompt = (
         f"{PERSONA_BLOCK}\n\n"
         "You are reporting the result of a comparison between a reference document "
@@ -4067,7 +4133,7 @@ def _run_attachment_content_branch(
     # Plain `get_llm()`, no sampling parameters — Gap 367. What makes this
     # branch safe is that it produces no computed figure at all, not a
     # temperature.
-    llm = get_llm()
+    llm = _fast_llm()  # A2: narration only -- this branch produces no computed figure at all
     system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
 {CONTENT_BRANCH_PROMPT_MARKER}. The user attached it to this conversation; it is
@@ -4343,6 +4409,12 @@ def _run_query_agent(
         turn.stop_reason = "route_override_followup"
 
     llm = get_llm()
+    # A2: a SECOND handle, not a replacement. `llm` above stays on the
+    # reasoning deployment because `run_sql_generation_loop()` uses it and
+    # generation is the one call in this turn that genuinely reasons -- item A1
+    # tunes its `reasoning_effort` separately. Only the two calls that phrase
+    # an already-computed answer move: `chat.sql_summary` and `chat.rag_answer`.
+    fast_llm = _fast_llm()
     response_text = ""
     generated_sql = None
     citations = []
@@ -4534,12 +4606,12 @@ User Query: {user_message}
                     # a well-formed rate with no separate denominator to build.
                     with tracked_llm_call(
                         "chat.sql_summary",
-                        llm=llm,
+                        llm=fast_llm,
                         tenant_id=tenant_id,
                         zero_result=outcome.zero_result,
                         zero_result_fallback_recovered=outcome.zero_result_fallback_recovered,
                     ):
-                        final_res = llm.invoke(summary_prompt)
+                        final_res = fast_llm.invoke(summary_prompt)
                     # One blank line before the heading, one after -- db_result
                     # itself now starts directly with the table (see
                     # execute_generated_sql's own comment on why the leading
@@ -4579,9 +4651,20 @@ User Query: {user_message}
         # no business on a progress channel.
         progress("documents_found", count=len(chunks))
 
-        context_str = ""
+        # Gap 388: retrieved chunk text is third-party content -- the text of
+        # documents a supplier sent us -- and it used to be interpolated raw
+        # under a `--- CHUNK ---` label that says nothing about trust and nothing
+        # about origin. It now goes through the same wrapper Feature 26 built for
+        # attached-document text, which delimits each span and names its source.
+        #
+        # The same stated limit applies as there: this is a MITIGATION, not a
+        # control. The structural control on this route is that RAG produces no
+        # computed figure -- every number in a SQL-route answer comes from
+        # `_computed_figures_block_for()`, which no chunk can reach. A hostile
+        # document can at worst make a text answer say something odd.
+        context_str = _wrap_retrieved_document_text(chunks, tenant_id=tenant_id)
+
         for chunk in chunks:
-            context_str += f"--- CHUNK ---\n{chunk['document']}\n"
             # Gap 304 half (2): the chunk *text* is the only faithfulness
             # evidence this route has, and it is precisely what never reaches
             # Postgres -- `ChatMessage` keeps citations (ids, vendor, page) and
@@ -4649,7 +4732,9 @@ Answer in 1-3 sentences. Be direct. Do not explain your reasoning unless asked.
 
 FORMATTING: Format your answer in Markdown. Use a bullet list when listing multiple items (e.g. multiple invoices or vendors) rather than a run-on sentence.
 
-Extracted Document Context (Long-term Facts):
+{_DOCUMENT_TEXT_GUARD_INSTRUCTION}
+Extracted Document Context (Long-term Facts) -- each passage is delimited and labelled with the
+invoice it came from, so cite the source when you use one:
 {context_str}
 
 {tenant_stats}
@@ -4663,9 +4748,9 @@ Conversation History (Short-term context):
         try:
             # Feature 23 Phase 1
             with tracked_llm_call(
-                "chat.rag_answer", llm=llm, tenant_id=tenant_id, chunk_count=len(chunks)
+                "chat.rag_answer", llm=fast_llm, tenant_id=tenant_id, chunk_count=len(chunks)
             ):
-                res = llm.invoke(f"{system_prompt}\nUser Query: {wrapped_user_message}")
+                res = fast_llm.invoke(f"{system_prompt}\nUser Query: {wrapped_user_message}")
             response_text = res.content
 
             # Append clean formatted citations list to answer text

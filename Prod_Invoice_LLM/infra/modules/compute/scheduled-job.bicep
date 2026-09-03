@@ -54,7 +54,10 @@ param chromaHost string
 param azureOpenAiEndpoint string = ''
 
 @description('Azure OpenAI deployment name. Same rationale as azureOpenAiEndpoint.')
-param azureOpenAiDeploymentName string = ''
+param azureOpenAiDeploymentName string
+
+@description('Feature 6.1 A2: fast, non-reasoning deployment for routing, summarising and narration. Empty = use azureOpenAiDeploymentName.')
+param azureOpenAiFastDeploymentName string = '' = ''
 
 @description('Application Insights connection string. Empty by default (the overdue sweep does not emit telemetry); the golden-bank eval job needs it so scripts/run_agent_eval.py\'s track_eval_result()/emit_online_signals() calls actually reach appi-invoicellm-dev instead of silently no-op-ing to stdout.')
 param appInsightsConnectionString string = ''
@@ -219,6 +222,10 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
               value: azureOpenAiDeploymentName
+            }
+            {
+              name: 'AZURE_OPENAI_FAST_DEPLOYMENT_NAME'
+              value: azureOpenAiFastDeploymentName
             }
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'

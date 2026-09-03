@@ -355,6 +355,28 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_API_VERSION: str = "2024-02-15-preview"
+    # Feature 6.1 item A2: the deployment used for the *non-reasoning* half of a
+    # chat turn -- routing, summarising rows already computed, answering from
+    # retrieved text, and narrating a diff table deterministic code built. None of
+    # those reasons about anything, so paying a reasoning model's thinking tokens
+    # for them buys nothing and costs seconds: measured 2026-09-03, classify 3.1s
+    # and summary 3.6s of a 27.8s median turn.
+    #
+    # EMPTY BY DEFAULT, deliberately -- empty means `_fast_llm()` returns exactly
+    # what `get_llm()` returns, so an unset environment behaves bit-identically to
+    # before this existed. Set it to `gpt-4o` to turn A2 on.
+    #
+    # What must stay on the reasoning deployment: SQL generation. It is the one
+    # call in the turn that genuinely reasons -- schema, joins, the repair loop --
+    # and item A1 tunes its `reasoning_effort` separately. Never point this at the
+    # generation path.
+    #
+    # Safe because no figure is at stake: `_computed_figures_block_for()` and
+    # `_full_record_block_for()` compute every number before the model sees it,
+    # and Feature 26's narration rule forbids stating a figure absent from the
+    # diff table. The model phrases; it does not decide (hard rule 3).
+    AZURE_OPENAI_FAST_DEPLOYMENT_NAME: str = ""
+
     AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-4o-mini"  # Azure uses deployment name instead of model name
     AZURE_DOC_INTEL_ENDPOINT: str = ""
     AZURE_DOC_INTEL_KEY: str = ""

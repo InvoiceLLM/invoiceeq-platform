@@ -23,6 +23,9 @@ param nextPublicClerkPublishableKey string
 @description('Azure OpenAI Model Deployment Name')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
+@description('Feature 6.1 item A2: deployment for the non-reasoning half of a chat turn -- routing, summarising already-computed rows, answering from retrieved text, narrating a diff table. Empty means "use azureOpenAiDeploymentName", which is exactly the behaviour before A2 existed. SQL generation never uses this: it is the one call that genuinely reasons, and item A1 tunes its reasoning_effort separately.')
+param azureOpenAiFastDeploymentName string = ''
+
 @description('Image tag for backend API container')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -286,6 +289,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     image: backendImage
@@ -353,6 +357,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     storageAccountName: storageAccountName
@@ -458,6 +463,7 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -494,6 +500,7 @@ module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -598,6 +605,7 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     // Both scripts emit telemetry (extraction's tracked_llm_call() sites,
     // Track 2's track_eval_result()/track_agent_call()) -- without this it
     // would silently no-op to stdout instead of reaching appi-invoicellm-dev.

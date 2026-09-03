@@ -1257,10 +1257,22 @@ def test_the_outcome_records_the_flags_for_every_caller_of_the_shared_loop():
 #    load.
 
 
-def _turn_events(caplog):
-    return [
+def _turn_events(caplog, trace_id=None):
+    """Turn events in this capture, optionally only the one with `trace_id`.
+
+    Gap 420: taking `[0]` positionally made a test depend on which test ran before
+    it. The chat path runs work on an in-process `ThreadPoolExecutor`, so an
+    earlier test's turn can still be completing and land its `success` event ahead
+    of the one under test -- which is exactly what happened in an 18-suite run
+    while the same file passed alone. Selecting by `trace_id` makes the test
+    identify its own turn instead of hoping it arrives first.
+    """
+    events = [
         r for r in caplog.records if r.getMessage() == telemetry.CHAT_TURN_EVENT_NAME
     ]
+    if trace_id is None:
+        return events
+    return [r for r in events if getattr(r, "trace_id", None) == trace_id]
 
 
 def _emit_turn(result, **overrides):
@@ -1639,7 +1651,11 @@ def test_a_queued_turn_that_raises_still_emits_an_errored_turn_event(caplog):
             )
 
     assert res["status"] == "failed"
-    event = _turn_events(caplog)[0]
+    # Gap 420: select this turn by the trace id the call above set, not by
+    # position -- another test's turn may still be completing on the pool thread.
+    matches = _turn_events(caplog, trace_id="trace-boom")
+    assert len(matches) == 1, f"expected exactly one turn event for trace-boom, got {len(matches)}"
+    event = matches[0]
     assert event.status == telemetry.TURN_STATUS_ERROR
     assert event.error_type == "ValueError"
     assert event.stop_reason == "queue_handler_raised"
