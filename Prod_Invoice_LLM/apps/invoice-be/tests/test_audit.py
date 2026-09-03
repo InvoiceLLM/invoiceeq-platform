@@ -524,3 +524,167 @@ def test_deferral_status_not_reachable_via_invalid_status_message(db_session):
     detail = response.json()["detail"]
     for expected in ("PAID", "REJECTED", "AUDIT_REQUIRED", "REVIEW_LATER", "NEEDS_RESUBMISSION"):
         assert expected in detail
+
+
+# ---------------------------------------------------------------------------
+# Gap 419: parking an invoice must NOT dismiss its alerts
+#
+# The FE's handleResolve() sent `dismissed_alerts` on every action, so parking
+# an invoice permanently deleted every alert on it -- you parked it to review
+# later and came back to nothing to review, and you sent an invoice back for
+# resubmission having erased the record of what was wrong. The FE fix stops
+# sending them; these tests pin the backend contract the FE now relies on.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("target_status", ["REVIEW_LATER", "NEEDS_RESUBMISSION"])
+def test_parking_without_dismissed_alerts_preserves_them(db_session, target_status):
+    """The contract the fixed FE depends on: omit `dismissed_alerts` and every
+    alert survives the status change."""
+    invoice_id = uuid4()
+    alerts = [
+        {"id": "a1", "type": "line_items_mismatch", "message": "Sum mismatch"},
+        {"id": "a2", "type": "tax_mismatch", "message": "Tax mismatch"},
+    ]
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=alerts,
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    # No dismissed_alerts key at all -- exactly what the FE now sends.
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": target_status},
+    )
+    assert response.status_code == 200, response.text
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == target_status
+    assert len(db_invoice.sa_alerts) == 2, "parking must not dismiss alerts"
+    assert {a["id"] for a in db_invoice.sa_alerts} == {"a1", "a2"}
+
+
+def test_terminal_resolve_still_dismisses_alerts(db_session):
+    """Regression guard on the other side: Gap 419 must not stop a genuine
+    finalization from clearing the alerts it resolved."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=["Math mismatch", "Invalid vendor"],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "PAID", "dismissed_alerts": ["Math mismatch"]},
+    )
+    assert response.status_code == 200
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "PAID"
+    assert db_invoice.sa_alerts == ["Invalid vendor"]
+
+
+# ---------------------------------------------------------------------------
+# Gap 420: a parked invoice can be returned to the audit queue
+#
+# Before this, BOTH guards rejected the transition -- the Admin check AND the
+# "only PAID/REJECTED can be reopened" check -- so a parked invoice could not
+# be un-parked by ANY role, including Admin. Parking was a one-way door.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("parked_status", ["REVIEW_LATER", "NEEDS_RESUBMISSION"])
+def test_non_admin_can_unpark_to_audit_queue(db_session, parked_status):
+    """Parking was never a finalization, so Gap 193's Admin-only rule must not
+    apply to undoing it -- whoever could park it can put it back."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status=parked_status, sa_alerts=["Sum mismatch"],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    _viewer_row_with_audit_permission(db_session)
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "AUDIT_REQUIRED"},
+        headers=VIEWER,
+    )
+    assert response.status_code == 200, response.text
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "AUDIT_REQUIRED"
+    # The alerts that justified parking it must still be there to review.
+    assert db_invoice.sa_alerts == ["Sum mismatch"]
+
+
+@pytest.mark.parametrize("parked_status", ["REVIEW_LATER", "NEEDS_RESUBMISSION"])
+def test_unpark_records_where_it_came_from(db_session, parked_status):
+    """The trail writes REOPEN_INVOICE for both un-park and Gap 193 reopen, so
+    `previous_status` in details is the only thing telling them apart."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status=parked_status, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "AUDIT_REQUIRED"},
+    )
+    assert response.status_code == 200
+
+    logs = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id)).all()
+    assert len(logs) == 1
+    assert logs[0].details["previous_status"] == parked_status
+    assert logs[0].details["target_status"] == "AUDIT_REQUIRED"
+
+
+def test_unpark_does_not_weaken_the_admin_only_reopen(db_session):
+    """The security-relevant half of Gap 420: relaxing the gate for parked
+    invoices must not let a non-Admin undo a genuine finalization."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="PAID", sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    _viewer_row_with_audit_permission(db_session)
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "AUDIT_REQUIRED"},
+        headers=VIEWER,
+    )
+    assert response.status_code == 403
+    assert "Admin" in response.json()["detail"]
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "PAID"  # unchanged
+
+
+def test_cannot_unpark_an_invoice_that_was_never_parked(db_session):
+    """AUDIT_REQUIRED -> AUDIT_REQUIRED is still a no-op the FE should never
+    send, and is still rejected rather than silently accepted."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "AUDIT_REQUIRED"},
+    )
+    assert response.status_code == 400
+    assert "Cannot reopen" in response.json()["detail"]

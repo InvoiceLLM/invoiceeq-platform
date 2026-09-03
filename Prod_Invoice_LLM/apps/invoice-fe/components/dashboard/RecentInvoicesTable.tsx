@@ -12,7 +12,9 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  XCircle
+  XCircle,
+  Clock,
+  RotateCcw
 } from "lucide-react";
 import { formatCurrency, formatDate } from "../../lib/utils";
 import { apiClient } from "../../lib/apiClient";
@@ -45,7 +47,20 @@ export interface InvoiceRecord {
 // finalized as Paid/Rejected (Processing, Completed, Audit Required,
 // Duplicate) -- matches the AP mental model of "still in the pipeline"
 // vs. a closed-out invoice, rather than mapping 1:1 to every raw status enum.
-export type StatusTab = "all" | "audit_required" | "paid" | "pending" | "rejected";
+// Gap 420: "review_later" and "needs_resubmission" added. Before this the two
+// parked states appeared under NO tab -- `pending` is a hardcoded
+// PROCESSING/COMPLETED/DUPLICATE list (see tabToStatusParams in
+// app/invoices/page.tsx) -- so a parked invoice was only reachable via "All",
+// where it also rendered as a spinning "Processing". Parking an invoice
+// effectively removed it from the product.
+export type StatusTab =
+  | "all"
+  | "audit_required"
+  | "review_later"
+  | "needs_resubmission"
+  | "paid"
+  | "pending"
+  | "rejected";
 
 interface RecentInvoicesTableProps {
   invoices: InvoiceRecord[];
@@ -64,6 +79,10 @@ interface RecentInvoicesTableProps {
 const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "all", label: "All" },
   { key: "audit_required", label: "Review Required" },
+  // Gap 420: the two parked states, each its own filter -- they mean different
+  // things operationally ("I'll come back to this" vs "the vendor must resend").
+  { key: "review_later", label: "Review Later" },
+  { key: "needs_resubmission", label: "Needs Resubmission" },
   { key: "paid", label: "Paid" },
   { key: "pending", label: "Pending" },
   { key: "rejected", label: "Rejected" },
@@ -155,6 +174,24 @@ export default function RecentInvoicesTable({
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/10 border border-rose-500/25 text-rose-400">
             <XCircle className="w-3.5 h-3.5" />
             Rejected
+          </span>
+        );
+      // Gap 420: both parked states need explicit cases. Without them they hit
+      // `default:` below and rendered as "Processing" with a spinner that never
+      // stops -- a parked invoice looked permanently stuck mid-extraction.
+      // Colours deliberately match the Auditor Review Console's own badges.
+      case "REVIEW_LATER":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-500/10 border border-sky-500/25 text-sky-300">
+            <Clock className="w-3.5 h-3.5" />
+            Review Later
+          </span>
+        );
+      case "NEEDS_RESUBMISSION":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-500/10 border border-orange-500/25 text-orange-300">
+            <RotateCcw className="w-3.5 h-3.5" />
+            Needs Resubmission
           </span>
         );
       case "PROCESSING":

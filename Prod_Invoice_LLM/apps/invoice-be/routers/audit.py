@@ -410,11 +410,11 @@ async def resolve_audit_invoice(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid target status '{payload.status}'. Must be PAID, REJECTED, AUDIT_REQUIRED, REVIEW_LATER, or NEEDS_RESUBMISSION."
             )
-        if target_status == "AUDIT_REQUIRED" and context.role != "Admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only an Admin can reopen a resolved invoice."
-            )
+        # Gap 420: the Admin gate on AUDIT_REQUIRED moved below, to after the
+        # invoice is loaded. It cannot be decided here any more because it now
+        # depends on the invoice's CURRENT status: undoing a finalization is
+        # Admin-only (Gap 193), but returning a *parked* invoice to the queue
+        # is not. See the transition block after the fetch.
 
     # Gap 125: validate notify list before mutating (only meaningful on finalize).
     if target_status in ("PAID", "REJECTED") and payload.notify_emails:
@@ -442,11 +442,34 @@ async def resolve_audit_invoice(
             detail="Invoice not found or access denied."
         )
 
-    if target_status == "AUDIT_REQUIRED" and invoice.status not in ("PAID", "REJECTED"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot reopen an invoice with status '{invoice.status}' — only PAID or REJECTED invoices can be reopened."
-        )
+    # Two different transitions both land on AUDIT_REQUIRED, and they carry
+    # deliberately different permission rules.
+    if target_status == "AUDIT_REQUIRED":
+        if invoice.status in ("PAID", "REJECTED"):
+            # Gap 193 reopen: this undoes another auditor's *finalized*
+            # decision, so it stays Admin-only exactly as before.
+            if context.role != "Admin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only an Admin can reopen a resolved invoice."
+                )
+        elif invoice.status in ("REVIEW_LATER", "NEEDS_RESUBMISSION"):
+            # Gap 420 un-park: parking was never a finalization, so Gap 193's
+            # Admin gate does not apply -- whoever could park an invoice can
+            # put it back in the queue. Before this, BOTH guards rejected it
+            # (the Admin check above, and the PAID/REJECTED-only check below),
+            # so a parked invoice could not be returned to the queue by ANY
+            # role, including Admin. Parking was a one-way door.
+            pass
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Cannot reopen an invoice with status '{invoice.status}' — only PAID, "
+                    "REJECTED, REVIEW_LATER or NEEDS_RESUBMISSION invoices can be returned "
+                    "to the audit queue."
+                )
+            )
 
     # Gap 407: REVIEW_LATER / NEEDS_RESUBMISSION are non-terminal deferrals, not
     # finalizations — they must not be reachable directly from an already
@@ -457,6 +480,17 @@ async def resolve_audit_invoice(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot set '{target_status}' on a {invoice.status} invoice — reopen it first (Admin-only)."
         )
+
+    # Gap 420: capture the status we are transitioning FROM, before it is
+    # overwritten below. The audit trail records `target_status` but never
+    # recorded where the invoice came from, so a log entry could not tell an
+    # Admin undoing a finalization apart from an auditor returning a parked
+    # invoice to the queue -- both write action=REOPEN_INVOICE. Recorded in
+    # `details` rather than as a new action string on purpose:
+    # services/extraction_quality_rollup.py consumes exactly
+    # ("RESOLVE_INVOICE", "REOPEN_INVOICE"), so a third action would silently
+    # vanish from that rollup.
+    previous_status = invoice.status
 
     # 3. Dismiss specified warnings
     previous_alerts = list(invoice.sa_alerts or [])
@@ -501,6 +535,12 @@ async def resolve_audit_invoice(
     # exactly what a human changed and why.
     log_details = {
         "target_status": target_status,
+        # Gap 420: where the invoice came from. Distinguishes an Admin undoing
+        # a finalization (PAID/REJECTED -> AUDIT_REQUIRED) from an auditor
+        # returning a parked invoice to the queue (REVIEW_LATER /
+        # NEEDS_RESUBMISSION -> AUDIT_REQUIRED), which are otherwise identical
+        # in the trail because both write action=REOPEN_INVOICE.
+        "previous_status": previous_status,
         "reject_reason": payload.reject_reason,
         "dismissed_alerts_input": dismissed_list,
         "previous_alerts": previous_alerts,

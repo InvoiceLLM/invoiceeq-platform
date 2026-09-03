@@ -280,7 +280,9 @@ export default function AuditorReviewPage() {
   const [corrections, setCorrections] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   // Gap 407: two more non-terminal deferral actions alongside paid/rejected.
-  const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | "review_later" | "needs_resubmission" | null>(null);
+  const [actionLoading, setActionLoading] = useState<
+    "paid" | "rejected" | "review_later" | "needs_resubmission" | "unpark" | null
+  >(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("Invoice Error");
@@ -319,7 +321,14 @@ export default function AuditorReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+    // Gap 420: `invoice?.status` added to the deps. Keying on `id` alone meant
+    // the list was only refreshed when you navigated to a DIFFERENT invoice --
+    // so parking (or resolving) the one you were looking at left the "N of M"
+    // counter and the Previous/Next targets describing a queue this invoice had
+    // already left. Re-fetching on a status change keeps the counter honest.
+    // Deliberately NOT auto-advancing to the next invoice: that changes where
+    // the user lands after a click and is a product decision, not a bug fix.
+  }, [id, invoice?.status]);
   const auditQueueIndex = auditQueueIds.indexOf(id);
   const previousAuditInvoiceId =
     auditQueueIndex > 0 ? auditQueueIds[auditQueueIndex - 1] : null;
@@ -516,17 +525,39 @@ export default function AuditorReviewPage() {
     } else {
       setSavingCorrection(true);
     }
+    // Gap 419: parking an invoice must NOT dismiss its alerts.
+    //
+    // This function was written for *terminal* actions, where clearing the
+    // alerts is correct -- you are closing the invoice out, so they are
+    // resolved. Gap 407 reused it for REVIEW_LATER / NEEDS_RESUBMISSION
+    // without accounting for that, so parking an invoice permanently deleted
+    // every alert on it (the backend rewrites `invoice.sa_alerts` with the
+    // dismissed ones filtered out and commits). The result destroyed the
+    // feature's own purpose: you parked an invoice to look at later and came
+    // back to one with nothing left to review, and you sent an invoice back
+    // for resubmission having just erased the record of what was wrong with it.
+    //
+    // Deliberately scoped to the two parking statuses only. PAID/REJECTED and
+    // the no-status "Save Correction" path (Gap 53/FE 26) keep their existing
+    // behaviour exactly -- see the tracker note on the save-correction path,
+    // which also dismisses alerts and is questionable but pre-existing and
+    // out of this gap's scope.
+    const isParkingAction =
+      targetStatus === "REVIEW_LATER" || targetStatus === "NEEDS_RESUBMISSION";
+
     try {
       const res = await apiClient.put(`/audit/resolve/${invoice.id}`, {
         ...(targetStatus ? { status: targetStatus } : {}),
         ...(reasonText ? { reject_reason: reasonText } : {}),
-        dismissed_alerts: alerts.map((a) => a.message),
+        ...(isParkingAction ? {} : { dismissed_alerts: alerts.map((a) => a.message) }),
         corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
         ...(targetStatus && notifyEmails.length > 0 ? { notify_emails: notifyEmails } : {}),
       });
       setInvoice((prev) => (prev ? { ...prev, status: targetStatus ?? prev.status, ...corrections } : prev));
-      setAlerts([]);
+      // Corrections the auditor typed are still saved above and cleared below;
+      // only the alert list survives a parking action.
+      if (!isParkingAction) setAlerts([]);
       setCorrections({});
       setApplyAsStandingRule(false);
       if (res.data?.suggested_rule) {
@@ -573,6 +604,10 @@ export default function AuditorReviewPage() {
   }
 
   const isResolved = ["PAID", "REJECTED"].includes(invoice.status);
+  // Gap 420: parked = deferred, not decided. Deliberately NOT folded into
+  // isResolved -- a parked invoice must keep the full action row (Approve /
+  // Reject / the other parking action), and only adds a way back to the queue.
+  const isParked = ["REVIEW_LATER", "NEEDS_RESUBMISSION"].includes(invoice.status);
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
 
   return (
@@ -661,6 +696,44 @@ export default function AuditorReviewPage() {
             >
               <Undo2 size={13} />
               Reopen Audit
+            </button>
+          )}
+          {/* Gap 420: return a PARKED invoice to the audit queue. Distinct from
+              Gap 193's Reopen Audit above in both condition and permission:
+              that one undoes a *finalization* and is Admin-only; this one
+              undoes a deferral, which was never a decision, so any auditor who
+              could park it can put it back (the backend enforces the same
+              split). Without this, parking was a one-way door -- both backend
+              guards rejected the transition, so no role could un-park. */}
+          {isParked && (
+            <button
+              onClick={async () => {
+                setActionLoading("unpark");
+                try {
+                  await apiClient.put(`/audit/resolve/${invoice.id}`, {
+                    status: "AUDIT_REQUIRED",
+                  });
+                  setInvoice((prev) => (prev ? { ...prev, status: "AUDIT_REQUIRED" } : prev));
+                } catch (err: any) {
+                  console.error("Return to queue failed:", err);
+                  window.alert(
+                    err?.response?.data?.detail ||
+                      "Failed to return this invoice to the audit queue. Please try again."
+                  );
+                } finally {
+                  setActionLoading(null);
+                }
+              }}
+              disabled={!!actionLoading}
+              title="Put this invoice back in the audit queue"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-500/50 bg-amber-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-amber-300 transition hover:bg-amber-600/30 disabled:opacity-50"
+            >
+              {actionLoading === "unpark" ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Undo2 size={13} />
+              )}
+              Return to Audit Queue
             </button>
           )}
           {/* Gap 407: two non-terminal deferral actions, distinct from the
