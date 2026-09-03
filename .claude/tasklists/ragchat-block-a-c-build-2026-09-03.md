@@ -24,8 +24,8 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocke
 | # | item | status |
 |---|---|---|
 | 7 | **A4** — reorder `build_sql_system_prompt` so a ≥1,024-token static prefix precedes every per-tenant / per-turn block | `[~]` code + tests green (10 + 333 passed); shared prefix 1,809 → 5,002 tokens; golden before/after pending |
-| 10 | **C3** — zero rows → deterministic diagnosis → vector probe → "I read X as Y — confirm?" card (BE + FE) | `[ ]` |
-| 8 | **A3** — stream the summary and F26 narration (BE SSE + FE) | `[ ]` |
+| 10 | **C3** — zero rows → deterministic diagnosis → vector probe → "Did you mean X?" proposal (BE + FE) | `[x]` Gap 424; 19 + 17 e2e; 572-test regression, 5 old-contract tests updated |
+| 8 | **A3** — stream the summary and F26 narration (BE SSE + FE) | `[~]` patch + tests written; applying after C3 is pushed |
 | 11 | **C4** — rules → structure; write SQL for the golden cases; golden before/after | `[ ]` |
 
 ## A4 — design, written before code

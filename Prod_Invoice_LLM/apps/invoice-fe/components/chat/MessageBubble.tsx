@@ -403,7 +403,7 @@ function ClarificationChoices({
     <div id="chat-attachment-clarification" className="mt-2 flex flex-wrap gap-2">
       {options.map((option) => (
         <button
-          key={option.intent}
+          key={option.text ?? option.intent}
           type="button"
           data-testid="attachment-clarification-choice"
           data-intent={option.intent}
@@ -411,7 +411,8 @@ function ClarificationChoices({
             onChoose(
               composeClarificationReply(
                 precedingUserQuestion,
-                option.intent as AttachmentClarificationIntent
+                option.intent as AttachmentClarificationIntent,
+                option.text
               ),
               option.intent as AttachmentClarificationIntent
             )

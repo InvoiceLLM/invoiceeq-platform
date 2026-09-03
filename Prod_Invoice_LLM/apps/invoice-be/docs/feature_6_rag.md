@@ -1709,3 +1709,27 @@ except how long it took to fail, and that is what ruled the race out. The 15 s
 warm-up budget added by Gap 415 is therefore treating a symptom that does not
 exist — recorded here rather than reverted in the same change, so the two effects
 stay separable.
+
+### C3 result — 2026-09-03 (Gap 424)
+
+**Built, BE + FE, on by default** — it is a correctness change: a zero-row result
+is diagnosed instead of narrated. The ladder is the six steps designed above,
+with the founder's amendment applied: step 4 never auto-corrects; every recovery
+that needs the user ends in a **proposal** ("Did you mean Apex Consulting Group?")
+rendered through the Feature 26 clarification contract with a new `resend` option
+that carries the corrected question. One click sends it as a normal turn.
+
+**Two deviations from the design table, recorded rather than silent.**
+The AST split (step 1) is on sqlglot from day one — item 2 (C1) had already landed
+— so there was no "on text until then" phase. And a Gap 305 recovery is now
+labelled `gap305_fallback` in `zero_result_diagnosis`, so the field describes the
+whole zero-row population, which Q1 needs.
+
+**Verified (real Postgres):** `tests/test_c3_zero_rows_diagnosis.py` 19 passed;
+FE `e2e/chat-attachment-contract.spec.ts` 17 passed, `tsc` clean; 18-suite
+regression 572 passed with 5 contract-of-the-old-behaviour tests updated in place
+and re-run green. Evidence in `docs/test_evidence/f6_c3_zero_rows_2026-09-03/`.
+
+**Found on the way:** one test had been passing on a zero-row result for as long
+as it existed (details in Gap 424). C3 exposed it because an ask-back has no
+`### Query Results` heading.

@@ -1034,7 +1034,7 @@ class ChatTurn:
         "turn_id", "session_id", "tenant_id", "route", "status", "stop_reason",
         "tool_calls_made", "tools_called", "llm_calls", "tokens_in", "tokens_out",
         "agents_called", "generated_sql", "sql_attempts", "zero_result",
-        "zero_result_fallback_recovered", "citation_count", "result_invoice_count",
+        "zero_result_fallback_recovered", "zero_result_diagnosis", "citation_count", "result_invoice_count",
         "tool_output", "turn_index", "seconds_since_prev_turn", "error_type",
         "drift_flags",
     )
@@ -1060,6 +1060,8 @@ class ChatTurn:
         self.sql_attempts = 0
         self.zero_result = False
         self.zero_result_fallback_recovered = False
+        # C3 (Feature 6.1): which rung of the zero-row ladder answered, if any.
+        self.zero_result_diagnosis = ""
         self.citation_count = 0
         self.result_invoice_count = 0
         self.tool_output = ""
@@ -1104,6 +1106,7 @@ class ChatTurn:
             "sql_attempts": self.sql_attempts,
             "zero_result": self.zero_result,
             "zero_result_fallback_recovered": self.zero_result_fallback_recovered,
+            "zero_result_diagnosis": self.zero_result_diagnosis,
             "citation_count": self.citation_count,
             "result_invoice_count": self.result_invoice_count,
             "tool_output": self.tool_output,
@@ -1182,6 +1185,7 @@ def track_chat_turn(
     sql_attempts: int = 0,
     zero_result: bool = False,
     zero_result_fallback_recovered: bool = False,
+    zero_result_diagnosis: str = "",
     citation_count: int = 0,
     result_invoice_count: int = 0,
     tool_output: str = "",
@@ -1239,6 +1243,7 @@ def track_chat_turn(
             "sql_attempts": int(sql_attempts or 0),
             "zero_result": bool(zero_result),
             "zero_result_fallback_recovered": bool(zero_result_fallback_recovered),
+            "zero_result_diagnosis": str(zero_result_diagnosis or ""),
             "citation_count": int(citation_count or 0),
             "result_invoice_count": int(result_invoice_count or 0),
             "tool_output": tool_text,

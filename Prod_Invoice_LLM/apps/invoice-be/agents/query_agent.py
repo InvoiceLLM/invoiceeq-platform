@@ -3173,6 +3173,258 @@ class SqlGenerationOutcome:
     #: events, and a declined turn's retry (Gap 237's one regeneration) is part
     #: of it. 1 for the normal case; 0 only if the loop never ran.
     attempts: int = 0
+    #: C3 (Feature 6.1). One of "", "narrowing_dropped", "vector_answered",
+    #: "clarified_with_candidates", "no_candidates". Empty when the query found
+    #: rows or an earlier Gap 305 fallback recovered it.
+    zero_result_diagnosis: str = ""
+    #: C3. A proposal or an ask-back for the user, in the Feature 26 clarification
+    #: shape (`message` + optional `options`). Set => the turn has no answer yet.
+    clarification: Optional[dict] = None
+    #: C3. Chunks from the vector probe, when the textual question is answerable
+    #: from documents. The RAG branch narrates them; this loop never does.
+    vector_chunks: Optional[list] = None
+
+
+# ---------------------------------------------------------------------------
+# C3 (Feature 6.1): zero rows is a diagnosis, never an answer.
+#
+# Everything below is deterministic. The only model call anywhere on this ladder
+# is the RAG narration a `vector_answered` outcome hands off to -- and that
+# narrates document text, it never supplies a figure. Hard rule 3.
+# ---------------------------------------------------------------------------
+
+# Predicates on these columns say WHICH invoices the question is about. Every
+# other predicate narrows within them (a line-item word, a status, an amount)
+# and is the part most likely to be wrong when the model turned an invoice
+# attribute into a line-item keyword (the Gap 413 shape).
+_ZERO_ROW_IDENTIFYING_COLUMNS = frozenset(
+    {"vendor_name", "customer_name", "invoice_number", "po_number", "invoice_date", "due_date"}
+)
+# Columns the probe carries over untouched, because dropping them would widen
+# the question, not narrow it.
+_ZERO_ROW_CARRIED_COLUMNS = frozenset({"tenant_id", "flow_direction"})
+# The two columns a typo'd name could have been meant for.
+_ZERO_ROW_ENTITY_COLUMNS = ("vendor_name", "customer_name")
+_ZERO_ROW_NAME_MATCH_CUTOFF = 0.75
+_ZERO_ROW_MAX_CANDIDATES = 3
+_ZERO_ROW_PROBE_LIMIT = 25
+
+
+def _strip_like_wildcards(value: str) -> str:
+    return (value or "").strip().strip("%").strip()
+
+
+def _diagnose_zero_rows(generated_sql: str | None, dialect_name: str) -> dict:
+    """Split a zero-row query's WHERE clause into what identifies and what narrows.
+
+    Returns `{"identifying": [sql, ...], "narrowing": bool, "entities":
+    [(column, literal), ...], "parsed": bool}`. `identifying` are the predicate
+    SQL strings (rendered back in the bound dialect) on the columns in
+    `_ZERO_ROW_IDENTIFYING_COLUMNS`; `entities` are the vendor/customer literals
+    they compared against, wildcards stripped, for the name-matching step.
+
+    Only top-level AND-joined predicates are read. An OR group is treated as one
+    opaque predicate and classified by whether every column it touches is
+    identifying -- rule 4a's `(INBOUND AND vendor LIKE) OR (OUTBOUND AND customer
+    LIKE)` shape counts as identifying, a rule 6b four-column category group
+    (tags/items in it) counts as narrowing. Parse failure returns
+    `parsed=False` and empty lists: the ladder then skips straight to the vector
+    probe and the ask-back, it never guesses at the SQL.
+    """
+    # `identifying_entities` counts predicates on the entity-identifying columns
+    # specifically (not the carried tenant/flow_direction ones). The probe only
+    # makes sense when it is >= 1: with nothing identifying, "drop the
+    # narrowing" would mean "return every invoice the tenant has".
+    out = {"identifying": [], "identifying_entities": 0, "narrowing": False, "entities": [], "parsed": False}
+    if not generated_sql:
+        return out
+    try:
+        import sqlglot
+        import sqlglot.expressions as sg_exp
+
+        dialect = _sqlglot_dialect_for(dialect_name)
+        tree = sqlglot.parse_one(generated_sql, read=dialect)
+        select = next(iter(tree.find_all(sg_exp.Select)), None)
+        where = select.args.get("where") if select is not None else None
+        if where is None:
+            return out
+        out["parsed"] = True
+
+        def _columns_in(node) -> set:
+            return {c.name.lower() for c in node.find_all(sg_exp.Column) if c.name}
+
+        def _conjuncts(node):
+            if isinstance(node, sg_exp.Paren):
+                yield from _conjuncts(node.this)
+            elif isinstance(node, sg_exp.And):
+                yield from _conjuncts(node.this)
+                yield from _conjuncts(node.expression)
+            else:
+                yield node
+
+        for pred in _conjuncts(where.this):
+            cols = _columns_in(pred)
+            if not cols:
+                out["narrowing"] = True
+                continue
+            if cols <= _ZERO_ROW_CARRIED_COLUMNS:
+                # tenant_id / flow_direction: kept by the probe, not classified.
+                out["identifying"].append(pred.sql(dialect=dialect))
+                continue
+            if cols <= (_ZERO_ROW_IDENTIFYING_COLUMNS | _ZERO_ROW_CARRIED_COLUMNS):
+                out["identifying"].append(pred.sql(dialect=dialect))
+                out["identifying_entities"] += 1
+                # Pull the literal a vendor/customer name was compared against.
+                for leaf in pred.find_all(sg_exp.Like, sg_exp.ILike, sg_exp.EQ):
+                    leaf_cols = _columns_in(leaf)
+                    if not (leaf_cols & set(_ZERO_ROW_ENTITY_COLUMNS)):
+                        continue
+                    col = next(iter(leaf_cols & set(_ZERO_ROW_ENTITY_COLUMNS)))
+                    lit = next(iter(leaf.expression.find_all(sg_exp.Literal)), None) \
+                        if leaf.expression is not None else None
+                    if lit is None:
+                        lit = next(iter(leaf.find_all(sg_exp.Literal)), None)
+                    if lit is not None and lit.is_string:
+                        value = _strip_like_wildcards(str(lit.this))
+                        if value:
+                            out["entities"].append((col, value))
+            else:
+                out["narrowing"] = True
+    except Exception:  # noqa: BLE001 -- a diagnosis that cannot parse says so
+        logger.debug("C3: zero-row diagnosis could not parse the query", exc_info=True)
+        return {"identifying": [], "identifying_entities": 0, "narrowing": False, "entities": [], "parsed": False}
+    return out
+
+
+def _probe_identifiers(
+    identifying: list, tenant_id: str, db_session, snapshot: list | None = None
+) -> str | None:
+    """Re-run only the identifying predicates. Rows => the narrowing was wrong.
+
+    Goes through `execute_generated_sql`, not a raw execute, so the AST tenant
+    guard (Gaps 414/417) applies to the probe exactly as it does to the model's
+    own query -- and because the probe's WHERE is built from the model's own
+    predicates, a query the guard would have rejected is never probed either.
+    The tenant predicate is added explicitly rather than trusted to be among the
+    carried-over predicates.
+    """
+    if not identifying:
+        return None
+    where = " AND ".join(f"({p})" for p in identifying)
+    sql = (
+        "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, "
+        "due_date, status, grand_total, currency FROM invoice "
+        f"WHERE tenant_id = '{tenant_id}' AND {where} "
+        f"ORDER BY invoice_date DESC LIMIT {_ZERO_ROW_PROBE_LIMIT}"
+    )
+    try:
+        result = execute_generated_sql(sql, tenant_id, db_session, snapshot=snapshot)
+    except Exception as e:  # noqa: BLE001 -- the probe is best effort, never fatal
+        logger.info("C3: identifier probe did not run (%s)", type(e).__name__)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return None
+    if not result or result.strip() == NO_RECORDS_FOUND:
+        return None
+    return result
+
+
+def _distinct_entity_names(tenant_id: str, db_session) -> list[str]:
+    """Every vendor and customer name this tenant has, for the typo matcher."""
+    try:
+        import sqlalchemy as _sa
+        from uuid import UUID as _UUID  # local, matching this module's other helpers
+
+        from models import Invoice
+
+        tenant_uuid = tenant_id if not isinstance(tenant_id, str) else _UUID(tenant_id)
+        names: set[str] = set()
+        for column in (Invoice.vendor_name, Invoice.customer_name):
+            rows = db_session.execute(
+                _sa.select(column).where(Invoice.tenant_id == tenant_uuid).distinct()
+            ).all()
+            names.update(str(r[0]).strip() for r in rows if r[0])
+        return sorted(names)
+    except Exception:  # noqa: BLE001
+        logger.debug("C3: could not list entity names", exc_info=True)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return []
+
+
+def _nearest_entity_names(literal: str, names: list[str]) -> list[str]:
+    """The stored names closest to what the user typed, best first.
+
+    `difflib` on lower-cased text, cutoff 0.75. Deliberately no auto-correction
+    at any score: the founder's rule is that every recovery ends in a proposal
+    the user confirms, because a confident answer about the wrong vendor is
+    worse than one extra click.
+    """
+    import difflib
+
+    if not literal or not names:
+        return []
+    lowered = {n.lower(): n for n in names}
+    hits = difflib.get_close_matches(
+        literal.lower(), list(lowered), n=_ZERO_ROW_MAX_CANDIDATES, cutoff=_ZERO_ROW_NAME_MATCH_CUTOFF
+    )
+    return [lowered[h] for h in hits]
+
+
+def _resend_text(user_message: str, literal: str, candidate: str) -> str:
+    """The user's question with the typo replaced -- what one click will send."""
+    if literal:
+        pattern = re.compile(re.escape(literal), re.IGNORECASE)
+        if pattern.search(user_message or ""):
+            return pattern.sub(candidate, user_message, count=1)
+    return f"{user_message} (vendor: {candidate})"
+
+
+def _zero_rows_clarification(user_message: str, entities: list, candidates_by_literal: dict) -> dict:
+    """The proposal or ask-back, in the Feature 26 clarification wire shape."""
+    options = []
+    for _col, literal in entities:
+        for candidate in candidates_by_literal.get(literal, []):
+            options.append(
+                {
+                    "intent": "resend",
+                    "label": f"Yes \u2014 {candidate}",
+                    "text": _resend_text(user_message, literal, candidate),
+                }
+            )
+    # Dedupe by text, keep order, cap.
+    seen, deduped = set(), []
+    for o in options:
+        if o["text"] not in seen:
+            seen.add(o["text"])
+            deduped.append(o)
+    options = deduped[:_ZERO_ROW_MAX_CANDIDATES]
+
+    typed = ", ".join(f"'{lit}'" for _c, lit in entities) if entities else ""
+    if options:
+        names = ", ".join(o["label"].replace("Yes \u2014 ", "") for o in options)
+        message = (
+            f"I couldn't find any invoices for {typed}. Did you mean {names}? "
+            "Pick one and I'll answer for that name."
+        )
+    elif typed:
+        message = (
+            f"No vendor or customer resembles {typed}, and nothing in your documents "
+            "mentions it. Check the spelling, or give me an invoice number."
+        )
+    else:
+        message = (
+            "No invoices matched that question. Try naming a vendor, an invoice number, "
+            "or a wider date range."
+        )
+    payload = {"message": message}
+    if options:
+        payload["options"] = options
+    return payload
 
 
 def run_sql_generation_loop(
@@ -3338,6 +3590,53 @@ def run_sql_generation_loop(
             fallback_recovered = True
             zero_result = False
 
+    # C3 (Feature 6.1): zero rows is a diagnosis, never an answer. Runs only
+    # when both Gap 305 fallbacks above came up empty. Every step is
+    # deterministic; the only model call is the RAG narration a
+    # `vector_answered` outcome hands off to, and that narrates text.
+    # A Gap 305 fallback that already recovered the turn is labelled too, so the
+    # diagnosis field describes every zero-row turn, not only the ones this
+    # ladder handled -- Q1 (is RAG rare because the router over-routes?) needs
+    # the whole population.
+    diagnosis = "gap305_fallback" if fallback_recovered else ""
+    clarification = None
+    vector_chunks = None
+    if zero_result and generated_sql:
+        dx = _diagnose_zero_rows(generated_sql, _sql_dialect_name(db_session))
+        # 1-2. Identifying predicates alone. Rows => the narrowing was the wrong
+        # part, and the full-record path downstream answers from the whole row.
+        if dx["narrowing"] and dx["identifying_entities"] >= 1:
+            probed = _probe_identifiers(dx["identifying"], tenant_id, db_session, snapshot=snapshot)
+            if probed:
+                logger.info("C3: zero rows; identifying predicates alone matched -- narrowing dropped")
+                db_result = probed
+                fallback_recovered = True
+                zero_result = False
+                diagnosis = "narrowing_dropped"
+        # 3. The documents. Only when nothing was identified.
+        if zero_result:
+            try:
+                chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
+            except Exception:  # noqa: BLE001 -- a probe that fails is a probe that found nothing
+                logger.debug("C3: vector probe failed", exc_info=True)
+                chunks = []
+            if chunks:
+                logger.info("C3: zero rows; %d document chunks answer the textual question", len(chunks))
+                vector_chunks = list(chunks)
+                diagnosis = "vector_answered"
+        # 4-5. A proposal, or an ask-back.
+        if zero_result and diagnosis != "vector_answered":
+            candidates_by_literal = {}
+            if dx["entities"]:
+                names = _distinct_entity_names(tenant_id, db_session)
+                for _col, literal in dx["entities"]:
+                    found = _nearest_entity_names(literal, names)
+                    if found:
+                        candidates_by_literal[literal] = found
+            clarification = _zero_rows_clarification(user_message, dx["entities"], candidates_by_literal)
+            diagnosis = "clarified_with_candidates" if candidates_by_literal else "no_candidates"
+            logger.info("C3: zero rows; %s", diagnosis)
+
     return SqlGenerationOutcome(
         generated_sql=generated_sql,
         db_result=db_result,
@@ -3345,6 +3644,9 @@ def run_sql_generation_loop(
         zero_result=zero_result,
         zero_result_fallback_recovered=fallback_recovered,
         attempts=attempts_made,
+        zero_result_diagnosis=diagnosis,
+        clarification=clarification,
+        vector_chunks=vector_chunks,
     )
 
 
@@ -4453,6 +4755,10 @@ def _run_query_agent(
     route = classify_query(user_message, tenant_id=str(tenant_id))
     logger.info("Selected Route: %s", route)
     turn.route = route
+    # C3 (Feature 6.1): set by the SQL branch when zero rows were diagnosed as
+    # a textual question (chunks to narrate) or as needing the user's confirmation.
+    forced_chunks = None
+    c3_clarification = None
     progress("route_selected", route=route)
 
     # Gap 237 step 2: the previous turn's exact query, when there was one. Needed
@@ -4566,6 +4872,27 @@ def _run_query_agent(
         turn.sql_attempts = outcome.attempts
         turn.zero_result = outcome.zero_result
         turn.zero_result_fallback_recovered = outcome.zero_result_fallback_recovered
+        turn.zero_result_diagnosis = outcome.zero_result_diagnosis
+
+        # C3 (Feature 6.1): a zero-row query was diagnosed, not answered.
+        if outcome.clarification is not None:
+            # A proposal ("Did you mean X?") or an ask-back. No summary call: there
+            # is nothing to summarise, and narrating the sentinel is exactly the
+            # failure this replaces. Declined, because no fresh answer was given;
+            # the stop reason carries which rung of the ladder it stopped on.
+            c3_clarification = outcome.clarification
+            response_text = c3_clarification["message"]
+            route_succeeded = True
+            turn.status = telemetry.TURN_STATUS_DECLINED
+            turn.stop_reason = f"zero_rows_{outcome.zero_result_diagnosis}"
+        elif outcome.vector_chunks:
+            # The question is textual and the documents can answer it. Re-dispatch
+            # into the RAG branch with the chunks already fetched; that branch
+            # narrates text with citations and never computes a figure.
+            forced_chunks = outcome.vector_chunks
+            route = "RAG"
+            turn.route = route
+            turn.stop_reason = "zero_rows_vector_answered"
         # Gap 304 half (2). Both halves of the evidence, in the same shape
         # `scripts/run_agent_eval.py::_ToolOutputRecorder` renders for the golden
         # bank ("DATABASE RESULTS:" / the raw SQL), so a production faithfulness
@@ -4730,10 +5057,11 @@ User Query: {user_message}
                     turn.error_type = type(e).__name__
                     turn.stop_reason = "sql_summary_failed"
 
-    elif route == "RAG":
+    if route == "RAG":  # a plain `if`, not `elif`: C3 re-dispatches here from the SQL branch
         # Vector search (Long-term semantic facts)
         progress("searching_documents")
-        chunks = query_invoice_chunks(tenant_id, user_message, limit=5)
+        # C3: chunks the zero-row ladder already fetched, or a fresh search.
+        chunks = forced_chunks if forced_chunks is not None else query_invoice_chunks(tenant_id, user_message, limit=5)
         # A count, not the chunks: the chunk text is raw document content and has
         # no business on a progress channel.
         progress("documents_found", count=len(chunks))
@@ -4866,7 +5194,7 @@ Conversation History (Short-term context):
             turn.error_type = type(e).__name__
             turn.stop_reason = "rag_answer_failed"
             
-    else:  # CHAT
+    elif route != "SQL":  # CHAT -- still the catch-all for anything that is not SQL or RAG
         system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
 For THIS step there is no query result and no document context: this turn is ordinary conversation
@@ -4968,8 +5296,16 @@ Conversation History:
         "citations": citations,
         "result_invoice_ids": result_invoice_ids[:MAX_SNAPSHOT_INVOICE_IDS],
     }
+    if c3_clarification is not None:
+        # C3: rides the Feature 26 clarification contract, which already
+        # persists (ATTACHMENT_CONTRACT_KEYS), serialises and renders. The FE
+        # sends a chosen option's `text` as a normal turn -- no new endpoint.
+        result["attachment_clarification"] = c3_clarification
+        result["needs_confirmation"] = True
 
-    if route in ("SQL", "RAG") and route_succeeded:
+    # C3: a proposal is not an answer and must never be served from the cache
+    # to anyone -- it is about this user's typo.
+    if route in ("SQL", "RAG") and route_succeeded and c3_clarification is None:
         # C2: symmetric with the read guard above. Skipping only the read would
         # still let this session's answer to "and the other one?" sit in the cache
         # under a key that means something different to every other session.

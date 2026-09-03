@@ -1436,12 +1436,23 @@ def test_query_results_have_exactly_one_blank_line_before_and_after_heading(db_s
     against a real seeded row, so this checks actual end-to-end formatting,
     not an isolated function in a vacuum."""
     _seed_invoice(db_session, invoice_number="US-1", grand_total=100.0)
+    # Both UUID spellings, deliberately (the repo's SQLite idiom -- see
+    # `_tenant_filter()` in test_rag.py): SQLite stores the tenant id dashless,
+    # so a dashed-only literal matches NOTHING here. Found 2026-09-03 by Feature
+    # 6.1 C3: this test had been passing on a zero-row result all along, because
+    # the heading it checks was appended even to the "No records found" sentinel.
+    # C3 turns a zero-row turn into an ask-back with no heading, which exposed it.
+    # With the row actually found, the test checks what its docstring says.
     llm = _RecordingLLM(
-        [MagicMock(sql=f"SELECT invoice_number, grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")],
+        [MagicMock(sql=(
+            "SELECT invoice_number, grand_total, currency FROM invoice WHERE "
+            f"(tenant_id = '{MOCK_TENANT_ID}' OR tenant_id = '{MOCK_TENANT_ID.hex}')"
+        ))],
         summary="The total is USD 100.00.",
     )
     result = _run(db_session, llm, "what is the total", uuid4())
     content = result["content"]
+    assert "US-1" in content, "the seeded row was not found -- the test is not exercising a real result"
     assert "### Query Results\n\n" in content  # exactly one blank line after the heading
     assert "\n\n\n" not in content  # no triple-newline (= 2 blank lines) anywhere
 
@@ -2418,7 +2429,18 @@ def test_a_name_lookup_that_genuinely_found_nothing_is_left_alone(db_session):
     )
 
     assert query_agent.category_search_phrases(name_lookup) == []
-    assert query_agent.NO_RECORDS_FOUND in result["content"]
+    # Feature 6.1 C3 (2026-09-03): the honest "no" is no longer the bare sentinel
+    # narrated as an answer. A name that matches nothing and resembles nothing the
+    # tenant has becomes an ask-back -- the user is told what was looked for and
+    # invited to correct it -- and the turn waits. The anti-false-positive point
+    # of this test is unchanged: nothing was re-searched to manufacture a match
+    # (no candidates were proposed, because "reverse charge mechanism" resembles
+    # no stored vendor), and no figure was invented.
+    assert query_agent.NO_RECORDS_FOUND not in result["content"]
+    assert "reverse charge mechanism" in result["content"].lower()
+    assert "spelling" in result["content"].lower()
+    assert result.get("needs_confirmation") is True
+    assert "options" not in (result.get("attachment_clarification") or {})
 
 
 def test_a_line_item_query_does_not_trigger_the_fallback():
@@ -2657,7 +2679,11 @@ def test_attribute_term_block_reaches_both_prompts(db_session):
     llm = _RecordingLLM([
         MagicMock(sql=f"SELECT discount_amount, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
-    _run(db_session, llm, "discount amount for apex consulting group", uuid4())
+    # `surfaced_rows=1`: a row must come back for the summary prompt to be built
+    # at all. Since Feature 6.1 C3 a zero-row turn is diagnosed and ends in an
+    # ask-back with no summary call -- which is correct, and not what this test
+    # is about. It is about the block reaching BOTH prompts on a normal turn.
+    _run(db_session, llm, "discount amount for apex consulting group", uuid4(), surfaced_rows=1)
     note = 'names the invoice attribute "discount amount" (column `discount_amount`)'
     assert note in llm.prompts[0]
     assert "do NOT search line-item descriptions" in llm.prompts[0]

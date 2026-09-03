@@ -1125,14 +1125,24 @@ def test_a_zero_result_turn_is_flagged_on_the_sql_summary_event(sql_route_sessio
     with caplog.at_level(logging.INFO):
         result = _run_sql_route(sql_route_session, llm, "how much did we spend on freight?")
 
-    # No rows were seeded, so the real query genuinely matched nothing — and the
-    # user really is told so, which is the state `zero_result_rate` measures.
+    # No rows were seeded, so the real query genuinely matched nothing. Since
+    # Feature 6.1 C3 (2026-09-03) that is a DIAGNOSIS, not an answer: the turn
+    # ends in an ask-back the user confirms or corrects, and no summary call is
+    # made -- there is nothing to summarise, and narrating the sentinel is the
+    # exact failure C3 replaces. So the `chat.sql_summary` event this test used
+    # to read no longer exists for a zero-row turn; what exists instead is the
+    # generation event (the turn WAS measured) and the ask-back on the wire.
+    # The zero-result signal itself now rides the turn event as `zero_result`
+    # plus `zero_result_diagnosis`, emitted by the router/worker around this
+    # call (see the queued-turn tests below), not by the summary step.
     from agents.query_agent import NO_RECORDS_FOUND
 
-    assert NO_RECORDS_FOUND in result["content"]
-    record = _summary_events(caplog)[-1]
-    assert record.zero_result is True
-    assert record.zero_result_fallback_recovered is False
+    assert NO_RECORDS_FOUND not in result["content"], "the sentinel must never reach the user"
+    assert result.get("needs_confirmation") is True
+    assert "No invoices matched" in result["content"] or "resembles" in result["content"]
+    assert _summary_events(caplog) == [], "a diagnosed zero-row turn must not call the summariser"
+    generation = [r for r in _events(caplog) if r.agent_name == "chat.sql_generation"]
+    assert generation, "the turn's SQL generation was not measured"
 
 
 def test_a_turn_that_found_rows_carries_the_flag_as_false(sql_route_session, caplog):

@@ -335,7 +335,9 @@ def test_the_tier_is_additive_the_single_turn_bank_is_untouched():
     single_turn_ids = {case.case_id for case in CASES}
     drift_ids = {case.case_id for case in MULTI_TURN_CASES}
 
-    assert len(CASES) == 35
+    # 35 at Gap 307; +1 on 2026-09-03 for Feature 6.1 C3's `zero_result_typo_vendor`
+    # (a misspelt vendor must become a proposal, never a figure or a flat "none").
+    assert len(CASES) == 36
     assert not (single_turn_ids & drift_ids)
     assert all(getattr(case, "drift", None) is None for case in CASES)
 
