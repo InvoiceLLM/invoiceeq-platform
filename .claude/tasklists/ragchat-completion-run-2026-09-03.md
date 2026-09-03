@@ -48,7 +48,7 @@ that the moment the push lands, the deploy-dependent rows are all that remain.
 | 6 | F6 | — | **A1** — `reasoning_effort="low"` + completion cap | `[x]` shipped OFF |
 | 7 | F6 | — | **A4** — reorder prompt for a cacheable prefix | `[ ]` |
 | 8 | F6 | — | **A3** — stream summary + narration | `[ ]` |
-| 9 | F6 | — | **C2** — cache read after classify | `[ ]` |
+| 9 | F6 | — | **C2** — cache guarded on narrowing follow-ups | `[x]` Gap 423 |
 | 10 | F6 | — | **C3** — zero rows → vector probe → confirm card | `[ ]` |
 | 11 | F6 | — | **C4** — rules → structure | `[ ]` |
 | 12 | F6 | 388 | Delimit + mark provenance on retrieved chunks | `[x]` |
@@ -161,3 +161,23 @@ handle would have sent `reasoning_effort` to a model that has none. Source guard
 both test files now fail if anyone crosses them. 16 passed.
 
 Nine of twenty done.
+
+## 16:22 update
+
+**Row 9 (C2) done and pushed** as `948d0bb`, filed as **Gap 423**. The answer cache
+now consults `_is_narrowing_followup()` on both read and write.
+
+Straight about what it is worth: the fix is real but **narrower than it sounds**.
+The detector catches `show me those`, `explain them`, `those 5 invoices`. It does
+**not** catch `what about the second one` or `and the other one?`, which are just as
+session-dependent and just as wrong to serve from a shared cache. That hole is
+pinned by `test_ordinal_back_references_are_a_known_hole`, which fails if anyone
+widens the patterns — so it is a recorded decision, not a surprise. Widening is its
+own change: every phrase added is also a phrase that stops being cacheable, so the
+false-positive cost is real and belongs with a measurement of how often those shapes
+actually occur.
+
+Three commits pushed this run: `308dd55`, `d7bd02e`, `948d0bb`. Eleven of twenty
+rows done. Two CI/CD deploys are still building — rows 3, 4, 17 and 19 all wait on
+them, and there are 31 minutes left, so some of those will not close inside this
+run.
