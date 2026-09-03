@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from dependencies import (
     get_db_session,
     require_can_load,
-    # Gap 369: per-user Send Invoices visibility, layered on top of can_load
+    # Gap 405: per-user Send Invoices visibility, layered on top of can_load
     # below -- both must pass to upload an outbound invoice.
     require_can_send_invoices,
     # Feature 25 (Gap 335): gates confirm-send / mark-paid, which had NO
@@ -91,7 +91,7 @@ async def upload_outbound_invoice(
     # inbound /invoices/upload is the ingestion path integrations actually
     # asked for. Revisit with Gap 336 if an AR integration needs it.
     context: TenantContext = Depends(require_can_load),
-    # Gap 369: per-user Send Invoices visibility, on top of can_load above --
+    # Gap 405: per-user Send Invoices visibility, on top of can_load above --
     # both are required. can_load alone would let anyone who can upload
     # inbound invoices also upload outbound ones regardless of an Admin's
     # per-user grant, which is exactly the granular control this gap exists

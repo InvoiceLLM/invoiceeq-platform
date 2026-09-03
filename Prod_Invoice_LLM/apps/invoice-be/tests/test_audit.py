@@ -422,7 +422,7 @@ def test_standing_rule_not_attempted_when_checkbox_unset(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Gap 371: REVIEW_LATER / NEEDS_RESUBMISSION — non-terminal deferral states
+# Gap 407: REVIEW_LATER / NEEDS_RESUBMISSION — non-terminal deferral states
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("target_status", ["REVIEW_LATER", "NEEDS_RESUBMISSION"])

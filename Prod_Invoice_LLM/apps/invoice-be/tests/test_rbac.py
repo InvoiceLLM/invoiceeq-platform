@@ -90,7 +90,7 @@ def _grant(db_session, **flags) -> None:
 
 def test_resolve_permissions_admin_implies_all():
     """Admin is a role, not a per-permission flag -- it grants all four
-    (can_send_invoices added by Gap 369) regardless of the row."""
+    (can_send_invoices added by Gap 405) regardless of the row."""
     user = User(
         email="a@example.com", role="Admin", clerk_user_id="user_admin",
         can_train=False, can_audit=False, can_load=False, can_send_invoices=False,
@@ -226,7 +226,7 @@ def test_outbound_upload_requires_can_load():
 
 
 # ---------------------------------------------------------------------------
-# Gap 369: can_send_invoices — a 4th, independent gate on outbound upload,
+# Gap 405: can_send_invoices — a 4th, independent gate on outbound upload,
 # layered on top of can_load rather than folded into it.
 # ---------------------------------------------------------------------------
 
@@ -348,7 +348,7 @@ def test_admin_lists_tenant_users(db_session):
 
 
 def test_admin_sets_can_send_invoices(db_session):
-    """Gap 369's 4th flag round-trips through the same endpoint the other
+    """Gap 405's 4th flag round-trips through the same endpoint the other
     three already use -- no separate admin endpoint was added."""
     user = _viewer_row(db_session)
     response = client.put(

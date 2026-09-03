@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * FE Gap 368: Help Center Ticket History & Status portal.
+ * FE Gap 404: Help Center Ticket History & Status portal.
  *
  * Lists the signed-in tenant's own support tickets (GET /support/tickets,
  * already built and proxied — see the route note below). Read-only: this
@@ -16,7 +16,7 @@
  * column. Surfacing "agent replies" would need a backend response-shape
  * change first (and a product decision on whether `admin_notes` — a single
  * freeform field, not a threaded list — is the right shape for that at all).
- * That is out of scope here; see be_features_tracker.md Gap 368 for the full
+ * That is out of scope here; see be_features_tracker.md Gap 404 for the full
  * reasoning. This panel shows exactly what the API returns today.
  */
 

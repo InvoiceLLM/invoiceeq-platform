@@ -20,7 +20,7 @@ Escalation" framing as a genuine detected incident. The two are not the same
 claim, so they no longer share a flag — but a miss still needs *some* way to
 raise a ticket, which is what `low_confidence` drives in the UI.
 
-Gap 367: a query that scores zero keyword hits against `KNOWLEDGE_TOPICS` and
+Gap 403: a query that scores zero keyword hits against `KNOWLEDGE_TOPICS` and
 isn't an error trigger or an explicit human-help request now gets one more
 chance — a semantic (vector) match against the same topic set — before it is
 allowed to become a generic miss. This does not touch the keyword pass, the
@@ -354,7 +354,7 @@ def _score_topic(topic: dict[str, Any], lower_query: str) -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Gap 367: semantic (vector) fallback over KNOWLEDGE_TOPICS
+# Gap 403: semantic (vector) fallback over KNOWLEDGE_TOPICS
 # ---------------------------------------------------------------------------
 #
 # Only reached when the keyword pass above scores zero hits AND the query is
@@ -428,7 +428,7 @@ def _vector_match_topic(query: str) -> dict[str, Any] | None:
         query_embedding = get_embeddings([query])
         results = collection.query(query_embeddings=query_embedding, n_results=1)
     except Exception:
-        logger.warning("Gap 367 vector fallback failed; treating as a miss", exc_info=True)
+        logger.warning("Gap 403 vector fallback failed; treating as a miss", exc_info=True)
         return None
 
     ids = (results.get("ids") or [[]])[0]
@@ -570,7 +570,7 @@ def evaluate_support_query(
             },
         }
 
-    # 5. Gap 367: semantic fallback. Deliberately placed after error triggers and
+    # 5. Gap 403: semantic fallback. Deliberately placed after error triggers and
     # the explicit human-help check above, not before them — those two guarantees
     # (a genuine incident always escalates, an explicit ask for a human always
     # escalates) must stay exactly as deterministic as they were, unaffected by

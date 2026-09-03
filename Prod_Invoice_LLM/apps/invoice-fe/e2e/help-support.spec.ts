@@ -12,7 +12,7 @@ import { test, expect, Page } from "@playwright/test";
  * 6. Modal Pre-fill: Escalation trigger pre-populates subject, category, and priority in modal.
  * 7. Direct Ticket Trigger: Single direct ticket button in chat header opens clean modal and submits successfully.
  *
- * FE Gap 368 (Ticket History & Status portal):
+ * FE Gap 404 (Ticket History & Status portal):
  * 8. My Tickets tab lists the tenant's own tickets from GET /api/support/ticket.
  * 9. My Tickets tab shows the empty state when the tenant has no tickets.
  */

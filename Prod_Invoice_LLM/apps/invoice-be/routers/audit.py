@@ -84,7 +84,7 @@ class AuditResolutionPayload(BaseModel):
         default=None,
         description="Target status: PAID, REJECTED, AUDIT_REQUIRED (Gap 193: "
                      "Admin-only reopen of an already-resolved invoice), "
-                     "REVIEW_LATER, or NEEDS_RESUBMISSION (Gap 371: non-terminal "
+                     "REVIEW_LATER, or NEEDS_RESUBMISSION (Gap 407: non-terminal "
                      "deferrals, not usable directly on a PAID/REJECTED invoice). "
                      "Omit to just dismiss alerts and/or save corrections without "
                      "finalizing the invoice.",
@@ -390,7 +390,7 @@ async def resolve_audit_invoice(
     and only valid from a terminal state (reopening a non-terminal invoice is a
     no-op the FE should never send, rejected here rather than silently accepted).
 
-    Gap 371: `status=REVIEW_LATER` / `status=NEEDS_RESUBMISSION` are two more
+    Gap 407: `status=REVIEW_LATER` / `status=NEEDS_RESUBMISSION` are two more
     non-terminal states — an auditor deferring a decision, or flagging a
     disputed invoice as queued back for vendor correction. Unlike
     AUDIT_REQUIRED's reopen, setting either is **not** Admin-gated (neither
@@ -448,7 +448,7 @@ async def resolve_audit_invoice(
             detail=f"Cannot reopen an invoice with status '{invoice.status}' — only PAID or REJECTED invoices can be reopened."
         )
 
-    # Gap 371: REVIEW_LATER / NEEDS_RESUBMISSION are non-terminal deferrals, not
+    # Gap 407: REVIEW_LATER / NEEDS_RESUBMISSION are non-terminal deferrals, not
     # finalizations — they must not be reachable directly from an already
     # terminal invoice, or this would silently un-finalize a PAID/REJECTED
     # invoice with no Admin involved. Reopen it via AUDIT_REQUIRED first.

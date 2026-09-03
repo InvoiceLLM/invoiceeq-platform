@@ -279,7 +279,7 @@ export default function AuditorReviewPage() {
   const [focusRequest, setFocusRequest] = useState<{ field: string; nonce: number } | null>(null);
   const [corrections, setCorrections] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
-  // Gap 371: two more non-terminal deferral actions alongside paid/rejected.
+  // Gap 407: two more non-terminal deferral actions alongside paid/rejected.
   const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | "review_later" | "needs_resubmission" | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -490,7 +490,7 @@ export default function AuditorReviewPage() {
     alerts.map((a) => a.field).filter((f): f is string => Boolean(f))
   );
 
-  // Gap 371: widened from "PAID" | "REJECTED" to also accept the two new
+  // Gap 407: widened from "PAID" | "REJECTED" to also accept the two new
   // non-terminal deferral statuses -- same endpoint, same payload shape,
   // backend already validates all four (routers/audit.py).
   const handleResolve = async (
@@ -629,7 +629,7 @@ export default function AuditorReviewPage() {
                 ? "border-red-600/50 bg-red-500/10 text-red-300"
                 : invoice.status === "AUDIT_REQUIRED"
                 ? "border-yellow-600/50 bg-yellow-500/10 text-yellow-300"
-                // Gap 371: distinct from AUDIT_REQUIRED's yellow so a deferred
+                // Gap 407: distinct from AUDIT_REQUIRED's yellow so a deferred
                 // decision doesn't read as "still needs a first look."
                 : invoice.status === "REVIEW_LATER"
                 ? "border-sky-600/50 bg-sky-500/10 text-sky-300"
@@ -663,7 +663,7 @@ export default function AuditorReviewPage() {
               Reopen Audit
             </button>
           )}
-          {/* Gap 371: two non-terminal deferral actions, distinct from the
+          {/* Gap 407: two non-terminal deferral actions, distinct from the
               terminal Reject/Approve pair below -- picking either leaves
               isResolved false, so this whole action row (including these two
               buttons) stays visible afterward rather than the invoice

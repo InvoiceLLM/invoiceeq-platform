@@ -1,6 +1,6 @@
 # Feature 1.1: Granular Role-Based Access Control
 
-> **Additive note — 2026-09-02, BE Gap 369.** A 4th permission, `can_send_invoices`,
+> **Additive note — 2026-09-02, BE Gap 405.** A 4th permission, `can_send_invoices`,
 > was added following exactly this feature's existing shape (own column, own
 > `RoleMapper` default per role, own `require_can_send_invoices` dependency, own
 > Admin-console checkbox) — nothing about `can_train`/`can_audit`/`can_load` changed.
@@ -77,7 +77,7 @@ Admin is a role, not a 4th permission — Admins implicitly have all three and a
   * **Not performed.** Real Clerk sign-in is blocked on a human Cloudflare Turnstile click-through (`website_features_tracker.md` Gap 9), so the end-to-end path *browser → Clerk session → minted bearer token → backend* has never been exercised against a live Clerk instance. The e2e specs stub `GET /api/auth/me`, which proves the FE consumes the contract correctly but not that Clerk issues a token the backend accepts.
 
 ### Known follow-ups (not in this feature)
-* **Gap 369, filed 2026-09-02, built same day**: a 4th permission, `can_send_invoices`, was added — see the additive note at the top of this document and `be_features_tracker.md` Gap 369 for the full build record.
+* **Gap 405, filed 2026-09-02, built same day**: a 4th permission, `can_send_invoices`, was added — see the additive note at the top of this document and `be_features_tracker.md` Gap 405 for the full build record.
 * **Route protection is still absent.** `invoice-fe/middleware.ts` remains bare `clerkMiddleware()` with no `.protect()` calls, so hiding a nav item hides the *link*, not the *route* — a permission-less user who types `/trainer` still loads the page shell (its API calls then 403). Enabling protection is a separate decision with its own blast radius: `/flows` must stay a public no-login demo (see FE Gap 62's `STANDALONE_ROUTES`).
 * **`ALLOW_MOCK_AUTH` has not been flipped anywhere.** Nothing in `.env`, `config.py`, `infra/params.*.json` or any bicep was touched. Turning enforcement on in a deployed environment is a deployment decision.
 * **`outbound_invoices.py`'s `confirm-send` / `mark-paid` are ungated** — outbound lifecycle transitions rather than ingestion, so they fall outside `can_load`; whether they belong under `can_audit` is an open question.

@@ -561,7 +561,7 @@ class User(SQLModel, table=True):
     can_train: bool = Field(default=False, nullable=False)
     can_audit: bool = Field(default=False, nullable=False)
     can_load: bool = Field(default=False, nullable=False)
-    # Gap 369: granular per-user visibility for the Send Invoices feature,
+    # Gap 405: granular per-user visibility for the Send Invoices feature,
     # layered on top of (not replacing) Tenant.send_invoices_enabled's
     # tenant-wide plan/email prerequisite gate (feature_16_settings.md) --
     # both must be true for a given user to see/use outbound sending.
@@ -1308,7 +1308,7 @@ class RoleMapper:
         "restricted": NO_ROLE,
     }
 
-    # Gap 369: can_send_invoices defaults False for every role, including
+    # Gap 405: can_send_invoices defaults False for every role, including
     # Auditor -- least-privilege by design, matching this class's existing
     # philosophy for the other three (an Admin grants it explicitly per user,
     # same as can_train/can_audit/can_load).

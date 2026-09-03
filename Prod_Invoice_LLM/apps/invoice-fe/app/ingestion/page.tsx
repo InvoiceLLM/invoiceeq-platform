@@ -61,7 +61,7 @@ export default function IngestionPage() {
   // its one relevant view, unchanged from today's default when Send is off.
   const [receiveEnabled, setReceiveEnabled] = useState(true);
   const [sendEnabled, setSendEnabled] = useState(false);
-  // Gap 369: per-user Send Invoices visibility, on top of the tenant-wide
+  // Gap 405: per-user Send Invoices visibility, on top of the tenant-wide
   // sendEnabled flag above -- both must be true for this user to see Sending.
   const { canSendInvoices } = useAuth();
   const sendVisible = sendEnabled && canSendInvoices;
@@ -223,7 +223,7 @@ export default function IngestionPage() {
         if (cancelled || !data) return;
         setReceiveEnabled(data.receive_invoices_enabled ?? true);
         setSendEnabled(data.send_invoices_enabled ?? false);
-        // Gap 369: only auto-switch to a tab this user can actually see --
+        // Gap 405: only auto-switch to a tab this user can actually see --
         // canSendInvoices=false must not land them on a tab with no visible
         // button and nothing rendered.
         if (!data.receive_invoices_enabled && data.send_invoices_enabled && canSendInvoices) {
@@ -296,7 +296,7 @@ export default function IngestionPage() {
     cachedTrackedFiles = trackedFiles;
   }, [trackedFiles]);
 
-  // FE Gap 370 (2026-09-02): the server-path directory watcher form
+  // FE Gap 406 (2026-09-02): the server-path directory watcher form
   // (directoryPath/isScanning/handleWatchDirectory, POST /invoices/watcher)
   // was removed here -- a raw server-filesystem path input is meaningless in
   // a hosted multi-tenant SaaS deployment, and the browser folder picker
@@ -304,7 +304,7 @@ export default function IngestionPage() {
   // watcherResult are kept: the folder picker's own onChange handler still
   // uses both to report what it found. The backend endpoint
   // (`routers/invoices.py::start_directory_watcher`) is deliberately left
-  // in place -- see be_features_tracker.md Gap 370 for why removing it is a
+  // in place -- see be_features_tracker.md Gap 406 for why removing it is a
   // separate, later decision.
   const [watcherError, setWatcherError] = useState<string | null>(null);
   const [watcherResult, setWatcherResult] = useState<{ files_found: number; files_queued: number } | null>(null);
@@ -357,7 +357,7 @@ export default function IngestionPage() {
     }
   };
 
-  // Gap 369: sendVisible (tenant flag AND per-user permission) replaces
+  // Gap 405: sendVisible (tenant flag AND per-user permission) replaces
   // sendEnabled everywhere Sending's visibility, not just its backing data,
   // is decided -- a user without canSendInvoices must not see the tab, the
   // tab button, or land on it via the auto-switch effect above.
@@ -511,7 +511,7 @@ export default function IngestionPage() {
           {/* Bulk Directory Scan: bulk-ingest a local folder in one pass, no
               per-file drag-and-drop. FE Gap 69: collapsed into a disclosure so
               it stops pushing itself off-screen. Header row is always
-              rendered and always clickable. FE Gap 370: the server-path half
+              rendered and always clickable. FE Gap 406: the server-path half
               of this card was removed -- browser folder selection (Gap 145)
               is now the only mechanism here. */}
           <div className="glass-panel rounded-xl border border-[#222D3D] p-4 space-y-3">

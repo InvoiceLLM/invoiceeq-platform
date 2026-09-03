@@ -1,4 +1,4 @@
-# senior-dev — Gap 367: Support Assistant hybrid vector search
+# senior-dev — Gap 403: Support Assistant hybrid vector search
 
 Scope approved 2026-09-02 (founder gate). Hybrid vector search only — no LLM call, keyword scoring keeps priority, vector search only fires on a zero-keyword-match query before falling through to the generic miss.
 
@@ -9,6 +9,6 @@ Scope approved 2026-09-02 (founder gate). Hybrid vector search only — no LLM c
 - [x] Run `tests/test_support.py` in isolation — real pytest run: **75 passed**, 30.21s.
 - [x] Run the full backend suite for regression — **25 failed, 1773 passed, 3 skipped, 4 errors, 177.65s**. Checked every failure individually: all pre-existing/environmental (local Postgres missing a migrated `tenant.api_key_scope` column across unrelated `*_on_postgres` tests; the already-documented Gap 354 `test_rag.py` failure; unrelated benchmark-telemetry/ops-workbook/connector tests). Zero failures in `tests/test_support.py`.
 - [x] Update `feature_19_support_tickets_and_notifications.md` Task 19.3 with the as-built design + verification.
-- [x] Flip Gap 367 to `[x]` in `be_features_tracker.md` with real verification results.
+- [x] Flip Gap 403 to `[x]` in `be_features_tracker.md` with real verification results.
 
 **Final status: done.** Hybrid vector fallback built exactly to approved scope (no LLM call, keyword pass unaffected, vector search only fires on a zero-keyword-match query). `tests/test_support.py` 75/75 passing; full-suite regression confirms no new breakage. Real-model semantic-quality validation (vs. the mechanism being wired correctly) and the 0.35 threshold's live tuning are explicitly left open, not claimed as done.

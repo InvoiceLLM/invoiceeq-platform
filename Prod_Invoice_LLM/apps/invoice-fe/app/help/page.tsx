@@ -30,7 +30,7 @@ export default function HelpPage() {
   });
 
   // Default view is 'guides' (Knowledge Base) as required by specification.
-  // FE Gap 368: "tickets" tab added, default view unchanged.
+  // FE Gap 404: "tickets" tab added, default view unchanged.
   const [activeTab, setActiveTab] = useState<"guides" | "assistant" | "tickets">("guides");
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string>(HELP_SECTIONS[0].id);
@@ -85,7 +85,7 @@ export default function HelpPage() {
               Ask SAGE
             </span>
           </button>
-          {/* FE Gap 368: Ticket History & Status tab */}
+          {/* FE Gap 404: Ticket History & Status tab */}
           <button
             id="tab-btn-tickets"
             role="tab"
@@ -170,7 +170,7 @@ export default function HelpPage() {
         </div>
       )}
 
-      {/* Tab 3 (FE Gap 368): Ticket History & Status */}
+      {/* Tab 3 (FE Gap 404): Ticket History & Status */}
       {activeTab === "tickets" && (
         <div id="help-tickets-container" className="animate-in fade-in duration-200">
           <TicketHistoryPanel />

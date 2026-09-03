@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import os
 
-# Gap 367: evaluate_support_query() now has a vector-search fallback
+# Gap 403: evaluate_support_query() now has a vector-search fallback
 # (agents/support_agent.py) that goes through chroma_client.get_embeddings().
 # Must be set before `config`/`main` are imported anywhere (see conftest.py's
 # comment on ALLOW_MOCK_AUTH for why) so this file never pays the real
@@ -536,12 +536,12 @@ class TestSupportChatEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# Gap 367: semantic (vector) fallback for zero-keyword-match queries
+# Gap 403: semantic (vector) fallback for zero-keyword-match queries
 # ---------------------------------------------------------------------------
 
 class TestSupportAgentVectorFallback:
     """
-    Gap 367 — support_agent.py's evaluate_support_query() now tries a
+    Gap 403 — support_agent.py's evaluate_support_query() now tries a
     semantic match over KNOWLEDGE_TOPICS before giving up on a query that
     scored zero keyword hits (and isn't an error trigger / human-help ask).
 
@@ -600,13 +600,13 @@ class TestSupportAgentVectorFallback:
     def test_semantic_match_with_no_keyword_overlap_resolves_via_vector_search(
         self, db_session: Session, monkeypatch
     ):
-        """The actual point of Gap 367: a paraphrase sharing *zero* keywords
+        """The actual point of Gap 403: a paraphrase sharing *zero* keywords
         with any topic (so the existing keyword pass cannot match it) still
         resolves to the right topic once semantic distance is small.
         Embeddings are monkeypatched to a controlled mapping — this proves
         the retrieval *wiring* (query embed -> Chroma query -> threshold ->
         topic lookup), not a real model's judgment, which is what the
-        approved scope deliberately left out (be_features_tracker.md Gap 367:
+        approved scope deliberately left out (be_features_tracker.md Gap 403:
         hybrid vector search only, no LLM call, and a real-model quality
         claim would need a live/manual run this task didn't do)."""
         import agents.support_agent as support_agent_mod
@@ -657,7 +657,7 @@ class TestSupportAgentVectorFallback:
         assert calls == [], "vector fallback ran even though the keyword pass already matched"
 
     def test_error_trigger_still_wins_over_a_forced_semantic_match(self, db_session: Session, monkeypatch):
-        """Hard guarantee that must survive Gap 367: error triggers are
+        """Hard guarantee that must survive Gap 403: error triggers are
         checked before the vector fallback, so a real incident escalation can
         never even reach embedding code, let alone be suppressed by it."""
         import agents.support_agent as support_agent_mod
@@ -683,7 +683,7 @@ class TestSupportAgentVectorFallback:
     def test_vector_search_failure_degrades_to_the_existing_miss(self, db_session: Session, monkeypatch):
         """A Chroma/embedding outage must not break the Support Assistant —
         it should only cost this one enhancement and behave exactly as it did
-        before Gap 367."""
+        before Gap 403."""
         import agents.support_agent as support_agent_mod
 
         def broken_get_embeddings(texts: list[str]) -> list[list[float]]:

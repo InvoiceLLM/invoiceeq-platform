@@ -28,7 +28,7 @@ export interface OrgUser {
   canTrain: boolean;
   canAudit: boolean;
   canLoad: boolean;
-  /** Gap 369: per-user Send Invoices visibility. */
+  /** Gap 405: per-user Send Invoices visibility. */
   canSendInvoices: boolean;
 }
 
@@ -89,7 +89,7 @@ const PERMISSIONS = [
   { key: "canTrain" as const, field: "can_train" as const, label: "Trainer" },
   { key: "canAudit" as const, field: "can_audit" as const, label: "Auditor" },
   { key: "canLoad" as const, field: "can_load" as const, label: "Loader" },
-  // Gap 369: Admin-config-panel visibility control for Send Invoices.
+  // Gap 405: Admin-config-panel visibility control for Send Invoices.
   { key: "canSendInvoices" as const, field: "can_send_invoices" as const, label: "Send Invoices" },
 ];
 

@@ -38,7 +38,7 @@ class TenantContext(BaseModel):
     can_train: bool = False
     can_audit: bool = False
     can_load: bool = False
-    # Gap 369: granular per-user Send Invoices visibility, layered on top of
+    # Gap 405: granular per-user Send Invoices visibility, layered on top of
     # Tenant.send_invoices_enabled's tenant-wide gate. Defaults False, so
     # every existing TenantContext(...) construction site that predates this
     # field is unaffected, same pattern as auth_method/key_scope below.
@@ -300,7 +300,7 @@ def get_authenticated_clerk_identity(
 def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool, bool]:
     """
     Feature 1.1 (Task 1.1.3) / Gap 73: resolve (can_train, can_audit, can_load,
-    can_send_invoices — the last added by Gap 369).
+    can_send_invoices — the last added by Gap 405).
     Delegates to RoleMapper for enterprise-scale role mapping and fallback permissions.
     """
     return RoleMapper.resolve_permissions(role, user)
@@ -831,7 +831,7 @@ API_KEY_SERVICE_USER_EMAIL_DOMAIN = "service.invoice-llm.internal"
 def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool, bool]:
     """
     Feature 25 (Gap 335): (can_train, can_audit, can_load, can_send_invoices —
-    the last added by Gap 369) for an API-key scope.
+    the last added by Gap 405) for an API-key scope.
 
     Replaces Gap 184's hardcoded `role = "Viewer"` -> resolve_permissions(). The
     readonly row below is the SAME effective permission set that Viewer label
@@ -850,7 +850,7 @@ def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool, bool
     extraction rules is a much larger claim than letting it finish an invoice,
     and it will not arrive here as a side effect.
 
-    can_send_invoices is True at `actions` scope (Gap 369) -- "send" is one of
+    can_send_invoices is True at `actions` scope (Gap 405) -- "send" is one of
     the exact actions the founder's full-automation description named, so an
     actions-scoped key is granted the same outbound-visibility permission a
     human Admin gets, consistent with how can_audit/can_load already work here.
@@ -1244,7 +1244,7 @@ def require_permission(permission: str):
 require_can_train = require_permission("can_train")
 require_can_audit = require_permission("can_audit")
 require_can_load = require_permission("can_load")
-require_can_send_invoices = require_permission("can_send_invoices")  # Gap 369
+require_can_send_invoices = require_permission("can_send_invoices")  # Gap 405
 
 
 # --- Feature 25 (Gap 335): dual-credential gates ---------------------------

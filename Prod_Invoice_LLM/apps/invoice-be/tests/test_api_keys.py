@@ -283,7 +283,7 @@ def test_api_key_scope_defaults_to_readonly(db_session):
         # existing tenants".
         (KEY_SCOPE_READONLY, (False, False, False, False)),
         # actions grants the five financial actions' permissions, including
-        # can_send_invoices (Gap 369 -- "send" was one of the named actions)
+        # can_send_invoices (Gap 405 -- "send" was one of the named actions)
         # -- and NOT can_train. The founder's definition of full automation
         # named approve/reject/verify/send/mark-paid; training was not among them.
         (KEY_SCOPE_ACTIONS, (False, True, True, True)),

@@ -4,7 +4,7 @@ Revision ID: dfcfbb60ef1c
 Revises: c2d3e4f5a6b7
 Create Date: 2026-09-02
 
-Gap 369 (Granular Role-Based Feature Visibility). Adds a 4th per-user
+Gap 405 (Granular Role-Based Feature Visibility). Adds a 4th per-user
 permission flag, `can_send_invoices`, alongside the existing can_train /
 can_audit / can_load added by f6a7b8c9d0e1 (Feature 1.1) -- same shape, same
 least-privilege default, same reasoning: a newly created user gets nothing
@@ -21,7 +21,11 @@ that tenant-wide switch (gated on billing plan + an outbound authorized email)
 stays exactly as it is. This column is the per-user visibility layer on top of
 it; both must be true for a given user to see/use Send Invoices.
 
-down_revision taken from a real `alembic heads` run (single head c2d3e4f5a6b7)
+down_revision RE-PARENTED 2026-09-03 during branch recovery: this migration was
+written against head `c2d3e4f5a6b7`, but 32 commits of Feature 26/27 landed on
+master first and moved the head to `a6b7c8d9e0f1` (Feature 27 A6's `doc_attributes`).
+Left as written it would have produced TWO alembic heads and `upgrade head` would
+have refused to run. Verified against a real `alembic heads` run, not assumed
 immediately before writing this file, not assumed -- see be_features_tracker.md
 Gap 60 for the multi-head incident this check guards against.
 """
@@ -32,7 +36,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'dfcfbb60ef1c'
-down_revision: Union[str, None] = 'c2d3e4f5a6b7'
+down_revision: Union[str, None] = 'a6b7c8d9e0f1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

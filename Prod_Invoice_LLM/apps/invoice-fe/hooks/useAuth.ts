@@ -42,7 +42,7 @@ export interface AuthContextType {
   canTrain: boolean;
   canAudit: boolean;
   canLoad: boolean;
-  /** Gap 369: per-user Send Invoices visibility, on top of the tenant-wide
+  /** Gap 405: per-user Send Invoices visibility, on top of the tenant-wide
    * send_invoices_enabled plan/email gate (ServiceFlowToggles.tsx). */
   canSendInvoices: boolean;
   billingPlan: string;
