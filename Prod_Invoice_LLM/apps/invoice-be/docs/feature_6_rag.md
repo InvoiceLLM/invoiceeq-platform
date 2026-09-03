@@ -1763,3 +1763,58 @@ regression 587 passed in 167.75s (0:02:47).
 **Value stays bounded, as scoped:** ~2 s of *perceived* latency on a 27.8 s median
 turn. The measured half — time-to-first-visible-token on the async path — needs
 real traffic with the flag on; recorded in `docs/test_evidence/` when it exists.
+
+### C4 result — 2026-09-03
+
+**Built in three parts, all landed.**
+
+**C4.1 — schema linking before generation.** `link_question_to_schema()` resolves,
+deterministically and before the model runs, what the question's terms ARE:
+an invoice attribute (`detect_invoice_attribute_term`, ORM-derived), a tax
+component, a named metric (`_NAMED_METRICS`: spend, revenue, tax, subtotal,
+discount, count, outstanding — each one column expression, direction-aware where
+the schema is), a details projection, or nothing — in which case, and only in
+which case, a money/quantity word marks the product phrase as a line-item
+description. `_schema_linking_block_for()` hands the result to the model as
+facts in the request tail (below A4's marker, so the cacheable prefix is
+untouched). The genuine line-item case — "the amount only for training and
+onboarding" — links to no column and keeps the join; that is a named test.
+
+**C4.2 — the prose that taught the model to guess is retired.** Rule 6d's
+disambiguation paragraph, its tax exemption and its attribute exemption (the
+paragraphs ten gaps amended), rule 6's long form, rule 7 and rule 11 are each one
+line now, deferring to the SCHEMA LINK. The 6d *shape* — un-nest, extract,
+select, never aggregate, and the "one and only shape" example the taught-SQL
+tests execute — is byte-for-byte what it was. Measured: `query_agent.py` −9,083
+chars; the rendered prompt 6,797 → 5,598 tokens (o200k_base), the cacheable
+prefix 5,002 → 4,609. Three tests that asserted the old prose were updated to
+assert the same property where it now lives (the detector, the link block, the
+rule's deferral), with the reason in place.
+
+**C4.3 — retrieved few-shot examples.** `benchmarks/golden_sql_examples.py`
+holds 29 curated question → SQL examples, one per golden case with a structural
+answer, each with a `why` and both dialect shapes for line-item cases. **Every
+one is verified**, not asserted: `scratchpad/verify_golden_sql.py` seeds the
+fixture exactly as the golden runner does and runs each through
+`execute_generated_sql` — 29/29 return exactly the expected invoices. The set is
+embedded once per process with bge-m3, the question once per turn, and the top
+three by cosine above 0.45 are rendered in the tail for the bound dialect. The
+examples come from that module only — never a tenant's turns — and a source
+guard fails if that changes.
+
+**Found on the way — Gap 426.** The harness caught a live normaliser bug: any
+`invoice.<column> = '…'` filter (rule 6d's own qualified shape) was rewritten to
+invalid SQL. Fixed; 24/29 → 29/29.
+
+**Verified (real Postgres):** `test_c4_schema_linking.py` 13, `test_c4_examples_
+retrieval.py` 9, `test_gap426_qualified_column_normalisation.py` 11; wide
+regression across 23 suites: **654 passed in 158.14s (0:02:38)**.
+
+**Still owed — the control.** The golden before/after on Azure is the proving
+test (Gap 226 precedent). The A4 after-run, which is C4's baseline, was in flight
+when C4 landed; the C4 after-run is one command:
+`scripts/run_agent_eval.py --paths default --provider azure --model gpt-5-mini
+--out docs/test_evidence/f6_c4_rules_to_structure_2026-09-03/after.json`.
+`scratchpad/golden_diff.py` compares two runs case by case. C4 is not called
+"proven" until that comparison shows pass_rate, faithfulness and accuracy within
+noise of the baseline and the attribute/metric cases passing.

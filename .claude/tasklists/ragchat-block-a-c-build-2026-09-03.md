@@ -26,7 +26,7 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocke
 | 7 | **A4** — reorder `build_sql_system_prompt` so a ≥1,024-token static prefix precedes every per-tenant / per-turn block | `[~]` code + tests green (10 + 333 passed); shared prefix 1,809 → 5,002 tokens; golden before/after pending |
 | 10 | **C3** — zero rows → deterministic diagnosis → vector probe → "Did you mean X?" proposal (BE + FE) | `[x]` Gap 424; 19 + 17 e2e; 572-test regression, 5 old-contract tests updated |
 | 8 | **A3** — stream the summary and F26 narration (BE SSE + FE) | `[x]` shipped OFF; 11 passed in 15.87s; e2e 3 passed (37.7s) |
-| 11 | **C4** — rules → structure; write SQL for the golden cases; golden before/after | `[~]` evidence gathering |
+| 11 | **C4** — rules → structure; write SQL for the golden cases; golden before/after | `[x]` code + 33 tests + 29/29 verified examples; regression 654 passed in 158.14s (0:02:38); **golden after-run owed** |
 
 ## A4 — design, written before code
 
@@ -86,4 +86,4 @@ Golden "before" run started against Azure `gpt-5-mini` on the pre-A4 prompt:
 
 None. Three new settings are DECLARED (bicep + params.dev.json) and deliberately NOT set live: `AZURE_OPENAI_FAST_DEPLOYMENT_NAME` (A2), the A1 pair, `ENABLE_CHAT_STREAMING` (A3). Each is a latency claim that gets switched on against a measurement.
 
-**Status: in progress.** Created 2026-09-03.
+**Status: all four items landed on master; C4's golden after-run and the A4 before/after comparison are the two measurements still owed.** Created 2026-09-03.

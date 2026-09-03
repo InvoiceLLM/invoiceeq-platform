@@ -874,22 +874,32 @@ def test_rule_6d_excludes_tax_component_terms(db_session):
     slightly longer list of literals was pasted in -- a plain re-list would
     pass a test that only checks "GST" is present without fixing the actual
     defect class."""
+    # Feature 6.1 C4.2 (2026-09-03): the CONCEPT no longer lives as prose inside
+    # rule 6d. It lives in code -- `detect_tax_component_term()` recognises the
+    # term, and the SCHEMA LINK block states the column as a fact before the
+    # model runs. Rule 6d itself now defers to that block. Same defect class
+    # guarded, one level earlier: a re-list of literals in the prompt cannot pass
+    # this, only a detector that generalises can.
+    for term in ("GST", "CGST", "SGST", "IGST", "VAT", "sales tax"):
+        assert query_agent.detect_tax_component_term(f"what {term} did we pay Rajesh Steel") == term, term
+    block = query_agent._schema_linking_block_for("whats the CGST we paid to Rajesh Steel")
+    assert "tax_amount" in block
+    assert "never search line items for a tax term" in block
     rule_sqlite = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
-    assert re.search(r"\bGST\b", rule_sqlite)  # plain "GST", not just as a substring of CGST/SGST/IGST
-    assert "CGST" in rule_sqlite and "SGST" in rule_sqlite and "IGST" in rule_sqlite
-    assert "tax_amount" in rule_sqlite
-    assert "no invoice found" in rule_sqlite.lower() or "doesn't exist" in rule_sqlite.lower()
+    assert "When the SCHEMA LINK names a column, select that column" in rule_sqlite
+    assert "do NOT search line items" in rule_sqlite
     # The generalizing instruction itself, not just a longer list of named terms --
     # this is what should catch the NEXT unlisted tax term too (TDS, cess, duty, ...).
-    assert "not just the specific ones" in rule_sqlite or "not a fixed list" in rule_sqlite
+    # (C4.2: the "principle, not a fixed list" language moved with the concept into
+    # `detect_tax_component_term`, whose parametrised check above IS the test of it.)
 
     pg_session = MagicMock()
     pg_session.get_bind.return_value.dialect.name = "postgresql"
     rule_pg = query_agent._line_item_rule(str(MOCK_TENANT_ID), pg_session)
-    assert re.search(r"\bGST\b", rule_pg)
-    assert "CGST" in rule_pg and "SGST" in rule_pg and "IGST" in rule_pg
-    assert "tax_amount" in rule_pg
-    assert "not just the specific ones" in rule_pg or "not a fixed list" in rule_pg
+    # Both dialect rules defer to the same dialect-independent SCHEMA LINK fact,
+    # so the SQLite test path and the Postgres live path cannot diverge on it.
+    assert "When the SCHEMA LINK names a column, select that column" in rule_pg
+    assert "do NOT search line items" in rule_pg
 
 
 @pytest.mark.parametrize("message,expected", [
@@ -1738,9 +1748,13 @@ def test_rule_11_curates_columns_for_plain_details_questions(db_session):
     ])
     _run(db_session, llm, "give me the details of this invoice", uuid4())
     prompt = llm.prompts[0]
-    assert '11. "DETAILS" QUESTIONS ABOUT ONE SPECIFIC INVOICE' in prompt
-    assert "Do NOT select `items`, `tags`, or `sa_alerts` by default" in prompt
-    assert "short prose summary" in prompt
+    # Feature 6.1 C4.2 (2026-09-03): rule 11 is one line naming the projection,
+    # and the SCHEMA LINK block states it per question as a fact. Both must reach
+    # the SQL prompt for a details question.
+    assert '11. A "details"/"tell me about"/"pull up" question' in prompt
+    assert "never items, tags or sa_alerts unless" in prompt
+    assert "details question -> select exactly this projection" in prompt
+    assert query_agent._DETAILS_PROJECTION in prompt
 
 
 def test_chat_route_declines_off_topic_requests(db_session):
@@ -1859,10 +1873,10 @@ def test_persona_reaches_the_sql_generation_prompt(db_session):
     # prepended to this prompt, it did not replace any of it.
     assert "Given the 'invoice' table schema:" in prompt
     assert "CRITICAL RULES:" in prompt
-    assert "11. \"DETAILS\" QUESTIONS ABOUT ONE SPECIFIC INVOICE" in prompt
+    assert '11. A "details"/"tell me about"/"pull up" question' in prompt  # C4.2 one-liner
     # Rule 7 is NOT the presentation rule and was deliberately kept: "also SELECT
     # the currency column" is SQL mechanics, not a persona statement.
-    assert "you MUST ALSO select the `currency` column" in prompt
+    assert "Always select `currency` alongside any monetary column" in prompt  # C4.2 one-liner
 
 
 def test_persona_reaches_the_sql_summary_prompt(db_session):
@@ -2704,6 +2718,14 @@ def test_attribute_term_block_is_absent_for_a_genuine_line_item_question(db_sess
 def test_rule_6d_attribute_exemption_is_present_in_both_dialects():
     """Rule 6d is built per engine (Gap 253); the exemption has to be in both
     spellings or the SQLite test path and the Postgres live path diverge."""
+    # Feature 6.1 C4.2 (2026-09-03): the exemption is no longer a paragraph
+    # duplicated into two dialect constants -- it is one dialect-independent fact
+    # in the SCHEMA LINK block, and both dialect rules defer to it. The property
+    # being guarded is unchanged: the two engines cannot diverge on it.
     for rule in (query_agent._LINE_ITEM_RULE_POSTGRES, query_agent._LINE_ITEM_RULE_SQLITE):
-        assert "The SAME EXEMPTION applies to ANY attribute of the invoice document itself" in rule
-        assert "A property is NEVER a description keyword" in rule
+        assert "When the SCHEMA LINK names a column, select that column" in rule
+        assert "do NOT search line items" in rule
+    block = query_agent._schema_linking_block_for("discount amount for apex consulting group")
+    assert "`discount_amount`" in block
+    assert "never that the invoice does not exist" in block
+    assert "Do NOT search line items for this word" in block

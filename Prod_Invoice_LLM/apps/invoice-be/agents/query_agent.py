@@ -333,6 +333,214 @@ def _answer_text(llm, prompt: str, progress) -> "_StreamedAnswer":
     return _StreamedAnswer(text)
 
 
+# ---------------------------------------------------------------------------
+# C4.1 (Feature 6.1): schema linking before generation.
+#
+# Deterministic, ORM-derived where it can be, and computed before the model
+# runs. The output is handed to the model as FACTS about this question, in the
+# request tail, so the model does not have to re-derive from prose rules what a
+# word in the question is. Hard rule 3 is untouched: this links terms to
+# columns; it computes nothing.
+# ---------------------------------------------------------------------------
+
+#: Named metrics: what a person calls a figure -> how the schema expresses it.
+#: Each is one column expression, direction-aware where the schema is. Defined
+#: once here so the prompt, the linking block and the tests read one source.
+_NAMED_METRICS: dict[str, dict] = {
+    "spend": {
+        "pattern": r"\b(spend|spent|spending|paid out|what did we pay|how much (?:did|have) we (?:pay|spend)|billed us|owe)\b",
+        "column": "grand_total",
+        "note": "sum of `grand_total` over INBOUND rows (what vendors billed this tenant); always select `currency` and never blend currencies",
+    },
+    "revenue": {
+        "pattern": r"\b(owed to us|owes us|we billed|we invoiced|our invoice(?:s)? to|revenue|receivable)\b",
+        "column": "grand_total",
+        "note": "sum of `grand_total` over OUTBOUND rows (what this tenant billed customers); always select `currency`",
+    },
+    "tax": {
+        "pattern": None,  # detect_tax_component_term() decides; listed so the block can name it
+        "column": "tax_amount",
+        "note": "select `tax_amount` with the identifying columns; the itemised components live in the record's `taxes` field, which the answering step reads -- never search line items for a tax term",
+    },
+    "subtotal": {
+        "pattern": r"\b(sub[- ]?total|net amount|before tax|pre-tax)\b",
+        "column": "subtotal",
+        "note": "select `subtotal` with the identifying columns",
+    },
+    "discount": {
+        "pattern": r"\b(discount(?:s|ed)?|rebate)\b",
+        "column": "discount_amount",
+        "note": "select `discount_amount` (and `discount_percent` if asked) with the identifying columns; NULL means the invoice does not state one",
+    },
+    "count": {
+        "pattern": r"\b(how many (?:invoices|bills|vendors|customers)|number of (?:invoices|bills|vendors|customers)|count of)\b",
+        "column": "COUNT(*)",
+        "note": "COUNT(*) (or COUNT(DISTINCT vendor_name) / COUNT(DISTINCT customer_name) for entities) with the tenant and direction filters",
+    },
+    "outstanding": {
+        "pattern": r"\b(outstanding|overdue|past due|unpaid|not (?:yet )?paid|still owe|due soon|coming due)\b",
+        "column": "due_date",
+        "note": "OUTBOUND rows: `due_date < CURRENT_DATE AND status <> 'PAID'` is overdue and `status = 'PAID'` is settled. INBOUND rows: this table holds NO payment signal -- `status` is the extraction pipeline's state, never a payment state -- so answer with `due_date` only and say the table does not record whether it was paid",
+    },
+}
+
+#: Rule 11's "details" projection, as a named set the linking block can hand over.
+_DETAILS_PROJECTION = "invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number"
+_DETAILS_PATTERN = re.compile(r"\b(details? (?:of|for|on)|tell me about|pull up|show me (?:the )?invoice|look up invoice|what(?:'s| is) on (?:the )?invoice)\b", re.IGNORECASE)
+_MONEY_WORD_PATTERN = re.compile(r"\b(amount|cost|costs|price|priced|charge|charged|charges|fee|fees|quantity|qty|how much|total|totals|figure)\b", re.IGNORECASE)
+_METRIC_PATTERNS = {name: re.compile(m["pattern"], re.IGNORECASE) for name, m in _NAMED_METRICS.items() if m["pattern"]}
+
+
+def link_question_to_schema(user_message: str) -> dict:
+    """What the question's terms ARE, against the schema. Deterministic.
+
+    Returns `{attribute: (term, column)|None, tax_term: str|None, metrics: [name],
+    details: bool, payment_status: str|None, line_item_fallback: bool}`.
+
+    `line_item_fallback` is the inverted default from the C4 design: it is True
+    only when NOTHING linked to a column and the question still carries a money
+    or quantity word -- the one case where a product/service phrase should be
+    searched as a line-item description (rule 6d). "The amount only for training
+    and onboarding" links to no column and keeps that path; "discount amount for
+    Apex" links to `discount_amount` and never reaches it.
+    """
+    text = user_message or ""
+    attribute = detect_invoice_attribute_term(text)
+    tax_term = detect_tax_component_term(text)
+    payment = detect_payment_status_question(text)
+    metrics = [name for name, pat in _METRIC_PATTERNS.items() if pat.search(text)]
+    if tax_term and "tax" not in metrics:
+        metrics.append("tax")
+    if payment and "outstanding" not in metrics:
+        metrics.append("outstanding")
+    details = bool(_DETAILS_PATTERN.search(text))
+    linked = bool(attribute or tax_term or metrics or details)
+    line_item_fallback = (not linked) and bool(_MONEY_WORD_PATTERN.search(text))
+    return {
+        "attribute": attribute,
+        "tax_term": tax_term,
+        "metrics": metrics,
+        "details": details,
+        "payment_status": payment,
+        "line_item_fallback": line_item_fallback,
+    }
+
+
+def _schema_linking_block_for(user_message: str) -> str:
+    """The linking result as prompt text, or "" when there is nothing to say.
+
+    Lives in the request tail (below `SQL_PROMPT_TENANT_SECTION_MARKER`), so the
+    cacheable prefix from A4 is untouched.
+    """
+    link = link_question_to_schema(user_message)
+    lines: list[str] = []
+    if link["attribute"]:
+        term, column = link["attribute"]
+        lines.append(f"- attribute: \"{term}\" -> column `{column}`. Identify the invoice(s) from the vendor/customer/number/date given and SELECT `{column}` with the identifying columns and `currency`. A NULL means the invoice does not state it -- never that the invoice does not exist. Do NOT search line items for this word.")
+    for name in link["metrics"]:
+        m = _NAMED_METRICS[name]
+        label = f"\"{link['tax_term']}\"" if name == "tax" and link["tax_term"] else name
+        lines.append(f"- metric: {label} -> `{m['column']}`: {m['note']}.")
+    if link["details"]:
+        lines.append(f"- details question -> select exactly this projection, nothing else: {_DETAILS_PROJECTION}.")
+    if link["line_item_fallback"]:
+        lines.append("- no attribute or metric linked, and the question carries a money/quantity word -> the product/service phrase IS a line-item description: use rule 6d's un-nest shape and filter on the un-nested item's own description. Retrieval only, no SUM.")
+    if not lines:
+        return ""
+    return (
+        "\nSCHEMA LINK (computed deterministically before you ran -- these are facts about THIS question, apply them directly):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C4.3 (Feature 6.1): retrieved few-shot examples.
+# ---------------------------------------------------------------------------
+
+#: How many examples to show, and how similar the nearest must be to show any.
+#: Below the floor the examples would be noise -- a greeting has no neighbour.
+_SQL_EXAMPLES_K = 3
+_SQL_EXAMPLES_MIN_SIMILARITY = 0.45
+_sql_example_vectors_cache: dict | None = None
+
+
+def _curated_sql_examples() -> list[dict]:
+    """The curated set, imported lazily so `benchmarks/` is not a hard import."""
+    try:
+        from benchmarks.golden_sql_examples import GOLDEN_SQL_EXAMPLES
+
+        return list(GOLDEN_SQL_EXAMPLES)
+    except Exception:  # noqa: BLE001 -- no examples is a degraded prompt, not a dead turn
+        logger.debug("C4.3: curated SQL examples unavailable", exc_info=True)
+        return []
+
+
+def _sql_example_vectors() -> tuple[list[dict], list[list[float]]]:
+    """Embed the curated questions once per process."""
+    global _sql_example_vectors_cache
+    examples = _curated_sql_examples()
+    key = tuple(e["question"] for e in examples)
+    if _sql_example_vectors_cache is not None and _sql_example_vectors_cache.get("key") == key:
+        return _sql_example_vectors_cache["examples"], _sql_example_vectors_cache["vectors"]
+    if not examples:
+        return [], []
+    from chroma_client import get_embeddings
+
+    vectors = get_embeddings([e["question"] for e in examples])
+    _sql_example_vectors_cache = {"key": key, "examples": examples, "vectors": vectors}
+    return examples, vectors
+
+
+def _retrieve_sql_examples(user_message: str, dialect_name: str, k: int = _SQL_EXAMPLES_K) -> list[dict]:
+    """The curated examples nearest to the question, best first.
+
+    Cosine over unit-norm vectors is the dot product (Gap 244 guarantees the
+    norm). Returns `[]` on any failure -- the prompt then simply has no examples,
+    which is exactly the pre-C4 prompt.
+    """
+    if not (user_message or "").strip():
+        return []
+    try:
+        examples, vectors = _sql_example_vectors()
+        if not examples:
+            return []
+        from chroma_client import get_embeddings
+
+        qv = get_embeddings([user_message])[0]
+        scored = []
+        for ex, v in zip(examples, vectors):
+            sim = sum(a * b for a, b in zip(qv, v))
+            scored.append((sim, ex))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        picked = [ex for sim, ex in scored[:k] if sim >= _SQL_EXAMPLES_MIN_SIMILARITY]
+        sqlite = (dialect_name or "").startswith("sqlite")
+        out = []
+        for ex in picked:
+            sql = ex.get("sql_sqlite") if sqlite and ex.get("sql_sqlite") else ex["sql"]
+            out.append({"case_id": ex["case_id"], "question": ex["question"], "why": ex.get("why", ""), "sql": sql})
+        return out
+    except Exception:  # noqa: BLE001
+        logger.debug("C4.3: example retrieval failed; prompt continues without examples", exc_info=True)
+        return []
+
+
+def _sql_examples_block_for(user_message: str, dialect_name: str) -> str:
+    """The retrieved examples as prompt text, or "" when none clear the floor."""
+    examples = _retrieve_sql_examples(user_message, dialect_name)
+    if not examples:
+        return ""
+    lines = [
+        "\nEXAMPLES (retrieved from a curated, verified set by similarity to this question -- reference SHAPES; keep the shape, replace the filters with THIS question's entities; the tenant predicate is always this request's):"
+    ]
+    for ex in examples:
+        lines.append(f"Q: {ex['question']}")
+        if ex["why"]:
+            lines.append(f"   why this shape: {ex['why']}")
+        lines.append(f"   SQL: {ex['sql'].replace('{tenant_id}', '<TENANT_ID>')}")
+    return "\n".join(lines) + "\n"
+
+
 def _fast_llm():
     """The LLM for work that does not reason (Feature 6.1 item A2).
 
@@ -514,34 +722,42 @@ def _normalize_string_equality(sql: str) -> str:
     quietly keep the old case-sensitive behaviour. `ILIKE` is left alone — it is already
     case-insensitive.
     """
+    # Gap 426: `\b{column}` also matches the column inside `invoice.invoice_number`
+    # (a dot is a word boundary), and the rewrite used to emit the bare column,
+    # leaving the qualifier dangling in front of the function call --
+    # `invoice.TRIM(LOWER(invoice_number))`, a syntax error on both engines. Rule
+    # 6d's own taught shape qualifies every column with `invoice.`, so a model
+    # following it and filtering by number hit this on every attempt. The optional
+    # qualifier is now captured and kept INSIDE the call.
+    qualifier = r"((?:\b\w+\.)?)"
     for column in _FUZZY_STRING_COLUMNS:
-        equality = re.compile(rf"\b{column}\s*=\s*'([^']*)'", re.IGNORECASE)
+        equality = re.compile(rf"{qualifier}\b{column}\s*=\s*'([^']*)'", re.IGNORECASE)
         if column in _SUBSTRING_FUZZY_COLUMNS:
             sql = equality.sub(
-                lambda m, col=column: f"TRIM(LOWER({col})) LIKE LOWER('%{m.group(1)}%')",
+                lambda m, col=column: f"TRIM(LOWER({m.group(1)}{col})) LIKE LOWER('%{m.group(2)}%')",
                 sql,
             )
         else:
             sql = equality.sub(
-                lambda m, col=column: f"TRIM(LOWER({col})) = TRIM(LOWER('{m.group(1)}'))",
+                lambda m, col=column: f"TRIM(LOWER({m.group(1)}{col})) = TRIM(LOWER('{m.group(2)}'))",
                 sql,
             )
 
         def _rewrite_in(m, col=column):
-            negation = "NOT " if m.group(1) else ""
-            values = re.findall(r"'([^']*)'", m.group(2))
+            negation = "NOT " if m.group(2) else ""
+            values = re.findall(r"'([^']*)'", m.group(3))
             rendered = ", ".join(f"TRIM(LOWER('{value}'))" for value in values)
-            return f"TRIM(LOWER({col})) {negation}IN ({rendered})"
+            return f"TRIM(LOWER({m.group(1)}{col})) {negation}IN ({rendered})"
 
         in_clause = re.compile(
-            rf"\b{column}\s+(NOT\s+)?IN\s*\(\s*({_IN_STRING_LIST})\s*\)", re.IGNORECASE
+            rf"{qualifier}\b{column}\s+(NOT\s+)?IN\s*\(\s*({_IN_STRING_LIST})\s*\)", re.IGNORECASE
         )
         sql = in_clause.sub(_rewrite_in, sql)
 
-        like_clause = re.compile(rf"\b{column}\s+(NOT\s+)?LIKE\s*'([^']*)'", re.IGNORECASE)
+        like_clause = re.compile(rf"{qualifier}\b{column}\s+(NOT\s+)?LIKE\s*'([^']*)'", re.IGNORECASE)
         sql = like_clause.sub(
             lambda m, col=column: (
-                f"TRIM(LOWER({col})) {'NOT ' if m.group(1) else ''}LIKE LOWER('{m.group(2)}')"
+                f"TRIM(LOWER({m.group(1)}{col})) {'NOT ' if m.group(2) else ''}LIKE LOWER('{m.group(3)}')"
             ),
             sql,
         )
@@ -1214,8 +1430,7 @@ def detect_payment_status_question(message: str) -> str | None:
 #      a scalar" -- and an abort here burns an attempt of the 3-try repair loop),
 #   3. select `currency` alongside the monetary columns (rule 7),
 #   4. filter on the un-nested item's own description, not the invoice's text blob.
-_LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is PostgreSQL -- use exactly the syntax below). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist. The SAME EXEMPTION applies to ANY attribute of the invoice document itself, not only tax (Gap 413, found live 2026-09-03: "discount amount for <vendor>" was turned into a line-item search for the word "discount" -- zero rows, so no invoice was identified and an answerable question failed): discount / discount amount / discount percent, subtotal, deductions, payment instructions or terms, references, addresses, due date, PO number, currency, document type -- and every other column in the schema block above, including the ones marked as derived from the ORM. Ask the same CONCEPT question as for tax: is this word a good or service that could appear as a line on the invoice, or a property of the invoice as a document? A property is NEVER a description keyword. For such a question identify the invoice(s) from the vendor/customer/number/date given, SELECT that column (plus `currency` per rule 7) with the identifying columns, and let the answering step -- which is handed every identified invoice's full record -- read it. If the column is NULL, the answer is that the invoice does not state it, never that the invoice does not exist.
+_LINE_ITEM_RULE_POSTGRES = """6d. LINE-ITEM LEVEL EXTRACTION (this database is PostgreSQL -- use exactly the syntax below). Use this shape ONLY when the SCHEMA LINK below says the question's product/service phrase is a line-item description (no attribute or metric linked). When the SCHEMA LINK names a column, select that column with the identifying columns and do NOT search line items. Retrieval only: fetch every matching line; totals, per-vendor subtotals and reconciliation arithmetic are done deterministically after retrieval, never with SUM/GROUP BY here.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and jsonb_array_elements() raises on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true
@@ -1231,8 +1446,7 @@ The one and only shape for rule 6d, whether the user wants one line, a list, or 
 SELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item->>'description' AS line_description, (item->>'quantity')::numeric AS line_qty, (item->>'unit_price')::numeric AS line_unit_price, (item->>'amount')::numeric AS line_amount FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '{tenant_id}' AND LOWER(item->>'description') LIKE LOWER('%training%')
 Rule 6d does not exempt you from rules 1 (tenant_id), 4 (flow_direction), 7 (currency), 8a or 9 -- apply them on top of this shape."""
 
-_LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION & AGGREGATION (this database is SQLite -- use exactly the syntax below. PostgreSQL's JSONB un-nesting function, its lateral-join keyword and its double-colon cast operator do NOT exist in SQLite and will fail to parse, so do not reach for them here). Disambiguate this from category spend checks (rule 6b): rule 6b answers "which invoices relate to X" and totals whole invoices; rule 6d answers "what is THIS line's own figure" -- specific amounts, prices, quantities or details of individual line items matching a description keyword (e.g. "what is the training amount", "the amount only for training and onboarding from the total invoice", "invoice amount for the server line"). Prefer rule 6d whenever the user names a product/service phrase together with a money/quantity word; a rule 6b answer to that question returns the invoice's whole grand_total including unrelated lines and tax, which is wrong.
-DO NOT apply this rule to ANY tax-related term or abbreviation -- CGST, SGST, IGST, GST, VAT, "sales tax", "service tax", "withholding tax", "TDS", or any other regional tax name/acronym the user might use, not just the specific ones in this sentence. This is a principle, not a fixed list: found live, 2026-08-19, when "CGST" alone was excluded and the very next tax term a user might reasonably ask about ("GST" itself, arguably more common than any of its sub-components) was missed. (This sentence used to continue "because the schema has NO concept of tax-component breakdown at all -- it stores exactly one combined `tax_amount` field per invoice, full stop." That was true when written and is no longer -- see the end of this rule. Corrected 2026-08-24, Gap 310.) Whatever the user calls it, if the question is asking for a tax component or breakdown, it cannot be answered by searching item descriptions (guaranteed zero rows -- no invoice's line items are ever literally described as a tax term) and cannot be answered by matching against a name in a list here. Recognize the CONCEPT -- "does this term refer to a tax component rather than a purchasable line item" -- not a lookup against these examples. For any such question, do NOT search item descriptions; instead select `tax_amount` (and `currency` per rule 7) directly, plus whatever columns identify the invoice. Do NOT decline the question and do NOT return a null `sql` on the grounds that no per-component breakdown exists: the itemized components (CGST/SGST/IGST, VAT lines, each with its own type, rate and amount) are stored on the invoice in a `taxes` field, deliberately not listed in this prompt's schema block because it is a JSONB structure this route does not ask you to query -- the step that turns your rows into an English answer is handed the identified invoice's ENTIRE record, `taxes` included, and reads the component figures from there. Your job is to return the right invoice with its combined `tax_amount`; the breakdown is then answered from the record, not from your SELECT list. Never report a zero-row line-item search as "no invoice found" -- if the invoice-level filters (vendor/tenant) would have matched, say the breakdown isn't tracked, not that the invoice doesn't exist. The SAME EXEMPTION applies to ANY attribute of the invoice document itself, not only tax (Gap 413, found live 2026-09-03: "discount amount for <vendor>" was turned into a line-item search for the word "discount" -- zero rows, so no invoice was identified and an answerable question failed): discount / discount amount / discount percent, subtotal, deductions, payment instructions or terms, references, addresses, due date, PO number, currency, document type -- and every other column in the schema block above, including the ones marked as derived from the ORM. Ask the same CONCEPT question as for tax: is this word a good or service that could appear as a line on the invoice, or a property of the invoice as a document? A property is NEVER a description keyword. For such a question identify the invoice(s) from the vendor/customer/number/date given, SELECT that column (plus `currency` per rule 7) with the identifying columns, and let the answering step -- which is handed every identified invoice's full record -- read it. If the column is NULL, the answer is that the invoice does not state it, never that the invoice does not exist.
+_LINE_ITEM_RULE_SQLITE = """6d. LINE-ITEM LEVEL EXTRACTION (this database is SQLite -- use exactly the syntax below). Use this shape ONLY when the SCHEMA LINK below says the question's product/service phrase is a line-item description (no attribute or metric linked). When the SCHEMA LINK names a column, select that column with the identifying columns and do NOT search line items. Retrieval only: fetch every matching line; totals, per-vendor subtotals and reconciliation arithmetic are done deterministically after retrieval, never with SUM/GROUP BY here.
 Un-nest the line items with this FROM clause, exactly as written -- the CASE guard is required, because `items` is nullable and machine-populated and json_each() raises "malformed JSON" on a NULL or non-array value, which aborts the query for EVERY invoice, not just the bad row:
 FROM invoice
 LEFT JOIN json_each(CASE WHEN json_valid(items) AND json_type(items) = 'array' THEN items ELSE '[]' END) AS item ON 1=1
@@ -3155,6 +3369,8 @@ def build_sql_system_prompt(
     tax_term_block = _tax_term_block_for(user_message)
     payment_status_block = _payment_status_block_for(user_message)
     attribute_term_block = _attribute_term_block_for(user_message)  # Gap 413
+    schema_linking_block = _schema_linking_block_for(user_message)  # C4.1
+    sql_examples_block = _sql_examples_block_for(user_message, _sql_dialect_name(db_session))  # C4.3
     derived_schema_supplement = _derived_schema_supplement()  # Gap 413
     system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
@@ -3166,6 +3382,7 @@ name as readily as on a tag).
 {_HAND_TYPED_SCHEMA_BLOCK}{derived_schema_supplement}
 Write a SQL query to answer the user's question.
 CRITICAL RULES:
+(C4.2, 2026-09-03: the prose that taught you to guess what a word IS was retired. The SCHEMA LINK section at the end of this prompt states it as fact -- apply that section first.)
 1. You MUST filter by tenant_id = '<TENANT_ID>', where <TENANT_ID> is the exact value given in the TENANT AND REQUEST CONTEXT section at the end of this prompt -- copy it verbatim into the WHERE clause. Never invent, shorten or omit it.
 2. You MUST only generate a read-only SELECT statement.
 3. IMPORTANT: Audit status lives exclusively in the `status` enum and `sa_alerts` column. There is no `audit_flags`, `audit_logs`, or `audit_reasons` table. Do not hallucinate columns like `is_flagged_for_audit`.
@@ -3177,12 +3394,7 @@ SELECT
   SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_owed_to_us
 FROM invoice WHERE tenant_id = '<TENANT_ID>'
 
-6. If the user query refers to a tag or line-item description/detail, you can query the tags and items JSONB columns using simple LIKE filters. Two rules apply to EVERY such filter:
-   (a) A JSONB column (tags, items, sa_alerts) MUST be cast to text before LOWER/LIKE touches it: write LOWER(CAST(tags AS TEXT)), NEVER LOWER(tags). There is no lower(jsonb) function -- an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. CAST(... AS TEXT) is the portable form and works in both SQLite and Postgres. Plain VARCHAR columns (vendor_name, customer_name, status, invoice_number) are already text and must NOT be cast.
-   (b) ALWAYS wrap both sides in LOWER(...) -- tags and line-item descriptions are free text and are not reliably lowercase (e.g. "Ergonomic Office Chair"), and a case-sensitive match will silently miss real rows.
-   - To check if a specific named tag (e.g. 'hardware') is in tags: LOWER(CAST(tags AS TEXT)) LIKE LOWER('%"hardware"%')
-   - To search for a keyword (e.g. 'laptop') in line-item descriptions: LOWER(CAST(items AS TEXT)) LIKE LOWER('%laptop%')
-   - To search the audit alerts free text (e.g. 'duplicate'): LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')
+6. JSONB columns (tags, items, sa_alerts) MUST be cast before LOWER/LIKE -- LOWER(CAST(tags AS TEXT)) LIKE LOWER('%"hardware"%'), LOWER(CAST(items AS TEXT)) LIKE LOWER('%laptop%'), LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') -- never LOWER(tags): an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. VARCHAR columns (vendor_name, customer_name, status, invoice_number) are text already and must NOT be cast. Always LOWER both sides. Searching these JSON columns is the fallback for a phrase the SCHEMA LINK below did not link to a column.
 6a. IMPORTANT -- vendor_name/customer_name filters: NEVER use exact equality (=) to filter by vendor_name or customer_name. Users routinely refer to a vendor/customer by a shortened or informal name (e.g. "Cascade Manufacturing" when the stored value is "Cascade Manufacturing Co") -- an exact match will silently return zero rows for a real, existing vendor. ALWAYS use a case-insensitive partial match instead: LOWER(vendor_name) LIKE LOWER('%Cascade Manufacturing%'). This applies even when the user's question phrases it as if it were an exact name.
 6b. CATEGORY / SUBJECT-MATTER QUESTIONS -- one standard shape, use it every time. When the user asks about a category, spend area or subject rather than a named entity ("how much did we spend on office supplies", "logistics or freight costs", "anything cloud related", "printing costs"), the matching text may live in ANY of several columns and which one it happens to live in varies per invoice -- a vendor can be identifiable by its name alone ("Blue Ridge Logistics"), by its tags, or only by a line-item description. So ALWAYS check the SAME four columns, in ONE parenthesised OR group, never a subset of them:
    (LOWER(CAST(tags AS TEXT)) LIKE LOWER('%<phrase>%')
@@ -3192,17 +3404,17 @@ FROM invoice WHERE tenant_id = '<TENANT_ID>'
    Note the CAST on the two JSONB columns and its absence on the two VARCHAR ones -- this exact shape, per rule 6(a). Checking only item descriptions (or only tags) is a bug: it silently misses real matches that qualify through one of the other columns.
    NOT THIS RULE when the question asks for a dollar amount PER VENDOR/ENTITY for a specific charge type ("which vendors billed us for freight, delivery, or shipping charges, and how much per vendor"): found live, 2026-08-19 (US tenant test) -- this rule's own examples above ("logistics or freight costs") make "freight" look like a 6b trigger word, and the model answered with SUM(grand_total) (whole invoice totals for any invoice merely CONTAINING a matching line) grouped by vendor -- every vendor's figure came back 10-40x too large, because it included every unrelated line and tax on that invoice. "Which invoices relate to X" (this rule, 6b) and "how much did each vendor charge specifically for X" (rule 6d) are different questions with the same surface words. If the answer must be a dollar figure attributable ONLY to the named charge/product/service (not the whole invoice), that is rule 6d -- fetch the matching LINES (rule 6d never aggregates in SQL, see its own text), and let the per-vendor grouping and subtotals happen in the answer, not this rule, no matter how similar the trigger phrase looks to the examples above.
 6c. NEVER decompose a multi-word category phrase into independent single-word LIKE branches. "office supplies" means LIKE '%office supplies%' -- NOT ('%office%' OR '%supplies%'). A bare single word from the middle of a phrase matches unrelated categories (an unrelated janitorial invoice tagged "supplies" would be pulled into an "office supplies" total and silently inflate it). If the user names two or more ALTERNATIVE categories joined by "or" ("logistics or freight costs"), treat each named alternative as its own complete phrase ('%logistics%', '%freight%'), each applied to all four columns from rule 6b -- but never break a single phrase into its component words. The generic spend words a user tacks onto a category are NOT part of the phrase to match: strip "costs", "cost", "spend", "spending", "expenses", "charges", "invoices", "bills", "purchases" before building the LIKE literal ("freight costs" searches for '%freight%', never '%freight costs%' -- no line item or tag is literally called "freight costs").
-7. CRITICAL CURRENCY RULE: Whenever you query monetary columns (like grand_total, tax_amount, subtotal, or line-item amount), you MUST ALSO select the `currency` column in the query so the currency context is preserved in the results (e.g., SELECT grand_total, currency FROM invoice ...).
+7. Always select `currency` alongside any monetary column (grand_total, tax_amount, subtotal, discount_amount, line amounts).
 8. If the query requires columns or filters that are completely unsupported or non-existent in the schema, set the `sql` field to null in the schema response and explain why in `explanation_or_error`.
 8a. NEVER return a null `sql` on the grounds that the conversation history already appears to contain the answer, and never answer by restating numbers from an earlier reply. The history is a record of what was said, not a data source -- an answer taken from it is not backed by any query and cannot be trusted or expanded on. If the user asks anything about their invoices that this schema can express -- including "explain/expand/break down/detail the ones you just mentioned" -- write the query. A null `sql` is only correct when the question genuinely needs a column or filter this schema does not have.
 9. FOLLOW-UP QUESTIONS THAT NARROW A PREVIOUS ANSWER ("explain the 3 USD ones", "which of those are overdue", "show me their line items"): if a PREVIOUS TURN'S SQL block appears below, that is the exact query that produced the answer the user is referring to. Start from ITS WHERE clause VERBATIM and only ADD the new restriction with AND. Do NOT re-derive the predicate from the conversation text, and do NOT drop, merge or simplify away any branch of an existing OR group -- each branch is there because some real row matches ONLY through it, so removing one silently deletes rows from the very answer the user asked you to expand on. The SELECT list is yours to change freely (e.g. from an aggregate to per-invoice detail columns); only the WHERE clause is fixed. EXCEPTION -- the FROM clause: if the follow-up narrows from an invoice-level answer down to a specific LINE ITEM's own figure (e.g. after "what's the total on invoice X", the user asks "I want the amount only for training and onboarding from the total invoice"), you MUST add rule 6d's line-item join to the FROM clause and switch the SELECT to the line's own columns -- reusing the previous turn's invoice-level FROM would return the whole grand_total again, which is exactly the wrong answer. Adding that join is the ONLY FROM change allowed here: every tenant/invoice-identifying predicate from the previous WHERE clause still carries over verbatim, and you then AND on the new line-item description filter. If the follow-up is about a genuinely different subject rather than a narrowing of the previous answer, ignore the previous SQL and compose a fresh query as normal. A STRONG signal that it is a different subject, not a narrowing: the new question names a SPECIFIC invoice number or a SPECIFIC entity that was not part of what the previous turn was about ("give me the details of invoice X" naming an invoice never mentioned before is a fresh lookup, not a narrowing of a prior category/spend question, even in the same session). Found live, 2026-08-19: a "give me the details of invoice TSD-620458" question, asked right after an unrelated freight/delivery spend question, wrongly carried over that question's freight/delivery/shipping WHERE clause fragment onto the new invoice's lookup -- harmless that time only because the named invoice happened to also have a matching line, not because the reuse was correct. Naming a specific, different invoice/vendor/customer than the previous turn discussed means start over.
 10. COMPARISON QUESTIONS NAMING TWO OR MORE SPECIFIC ENTITIES ("between X and Y, whose total was bigger", "compare A vs B", "X, Y, or Z -- which cost more"): the query MUST return a row for EVERY named entity, never `ORDER BY ... LIMIT 1`. Found live, 2026-08-19: "between DataPipe Solutions and StratEdge Partners, whose invoice had the bigger total" generated `ORDER BY grand_total DESC LIMIT 1`, which returned only the winning row -- the losing vendor's real, existing invoice was silently excluded from the result set before the summary step ever saw it, and the reply then described the loser as having "no invoice in the returned results," which reads as false to the user even though the row was only ever truncated, not actually missing. Filter on the named entities explicitly (`WHERE vendor_name IN (...)` or an OR'd set of `LOWER(vendor_name) LIKE ...` per rule 6a, one per named entity) and let ALL their rows come back; a superlative in the question ("bigger", "which one", "the most") tells you which value to call out in the summary prose, it is never an instruction to LIMIT the query itself. This applies to any question naming a specific, countable set of entities to compare -- not to open-ended ranking questions ("show me the top 5 invoices"), where LIMIT is the correct, intended shape.
-11. "DETAILS" QUESTIONS ABOUT ONE SPECIFIC INVOICE ("give me the details of invoice X", "tell me about invoice X", "pull up invoice X"): SELECT only the columns a person actually reads for this -- invoice_number, vendor_name/customer_name (per rule 4/4a's direction), invoice_date, due_date, grand_total, currency, status, po_number. Do NOT select `items`, `tags`, or `sa_alerts` by default -- found live, 2026-08-19: a plain "pull up this invoice" answer selected every column including raw JSONB fields, and even correctly formatted (rule 6d/column-hygiene fixes elsewhere already stop `file_path`/`batch_id` leaking and stop raw Python-repr dumps), a wide table with an embedded JSON blob column is not what "details" means to a person -- it reads as a database export, not an answer. Only select `items` when the question is actually about line items (then rule 6d applies instead), only select `sa_alerts` when the question is actually about audit/flagged issues, only select `tags` when asked about categorization. The answer to a plain "details" question should be phrased as a short prose summary of the fields above, not a dump of the full row.
+11. A "details"/"tell me about"/"pull up" question about one invoice selects exactly the projection the SCHEMA LINK names (invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number) -- never items, tags or sa_alerts unless the question is about line items, categories or audit flags respectively.
 
 {_INJECTION_GUARD_INSTRUCTION}{SQL_PROMPT_TENANT_SECTION_MARKER}
 TENANT_ID for this request (rule 1): tenant_id = '{tenant_id}'
 Every query you write MUST contain exactly this predicate: tenant_id = '{tenant_id}'
-
+{schema_linking_block}{sql_examples_block}
 {line_item_rule}
 {tax_term_block}
 {payment_status_block}

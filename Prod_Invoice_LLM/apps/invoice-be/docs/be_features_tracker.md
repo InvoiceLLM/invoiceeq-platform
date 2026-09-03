@@ -2318,6 +2318,13 @@ and the 2026-08-25 deletion commit). The deletion itself is **Gap 316**, below.
   - **Known hole, pinned rather than hidden**: ordinal back-references and typos the 0.75 cutoff misses fall to the ask-back, not to a wrong proposal. `_ZERO_ROW_NAME_MATCH_CUTOFF` is a single constant to tune against real traffic once `zero_result_diagnosis` has a population.
   - Spec: `feature_6_rag.md` §RETRIEVAL HARDENING §C3 and §Execution record. Evidence: `docs/test_evidence/f6_c3_zero_rows_2026-09-03/`.
 
+- `[x]` **Gap 426 (BE) — `_normalize_string_equality` turned a table-qualified filter into invalid SQL: `invoice.invoice_number = 'X'` became `invoice.TRIM(LOWER(invoice_number))`** — found and fixed 2026-09-03 by Feature 6.1 C4's reference-SQL verification harness. **Collision-checked**: 420–425 in use repo-wide, so this is 426.
+  - **How it surfaced.** The C4.3 harness runs every curated question → SQL example through `execute_generated_sql` against the seeded golden fixture. 5 of 29 failed with `near "(": syntax error` — every one a line-item example filtering on `invoice.invoice_number`. The normaliser's regexes use `\b{column}`, and a dot is a word boundary, so the column matched inside its qualifier; the rewrite then emitted the bare column and left the qualifier dangling in front of the function call.
+  - **Why it matters live.** Rule 6d's taught shape qualifies every column with `invoice.` (`invoice.invoice_number`, `invoice.vendor_name`). A model following that shape and filtering by number — "does the bolts line on invoice US-20260722-001 add up?" — produced this on every attempt, burning the three-attempt repair loop on a syntax error the model could not see the cause of.
+  - **Fixed**: an optional `((?:\b\w+\.)?)` qualifier group on all three rewrite passes (`=`, `IN`, `LIKE`), kept inside the call: `TRIM(LOWER(invoice.invoice_number))`. `\b` still protects `my_vendor_name`.
+  - **Verified**: `tests/test_gap426_qualified_column_normalisation.py` — **11 passed** (qualified and unqualified forms for all three passes, the dangling qualifier never appears, an embedded column name is left alone); the harness went from 24/29 to **29/29 verified**.
+- `[x]` **Feature 6.1 C4 — rules → structure (schema linking, rule restructure, retrieved examples)** — built 2026-09-03; recorded here as a feature row, not a defect. Spec: `feature_6_rag.md` §RETRIEVAL HARDENING §C4 result. Evidence: `docs/test_evidence/f6_c4_rules_to_structure_2026-09-03/`.
+
 ## Nice-to-Have / Future Enhancements
 
 
