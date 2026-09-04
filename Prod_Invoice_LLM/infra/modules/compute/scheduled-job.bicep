@@ -57,7 +57,7 @@ param azureOpenAiEndpoint string = ''
 param azureOpenAiDeploymentName string
 
 @description('Feature 6.1 A2: fast, non-reasoning deployment for routing, summarising and narration. Empty = use azureOpenAiDeploymentName.')
-param azureOpenAiFastDeploymentName string = '' = ''
+param azureOpenAiFastDeploymentName string = ''
 
 @description('Application Insights connection string. Empty by default (the overdue sweep does not emit telemetry); the golden-bank eval job needs it so scripts/run_agent_eval.py\'s track_eval_result()/emit_online_signals() calls actually reach appi-invoicellm-dev instead of silently no-op-ing to stdout.')
 param appInsightsConnectionString string = ''
@@ -184,8 +184,24 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
               value: chromaHost
             }
             {
+              // Gap 422: 443, NOT 8000. `chromaHost` is an Azure Container Apps
+              // *internal ingress* FQDN, and ACA publishes internal ingress on 80
+              // (http) and 443 (https). The chromadb app's `targetPort: 8000` is
+              // the port its container listens on inside the replica -- it is not
+              // what the FQDN serves, so <fqdn>:8000 reaches nothing and hangs
+              // until the client timeout fires, dropping the process onto an
+              // empty in-container PersistentClient. This module was missed when
+              // the two long-running apps were fixed, so every job built from it
+              // (caj-chat-doc-ttl-dev, emit-online-signals) was still searching
+              // an empty store. Matches the verified live config on
+              // ca-invoice-be-dev revision --0000131.
               name: 'CHROMA_PORT'
-              value: '8000'
+              value: '443'
+            }
+            {
+              // Must move together with CHROMA_PORT above -- 443 requires SSL.
+              name: 'CHROMA_USE_SSL'
+              value: 'true'
             }
             {
               name: 'CLERK_SECRET_KEY'

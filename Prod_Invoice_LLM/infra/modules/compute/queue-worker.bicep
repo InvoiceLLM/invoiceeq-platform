@@ -261,9 +261,21 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               // that budget to 15s changed nothing except how long it took to
               // fail, which is what finally ruled the race out.
               //
-              // If this is ever changed to 443, set CHROMA_USE_SSL true with it.
+              // Aligned 2026-09-04 to what is actually live and verified on
+              // ca-invoice-be-dev / ca-queue-worker-dev: 443 with SSL on, not 80.
+              // Revision --0000131 logs `Initializing Chroma HttpClient at
+              // <fqdn>:443 (ssl=True)` -> `RAG warm-up complete: chroma=ok (0.1s)`
+              // with no fallback line, and real `rag.vector_query` dependency
+              // spans returning success. 80/plain-http would probably also work,
+              // but it has never been run; this file must not rewrite a verified
+              // configuration into an untested one on the next deploy.
               name: 'CHROMA_PORT'
-              value: '80'
+              value: '443'
+            }
+            {
+              // Must move together with CHROMA_PORT above -- 443 requires SSL.
+              name: 'CHROMA_USE_SSL'
+              value: 'true'
             }
             {
               name: 'CLERK_SECRET_KEY'
