@@ -3233,8 +3233,14 @@ the current view.
       delimiting** (`query_agent.py` L3482–3484) — Feature 6's surface, found
       during this review, **not fixed here** (B6). *senior-dev*
   - **Done throughout: Gaps 368-388 and 396-401 were each filed in the same change as their code.**
-- [ ] **V** — execute §P2.10 against Postgres + real Redis; update
-  - **STILL OPEN, and the only substantive Feature 26 task that is (2026-09-03).** This is the soak. It must be re-run *after* the Gap 415 deploy, not before: §P2.4A records that Tier 3 was searching an empty Chroma store on every dev revision up to `--0000120`, so any Tier-3 result gathered before that fix ships is not evidence.
+- [x] **V** — execute §P2.10 against Postgres + real Redis; update
+  - **CLOSED 2026-09-04, founder-directed — descoped, not executed.** The >=7-day soak and the human end-to-end pass were cancelled as process ceremony disproportionate to this system's traffic: telemetry shows **13 chat turns in 30 days**, so a 7-day soak measures close to nothing. What Part 2 *does* have on real Postgres stands and is unaffected: V-27 (the answer contract reaching the browser, run 2), the R3 migration and R4 runs (evidence files 01-03), and run 3's `tests/test_document_delete.py` -> 11 passing.
+  - **The flag is already ON in dev, and B11's criteria are closed with it.** Checked against live Azure 2026-09-04:
+    `ca-invoice-be-dev` and `ca-queue-worker-dev` both carry `ENABLE_GENERIC_DOC_CHAT=true` (and
+    `ENABLE_GENERIC_EXTRACTION=true`). Part 2 is reachable in the dev environment and has been for some time; the
+    criteria (a)-(e) this task was gating were overtaken by that. B11's checklist is closed as spent, not satisfied.
+    Recorded here so a future reader does not go looking for soak evidence that was deliberately never produced,
+    nor assume the flag is off because earlier text in this file says so.
       `test_coverage_map.md` and `test_evidence/`. *functional-tester*
 - [x] **H16** — **`MessageResponse` + the persisted answer contract (B12, BE Gap 386).**
       *senior-dev* — **new 2026-09-02, and blocking: H10, H11 and H12 are not done
