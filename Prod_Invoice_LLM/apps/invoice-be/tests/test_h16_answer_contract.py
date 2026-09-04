@@ -56,6 +56,8 @@ CONTRACT_KEYS = (
     "line_items",
     "unmatched",
     "reconciliation",
+    # Gap 387 (Phase 2.3): two attached documents compared to each other.
+    "attachment_pair_comparison",
 )
 
 

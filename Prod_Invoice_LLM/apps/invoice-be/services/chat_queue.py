@@ -89,6 +89,10 @@ class ChatQueueService:
         # and every existing test body stays valid byte-for-byte -- the same
         # shape C5b used when it threaded the id onto MessageCreate.
         attachment_id: str | None = None,
+        # Gap 439: the same shape H7 used for the single id -- optional, default
+        # None, so a pre-Phase-2 caller and every existing test body are valid
+        # unchanged and a message already in the queue at deploy time still runs.
+        attachment_ids: list | None = None,
         client: redis.Redis | None = None,
     ) -> dict:
         """Enqueues a chat query into the Redis task queue with fair-share throttling.
@@ -129,6 +133,7 @@ class ChatQueueService:
             # prevent, which is why C5b routed these turns AWAY from the queue
             # rather than through it while the key was missing.
             "attachment_id": attachment_id,
+            "attachment_ids": attachment_ids,
             "status": "queued",
             "created_at": now_iso,
         }
@@ -203,6 +208,55 @@ class ChatQueueService:
                     ChatQueueService.release_tenant_slot(tenant_id, r)
                 logger.error("Failed to enqueue chat job %s to Redis: %s", job_id, e)
 
+        return {"job_id": job_id, "status": "queued", "created_at": now_iso}
+
+    @staticmethod
+    def enqueue_attachment_extraction(
+        attachment_id: str,
+        tenant_id: str,
+        job_id: str | None = None,
+        client: "redis.Redis | None" = None,
+    ) -> dict | None:
+        """Feature 26 Phase 3.3 (Gap 452): queue one attachment's extraction.
+
+        Rides the SAME list the chat jobs use, tagged with a `task` key, so the
+        worker's existing drain and the browser's existing SSE channel both work
+        unchanged. A second queue would have needed a second drain loop, a second
+        channel and a second failure mode, for one more job type.
+
+        It deliberately does NOT take a tenant chat slot. Gap 364's ceiling
+        exists to stop one tenant's QUESTIONS starving another's; charging an
+        upload against it would let a user who attached three documents be
+        unable to ask anything about them.
+
+        Returns None when Redis is unreachable, and that return value is the
+        caller's instruction to extract inline instead -- an upload must not fail
+        because a queue is down.
+        """
+        r = client or get_redis_client()
+        if not r:
+            return None
+
+        job_id = job_id or str(uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "task": "extract_attachment",
+            "job_id": job_id,
+            "attachment_id": attachment_id,
+            "tenant_id": tenant_id,
+            "status": "queued",
+            "created_at": now_iso,
+        }
+        try:
+            r.set(
+                f"{CHAT_JOB_STATUS_PREFIX}{job_id}",
+                json.dumps(payload),
+                ex=JOB_STATUS_TTL_SECONDS,
+            )
+            r.lpush(CHAT_QUEUE_KEY, json.dumps(payload))
+        except Exception as e:
+            logger.error("Failed to enqueue attachment extraction %s: %s", attachment_id, e)
+            return None
         return {"job_id": job_id, "status": "queued", "created_at": now_iso}
 
     @staticmethod

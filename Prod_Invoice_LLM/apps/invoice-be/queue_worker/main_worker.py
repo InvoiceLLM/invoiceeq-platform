@@ -8,6 +8,7 @@ from azure.storage.queue import QueueClient
 from config import get_settings
 from utils.logging_config import setup_structured_logging, tenant_id_ctx, request_id_ctx
 from queue_worker.handlers import (
+    handle_extract_attachment,
     handle_process_invoice,
     handle_import_connector_file,
     handle_reaudit_templates,
@@ -242,6 +243,9 @@ def _process_message(queue_client: QueueClient, msg) -> None:
                 # queue at deploy time is processed as an ordinary chat turn
                 # rather than raising.
                 attachment_id=kwargs.get("attachment_id"),
+                # Gap 439: the fourth dispatch site, same `.get()` shape as the
+                # single id so a message enqueued before this deploy is fine.
+                attachment_ids=kwargs.get("attachment_ids"),
             )
         else:
             logger.warning(f"Unknown task {task_name}")
@@ -275,6 +279,17 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
         raw = r.rpop("chat_tasks_queue")
         if raw:
             data = json.loads(raw)
+            # Gap 452: the list now carries two job types. An older message has
+            # no `task` key at all and is a chat turn, which is why the default
+            # is the chat branch rather than a rejection.
+            if data.get("task") == "extract_attachment":
+                executor.submit(
+                    handle_extract_attachment,
+                    job_id=data.get("job_id"),
+                    attachment_id=data.get("attachment_id"),
+                    tenant_id=data.get("tenant_id"),
+                )
+                return
             executor.submit(
                 handle_process_chat_job,
                 job_id=data.get("job_id"),
@@ -282,6 +297,16 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
                 user_msg_id=data.get("user_msg_id"),
                 content=data.get("content"),
                 tenant_id=data.get("tenant_id"),
+                # Gap 451, found while switching the queue on by default: THIS
+                # drain -- the one that actually runs chat jobs -- never passed
+                # the attachment through. H7 threaded the id through the payload,
+                # the handler and the Azure-queue dispatch, but not through here,
+                # so every attachment turn taken on the queue would have been
+                # answered as an ordinary chat turn with the document silently
+                # dropped. That is the exact failure the pre-route gate exists to
+                # prevent, and it was latent only because the flag was off.
+                attachment_id=data.get("attachment_id"),
+                attachment_ids=data.get("attachment_ids"),
             )
     except Exception as e:
         logger.warning("Error consuming Redis chat task: %s", e)

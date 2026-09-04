@@ -6,6 +6,10 @@
 import { useCallback, useMemo, useState } from "react";
 
 import { useChatSession } from "@/hooks/useChatSession";
+import {
+  ATTACHMENT_INTENT_PHRASE,
+  type AttachmentClarificationIntent,
+} from "@/lib/chatAttachments";
 import ChatWindow from "@/components/chat/ChatWindow";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
@@ -92,8 +96,10 @@ export default function ChatPage() {
   // phrase in the message IS the mechanism for making an intent explicit.
   // MessageBubble has already composed `text` via composeClarificationReply().
   const onClarificationChoice = useCallback(
-    async (text: string) => {
-      await sendMessage(text);
+    async (text: string, intent: AttachmentClarificationIntent) => {
+      // Gap 432: the choice also travels as a structured field, so the
+      // original question's own words can no longer re-trigger the card.
+      await sendMessage(text, intent === "read" || intent === "compare" ? intent : undefined);
     },
     [sendMessage]
   );
@@ -102,6 +108,16 @@ export default function ChatPage() {
   // anything the matcher did not propose, so a typed invoice NUMBER cannot go
   // there -- it goes back as a message, which is what the backend's own
   // zero-candidate copy asks the user to do.
+  // Gap 444: the chip's two buttons. The phrase is the same one the clarify
+  // card would have sent, and the structured intent rides alongside it -- so the
+  // user gets the answer directly instead of being asked which they meant.
+  const onAttachmentIntent = useCallback(
+    async (intent: "read" | "compare") => {
+      await sendMessage(ATTACHMENT_INTENT_PHRASE[intent], intent);
+    },
+    [sendMessage]
+  );
+
   const onManualInvoiceEntry = useCallback(
     async (_attachmentId: string, invoiceNumber: string) => {
       await sendMessage(`Compare it against invoice ${invoiceNumber}.`);
@@ -161,6 +177,7 @@ export default function ChatPage() {
         onCancelAttachment={cancelAttachment}
         attachmentHandlers={attachmentHandlers}
         attachmentCount={attachmentCount}
+        onAttachmentIntent={onAttachmentIntent}
       />
     </div>
   );

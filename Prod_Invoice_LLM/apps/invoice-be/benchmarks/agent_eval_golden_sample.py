@@ -1133,3 +1133,62 @@ __all__ = [
     "stats_for_tenant",
     "tenant_stats_summary",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Feature 26 Phase 5.9 (Gap 453) — cases promoted from real thumbs-down votes
+# ---------------------------------------------------------------------------
+def auto_promoted_cases(db_session) -> list[GoldenCase]:
+    """Every active auto-promoted case, as `GoldenCase` rows.
+
+    Kept as a FUNCTION taking a session rather than a module-level list, because
+    this module's defining property is that it is pure fixture data with no
+    `services/` import and no database access at import time. A caller that
+    wants the promoted cases asks for them and supplies the session; a caller
+    that does not is completely unaffected, which is what keeps every existing
+    run reproducible.
+
+    `expected_answer` is None for all of them, deliberately: a thumbs-down says
+    the answer was wrong, never what the right answer was. The accuracy judge
+    therefore skips these and they are graded reference-free, on faithfulness
+    and relevance. Writing the rejected answer in as the reference would teach
+    the bank to expect exactly the output the user complained about.
+
+    Returns `[]` on any failure. A regression run must not be lost because the
+    promotion table could not be read.
+    """
+    try:
+        from sqlmodel import select
+
+        from models import AutoGoldenCase
+
+        rows = db_session.exec(
+            select(AutoGoldenCase)
+            .where(AutoGoldenCase.active == True)  # noqa: E712 - SQL boolean
+            .order_by(AutoGoldenCase.created_at.asc())
+        ).all()
+    except Exception:
+        return []
+
+    cases: list[GoldenCase] = []
+    for row in rows:
+        reason = f" (user reported: {row.reason})" if row.reason else ""
+        cases.append(
+            GoldenCase(
+                # The marker is in the id as well as in `source`, so a case is
+                # identifiable as auto-promoted in a results table that shows
+                # only ids.
+                case_id=f"auto-{str(row.id)[:8]}",
+                question=row.question,
+                expected_answer=None,
+                source=row.source,
+                why_on_file=(
+                    "Promoted automatically from a thumbs-down on message "
+                    f"{row.message_id}{reason}. No reference answer: the vote "
+                    "says the reply was wrong, not what right would have been."
+                ),
+                expected_invoice_numbers=None,
+                tenant_id=str(row.tenant_id),
+            )
+        )
+    return cases

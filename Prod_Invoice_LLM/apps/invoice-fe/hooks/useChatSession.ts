@@ -28,7 +28,7 @@ export interface UseChatSessionReturn {
   error: string | null;          // Shown in the red error banner at the top of the chat area
   createSession: () => Promise<void>;
   selectSession: (id: string) => Promise<void>;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, attachmentIntent?: "read" | "compare") => Promise<void>;
   clearError: () => void;
   renameSession: (id: string, newTitle: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -310,6 +310,97 @@ export function useChatSession(): UseChatSessionReturn {
    * Intelligence round trip plus H4's embed step), so between those two events
    * the user is genuinely waiting on the server reading their document.
    */
+  // Gap 452: watch one attachment's extraction job. Kept separate from the
+  // chat-turn stream on purpose: that one rewrites a message placeholder, this
+  // one rewrites the composer chip, and the two must not fight over
+  // `activeStreamRef` -- a user can be asking a question while a second
+  // document is still being read.
+  const extractionStreamRef = useRef<EventSource | null>(null);
+
+  const followExtractionJob = useCallback(
+    (jobId: string, attachmentId: string, filename: string) => {
+      try {
+        extractionStreamRef.current?.close();
+      } catch {
+        /* nothing to close */
+      }
+
+      const finish = async () => {
+        try {
+          extractionStreamRef.current?.close();
+        } catch {
+          /* already closed */
+        }
+        extractionStreamRef.current = null;
+        // The completion event carries a summary, but the GET is the contract
+        // the chip renders from (preview, confidence, match) -- one source of
+        // truth rather than two shapes to keep in step.
+        try {
+          const res = await apiClient.get<ChatAttachmentSummary>(
+            `/chat/attachments/${attachmentId}`
+          );
+          const row = res.data;
+          if (row.extraction_status === "EXTRACT_FAILED") {
+            setAttachment({
+              status: "failed",
+              filename,
+              failure: "extraction_failed",
+              message: "The document was attached but its text could not be read.",
+            });
+            return;
+          }
+          setAttachment({ status: "ready", filename, attachment: row });
+        } catch {
+          setAttachment({
+            status: "failed",
+            filename,
+            failure: "extraction_failed",
+            message: "The document was read but its details could not be loaded. Try re-attaching it.",
+          });
+        }
+      };
+
+      let source: EventSource | null = null;
+      try {
+        source = new EventSource(`/api/chat/jobs/${jobId}/stream`);
+      } catch {
+        // No EventSource (an old browser, or a blocked connection): fall back
+        // to a single delayed read rather than leaving the chip spinning.
+        setTimeout(finish, 30000);
+        return;
+      }
+      extractionStreamRef.current = source;
+
+      source.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as {
+            status?: string;
+            step?: string;
+          };
+          if (data.status === "processing" && data.step) {
+            setAttachment((prev) =>
+              prev && prev.status === "extracting" ? { ...prev, stage: data.step } : prev
+            );
+            return;
+          }
+          if (data.status === "completed" || data.status === "failed") {
+            void finish();
+          }
+        } catch {
+          /* a malformed event is not worth breaking the wait over */
+        }
+      };
+      source.onerror = () => {
+        // The stream dropped. The worker may still finish; read the row rather
+        // than guess, after a short grace period for the stream to reconnect.
+        setTimeout(() => {
+          if (extractionStreamRef.current === source) void finish();
+        }, 5000);
+      };
+    },
+    []
+  );
+
   const uploadAttachment = useCallback(
     (file: File) => {
       const sessionId = activeSessionId;
@@ -388,6 +479,23 @@ export function useChatSession(): UseChatSessionReturn {
               failure: "extraction_failed",
               message: "The document was attached but its text could not be read.",
             });
+            return;
+          }
+
+          // Feature 26 Phase 3.3 (Gap 452): extraction was queued on the worker.
+          // The row exists and counts against the cap, but it is PENDING: keep
+          // the chip in the extracting state and follow the job stream, which
+          // reports reading -> extracting -> indexing -> matching, then re-read
+          // the row so the chip shows the same fields it would have shown from
+          // an inline upload.
+          if (summary.extraction_job_id && summary.extraction_status === "PENDING") {
+            writeAttachmentMemo(sessionId, { id: summary.id, count: nextCount });
+            setAttachment({
+              status: "extracting",
+              filename: summary.filename || file.name,
+              stage: "queued",
+            });
+            followExtractionJob(summary.extraction_job_id, summary.id, summary.filename || file.name);
             return;
           }
 
@@ -772,7 +880,7 @@ export function useChatSession(): UseChatSessionReturn {
   // sendMessage
   // ---------------------------------------------------------------------------
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentIntent?: "read" | "compare") => {
       if (!activeSessionId || !text.trim() || isSending) return;
       setError(null);
 
@@ -801,6 +909,8 @@ export function useChatSession(): UseChatSessionReturn {
         // Step 2: POST to proxy → backend
         const body: SendMessageRequest = { content: text.trim() };
         if (attachedId) body.attachment_id = attachedId;
+        // Gap 432: only meaningful with an attachment; never sent otherwise.
+        if (attachedId && attachmentIntent) body.attachment_intent = attachmentIntent;
         const res = await apiClient.post<SendMessageResponse>(
           `/chat/sessions/${activeSessionId}/message`,
           body

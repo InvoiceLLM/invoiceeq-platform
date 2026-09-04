@@ -254,6 +254,7 @@ class ReferenceDocLineItem(BaseModel):
     hsn_sac_code: Optional[str] = Field(default=None, description="HSN/SAC code (mandatory for Indian GST)")
     uom: Optional[str] = Field(default=None, description="Unit of measure (e.g., each, kg, hours)")
     line_number: Optional[int] = Field(default=None, description="The line's printed row number or serial number, if the document numbers its rows. Null if the table is unnumbered — never invent a position.")
+    page_number: Optional[int] = Field(default=None, description="The 1-based page this row is printed on. Fill it only when you can see which page the row came from; null otherwise. NEVER guess a page, and never assume page 1 for a multi-page document -- a wrong page reference is worse than none, because it sends a reader to the wrong place to check a figure.")
 
 
 class ReferenceDocExtractionSchema(BaseModel):
@@ -328,6 +329,7 @@ class GenericLineItem(BaseModel):
     quantity_received: Optional[float] = Field(default=None, description="Quantity actually received/accepted, ONLY when the row prints it as its own column (a goods receipt note typically prints ordered, received and rejected side by side). Null otherwise.")
     uom: Optional[str] = Field(default=None, description="Unit of measure exactly as printed (e.g. 'NOS', 'KG', 'PCS', 'hours', 'each').")
     batch_or_serial: Optional[str] = Field(default=None, description="Batch, lot or serial number printed against this row, as a single string. Null if the row prints none.")
+    page_number: Optional[int] = Field(default=None, description="The 1-based page this row is printed on. Fill it only when you can see which page the row came from; null otherwise. NEVER guess a page, and never assume page 1 for a multi-page document -- a wrong page reference is worse than none, because it sends a reader to the wrong place to check a figure.")
 
     # NOT widened with `hsn_sac_code` / `line_number`, deliberately -- an earlier
     # pass of R10 added them here and two tests caught it. A2 names per-line
@@ -1485,7 +1487,19 @@ def resolve_extraction_profile(flow_direction: Optional[str], doc_type: Optional
     #    first line of this function now raises `UnknownFlowDirectionError` for
     #    it, in both flag states (E9). So this branch is left to decide exactly
     #    one thing: a *valid* direction that is not INBOUND.
-    if (flow_direction or "INBOUND").upper() != "INBOUND":
+    direction = (flow_direction or "INBOUND").upper()
+    if direction == "REFERENCE":
+        # Gap 435 (2026-09-04): a statement of account / remittance advice
+        # attached in chat needs `referenced_documents[]` -- a field only the
+        # generic spine has -- for B8's list reconcile. On the REFERENCE schema
+        # the list is never extracted, so the reconcile branch always answered
+        # "I could not read a list of invoice references" (F26 benchmark
+        # S18-S20). Only the ADVISORY family crosses over; a PO or quotation
+        # keeps the REFERENCE schema and everything Part 1 was written against.
+        if doc_type is not None and DOC_TYPE_FAMILY.get(str(doc_type).strip().upper()) == ADVISORY_FAMILY:
+            return _DIRECTION_PROFILES["GENERIC"]
+        return profile
+    if direction != "INBOUND":
         return profile
 
     # 3. No classification -> the existing profile, exactly as today. This is the
@@ -2364,6 +2378,15 @@ def dynamic_qa_node(state: ExtractionState) -> Dict[str, Any]:
     elicit non-standard structure before main extraction runs, folding the answers
     into state["dynamic_qa_context"] for extract_node to consume.
     """
+    # Gap 443 (2026-09-04): this node exists to elicit non-standard INVOICE
+    # structure -- multi-tax tables, retention, holdbacks -- and its questions are
+    # written about an invoice. A chat-attached reference document is none of
+    # those things, and the F26 benchmark measured uploads at 24-53 s with two
+    # reasoning calls inside them. Skipping a node whose output the REFERENCE
+    # profile has no use for removes one of those calls outright.
+    if str(state.get("flow_direction") or "").upper() == "REFERENCE":
+        return {"dynamic_qa_context": None}
+
     complexity = state.get("complexity", "STANDARD")
     if complexity != "COMPLEX":
         return {"dynamic_qa_context": None}

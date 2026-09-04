@@ -387,6 +387,18 @@ class ChatSession(SQLModel, table=True):
     tenant_id: UUID = Field(index=True)
     title: str = Field(max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Feature 26 Phase 2 (Gap 436): what this conversation is currently about --
+    # `{"vendor", "invoice_ids", "date_range", "attachment_ids"}`, rewritten from
+    # each turn's own result. One line of it is injected into every prompt so a
+    # follow-up does not have to re-establish the subject by substring luck.
+    #
+    # Deliberately a snapshot, never an accumulator: a focus that only ever grows
+    # would make turn 20 answer about a vendor abandoned at turn 3.
+    focus: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    # Feature 26 Phase 2 (Gap 437): the oldest half of a long conversation,
+    # condensed once and then reused, so history older than the 3,000-token
+    # window is not simply dropped. Written by `get_chat_history()`.
+    history_summary: str | None = Field(default=None)
 
 class ChatMessage(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -491,6 +503,13 @@ class ChatAttachment(SQLModel, table=True):
     # list == "we found these, the user has not agreed yet".
     candidate_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     confirmed_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # Feature 26 Phase 4 (Gap 444): which tier proposed those candidates, and a
+    # one-line rendering of the proposal for the chip. Persisted rather than
+    # recomputed so the chip says the same thing after a reload as it did at
+    # upload -- the matcher is a database query, and re-running it on every
+    # render would let the answer drift as the ledger changes underneath it.
+    match_tier: int | None = Field(default=None)
+    match_summary: str | None = Field(default=None, max_length=512)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # Feature 26 Part 2 (E-6, task H4): the document's own text is embedded into
     # the sibling Chroma collection `chat_docs_{tenant_id}` so an open-ended
@@ -666,6 +685,105 @@ class TenantChatSettings(SQLModel, table=True):
     custom_instructions: str = Field(default="", max_length=2000)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AutoGoldenCase(SQLModel, table=True):
+    """Feature 26 Phase 5.9 (Gap 453) — a thumbs-down promoted into the eval bank.
+
+    The judge, the thumbs-down triage flow and the golden bank all existed and
+    none of them fed each other: a user could report a bad answer every day and
+    the nightly regression would never learn the question. This table is the
+    connection, and it is deliberately a TABLE rather than an append to
+    `benchmarks/agent_eval_golden_sample.py` -- a runtime that edits its own
+    source file is not something to build into a product.
+
+    **Promotion is automatic** (founder decision, 2026-09-04), and the risk that
+    carries is met by two properties rather than by a human gate:
+
+      * `source` marks every row as auto-promoted, so the whole set can be
+        filtered out of a run, or deleted, without touching the curated bank;
+      * `active` lets one bad case be retired individually, which matters
+        because a case is graded against forever once it is in.
+
+    `expected_answer` is null on purpose. A thumbs-down says the answer was
+    wrong; it does NOT say what the right answer was. Writing the reported answer
+    in as the reference would teach the bank to expect the very output the user
+    rejected. Until someone fills it in, the case is graded on the
+    reference-free axes -- faithfulness and relevance -- which is exactly what
+    the production judge already does.
+    """
+    __tablename__ = "auto_golden_cases"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    message_id: UUID = Field(index=True, unique=True)
+    session_id: UUID | None = Field(default=None)
+    question: str
+    #: What SAGE actually replied. Kept for the reviewer who later writes the
+    #: reference answer, never used as one.
+    reported_answer: str | None = Field(default=None)
+    #: The triage category the user picked, where they picked one.
+    reason: str | None = Field(default=None, max_length=64)
+    note: str | None = Field(default=None, max_length=2000)
+    #: "auto:thumbs_down" today. A second promoter would carry its own marker.
+    source: str = Field(default="auto:thumbs_down", max_length=64, index=True)
+    active: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class MatchPolicy(SQLModel, table=True):
+    """Feature 26 Phase 5 (Gap 447) — one tenant's matching tolerances.
+
+    Every finance team runs three-way match with a tolerance band, and the band
+    is a business decision, not a constant: a chemicals buyer tolerates 2% on
+    quantity because product is weighed, a parts distributor tolerates none.
+    Before this the comparison had exactly one band -- zero -- so a 0.4 kg
+    weighbridge difference was reported in the same words as a 200-unit
+    over-delivery, and the user had to decide which of the two mattered on every
+    single line.
+
+    One row per tenant, all defaults zero, so a tenant that never sets a policy
+    behaves EXACTLY as the product did before this table existed.
+    """
+    __tablename__ = "match_policies"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True, unique=True)
+    # Percentages, not absolute amounts: a 1% band means the same thing on a
+    # Rs 500 line and a Rs 5,00,000 one, and absolute bands do not survive a
+    # currency change.
+    quantity_tolerance_percent: float = Field(default=0.0)
+    price_tolerance_percent: float = Field(default=0.0)
+    # Days either side, for the date window a matching document may fall in.
+    date_tolerance_days: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DocumentComparison(SQLModel, table=True):
+    """Feature 26 Phase 5 (Gap 448) — a comparison, kept.
+
+    Until now every comparison lived and died in chat scrollback: the user asked
+    "does this PO match?", got a correct answer, and had no record of it on the
+    invoice, in the Auditor console, or anywhere an approver would look. A
+    finding that exists only in a conversation is not a control.
+
+    The payload is stored verbatim -- it is what Python computed, and re-deriving
+    it later against a ledger that has since changed would produce a different
+    answer under the same id.
+    """
+    __tablename__ = "document_comparisons"
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    invoice_id: UUID | None = Field(default=None, index=True)
+    attachment_id: UUID | None = Field(default=None, index=True)
+    session_id: UUID | None = Field(default=None, index=True)
+    # "attachment_vs_invoice" | "attachment_vs_attachment" | "list_reconcile"
+    kind: str = Field(max_length=40)
+    doc_type: str | None = Field(default=None, max_length=32)
+    mode: str | None = Field(default=None, max_length=32)
+    # "match" | "variance" | "incomplete" | "currency_mismatch" | "reconciled"
+    outcome: str | None = Field(default=None, max_length=32)
+    payload: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class TenantChatRule(SQLModel, table=True):

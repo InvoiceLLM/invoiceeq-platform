@@ -796,6 +796,21 @@ def _stubbed_extraction(extracted):
         yield
 
 
+@pytest.fixture(autouse=True)
+def extraction_runs_inline(monkeypatch):
+    """Gap 452: uploads now queue extraction when Redis is reachable. Every test
+    in this file was written against the inline pipeline and asserts on the
+    row's state straight after the upload returns, so the queue is made
+    unavailable here -- which is a real path (Redis down), not a test-only
+    shortcut -- and the pipeline runs inline exactly as those tests expect.
+    The queued path has its own tests in `test_attachment_upload_ux.py`."""
+    from services.chat_queue import ChatQueueService
+
+    monkeypatch.setattr(
+        ChatQueueService, "enqueue_attachment_extraction", staticmethod(lambda **kw: None)
+    )
+
+
 @pytest.fixture(name="mock_embeddings")
 def mock_embeddings_fixture():
     """`get_embedding_model() -> None` is exactly what `MOCK_EMBEDDINGS=true`
@@ -891,6 +906,35 @@ def test_a_successful_upload_indexes_the_document_and_records_the_index_state(
     # E-2's header rode along, so a retrieved chunk still says what kind of
     # document it came from.
     assert "[Document type: PURCHASE_ORDER" in texts
+
+
+def test_gap_430_doc_type_comes_from_the_feature_27_classifier_first(
+    db_session, router_client, local_blob, mock_embeddings
+):
+    """The classifier's verdict is at the TOP level of the result; the
+    REFERENCE schema field only knows PO/QUOTATION/OTHER. A statement of
+    account must land as STATEMENT_OF_ACCOUNT, not OTHER."""
+    import agents.extraction_agent as extraction_agent
+    import queue_worker.handlers as handlers
+
+    chat_session = _owned_session(db_session)
+    extracted = {**_STUB_EXTRACTED, "doc_type": "OTHER", "doc_number": "SOA-2026-06"}
+    with patch.object(
+        handlers, "_run_ocr", return_value={"content": "ocr text"}
+    ), patch.object(
+        extraction_agent,
+        "run_extraction_agent",
+        return_value={"extracted_data": extracted, "doc_type": "STATEMENT_OF_ACCOUNT"},
+    ):
+        res = _upload(router_client, chat_session.id)
+
+    assert res.status_code == 200, res.text
+    assert res.json()["doc_type"] == "STATEMENT_OF_ACCOUNT"
+
+    # Flag off / classifier absent: the schema field is still the fallback.
+    with _stubbed_extraction({**_STUB_EXTRACTED, "doc_type": "QUOTATION"}):
+        res = _upload(router_client, chat_session.id)
+    assert res.json()["doc_type"] == "QUOTATION"
 
 
 def test_a_failed_extraction_never_reaches_the_indexer(db_session, router_client, local_blob):

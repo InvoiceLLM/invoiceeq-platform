@@ -473,7 +473,11 @@ def test_judge_evidence_is_attached_after_the_cache_write_not_before(db_session)
     # that the real Redis write (a `json.dumps` on the spot) never saw.
     captured = {}
 
-    def _capture(tenant_id, user_message, result):  # noqa: ARG001 - shape only
+    # `rules_version` is Gap 438's fourth parameter (the tenant's enabled-rule
+    # hash, which the cache key now carries). Accepted with a default so this
+    # stub matches the real signature without asserting on a value this test is
+    # not about.
+    def _capture(tenant_id, user_message, result, rules_version=None):  # noqa: ARG001 - shape only
         captured["payload"] = json.dumps(result)
 
     with patch("agents.query_agent.set_cached_answer", side_effect=_capture) as cache_write:

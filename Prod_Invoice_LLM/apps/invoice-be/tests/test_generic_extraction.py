@@ -491,6 +491,22 @@ def test_g7s_honest_scope_the_di_trust_boundaries_are_wired_and_g6_still_is_not(
 
 
 # =============================================================================
+def test_gap_435_reference_direction_takes_the_generic_spine_for_advisory_types_only(monkeypatch):
+    """A chat-attached statement/remittance must be extracted on the generic
+    schema (it alone carries `referenced_documents[]`); a chat-attached PO must
+    not change profile at all."""
+    import agents.extraction_agent as ea
+    from agents.extraction_agent import resolve_extraction_profile
+
+    monkeypatch.setattr(ea.get_settings(), "ENABLE_GENERIC_EXTRACTION", True)
+    for adv in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+        assert resolve_extraction_profile("REFERENCE", adv) is ea._DIRECTION_PROFILES["GENERIC"]
+    for other in ("PURCHASE_ORDER", "QUOTATION", "DELIVERY_NOTE", "CONTRACT", "INVOICE", None):
+        assert resolve_extraction_profile("REFERENCE", other) is ea._DIRECTION_PROFILES["REFERENCE"]
+    monkeypatch.setattr(ea.get_settings(), "ENABLE_GENERIC_EXTRACTION", False)
+    assert resolve_extraction_profile("REFERENCE", "STATEMENT_OF_ACCOUNT") is ea._DIRECTION_PROFILES["REFERENCE"]
+
+
 # Feature 27 (G3b) — `resolve_extraction_profile()` + the `GENERIC` profile entry
 # =============================================================================
 # Amendment A2, "Profile resolution — the exact rule to implement". The function
@@ -655,7 +671,13 @@ def test_outbound_and_reference_are_unchanged_for_every_doc_type(
     OUTBOUND's consumers (`routers/outbound_audit.py`,
     `queue_worker/outbound_handlers.py`) are written against
     `OutboundInvoiceExtractionSchema`, and REFERENCE is Feature 26's
-    chat-attachment path."""
+    chat-attachment path.
+
+    Gap 435 (2026-09-04) carved out ONE exception: REFERENCE + an ADVISORY type
+    takes the generic spine, because reconcile needs `referenced_documents[]`.
+    """
+    if flow_direction == "REFERENCE" and doc_type in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+        pytest.skip("Gap 435: covered by test_gap_435_reference_direction_takes_the_generic_spine_for_advisory_types_only")
     resolved = resolve_extraction_profile(flow_direction, doc_type)
     assert resolved is resolve_direction_profile(flow_direction)
     assert resolved is ea._DIRECTION_PROFILES[flow_direction]

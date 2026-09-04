@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-03T04:46:49+00:00",
+  "generated_at": "2026-09-04T11:41:48+00:00",
   "generator": "tests/extraction_benchmark/{documents,mutations}.py",
   "determinism": "No RNG. Regenerating from an unchanged tree reproduces this file byte for byte.",
   "mutation_policy": {

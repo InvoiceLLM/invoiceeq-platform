@@ -110,6 +110,127 @@ Part 1 and Part 2 are in genuinely different states and are never to be cited as
 
 ---
 
+## Current algorithm — attachment turn as built, verified against code 2026-09-04
+
+Companion to `feature_6_rag.md` §"Current algorithm" (the shared SAGE pipeline: routing, memory, tools, prompts). This table covers only what an `attachment_id` changes. Entry point: `agents/query_agent.py::_run_query_agent()` checks `attachment_id` **before** the answer cache and before routing, and hands the whole turn to `_run_attached_document_turn()` — nothing below ever reaches `classify_query()`, the SQL route or the RAG route.
+
+| Step | Function | Behaviour | LLM |
+|---|---|---|---|
+| Load | `_run_attached_document_turn()` | Loads the `ChatAttachment` (Feature 27 taxonomy `doc_type`), emits `reading_attachment` | — |
+| Intent | `_classify_attachment_intent(user_message, doc_type)` | `_COMPARISON_INTENT_PATTERN` / `_CONTENT_INTENT_PATTERN` / `_RECONCILE_INTENT_PATTERN` keyword regexes, biased by `_INTENT_BIAS_BY_DOC_TYPE` → `comparison` · `content` · `reconcile` · `clarify` (B2, B9) | none |
+| Clarify | returns `attachment_clarification` | Two-option card — "Read the document" / "Compare to my invoices"; `needs_confirmation=True`, `stop_reason=awaiting_intent_clarification` | none |
+| Reconcile (advisory) | `_run_attachment_reconcile_branch()` | `doc_type` in `STATEMENT_OF_ACCOUNT` / `REMITTANCE_ADVICE` → `services/document_comparison.py::reconcile_referenced_documents()` matches every referenced invoice number against `Invoice` rows → `found_matching` / `amount_mismatch` / `status_mismatch` / `not_found` counts + table (B8) | `_fast_llm()` narrates the Python result |
+| Content | `_run_attachment_content_branch()` | `get_full_record()` (already loaded) + exactly one `services/chat_document_search.py::search_attachment_chunks()` over the per-attachment Chroma collection → spans wrapped by `_wrap_retrieved_document_text()` inside `<<<DOCUMENT_TEXT_START/END>>>` (B6) → answer. Prompt forbids comparing; if asked to, it says so (B5) | `_fast_llm()` |
+| Match | `services/document_comparison.py::find_candidate_invoices()` | Tier 1 normalised `po_number` exact → Tier 2 vendor-name substring + `invoice_date` window (only if Tier 1 empty) → Tier 3 vector via `_tier3_candidates()`. Returns `{tier, invoices, truncated}` | none |
+| Confirm | `build_confirmation_payload()` | `needs_confirmation=True`, `stop_reason=awaiting_match_confirmation`; user picks which invoice(s) | none |
+| Compare | `compare_reference_to_invoices()` / `compare_documents(doc_a, doc_b, mode)` | Field diff (`_compare_one`) + line matcher `_match_lines()` L1 exact / L2 token overlap / L3 fuzzy (B3, B7); `currency_mismatch` reported, never converted; `build_suggested_actions()` deep-links only (D6) | `_fast_llm()` narrates; every figure is Python's (D5, hard rule 3) |
+| Contract | `routers/chat.py::MessageResponse` + `extract_attachment_payload()` | `attachment_payload` carries `comparison`, `line_items[]`, `unmatched[]`, `reconciliation[]`, `suggested_actions[]` (B10, H16) | — |
+| Cache | — | Attachment turns never read or write the Task 6.11 answer cache (B1) | — |
+| TTL | `scripts/sweep_chat_attachments.py` via `caj-chat-doc-ttl-dev` (05:00 UTC) | Deletes expired `ChatAttachment` rows and their Chroma chunks (`delete_attachment_chunks()`) | — |
+
+**Memory:** the attachment turn uses no conversation history and no prior-SQL block — the document itself is the context. **Tools:** all deterministic, listed in `feature_6_rag.md` §4. **Graph:** none — same imperative pipeline as the parent. **Flag:** `ENABLE_GENERIC_DOC_CHAT` is `true` on `ca-invoice-be-dev` and `ca-queue-worker-dev` (checked 2026-09-04); `attachment_id` presence is the real switch (B11).
+
+## Benchmark findings and enhancement roadmap — 2026-09-04
+
+**Source.** The 25-scenario attachment benchmark (`docs/f26_attachment_benchmark_scenarios.md`, evidence in `docs/test_evidence/f26_attachment_benchmark_2026-09-04/`) run on the local stack against real Azure OpenAI (`gpt-5-mini`) and Doc Intelligence: 3 tenants (India / US / EU), 15 seeded invoices, 18 generated attachments covering every Feature 27 doc type. **Pass 1 (question as typed): 8/25. Pass 2 (answering the clarify card the way the FE does): 16/25.** Uploads 18/18 extracted, PO/quotation fields correct, 24–53 s each.
+
+**Founder framing (2026-09-04).** Dev stage, no production customers: change as much as needed to make this world-class; correctness first, then memory and multi-document, then speed, then the AP-workflow capabilities. Everything below is approved direction pending the founder's go on each phase.
+
+### Defects found (tracker Gaps 430–433)
+
+| Gap | Sev | Defect | Solution |
+|---|---|---|---|
+| 430 | P1 | `routers/chat_attachments.py:242` takes `doc_type` from `extracted_data` (Part-1 REFERENCE schema: PO / QUOTATION / OTHER) instead of the Feature 27 classification `run_extraction_agent()` returns at top level. 9 of 18 uploads → `OTHER`. B8 reconcile and B9 doc-type bias are unreachable. A remittance short by Rs 1,000 was answered "not short". | Prefer `result["doc_type"]`, fall back to the schema field only when null; persist `doc_type_evidence` / `doc_type_confidence`; test uploads a statement and asserts `STATEMENT_OF_ACCOUNT`. |
+| 431 | P1 | `services/document_comparison.py::compare_documents()` (B3/B7 line matcher, `line_items[]`, `unmatched`) has zero callers; the compare branch runs header fields only. "Which line is over-billed" cannot be answered. | Call `compare_documents(reference, invoice, mode=resolve_comparison_mode(doc_type))` per confirmed invoice after the header diff; populate `line_items` / `unmatched` on `MessageResponse` (fields already exist, B10/H16); feed the line table to the narration prompt as data. |
+| 432 | P2 | `_classify_attachment_intent()` is keyword-only; 13/25 natural phrasings hit the clarify card; "what payment terms did we **agree**" loops forever because the FE's reply is appended text and "agree" stays in the string. | (a) `MessageCreate.attachment_intent: "read" \| "compare" \| None` honoured before classification; (b) add "consistent with", "relate(s) to", "still owe", "owe after", "invoiced", "billed", "ordered vs", "pay the full" to the comparison list; (c) when both lists hit and no doc-type bias, prefer the longer matched phrase over clarifying. |
+| 433 | P3 | `delete_session()` deletes the attachment row and Chroma chunks but not the blob. | Delete `blob_path` with the sweeper's best-effort/logged pattern. |
+| 435 | P1 | Found by the Phase 1 re-run: statements/remittances were extracted on the REFERENCE (PO) schema, which has no `referenced_documents[]`, so reconcile had nothing to read. | `resolve_extraction_profile()` returns the GENERIC profile for REFERENCE + ADVISORY family; fixed 2026-09-04. |
+
+### Phase 1 — Correctness (~2 d) — **started 2026-09-04 on founder go**
+
+Status 2026-09-04: Gaps 430, 431, 432, 433 fixed (see the tracker entries for the exact change and test per gap). `MessageCreate` gained `attachment_intent`; the compare answer now carries `line_items` / `unmatched`; the clarify tie-break rule changed (longer matched phrase wins, dead heat clarifies). 1.4 (judge alert) not started. 1.5 done: **benchmark re-run 24/25** (from 16/25) — every fixed scenario re-uploaded and re-asked on the local stack against real Azure OpenAI + Doc Intelligence; the one remaining failure is S15 (GRN vs invoice quantities), which is attachment-vs-attachment / Gap 387 and is Phase 2.3. Gap 435 was found and fixed during the re-run. Evidence: `docs/test_evidence/f26_attachment_benchmark_2026-09-04/README.md` (`transcript_pass2_before_phase1.json` is the 16/25 baseline).
+
+| # | Item | Solution | Done when |
+|---|---|---|---|
+| 1.1 | Gap 430 | as above — **done** | S18–S20 pass; chip badge correct for all 18 benchmark docs |
+| 1.2 | Gap 431 | as above — **done** | S02, S04, S11, S16 pass |
+| 1.3 | Gap 432 | as above — **done** (FE sends `attachment_intent`) | pass-1 clarify hits ≤ 3/25; S21 passes |
+| 1.4 | Judge threshold alert | `services/online_quality_judge.py` scores already emit per turn; add a scheduled-query alert on p95 faithfulness < 0.8 over 24 h (same `09-monitoring.bicep` pattern as `alert-agent-eval-run-critical-dev`) | alert exists and has fired once in a test |
+| 1.5 | Re-run benchmark | `run_f26_bench.py` from the evidence folder — **done, 25/25** after Phases 2–5 | ≥ 22/25 |
+
+### Delivery status — 2026-09-04
+
+| Phase | State | Evidence |
+|---|---|---|
+| 1 Correctness | **Complete.** Gaps 430–433, 435; judge alert as Gap 450 | benchmark 16/25 → **25/25**; `tests/test_chat_doc_content_branch.py`, `tests/test_chat_attachments.py` |
+| 2 Memory and multi-document | **Complete.** Gaps 436–441 and Gap 387 (attachment-vs-attachment, re-scoped in) | `tests/test_chat_memory_multidoc.py` (23 tests), migration `c3d4e5f6a9b0` |
+| 3 Speed | **Complete.** 3.1/3.2 (Gaps 442/443); 3.3 extraction on the worker with streamed stages (Gap 452); 3.4 decided: both paths stay, queue on by default, a latent attachment-drop in the queue drain fixed (Gap 451); 3.5 request marker on all five phrasing prompts, every static prefix above 1,024 tokens (Gap 455) | `services/attachment_extraction.py`, `tests/test_prompt_prefix_all_routes.py` |
+| 4 Product UX | **Complete.** Gaps 444–446 | `tests/test_attachment_upload_ux.py` (13 tests), migration `d4e5f6a0b1c2` |
+| 5 World-class AP/AR | **Done as decided.** 5.1 tolerances (zero band, no settings surface by decision), 5.2 storage (no surfacing by decision), `date_math`, 5.7 page numbers on comparison figures, 5.9 automatic thumbs-down promotion, judge alert deployed (Gaps 447–450, 453, 454). 5.3, 5.4, 5.5, 5.6, 5.8 **closed by founder decision** 2026-09-04: the system acts only when a document is attached and a question asked; it reports, the person decides | `tests/test_match_policy_and_records.py`, migrations `e5f6a1b2c3d4`, `f6a1b2c3d4e5` |
+
+**Founder decisions, 2026-09-04.** The remaining Phase 5 items were put to the founder one at a time and closed: no tolerance settings surface, no actions from findings, no proactive reconciliation, no email-in, comparisons not surfaced outside chat yet, provenance stops at page numbers. The product's stance is deliberate: it acts only when a document is attached and a question asked, it reports every difference, and the person decides. Two things remain genuinely open: wiring `auto_promoted_cases()` into the nightly job's case list, and surfacing stored comparisons whenever that is wanted.
+
+### Phase 2 — Memory and multi-document (~2 d)
+
+| # | Item | Solution |
+|---|---|---|
+| 2.1 | Attachment turns see context | `_run_attached_document_turn()` receives the last 3 turns as one-line summaries (role, route, doc referenced, figure answered) — not raw text — and the session's `attachment_id` is carried forward when a turn arrives without one and the message refers to "the PO / the document / it". |
+| 2.2 | Multiple documents per turn | `MessageCreate.attachment_ids: list[UUID]` (keep `attachment_id` for compatibility). Default when absent and the question references an earlier document: every `ChatAttachment` in the session. The prompt gets a one-line manifest per document (type, number, party, date, total, lines). |
+| 2.3 | Attachment-vs-attachment (Gap 387, re-scoped in) | New intent `compare_attachments`; wire `compare_documents(doc_a, doc_b, mode)` — the function exists. Pairs chosen by doc-type family: PO ↔ delivery note/GRN (quantities), PO ↔ order confirmation (lines), quotation ↔ PO (prices). Three-way PO ↔ GRN ↔ invoice follows by chaining two pairwise results. |
+| 2.4 | Session focus | Per-session `focus` JSON on `ChatSession` (`vendor`, `invoice_ids`, `date_range`, `attachment_ids`) updated from each result's snapshot; injected as one line into every prompt. |
+| 2.5 | Rolling summary | When `get_chat_history()` exceeds its budget, summarise the oldest half once (~150 tokens) into `ChatSession.history_summary`; prepend it. |
+| 2.6 | Cache correctness | Answer-cache key includes a hash of the tenant's enabled `TenantChatRule` rows; `/chat/rules/commit` invalidates, as Trainer commits already do. |
+
+### Phase 3 — Speed (~2 d)
+
+| # | Item | Solution | Target |
+|---|---|---|---|
+| 3.1 | Per-turn embedding cost | bge-m3 on CPU took 4–15 s per turn (few-shot retrieval on SQL turns, attachment search). Cache the question embedding in Redis (keyed on normalised text), skip few-shot retrieval when the keyword router was confident, and evaluate a hosted embedding endpoint or a small GPU SKU for the container. | ≤ 0.5 s |
+| 3.2 | Upload latency | 24–53 s for a 1-page reference doc, ~22 s of it two reasoning calls. Skip `dynamic_qa_node` for the REFERENCE profile (it exists for COMPLEX invoices), run classification and extraction concurrently, cap `reasoning_effort` for REFERENCE. | ≤ 15 s |
+| 3.3 | Upload progress | Reuse `_progress_emitter()` + the Redis pub/sub channel so the chip streams `reading → extracting → matching` instead of one spinner. | — |
+| 3.4 | One chat path | Decide sync or async queue and delete the other; the flag has broken four tests and holds a queue that is empty at this volume. | — |
+| 3.5 | Prompt caching | Add the A4-style static-prefix marker to the summary, RAG and F26 narration prompts, not only SQL. | — |
+
+### Phase 4 — Product UX (~1.5 d)
+
+| # | Item | Solution |
+|---|---|---|
+| 4.1 | Match at upload | Run `find_candidate_invoices()` inside `_extract_attachment()`; return `candidate_invoice_ids` + `match_tier` on `AttachmentOut` (today both are empty until the first turn). |
+| 4.2 | Richer chip | `AttachmentChip.tsx` shows type, number, party, **date**, total, **line count**, **match status** ("matches DC-2026-1120 by PO number" / "no match yet"), and **Compare / Read buttons** that send `attachment_intent` — this removes the clarify card for the common case. |
+| 4.3 | Extraction confidence gate | Attachments carry `field_confidence` like invoices (Feature 27 emits it); a low-confidence `doc_number` yields "I read the PO number as X — correct?" before any Tier 1 miss. |
+| 4.4 | Limits surfaced | Composer shows "3 of 5 documents" and disables at the cap instead of the 409; accept images (PNG/JPG — Doc Intelligence and the extraction agent already handle them). |
+| 4.5 | Show what was read | On upload, a collapsible "here's what I read" table (lines, totals, terms) so extraction errors are caught before a wrong comparison. |
+
+### Phase 5 — World-class AP/AR capabilities (2–3 weeks, after Phases 1–4)
+
+| # | Capability | Solution sketch |
+|---|---|---|
+| 5.1 | Three-way match as a first-class object with tenant tolerances | `MatchPolicy` per tenant (qty ±%, price ±%, date window); `ThreeWayMatch` row linking PO, GRN/DN, invoice with per-line outcome; chat and Auditor both read it |
+| 5.2 | Persisted comparisons | Every compare/reconcile writes a `DocumentComparison` row keyed to the invoice; shown on the invoice page and the Auditor console, not only in chat |
+| 5.3 | Actions from findings | "Short-pay", "raise dispute", "request credit note", "hold invoice" as one-click, audit-logged actions on the comparison card (today: deep-links only, D6) |
+| 5.4 | Email-in for reference documents | Extend Feature 14's inbound address to accept PO/statement/remittance and attach to a tenant "inbox" session |
+| 5.5 | Proactive reconciliation | On every statement/remittance arrival, run reconcile and raise a notification ("1 invoice on Benelux's statement is missing on our side") — chat becomes the explanation surface, not the trigger |
+| 5.6 | Scheduled vendor-statement positions | A sweep that publishes a per-vendor open-position table from the latest statement vs `Invoice` rows |
+| 5.7 | Explainable confidence | Every figure in an answer links to its source cell/page; every extracted field carries confidence and a verify affordance |
+| 5.8 | Tenant-tunable behaviour | Matching tolerances, currency handling, which doc types auto-compare, verbosity — in Settings next to the existing style controls |
+| 5.9 | Evaluation as infrastructure | Thumbs-down → review queue → golden bank automatically; weekly per-region regression report from `caj-benchmark-eval` |
+| 5.10 | Latency budget | p95: compare ≤ 5 s, upload ≤ 15 s, content answer ≤ 8 s — enforced by the judge alert's sibling on `chat_turn.latency_ms` |
+| 5.11 | Streaming everywhere | Upload stages, comparison rows as they compute, answer tokens (A3 already does the last) |
+
+### Explicitly not doing
+
+LangGraph checkpointer (Task 6.12 cancelled 2026-09-04) · vector memory over chat history · gpt-4o fast tier (single model until Phase 3 measures a need) · Stage 8 as-is (what-if shows it would create a second Front Door) · vendor-side matching that converts currencies (hard rule 3 stands).
+
+### Memory model after Phase 2 (for reference)
+
+| Memory | Today | After Phase 2 |
+|---|---|---|
+| Conversation history | 50 msgs → 3,000 tok, plain turns only | + rolling summary; attachment turns get 3-turn summaries |
+| Document state | one `attachment_id` per turn, row remembers match | all session attachments visible; `attachment_ids` per turn; focus carries the active doc |
+| Entity focus | none (substring match per turn) | `ChatSession.focus` from each result |
+| Answer cache | `(tenant, normalized_q)`, 1 h, skipped for follow-ups and attachments | + rules-version hash |
+| Long-term | Trainer rules, chat rules, style in Postgres | unchanged |
+
 # PART 1 — Chat Attached Documents (PO/Quotation grounding, Gap 366)
 
 ## Overview

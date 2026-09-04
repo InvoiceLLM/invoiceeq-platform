@@ -134,6 +134,23 @@ export interface ChatMessage {
 
   /** The deterministic diff table from `compare_reference_to_invoices()` (D5). */
   attachment_comparison?: AttachmentComparison;
+  /**
+   * Feature 26 Phase 2.3 (Gap 387): two ATTACHED documents compared to each
+   * other -- a PO against the delivery note it was received under -- rather
+   * than an attachment against an invoice. `line_items` / `unmatched` carry the
+   * same shape they do for an invoice comparison, so a renderer written for one
+   * works for the other; this key is what says which comparison was run.
+   */
+  attachment_pair_comparison?: {
+    mode: string;
+    documents: Array<{
+      attachment_id: string;
+      doc_type?: string | null;
+      doc_number?: string | null;
+      party_name?: string | null;
+    }>;
+    comparison?: unknown;
+  };
 
   /** 0-3 deep-links (D6). Rendered as links; chat never invokes them. */
   suggested_actions?: SuggestedAction[];
@@ -206,6 +223,9 @@ export interface SendMessageRequest {
   // actually populates it; the field is declared here so the hook has a type to
   // fill rather than widening the request shape ad hoc.
   attachment_id?: string;
+  // Gap 432: the clarify card's choice as a structured field ("read" |
+  // "compare"). The backend honours it before its keyword classifier.
+  attachment_intent?: "read" | "compare";
 }
 
 /** POST /chat/sessions/{id}/message — response: returns either ChatJobResponse (202 async) or ChatMessage (sync) */

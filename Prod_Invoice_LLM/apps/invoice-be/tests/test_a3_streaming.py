@@ -186,7 +186,9 @@ def test_exactly_the_four_phrasing_sites_stream_and_generation_does_not():
     import inspect
 
     src = inspect.getsource(query_agent)
-    assert src.count("_answer_text(llm, system_prompt, progress)") == 2, "the two F26 narrations"
+    # Three since Gap 387 (Phase 2.3): compare, content, and the attachment-pair
+    # narration -- all three phrase a table Python already computed.
+    assert src.count("_answer_text(llm, system_prompt, progress)") == 3, "the three F26 narrations"
     assert "_answer_text(fast_llm, summary_prompt, progress)" in src, "chat.sql_summary"
     assert '_answer_text(fast_llm, f"{system_prompt}\\nUser Query: {wrapped_user_message}", progress)' in src, "chat.rag_answer"
     # SQL generation is structured output and must never go through here.

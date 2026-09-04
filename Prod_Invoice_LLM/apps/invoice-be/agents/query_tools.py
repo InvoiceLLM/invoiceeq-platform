@@ -611,3 +611,118 @@ def compute(operation: str, values: Iterable[Any]) -> ComputeResult:
         ],
     )
 
+
+
+# ---------------------------------------------------------------------------
+# Feature 26 Phase 5 (Gap 449) — date arithmetic as a function, not a guess
+# ---------------------------------------------------------------------------
+#
+# "Is this invoice within the contract's 90-day price validity?" and "how many
+# days overdue is this?" are date arithmetic, and a language model does date
+# arithmetic by recalling what similar dates usually imply. The F26 benchmark's
+# S22 recorded exactly that: a confident answer produced without the subtraction
+# ever being performed. This module already exists because the same argument was
+# made about money (see `compute` above); dates are the other half of it.
+
+
+def _as_date(value: Any) -> Optional["date"]:
+    """A date from an ISO string, a `date`, or a `datetime`. None otherwise.
+
+    Never a guess: an unparseable value returns None and the caller reports that
+    it could not do the arithmetic, which is the honest outcome and the one the
+    model cannot produce on its own.
+    """
+    from datetime import date as _date, datetime as _datetime
+
+    if value is None:
+        return None
+    if isinstance(value, _datetime):
+        return value.date()
+    if isinstance(value, _date):
+        return value
+    text = str(value).strip()[:10]
+    try:
+        return _date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def date_math(
+    operation: str,
+    start: Any = None,
+    end: Any = None,
+    days: Optional[int] = None,
+) -> dict:
+    """Deterministic date arithmetic. `status` is "ok" or "error".
+
+    Three operations, each the shape of a question this product is actually
+    asked:
+
+    `days_between` — `end - start`, signed. Negative means `end` precedes
+    `start`, which is information, not an error.
+
+    `add_days`     — `start + days`, for "when does a Net 45 invoice fall due?"
+                     and "when does a 90-day validity window close?".
+
+    `within_window`— is `end` inside `[start, start + days]`? Answers the
+                     contract-validity and date-tolerance questions directly,
+                     and returns the window it used so the answer can say which
+                     window that was.
+
+    Every result carries the inputs it used. A date answer whose window is not
+    stated is unauditable, and this product's whole argument is that a figure
+    without its derivation is worth less than no figure.
+    """
+    from datetime import timedelta as _timedelta
+
+    start_date, end_date = _as_date(start), _as_date(end)
+
+    def _error(message: str) -> dict:
+        return {"status": "error", "operation": operation, "error": message}
+
+    if operation == "days_between":
+        if start_date is None or end_date is None:
+            return _error("Both dates are required and must be readable as dates.")
+        return {
+            "status": "ok",
+            "operation": operation,
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat(),
+            "days": (end_date - start_date).days,
+        }
+
+    if operation == "add_days":
+        if start_date is None or days is None:
+            return _error("A start date and a number of days are required.")
+        result = start_date + _timedelta(days=int(days))
+        return {
+            "status": "ok",
+            "operation": operation,
+            "start": start_date.isoformat(),
+            "days": int(days),
+            "result": result.isoformat(),
+        }
+
+    if operation == "within_window":
+        if start_date is None or end_date is None or days is None:
+            return _error("A start date, an end date and a window length are required.")
+        window_end = start_date + _timedelta(days=int(days))
+        return {
+            "status": "ok",
+            "operation": operation,
+            "window_start": start_date.isoformat(),
+            "window_end": window_end.isoformat(),
+            "subject": end_date.isoformat(),
+            "within": start_date <= end_date <= window_end,
+            "days_outside": 0
+            if start_date <= end_date <= window_end
+            else min(abs((end_date - start_date).days), abs((end_date - window_end).days)),
+        }
+
+    return _error(f"Unknown operation {operation!r}; expected one of {DATE_OPERATIONS}.")
+
+
+DAYS_BETWEEN = "days_between"
+ADD_DAYS = "add_days"
+WITHIN_WINDOW = "within_window"
+DATE_OPERATIONS = (DAYS_BETWEEN, ADD_DAYS, WITHIN_WINDOW)

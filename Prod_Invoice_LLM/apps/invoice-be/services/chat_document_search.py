@@ -44,6 +44,7 @@ import fitz
 from chroma_client import (
     _collection_space,
     _to_cosine_distance,
+    embed_query,
     get_chat_doc_collection,
     get_embeddings,
 )
@@ -117,7 +118,12 @@ def index_attachment_chunks(attachment, tenant_id) -> int:
         return 0
 
     try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        # Gap 446: an attachment may now be a PNG/JPEG on the Azure path. PyMuPDF
+        # opens both; the filetype hint has to follow the file, or it raises on an
+        # image and the document is stored with no searchable text at all.
+        suffix = (attachment.blob_path or "").lower().rsplit(".", 1)[-1]
+        filetype = suffix if suffix in ("png", "jpg", "jpeg") else "pdf"
+        doc = fitz.open(stream=pdf_bytes, filetype=filetype)
     except Exception as e:
         logger.error("Chat attachment %s: failed to open PDF for indexing: %s", attachment_id, e)
         return 0
@@ -221,7 +227,7 @@ def search_attachment_chunks(
         collection = get_chat_doc_collection(str(tenant_id))
         collection_space = _collection_space(collection)
         results = collection.query(
-            query_embeddings=get_embeddings([query]),
+            query_embeddings=[embed_query(query)],
             n_results=max(1, int(limit)),
             where={ATTACHMENT_ID_METADATA_KEY: str(attachment_id)},
         )

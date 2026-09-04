@@ -66,7 +66,82 @@ export interface ChatAttachmentSummary {
   file_size_bytes?: number;
   candidate_invoice_ids?: string[];
   confirmed_invoice_ids?: string[];
+  // Feature 26 Phase 4 (Gap 444/445). Everything below arrives with the upload
+  // response, so the chip can say what was read and what it matched BEFORE the
+  // user asks anything -- which is the only moment an extraction mistake is
+  // cheap to correct.
+  line_count?: number;
+  /** 1 = document number, 2 = party + date window, 3 = content similarity, 0 = none. */
+  match_tier?: number | null;
+  match_summary?: string | null;
+  attachment_count?: number;
+  attachment_limit?: number;
+  extraction_preview?: AttachmentExtractionPreview | null;
+  /** Fields the extractor was unsure of, worth confirming before a match. */
+  low_confidence_fields?: string[];
+  /**
+   * Feature 26 Phase 3.3 (Gap 452). Present when extraction was queued on the
+   * worker: subscribe to `/api/chat/jobs/{id}/stream` for the stages. Absent
+   * when the backend extracted inline (Redis down), in which case the summary
+   * is already final.
+   */
+  extraction_job_id?: string | null;
 }
+
+/** Gap 452: the worker's stage names, and what the chip says for each. */
+export const ATTACHMENT_STAGE_LABELS: Record<string, string> = {
+  queued: "Queued",
+  reading_document: "Reading the document",
+  extracting_fields: "Extracting the fields",
+  indexing_text: "Indexing the text",
+  matching_invoices: "Looking for matching invoices",
+  attachment_ready: "Ready",
+  attachment_failed: "Could not read this document",
+};
+
+/** What the "here is what I read" panel renders (`_extraction_preview()`). */
+export interface AttachmentExtractionPreview {
+  doc_type?: string | null;
+  doc_number?: string | null;
+  party_name?: string | null;
+  doc_date?: string | null;
+  currency?: string | null;
+  subtotal?: number | null;
+  tax_amount?: number | null;
+  grand_total?: number | null;
+  payment_terms?: string | null;
+  delivery_terms?: string | null;
+  line_count?: number;
+  lines?: Array<{
+    description?: string | null;
+    quantity?: number | null;
+    unit_price?: number | null;
+    amount?: number | null;
+  }>;
+  referenced_document_count?: number;
+}
+
+/**
+ * Gap 444: the match proposal as one short phrase for the chip.
+ *
+ * The backend already composes `match_summary`; this exists for the case where
+ * an older row has none, so the chip still says something true rather than
+ * falling silent about whether a match was found.
+ */
+export function matchStatusLabel(a: ChatAttachmentSummary): string {
+  if (a.match_summary) return a.match_summary;
+  const count = a.candidate_invoice_ids?.length ?? 0;
+  if (!count) return "no matching invoice found yet";
+  return count === 1 ? "1 possible match" : `${count} possible matches`;
+}
+
+/** Gap 445: which fields to query before trusting a match, in plain words. */
+export const CONFIDENCE_FIELD_LABELS: Record<string, string> = {
+  doc_number: "document number",
+  grand_total: "total",
+  party_name: "party name",
+  doc_date: "document date",
+};
 
 /**
  * The four states of one attachment in the composer (§P2.6.2).
@@ -80,7 +155,16 @@ export interface ChatAttachmentSummary {
  */
 export type AttachmentState =
   | { status: "uploading"; filename: string; progress: number }
-  | { status: "extracting"; filename: string }
+  | {
+      status: "extracting";
+      filename: string;
+      /**
+       * Feature 26 Phase 3.3 (Gap 452): which stage the worker is on. Absent
+       * while the upload request is still in flight (nothing has been reported
+       * yet); set from the job stream once extraction is queued.
+       */
+      stage?: string;
+    }
   | { status: "ready"; filename: string; attachment: ChatAttachmentSummary }
   | {
       status: "failed";

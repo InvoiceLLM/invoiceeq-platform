@@ -546,6 +546,69 @@ def get_document_collection(tenant_id: str):
     )
 
 
+#: Gap 442. How long a question's vector is worth keeping. The model is
+#: deterministic, so the only thing that can invalidate an entry is a model
+#: change -- which is a deploy, and a deploy is a new process with a new prefix.
+_QUERY_EMBEDDING_TTL_SECONDS = 24 * 60 * 60
+_QUERY_EMBEDDING_PREFIX = "query_embedding:bge-m3:v1:"
+
+
+def embed_query(text: str) -> list[float]:
+    """Gap 442: one question's vector, cached in Redis across processes.
+
+    bge-m3 on CPU measured 4-15 s per chat turn in the Feature 26 benchmark --
+    the single largest latency item in the product, and paid again on every
+    repeat of a question the model would answer identically. Encoding is
+    deterministic, so a cache here is not an approximation of the right answer;
+    it IS the right answer, computed earlier.
+
+    Deliberately NOT applied to `get_embeddings()` as a whole: indexing embeds
+    thousands of chunk texts that are each seen exactly once, so caching those
+    would be a Redis write per chunk for a key nothing ever reads.
+
+    Every failure path falls through to encoding. A cache that is down must cost
+    latency, never an answer.
+    """
+    import hashlib
+
+    key = _QUERY_EMBEDDING_PREFIX + hashlib.sha256(
+        " ".join((text or "").split()).lower().encode("utf-8")
+    ).hexdigest()
+
+    client = None
+    try:
+        import json as _json
+
+        import redis
+        from config import get_settings
+
+        settings = get_settings()
+        # A mocked embedder produces vectors that mean nothing outside the
+        # process that made them, and a test that patches `get_embeddings()`
+        # must see its own patch rather than a real vector some earlier run
+        # left in Redis under the same question. So mock mode does not cache.
+        if settings.MOCK_EMBEDDINGS:
+            return get_embeddings([text])[0]
+        client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        hit = client.get(key)
+        if hit:
+            return _json.loads(hit)
+    except Exception as e:
+        logger.debug("Query embedding cache read skipped: %s", e)
+        client = None
+
+    vector = get_embeddings([text])[0]
+
+    if client is not None:
+        try:
+            import json as _json
+
+            client.set(key, _json.dumps(vector), ex=_QUERY_EMBEDDING_TTL_SECONDS)
+        except Exception as e:
+            logger.debug("Query embedding cache write skipped: %s", e)
+    return vector
+
+
 @tracked_dependency("rag.embeddings", "InProc")
 def get_embeddings(texts: list[str]) -> list[list[float]]:
     """
@@ -992,7 +1055,9 @@ def query_invoice_chunks(tenant_id: str, query_text: str, limit: int = 5) -> lis
     # whether or not the re-embed migration has been run for this tenant yet.
     collection_space = _collection_space(collection)
 
-    query_embeddings = get_embeddings([query_text])
+    # Gap 442: cached, for the same reason `_retrieve_sql_examples` is -- this is
+    # a question, not a corpus chunk.
+    query_embeddings = [embed_query(query_text)]
 
     # Gap 22: Fetch a larger candidate pool for reranking
     candidate_limit = limit * 3

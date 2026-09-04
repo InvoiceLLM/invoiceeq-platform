@@ -1469,6 +1469,7 @@ def handle_process_chat_job(
     tenant_id: str,
     db_session: Optional[Session] = None,
     attachment_id: Optional[str] = None,
+    attachment_ids: Optional[list] = None,
     trace_id: Optional[str] = None,
     request_id: Optional[str] = None,
 ) -> dict:
@@ -1541,6 +1542,7 @@ def handle_process_chat_job(
                 # queue simply never carried it. With it threaded, the pre-route
                 # gate fires in the worker exactly as it does in the request.
                 attachment_id=attachment_id,
+                attachment_ids=attachment_ids,
             )
             turn_latency_ms = (time.perf_counter() - turn_started) * 1000.0
 
@@ -1698,3 +1700,73 @@ def handle_process_chat_job(
             with Session(engine) as session:
                 return _execute(session)
 
+
+# ---------------------------------------------------------------------------
+# Feature 26 Phase 3.3 (Gap 452) — attachment extraction on the worker
+# ---------------------------------------------------------------------------
+def handle_extract_attachment(job_id: str, attachment_id: str, tenant_id: str) -> None:
+    """Extract one chat attachment, reporting each stage as it goes.
+
+    This is the whole point of moving extraction off the request: the pipeline
+    was always doing four distinguishable things -- reading the file, extracting
+    fields, indexing the text, looking for matching invoices -- and the browser
+    could see none of them because an HTTP request has nowhere to publish. Here
+    each stage is published to the job's channel, which the FE is already
+    subscribed to for chat progress.
+
+    Every exit path finishes the job. A browser waiting on the stream must be
+    told the outcome even when the outcome is a failure, or the chip spins for
+    ever on a document that will never arrive.
+    """
+    from services.chat_queue import ChatQueueService
+
+    def progress(stage: str) -> None:
+        ChatQueueService.publish_progress(job_id, stage, {"attachment_id": attachment_id})
+
+    session = None
+    try:
+        from uuid import UUID
+
+        from models import ChatAttachment
+        from services.attachment_extraction import STAGE_FAILED, STAGE_READY, extract_attachment
+
+        with Session(engine) as session:
+            row = session.get(ChatAttachment, UUID(str(attachment_id)))
+            if row is None:
+                # The session was deleted, or the TTL sweeper got there first.
+                # Not an error worth failing loudly: there is nothing to extract
+                # and nobody left to tell.
+                logger.warning("Attachment %s vanished before extraction", attachment_id)
+                ChatQueueService.complete_job(
+                    job_id, tenant_id, {"attachment_id": attachment_id, "status": "gone"}
+                )
+                return
+
+            row = extract_attachment(row, session, progress=progress)
+
+            if row.extraction_status == "EXTRACTED":
+                progress(STAGE_READY)
+            else:
+                progress(STAGE_FAILED)
+
+            ChatQueueService.complete_job(
+                job_id,
+                tenant_id,
+                {
+                    "attachment_id": str(row.id),
+                    "extraction_status": row.extraction_status,
+                    "doc_type": row.doc_type,
+                    "doc_number": row.doc_number,
+                    "party_name": row.party_name,
+                    "grand_total": row.grand_total,
+                    "match_summary": row.match_summary,
+                    "match_tier": row.match_tier,
+                    "candidate_invoice_ids": [str(i) for i in (row.candidate_invoice_ids or [])],
+                },
+            )
+    except Exception as e:
+        logger.error("Attachment extraction job %s failed: %s", job_id, e)
+        try:
+            ChatQueueService.fail_job(job_id, tenant_id, str(e))
+        except Exception:
+            pass

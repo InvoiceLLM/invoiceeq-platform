@@ -55,10 +55,17 @@ class Settings(BaseSettings):
     #   5. REDIS-DOWN FALLBACK. With Redis unreachable,
     #      POST /chat/sessions/{id}/message still answers via the synchronous
     #      path and returns no 5xx.
-    # Deliberately left False by the change that wrote these criteria: stating
-    # the bar and clearing it are two different jobs, and the second one belongs
-    # to whoever holds the verification evidence.
-    ENABLE_ASYNC_CHAT_QUEUE: bool = False
+    # Founder decision, 2026-09-04 (Gap 451): BOTH paths stay, and the queue is
+    # the one that is on. The synchronous path is kept deliberately -- it is the
+    # Redis-down fallback named in criterion 5 above, and deleting it would make
+    # an unreachable Redis a 5xx instead of a slower answer.
+    #
+    # Why the queue is now the default rather than the exception: it is the only
+    # path with a progress channel, and Feature 26 Phase 3.3 puts attachment
+    # extraction on it (Gap 452) so an upload can report reading -> extracting ->
+    # matching instead of holding one HTTP request open for 25-50 seconds. It is
+    # also the only path that enforces Gap 364's per-tenant concurrency ceiling.
+    ENABLE_ASYNC_CHAT_QUEUE: bool = True
 
     # Feature 6.1 item A3: stream the four *phrasing* calls of a chat turn --
     # the SQL summary, the RAG answer and both Feature 26 narrations -- as

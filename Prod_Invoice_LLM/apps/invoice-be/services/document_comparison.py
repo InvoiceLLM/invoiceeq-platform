@@ -762,6 +762,11 @@ def _line_of(row: Any) -> Dict[str, Any]:
         "hsn_sac_code": get("hsn_sac_code"),
         "uom": get("uom"),
         "line_number": get("line_number"),
+        # Gap 454: which page the row was read from, carried so an answer can say
+        # where a figure came from. Null whenever the extractor did not know --
+        # never defaulted to 1, because a wrong page reference sends a reader to
+        # the wrong place to check a number, which is worse than no reference.
+        "page_number": get("page_number"),
     }
 
 
@@ -858,7 +863,29 @@ def _match_lines(
     return pairs, unmatched_ref, unmatched_inv
 
 
-def _line_row(ref: Dict[str, Any], inv: Dict[str, Any], tier: str, mode: str) -> Dict[str, Any]:
+def _within_tolerance(reference, invoice, percent: Optional[float]) -> bool:
+    """Gap 447: is this delta inside the tenant's band?
+
+    False whenever the question cannot be answered -- no band, a missing side, or
+    a zero reference (any delta from zero is infinite in percentage terms). The
+    fail-closed direction is deliberate: an unanswerable tolerance question must
+    report the variance, never swallow it.
+    """
+    if not percent or percent <= 0:
+        return False
+    ref, inv = _to_decimal(reference), _to_decimal(invoice)
+    if ref is None or inv is None or ref == 0:
+        return False
+    return abs((inv - ref) / ref) * 100 <= Decimal(str(percent))
+
+
+def _line_row(
+    ref: Dict[str, Any],
+    inv: Dict[str, Any],
+    tier: str,
+    mode: str,
+    policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """One rendered comparison row. Every figure is Decimal-derived and every
     delta is None when either side is missing -- absent is never zero (Gap 283)."""
     def _delta(a, b):
@@ -869,6 +896,12 @@ def _line_row(ref: Dict[str, Any], inv: Dict[str, Any], tier: str, mode: str) ->
 
     row: Dict[str, Any] = {
         "match_tier": tier,
+        # Gap 454: both sides' pages, separately. They are different documents,
+        # so one "page" field would have to pick a side and silently lose the
+        # other -- and "page 2 of the purchase order" and "page 2 of the invoice"
+        # are not the same claim.
+        "reference_page": ref.get("page_number"),
+        "invoice_page": inv.get("page_number"),
         "description": ref.get("description") or inv.get("description"),
         "hsn_sac_code": ref.get("hsn_sac_code") or inv.get("hsn_sac_code"),
         "uom": ref.get("uom") or inv.get("uom"),
@@ -893,6 +926,22 @@ def _line_row(ref: Dict[str, Any], inv: Dict[str, Any], tier: str, mode: str) ->
 
     quantity_differs = row["quantity_delta"] not in (None, "0")
     price_differs = row["price_delta"] not in (None, "0")
+
+    # Gap 447: a delta inside the tenant's band is still REPORTED -- the figure
+    # stays on the row -- but it is not a discrepancy, and saying so is the whole
+    # point of having a policy. Silently dropping the delta would be worse than
+    # having no tolerance at all.
+    policy = policy or {}
+    if quantity_differs and _within_tolerance(
+        ref.get("quantity"), inv.get("quantity"), policy.get("quantity_tolerance_percent")
+    ):
+        quantity_differs = False
+        row["quantity_within_tolerance"] = True
+    if price_differs and _within_tolerance(
+        ref.get("unit_price"), inv.get("unit_price"), policy.get("price_tolerance_percent")
+    ):
+        price_differs = False
+        row["price_within_tolerance"] = True
     if mode == QUANTITY_MODE:
         # Absent price is NOT a discrepancy here -- Feature 27 E4's quantity
         # rubric, and the founder's original symptom.
@@ -917,6 +966,7 @@ def compare_documents(
     mode: str = BOTH_MODE,
     *,
     correction_method: Optional[str] = None,
+    policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Deterministic line-item comparison of two extracted documents (B3/B7).
 
@@ -948,10 +998,20 @@ def compare_documents(
     inv_lines = [_line_of(r) for r in (doc_b.get("items") or [])]
     pairs, unmatched_ref, unmatched_inv = _match_lines(ref_lines, inv_lines)
 
-    line_items = [_line_row(ref_lines[i], inv_lines[j], tier, mode) for i, j, tier in pairs]
+    line_items = [_line_row(ref_lines[i], inv_lines[j], tier, mode, policy) for i, j, tier in pairs]
+    if policy:
+        # Stated in the output, not merely applied: a reader must be able to see
+        # WHICH band produced "no discrepancy" (Feature 27 A6's own rule about
+        # unstated assumptions, applied to tolerances).
+        assumptions.append(
+            "Tolerances applied: quantity "
+            f"{policy.get('quantity_tolerance_percent', 0)}%, price "
+            f"{policy.get('price_tolerance_percent', 0)}%."
+        )
 
     return {
         "mode": mode,
+        "policy": policy or None,
         "correction_method": effective_correction,
         "assumptions": assumptions,
         "line_items": line_items,
@@ -1084,3 +1144,82 @@ def reconcile_referenced_documents(
         "deductions": list(deductions or []),
         "unreferenced_invoices": unreferenced,
     }
+
+
+# ---------------------------------------------------------------------------
+# Gap 447 — the tenant's tolerances, read once per comparison
+# ---------------------------------------------------------------------------
+def get_match_policy(tenant_id: Any, db_session: Session) -> Dict[str, Any]:
+    """One tenant's tolerance band, or the zero band.
+
+    The zero band is not a placeholder for "unconfigured" -- it is the product's
+    behaviour before this table existed, and it is the correct default: a
+    tolerance is permission to ignore a real difference, and nobody should be
+    granted that by omission.
+    """
+    from models import MatchPolicy
+
+    zero = {
+        "quantity_tolerance_percent": 0.0,
+        "price_tolerance_percent": 0.0,
+        "date_tolerance_days": 0,
+    }
+    try:
+        row = db_session.exec(
+            select(MatchPolicy).where(MatchPolicy.tenant_id == tenant_id)
+        ).first()
+    except Exception as e:
+        logger.warning("Match policy lookup failed for tenant %s: %s", tenant_id, e)
+        return zero
+    if row is None:
+        return zero
+    return {
+        "quantity_tolerance_percent": row.quantity_tolerance_percent,
+        "price_tolerance_percent": row.price_tolerance_percent,
+        "date_tolerance_days": row.date_tolerance_days,
+    }
+
+
+def record_comparison(
+    *,
+    db_session: Session,
+    tenant_id: Any,
+    kind: str,
+    payload: Dict[str, Any],
+    invoice_id: Any = None,
+    attachment_id: Any = None,
+    session_id: Any = None,
+    doc_type: Optional[str] = None,
+    mode: Optional[str] = None,
+    outcome: Optional[str] = None,
+):
+    """Gap 448: keep the comparison as a record, not only as a sentence.
+
+    Best-effort by construction. The user has already been given a correct
+    answer by the time this runs; failing the turn because an audit row could not
+    be written would trade the thing they asked for against the thing we wanted.
+    """
+    from models import DocumentComparison
+
+    try:
+        row = DocumentComparison(
+            tenant_id=tenant_id,
+            invoice_id=invoice_id,
+            attachment_id=attachment_id,
+            session_id=session_id,
+            kind=kind,
+            doc_type=doc_type,
+            mode=mode,
+            outcome=outcome,
+            payload=payload,
+        )
+        db_session.add(row)
+        db_session.commit()
+        return row
+    except Exception as e:
+        logger.error("Recording comparison failed (tenant %s, kind %s): %s", tenant_id, kind, e)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return None

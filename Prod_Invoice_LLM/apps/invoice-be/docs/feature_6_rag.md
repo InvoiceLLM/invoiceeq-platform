@@ -64,6 +64,115 @@ Chat-history behaviour is deliberately unchanged: the staged row is still autofl
 
 **Update (Gap 219, Aug 12, 2026) — conciseness + per-tenant response style**: `agents/query_agent.py` injects `_CONCISENESS_INSTRUCTION` ("Answer in 1–3 sentences unless asked for detail") into SQL, RAG, and CHAT system prompts. `_get_chat_style_block()` reads `chat_style` from the tenant's global INBOUND template (saved via `POST /trainer/sessions/{id}/commit-behavior`, BE Gap 221) and adds length/tone/custom-instruction hints.
 
+### Current algorithm — as built, verified against code 2026-09-04
+
+Read from `agents/query_agent.py` (5,641 lines), `agents/query_tools.py`, `routers/chat.py`, `services/chat_queue.py`, `chroma_client.py`, `services/document_comparison.py`, `services/chat_document_search.py`. Supersedes the "Functionality" narrative above where they differ; the per-gap history below it is unchanged.
+
+#### 1. Turn pipeline (`_run_query_agent()`, one sequential Python function)
+
+| # | Step | Function | What happens | LLM call? |
+|---|---|---|---|---|
+| 0 | Entry | `routers/chat.py::post_chat_message()` | Sandbox charge → stage user row → if `ENABLE_ASYNC_CHAT_QUEUE` and Redis up: enqueue, return `202 {job_id}`; else `run_sync_chat_turn()` inline | — |
+| 1 | Attachment gate | `_run_attached_document_turn()` | If `attachment_id` present, the whole turn goes to §6 and never reaches routing | — |
+| 2 | Answer cache | `get_cached_answer()` | Redis, key `(tenant_id, normalized_query)`, TTL 1h. Skipped when `_is_narrowing_followup()` (Gap 423). Hit → return, no model | — |
+| 3 | Context assembly | `get_chat_history()`, `_get_global_business_rules()`, `_get_vendor_business_rules()`, `_chat_rules_block()`, `_get_chat_style_block()`, `_get_tenant_stats_summary()`, `_wrap_user_input()` | See §3 Memory and §5 Prompts | — |
+| 4 | Route | `classify_query()` | Keyword pass first (`_SQL_KEYWORDS` / `_CHAT_KEYWORDS`, word-boundary). Only if neither matches → structured-output LLM call → `SQL` / `RAG` / `CHAT`. On LLM error → `RAG` | 0 or 1 (fast) |
+| 4a | Route override | `_is_narrowing_followup()` + `get_prior_turn_sql()` | "explain those 3" style back-reference with a prior SQL turn forces `SQL` (Gap 237) | — |
+| 5 | SQL route | `build_sql_system_prompt()` → `run_sql_generation_loop()` | Up to 3 attempts: structured-output SQL generation → `_normalize_string_equality()` → `assert_tenant_isolation_on_ast()` (sqlglot AST, Gap 414) → `execute_generated_sql()`. Postgres error text fed back for repair. Zero rows → fallbacks (§4) → `_diagnose_zero_rows()` (C3) | 1–3 (reasoning, `_generation_llm()`) |
+| 5b | SQL summary | `_full_record_block_for()`, `_computed_figures_block_for()`, `_answer_text()` | Whole rows for ≤3 identified invoices; Python-computed totals via `query_tools.compute()` (Gap 315); streamed prose summary; results table appended verbatim | 1 (fast, streamed) |
+| 6 | RAG route | `query_invoice_chunks()` → `_wrap_retrieved_document_text()` → `_answer_text()` | Hybrid retrieval (§4); chunks delimited + attributed (Gap 388); citations validated against `Invoice` rows; streamed answer + `**Citations:**` links | 1 (fast, streamed) |
+| 7 | CHAT route | `llm.invoke()` | Persona + tenant stats + history, no retrieval. Scoped to invoice questions only | 1 |
+| 8 | Post | `set_cached_answer()`, `judge_evidence`, `turn.*` telemetry | Cache only SQL/RAG successes that are not follow-ups; Gap 237 count-reconciliation footnote; `submit_turn_judgement()` fires the background quality judge | judge: async |
+
+#### 2. Graph implementation
+
+| Aspect | State |
+|---|---|
+| LangGraph / `StateGraph` / checkpointer | **None.** `agents/query_agent.py` has zero `StateGraph`, `create_react_agent` or `langgraph.checkpoint` references. `langgraph` is present in `.venv` only as a transitive dependency of `langchain` |
+| Orchestration model | Imperative pipeline: one function, `if route == "SQL"` / `if route == "RAG"` / `elif` CHAT. C3 re-dispatches SQL→RAG by mutating `route` mid-function |
+| History | Feature 21's LangGraph orchestrator was built, benchmarked head-to-head, measured slower and dearer, and deleted 2026-08-25 (Gap 316). Task 6.12's `PostgresSaver` half was cancelled 2026-09-04 for the same reason |
+| State between steps | Local variables inside `_run_query_agent()`; the `turn` telemetry object; `SqlGenerationOutcome` dataclass from the SQL loop |
+| Progress events | `_progress_emitter()` → `on_progress` callback → Redis pub/sub → `stream_chat_job()` SSE (Gap 280/365). Steps: `understanding_question`, `route_selected`, `generating_sql`, `running_query`, `summarizing_results`, `searching_documents`, `composing_answer`, `answer_ready` |
+
+#### 3. Memory management
+
+| Memory | Where | Mechanism | Budget / TTL |
+|---|---|---|---|
+| Conversation history | `get_chat_history()` | Last 50 `ChatMessage` rows for the session, newest first, `tiktoken cl100k_base` count, stop when over budget, reverse → `Role: content` transcript | 3,000 tokens |
+| Prior turn's SQL | `get_prior_turn_sql()` | Most recent assistant row with `generated_sql`; injected as a block so narrowing follow-ups can `WHERE ... AND` onto it (rule 9) | 2,000 chars |
+| Answer cache | `get_cached_answer()` / `set_cached_answer()` | Redis; SQL/RAG successes only; invalidated on Trainer commit/rollback (`_invalidate_chat_answer_cache()`) | 1 h |
+| Tenant stats | `_get_tenant_stats_summary()` | One ORM aggregate (count, spend, vendors, date range, status mix); orientation only | Redis 5 min |
+| SQL few-shot vectors | `_sql_example_vectors()` | Curated examples embedded once per process; top-k by cosine ≥ 0.45 | k=3, process-lifetime |
+| Result snapshot | `result_invoice_ids` → `ChatMessage.snapshot` | Invoice ids the answer was built from, for triage diffing | ≤200 ids |
+| Trainer rules | `_get_global_business_rules()`, `_get_vendor_business_rules()` | `ExtractionTemplate.constraints`, INBOUND + OUTBOUND Global unioned; vendor rules by name-substring match against the question | per turn, DB |
+| Chat rules (training) | `_chat_rules_block()` | `TenantChatRule` rows committed from thumbs-down triage (`POST /chat/rules/commit`) | per turn, DB |
+| Style | `_get_chat_style_block()` | `TenantChatSettings.response_length` / `tone` → hint sentences | per turn, DB |
+
+#### 4. Tools (deterministic, no LLM)
+
+| Tool | Location | Used by | Purpose |
+|---|---|---|---|
+| `execute_generated_sql()` | `query_agent.py` | SQL route | Read-only enforcement (word-boundary keyword check), AST tenant guard, run, render Markdown table |
+| `assert_tenant_isolation_on_ast()` | `query_agent.py` | SQL route | sqlglot parse; every physical-table SELECT must carry `tenant_id = '<id>'` as a conjunct (Gap 414/417) |
+| `_normalize_string_equality()` | `query_agent.py` | SQL route | `vendor_name = 'X'` → `LOWER(...) LIKE '%x%'`; `invoice_number =` stays exact |
+| `lookup_invoice_by_number_fallback()` | `query_agent.py` | zero rows | Regex-spotted invoice number → direct lookup |
+| `recover_missed_category_match()` / `category_search_fallback()` | `query_agent.py` | zero rows | Re-run the rule-6b OR-group over tags/items/vendor/customer |
+| `_diagnose_zero_rows()` → `_probe_identifiers()` → `_zero_rows_clarification()` | `query_agent.py` | zero rows (C3) | Identifying predicates alone → "narrowing dropped"; vector probe → "vector answered"; else fuzzy entity candidates (cutoff 0.75, max 3) → clarification card |
+| `query_tools.get_full_record()` | `query_tools.py` | SQL summary, F26 | Whole `Invoice` row + bounded document pages (≤3 invoices, 12k chars) |
+| `query_tools.compute()` | `query_tools.py` | SQL summary, F26 | `sum_by_currency`, `reconcile_line_items` — Decimal arithmetic, never blends currencies |
+| `query_tools.parse_results_table()` | `query_tools.py` | SQL summary | Markdown table → columns/rows for `compute()` |
+| `query_invoice_chunks()` | `chroma_client.py` | RAG, C3 probe | 3× candidate pool → cosine-normalised distance ≤ 0.49 → keyword boost (numbers/uppercase tokens) → rerank → top-`limit` |
+| `find_candidate_invoices()` | `document_comparison.py` | F26 | Tier 1 normalised `po_number` exact; Tier 2 vendor substring + date window; Tier 3 vector |
+| `compare_reference_to_invoices()` / `reconcile_referenced_documents()` | `document_comparison.py` | F26 | Field diff / statement reconciliation; every figure Python's |
+| `search_attachment_chunks()` | `chat_document_search.py` | F26 content branch | Per-attachment Chroma collection query |
+| `redact_query_internals()` | `query_agent.py` | every answer | Strips SQL/tenant ids from user-facing text (Gap 294) |
+| `_wrap_user_input()` / `_wrap_retrieved_document_text()` | `query_agent.py` | all routes | Delimiter markers + injection heuristics |
+
+No LangChain `@tool` decorators, no function-calling; the model never chooses a tool. Python decides, the model phrases.
+
+#### 5. System prompts
+
+| Prompt | Builder | Structure | Model |
+|---|---|---|---|
+| Router | inline in `classify_query()` | One paragraph defining SQL / RAG / CHAT; `QueryRoutingSchema` structured output | `_fast_llm()` |
+| SQL generation | `build_sql_system_prompt()` | **Above `SQL_PROMPT_TENANT_SECTION_MARKER` (static, cacheable, A4):** `CHAT_PERSONA_BLOCK` → `_HAND_TYPED_SCHEMA_BLOCK` + `_derived_schema_supplement()` → rules 1–11 (tenant filter, SELECT-only, status/sa_alerts, direction 4/4a, net question 5, JSONB casts 6, fuzzy names 6a, category OR-group 6b/6c, currency 7, null-SQL 8/8a, follow-ups 9, comparisons 10, details 11) → `_INJECTION_GUARD_INSTRUCTION`. **Below (per request):** tenant id literal, `_schema_linking_block_for()` (C4.1), `_sql_examples_block_for()` (C4.3), rule 6d line-item syntax (dialect-specific), tax/payment-status/attribute term blocks, tenant stats, trainer rules, chat rules, prior SQL, history. `SQLGenerationSchema` structured output | `_generation_llm()` (reasoning budget, A1) |
+| SQL summary | inline f-string in `_run_query_agent()` | `CHAT_PERSONA_BLOCK` → "format a friendly summary" → style → line-item template → `_DETERMINISTIC_TOTALS_INSTRUCTION` or `_LLM_TOTALS_INSTRUCTION` → reconciliation exception → payment/attribute blocks → results + computed figures + full records → rules | `_fast_llm()`, streamed |
+| RAG answer | inline f-string | `CHAT_PERSONA_BLOCK` → "answer from documents, 1–3 sentences" → `_DOCUMENT_TEXT_GUARD_INSTRUCTION` → delimited chunks → tenant stats → rules → style → `_INJECTION_GUARD_INSTRUCTION` → history | `_fast_llm()`, streamed |
+| CHAT | inline f-string | `CHAT_PERSONA_BLOCK` → "ordinary conversation" → SCOPE (invoice questions only, no code) → tenant stats → style → guard → history | `_generation_llm()` |
+| Attachment narration (F26) | inline in `_run_attached_document_turn()` branches | Persona + "narrate this Python diff / reconciliation / spans; compute nothing" | `_fast_llm()` |
+| Zero-row clarification | `_zero_rows_clarification()` | **No LLM** — templated text + candidate list | — |
+
+`CHAT_PERSONA_BLOCK` = `agents/sage_prompts.py::PERSONA_BLOCK` (tax-domain knowledge: CGST/SGST/IGST, GSTIN/VAT/EIN, IRN/e-Way/Peppol, RCM; DATA HONESTY; ambiguous-name handling) with its tool-grounding tail swapped for `_CHAT_GROUNDING_BLOCK` (currency presentation, answer only from supplied context). Guards: `_INJECTION_GUARD_INSTRUCTION` wraps the user's text in `<<<USER_QUESTION_START/END>>>`; `_DOCUMENT_TEXT_GUARD_INSTRUCTION` wraps retrieved/attached text in `<<<DOCUMENT_TEXT_START/END>>>`.
+
+#### 6. Attached-document turn (Feature 26, `_run_attached_document_turn()`)
+
+| Step | Function | Behaviour |
+|---|---|---|
+| Intent | `_classify_attachment_intent()` | Keyword patterns + `_INTENT_BIAS_BY_DOC_TYPE` → `comparison` / `content` / `reconcile` / `clarify`. No LLM |
+| Clarify | — | Returns `attachment_clarification` card: "Read the document" vs "Compare to my invoices" |
+| Reconcile | `_run_attachment_reconcile_branch()` | ADVISORY types (`STATEMENT_OF_ACCOUNT`, `REMITTANCE_ADVICE`): `reconcile_referenced_documents()` → counts agree/disagree → table; fast LLM narrates |
+| Content | `_run_attachment_content_branch()` | `search_attachment_chunks()` → delimited spans → fast LLM answers; forbidden from comparing |
+| Compare | `find_candidate_invoices()` → confirmation → `compare_reference_to_invoices()` | Tier 1/2/3 match → `needs_confirmation` card → on confirm, Python diff → fast LLM narrates. `currency_mismatch` reported, never converted |
+
+#### 7. Async, streaming and evaluation
+
+| Piece | Where | Mechanism |
+|---|---|---|
+| Async queue | `services/chat_queue.py::ChatQueueService`, `queue_worker/handlers.py::handle_process_chat_job` | Redis list; capacity error → 503; worker runs `run_sync_chat_turn()` |
+| Progress + tokens | `_progress_emitter()`, `_answer_text()` (`_StreamedAnswer`, flush every 48 chars) | Redis pub/sub channel per job |
+| SSE | `stream_chat_job()` `GET /chat/jobs/{id}/stream` | Replays current status, subscribes, yields `data:` events until terminal or timeout |
+| Quality judge | `services/online_quality_judge.py::judge_turn()` | Background; scores faithfulness/persona against `judge_evidence` (route, context, executed queries); emits telemetry |
+| Telemetry | `telemetry.py` `tracked_llm_call()`, `turn.*` | Per-call spans: `chat.classify`, `chat.sql_generation`, `chat.sql_summary`, `chat.rag_answer`, `chat.conversational`; dependency spans for Chroma/Postgres (B1); `cached_tokens` / `reasoning_tokens` |
+| Feedback loop | `PUT /chat/messages/{id}/feedback`, `POST /chat/messages/{id}/triage`, `/chat/rules/*` | Thumbs → triage (snapshot diff, source verdict) → `TenantChatRule` commit → `_chat_rules_block()` next turn |
+
+#### 8. LLM deployments in use
+
+| Symbol | Resolves to (dev, 2026-09-04) | Used for |
+|---|---|---|
+| `_generation_llm()` | `gpt-5-mini`, reasoning effort + completion cap (A1) | SQL generation, CHAT route |
+| `_fast_llm()` | `gpt-5-mini` — `AZURE_OPENAI_FAST_DEPLOYMENT_NAME` is blank by founder decision; the `gpt-4o` fallback path exists but is inert | Routing, summaries, RAG answer, F26 narration |
+| Embeddings | `BAAI/bge-m3` SentenceTransformer, in-process, unit-norm | Chroma index/query, SQL example retrieval |
+
 ### Tasks
 - [x] **Task 6.1: Setup Chat Sessions & Threads API**
   - Implement endpoints:

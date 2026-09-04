@@ -28,12 +28,16 @@
 
 "use client";
 
+import { useState } from "react";
 import { FileText, Loader2, X, AlertTriangle } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import {
   attachmentFailureHeadline,
   docTypeBadgeLabel,
+  matchStatusLabel,
   truncateFilenameMiddle,
+  ATTACHMENT_STAGE_LABELS,
+  CONFIDENCE_FIELD_LABELS,
   EXTRACTION_FAILED_HINT,
   type AttachmentState,
 } from "@/lib/chatAttachments";
@@ -42,6 +46,17 @@ export type { AttachmentState };
 
 interface AttachmentChipProps {
   state: AttachmentState;
+  /**
+   * Feature 26 Phase 4 (Gap 444). Sends the question with an explicit
+   * `attachment_intent`, which is what removes the clarify card for the two
+   * cases that account for nearly every question: "read it" and "compare it".
+   */
+  onIntent?: (intent: "read" | "compare") => void;
+  /**
+   * Gap 445: the "here is what I read" panel is state local to the chip -- it
+   * is a disclosure of data the chip already holds, so threading a handler
+   * through two components to toggle it would buy nothing.
+   */
   /** Abort the in-flight upload. Only meaningful while uploading. */
   onCancel?: () => void;
   /** Detach — used from the ready and failed states. */
@@ -55,7 +70,9 @@ export default function AttachmentChip({
   state,
   onCancel,
   onRemove,
+  onIntent,
 }: AttachmentChipProps) {
+  const [showExtraction, setShowExtraction] = useState(false);
   const shortName = truncateFilenameMiddle(state.filename);
 
   // --- uploading -----------------------------------------------------------
@@ -117,7 +134,9 @@ export default function AttachmentChip({
         {/* No progress bar and no cancel: extraction happens server-side inside
             the upload request, so there is nothing to measure and nothing this
             client can abort. Saying "Reading document…" is the honest render. */}
-        <span className="text-slate-500 shrink-0">Reading document…</span>
+        <span className="text-slate-500 shrink-0" data-testid="chat-attachment-stage">
+          {(state.stage && ATTACHMENT_STAGE_LABELS[state.stage]) || "Reading document…"}
+        </span>
       </div>
     );
   }
@@ -164,6 +183,8 @@ export default function AttachmentChip({
 
   // --- ready ---------------------------------------------------------------
   const { attachment } = state;
+  const lineCount = attachment.line_count ?? 0;
+  const lowConfidence = attachment.low_confidence_fields ?? [];
   return (
     <div
       id="chat-attachment-chip"
@@ -196,9 +217,137 @@ export default function AttachmentChip({
         {/* Filename stays visible: doc_number/party_name can both be null on a
             document the extractor read only partially, and a chip with no
             identifying text at all would be unattributable. */}
+        {attachment.doc_date && (
+          <span className="text-[11px] text-slate-400">{attachment.doc_date}</span>
+        )}
+        {lineCount > 0 && (
+          <span className="text-[11px] text-slate-400">
+            {lineCount} {lineCount === 1 ? "line" : "lines"}
+          </span>
+        )}
         <span className="text-[11px] text-slate-500 truncate" title={attachment.filename}>
           {truncateFilenameMiddle(attachment.filename, 24)}
         </span>
+        {/* Gap 444: what the matcher already found, at upload. An empty result
+            is stated rather than left blank -- "no match yet" is information,
+            and silence reads as "still working". */}
+        <span
+          data-testid="chat-attachment-match"
+          className="w-full text-[11px] text-slate-400"
+        >
+          {matchStatusLabel(attachment)}
+        </span>
+        {/* Gap 445: a field the extractor was unsure of is worth one question
+            now rather than a wrong comparison later. */}
+        {lowConfidence.length > 0 && (
+          <span
+            data-testid="chat-attachment-low-confidence"
+            className="w-full text-[11px] text-amber-300/90"
+          >
+            Please check the{" "}
+            {lowConfidence
+              .map((f) => CONFIDENCE_FIELD_LABELS[f] ?? f)
+              .join(", ")}{" "}
+            I read from this document.
+          </span>
+        )}
+        {/* Gap 432/444: the two intents as buttons. This is the path that makes
+            the clarify card unnecessary for the common case. */}
+        {/* Gap 445: what the extractor actually read, before any comparison is
+            computed from it. An extraction mistake caught here costs one
+            re-upload; the same mistake caught after an answer costs the user's
+            trust in every figure in it. */}
+        {showExtraction && attachment.extraction_preview && (
+          <div
+            data-testid="chat-attachment-extraction"
+            className="w-full mt-1 rounded-lg border border-[#222D3D] bg-[#0B1220] p-2"
+          >
+            <table className="w-full text-[11px]">
+              <tbody>
+                {[
+                  ["Type", attachment.extraction_preview.doc_type],
+                  ["Number", attachment.extraction_preview.doc_number],
+                  ["Party", attachment.extraction_preview.party_name],
+                  ["Date", attachment.extraction_preview.doc_date],
+                  ["Subtotal", attachment.extraction_preview.subtotal],
+                  ["Tax", attachment.extraction_preview.tax_amount],
+                  ["Total", attachment.extraction_preview.grand_total],
+                  ["Payment terms", attachment.extraction_preview.payment_terms],
+                  ["Delivery terms", attachment.extraction_preview.delivery_terms],
+                ]
+                  .filter(([, v]) => v !== null && v !== undefined && v !== "")
+                  .map(([label, value]) => (
+                    <tr key={String(label)}>
+                      <td className="pr-3 py-0.5 text-slate-500 align-top whitespace-nowrap">
+                        {label}
+                      </td>
+                      <td className="py-0.5 text-slate-300 break-words">{String(value)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+            {(attachment.extraction_preview.lines?.length ?? 0) > 0 && (
+              <table className="w-full mt-1.5 text-[11px]">
+                <thead>
+                  <tr className="text-slate-500">
+                    <th className="text-left font-normal py-0.5">Line</th>
+                    <th className="text-right font-normal py-0.5">Qty</th>
+                    <th className="text-right font-normal py-0.5">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attachment.extraction_preview.lines!.map((line, i) => (
+                    <tr key={i} className="text-slate-300">
+                      <td className="py-0.5 pr-2 break-words">{line.description ?? "-"}</td>
+                      <td className="py-0.5 text-right font-mono">{line.quantity ?? "-"}</td>
+                      <td className="py-0.5 text-right font-mono">{line.amount ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {/* Stated, not hidden: a 40-line statement shows 20 rows here, and a
+                user counting them must not conclude we read only 20. */}
+            {(attachment.extraction_preview.line_count ?? 0) >
+              (attachment.extraction_preview.lines?.length ?? 0) && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Showing {attachment.extraction_preview.lines?.length ?? 0} of{" "}
+                {attachment.extraction_preview.line_count} lines.
+              </p>
+            )}
+          </div>
+        )}
+        {onIntent && (
+          <span className="w-full flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              data-testid="chat-attachment-compare"
+              onClick={() => onIntent("compare")}
+              className="text-[11px] px-2 py-0.5 rounded border border-blue-800/50 text-blue-300 hover:bg-blue-900/30 transition-colors"
+            >
+              Compare to my invoices
+            </button>
+            <button
+              type="button"
+              data-testid="chat-attachment-read"
+              onClick={() => onIntent("read")}
+              className="text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 transition-colors"
+            >
+              Read the document
+            </button>
+            {attachment.extraction_preview && (
+              <button
+                type="button"
+                data-testid="chat-attachment-show-extraction"
+                aria-expanded={showExtraction}
+                onClick={() => setShowExtraction((v) => !v)}
+                className="text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:bg-slate-800 transition-colors"
+              >
+                {showExtraction ? "Hide what I read" : "What I read"}
+              </button>
+            )}
+          </span>
+        )}
       </div>
       {onRemove && (
         <button

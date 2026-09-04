@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -139,22 +140,59 @@ def _normalize_query(user_message: str) -> str:
     return re.sub(r"\s+", " ", user_message.strip().lower())
 
 
-def _cache_key(tenant_id: str, user_message: str) -> str:
-    return f"chat_answer_cache:{tenant_id}:{_normalize_query(user_message)}"
+def chat_rules_version(tenant_id: str, db_session) -> str:
+    """Gap 438: a short hash of this tenant's ENABLED chat rules.
 
+    The answer cache was keyed on `(tenant_id, normalized_query)` alone, so a
+    rule committed through `/chat/rules/commit` -- which changes how every future
+    answer for the workspace is worded and filtered -- left up to an hour of
+    pre-rule answers being served as if nothing had changed. Folding the rule set
+    into the key makes a commit invalidate exactly the entries it should, with no
+    scan and no explicit flush: the old key is simply never asked for again.
 
-def get_cached_answer(tenant_id: str, user_message: str) -> dict | None:
+    Best-effort: any failure returns `"na"`, which behaves like today's single
+    undifferentiated key rather than failing the turn.
+    """
+    from models import TenantChatRule
+    from sqlmodel import select
+    from uuid import UUID
+
     try:
-        raw = _get_redis_client().get(_cache_key(tenant_id, user_message))
+        rows = db_session.exec(
+            select(TenantChatRule).where(
+                TenantChatRule.tenant_id == UUID(str(tenant_id)),
+                TenantChatRule.enabled == True,  # noqa: E712 - SQL boolean, not Python identity
+            ).order_by(TenantChatRule.created_at.asc())
+        ).all()
+    except Exception as e:
+        logger.warning("Chat rules version lookup failed, caching without it: %s", e)
+        return "na"
+
+    if not rows:
+        return "none"
+    material = "|".join(f"{r.id}:{getattr(r, 'created_at', '')}" for r in rows)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+
+
+def _cache_key(tenant_id: str, user_message: str, rules_version: str | None = None) -> str:
+    suffix = f":rules={rules_version}" if rules_version else ""
+    return f"chat_answer_cache:{tenant_id}:{_normalize_query(user_message)}{suffix}"
+
+
+def get_cached_answer(tenant_id: str, user_message: str, rules_version: str | None = None) -> dict | None:
+    try:
+        raw = _get_redis_client().get(_cache_key(tenant_id, user_message, rules_version))
         return json.loads(raw) if raw else None
     except Exception as e:
         logger.warning("Chat answer cache lookup failed, proceeding without cache: %s", e)
         return None
 
 
-def set_cached_answer(tenant_id: str, user_message: str, result: dict) -> None:
+def set_cached_answer(tenant_id: str, user_message: str, result: dict, rules_version: str | None = None) -> None:
     try:
-        _get_redis_client().set(_cache_key(tenant_id, user_message), json.dumps(result), ex=CACHE_TTL_SECONDS)
+        _get_redis_client().set(
+            _cache_key(tenant_id, user_message, rules_version), json.dumps(result), ex=CACHE_TTL_SECONDS
+        )
     except Exception as e:
         logger.warning("Chat answer cache write failed: %s", e)
 
@@ -505,9 +543,12 @@ def _retrieve_sql_examples(user_message: str, dialect_name: str, k: int = _SQL_E
         examples, vectors = _sql_example_vectors()
         if not examples:
             return []
-        from chroma_client import get_embeddings
+        from chroma_client import embed_query
 
-        qv = get_embeddings([user_message])[0]
+        # Gap 442: the question's vector, from Redis when this question (or an
+        # identical one from any tenant -- the vector is not tenant data) has
+        # been asked in the last day.
+        qv = embed_query(user_message)
         scored = []
         for ex, v in zip(examples, vectors):
             sim = sum(a * b for a, b in zip(qv, v))
@@ -2655,6 +2696,35 @@ def get_prior_turn_sql(session_id: str, db_session) -> str | None:
     return prior.generated_sql.strip()[:_PRIOR_SQL_MAX_CHARS]
 
 
+#: Gap 437. How much of an over-long conversation is condensed rather than
+#: dropped, and how much of each message survives the condensation. Both are
+#: deliberately small: the summary is a pointer back into the transcript, not a
+#: second copy of it.
+_SUMMARY_MESSAGE_CHARS = 110
+_SUMMARY_MAX_MESSAGES = 12
+
+
+def _condense_messages(messages) -> str:
+    """Gap 437: the oldest half of a long conversation, in one short block.
+
+    Deterministic string work, NOT a model call, and that is the design choice
+    rather than a shortcut. A summarisation call would add a second LLM round
+    trip to every long turn, and -- far worse -- would put a model between the
+    user and figures it did not compute, which is the exact thing hard rule 3
+    forbids everywhere else in this feature. Truncated verbatim text can be
+    stale but never invented.
+    """
+    lines = []
+    for m in messages[-_SUMMARY_MAX_MESSAGES:]:
+        text = " ".join((m.content or "").split())
+        if not text:
+            continue
+        if len(text) > _SUMMARY_MESSAGE_CHARS:
+            text = text[:_SUMMARY_MESSAGE_CHARS].rstrip() + "..."
+        lines.append(f"{m.role.capitalize()}: {text}")
+    return "\n".join(lines)
+
+
 @tracked_dependency("chat.history", "PostgreSQL")
 def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str:
     """Retrieve short-term conversational context from the database, bounded by token length (Gap 23)."""
@@ -2691,7 +2761,32 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
             selected_messages.append(msg_str)
             
         selected_messages.reverse()
-        return "".join(selected_messages)
+        window = "".join(selected_messages)
+
+        # Gap 437: everything that did not fit is condensed ONCE and reused. The
+        # summary is stored on the session, so a 60-turn conversation pays for
+        # this at most as often as its oldest half changes -- not per turn.
+        dropped = messages[len(selected_messages):]
+        if dropped:
+            try:
+                from models import ChatSession
+
+                chat_session = db_session.get(ChatSession, sess_uuid)
+                if chat_session is not None:
+                    if not chat_session.history_summary:
+                        chat_session.history_summary = _condense_messages(list(reversed(dropped)))
+                        db_session.add(chat_session)
+                        db_session.commit()
+                    if chat_session.history_summary:
+                        window = (
+                            "EARLIER IN THIS CONVERSATION (condensed):\n"
+                            f"{chat_session.history_summary}\n\n{window}"
+                        )
+            except Exception as e:  # a summary is a nicety; the window is the contract
+                logger.warning("Rolling history summary failed for session %s: %s", session_id, e)
+                db_session.rollback()
+
+        return window
     except Exception as e:
         # Gap 37: Missing history is recoverable — proceed without it rather than fail request
         logger.warning("Failed to load chat history for session %s: %s", session_id, e)
@@ -3322,6 +3417,19 @@ def _derived_schema_supplement() -> str:
 # behave: prefix byte-identical across tenants and questions, and long enough.
 SQL_PROMPT_TENANT_SECTION_MARKER = (
     "\n=== TENANT AND REQUEST CONTEXT "
+    "(everything above this line is the same for every request) ===\n"
+)
+
+# Feature 26 Phase 3.5 (Gap 455). The same boundary for the OTHER prompts that
+# phrase an answer -- the SQL summary, the RAG answer, and the two Feature 26
+# narrations. Each is now two halves: everything above the marker is identical
+# for every request in the process (persona, rules, formatting, both injection
+# guards), everything below is this tenant's and this turn's. The provider
+# caches the longest identical prefix, so the marker is the boundary the cache
+# sees. `tests/test_prompt_prefix_all_routes.py` reads the SOURCE of each
+# prompt and fails if any interpolated value sits above the marker.
+PROMPT_REQUEST_SECTION_MARKER = (
+    "\n=== THIS REQUEST "
     "(everything above this line is the same for every request) ===\n"
 )
 
@@ -4052,6 +4160,8 @@ def run_query_agent(
     db_session,
     on_progress: Optional[ProgressCallback] = None,
     attachment_id: Optional[str] = None,
+    attachment_intent: Optional[str] = None,
+    attachment_ids: Optional[list] = None,
 ) -> dict:
     """
     RAG Query Agent routing natural language inputs to semantic context indexers,
@@ -4099,6 +4209,8 @@ def run_query_agent(
             turn,
             on_progress=on_progress,
             attachment_id=attachment_id,
+            attachment_intent=attachment_intent,
+            attachment_ids=attachment_ids,
         )
         # Gap 324: computed after the turn resolves (every path sets
         # turn.generated_sql before returning, including the cache-hit and
@@ -4141,6 +4253,11 @@ _COMPARISON_INTENT_KEYWORDS = (
     "reconcile", "reconciled", "reconciliation",
     "same as", "as agreed", "as quoted", "as ordered",
     "tally", "line up", "check against", "cross-check", "billed correctly",
+    # Gap 432 (2026-09-04): phrasings the F26 benchmark showed landing on the
+    # clarify card 13/25 times.
+    "consistent with", "relate to", "relates to", "related to",
+    "still owe", "owe after", "invoiced", "billed", "ordered vs", "vs invoiced",
+    "pay the full", "paid the full", "missing on", "what's missing",
 )
 
 _CONTENT_INTENT_KEYWORDS = (
@@ -4311,7 +4428,19 @@ def _classify_attachment_intent(user_message: str, doc_type) -> str:
         return _INTENT_CONTENT
     if comparison_hit and content_hit:
         bias = _INTENT_BIAS_BY_DOC_TYPE.get(str(doc_type or "").strip().upper())
-        return bias or _INTENT_CLARIFY
+        if bias:
+            return bias
+        # Gap 432: no bias for this type (OTHER / unknown). Prefer the family
+        # whose matched phrase is LONGER -- "payment terms" over "agree",
+        # "what does it say" over "compare" -- and clarify only on a dead heat.
+        # A longer phrase is a more specific signal than a single verb.
+        longest_cmp = max((len(m.group(0)) for m in _COMPARISON_INTENT_PATTERN.finditer(text)), default=0)
+        longest_content = max((len(m.group(0)) for m in _CONTENT_INTENT_PATTERN.finditer(text)), default=0)
+        if longest_content > longest_cmp:
+            return _INTENT_CONTENT
+        if longest_cmp > longest_content:
+            return _INTENT_COMPARISON
+        return _INTENT_CLARIFY
     # A reconcile word on a non-advisory document reads as comparison -- it is
     # still a question about how this document relates to our records.
     if reconcile_hit:
@@ -4324,6 +4453,103 @@ def _classify_attachment_intent(user_message: str, doc_type) -> str:
     return _INTENT_CLARIFY
 
 
+#: Gap 387 (re-scoped in by Phase 2.3). Comparing two ATTACHED documents to each
+#: other -- a PO against the delivery note, a quotation against the order
+#: confirmation -- rather than an attachment against an invoice.
+_INTENT_COMPARE_ATTACHMENTS = "compare_attachments"
+
+#: Which doc types a phrase in the question is asking for, so "compare this to
+#: the delivery note" can pick the right second document out of the session.
+_DOC_TYPE_PHRASES = (
+    ("delivery note", "DELIVERY_NOTE"),
+    ("delivery challan", "DELIVERY_NOTE"),
+    ("despatch note", "DELIVERY_NOTE"),
+    ("dispatch note", "DELIVERY_NOTE"),
+    ("goods receipt", "GRN"),
+    ("grn", "GRN"),
+    ("purchase order", "PURCHASE_ORDER"),
+    ("the po", "PURCHASE_ORDER"),
+    ("order confirmation", "ORDER_CONFIRMATION"),
+    ("quotation", "QUOTATION"),
+    ("the quote", "QUOTATION"),
+    ("proforma", "PROFORMA_INVOICE"),
+    ("credit note", "CREDIT_NOTE"),
+    ("debit note", "DEBIT_NOTE"),
+    ("contract", "CONTRACT"),
+    ("statement", "STATEMENT_OF_ACCOUNT"),
+    ("remittance", "REMITTANCE_ADVICE"),
+    ("receipt", "RECEIPT"),
+)
+
+#: Gap 441. A question that refers to a document without carrying its id --
+#: "and the PO?", "what does it say about freight?" -- after one has been
+#: attached in this session.
+_ATTACHMENT_DEICTIC_PATTERN = re.compile(
+    r"(?<!\w)(that document|this document|the document|the attachment|the attached|"
+    r"the po\b|the purchase order|the quotation|the quote|the statement|the remittance|"
+    r"the delivery note|the grn|the credit note|the debit note|the contract|the proforma)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _requested_doc_types(user_message: str) -> list:
+    """Which document types this question names, in the order it names them."""
+    text = (user_message or "").lower()
+    found = []
+    for phrase, doc_type in _DOC_TYPE_PHRASES:
+        pos = text.find(phrase)
+        if pos >= 0:
+            found.append((pos, doc_type))
+    seen, ordered = set(), []
+    for _, doc_type in sorted(found):
+        if doc_type not in seen:
+            seen.add(doc_type)
+            ordered.append(doc_type)
+    return ordered
+
+
+def select_comparison_partner(primary, others, user_message: str):
+    """Gap 387: which OTHER attached document this question wants compared.
+
+    Deterministic and conservative: a type the question actually names wins; a
+    single other document in the session is taken as the intended partner; more
+    than one candidate with nothing naming a type returns None, and the caller
+    asks rather than guessing which of the user's documents they meant.
+    """
+    if not others:
+        return None
+    wanted = [t for t in _requested_doc_types(user_message) if t != str(primary.doc_type or "").upper()]
+    for doc_type in wanted:
+        for other in others:
+            if str(other.doc_type or "").upper() == doc_type:
+                return other
+    if len(others) == 1:
+        return others[0]
+    return None
+
+
+#: Gap 387: the arithmetic each pairing gets. A delivery note or GRN prices
+#: nothing by design, so comparing money against one manufactures a discrepancy;
+#: a quotation against a PO is about both what was agreed and what it cost.
+def pair_comparison_mode(type_a, type_b) -> str:
+    from services.document_comparison import BOTH_MODE, QUANTITY_MODE
+
+    quantity_only = {"DELIVERY_NOTE", "GRN"}
+    if str(type_a or "").upper() in quantity_only or str(type_b or "").upper() in quantity_only:
+        return QUANTITY_MODE
+    return BOTH_MODE
+
+
+_EXPLICIT_ATTACHMENT_INTENTS = {
+    # Gap 432: `MessageCreate.attachment_intent` -- the FE's clarify-card buttons
+    # send the choice as a structured field, so "agree" in the original question
+    # can no longer keep the card looping. Anything else is ignored and the
+    # keyword classifier decides, as before.
+    "read": _INTENT_CONTENT,
+    "compare": _INTENT_COMPARISON,
+}
+
+
 def _run_attached_document_turn(
     *,
     session_id: str,
@@ -4333,6 +4559,8 @@ def _run_attached_document_turn(
     turn,
     attachment_id: str,
     progress,
+    attachment_intent: Optional[str] = None,
+    attachment_ids: Optional[list] = None,
 ) -> dict:
     """Feature 26 (Gap 366): a turn grounded in an attached PO/quotation.
 
@@ -4351,10 +4579,16 @@ def _run_attached_document_turn(
     from config import get_settings  # local, matching `_redis()` above
     from models import ChatAttachment, Invoice  # local: keeps models out of the eval-harness import graph
     from services.document_comparison import (
+        BOTH_MODE,
+        LIST_RECONCILE_MODE,
         build_confirmation_payload,
         build_suggested_actions,
+        compare_documents,
         compare_reference_to_invoices,
         find_candidate_invoices,
+        get_match_policy,
+        record_comparison,
+        resolve_comparison_mode,
     )
     from sqlmodel import select as _select
 
@@ -4427,7 +4661,48 @@ def _run_attached_document_turn(
         # match-confirmation card, which is precisely what happened while this
         # function had one branch. No model is consulted here (see
         # `_classify_attachment_intent`).
-        intent = _classify_attachment_intent(user_message, attachment.doc_type)
+        intent = _EXPLICIT_ATTACHMENT_INTENTS.get(
+            str(attachment_intent or "").strip().lower()
+        ) or _classify_attachment_intent(user_message, attachment.doc_type)
+        # Gap 432 (2026-09-04, second finding): a statement of account or a
+        # remittance advice has no header to diff -- `list_reconcile` IS its
+        # comparison mode (B8). "Which invoice on this statement don't we have?"
+        # and "is this remittance short?" carry no reconcile keyword, so they
+        # reached Part 1's Tier-0 "no invoice matches SOA-2026-06" instead.
+        # Applied here rather than in the classifier so it also covers an
+        # explicit `attachment_intent="compare"` and the doc-type bias.
+        if intent == _INTENT_COMPARISON and _is_advisory_doc_type(attachment.doc_type):
+            intent = _INTENT_RECONCILE
+
+        # Gap 387 (Phase 2.3): before anything else decides, ask whether this is
+        # a question about two ATTACHED documents rather than about this one and
+        # the invoice ledger. Two independent signals, and either is enough:
+        # the turn carried more than one attachment id, or the question names
+        # another document type that is in fact sitting in this session.
+        others = [
+            a for a in session_attachments(session_id, tenant_uuid, db_session)
+            if str(a.id) != str(attachment.id)
+        ]
+        explicit_pair = [i for i in (attachment_ids or []) if str(i) != str(attachment.id)]
+        partner = None
+        if intent in (_INTENT_COMPARISON, _INTENT_RECONCILE, _INTENT_CONTENT) and others:
+            if explicit_pair:
+                partner = next((a for a in others if str(a.id) == str(explicit_pair[0])), None)
+            elif intent == _INTENT_COMPARISON and _requested_doc_types(user_message):
+                partner = select_comparison_partner(attachment, others, user_message)
+        if partner is not None:
+            return _run_attachment_pair_branch(
+                user_message=user_message,
+                tenant_id=tenant_id,
+                primary=attachment,
+                partner=partner,
+                manifest=attachment_manifest_block(
+                    [attachment] + others, active_id=str(attachment.id)
+                ),
+                turn=turn,
+                progress=progress,
+                db_session=db_session,
+            )
 
         if intent == _INTENT_CLARIFY:
             progress("awaiting_intent_clarification")
@@ -4463,6 +4738,8 @@ def _run_attached_document_turn(
             )
         if intent == _INTENT_CONTENT:
             return _run_attachment_content_branch(
+                session_id=session_id,
+                db_session=db_session,
                 user_message=user_message,
                 tenant_id=tenant_id,
                 tenant_uuid=tenant_uuid,
@@ -4526,6 +4803,50 @@ def _run_attached_document_turn(
     progress("comparing_documents")
     diff = compare_reference_to_invoices(reference, invoices)
 
+    # Gap 431 (2026-09-04): the header diff above cannot say WHICH line is
+    # over-billed. `compare_documents()` (B3/B7) has existed since R10 with no
+    # caller; wire it per confirmed invoice, in the mode the document type
+    # gets. Pure Python, same hard-rule-3 guarantee as the header diff.
+    # Gap 447: the tenant's tolerance band, read once for this whole turn.
+    policy = get_match_policy(tenant_uuid, db_session)
+    line_mode = resolve_comparison_mode(attachment.doc_type) or BOTH_MODE
+    line_items: list = []
+    unmatched: dict = {"reference_lines": [], "invoice_lines": []}
+    if line_mode != LIST_RECONCILE_MODE:
+        by_id = {str(inv.id): inv for inv in invoices}
+        for comparison in diff["comparisons"]:
+            inv = by_id.get(str(comparison.get("invoice_id")))
+            if inv is None or comparison.get("outcome") == "currency_mismatch":
+                continue
+            try:
+                lc = compare_documents(
+                    reference, {"items": list(inv.items or [])}, mode=line_mode, policy=policy
+                )
+            except Exception as e:  # never let a line diff cost the header answer
+                logger.error("Line comparison failed for invoice %s: %s", inv.id, e)
+                continue
+            comparison["line_comparison"] = lc
+            for row in lc["line_items"]:
+                line_items.append({**row, "invoice_number": inv.invoice_number})
+            unmatched["reference_lines"].extend(lc["unmatched"]["reference_lines"])
+            unmatched["invoice_lines"].extend(
+                {**row, "invoice_number": inv.invoice_number} for row in lc["unmatched"]["invoice_lines"]
+            )
+            # Gap 448: the comparison becomes a record on the invoice, not only a
+            # sentence in this conversation.
+            record_comparison(
+                db_session=db_session,
+                tenant_id=tenant_uuid,
+                kind="attachment_vs_invoice",
+                invoice_id=inv.id,
+                attachment_id=attachment.id,
+                session_id=_uuid_or_none(session_id),
+                doc_type=attachment.doc_type,
+                mode=line_mode,
+                outcome=comparison.get("outcome"),
+                payload={"header": comparison, "lines": lc},
+            )
+
     suggestions = []
     for comparison in diff["comparisons"]:
         suggestions.extend(build_suggested_actions(comparison))
@@ -4551,13 +4872,17 @@ def _run_attached_document_turn(
         "magnitudes anyway.\n"
         "- Where a field's status is 'missing', say the document did not state it. "
         "Do not treat a missing value as zero.\n"
-        "- Do not suggest actions; those are supplied separately.\n\n"
-        f"COMPARISON JSON:\n{json.dumps(diff, default=str)}\n\n"
-        # B6, found 2026-09-02 and fixed here: this prompt has interpolated
-        # `_wrap_user_input()` since Gap 366 but never carried the instruction
-        # that says what its markers MEAN, unlike the SQL, RAG and CHAT prompts.
-        # Markers with nothing explaining them are decoration.
+        "- Do not suggest actions; those are supplied separately.\n"
         f"{_INJECTION_GUARD_INSTRUCTION}\n"
+        f"{PROMPT_REQUEST_SECTION_MARKER}"
+        f"COMPARISON JSON:\n{json.dumps(diff, default=str)}\n\n"
+        # Gaps 439/440: what else is on the table, and what was just discussed.
+        # Context only -- the hard rules above still forbid stating any figure
+        # that is not in the JSON, and neither block carries computed figures.
+        f"{attachment_manifest_block(session_attachments(session_id, tenant_uuid, db_session), active_id=str(attachment.id))}\n\n"
+        f"{recent_turn_digest(session_id, db_session)}\n\n"
+        # B6's guard instruction now sits ABOVE the request marker with the other
+        # static rules (Gap 455), so it is part of the cached prefix.
         f"The user asked: {_wrap_user_input(user_message, tenant_id)}"
     )
     try:
@@ -4582,7 +4907,280 @@ def _run_attached_document_turn(
         "citations": [],
         "result_invoice_ids": [str(inv.id) for inv in invoices][:MAX_SNAPSHOT_INVOICE_IDS],
         "attachment_comparison": diff,
+        "line_items": line_items,
+        "unmatched": unmatched,
         "suggested_actions": suggestions[:3],
+    }
+
+
+#: Gap 436. Nothing here is inferred by a model: every value is copied out of a
+#: result payload the turn already computed.
+_FOCUS_KEYS = ("vendor", "invoice_ids", "date_range", "attachment_ids")
+
+
+def update_session_focus(session_id: str, db_session, result: dict) -> None:
+    """Gap 436: rewrite the session's subject snapshot from this turn's result.
+
+    A SNAPSHOT, not an accumulator. A focus that only grew would have turn 20
+    still answering about a vendor the user abandoned at turn 3, which is worse
+    than having no focus at all. Best-effort: a failure here must never cost the
+    user an answer they have already been given.
+    """
+    from models import ChatSession
+    from uuid import UUID
+
+    try:
+        chat_session = db_session.get(ChatSession, UUID(str(session_id)))
+        if chat_session is None:
+            return
+        invoice_ids = [str(i) for i in (result.get("result_invoice_ids") or [])][:10]
+        snapshot = {k: v for k, v in (result.get("focus") or {}).items() if k in _FOCUS_KEYS}
+        if invoice_ids:
+            snapshot["invoice_ids"] = invoice_ids
+        if not snapshot:
+            return
+        chat_session.focus = snapshot
+        db_session.add(chat_session)
+        db_session.commit()
+    except Exception as e:
+        logger.warning("Session focus update failed for session %s: %s", session_id, e)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+
+
+def session_focus_block(session_id: str, db_session) -> str:
+    """Gap 436: the focus snapshot as ONE prompt line, or empty."""
+    from models import ChatSession
+    from uuid import UUID
+
+    try:
+        chat_session = db_session.get(ChatSession, UUID(str(session_id)))
+        focus = getattr(chat_session, "focus", None) or {}
+    except Exception:
+        return ""
+    parts = []
+    if focus.get("vendor"):
+        parts.append(f"vendor {focus['vendor']}")
+    if focus.get("date_range"):
+        parts.append(f"period {focus['date_range']}")
+    if focus.get("invoice_ids"):
+        parts.append(f"{len(focus['invoice_ids'])} invoice(s) already in view")
+    if not parts:
+        return ""
+    return "CURRENT SUBJECT OF THIS CONVERSATION: " + ", ".join(parts) + "."
+
+
+def session_attachments(session_id, tenant_uuid, db_session, extracted_only: bool = True):
+    """Gap 439: every document attached to this session, oldest first."""
+    from models import ChatAttachment
+    from sqlmodel import select
+    from uuid import UUID
+
+    try:
+        rows = db_session.exec(
+            select(ChatAttachment)
+            .where(
+                ChatAttachment.session_id == UUID(str(session_id)),
+                ChatAttachment.tenant_id == tenant_uuid,
+            )
+            .order_by(ChatAttachment.created_at.asc())
+        ).all()
+    except Exception as e:
+        logger.warning("Session attachment lookup failed for %s: %s", session_id, e)
+        return []
+    if extracted_only:
+        rows = [r for r in rows if r.extraction_status == "EXTRACTED"]
+    return list(rows)
+
+
+def attachment_manifest_block(attachments, active_id=None) -> str:
+    """Gap 439: one line per document on the table.
+
+    The manifest is what makes "compare the PO to the delivery note" answerable
+    at all -- before it, a turn could only see the single document whose id the
+    request happened to carry, so the model was being asked about objects it had
+    no evidence existed.
+    """
+    if not attachments:
+        return ""
+    lines = []
+    for a in attachments:
+        marker = " (the document this question is about)" if active_id and str(a.id) == str(active_id) else ""
+        line_count = len((a.extracted_json or {}).get("items") or [])
+        bits = [
+            str(a.doc_type or "OTHER"),
+            str(a.doc_number or "no number"),
+            str(a.party_name or "party not stated"),
+            str(a.doc_date or "no date"),
+            f"total {a.currency or ''} {a.grand_total}".strip() if a.grand_total is not None else "no total",
+            f"{line_count} line(s)",
+        ]
+        lines.append(f"- {' | '.join(bits)}{marker}")
+    return "DOCUMENTS ATTACHED TO THIS CONVERSATION:\n" + "\n".join(lines)
+
+
+def recent_turn_digest(session_id: str, db_session, limit: int = 3) -> str:
+    """Gap 440: the last few turns as one line each, for the attachment path.
+
+    The attachment branches were the only route in the product that saw no
+    conversation history whatsoever, so "and the second line?" after a comparison
+    was answered as if it were the first thing ever asked. Summaries rather than
+    raw turns on purpose: the comparison prompts forbid restating any figure that
+    is not in the computed JSON, and pasting an earlier answer's prose back in
+    would put exactly such figures in front of the model.
+    """
+    from models import ChatMessage
+    from sqlmodel import select
+    from uuid import UUID
+
+    try:
+        rows = db_session.exec(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == UUID(str(session_id)))
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit * 2)
+        ).all()
+    except Exception as e:
+        logger.warning("Recent turn digest failed for session %s: %s", session_id, e)
+        return ""
+
+    lines = []
+    for m in reversed(rows):
+        text = " ".join((m.content or "").split())
+        if not text:
+            continue
+        lines.append(f"- {m.role}: {text[:120]}{'...' if len(text) > 120 else ''}")
+    if not lines:
+        return ""
+    return "RECENT TURNS IN THIS CONVERSATION (for context only -- never restate a figure from here):\n" + "\n".join(
+        lines[-limit * 2:]
+    )
+
+
+def _run_attachment_pair_branch(
+    *,
+    user_message: str,
+    tenant_id: str,
+    primary,
+    partner,
+    manifest: str,
+    turn,
+    progress,
+    db_session,
+) -> dict:
+    """Gap 387 / Phase 2.3 — compare two ATTACHED documents to each other.
+
+    The function that does the arithmetic is the same `compare_documents()` the
+    invoice path uses; that it was written source-agnostic (B3/B7) is what makes
+    this a wiring change rather than a second matcher. No invoice is read here at
+    all, so no confirmation gate applies: nothing in the tenant's ledger is being
+    asserted about, and both documents are ones the user themselves attached.
+
+    Every figure is Python's. The model narrates a table it may not add to.
+    """
+    from services.document_comparison import compare_documents
+
+    progress("comparing_attachments")
+    mode = pair_comparison_mode(primary.doc_type, partner.doc_type)
+    try:
+        result = compare_documents(
+            dict(primary.extracted_json or {}),
+            dict(partner.extracted_json or {}),
+            mode=mode,
+        )
+    except Exception as e:
+        logger.error("Attachment pair comparison failed (%s vs %s): %s", primary.id, partner.id, e)
+        turn.status = telemetry.TURN_STATUS_ERROR
+        turn.stop_reason = "attachment_pair_compare_failed"
+        return {
+            "content": "I couldn't compare those two documents. Try asking again.",
+            "generated_sql": "",
+            "citations": [],
+            "result_invoice_ids": [],
+        }
+
+    payload = {
+        "mode": mode,
+        "documents": [
+            {
+                "attachment_id": str(primary.id),
+                "doc_type": primary.doc_type,
+                "doc_number": primary.doc_number,
+                "party_name": primary.party_name,
+            },
+            {
+                "attachment_id": str(partner.id),
+                "doc_type": partner.doc_type,
+                "doc_number": partner.doc_number,
+                "party_name": partner.party_name,
+            },
+        ],
+        "comparison": result,
+    }
+
+    # Gap 448: kept as a record, the same as an attachment-vs-invoice comparison.
+    from services.document_comparison import record_comparison
+
+    record_comparison(
+        db_session=db_session,
+        tenant_id=primary.tenant_id,
+        kind="attachment_vs_attachment",
+        attachment_id=primary.id,
+        session_id=primary.session_id,
+        doc_type=primary.doc_type,
+        mode=mode,
+        outcome="variance" if result["unmatched_count"] or any(
+            r.get("status") not in (None, "match") for r in result["line_items"]
+        ) else "match",
+        payload=payload,
+    )
+
+    progress("composing_answer")
+    llm = _fast_llm()  # narration only -- every figure comes from compare_documents()
+    system_prompt = (
+        f"{PERSONA_BLOCK}\n\n"
+        "You are reporting a comparison between TWO documents the user attached to "
+        "this conversation. Neither is an invoice from their workspace.\n\n"
+        "THE COMPARISON HAS ALREADY BEEN COMPUTED. It is given to you below as JSON.\n"
+        "HARD RULES:\n"
+        "- You MUST NOT state any number that does not appear verbatim in the JSON.\n"
+        "- You MUST NOT compute, re-derive, sum, or correct any figure yourself.\n"
+        "- A line under `unmatched` appears on ONE document only. Say which one. "
+        "Do not describe it as a difference in value.\n"
+        "- In 'quantity' mode prices were NOT compared, because a delivery note or "
+        "goods receipt prices nothing by design; say so rather than implying the "
+        "prices agree. The mode in force is stated below.\n"
+        f"{_INJECTION_GUARD_INSTRUCTION}\n"
+        f"{PROMPT_REQUEST_SECTION_MARKER}"
+        f"The comparison mode is '{mode}'.\n"
+        f"COMPARISON JSON:\n{json.dumps(payload, default=str)}\n\n"
+        f"{manifest}\n\n"
+        f"The user asked: {_wrap_user_input(user_message, tenant_id)}"
+    )
+    try:
+        with tracked_llm_call("chat.attachment_pair_compare", llm=llm, tenant_id=tenant_id):
+            res = _answer_text(llm, system_prompt, progress)
+        response_text = res.content
+        turn.status = telemetry.TURN_STATUS_SUCCESS
+    except Exception as e:
+        logger.error("Attachment pair synthesis failed: %s", e)
+        turn.status = telemetry.TURN_STATUS_ERROR
+        turn.error_type = type(e).__name__
+        turn.stop_reason = "attachment_pair_answer_failed"
+        response_text = "I compared the two documents but couldn't write up the result. Try asking again."
+
+    turn.stop_reason = turn.stop_reason or "attachment_pair_compared"
+    progress("answer_ready")
+    return {
+        "content": response_text,
+        "generated_sql": "",
+        "citations": [],
+        "result_invoice_ids": [],
+        "attachment_pair_comparison": payload,
+        "line_items": result["line_items"],
+        "unmatched": result["unmatched"],
     }
 
 
@@ -4711,6 +5309,112 @@ def _run_attachment_reconcile_branch(
     }
 
 
+#: Gap 449. Phrases that make a question date arithmetic rather than a lookup.
+_DATE_QUESTION_PATTERN = re.compile(
+    r"(?<!\w)(within|valid|validity|expire[sd]?|expiry|still in force|in force|"
+    r"how (?:many days|long)|overdue|due date|by when|before the|after the)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+#: Gap 449. "valid for 90 days", "validity: 90 days", "90 days from the
+#: agreement date" -- a duration that is explicitly about validity.
+_VALIDITY_DURATION_PATTERN = re.compile(
+    r"valid(?:ity)?[^.]{0,40}?(\d{1,3})\s*(?:calendar\s*)?days?"
+    r"|(\d{1,3})\s*(?:calendar\s*)?days?[^.]{0,30}?valid",
+    re.IGNORECASE,
+)
+
+#: The fallback: any duration at all, used only when nothing ties one to validity.
+_BARE_DURATION_PATTERN = re.compile(r"(\d{1,3})\s*(?:calendar\s*)?days?", re.IGNORECASE)
+
+
+def _attachment_date_block(user_message: str, attachment, spans=None) -> str:
+    """Gap 449: the date arithmetic this question needs, already done.
+
+    Returns "" whenever there is nothing to compute -- not a date question, or a
+    document that states no dates. An empty block is the honest output: it leaves
+    the model with no computed date to quote, which is better than a computed
+    date derived from a date the document never printed.
+    """
+    if not _DATE_QUESTION_PATTERN.search(user_message or ""):
+        return ""
+
+    from agents.query_tools import date_math
+
+    data = attachment.extracted_json or {}
+    doc_date = data.get("doc_date") or getattr(attachment, "doc_date", None)
+    valid_until = data.get("valid_until")
+    lines = []
+
+    if doc_date and valid_until:
+        result = date_math("days_between", start=doc_date, end=valid_until)
+        if result["status"] == "ok":
+            lines.append(
+                f"- The document is dated {result['start']} and states validity to "
+                f"{result['end']} ({result['days']} days)."
+            )
+
+    # A validity expressed as a duration rather than as an end date. The number
+    # is read from the document -- its own fields first, then the retrieved page
+    # text, which is where a contract's validity clause actually lives (the
+    # extraction schema has no field for it, as the F26 benchmark's contract
+    # showed). Python does the arithmetic on it; nothing here invents a number.
+    sources = [str(data.get(k) or "") for k in ("notes", "payment_terms", "delivery_terms", "validity")]
+    sources += [str((span or {}).get("document") or "") for span in (spans or [])]
+    # A validity clause and a payment term both read as "N days", and picking
+    # whichever appears first gets Net 45 when the question was about a 90-day
+    # price validity -- observed on the benchmark's contract. So a duration tied
+    # to validity language wins, and the bare pattern is only the fallback.
+    window_days = None
+    for pattern in (_VALIDITY_DURATION_PATTERN, _BARE_DURATION_PATTERN):
+        for text in sources:
+            found = pattern.search(text)
+            if found:
+                window_days = int(found.group(1) or found.group(found.lastindex))
+                break
+        if window_days is not None:
+            break
+    if doc_date and window_days and not valid_until:
+        window = date_math("add_days", start=doc_date, days=window_days)
+        if window["status"] == "ok":
+            lines.append(
+                f"- The document is dated {window['start']} and states a "
+                f"{window['days']}-day window, which ends {window['result']}."
+            )
+
+    # A date named in the QUESTION ("is the invoice dated 2026-06-14 within...?")
+    # is the subject the window has to be tested against. Without this the window
+    # is computed and then compared by the model, which is the guess this whole
+    # block exists to remove.
+    subject = re.search(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)", user_message or "")
+    if doc_date and subject and (window_days or valid_until):
+        if valid_until:
+            span_days = date_math("days_between", start=doc_date, end=valid_until)
+            days_for_window = span_days["days"] if span_days["status"] == "ok" else None
+        else:
+            days_for_window = window_days
+        if days_for_window is not None:
+            verdict = date_math(
+                "within_window", start=doc_date, end=subject.group(1), days=days_for_window
+            )
+            if verdict["status"] == "ok":
+                lines.append(
+                    f"- {verdict['subject']} is "
+                    f"{'INSIDE' if verdict['within'] else 'OUTSIDE'} the window "
+                    f"{verdict['window_start']} to {verdict['window_end']}"
+                    + ("" if verdict["within"] else f", by {verdict['days_outside']} days")
+                    + "."
+                )
+
+    if not lines:
+        return ""
+    return (
+        "COMPUTED DATES (calculated in Python from the document's own dates -- "
+        "quote these rather than working any date out yourself):" + chr(10) + chr(10).join(lines)
+    )
+
+
 def _run_attachment_content_branch(
     *,
     user_message: str,
@@ -4719,6 +5423,8 @@ def _run_attachment_content_branch(
     attachment,
     turn,
     progress,
+    session_id: Optional[str] = None,
+    db_session=None,
 ) -> dict:
     """Feature 26 Part 2 (task H5) — the open-ended document-content answer.
 
@@ -4768,6 +5474,27 @@ def _run_attachment_content_branch(
     progress("attachment_spans_found", count=len(spans))
 
     summary_block = _attachment_summary_block(attachment)
+    date_block = _attachment_date_block(user_message, attachment, spans)
+
+    # Gap 449: if the question is about a date window and the document states the
+    # dates, the arithmetic is done HERE, in Python, and handed to the model as a
+    # computed fact. The alternative -- which is what happened before this -- is
+    # the model recalling what dates like these usually imply, which is how S22
+    # produced a confident answer with no subtraction behind it.
+    # Gaps 439/440: what else is attached, and what was just discussed. Both are
+    # context, never evidence: the hard rules below still restrict every claim to
+    # the summary and the retrieved passages.
+    context_block = date_block
+    if session_id is not None and db_session is not None:
+        blocks = [
+            date_block,
+            attachment_manifest_block(
+                session_attachments(session_id, tenant_uuid or tenant_id, db_session),
+                active_id=attachment_id,
+            ),
+            recent_turn_digest(session_id, db_session),
+        ]
+        context_block = "\n\n".join(b for b in blocks if b)
 
     if not spans:
         # §P2.8: "an answer with no evidence and no comparison is a bug". So
@@ -4814,6 +5541,9 @@ NOT one of the invoices in their workspace, and it is not a payable.
 WHAT YOU HAVE:
 1. A short summary of the document, extracted into fields.
 2. Verbatim passages retrieved from the document's own pages.
+3. Context: what else is attached to this conversation, and what was just
+   discussed. Use it to understand WHICH document is meant. It is not evidence,
+   and nothing in it may be quoted as a fact about this document.
 
 HARD RULES:
 - Answer ONLY from the summary and the passages below. If they do not contain
@@ -4825,10 +5555,19 @@ HARD RULES:
   compare, reconcile, or find a discrepancy — do NOT attempt it here. Say: "I
   can tell you what the document says; to check it against your invoices, ask me
   to compare them." That is a redirect, not a refusal to help.
+- EXCEPTION (Gap 449): when a COMPUTED DATES block appears below, the date
+  arithmetic has ALREADY been done for you in Python. Answer the date question
+  directly from it and quote its figures. Do not redirect, and do not work any
+  date out yourself.
 - Cite the page number when you state something the passages support.
 
 FORMATTING: Format your answer in Markdown. Use a bullet list when listing
 multiple items rather than a run-on sentence.
+
+{_DOCUMENT_TEXT_GUARD_INSTRUCTION}
+{_INJECTION_GUARD_INSTRUCTION}
+{PROMPT_REQUEST_SECTION_MARKER}
+{context_block}
 
 DOCUMENT SUMMARY:
 {summary_block}
@@ -4836,8 +5575,6 @@ DOCUMENT SUMMARY:
 DOCUMENT PASSAGES:
 {wrapped_spans}
 
-{_DOCUMENT_TEXT_GUARD_INSTRUCTION}
-{_INJECTION_GUARD_INSTRUCTION}
 The user asked: {_wrap_user_input(user_message, tenant_id)}
 """
 
@@ -4932,6 +5669,8 @@ def _run_query_agent(
     turn,
     on_progress: Optional[ProgressCallback] = None,
     attachment_id: Optional[str] = None,
+    attachment_intent: Optional[str] = None,
+    attachment_ids: Optional[list] = None,
 ) -> dict:
     """The turn itself. See `run_query_agent()` above for the Trace wrapper.
 
@@ -4972,6 +5711,22 @@ def _run_query_agent(
     # (tenant_id, normalized_query) with no attachment dimension, so "does this
     # match?" asked about two different POs would collide on one cache entry and
     # serve the first document's figures for the second document.
+    # Gap 441: a question that plainly refers to an attached document but
+    # carries no id -- "and what does the PO say about freight?" -- is about that
+    # document, not a fresh ledger query. Three conditions, all required: no
+    # explicit id, a deictic reference, and a document actually in this session.
+    # Anything less and an ordinary question would be silently re-routed.
+    if not attachment_id and not attachment_ids and _ATTACHMENT_DEICTIC_PATTERN.search(user_message or ""):
+        carried = session_attachments(session_id, _uuid_or_none(tenant_id) or tenant_id, db_session)
+        if carried:
+            attachment_id = str(carried[-1].id)
+            logger.info(
+                "Carrying attachment %s forward for session %s (Gap 441)", attachment_id, session_id
+            )
+
+    if not attachment_id and attachment_ids:
+        attachment_id = str(attachment_ids[0])
+
     if attachment_id:
         return _run_attached_document_turn(
             session_id=session_id,
@@ -4981,6 +5736,8 @@ def _run_query_agent(
             turn=turn,
             attachment_id=attachment_id,
             progress=progress,
+            attachment_intent=attachment_intent,
+            attachment_ids=[str(i) for i in (attachment_ids or [])],
         )
 
     # C2 (Feature 6.1): a narrowing follow-up is not cacheable and must not be
@@ -4994,8 +5751,11 @@ def _run_query_agent(
     # A skipped cache read costs one normal turn. A wrong cache hit is a confident
     # answer about someone else's question, which is the failure mode this whole
     # review exists to remove.
+    # Gap 438: the key carries the tenant's enabled-rule set, so a
+    # `/chat/rules/commit` retires every pre-rule entry without a scan or a flush.
+    rules_version = chat_rules_version(tenant_id, db_session)
     cached = None if _is_narrowing_followup(user_message) else get_cached_answer(
-        tenant_id, user_message
+        tenant_id, user_message, rules_version
     )
     if cached is not None:
         logger.info("Serving cached answer for tenant %s (Task 6.11 semantic cache hit)", tenant_id)
@@ -5029,6 +5789,13 @@ def _run_query_agent(
 
     # Retrieve short-term context history
     chat_history = get_chat_history(session_id, db_session)
+
+    # Gap 436: one line saying what this conversation is currently about, in
+    # front of the history rather than inside it -- the routes read
+    # `chat_history` as opaque prose, so prepending is the whole integration.
+    focus_line = session_focus_block(session_id, db_session)
+    if focus_line:
+        chat_history = f"{focus_line}\n{chat_history}"
 
     # Trainer-taught business rules (Global scope + heuristically matched Vendor scope)
     global_rules = _get_global_business_rules(tenant_id, db_session)
@@ -5286,7 +6053,6 @@ def _run_query_agent(
                 summary_prompt = f"""{CHAT_PERSONA_BLOCK}
 
 Format a friendly summary explaining these database query results.
-{style_block}
 Do not restate every row -- the full results table is
 shown to the user separately right after your summary. Do not explain your
 reasoning or how the query was constructed.
@@ -5294,15 +6060,18 @@ reasoning or how the query was constructed.
 FORMATTING FOR LINE-ITEM EXTRACTION: If the query results list individual un-nested line items (e.g., line_description, line_qty, line_unit_price, line_amount), you MUST format each matching line item exactly in the following format on its own line:
 <line_description>: <line_qty> units × <currency> <line_unit_price> = <currency> <line_amount>
 where <currency> is that ROW'S OWN `currency` value (e.g. "Training & Onboarding: 40 units × USD 732.57 = USD 29,302.94", or "Onboarding pack: 2 units × INR 50.00 = INR 100.00"). Never hardcode '$' or any other symbol here -- results can span multiple currencies in one table and each row must carry its own. If exactly one line item matches, emit only that one line with no total underneath. If more than one matches, list each one this way and add a total underneath per currency (never one total added across different currencies -- no exchange rate is available).
-{line_item_total_instruction}
 EXCEPTION -- reconciliation/mismatch questions: the template above asserts an equation (qty × price = amount) that is only true when the row's stored `line_amount` actually equals qty × unit_price. Found live, 2026-08-19 (US tenant test): asked to check whether a line reconciles, the query results included both the stored amount and a separately computed one (e.g. `computed_line_amount`, `line_amount_matches`) precisely because they DIFFER -- and applying the "=" template anyway printed a false equation ("5000.00 units × USD 0.08 = USD 420.00", when 5000 × 0.08 is actually 400.00, not 420.00). If the query results contain a computed/expected amount that does NOT equal the stored `line_amount` for a row, do NOT use the "=" template for that row -- it would state a false equation. Instead say both figures plainly and name the mismatch: "<line_description>: printed amount <currency> <line_amount>, but <line_qty> × <currency> <line_unit_price> computes to <currency> <computed_amount> -- a <currency> <difference> mismatch." Only use the "=" template when the stored amount and the computed one genuinely agree (the normal case).
 
+{_INJECTION_GUARD_INSTRUCTION}
+{PROMPT_REQUEST_SECTION_MARKER}
+{style_block}
+{line_item_total_instruction}
 {payment_status_block}
 {attribute_term_block}
 Results:
 {db_result}{computed_figures_block}{full_record_block}
 {rules_block}{chat_rules_block}
-User Query: {user_message}
+User Query: {_wrap_user_input(user_message, tenant_id)}
 """
 
                 progress("summarizing_results")
@@ -5447,12 +6216,13 @@ FORMATTING: Format your answer in Markdown. Use a bullet list when listing multi
 Extracted Document Context (Long-term Facts):
 Each passage below is delimited and labelled with the invoice it came from -- cite that source
 when you use one.
+{_INJECTION_GUARD_INSTRUCTION}
+{PROMPT_REQUEST_SECTION_MARKER}
 {context_str}
 
 {tenant_stats}
 {rules_block}{chat_rules_block}
 {style_block}
-{_INJECTION_GUARD_INSTRUCTION}
 Conversation History (Short-term context):
 {chat_history}
 """
@@ -5592,6 +6362,11 @@ Conversation History:
         "citations": citations,
         "result_invoice_ids": result_invoice_ids[:MAX_SNAPSHOT_INVOICE_IDS],
     }
+    # Gap 436: the snapshot is rewritten from what this turn actually returned,
+    # before the cache write, so the next turn inherits the subject even when
+    # this one is later served from cache.
+    update_session_focus(session_id, db_session, result)
+
     if c3_clarification is not None:
         # C3: rides the Feature 26 clarification contract, which already
         # persists (ATTACHMENT_CONTRACT_KEYS), serialises and renders. The FE
@@ -5606,7 +6381,7 @@ Conversation History:
         # still let this session's answer to "and the other one?" sit in the cache
         # under a key that means something different to every other session.
         if not _is_narrowing_followup(user_message):
-            set_cached_answer(tenant_id, user_message, result)
+            set_cached_answer(tenant_id, user_message, result, rules_version)
 
     # Gap 304 half (2): attached AFTER the cache write, deliberately. Two
     # consequences, both wanted:

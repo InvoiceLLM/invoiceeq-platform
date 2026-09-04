@@ -370,6 +370,12 @@ interface InputBarProps {
   onRemoveAttachment?: () => void;
   /** Abort the in-flight upload (uploading only). */
   onCancelAttachment?: () => void;
+  /**
+   * Feature 26 Phase 4 (Gap 444). The chip's Compare / Read buttons send the
+   * question WITH a structured `attachment_intent`, so the clarify card does
+   * not have to fire for the two cases that cover most questions.
+   */
+  onAttachmentIntent?: (intent: "read" | "compare") => void;
   /** How many attachments this SESSION already holds (backend cap is 5). */
   attachmentCount?: number;
 }
@@ -382,6 +388,7 @@ function InputBar({
   attachment = null,
   onRemoveAttachment,
   onCancelAttachment,
+  onAttachmentIntent,
   attachmentCount = 0,
 }: InputBarProps) {
   const [value, setValue] = useState("");
@@ -455,7 +462,19 @@ function InputBar({
               state={attachment}
               onCancel={onCancelAttachment}
               onRemove={onRemoveAttachment}
+              onIntent={onAttachmentIntent}
             />
+            {/* Gap 444: the cap, said before the 409 rather than after it. The
+                paperclip already disables at the limit; this says why. */}
+            {attachmentCount > 0 && (
+              <p
+                data-testid="chat-attachment-count"
+                className="mt-1 text-[11px] text-slate-500"
+              >
+                {attachmentCount} of {MAX_CHAT_ATTACHMENTS_PER_SESSION} documents
+                {sessionFull ? " - this conversation is full" : ""}
+              </p>
+            )}
           </div>
         )}
         <div className="flex items-end gap-3">
@@ -597,6 +616,12 @@ interface ChatWindowProps {
   attachment?: AttachmentState | null;
   onRemoveAttachment?: () => void;
   onCancelAttachment?: () => void;
+  /**
+   * Feature 26 Phase 4 (Gap 444). The chip's Compare / Read buttons send the
+   * question WITH a structured `attachment_intent`, so the clarify card does
+   * not have to fire for the two cases that cover most questions.
+   */
+  onAttachmentIntent?: (intent: "read" | "compare") => void;
   attachmentCount?: number;
   // Feature 26 task H16/R6. H11 built the confirmation card, the clarification
   // buttons and the manual-entry field behind this prop, and H12 built the
@@ -625,6 +650,7 @@ export default function ChatWindow({
   attachment = null,
   onRemoveAttachment,
   onCancelAttachment,
+  onAttachmentIntent,
   attachmentCount = 0,
   attachmentHandlers,
 }: ChatWindowProps) {
@@ -745,6 +771,7 @@ export default function ChatWindow({
           attachment={attachment}
           onRemoveAttachment={onRemoveAttachment}
           onCancelAttachment={onCancelAttachment}
+          onAttachmentIntent={onAttachmentIntent}
           attachmentCount={attachmentCount}
         />
       </div>

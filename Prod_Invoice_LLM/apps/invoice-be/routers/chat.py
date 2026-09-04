@@ -125,6 +125,14 @@ class MessageCreate(BaseModel):
     # Ownership/tenant scoping of the id is resolved in the agent's attachment
     # path against the DB -- this router does not widen it.
     attachment_id: UUID | None = None
+    # Gap 432 (2026-09-04): "read" | "compare" from the clarify card's buttons.
+    # Structured, so the choice does not have to survive a keyword match over
+    # the re-sent text. Ignored when there is no attachment.
+    attachment_intent: str | None = Field(default=None, max_length=16)
+    # Feature 26 Phase 2 (Gap 439): more than one attached document per turn.
+    # `attachment_id` stays for every existing caller; when both are sent the
+    # single id is the one the question is primarily about.
+    attachment_ids: list[UUID] | None = Field(default=None, max_length=5)
 
 class ChatJobResponse(BaseModel):
     """Gap 280: Async job enqueue response."""
@@ -205,6 +213,8 @@ class MessageResponse(BaseModel):
     line_items: list | None = None
     unmatched: dict | None = None
     reconciliation: dict | None = None
+    # Gap 387 (Phase 2.3): two attached documents compared to each other.
+    attachment_pair_comparison: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -223,6 +233,7 @@ ATTACHMENT_CONTRACT_KEYS: tuple[str, ...] = (
     "line_items",
     "unmatched",
     "reconciliation",
+    "attachment_pair_comparison",
 )
 
 
@@ -394,6 +405,19 @@ def delete_session(
     ).all()
     for attachment in attachments:
         delete_attachment_chunks(attachment.id, attachment.tenant_id)
+        # Gap 433 (2026-09-04): the blob was the one thing this path left
+        # behind. Same best-effort/logged shape as the TTL sweeper -- an
+        # unreachable storage account must not make the session undeletable.
+        if attachment.blob_path:
+            try:
+                from services.storage import delete_pdf_from_storage
+
+                delete_pdf_from_storage(attachment.blob_path)
+            except Exception as e:
+                logger.error(
+                    "Blob delete failed for attachment %s (%s): %s",
+                    attachment.id, attachment.blob_path, e,
+                )
         db_session.delete(attachment)
 
     db_session.delete(chat_session)
@@ -558,6 +582,7 @@ def post_chat_message(
                 # actually supplies it. Missing this one would leave the other
                 # three carrying a value nobody ever sets.
                 attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
+                attachment_ids=[str(i) for i in (payload.attachment_ids or [])] or None,
             )
         except ChatQueueCapacityError as exc:
             # Gap 364: the tenant is at PER_TENANT_MAX_ACTIVE_CHAT. Undo the row
@@ -635,6 +660,8 @@ def post_chat_message(
         chat_session=chat_session,
         new_title=new_title,
         attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
+        attachment_intent=payload.attachment_intent,
+        attachment_ids=[str(i) for i in (payload.attachment_ids or [])] or None,
     )
 
     # Feature 26 H16 (Gap 386): flatten the stored contract back onto the wire,
@@ -655,6 +682,8 @@ def run_sync_chat_turn(
     chat_session: ChatSession | None = None,
     new_title: str | None = None,
     attachment_id: str | None = None,
+    attachment_intent: str | None = None,
+    attachment_ids: list | None = None,
 ) -> ChatMessage:
     """One complete synchronous chat turn: persist, answer, persist, observe.
 
@@ -697,6 +726,8 @@ def run_sync_chat_turn(
             tenant_id=str(tenant_id),
             db_session=db_session,
             attachment_id=attachment_id,
+            attachment_intent=attachment_intent,
+            attachment_ids=attachment_ids,
         )
     except Exception as e:
         logger.error("run_query_agent failed unexpectedly for session %s: %s", session_id, e)
@@ -1011,12 +1042,72 @@ def set_message_feedback(
         ))
     db_session.commit()
 
+    if payload.vote == "down":
+        _promote_to_eval_bank(message, payload, db_session, tenant_context)
+
     response = {"success": True, "vote": payload.vote, "reason": payload.reason}
     if payload.vote == "down":
         # Feature 18: hand the FE everything it needs to open the right next step
         # without a second round-trip just to discover which step that is.
         response["triage"] = _triage_entry_point(message, payload.reason, db_session, tenant_context)
     return response
+
+
+def _promote_to_eval_bank(message, payload, db_session: Session, tenant_context) -> None:
+    """Gap 453: a thumbs-down becomes an eval case, automatically.
+
+    Best-effort and idempotent. The user's feedback is already committed by the
+    time this runs, so a failure here must not turn a working thumbs-down into a
+    500 -- and a second thumbs-down on the same message must not create a second
+    case (the unique index on `message_id` says so; this checks first so the
+    common path does not rely on catching an integrity error).
+
+    The QUESTION is what gets promoted, not the answer: the user's question
+    paired with what we replied is a case worth re-running, and the reply itself
+    is exactly what the case must NOT expect (see `AutoGoldenCase`).
+    """
+    from models import AutoGoldenCase
+
+    try:
+        if db_session.exec(
+            select(AutoGoldenCase).where(AutoGoldenCase.message_id == message.id)
+        ).first():
+            return
+
+        question = db_session.exec(
+            select(ChatMessage)
+            .where(
+                ChatMessage.session_id == message.session_id,
+                ChatMessage.role == "user",
+                ChatMessage.created_at <= message.created_at,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        ).first()
+        if question is None or not (question.content or "").strip():
+            # Nothing to re-ask. A case with no question cannot be run, and
+            # storing one would put an unrunnable row in the bank.
+            return
+
+        db_session.add(
+            AutoGoldenCase(
+                tenant_id=tenant_context.tenant_id,
+                message_id=message.id,
+                session_id=message.session_id,
+                question=question.content.strip()[:4000],
+                reported_answer=(message.content or "")[:8000] or None,
+                reason=payload.reason,
+                note=(payload.note or "").strip()[:2000] or None,
+            )
+        )
+        db_session.commit()
+        logger.info("Promoted message %s to the eval bank (Gap 453)", message.id)
+    except Exception as e:
+        logger.error("Eval-bank promotion failed for message %s: %s", message.id, e)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
