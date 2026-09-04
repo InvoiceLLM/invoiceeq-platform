@@ -94,6 +94,9 @@ param chatDocTtlReplicaTimeout int = 1800
 @description('Cap on rows this run touches, passed as --limit. See header comment: the first run against a long-lived, backlog-unknown environment is easier to inspect bounded than unbounded.')
 param chatDocTtlLimit int = 500
 
+@description('Azure OpenAI deployment name. The shared scheduled-job module made this required in 308dd55 (config.py reads it at import; this script never calls the model). gpt-5-mini is the one deployment this environment runs on.')
+param azureOpenAiDeploymentName string = 'gpt-5-mini'
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
@@ -137,6 +140,7 @@ module chatDocTtlJob './modules/compute/scheduled-job.bicep' = {
     ]
     cronExpression: chatDocTtlCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
     appInsightsConnectionString: appInsights.properties.ConnectionString
     cpu: '0.5'
     memory: '1.0Gi'

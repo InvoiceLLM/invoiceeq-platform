@@ -60,7 +60,7 @@
       "value": "gpt-5-mini"
     },
     "azureOpenAiFastDeploymentName": {
-      "value": "gpt-4o"
+      "value": ""
     },
     "azureOpenAiModelVersion": {
       "value": "2025-08-07"

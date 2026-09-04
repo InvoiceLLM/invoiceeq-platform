@@ -333,16 +333,37 @@ module backendApp './modules/compute/invoice-be.bicep' = {
 
 // Gaps 119 + 121: daily billing lifecycle sweep (paid lapse + free quota refill).
 // Same backend image as ca-invoice-be; command overridden to the sweep script.
-module billingLifecycleJob './modules/compute/billing-lifecycle-job.bicep' = {
+// Billing runs on the shared scheduled-job module, NOT
+// modules/compute/billing-lifecycle-job.bicep. That module sets only
+// DATABASE_URL, but scripts/sweep_billing_lifecycle.py imports `database` ->
+// `config.settings`, and config.py requires REDIS_URL, CHROMA_HOST,
+// CHROMA_PORT, CLERK_SECRET_KEY and TOKEN_ENCRYPTION_KEY at import. Proven
+// 2026-09-04: the job's first-ever execution died with `ValidationError: 6
+// validation errors for Settings` before reaching main(). Mirrors
+// sweep-jobs-only.bicep, which is what actually deployed it -- keep in sync.
+module billingLifecycleJob './modules/compute/scheduled-job.bicep' = {
   name: 'billing-lifecycle-job-deploy'
   params: {
     location: location
     caeId: cae.id
     jobName: 'caj-billing-lifecycle-${environment}'
+    containerName: 'billing-lifecycle-sweep'
     userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
     keyVaultName: keyVaultName
     acrName: sharedAcrName
     image: backendImage
+    command: [
+      'python'
+      'scripts/sweep_billing_lifecycle.py'
+    ]
+    cronExpression: '0 6 * * *'
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    cpu: '0.25'
+    memory: '0.5Gi'
   }
 }
 

@@ -64,6 +64,9 @@ param onlineSignalsCron string = '15 0,6,12,18 * * *'
 @description('Seconds before the execution is killed. This is a handful of read-only Postgres queries plus one telemetry mirror -- far below a benchmark run.')
 param onlineSignalsReplicaTimeout int = 600
 
+@description('Azure OpenAI deployment name. The shared scheduled-job module made this required in 308dd55 (config.py reads it at import; this script never calls the model). gpt-5-mini is the one deployment this environment runs on.')
+param azureOpenAiDeploymentName string = 'gpt-5-mini'
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
@@ -107,6 +110,7 @@ module onlineSignalsJob './modules/compute/scheduled-job.bicep' = {
     ]
     cronExpression: onlineSignalsCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
     appInsightsConnectionString: appInsights.properties.ConnectionString
     cpu: '0.5'
     memory: '1.0Gi'
