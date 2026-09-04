@@ -18,7 +18,7 @@ function tabToStatusParams(tab: StatusTab): { status?: string; status_in?: strin
   if (tab === "paid") return { status: "PAID" };
   if (tab === "rejected") return { status: "REJECTED" };
   if (tab === "audit_required") return { status: "AUDIT_REQUIRED" };
-  if (tab === "pending") return { status_in: "PROCESSING,COMPLETED,DUPLICATE" };
+  if (tab === "pending") return { status_in: "PROCESSING,COMPLETED,DUPLICATE,REVIEW_LATER,NEEDS_RESUBMISSION" };
   return {};
 }
 

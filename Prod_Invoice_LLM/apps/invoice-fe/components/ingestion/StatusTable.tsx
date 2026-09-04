@@ -10,7 +10,9 @@ import {
   FileText,
   ExternalLink,
   Info,
-  Tag
+  Tag,
+  Clock,
+  RotateCcw
 } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "../../lib/utils";
@@ -19,7 +21,7 @@ export interface StatusItem {
   id: string;
   name: string;
   size: number;
-  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED" | "PAID" | "REJECTED";
+  status: "UPLOADED" | "PROCESSING" | "COMPLETED" | "AUDIT_REQUIRED" | "DUPLICATE" | "FAILED" | "PAID" | "REJECTED" | "REVIEW_LATER" | "NEEDS_RESUBMISSION";
   progress: number;
   alerts?: any[];
   vendorName?: string;
@@ -260,6 +262,20 @@ export default function StatusTable({
           >
             <AlertTriangle className="w-3 h-3" />
             Duplicate
+          </span>
+        );
+      case "REVIEW_LATER":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/10 border border-sky-500/20 text-sky-400">
+            <Clock className="w-3 h-3" />
+            Review Later
+          </span>
+        );
+      case "NEEDS_RESUBMISSION":
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/10 border border-orange-500/20 text-orange-400">
+            <RotateCcw className="w-3 h-3" />
+            Needs Resubmission
           </span>
         );
       case "PROCESSING":

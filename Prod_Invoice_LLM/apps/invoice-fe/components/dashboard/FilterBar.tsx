@@ -48,6 +48,8 @@ const INBOUND_STATUSES = [
   { value: "PROCESSING", label: "Processing" },
   { value: "COMPLETED", label: "Completed" },
   { value: "AUDIT_REQUIRED", label: "Audit Required" },
+  { value: "REVIEW_LATER", label: "Review Later" },
+  { value: "NEEDS_RESUBMISSION", label: "Needs Resubmission" },
   { value: "PAID", label: "Paid" },
   { value: "REJECTED", label: "Rejected" },
   { value: "DUPLICATE", label: "Duplicate" },

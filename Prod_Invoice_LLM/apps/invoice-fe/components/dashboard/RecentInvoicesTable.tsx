@@ -12,7 +12,9 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  XCircle
+  XCircle,
+  Clock,
+  RotateCcw
 } from "lucide-react";
 import { formatCurrency, formatDate } from "../../lib/utils";
 import { apiClient } from "../../lib/apiClient";
@@ -155,6 +157,20 @@ export default function RecentInvoicesTable({
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/10 border border-rose-500/25 text-rose-400">
             <XCircle className="w-3.5 h-3.5" />
             Rejected
+          </span>
+        );
+      case "REVIEW_LATER":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-500/10 border border-sky-500/25 text-sky-400">
+            <Clock className="w-3.5 h-3.5" />
+            Review Later
+          </span>
+        );
+      case "NEEDS_RESUBMISSION":
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-500/10 border border-orange-500/25 text-orange-400">
+            <RotateCcw className="w-3.5 h-3.5" />
+            Needs Resubmission
           </span>
         );
       case "PROCESSING":
