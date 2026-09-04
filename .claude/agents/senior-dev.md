@@ -1,7 +1,7 @@
 ---
 name: senior-dev
 description: Implements code changes across invoice-be/invoice-fe/invoice-website per a scope approved with architect (or a direct small ask). Writes application code and updates the matching feature spec doc + tracker.
-tools: Read, Edit, Write, Grep, Glob, Bash
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill
 model: opus
 ---
 

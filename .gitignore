@@ -16,3 +16,11 @@ local/
 .claude/tasklists/functional-tester-realworld-chat-live-run.md
 .claude/tasklists/functional-tester-realworld-tenant4-groundtruth.md
 .claude/tasklists/senior-dev-preflight-chat-testing-gate.md
+
+# Generated code/doc dependency graphs - regenerate with
+# dependency_parser.py and code_dependency_graph.py (see CLAUDE.md).
+# Build output: churns on every run, no value in history.
+dependency_graph.json
+be_code_graph.json
+fe_code_graph.json
+website_code_graph.json

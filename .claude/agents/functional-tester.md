@@ -1,7 +1,7 @@
 ---
 name: functional-tester
 description: Designs and runs functional test scenarios across invoice-be/invoice-fe/invoice-website — DB state validation, log-level checks, screen/alignment verification via screenshot, API contract checks. States the test plan before running, files real evidence after.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 model: sonnet
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: infra-devops
 description: Changes infra/ (Azure Bicep, ps1 deploy scripts, GitHub Actions) per a scope approved with architect — e.g. building the dev/prod environment split. Verifies with real tooling before reporting done.
-tools: Read, Edit, Write, Grep, Glob, Bash
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill
 model: sonnet
 ---
 
