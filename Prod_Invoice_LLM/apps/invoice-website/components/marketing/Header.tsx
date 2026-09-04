@@ -18,7 +18,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
-  const [hash, setHash] = useState("");
+  const [activeSection, setActiveSection] = useState<string>("");
   const loginTargetHref = pathname === "/login" ? "/signup" : "/login";
   const loginLabel = pathname === "/login" ? "Register" : "Login";
   const ctaTargetHref = pathname === "/login" ? "/signup" : "/login";
@@ -32,23 +32,72 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
       }
     };
 
-    window.addEventListener("scroll", handleScroll);
+    window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // Same-page section links (#features/#pricing/#architecture-flows) are only
-  // "active" when that section is the current fragment, so exactly one nav item
-  // can be highlighted at a time rather than every section link on "/".
+  // Track the actively visible section on the landing page ("/")
+  // so the corresponding nav item highlights smoothly as users scroll or click.
   useEffect(() => {
-    const syncHash = () => setHash(window.location.hash);
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-    return () => window.removeEventListener("hashchange", syncHash);
+    if (pathname !== "/") {
+      return;
+    }
+
+    const sections = [
+      { id: "architecture-flows", href: "#architecture-flows" },
+      { id: "features", href: "#features" },
+      { id: "choose-your-workflow", href: "#choose-your-workflow" },
+      { id: "pricing", href: "#pricing" },
+    ];
+
+    const updateActiveSection = () => {
+      // If at the very top (e.g. Hero banner), no section is active
+      if (window.scrollY < 200) {
+        setActiveSection("");
+        return;
+      }
+
+      // If near the bottom of the page, pricing is active
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 100) {
+        setActiveSection("#pricing");
+        return;
+      }
+
+      const headerOffset = 140; // sticky header height + trigger offset
+      for (let i = sections.length - 1; i >= 0; i--) {
+        const section = sections[i];
+        const el = document.getElementById(section.id);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top <= headerOffset) {
+            setActiveSection(section.href);
+            return;
+          }
+        }
+      }
+    };
+
+    if (window.location.hash) {
+      setActiveSection(window.location.hash);
+    } else {
+      updateActiveSection();
+    }
+
+    window.addEventListener("scroll", updateActiveSection, { passive: true });
+    window.addEventListener("hashchange", updateActiveSection);
+    return () => {
+      window.removeEventListener("scroll", updateActiveSection);
+      window.removeEventListener("hashchange", updateActiveSection);
+    };
   }, [pathname]);
 
   const isActive = (href: string) => {
-    if (href.startsWith("#")) return pathname === "/" && hash === href;
-    if (href === "/") return pathname === "/";
+    if (pathname === "/") {
+      if (href.startsWith("#")) {
+        return activeSection === href;
+      }
+      return false;
+    }
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
@@ -97,6 +146,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
           <a
             href={pathname === "/" ? "#architecture-flows" : "/#architecture-flows"}
             onClick={(e) => {
+              if (pathname === "/") setActiveSection("#architecture-flows");
               if (pathname === "/" && onOpenFlowsModal) {
                 e.preventDefault();
                 onOpenFlowsModal();
@@ -111,7 +161,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
           <Link
             href={pathname === "/" ? "#features" : "/#features"}
             onClick={() => {
-              if (pathname === "/") setHash("#features");
+              if (pathname === "/") setActiveSection("#features");
             }}
             aria-current={navCurrent("#features")}
             className={navLinkClass("#features")}
@@ -121,7 +171,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
           <Link
             href={pathname === "/" ? "#pricing" : "/#pricing"}
             onClick={() => {
-              if (pathname === "/") setHash("#pricing");
+              if (pathname === "/") setActiveSection("#pricing");
             }}
             aria-current={navCurrent("#pricing")}
             className={navLinkClass("#pricing")}
@@ -142,7 +192,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
           <Link
             href={pathname === "/" ? "#choose-your-workflow" : "/#choose-your-workflow"}
             onClick={() => {
-              if (pathname === "/") setHash("#choose-your-workflow");
+              if (pathname === "/") setActiveSection("#choose-your-workflow");
             }}
             aria-current={navCurrent("#choose-your-workflow")}
             className={navLinkClass("#choose-your-workflow")}
@@ -185,7 +235,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
             <Link
               href={pathname === "/" ? "#features" : "/#features"}
               onClick={() => {
-                if (pathname === "/") setHash("#features");
+                if (pathname === "/") setActiveSection("#features");
                 setMobileMenuOpen(false);
               }}
               aria-current={navCurrent("#features")}
@@ -196,7 +246,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
             <Link
               href={pathname === "/" ? "#pricing" : "/#pricing"}
               onClick={() => {
-                if (pathname === "/") setHash("#pricing");
+                if (pathname === "/") setActiveSection("#pricing");
                 setMobileMenuOpen(false);
               }}
               aria-current={navCurrent("#pricing")}
@@ -215,7 +265,7 @@ export function Header({ onOpenFlowsModal }: HeaderProps) {
             <Link
               href={pathname === "/" ? "#choose-your-workflow" : "/#choose-your-workflow"}
               onClick={() => {
-                if (pathname === "/") setHash("#choose-your-workflow");
+                if (pathname === "/") setActiveSection("#choose-your-workflow");
                 setMobileMenuOpen(false);
               }}
               aria-current={navCurrent("#choose-your-workflow")}
