@@ -29,8 +29,14 @@ invoice-fe-lite/
 **/.env.*.local
 
 # Local temp data (not for cloud)
+# Gap 416: this is the file that matters. Docker only reads `.dockerignore` at
+# the *context root*, and `docker/Dockerfile.be` copies `apps/invoice-be/...`,
+# so the context root is `Prod_Invoice_LLM/` -- a `.dockerignore` placed inside
+# `apps/invoice-be/` would never be read at all.
 apps/invoice-be/temp_chroma_db
 apps/invoice-be/temp_storage
+apps/invoice-be/local_logs
+apps/invoice-be/watched_invoices
 
 # Infrastructure and docs (not needed in Docker image)
 infra/
