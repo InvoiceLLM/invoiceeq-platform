@@ -1071,7 +1071,9 @@ class WidgetToken(SQLModel, table=True):
 # manual "Sync Now" runs. Two-layer deduplication:
 #   Layer 1: source_file_id match (same file seen before by ID)
 #   Layer 2: content_hash match (same PDF bytes, even if renamed/moved)
-# status values: 'SUCCESS' | 'SKIPPED_DUPLICATE' | 'FAILED'
+# status values: 'SUCCESS' | 'SKIPPED_DUPLICATE' | 'FAILED' | 'NO_NEW_FILES'
+# Gap 427: rows are additionally grouped into runs by batch_id -- see the field
+# comments below and GET /autopilot/history in routers/autopilot.py.
 class TenantAutopilotLog(SQLModel, table=True):
     __tablename__ = "tenant_autopilot_logs"
     __table_args__ = (
@@ -1079,6 +1081,10 @@ class TenantAutopilotLog(SQLModel, table=True):
         sa.Index("idx_autopilot_log_tenant_file", "tenant_id", "source_file_id"),
         # Index for dedup layer 2 lookup (content hash across tenant)
         sa.Index("idx_autopilot_log_hash", "content_hash"),
+        # Gap 427: the Sync History screen groups these rows into *runs*, so the
+        # read path is "every row of this tenant's batch" / "GROUP BY batch_id
+        # for this tenant" -- neither of the two dedup indexes above serves it.
+        sa.Index("idx_autopilot_log_tenant_batch", "tenant_id", "batch_id"),
     )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
@@ -1087,10 +1093,37 @@ class TenantAutopilotLog(SQLModel, table=True):
     source_type: str = Field(max_length=50)
     # Google Drive fileId
     source_file_id: str = Field(max_length=255)
+    # Gap 427: the human-readable file name as the source reported it, captured
+    # at ingest time. The raw Drive fileId is the only thing the history table
+    # could show before this, which is unreadable. Nullable because rows written
+    # before this column existed can never be back-filled -- the name is not
+    # recoverable from anything else stored.
+    source_file_name: str | None = Field(default=None, max_length=512)
     # SHA-256 hash of raw document bytes — reuses email attachment dedup logic
     content_hash: str = Field(max_length=64)
+    # Gap 427: which sync run wrote this row. run_sync() already minted a
+    # per-run batch_id and stamped it on the Invoice rows it created, but never
+    # on its own log rows -- so the history endpoint had no notion of a "run"
+    # at all and could only page over individual files. Nullable: every row
+    # written before this column existed belongs to no identifiable run, and
+    # those legacy rows collapse into one synthetic "before run tracking"
+    # entry in GET /autopilot/history.
+    #
+    # Indexed by the composite idx_autopilot_log_tenant_batch declared above
+    # rather than index=True here: every read of this column is already
+    # tenant-scoped, so a standalone single-column index would be redundant.
+    batch_id: UUID | None = Field(default=None)
+    # Gap 427: 'manual' (POST /autopilot/sync, a human pressed Sync Now) or
+    # 'scheduled' (the ACA job). Nullable for the same legacy reason as above.
+    trigger: str | None = Field(default=None, max_length=20)
     ingested_at: datetime = Field(default_factory=datetime.utcnow)
-    # 'SUCCESS' | 'SKIPPED_DUPLICATE' | 'FAILED'
+    # 'SUCCESS' | 'SKIPPED_DUPLICATE' | 'FAILED' | 'NO_NEW_FILES'
+    # Gap 427: NO_NEW_FILES is a run-level marker, not a file -- one row with an
+    # empty source_file_id, written when a run finds nothing to do, so that an
+    # empty run is still visible in history instead of vanishing. It is
+    # deliberately NOT 'SUCCESS': both dedup layers and the incremental
+    # since_dt lookup filter on status == 'SUCCESS', and a marker row carrying
+    # an empty file id/hash must not participate in any of them.
     status: str = Field(max_length=50)
     # populated only on FAILED rows — stores the exception message
     error_detail: str | None = Field(default=None)

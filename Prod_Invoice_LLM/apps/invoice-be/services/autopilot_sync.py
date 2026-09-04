@@ -16,8 +16,18 @@ Sync flow per tenant:
   6. Charge the free-tier quota for the new file (Gap 343) — a refusal here
      stops the run rather than ingesting past the tenant's allowance
   7. Create Invoice DB row + dispatch extraction queue message
-  8. Write TenantAutopilotLog row (SUCCESS / SKIPPED_DUPLICATE / FAILED)
+  8. Write TenantAutopilotLog row (SUCCESS / SKIPPED_DUPLICATE / FAILED),
+     stamped with this run's batch_id, trigger and the source file name
   9. Return summary: { processed, skipped, failed, quota_exhausted }
+
+Gap 427 — runs, not files. Every log row this module writes now carries the
+per-run `batch_id` (which already existed, but was only ever stamped on the
+Invoice rows), the `trigger` that started the run ('manual' | 'scheduled') and
+the human-readable file name. A run that finds nothing to do writes a single
+NO_NEW_FILES marker row so that an empty run is still visible in history rather
+than leaving no trace at all. GET /autopilot/history derives run-level totals
+by grouping these rows -- there is deliberately no separate "run" table and no
+end-of-run summary row to keep in sync with the per-file rows.
 """
 
 import hashlib
@@ -78,9 +88,19 @@ SOURCE_TYPE_TO_PROVIDER = {
 # Public API
 # ---------------------------------------------------------------------------
 
-def run_sync(tenant_id: UUID, db_session: Session) -> dict:
+def run_sync(
+    tenant_id: UUID,
+    db_session: Session,
+    trigger: str = "scheduled",
+) -> dict:
     """
     Run a full Autopilot sync cycle for one tenant.
+
+    Args:
+        trigger: Gap 427 — what started this run, recorded on every log row it
+            writes. Defaults to 'scheduled' because the unattended ACA job path
+            (run_sync_for_all_due_tenants below) is the one that cannot pass it
+            per-call; routers/autopilot.py::trigger_sync() passes 'manual'.
 
     Returns:
         {"processed": int, "skipped": int, "failed": int, "quota_exhausted": bool}
@@ -176,6 +196,19 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
     batch_id = uuid4()
     newly_imported: list[dict] = []
 
+    # Gap 427: a run that found nothing still happened, and the user pressing
+    # "Sync Now" needs to see that it ran and found nothing -- otherwise the
+    # screen is indistinguishable from the sync never having fired. One marker
+    # row, no file id, no hash. Written before the loop rather than after it so
+    # that the "found nothing" case has exactly one row and the "found files"
+    # case has none of these; the two are mutually exclusive by construction.
+    if not remote_files:
+        _write_log(
+            db_session, tenant_id, config.source_type,
+            source_file_id="", content_hash="", status="NO_NEW_FILES",
+            batch_id=batch_id, trigger=trigger, source_file_name=None,
+        )
+
     for remote_file in remote_files:
         file_id = remote_file["id"]
         file_name = remote_file.get("name", file_id)
@@ -195,6 +228,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                 _write_log(
                     db_session, tenant_id, config.source_type,
                     file_id, content_hash="", status="SKIPPED_DUPLICATE",
+                    batch_id=batch_id, trigger=trigger, source_file_name=file_name,
                 )
                 skipped += 1
                 continue
@@ -225,6 +259,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                 _write_log(
                     db_session, tenant_id, config.source_type,
                     file_id, content_hash=content_hash, status="SKIPPED_DUPLICATE",
+                    batch_id=batch_id, trigger=trigger, source_file_name=file_name,
                 )
                 skipped += 1
                 continue
@@ -265,6 +300,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                         "imported. It will be retried automatically after the "
                         "monthly quota refill, or immediately on a paid plan."
                     ),
+                    batch_id=batch_id, trigger=trigger, source_file_name=file_name,
                 )
                 failed += 1
                 break
@@ -297,6 +333,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
             _write_log(
                 db_session, tenant_id, config.source_type,
                 file_id, content_hash=content_hash, status="SUCCESS",
+                batch_id=batch_id, trigger=trigger, source_file_name=file_name,
             )
             processed += 1
             newly_imported.append({
@@ -312,6 +349,7 @@ def run_sync(tenant_id: UUID, db_session: Session) -> dict:
                 db_session, tenant_id, config.source_type,
                 file_id, content_hash="", status="FAILED",
                 error_detail=str(exc),
+                batch_id=batch_id, trigger=trigger, source_file_name=file_name,
             )
             failed += 1
 
@@ -355,7 +393,9 @@ def run_sync_for_all_due_tenants(db_session: Session) -> None:
 
     for config in configs:
         try:
-            summary = run_sync(config.tenant_id, db_session)
+            # Gap 427: explicit rather than relying on the default, so the
+            # scheduled path stays labelled correctly if that default ever moves.
+            summary = run_sync(config.tenant_id, db_session, trigger="scheduled")
             logger.info(
                 "Tenant %s sync done: %s", config.tenant_id, summary
             )
@@ -378,13 +418,27 @@ def _write_log(
     content_hash: str,
     status: str,
     error_detail: str | None = None,
+    batch_id: UUID | None = None,
+    trigger: str | None = None,
+    source_file_name: str | None = None,
 ) -> None:
-    """Write a single row to tenant_autopilot_logs."""
+    """Write a single row to tenant_autopilot_logs.
+
+    Gap 427: batch_id/trigger/source_file_name are what turn these rows into a
+    readable *run* in GET /autopilot/history. They keep None defaults so the
+    signature stays compatible with any caller outside this module, but every
+    call site inside run_sync() passes all three -- a row written without a
+    batch_id would silently fall into the endpoint's legacy bucket instead of
+    the run it actually belongs to.
+    """
     log_entry = TenantAutopilotLog(
         tenant_id=tenant_id,
         source_type=source_type,
         source_file_id=source_file_id,
+        source_file_name=source_file_name,
         content_hash=content_hash,
+        batch_id=batch_id,
+        trigger=trigger,
         status=status,
         error_detail=error_detail,
     )

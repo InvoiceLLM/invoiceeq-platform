@@ -10,7 +10,17 @@ Covers:
     T05 - PUT /autopilot/config  -> 422 rejects invalid flow_direction
     T06 - PUT /autopilot/config  -> 422 rejects invalid trigger_mode
     T07 - GET /autopilot/history -> 200 empty list when no logs
-    T08 - GET /autopilot/history -> 200 returns paginated log entries
+    T08 - GET /autopilot/history -> 200 groups log rows into runs, paginated
+
+  Gap 427 — sync history is a list of RUNS, not files:
+    T20a - runs are grouped by batch_id, newest first, with per-run totals
+    T20b - run status derivation: SUCCESS / PARTIAL / FAILED / all-skipped
+    T20c - a NO_NEW_FILES marker run reports files_seen 0 and that status
+    T20d - legacy (batch_id IS NULL) rows collapse into ONE bucket, ordered last
+    T20e - /history/{batch_id}/files returns that run's files, 404 cross-tenant
+    T20f - /history/legacy/files returns only the caller's legacy rows
+    T20g - run_sync stamps batch_id/trigger/source_file_name on every row and
+           writes a NO_NEW_FILES row when the source has nothing new
     T09 - POST /autopilot/sync   -> 400 when no config saved
     T10 - POST /autopilot/sync   -> 400 when no active connection
 
@@ -36,6 +46,7 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -157,15 +168,35 @@ def _make_log(
     source_file_id: str = "file-001",
     content_hash: str = "aabbcc",
     status: str = "SUCCESS",
+    batch_id: UUID | None = None,
+    trigger: str | None = None,
+    source_file_name: str | None = None,
+    ingested_at: datetime | None = None,
 ) -> TenantAutopilotLog:
-    """Insert a TenantAutopilotLog row and return it."""
+    """Insert a TenantAutopilotLog row and return it.
+
+    Gap 427: `batch_id` defaults to None so that a bare _make_log() call still
+    produces a *legacy* row -- which is what the pre-Gap-427 rows in a real
+    database actually are, and keeps the legacy-bucket tests honest. Tests that
+    want a real run pass an explicit batch_id.
+
+    `ingested_at` is settable because run ordering is by min(ingested_at), and
+    rows inserted in the same test land in the same clock tick often enough on
+    Windows that relying on insertion order would make the ordering assertions
+    flaky rather than wrong.
+    """
     log = TenantAutopilotLog(
         tenant_id=tenant_id,
         source_type="gdrive",
         source_file_id=source_file_id,
+        source_file_name=source_file_name,
         content_hash=content_hash,
+        batch_id=batch_id,
+        trigger=trigger,
         status=status,
     )
+    if ingested_at is not None:
+        log.ingested_at = ingested_at
     db_session.add(log)
     db_session.commit()
     db_session.refresh(log)
@@ -323,23 +354,34 @@ def test_T07_get_history_empty(db_session):
 # ===========================================================================
 
 def test_T08_get_history_paginated(db_session):
-    """T08: GET /autopilot/history returns correct log entries with pagination metadata."""
-    # Insert 3 log rows
+    """T08: pagination counts RUNS, not files (Gap 427).
+
+    Three runs of two files each: the old per-file endpoint would have reported
+    total=6 here. Pagination that counted files was precisely what made the
+    screen unreadable, so the count is the assertion that matters.
+    """
+    base = datetime(2026, 9, 1, 12, 0, 0)
     for i in range(3):
-        _make_log(
-            db_session,
-            source_file_id=f"file-{i:03d}",
-            content_hash=f"hash{i:03d}",
-            status="SUCCESS",
-        )
+        batch = uuid4()
+        for j in range(2):
+            _make_log(
+                db_session,
+                source_file_id=f"file-{i}-{j}",
+                content_hash=f"hash{i}{j}",
+                status="SUCCESS",
+                batch_id=batch,
+                trigger="scheduled",
+                ingested_at=base + timedelta(hours=i, minutes=j),
+            )
 
     response = client.get("/api/v1/autopilot/history?page=1&page_size=2")
     assert response.status_code == 200
     data = response.json()
-    assert data["total"] == 3
+    assert data["total"] == 3          # 3 runs, not 6 files
     assert data["page"] == 1
     assert data["page_size"] == 2
-    assert len(data["items"]) == 2  # page_size=2 -> only 2 returned
+    assert len(data["items"]) == 2
+    assert all(item["files_seen"] == 2 for item in data["items"])
 
     # Second page
     response2 = client.get("/api/v1/autopilot/history?page=2&page_size=2")
@@ -625,7 +667,10 @@ def test_T18_job_calls_run_sync_per_tenant(db_session):
 
     call_log = []
 
-    def _fake_run_sync(tenant_id, session):
+    def _fake_run_sync(tenant_id, session, trigger="scheduled"):
+        # Gap 427: the scheduled path must label its rows 'scheduled'; asserting
+        # it here is what stops the ACA job silently writing 'manual' runs.
+        assert trigger == "scheduled"
         call_log.append(tenant_id)
         return {"processed": 0, "skipped": 0, "failed": 0}
 
@@ -757,3 +802,325 @@ def test_run_sync_google_drive_translation_and_unsupported_source_type_on_postgr
             if tenant_row:
                 pg_session.delete(tenant_row)
                 pg_session.commit()
+
+
+# ===========================================================================
+# Gap 427 — sync history is a list of RUNS, not a list of files
+# ===========================================================================
+
+def _seed_run(db_session, statuses, *, tenant_id=MOCK_TENANT_ID, trigger="scheduled",
+              started=None, batch_id=None):
+    """Insert one run's worth of log rows and return its batch_id."""
+    batch_id = batch_id or uuid4()
+    started = started or datetime(2026, 9, 1, 9, 0, 0)
+    for idx, st in enumerate(statuses):
+        _make_log(
+            db_session,
+            tenant_id=tenant_id,
+            source_file_id=f"{batch_id.hex[:6]}-file-{idx}",
+            content_hash=f"{batch_id.hex[:6]}{idx}",
+            status=st,
+            batch_id=batch_id,
+            trigger=trigger,
+            source_file_name=f"invoice-{idx}.pdf",
+            ingested_at=started + timedelta(seconds=idx),
+        )
+    return batch_id
+
+
+def test_T20a_history_groups_rows_into_runs_newest_first(db_session):
+    """T20a: rows collapse into one item per batch_id, newest run first, with
+    per-run totals derived from the file rows."""
+    older = _seed_run(
+        db_session, ["SUCCESS", "SKIPPED_DUPLICATE"],
+        trigger="scheduled", started=datetime(2026, 9, 1, 8, 0, 0),
+    )
+    newer = _seed_run(
+        db_session, ["SUCCESS", "SUCCESS", "FAILED"],
+        trigger="manual", started=datetime(2026, 9, 1, 10, 0, 0),
+    )
+
+    data = client.get("/api/v1/autopilot/history").json()
+    assert data["total"] == 2
+    assert [item["batch_id"] for item in data["items"]] == [str(newer), str(older)]
+
+    first, second = data["items"]
+    assert first["trigger"] == "manual"
+    assert (first["files_seen"], first["imported"], first["skipped"], first["failed"]) == (3, 2, 0, 1)
+    assert first["source_type"] == "gdrive"
+    # started_at/finished_at bracket the run rather than both being one row's time
+    assert first["started_at"] < first["finished_at"]
+
+    assert second["trigger"] == "scheduled"
+    assert (second["files_seen"], second["imported"], second["skipped"], second["failed"]) == (2, 1, 1, 0)
+
+
+def test_T20b_run_status_derivation(db_session):
+    """T20b: every run-status rule, each on its own run."""
+    cases = {
+        "all_success": (["SUCCESS", "SUCCESS"], "SUCCESS"),
+        "mixed": (["SUCCESS", "FAILED"], "PARTIAL"),
+        "skip_plus_fail": (["SKIPPED_DUPLICATE", "FAILED"], "PARTIAL"),
+        "all_failed": (["FAILED", "FAILED"], "FAILED"),
+        # Dedup working correctly is not a failure and not an empty run.
+        "all_skipped": (["SKIPPED_DUPLICATE", "SKIPPED_DUPLICATE"], "SUCCESS"),
+    }
+    expected = {}
+    for offset, (name, (statuses, want)) in enumerate(cases.items()):
+        batch = _seed_run(
+            db_session, statuses,
+            started=datetime(2026, 9, 1, 8, 0, 0) + timedelta(hours=offset),
+        )
+        expected[str(batch)] = want
+
+    data = client.get("/api/v1/autopilot/history").json()
+    assert data["total"] == len(cases)
+    got = {item["batch_id"]: item["status"] for item in data["items"]}
+    assert got == expected
+
+    # An all-skipped run is SUCCESS but must still report imported 0 -- the
+    # status alone would otherwise read as "2 invoices imported".
+    all_skipped = [i for i in data["items"] if i["skipped"] == 2][0]
+    assert all_skipped["imported"] == 0 and all_skipped["files_seen"] == 2
+
+
+def test_T20c_no_new_files_run_is_visible_with_zero_files(db_session):
+    """T20c: an empty run still appears, as NO_NEW_FILES with files_seen 0.
+
+    The marker row is not a file, so counting it as one would make the UI claim
+    a run processed a file it never saw.
+    """
+    batch = uuid4()
+    _make_log(
+        db_session, source_file_id="", content_hash="", status="NO_NEW_FILES",
+        batch_id=batch, trigger="manual",
+    )
+
+    data = client.get("/api/v1/autopilot/history").json()
+    assert data["total"] == 1
+    item = data["items"][0]
+    assert item["status"] == "NO_NEW_FILES"
+    assert item["files_seen"] == 0
+    assert (item["imported"], item["skipped"], item["failed"]) == (0, 0, 0)
+    assert item["trigger"] == "manual"
+
+
+def test_T20d_legacy_rows_collapse_into_one_bucket_ordered_last(db_session):
+    """T20d: pre-Gap-427 rows (batch_id IS NULL) become ONE synthetic item,
+    always last, no matter how many of them there are."""
+    # Three legacy rows, timestamped NEWER than the real run, to prove the
+    # bucket is pinned last by rule and not merely by its timestamps.
+    for i in range(3):
+        _make_log(
+            db_session, source_file_id=f"legacy-{i}", content_hash=f"lh{i}",
+            status="SUCCESS" if i < 2 else "FAILED",
+            ingested_at=datetime(2026, 9, 2, 12, 0, i),
+        )
+    real = _seed_run(db_session, ["SUCCESS"], started=datetime(2026, 9, 1, 8, 0, 0))
+
+    data = client.get("/api/v1/autopilot/history").json()
+    assert data["total"] == 2          # 1 real run + 1 legacy bucket, not 4
+    assert [i["batch_id"] for i in data["items"]] == [str(real), None]
+
+    legacy = data["items"][-1]
+    assert legacy["trigger"] is None
+    assert (legacy["files_seen"], legacy["imported"], legacy["failed"]) == (3, 2, 1)
+    assert legacy["status"] == "PARTIAL"
+
+
+def test_T20d2_legacy_bucket_lands_on_the_last_page_only(db_session):
+    """T20d2: the bucket occupies exactly one slot in the paged ordering -- it
+    is not repeated on every page and not dropped off the end."""
+    for i in range(2):
+        _make_log(db_session, source_file_id=f"legacy-{i}", content_hash=f"lh{i}")
+    for offset in range(2):
+        _seed_run(db_session, ["SUCCESS"],
+                  started=datetime(2026, 9, 1, 8, 0, 0) + timedelta(hours=offset))
+
+    page1 = client.get("/api/v1/autopilot/history?page=1&page_size=2").json()
+    page2 = client.get("/api/v1/autopilot/history?page=2&page_size=2").json()
+
+    assert page1["total"] == 3 and page2["total"] == 3
+    assert len(page1["items"]) == 2
+    assert all(i["batch_id"] is not None for i in page1["items"])
+    assert [i["batch_id"] for i in page2["items"]] == [None]
+
+
+def test_T20e_run_files_endpoint_and_tenant_isolation(db_session):
+    """T20e: the drill-down returns that run's files with readable names, and
+    another tenant's batch_id is a 404 -- not a leak, and not an empty 200."""
+    batch = _seed_run(db_session, ["SUCCESS", "FAILED"])
+
+    resp = client.get(f"/api/v1/autopilot/history/{batch}/files")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert len(items) == 2
+    assert {i["source_file_name"] for i in items} == {"invoice-0.pdf", "invoice-1.pdf"}
+    assert all("source_file_id" in i and "content_hash" in i for i in items)
+
+    # A run belonging to a different tenant must not be readable by this caller.
+    other_tenant = uuid4()
+    db_session.add(Tenant(id=other_tenant, name="Other", domain=f"other-{other_tenant.hex[:8]}.com"))
+    db_session.commit()
+    other_batch = _seed_run(db_session, ["SUCCESS"], tenant_id=other_tenant)
+
+    cross = client.get(f"/api/v1/autopilot/history/{other_batch}/files")
+    assert cross.status_code == 404
+
+    # ...and an id that exists nowhere behaves identically, so the 404 cannot be
+    # used to probe which run ids are real.
+    assert client.get(f"/api/v1/autopilot/history/{uuid4()}/files").status_code == 404
+
+    # The other tenant's run must not appear in this caller's run list either.
+    listed = client.get("/api/v1/autopilot/history").json()
+    assert [i["batch_id"] for i in listed["items"]] == [str(batch)]
+
+
+def test_T20f_legacy_files_endpoint_is_tenant_scoped(db_session):
+    """T20f: /history/legacy/files returns only the caller's own legacy rows."""
+    _make_log(db_session, source_file_id="mine-1", content_hash="m1")
+
+    other_tenant = uuid4()
+    db_session.add(Tenant(id=other_tenant, name="Other2", domain=f"o2-{other_tenant.hex[:8]}.com"))
+    db_session.commit()
+    _make_log(db_session, tenant_id=other_tenant, source_file_id="theirs-1", content_hash="t1")
+
+    resp = client.get("/api/v1/autopilot/history/legacy/files")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert [i["source_file_id"] for i in items] == ["mine-1"]
+
+
+def test_T20g_run_sync_stamps_run_identity_and_logs_empty_runs(db_session):
+    """T20g: the write side. Every row a run writes carries that run's batch_id,
+    its trigger and the human-readable file name; a run that finds nothing
+    writes exactly one NO_NEW_FILES row so it is still visible in history."""
+    _make_config(db_session)
+    _make_connection(db_session)
+
+    remote = [{"id": "drive-file-1", "name": "ACME March.pdf", "type": "file", "size_bytes": 10}]
+    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+         patch("services.autopilot_sync.list_google_drive_files", return_value=remote), \
+         patch("services.autopilot_sync.download_google_drive_file", return_value=b"pdf-bytes"), \
+         patch("services.autopilot_sync.upload_pdf_to_blob_storage", return_value="path/x.pdf"), \
+         patch("services.autopilot_sync.charge_free_quota"), \
+         patch("services.autopilot_sync._dispatch_queue"):
+        summary = run_sync(MOCK_TENANT_ID, db_session, trigger="manual")
+
+    assert summary["processed"] == 1
+    logs = db_session.exec(
+        select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == MOCK_TENANT_ID)
+    ).all()
+    assert len(logs) == 1
+    assert logs[0].batch_id is not None
+    assert logs[0].trigger == "manual"
+    assert logs[0].source_file_name == "ACME March.pdf"
+    first_batch = logs[0].batch_id
+
+    # Second run: nothing new upstream -> one NO_NEW_FILES marker, its own batch.
+    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+         patch("services.autopilot_sync.list_google_drive_files", return_value=[]):
+        run_sync(MOCK_TENANT_ID, db_session, trigger="scheduled")
+
+    markers = db_session.exec(
+        select(TenantAutopilotLog).where(
+            TenantAutopilotLog.tenant_id == MOCK_TENANT_ID,
+            TenantAutopilotLog.status == "NO_NEW_FILES",
+        )
+    ).all()
+    assert len(markers) == 1
+    assert markers[0].source_file_id == ""
+    assert markers[0].trigger == "scheduled"
+    assert markers[0].batch_id is not None and markers[0].batch_id != first_batch
+
+    # Both runs are visible, and the marker run did not become a fake file.
+    data = client.get("/api/v1/autopilot/history").json()
+    assert data["total"] == 2
+    by_status = {i["status"]: i for i in data["items"]}
+    assert by_status["NO_NEW_FILES"]["files_seen"] == 0
+    assert by_status["SUCCESS"]["imported"] == 1
+
+
+def test_gap_427_run_grouping_on_postgres():
+    """Gap 427 Postgres checkpoint (CONVENTIONS hard rule 2).
+
+    The rest of this file drives the API over the SQLite fixture, which is fine
+    for the derivation rules but proves nothing about the SQL that produces
+    them: the runs endpoint is the first place in this router to use GROUP BY
+    with SUM(CASE ...) and COUNT(DISTINCT ...), and SQLite is far more forgiving
+    than Postgres about aggregate/grouping shape. This exercises the real query
+    against the real engine.
+
+    The handlers are called directly rather than through TestClient because the
+    TestClient's session dependency is pinned to the SQLite fixture for the
+    whole module; the query under test is inside the handler either way.
+    """
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+    from dependencies import TenantContext
+    from routers.autopilot import get_autopilot_history, get_run_files, get_legacy_run_files
+
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
+
+    tenant_id = uuid4()
+    other_id = uuid4()
+    with Session(pg_engine) as pg:
+        pg.add(Tenant(id=tenant_id, name="PG 427", domain=f"pg427-{tenant_id.hex[:8]}.com"))
+        pg.add(Tenant(id=other_id, name="PG 427 Other", domain=f"pg427o-{other_id.hex[:8]}.com"))
+        pg.commit()
+
+        ctx = TenantContext(
+            tenant_id=tenant_id, user_id="pg-427-user", role="Admin", billing_plan="free",
+        )
+
+        try:
+            partial = _seed_run(pg, ["SUCCESS", "FAILED"], tenant_id=tenant_id,
+                                trigger="manual", started=datetime(2026, 9, 1, 10, 0, 0))
+            skipped_only = _seed_run(pg, ["SKIPPED_DUPLICATE"], tenant_id=tenant_id,
+                                     started=datetime(2026, 9, 1, 9, 0, 0))
+            # Legacy rows for this tenant, plus another tenant's run that must
+            # never appear in either result.
+            _make_log(pg, tenant_id=tenant_id, source_file_id="pg-legacy",
+                      content_hash="pgl", ingested_at=datetime(2026, 9, 1, 8, 0, 0))
+            foreign = _seed_run(pg, ["SUCCESS"], tenant_id=other_id)
+
+            result = get_autopilot_history(page=1, page_size=50, context=ctx, db_session=pg)
+            assert result.total == 3   # 2 runs + 1 legacy bucket
+            assert [i.batch_id for i in result.items] == [str(partial), str(skipped_only), None]
+            assert [i.status for i in result.items] == ["PARTIAL", "SUCCESS", "SUCCESS"]
+            assert result.items[0].files_seen == 2
+            assert (result.items[0].imported, result.items[0].failed) == (1, 1)
+            assert result.items[0].trigger == "manual"
+            assert result.items[1].imported == 0 and result.items[1].skipped == 1
+
+            files = get_run_files(batch_id=partial, context=ctx, db_session=pg)
+            assert len(files.items) == 2
+            assert all(f.source_file_name for f in files.items)
+
+            legacy_files = get_legacy_run_files(context=ctx, db_session=pg)
+            assert [f.source_file_id for f in legacy_files.items] == ["pg-legacy"]
+
+            # Cross-tenant read is a 404 on the real engine too.
+            with pytest.raises(HTTPException) as exc_info:
+                get_run_files(batch_id=foreign, context=ctx, db_session=pg)
+            assert exc_info.value.status_code == 404
+        finally:
+            for t in (tenant_id, other_id):
+                for log in pg.exec(
+                    select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == t)
+                ).all():
+                    pg.delete(log)
+                pg.commit()
+                row = pg.get(Tenant, t)
+                if row:
+                    pg.delete(row)
+                    pg.commit()

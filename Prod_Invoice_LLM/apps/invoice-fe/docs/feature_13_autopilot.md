@@ -84,10 +84,11 @@ CREATE INDEX idx_autopilot_log_hash ON tenant_autopilot_logs(content_hash);
 - [x] **Task 13.3: Sync API Endpoints** — Create backend router `routers/autopilot.py`:
   - `POST /api/v1/autopilot/sync` (shared trigger endpoint)
   - `GET /api/v1/autopilot/config` & `PUT /api/v1/autopilot/config` (configuration manager)
-  - `GET /api/v1/autopilot/history` (paginated runs log)
+  - `GET /api/v1/autopilot/history` (paginated runs log — per-run summaries as of BE Gap 427)
+  - `GET /api/v1/autopilot/history/{batch_id}/files` (per-run file drill-down; `legacy` bucket for pre-Gap-427 rows — BE Gap 427)
 - [ ] **Task 13.4: Azure Container Apps Job Bicep IaC** — Script `scripts/autopilot_job.py` built; Bicep IaC module deferred for production deployment.
 - [x] **Task 13.5: Folder Picker Integration** — Connected folder browsing with ConnectorBrowseBar pattern. *(FE Gap 219, Aug 12, 2026: Autopilot config tab `source_ref` field now uses read-only folder name + Browse → `FolderTreeExplorer` with `selectionMode="folder"`; locked when connector inactive. `e2e/autopilot-folder-browser.spec.ts`.)*
-- [x] **Task 13.6: Autopilot UI & Sync History Table** — Built `AutopilotHistoryTable.tsx` component and Autopilot tab + config form on `/ingestion` screen.
+- [x] **Task 13.6: Autopilot UI & Sync History Table** — Built `AutopilotHistoryTable.tsx` component and Autopilot tab + config form on `/ingestion` screen. *(FE Gap 428, Sep 4, 2026: rewritten from one row per file to one row per run — summary tiles, sentence rows, proportional bar, lazily fetched per-run file drill-down, new `app/api/autopilot/history/[batchId]/files/route.ts` proxy. See Recent Fixes below.)*
 - [x] **Task 13.7: Automated Pytest Suite** — Created `tests/test_autopilot.py` with 18 unit/integration tests (100% pass rate). *(BE Gap 220, Aug 12, 2026: `test_T19_autopilot_sends_notify_email_after_import` — notify summary email with review deep links after sync; live SendGrid still Gap 125.)*
 
 ### Recent Fixes (Aug 12, 2026)
@@ -100,3 +101,23 @@ CREATE INDEX idx_autopilot_log_hash ON tenant_autopilot_logs(content_hash);
 ### Recent Fixes (Aug 28, 2026)
 * **FE Gap 321 — Missing Next.js API Route Proxy Handlers for Autopilot**: While `app/ingestion/page.tsx` used `apiClient` (which calls `/api/autopilot/*`), the Next.js backend proxy route handlers under `app/api/autopilot/` were missing, causing browser calls to fail with `HTTP 404 (Not Found)`. Added `app/api/autopilot/config/route.ts` (GET & PUT), `app/api/autopilot/sync/route.ts` (POST), and `app/api/autopilot/history/route.ts` (GET) delegating to FastAPI `/api/v1/autopilot/*` via `proxyJson()`. Type-checked (`npx tsc --noEmit`), E2E tested (`e2e/autopilot-folder-browser.spec.ts` passing), and backend verified (`pytest tests/test_autopilot.py` 19/19 passing).
 
+
+### Recent Fixes (Sep 4, 2026)
+* **FE Gap 428 — Sync History rewritten from a per-file table to a per-run summary with drill-down** (paired with BE Gap 427, which supplies the new endpoints). Before this change `components/ingestion/AutopilotHistoryTable.tsx` rendered one flat row per *file* — Date / Source / raw Drive **File ID** / Status / Detail — so a 14-file sync read as 14 unrelated lines of opaque ids and no run ever had a visible outcome. It now renders one row per **run**.
+
+  **Backend contract consumed** (BE Gap 427, coded against, not waited on):
+  - `GET /api/autopilot/history?page=&page_size=` → `{ items: Run[], total, page, page_size }` where `Run = { batch_id, trigger, source_type, started_at, finished_at, files_seen, imported, skipped, failed, status }` and `status ∈ SUCCESS | PARTIAL | FAILED | NO_NEW_FILES`.
+  - `GET /api/autopilot/history/{batch_id}/files` → `{ items: [{ id, source_file_id, source_file_name, content_hash, ingested_at, status, error_detail }] }`.
+  - `batch_id: null` is the single legacy bucket for pre-Gap-427 rows. It is rendered as **“Earlier activity”** (no date/trigger lead-in, since neither is meaningful for a bucket), and its files are fetched from the `legacy` path — `runKey()` maps `null → "legacy"`, which is both the React key and the URL segment.
+
+  **New proxy route.** `app/api/autopilot/history/[batchId]/files/route.ts` — `GET`, mirrors the sibling `history/route.ts`: `proxyJson(request, "/autopilot/history/{batchId}/files")` with `dynamic = "force-dynamic"` and `encodeURIComponent` on the segment. Same `[param]` handler shape as `app/api/audit/resolve/[id]/route.ts`.
+
+  **Component structure** (export name `AutopilotHistoryTable` and the `autoRefresh` prop are unchanged, so `app/ingestion/page.tsx`’s call site was not touched):
+  - **Header strip, three tiles** via `SummaryTile` — *Last run* (`relativeTime()` + a `RunStatusChip`), *Imported (last 7 days, loaded runs)* (summed over the runs on the currently loaded page only — the label states that limit rather than implying a tenant-wide total the endpoint does not return), and *Sync* (spinner + “In progress…” when `autoRefresh` is true, otherwise “Idle”).
+  - **Run row reads as a sentence** — `formatRunTime()` (“Today 09:12” / “Yesterday 17:40” / “12 Aug 09:12”) · `triggerLabel()` (Manual / Scheduled / Autopilot when null) · `sourceLabel()` (Gap 322’s gdrive→“Google Drive”, everything else “Manual”) · `runSummarySentence()` (“14 files: 11 imported, 2 skipped, 1 failed”; zero-count clauses are dropped, and a `NO_NEW_FILES` run with `files_seen === 0` reads “No new files”).
+  - **`RunStatusChip`** — SUCCESS emerald, PARTIAL amber, FAILED rose, NO_NEW_FILES slate “Nothing new”; same pill geometry as the existing `StatusBadge`.
+  - **`RunProportionBar`** — a 1px-tall proportional imported/skipped/failed bar, rendered only when the three counts sum above zero.
+  - **Drill-down** — clicking a row toggles `expanded` and calls `loadRunFiles(key)`, which fetches the per-file list **once per run** and caches it in `filesByRun` component state (a run already cached or in flight is a no-op, so re-expanding costs nothing). `RunFileList` renders file **name** with a fallback to the file id in monospace, truncated with the full id in `title`, plus the per-file `StatusBadge` (now including a `NO_NEW_FILES` arm) and `error_detail`.
+  - **Unchanged**: pagination (20/page), the Refresh button, the 30-second `setInterval` poll gated on `autoRefresh`, and the empty and error states.
+
+  **Verified**: `tsc --noEmit` exit 0. **Not verified**: no Playwright run — `e2e/` contains no spec touching the history table (`autopilot-folder-browser.spec.ts` does not reference it), and no new E2E was written because proving this UI end-to-end needs the BE Gap 427 endpoints, which are being built in parallel and were not running.
