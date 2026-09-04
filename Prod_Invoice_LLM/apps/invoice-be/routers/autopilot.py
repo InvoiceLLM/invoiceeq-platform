@@ -9,6 +9,8 @@ Endpoints:
   GET  /api/v1/autopilot/history/{batch_id}/files — one run's per-file detail
   GET  /api/v1/autopilot/history/legacy/files     — files of the pre-Gap-427
                                                     "no batch_id" legacy bucket
+  DELETE /api/v1/autopilot/history/{batch_id}     — hide one run (Gap 429)
+  DELETE /api/v1/autopilot/history                — hide all visible runs (Gap 429)
 """
 import logging
 from uuid import UUID
@@ -16,7 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import case
 from sqlmodel import Session, func, select
 
@@ -43,6 +45,11 @@ class AutopilotConfigPayload(BaseModel):
     trigger_value: str        # e.g. '60' (minutes) or '0 * * * *' (cron)
     notify_emails: list[str] = []
     send_approval_links: bool = False
+    # Gap 429: how many days of NOISE history (skipped/failed/no-new-files) to
+    # keep. Bounds enforced here rather than only in the DB so a bad value is a
+    # 422 at the edge; 7 days is the shortest window that still spans a week of
+    # scheduled runs, 365 the longest anyone has asked to keep.
+    history_retention_days: int = Field(default=90, ge=7, le=365)
 
 
 class AutopilotConfigResponse(BaseModel):
@@ -55,6 +62,7 @@ class AutopilotConfigResponse(BaseModel):
     trigger_value: str
     notify_emails: list
     send_approval_links: bool
+    history_retention_days: int
     created_at: datetime
     updated_at: datetime
 
@@ -116,6 +124,15 @@ class AutopilotHistoryResponse(BaseModel):
     page_size: int
 
 
+class AutopilotHistoryHideResponse(BaseModel):
+    """Response for both DELETE /autopilot/history endpoints (Gap 429).
+
+    `hidden` counts the rows this call actually flipped from visible to hidden,
+    so hiding an already-hidden run reports 0 rather than re-reporting its size.
+    """
+    hidden: int
+
+
 class AutopilotRunFilesResponse(BaseModel):
     """Response for GET /autopilot/history/{batch_id}/files — not paginated.
 
@@ -158,6 +175,7 @@ def get_autopilot_config(
         trigger_value=config.trigger_value,
         notify_emails=config.notify_emails or [],
         send_approval_links=config.send_approval_links,
+        history_retention_days=config.history_retention_days,
         created_at=config.created_at,
         updated_at=config.updated_at,
     )
@@ -216,6 +234,7 @@ def upsert_autopilot_config(
         existing.trigger_value = payload.trigger_value
         existing.notify_emails = payload.notify_emails
         existing.send_approval_links = payload.send_approval_links
+        existing.history_retention_days = payload.history_retention_days
         existing.updated_at = now
         db_session.add(existing)
         db_session.commit()
@@ -231,6 +250,7 @@ def upsert_autopilot_config(
             trigger_value=payload.trigger_value,
             notify_emails=payload.notify_emails,
             send_approval_links=payload.send_approval_links,
+            history_retention_days=payload.history_retention_days,
         )
         db_session.add(config)
         db_session.commit()
@@ -248,6 +268,7 @@ def upsert_autopilot_config(
         trigger_value=config.trigger_value,
         notify_emails=config.notify_emails or [],
         send_approval_links=config.send_approval_links,
+        history_retention_days=config.history_retention_days,
         created_at=config.created_at,
         updated_at=config.updated_at,
     )
@@ -416,7 +437,14 @@ def get_autopilot_history(
     Its files come from `GET /autopilot/history/legacy/files`.
     """
     offset = (page - 1) * page_size
-    tenant_filter = TenantAutopilotLog.tenant_id == context.tenant_id
+    # Gap 429: `tenant_filter` carries the hidden_at check so that EVERY query
+    # in this handler -- the two counts, the grouped page and the legacy
+    # aggregate -- excludes hidden rows without any of them being able to
+    # forget it. A run whose rows are all hidden disappears from `total` too,
+    # otherwise the pager would reserve slots for runs it never renders.
+    tenant_filter = (TenantAutopilotLog.tenant_id == context.tenant_id) & (
+        TenantAutopilotLog.hidden_at.is_(None)  # type: ignore[union-attr]
+    )
     has_batch = TenantAutopilotLog.batch_id.is_not(None)  # type: ignore[union-attr]
     no_batch = TenantAutopilotLog.batch_id.is_(None)  # type: ignore[union-attr]
 
@@ -498,6 +526,10 @@ def get_legacy_run_files(
         .where(
             TenantAutopilotLog.tenant_id == context.tenant_id,
             TenantAutopilotLog.batch_id.is_(None),  # type: ignore[union-attr]
+            # Gap 429: hidden rows are gone from every read path, including the
+            # drill-downs -- otherwise hiding a run would remove it from the
+            # list while its files stayed reachable by URL.
+            TenantAutopilotLog.hidden_at.is_(None),  # type: ignore[union-attr]
         )
         .order_by(TenantAutopilotLog.ingested_at.desc())  # type: ignore[union-attr]
     ).all()
@@ -530,6 +562,9 @@ def get_run_files(
         .where(
             TenantAutopilotLog.tenant_id == context.tenant_id,
             TenantAutopilotLog.batch_id == batch_id,
+            # Gap 429: see get_legacy_run_files(). A hidden run 404s here, the
+            # same as an unknown one.
+            TenantAutopilotLog.hidden_at.is_(None),  # type: ignore[union-attr]
         )
         .order_by(TenantAutopilotLog.ingested_at.desc())  # type: ignore[union-attr]
     ).all()
@@ -541,3 +576,113 @@ def get_run_files(
         )
 
     return AutopilotRunFilesResponse(items=[_to_file_entry(log) for log in logs])
+
+
+# ---------------------------------------------------------------------------
+# DELETE /autopilot/history        — hide every visible run (Gap 429)
+# DELETE /autopilot/history/{batch_id} — hide one run (Gap 429)
+# ---------------------------------------------------------------------------
+#
+# "Delete" here is a HIDE, and that is not a shortcut -- it is the only safe
+# operation on this table. `tenant_autopilot_logs` is simultaneously:
+#   * the history read model these endpoints serve,
+#   * dedup layer 1 (source_file_id) and layer 2 (content_hash), and
+#   * the incremental-poll watermark (max ingested_at over SUCCESS rows),
+# all in services/autopilot_sync.py::run_sync(). Hard-deleting a SUCCESS row
+# would make the next sync re-download and re-import an invoice already in the
+# system. So the row stays, `hidden_at` is stamped, the read paths above filter
+# it out, and the dedup/watermark queries deliberately do not.
+#
+# Time-based removal of rows that carry no dedup meaning lives in
+# services/autopilot_sync.py::prune_autopilot_history() instead.
+
+def _hide_rows(db_session: Session, *filters) -> int:
+    """Stamp hidden_at=now() on every currently-visible row matching `filters`.
+
+    Returns the number of rows changed. Rows already hidden are excluded rather
+    than re-stamped, so the count is "how many this call hid" and an idempotent
+    second call reports 0.
+    """
+    rows = db_session.exec(
+        select(TenantAutopilotLog).where(
+            *filters,
+            TenantAutopilotLog.hidden_at.is_(None),  # type: ignore[union-attr]
+        )
+    ).all()
+    now = datetime.utcnow()
+    for row in rows:
+        row.hidden_at = now
+        db_session.add(row)
+    db_session.commit()
+    return len(rows)
+
+
+@router.delete("/history", response_model=AutopilotHistoryHideResponse)
+def hide_all_autopilot_history(
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_session),
+):
+    """Hides this tenant's entire sync history, runs and legacy bucket alike.
+
+    Not a 404 when there is nothing to hide: "clear my history" on an empty
+    history is a no-op the user asked for, not an error, so it returns
+    `{"hidden": 0}`.
+    """
+    hidden = _hide_rows(
+        db_session, TenantAutopilotLog.tenant_id == context.tenant_id
+    )
+    logger.info(
+        "Autopilot history: hid %d row(s) for tenant %s (clear all)",
+        hidden, context.tenant_id,
+    )
+    return AutopilotHistoryHideResponse(hidden=hidden)
+
+
+@router.delete("/history/{batch_id}", response_model=AutopilotHistoryHideResponse)
+def hide_autopilot_run(
+    batch_id: str,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_session),
+):
+    """Hides one run from this tenant's sync history.
+
+    `batch_id` is typed `str`, not `UUID`, because the history list has one item
+    whose id is not a UUID: the synthetic `"legacy"` bucket holding every
+    pre-Gap-427 row that has no batch_id. A malformed non-UUID id is rejected
+    here as a 404 rather than a 422 -- it is indistinguishable to the caller
+    from a run that does not exist, which is the same non-probing rule
+    get_run_files() follows.
+
+    An unknown batch_id, another tenant's batch_id and an already-hidden run all
+    return 404.
+    """
+    tenant_filter = TenantAutopilotLog.tenant_id == context.tenant_id
+
+    if batch_id == "legacy":
+        row_filter = (
+            tenant_filter,
+            TenantAutopilotLog.batch_id.is_(None),  # type: ignore[union-attr]
+        )
+    else:
+        try:
+            parsed = UUID(batch_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sync run not found.",
+            )
+        row_filter = (tenant_filter, TenantAutopilotLog.batch_id == parsed)
+
+    hidden = _hide_rows(db_session, *row_filter)
+
+    if hidden == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sync run not found.",
+        )
+
+    logger.info(
+        "Autopilot history: hid run %s (%d row(s)) for tenant %s",
+        batch_id, hidden, context.tenant_id,
+    )
+    return AutopilotHistoryHideResponse(hidden=hidden)

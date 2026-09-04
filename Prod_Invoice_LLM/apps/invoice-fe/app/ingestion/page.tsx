@@ -76,6 +76,10 @@ export default function IngestionPage() {
     trigger_value: "60",
     notify_emails_raw: "",  // comma-separated string for the input
     send_approval_links: false,
+    // FE Gap 434 / BE Gap 429: how long skipped/failed/empty sync-history rows
+    // are kept before the backend hard-deletes them (7-365, default 90).
+    // Imported rows are always kept, for duplicate detection.
+    history_retention_days: 90,
   });
   const [autopilotConfigLoading, setAutopilotConfigLoading] = useState(false);
   const [autopilotSaving, setAutopilotSaving] = useState(false);
@@ -104,6 +108,7 @@ export default function IngestionPage() {
           trigger_value: res.data.trigger_value || "60",
           notify_emails_raw: (res.data.notify_emails || []).join(", "),
           send_approval_links: res.data.send_approval_links ?? false,
+          history_retention_days: res.data.history_retention_days ?? 90,
         });
       }
     } catch {
@@ -159,6 +164,7 @@ export default function IngestionPage() {
         .map((e: string) => e.trim())
         .filter(Boolean),
       send_approval_links: autopilotConfig.send_approval_links,
+      history_retention_days: autopilotConfig.history_retention_days,
     });
 
   // Gap 288: distinguishes "the backend responded with a real error" from
@@ -820,6 +826,28 @@ export default function IngestionPage() {
                     />
                   </div>
 
+                  {/* History retention (FE Gap 434) */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">History Retention (Days)</label>
+                    <input
+                      type="number"
+                      min={7}
+                      max={365}
+                      value={autopilotConfig.history_retention_days}
+                      onChange={(e) =>
+                        setAutopilotConfig((c) => ({
+                          ...c,
+                          history_retention_days: Number(e.target.value),
+                        }))
+                      }
+                      placeholder="90"
+                      className="w-full bg-[#0B0F19] border border-[#222D3D] rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/60"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Skipped, failed and empty sync-history entries older than this are deleted automatically. Imported entries are kept for duplicate detection.
+                    </p>
+                  </div>
+
                   {/* Approval links toggle */}
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
@@ -871,7 +899,11 @@ export default function IngestionPage() {
 
           {/* Right: Sync History Table */}
           <div>
-            <AutopilotHistoryTable key={autopilotHistoryKey} autoRefresh={autopilotSyncing} />
+            <AutopilotHistoryTable
+              key={autopilotHistoryKey}
+              autoRefresh={autopilotSyncing}
+              retentionDays={autopilotConfig.history_retention_days}
+            />
           </div>
 
           {autopilotBrowsing && (

@@ -86,9 +86,11 @@ CREATE INDEX idx_autopilot_log_hash ON tenant_autopilot_logs(content_hash);
   - `GET /api/v1/autopilot/config` & `PUT /api/v1/autopilot/config` (configuration manager)
   - `GET /api/v1/autopilot/history` (paginated runs log — per-run summaries as of BE Gap 427)
   - `GET /api/v1/autopilot/history/{batch_id}/files` (per-run file drill-down; `legacy` bucket for pre-Gap-427 rows — BE Gap 427)
+  - `DELETE /api/v1/autopilot/history/{batch_id}` (dismiss one run) and `DELETE /api/v1/autopilot/history` (hide all) — BE Gap 429
+  - `history_retention_days` on GET/PUT `/api/v1/autopilot/config` (7–365, default 90) — BE Gap 429
 - [ ] **Task 13.4: Azure Container Apps Job Bicep IaC** — Script `scripts/autopilot_job.py` built; Bicep IaC module deferred for production deployment.
 - [x] **Task 13.5: Folder Picker Integration** — Connected folder browsing with ConnectorBrowseBar pattern. *(FE Gap 219, Aug 12, 2026: Autopilot config tab `source_ref` field now uses read-only folder name + Browse → `FolderTreeExplorer` with `selectionMode="folder"`; locked when connector inactive. `e2e/autopilot-folder-browser.spec.ts`.)*
-- [x] **Task 13.6: Autopilot UI & Sync History Table** — Built `AutopilotHistoryTable.tsx` component and Autopilot tab + config form on `/ingestion` screen. *(FE Gap 428, Sep 4, 2026: rewritten from one row per file to one row per run — summary tiles, sentence rows, proportional bar, lazily fetched per-run file drill-down, new `app/api/autopilot/history/[batchId]/files/route.ts` proxy. See Recent Fixes below.)*
+- [x] **Task 13.6: Autopilot UI & Sync History Table** — Built `AutopilotHistoryTable.tsx` component and Autopilot tab + config form on `/ingestion` screen. *(FE Gap 428, Sep 4, 2026: rewritten from one row per file to one row per run — summary tiles, sentence rows, proportional bar, lazily fetched per-run file drill-down, new `app/api/autopilot/history/[batchId]/files/route.ts` proxy. See Recent Fixes below.)* *(FE Gap 434, Sep 4, 2026: per-run dismiss, clear-all with inline confirm, retention footnote, `history_retention_days` in the config form, new `app/api/autopilot/history/[batchId]/route.ts` DELETE proxy.)*
 - [x] **Task 13.7: Automated Pytest Suite** — Created `tests/test_autopilot.py` with 18 unit/integration tests (100% pass rate). *(BE Gap 220, Aug 12, 2026: `test_T19_autopilot_sends_notify_email_after_import` — notify summary email with review deep links after sync; live SendGrid still Gap 125.)*
 
 ### Recent Fixes (Aug 12, 2026)
@@ -121,3 +123,26 @@ CREATE INDEX idx_autopilot_log_hash ON tenant_autopilot_logs(content_hash);
   - **Unchanged**: pagination (20/page), the Refresh button, the 30-second `setInterval` poll gated on `autoRefresh`, and the empty and error states.
 
   **Verified**: `tsc --noEmit` exit 0. **Not verified**: no Playwright run — `e2e/` contains no spec touching the history table (`autopilot-folder-browser.spec.ts` does not reference it), and no new E2E was written because proving this UI end-to-end needs the BE Gap 427 endpoints, which are being built in parallel and were not running.
+
+* **FE Gap 434 — Sync History gained dismiss, clear-all and a retention setting** (paired with BE Gap 429, which supplies the DELETE endpoints and the config field). After Gap 428 the history read well but was append-only: a run could never be removed from view, the list only grew, and nothing told the user what was actually retained versus merely displayed.
+
+  **Backend contract consumed** (BE Gap 429, coded against, not waited on):
+  - `DELETE /api/autopilot/history/{batchId}` → 204/200; hides one run. `batchId` is a batch UUID or the literal `legacy`, same vocabulary as the `/files` route.
+  - `DELETE /api/autopilot/history` → `{ hidden: number }`; hides every run.
+  - `GET`/`PUT /api/autopilot/config` gains `history_retention_days: number` (7–365, default 90).
+  - "Hidden" is display-only — hidden rows simply stop appearing in `GET /history` but remain in the database, so duplicate detection is unaffected. Retention is the only thing that hard-deletes, and only for skipped/failed/empty rows older than N days; imported rows are kept permanently for duplicate detection.
+
+  **Proxy routes.**
+  - `app/api/autopilot/history/route.ts` — added a `DELETE` handler alongside the existing `GET`, both `proxyJson(request, "/autopilot/history")`. `proxyJson` already forwards `request.method` verbatim and already handles a 204 null body (FE Gap 177), so no change to `lib/backendProxy.ts` was needed.
+  - `app/api/autopilot/history/[batchId]/route.ts` — **new**, `DELETE` only, `proxyJson(request, "/autopilot/history/{batchId}")` with `encodeURIComponent` on the segment and `dynamic = "force-dynamic"`. Sits beside the Gap 428 `[batchId]/files/route.ts` and follows the same shape.
+
+  **`AutopilotHistoryTable.tsx`.**
+  - **Per-run dismiss** — `dismissRun(run)`: an `X` icon button at the right edge of each row, hidden until row hover/focus (`opacity-0 group-hover:opacity-100 focus:opacity-100`), swapped for a spinner while that run's request is in flight. It is **optimistic**: the row is filtered out of `data.items` and `total` decrements immediately, then `fetchHistory()` refills the page. On failure the pre-delete snapshot is restored, `actionError` is shown inline in the header strip, and a refetch reconciles with the server — the UI never claims a dismissal the backend rejected.
+  - **Structural fix required by the dismiss button**: the run row was a single full-width `<button>` from Gap 428, and a `<button>` inside a `<button>` is invalid HTML. The row is now a flex `<div>` holding the expand toggle (`flex-1`) and the dismiss button as *siblings*, with the hover background moved to the wrapping `div`. `stopPropagation()` is still called in the dismiss handler as belt-and-braces.
+  - **Clear history** — a `Trash2` header button, disabled when the list is empty or a clear is in flight, opens an **inline confirm strip** (not a modal) reading "Hide all N runs? Duplicate detection is unaffected." with Cancel / Hide all. `clearHistory()` is deliberately *not* optimistic: it awaits the DELETE, then resets `expanded`, the `filesByRun` cache and `page`, and refetches.
+  - **Error surfacing** — `actionError` renders as its own strip under the header rather than replacing the whole component with the existing full-panel error state, so a failed dismiss never blanks the history the user is reading.
+  - **Footnote** — a muted line above the pagination: "Hidden runs stay in duplicate detection. Skipped/failed entries older than {N} days are deleted automatically." `N` comes from a new optional `retentionDays?: number` prop, falling back to `DEFAULT_RETENTION_DAYS = 90` when the config has not loaded.
+
+  **`app/ingestion/page.tsx`.** `autopilotConfig` gains `history_retention_days` (default `90`); `loadAutopilotConfig()` reads `res.data.history_retention_days ?? 90` and `saveAutopilotConfigPayload()` sends it, so it rides the existing Save Config / Sync Now path with no new request. A "History Retention (Days)" number input (`min={7} max={365}`) sits in the config form between Notification Emails and the approval-links toggle, with a one-line explanation of what is deleted versus kept, and the value is passed down as `<AutopilotHistoryTable retentionDays={…} />`.
+
+  **Verified**: `node node_modules/typescript/bin/tsc --noEmit` exit 0 (`npx tsc` resolves to the wrong package in this checkout). **Not verified, and not claimed**: no Playwright run, no run against a live backend — the BE Gap 429 endpoints were being built in parallel and were not available; `e2e/` still contains no spec referencing the history table.

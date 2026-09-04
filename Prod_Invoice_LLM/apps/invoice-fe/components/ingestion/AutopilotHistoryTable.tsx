@@ -15,6 +15,13 @@
  * A run with `batch_id === null` is the single legacy bucket holding every
  * pre-Gap-427 row; its files are fetched from the `legacy` path.
  *
+ * FE Gap 434 (BE Gap 429): runs can be dismissed individually or all at once.
+ *   DELETE /api/autopilot/history/{batchId} -> hides one run
+ *   DELETE /api/autopilot/history           -> { hidden: number }, hides all
+ * "Hidden" is display-only: the underlying rows stay for duplicate detection.
+ * Retention (`history_retention_days` on the Autopilot config) is what actually
+ * deletes old skipped/failed/empty rows; it is surfaced here as a footnote.
+ *
  * Used inside the Autopilot tab of the /ingestion page.
  */
 
@@ -27,6 +34,8 @@ import {
   Clock,
   ChevronRight,
   Loader2,
+  X,
+  Trash2,
 } from "lucide-react";
 import { apiClient } from "../../lib/apiClient";
 
@@ -348,10 +357,20 @@ function RunFileList({ state }: { state: RunFilesState | undefined }) {
 interface AutopilotHistoryTableProps {
   /** Set to true to auto-refresh every 30 seconds (e.g. during an active sync). */
   autoRefresh?: boolean;
+  /**
+   * FE Gap 434: `history_retention_days` from the Autopilot config, passed down
+   * by /ingestion purely so the footnote can state the real number instead of a
+   * hardcoded one. Falls back to the backend default when the config hasn't
+   * loaded yet.
+   */
+  retentionDays?: number;
 }
+
+const DEFAULT_RETENTION_DAYS = 90;
 
 export default function AutopilotHistoryTable({
   autoRefresh = false,
+  retentionDays,
 }: AutopilotHistoryTableProps) {
   const [data, setData] = useState<AutopilotHistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -360,6 +379,13 @@ export default function AutopilotHistoryTable({
   const [expanded, setExpanded] = useState<string | null>(null);
   // Per-batch file cache: fetched once per run key, kept for the component's life.
   const [filesByRun, setFilesByRun] = useState<Record<string, RunFilesState>>({});
+  // FE Gap 434: dismiss/clear state. `actionError` is rendered inline in the
+  // header rather than replacing the whole list with the error state, so a
+  // failed dismiss never hides the history the user is looking at.
+  const [dismissing, setDismissing] = useState<string | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const pageSize = 20;
 
   const fetchHistory = useCallback(async () => {
@@ -419,6 +445,66 @@ export default function AutopilotHistoryTable({
     },
     [loadRunFiles]
   );
+
+  /**
+   * FE Gap 434: hides one run. Optimistic — the row disappears immediately and
+   * the total decrements; any failure restores the list by refetching so the UI
+   * can never claim a dismissal the backend rejected.
+   */
+  const dismissRun = useCallback(
+    async (run: AutopilotRun) => {
+      const key = runKey(run);
+      setActionError(null);
+      setDismissing(key);
+      const snapshot = data;
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.filter((r) => runKey(r) !== key),
+              total: Math.max(0, prev.total - 1),
+            }
+          : prev
+      );
+      setExpanded((cur) => (cur === key ? null : cur));
+      try {
+        await apiClient.delete(
+          `/autopilot/history/${encodeURIComponent(key)}`
+        );
+        // Keep the page full after a removal (and surface the next run).
+        void fetchHistory();
+      } catch (err: any) {
+        setData(snapshot);
+        setActionError(
+          err?.response?.data?.detail || "Failed to dismiss this run."
+        );
+        void fetchHistory();
+      } finally {
+        setDismissing(null);
+      }
+    },
+    [data, fetchHistory]
+  );
+
+  /** FE Gap 434: hides every run. Confirmed inline, then refetched (not optimistic). */
+  const clearHistory = useCallback(async () => {
+    setActionError(null);
+    setClearing(true);
+    try {
+      await apiClient.delete("/autopilot/history");
+      setConfirmingClear(false);
+      setExpanded(null);
+      setFilesByRun({});
+      setPage(1);
+      await fetchHistory();
+    } catch (err: any) {
+      setActionError(
+        err?.response?.data?.detail || "Failed to clear sync history."
+      );
+    } finally {
+      setClearing(false);
+    }
+  }, [fetchHistory]);
 
   // Initial load + page change
   useEffect(() => {
@@ -486,15 +572,60 @@ export default function AutopilotHistoryTable({
             </span>
           )}
         </span>
-        <button
-          onClick={fetchHistory}
-          className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition-colors"
-          title="Refresh history"
-        >
-          <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={fetchHistory}
+            className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition-colors"
+            title="Refresh history"
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+          {/* FE Gap 434: clear-all, behind an inline confirm (no modal). */}
+          <button
+            onClick={() => setConfirmingClear(true)}
+            disabled={runs.length === 0 || clearing}
+            className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-rose-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Hide all runs from this list"
+          >
+            <Trash2 className="w-3 h-3" />
+            Clear history
+          </button>
+        </div>
       </div>
+
+      {/* FE Gap 434: inline confirm + action error, above the tiles. */}
+      {confirmingClear && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#222D3D] bg-slate-900/40">
+          <span className="text-[11px] text-slate-300">
+            Hide all {data?.total ?? runs.length}{" "}
+            {(data?.total ?? runs.length) === 1 ? "run" : "runs"}? Duplicate
+            detection is unaffected.
+          </span>
+          <div className="flex gap-2 flex-shrink-0">
+            <button
+              onClick={() => setConfirmingClear(false)}
+              disabled={clearing}
+              className="px-3 py-1 text-[11px] rounded border border-[#222D3D] text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-40 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={clearHistory}
+              disabled={clearing}
+              className="px-3 py-1 text-[11px] rounded border border-rose-500/40 bg-rose-600/20 text-rose-300 hover:bg-rose-600/30 disabled:opacity-40 disabled:cursor-wait transition-all"
+            >
+              {clearing ? "Clearing…" : "Hide all"}
+            </button>
+          </div>
+        </div>
+      )}
+      {actionError && (
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#222D3D] bg-rose-500/10 text-rose-400 text-[11px]">
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
 
       {/* Summary tiles */}
       <div className="flex gap-2 px-4 py-3 border-b border-[#222D3D]">
@@ -536,12 +667,19 @@ export default function AutopilotHistoryTable({
             const isOpen = expanded === key;
             const isLegacy = run.batch_id === null;
             return (
-              <div key={key} className="border-b border-[#222D3D]/50 last:border-b-0">
+              <div
+                key={key}
+                className="group border-b border-[#222D3D]/50 last:border-b-0 hover:bg-slate-900/30 transition-colors"
+              >
+                {/* The expand toggle and the dismiss action are siblings, not
+                    nested buttons -- a <button> inside a <button> is invalid
+                    HTML and React will not render it reliably. */}
+                <div className="flex items-center">
                 <button
                   type="button"
                   onClick={() => toggleRun(run)}
                   aria-expanded={isOpen}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-900/30 transition-colors"
+                  className="min-w-0 flex-1 flex items-center gap-3 px-4 py-3 text-left"
                 >
                   <ChevronRight
                     className={`w-3.5 h-3.5 flex-shrink-0 text-slate-500 transition-transform ${
@@ -576,6 +714,24 @@ export default function AutopilotHistoryTable({
                   </div>
                   <RunStatusChip status={run.status} />
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void dismissRun(run);
+                  }}
+                  disabled={dismissing === key}
+                  aria-label="Dismiss this run"
+                  title="Dismiss this run"
+                  className="mr-3 ml-1 flex-shrink-0 rounded p-1 text-slate-600 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-slate-800 hover:text-rose-400 disabled:cursor-wait transition-all"
+                >
+                  {dismissing === key ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <X className="w-3.5 h-3.5" />
+                  )}
+                </button>
+                </div>
 
                 {isOpen && (
                   <div className="bg-slate-950/40 border-t border-[#222D3D]/50">
@@ -586,6 +742,14 @@ export default function AutopilotHistoryTable({
             );
           })
         )}
+      </div>
+
+      {/* FE Gap 434: states what "dismiss"/"clear" actually do, and what the
+          retention setting deletes for real. */}
+      <div className="px-4 py-2.5 border-t border-[#222D3D] text-[10px] text-slate-500">
+        Hidden runs stay in duplicate detection. Skipped/failed entries older
+        than {retentionDays ?? DEFAULT_RETENTION_DAYS} days are deleted
+        automatically.
       </div>
 
       {/* Pagination */}

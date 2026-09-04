@@ -851,6 +851,15 @@ class TenantAutopilotConfig(SQLModel, table=True):
     notify_emails: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     # if True, sync notification emails include a manual audit approval link
     send_approval_links: bool = Field(default=False)
+    # Gap 429: how long this tenant's sync-history NOISE rows are kept before
+    # services/autopilot_sync.py::prune_autopilot_history() hard-deletes them.
+    # Only SKIPPED_DUPLICATE / FAILED / NO_NEW_FILES rows are ever deleted --
+    # SUCCESS rows are the dedup ledger (source_file_id and content_hash
+    # lookups) and the incremental `since` watermark, so deleting one would
+    # cause an already-ingested invoice to be re-imported. Bounded 7..365 in
+    # routers/autopilot.py; defaulted rather than nullable so a tenant that
+    # never touches the setting still gets pruned.
+    history_retention_days: int = Field(default=90)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -1127,6 +1136,13 @@ class TenantAutopilotLog(SQLModel, table=True):
     status: str = Field(max_length=50)
     # populated only on FAILED rows — stores the exception message
     error_detail: str | None = Field(default=None)
+    # Gap 429: when the user hid this row from the Sync History screen (NULL =
+    # visible). A soft delete, never a hard one: this table is also the dedup
+    # ledger and the incremental-poll watermark, so a hidden SUCCESS row must
+    # still stop its file being re-imported. Every READ path in
+    # routers/autopilot.py filters `hidden_at IS NULL`; every DEDUP/watermark
+    # query in services/autopilot_sync.py deliberately does not.
+    hidden_at: datetime | None = Field(default=None)
 
 
 # ---------------------------------------------------------------------------

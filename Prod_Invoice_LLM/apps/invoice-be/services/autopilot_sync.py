@@ -20,6 +20,13 @@ Sync flow per tenant:
      stamped with this run's batch_id, trigger and the source file name
   9. Return summary: { processed, skipped, failed, quota_exhausted }
 
+Gap 429 — history is hideable and pruned. Log rows carry `hidden_at` (a soft
+delete driven from the Sync History screen) and `prune_autopilot_history()`
+below hard-deletes aged-out noise rows once per scheduler pass. Neither touches
+the dedup or watermark queries in run_sync(): those must see hidden rows, and
+SUCCESS rows are never hard-deleted at all. See the section comment above
+prune_autopilot_history() for why.
+
 Gap 427 — runs, not files. Every log row this module writes now carries the
 per-run `batch_id` (which already existed, but was only ever stamped on the
 Invoice rows), the `trigger` that started the run ('manual' | 'scheduled') and
@@ -33,7 +40,7 @@ end-of-run summary row to keep in sync with the per-file rows.
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status as http_status
@@ -155,6 +162,13 @@ def run_sync(
     access_token = get_valid_access_token(connection, settings, db_session)
 
     # 4. Find the last successful sync timestamp for incremental polling
+    #
+    # Gap 429: this query deliberately does NOT filter on `hidden_at`. Hiding a
+    # run is a display action taken in the UI; if a hidden SUCCESS row stopped
+    # counting here, the watermark would jump backwards to an older run and the
+    # next sync would re-list -- and, with the dedup queries below equally
+    # blind, re-import -- everything since. Hidden means "not shown", never
+    # "did not happen".
     last_run = db_session.exec(
         select(TenantAutopilotLog)
         .where(
@@ -215,6 +229,10 @@ def run_sync(
 
         try:
             # --- Dedup Layer 1: Check source_file_id ---
+            # Gap 429: no `hidden_at` filter, on purpose. A user who hides a run
+            # from Sync History has not un-ingested its files, and a hidden
+            # SUCCESS row must still block the re-import of the file it
+            # records. Same for Layer 2 below.
             existing_by_id = db_session.exec(
                 select(TenantAutopilotLog).where(
                     TenantAutopilotLog.tenant_id == tenant_id,
@@ -391,6 +409,10 @@ def run_sync_for_all_due_tenants(db_session: Session) -> None:
         logger.info("No tenants configured for Autopilot. Nothing to do.")
         return
 
+    # Gap 429: retention runs once per scheduler pass, before the syncs, so a
+    # pass that fails partway through has still trimmed the table.
+    prune_autopilot_history(db_session)
+
     for config in configs:
         try:
             # Gap 427: explicit rather than relying on the default, so the
@@ -404,6 +426,95 @@ def run_sync_for_all_due_tenants(db_session: Session) -> None:
                 "Autopilot job: unhandled error for tenant %s: %s",
                 config.tenant_id, exc,
             )
+
+
+# ---------------------------------------------------------------------------
+# Gap 429 — retention
+# ---------------------------------------------------------------------------
+#
+# The only rows this ever hard-deletes are SKIPPED_DUPLICATE, FAILED and
+# NO_NEW_FILES. SUCCESS rows are never deleted at any age, because they are the
+# dedup ledger (source_file_id / content_hash) and the incremental watermark in
+# run_sync() above -- deleting one re-opens the door for an invoice that was
+# already ingested to be downloaded and imported a second time. SUCCESS rows can
+# only be *hidden* (routers/autopilot.py::hide_autopilot_run).
+#
+# The three prunable statuses carry no such meaning: a SKIPPED_DUPLICATE row is
+# the record of a decision that was made by looking at a SUCCESS row, a FAILED
+# row nothing was ingested from, and NO_NEW_FILES is a marker that a run
+# happened. They are also the rows that actually accumulate -- an unattended
+# scheduler writes at least one of them on every pass, forever.
+
+_PRUNABLE_STATUSES = ("SKIPPED_DUPLICATE", "FAILED", "NO_NEW_FILES")
+
+# How often the prune is allowed to actually run. The scheduler pass may fire
+# every few minutes; scanning and deleting on every one of those would be pure
+# overhead, since a day-granularity retention window cannot change faster than
+# once a day.
+_PRUNE_INTERVAL = timedelta(hours=24)
+
+# Module-level rather than a DB row on purpose: this is an optimisation, not a
+# correctness guarantee. The job container is restarted regularly and each
+# restart simply prunes once more than strictly needed, which is harmless --
+# a second prune inside the same day deletes nothing, because the first one
+# already removed everything past the cutoff.
+_last_prune_at: datetime | None = None
+
+
+def prune_autopilot_history(db_session: Session, force: bool = False) -> int:
+    """Hard-delete aged-out NOISE log rows for every tenant with a config.
+
+    Args:
+        force: skip the once-per-24h guard. Used by tests, and available for a
+            manual one-off run; the scheduler never passes it.
+
+    Returns:
+        The number of rows deleted (0 when the 24h guard skipped this call).
+    """
+    global _last_prune_at
+
+    now = datetime.utcnow()
+    if not force and _last_prune_at is not None and now - _last_prune_at < _PRUNE_INTERVAL:
+        logger.debug(
+            "Autopilot retention: skipped, last prune was %s", _last_prune_at
+        )
+        return 0
+
+    configs = db_session.exec(select(TenantAutopilotConfig)).all()
+    total_deleted = 0
+
+    for config in configs:
+        # Defensive: a row written before the column had a default, or edited
+        # directly in the database, must not turn into a cutoff of "now".
+        retention_days = config.history_retention_days or 90
+        cutoff = now - timedelta(days=retention_days)
+
+        stale = db_session.exec(
+            select(TenantAutopilotLog).where(
+                TenantAutopilotLog.tenant_id == config.tenant_id,
+                TenantAutopilotLog.ingested_at < cutoff,
+                TenantAutopilotLog.status.in_(_PRUNABLE_STATUSES),  # type: ignore[union-attr]
+            )
+        ).all()
+
+        for row in stale:
+            db_session.delete(row)
+
+        if stale:
+            logger.info(
+                "Autopilot retention: deleted %d row(s) older than %s "
+                "(%d day window) for tenant %s",
+                len(stale), cutoff.isoformat(), retention_days, config.tenant_id,
+            )
+        total_deleted += len(stale)
+
+    db_session.commit()
+    _last_prune_at = now
+    logger.info(
+        "Autopilot retention pass complete — %d tenant(s), %d row(s) deleted",
+        len(configs), total_deleted,
+    )
+    return total_deleted
 
 
 # ---------------------------------------------------------------------------

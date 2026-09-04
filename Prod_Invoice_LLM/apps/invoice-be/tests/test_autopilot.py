@@ -21,6 +21,17 @@ Covers:
     T20f - /history/legacy/files returns only the caller's legacy rows
     T20g - run_sync stamps batch_id/trigger/source_file_name on every row and
            writes a NO_NEW_FILES row when the source has nothing new
+
+  Gap 429 - history is hideable and pruned:
+    T21a - DELETE /history/{batch_id} hides one run; the rest stay visible
+    T21b - DELETE /history/legacy hides the legacy bucket only
+    T21c - DELETE /history hides everything and reports the row count
+    T21d - a hidden run's files 404, and hiding it twice 404s
+    T21e - DELETE /history/{batch_id} 404s cross-tenant and for a junk id
+    T21f - a HIDDEN SUCCESS row still dedups -- the next sync skips, not imports
+    T21g - prune deletes only aged-out noise statuses, never SUCCESS
+    T21h - prune honours each tenant's window and the once-per-24h guard
+    T21i - history_retention_days round-trips and is bounded 7..365
     T09 - POST /autopilot/sync   -> 400 when no config saved
     T10 - POST /autopilot/sync   -> 400 when no active connection
 
@@ -60,7 +71,12 @@ from models import (
     TenantAutopilotLog,
     TenantConnection,
 )
-from services.autopilot_sync import run_sync, run_sync_for_all_due_tenants
+import services.autopilot_sync as autopilot_sync_module
+from services.autopilot_sync import (
+    prune_autopilot_history,
+    run_sync,
+    run_sync_for_all_due_tenants,
+)
 from utils.encryption import encrypt_token
 
 # ---------------------------------------------------------------------------
@@ -1124,3 +1140,361 @@ def test_gap_427_run_grouping_on_postgres():
                 if row:
                     pg.delete(row)
                     pg.commit()
+
+
+# ===========================================================================
+# Gap 429 - hiding runs, and time-based retention
+# ===========================================================================
+#
+# The rule these tests exist to protect: hiding is a DISPLAY action, retention
+# is a STORAGE action, and neither may ever weaken deduplication. T21f is the
+# one that would actually cost money if it broke -- a hidden run whose SUCCESS
+# rows stopped counting for dedup means the same invoice gets downloaded,
+# stored, quota-charged and extracted a second time.
+
+@pytest.fixture(autouse=True)
+def _reset_prune_clock():
+    """The 24h prune guard is module-level state, so it leaks between tests.
+
+    Reset before every test rather than only inside the retention tests: T18
+    drives run_sync_for_all_due_tenants(), which now calls the prune on its way
+    through, and whichever test ran first would otherwise decide whether a later
+    one is allowed to prune at all.
+    """
+    autopilot_sync_module._last_prune_at = None
+    yield
+    autopilot_sync_module._last_prune_at = None
+
+
+def test_T21a_hide_one_run_leaves_the_others_visible(db_session):
+    """T21a: DELETE /history/{batch_id} removes exactly that run from the list."""
+    keep = _seed_run(db_session, ["SUCCESS"], started=datetime(2026, 9, 1, 8, 0, 0))
+    drop = _seed_run(db_session, ["SUCCESS", "FAILED"], started=datetime(2026, 9, 1, 10, 0, 0))
+
+    resp = client.delete(f"/api/v1/autopilot/history/{drop}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["hidden"] == 2
+
+    data = client.get("/api/v1/autopilot/history").json()
+    # `total` drops with the run, not just the page -- a hidden run must not
+    # keep reserving a slot in the pager.
+    assert data["total"] == 1
+    assert [i["batch_id"] for i in data["items"]] == [str(keep)]
+
+    # Soft delete: the rows are still on the table, carrying hidden_at.
+    hidden_rows = db_session.exec(
+        select(TenantAutopilotLog).where(TenantAutopilotLog.batch_id == drop)
+    ).all()
+    assert len(hidden_rows) == 2
+    assert all(r.hidden_at is not None for r in hidden_rows)
+
+
+def test_T21b_hide_legacy_bucket(db_session):
+    """T21b: the synthetic 'legacy' id hides the batch_id IS NULL rows only."""
+    run = _seed_run(db_session, ["SUCCESS"], started=datetime(2026, 9, 1, 10, 0, 0))
+    _make_log(db_session, source_file_id="old-1", content_hash="o1",
+              ingested_at=datetime(2026, 9, 1, 8, 0, 0))
+    _make_log(db_session, source_file_id="old-2", content_hash="o2",
+              ingested_at=datetime(2026, 9, 1, 8, 30, 0))
+
+    assert client.get("/api/v1/autopilot/history").json()["total"] == 2
+
+    resp = client.delete("/api/v1/autopilot/history/legacy")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["hidden"] == 2
+
+    data = client.get("/api/v1/autopilot/history").json()
+    assert data["total"] == 1
+    assert [i["batch_id"] for i in data["items"]] == [str(run)]
+    assert client.get("/api/v1/autopilot/history/legacy/files").json()["items"] == []
+
+
+def test_T21c_hide_all_history(db_session):
+    """T21c: DELETE /history clears runs and the legacy bucket alike."""
+    _seed_run(db_session, ["SUCCESS", "SKIPPED_DUPLICATE"], started=datetime(2026, 9, 1, 10, 0, 0))
+    _seed_run(db_session, ["FAILED"], started=datetime(2026, 9, 1, 9, 0, 0))
+    _make_log(db_session, source_file_id="legacy-1", content_hash="l1")
+
+    resp = client.delete("/api/v1/autopilot/history")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["hidden"] == 4
+
+    data = client.get("/api/v1/autopilot/history").json()
+    assert data["total"] == 0 and data["items"] == []
+
+    # Idempotent: clearing an already-empty history is a no-op, not an error.
+    again = client.delete("/api/v1/autopilot/history")
+    assert again.status_code == 200
+    assert again.json()["hidden"] == 0
+
+
+def test_T21d_hidden_run_files_404_and_double_hide_404(db_session):
+    """T21d: hiding a run also closes its drill-down URL, and re-hiding 404s."""
+    batch = _seed_run(db_session, ["SUCCESS"])
+
+    assert client.get(f"/api/v1/autopilot/history/{batch}/files").status_code == 200
+    assert client.delete(f"/api/v1/autopilot/history/{batch}").status_code == 200
+    assert client.get(f"/api/v1/autopilot/history/{batch}/files").status_code == 404
+    assert client.delete(f"/api/v1/autopilot/history/{batch}").status_code == 404
+
+
+def test_T21e_hide_run_is_tenant_scoped(db_session):
+    """T21e: another tenant's run, an unknown id and a junk id all 404 alike."""
+    other_tenant = uuid4()
+    db_session.add(Tenant(id=other_tenant, name="Other429", domain=f"o429-{other_tenant.hex[:8]}.com"))
+    db_session.commit()
+    foreign = _seed_run(db_session, ["SUCCESS", "SUCCESS"], tenant_id=other_tenant)
+
+    assert client.delete(f"/api/v1/autopilot/history/{foreign}").status_code == 404
+    assert client.delete(f"/api/v1/autopilot/history/{uuid4()}").status_code == 404
+    # A non-UUID id is 404, not 422 -- the endpoint must not reveal which ids
+    # are even well-formed, let alone which exist.
+    assert client.delete("/api/v1/autopilot/history/not-a-uuid").status_code == 404
+
+    # The foreign run is untouched.
+    rows = db_session.exec(
+        select(TenantAutopilotLog).where(TenantAutopilotLog.batch_id == foreign)
+    ).all()
+    assert len(rows) == 2 and all(r.hidden_at is None for r in rows)
+
+
+def test_T21f_hidden_run_still_deduplicates(db_session):
+    """T21f: THE load-bearing one. A hidden SUCCESS row is still the dedup
+    ledger -- the next sync must SKIP the file, not re-import it."""
+    _make_config(db_session)
+    _make_connection(db_session)
+
+    remote = [{"id": "drive-file-9", "name": "Hidden Co.pdf", "type": "file", "size_bytes": 10}]
+
+    def _run_one(trigger):
+        with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
+             patch("services.autopilot_sync.list_google_drive_files", return_value=remote), \
+             patch("services.autopilot_sync.download_google_drive_file", return_value=b"pdf-bytes"), \
+             patch("services.autopilot_sync.upload_pdf_to_blob_storage", return_value="path/x.pdf"), \
+             patch("services.autopilot_sync.charge_free_quota"), \
+             patch("services.autopilot_sync._dispatch_queue"):
+            return run_sync(MOCK_TENANT_ID, db_session, trigger=trigger)
+
+    first = _run_one("manual")
+    assert first["processed"] == 1
+
+    listed = client.get("/api/v1/autopilot/history").json()
+    batch = listed["items"][0]["batch_id"]
+    assert client.delete(f"/api/v1/autopilot/history/{batch}").status_code == 200
+    assert client.get("/api/v1/autopilot/history").json()["total"] == 0
+
+    # Same file still upstream. If hiding had removed it from the dedup ledger,
+    # this would import it a second time.
+    second = _run_one("manual")
+
+    assert second["processed"] == 0
+    assert second["skipped"] == 1
+
+    statuses = [
+        r.status for r in db_session.exec(
+            select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == MOCK_TENANT_ID)
+        ).all()
+    ]
+    assert sorted(statuses) == ["SKIPPED_DUPLICATE", "SUCCESS"]
+
+    # And the new (visible) run is the only thing in history.
+    after = client.get("/api/v1/autopilot/history").json()
+    assert after["total"] == 1
+    assert after["items"][0]["skipped"] == 1
+
+
+def test_T21g_prune_deletes_only_aged_noise_rows(db_session):
+    """T21g: retention hard-deletes aged SKIPPED_DUPLICATE/FAILED/NO_NEW_FILES
+    rows and never a SUCCESS row, whatever its age."""
+    _make_config(db_session, history_retention_days=30)
+
+    old = datetime.utcnow() - timedelta(days=60)
+    recent = datetime.utcnow() - timedelta(days=2)
+
+    _make_log(db_session, source_file_id="old-success", content_hash="os",
+              status="SUCCESS", ingested_at=old)
+    _make_log(db_session, source_file_id="old-skip", content_hash="ok1",
+              status="SKIPPED_DUPLICATE", ingested_at=old)
+    _make_log(db_session, source_file_id="old-fail", content_hash="of",
+              status="FAILED", ingested_at=old)
+    _make_log(db_session, source_file_id="", content_hash="",
+              status="NO_NEW_FILES", ingested_at=old)
+    _make_log(db_session, source_file_id="recent-skip", content_hash="rs",
+              status="SKIPPED_DUPLICATE", ingested_at=recent)
+
+    deleted = prune_autopilot_history(db_session, force=True)
+    assert deleted == 3
+
+    remaining = sorted(
+        r.source_file_id for r in db_session.exec(
+            select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == MOCK_TENANT_ID)
+        ).all()
+    )
+    # The 60-day-old SUCCESS row survives on purpose: it is dedup layer 1/2 and
+    # the incremental watermark, not history decoration.
+    assert remaining == ["old-success", "recent-skip"]
+
+
+def test_T21h_prune_is_per_tenant_and_rate_limited(db_session):
+    """T21h: each tenant's own window applies, and the unforced prune runs at
+    most once per 24h."""
+    _make_config(db_session, history_retention_days=7)
+
+    long_tenant = uuid4()
+    _make_config(db_session, tenant_id=long_tenant, history_retention_days=365)
+
+    aged = datetime.utcnow() - timedelta(days=30)
+    _make_log(db_session, source_file_id="short-skip", content_hash="ss",
+              status="FAILED", ingested_at=aged)
+    _make_log(db_session, tenant_id=long_tenant, source_file_id="long-skip",
+              content_hash="ls", status="FAILED", ingested_at=aged)
+
+    assert prune_autopilot_history(db_session, force=True) == 1
+
+    survivors = [
+        r.source_file_id for r in db_session.exec(select(TenantAutopilotLog)).all()
+    ]
+    assert survivors == ["long-skip"]
+
+    # A second, unforced call inside the same day is skipped outright.
+    _make_log(db_session, source_file_id="another", content_hash="an",
+              status="FAILED", ingested_at=aged)
+    assert prune_autopilot_history(db_session) == 0
+    assert autopilot_sync_module._last_prune_at is not None
+
+    # ...and once the guard has expired, it runs again.
+    autopilot_sync_module._last_prune_at = datetime.utcnow() - timedelta(hours=25)
+    assert prune_autopilot_history(db_session) == 1
+
+
+def test_T21i_retention_days_round_trip_and_bounds(db_session):
+    """T21i: history_retention_days persists through the config endpoints and is
+    rejected outside 7..365."""
+    base = {
+        "source_type": "gdrive",
+        "source_ref": "folder-r",
+        "flow_direction": "INBOUND",
+        "trigger_mode": "interval",
+        "trigger_value": "60",
+        "notify_emails": [],
+        "send_approval_links": False,
+    }
+
+    # Omitted -> the 90-day default, so an existing client that never sends the
+    # field keeps working.
+    created = client.put("/api/v1/autopilot/config", json=base)
+    assert created.status_code == 200, created.text
+    assert created.json()["history_retention_days"] == 90
+
+    updated = client.put("/api/v1/autopilot/config", json={**base, "history_retention_days": 14})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["history_retention_days"] == 14
+    assert client.get("/api/v1/autopilot/config").json()["history_retention_days"] == 14
+
+    for bad in (0, 6, 366, -1):
+        resp = client.put("/api/v1/autopilot/config", json={**base, "history_retention_days": bad})
+        assert resp.status_code == 422, f"{bad} should be rejected"
+
+
+def test_gap_429_hide_and_prune_on_postgres():
+    """Gap 429 Postgres checkpoint (CONVENTIONS hard rule 2).
+
+    The SQLite fixture cannot prove the two things that actually differ on the
+    real engine here: a NULL-aware `hidden_at IS NULL` predicate folded into the
+    GROUP BY read path, and an `IN (...)` + timestamp-comparison delete. Both
+    are exercised against real Postgres, calling the handlers directly for the
+    same reason as the Gap 427 checkpoint above (the TestClient session is
+    pinned to SQLite for the whole module).
+    """
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+    from dependencies import TenantContext
+    from routers.autopilot import (
+        get_autopilot_history,
+        get_run_files,
+        hide_all_autopilot_history,
+        hide_autopilot_run,
+    )
+
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
+
+    tenant_id = uuid4()
+    with Session(pg_engine) as pg:
+        pg.add(Tenant(id=tenant_id, name="PG 429", domain=f"pg429-{tenant_id.hex[:8]}.com"))
+        pg.commit()
+
+        ctx = TenantContext(
+            tenant_id=tenant_id, user_id="pg-429-user", role="Admin", billing_plan="free",
+        )
+
+        try:
+            keep = _seed_run(pg, ["SUCCESS"], tenant_id=tenant_id,
+                             started=datetime(2026, 9, 1, 8, 0, 0))
+            drop = _seed_run(pg, ["SUCCESS", "FAILED"], tenant_id=tenant_id,
+                             started=datetime(2026, 9, 1, 10, 0, 0))
+
+            assert hide_autopilot_run(batch_id=str(drop), context=ctx, db_session=pg).hidden == 2
+
+            result = get_autopilot_history(page=1, page_size=50, context=ctx, db_session=pg)
+            assert result.total == 1
+            assert [i.batch_id for i in result.items] == [str(keep)]
+
+            with pytest.raises(HTTPException) as exc_info:
+                get_run_files(batch_id=drop, context=ctx, db_session=pg)
+            assert exc_info.value.status_code == 404
+
+            # Retention on the real engine: aged noise goes, SUCCESS stays --
+            # including the SUCCESS rows that were just hidden.
+            pg.add(TenantAutopilotConfig(
+                tenant_id=tenant_id, source_type="gdrive", source_ref="folder-pg",
+                trigger_mode="interval", trigger_value="60", notify_emails=[],
+                history_retention_days=7,
+            ))
+            pg.commit()
+
+            aged = datetime.utcnow() - timedelta(days=30)
+            _make_log(pg, tenant_id=tenant_id, source_file_id="pg-aged-fail",
+                      content_hash="paf", status="FAILED", ingested_at=aged)
+            _make_log(pg, tenant_id=tenant_id, source_file_id="pg-aged-success",
+                      content_hash="pas", status="SUCCESS", ingested_at=aged)
+
+            assert prune_autopilot_history(pg, force=True) == 1
+
+            left = {
+                r.source_file_id for r in pg.exec(
+                    select(TenantAutopilotLog).where(
+                        TenantAutopilotLog.tenant_id == tenant_id
+                    )
+                ).all()
+            }
+            assert "pg-aged-success" in left and "pg-aged-fail" not in left
+
+            assert hide_all_autopilot_history(context=ctx, db_session=pg).hidden >= 1
+            assert get_autopilot_history(
+                page=1, page_size=50, context=ctx, db_session=pg
+            ).total == 0
+        finally:
+            for cfg in pg.exec(
+                select(TenantAutopilotConfig).where(
+                    TenantAutopilotConfig.tenant_id == tenant_id
+                )
+            ).all():
+                pg.delete(cfg)
+            for log in pg.exec(
+                select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == tenant_id)
+            ).all():
+                pg.delete(log)
+            pg.commit()
+            row = pg.get(Tenant, tenant_id)
+            if row:
+                pg.delete(row)
+                pg.commit()
