@@ -1,8 +1,11 @@
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from uuid import uuid4, UUID
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Response, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
@@ -22,7 +25,23 @@ from dependencies import (
     TenantContext,
 )
 from models import Invoice, Tenant, User
+from services.invoice_builder import (
+    BuildRequest,
+    builder_intent,
+    compute_totals,
+    default_build_from_source,
+    plan_render_mode,
+    plan_substitutions,
+)
+from services.pdf_render import harvest_branding, render_invoice
+from services.pdf_substitute import _number_renderings as number_renderings, substitute
+from services.storage import download_pdf_from_storage
 from services.billing_quota import charge_free_quota, count_billable_uploads
+from services.file_intake import (
+    ImageTooLargeError,
+    UnsupportedUploadError,
+    normalize_upload,
+)
 from services.storage import upload_pdf_to_blob_storage
 from services.staff_notify import notify_auditor_action
 from services.invoice_visibility import invoice_not_deleted
@@ -74,62 +93,38 @@ def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type
         logger.error("Webhook dispatch failed for outbound invoice %s: %s", invoice.id, we)
 
 
-@router.post("/upload", status_code=status.HTTP_201_CREATED)
-async def upload_outbound_invoice(
-    file: UploadFile = File(...),
-    # Feature 1.1 (Task 1.1.2): AR-side mirror of the inbound upload gate.
-    #
-    # This comment used to end "confirm-send / mark-paid below are deliberately
-    # left ungated in this pass". That is no longer true and the sentence is
-    # removed rather than left to mislead: Feature 25 (Gap 335) gated both of
-    # them on `actions` scope / can_audit. Leaving those two routes open to any
-    # authenticated user turned out to be a real hole, not a scoping decision
-    # worth preserving.
-    #
-    # This upload route itself is deliberately NOT dual-credential in Phase 0:
-    # widening the AR ingestion surface to API keys was not requested, and the
-    # inbound /invoices/upload is the ingestion path integrations actually
-    # asked for. Revisit with Gap 336 if an AR integration needs it.
-    context: TenantContext = Depends(require_can_load),
-    # Gap 405: per-user Send Invoices visibility, on top of can_load above --
-    # both are required. can_load alone would let anyone who can upload
-    # inbound invoices also upload outbound ones regardless of an Admin's
-    # per-user grant, which is exactly the granular control this gap exists
-    # to add. A second Depends param (not a combined check) matches this
-    # codebase's existing one-permission-per-dependency convention.
-    _send_check: TenantContext = Depends(require_can_send_invoices),
-    db_session: Session = Depends(get_db_session),
-):
-    """Feature 2.1, Task 2.1.5: upload the tenant's own invoice to be sent to
-    a customer. Gated on the Send Invoices toggle -- upload-only, no in-app
-    invoice creation/generation (see feature_17_invoice_builder.md)."""
-    fname = (file.filename or "").strip()
-    if not fname.lower().endswith(".pdf"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid file format: {file.filename or 'unnamed'}. Only PDF is allowed.")
+async def _store_and_enqueue_outbound(
+    db_session: Session,
+    context: TenantContext,
+    tenant: Tenant,
+    pdf_bytes: bytes,
+    filename: str,
+    *,
+    source_invoice_id: UUID | None = None,
+    builder_intent: dict | None = None,
+) -> dict:
+    """The tail every outbound ingestion door shares: quota, blob, row, queue.
 
-    tenant = db_session.get(Tenant, context.tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    Feature 17 (task 17.4) factored this out of `upload_outbound_invoice()` so
+    that `POST /outbound-invoices/build` creates an invoice through *exactly*
+    the same path an upload does — same Gap 343 quota charge in the same order,
+    same blob location, same `UPLOADED` status, same `process_outbound_invoice`
+    message, same Gap 81 `last_enqueued_at` stamp. A builder-created invoice is
+    an ordinary outbound invoice from here on, which is why nothing downstream
+    (the worker, RAG indexing, webhooks, Drive archive, the ops workbooks) needs
+    to know this feature exists.
 
-    if not tenant.send_invoices_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Send Invoices is not enabled for this tenant. Enable it in Settings first.",
-        )
+    `pdf_bytes` is always a PDF: the upload door normalises images to PDF
+    before calling (Feature 28), and the builder renders one. `tenant` is the
+    already-loaded row the caller checked `send_invoices_enabled` on — it is not
+    re-read here, but `charge_free_quota()` deliberately re-reads it with
+    `populate_existing=True` (Gap 343) so the allowance is never evaluated
+    against a stale copy.
 
+    The two keyword arguments are NULL for uploads and set only by the builder.
+    """
     invoice_id = uuid4()
     batch_id = uuid4()
-
-    try:
-        file_bytes = await file.read()
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to read file {fname}: {str(e)}")
-
-    if not file_bytes.startswith(b"%PDF"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid PDF content in file {fname}. Only valid PDF documents are supported.",
-        )
 
     # Gap 343: the AR upload door charged nothing, so a Free Tier tenant at
     # free_invoices_remaining=0 could keep creating invoices through it. Same
@@ -139,19 +134,20 @@ async def upload_outbound_invoice(
     # `SELECT tenant … FOR UPDATE` and decrement. Placed before the blob upload
     # so a refused upload stores nothing.
     #
-    # Note the Tenant row was already loaded above for the send_invoices_enabled
-    # check; charge_free_quota() re-reads it with populate_existing=True (Gap
-    # 343, see services/billing_quota.py) precisely so this call site cannot
-    # evaluate the allowance against that earlier, now-stale copy.
-    billable = count_billable_uploads(db_session, context.tenant_id, [file_bytes])
+    # Note the Tenant row was already loaded by the caller for the
+    # send_invoices_enabled check; charge_free_quota() re-reads it with
+    # populate_existing=True (Gap 343, see services/billing_quota.py) precisely
+    # so this call site cannot evaluate the allowance against that earlier, now
+    # stale copy.
+    billable = count_billable_uploads(db_session, context.tenant_id, [pdf_bytes])
     charge_free_quota(db_session, context.tenant_id, billable)
 
     try:
         file_path = await run_in_threadpool(
-            upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
+            upload_pdf_to_blob_storage, pdf_bytes, str(context.tenant_id), str(invoice_id)
         )
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to store file {file.filename}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to store file {filename}: {str(e)}")
 
     db_invoice = Invoice(
         id=invoice_id,
@@ -161,6 +157,8 @@ async def upload_outbound_invoice(
         flow_direction="OUTBOUND",
         status="UPLOADED",
         submitted_by_email=_submitter_email_from_context(db_session, context),
+        source_invoice_id=source_invoice_id,
+        builder_intent=builder_intent,
     )
     db_session.add(db_invoice)
     await run_in_threadpool(db_session.commit)
@@ -200,6 +198,324 @@ async def upload_outbound_invoice(
         )
 
     return {"batch_id": str(batch_id), "invoice_id": str(invoice_id)}
+
+
+@router.post("/upload", status_code=status.HTTP_201_CREATED)
+async def upload_outbound_invoice(
+    file: UploadFile = File(...),
+    # Feature 1.1 (Task 1.1.2): AR-side mirror of the inbound upload gate.
+    #
+    # This comment used to end "confirm-send / mark-paid below are deliberately
+    # left ungated in this pass". That is no longer true and the sentence is
+    # removed rather than left to mislead: Feature 25 (Gap 335) gated both of
+    # them on `actions` scope / can_audit. Leaving those two routes open to any
+    # authenticated user turned out to be a real hole, not a scoping decision
+    # worth preserving.
+    #
+    # This upload route itself is deliberately NOT dual-credential in Phase 0:
+    # widening the AR ingestion surface to API keys was not requested, and the
+    # inbound /invoices/upload is the ingestion path integrations actually
+    # asked for. Revisit with Gap 336 if an AR integration needs it.
+    context: TenantContext = Depends(require_can_load),
+    # Gap 405: per-user Send Invoices visibility, on top of can_load above --
+    # both are required. can_load alone would let anyone who can upload
+    # inbound invoices also upload outbound ones regardless of an Admin's
+    # per-user grant, which is exactly the granular control this gap exists
+    # to add. A second Depends param (not a combined check) matches this
+    # codebase's existing one-permission-per-dependency convention.
+    _send_check: TenantContext = Depends(require_can_send_invoices),
+    db_session: Session = Depends(get_db_session),
+):
+    """Feature 2.1, Task 2.1.5: upload the tenant's own invoice to be sent to
+    a customer. Gated on the Send Invoices toggle -- upload-only, no in-app
+    invoice creation/generation (see feature_17_invoice_builder.md)."""
+    fname = (file.filename or "").strip() or "invoice.pdf"
+
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+
+    if not tenant.send_invoices_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Send Invoices is not enabled for this tenant. Enable it in Settings first.",
+        )
+
+    try:
+        file_bytes = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to read file {fname}: {str(e)}")
+
+    # Feature 28: one normalisation call replaces the old filename-suffix +
+    # %PDF-header pair. A PDF passes through byte-identical; an accepted image
+    # becomes a PDF here, so the blob write, the hash and everything downstream
+    # still only ever see a PDF. Placed before the quota charge below so a
+    # refused file never burns quota (Gap 343's ordering rule).
+    try:
+        normalized = normalize_upload(fname, file_bytes)
+    except (UnsupportedUploadError, ImageTooLargeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail)
+    fname = normalized.pdf_filename
+    file_bytes = normalized.pdf_bytes
+
+    # Feature 17 (task 17.4): quota, blob, row and queue now live in
+    # `_store_and_enqueue_outbound()` above, shared verbatim with
+    # `POST /outbound-invoices/build`. Everything before this line -- the
+    # tenant/send-invoices gate and Feature 28's normalisation -- is upload-only
+    # validation and stays here. Behaviour is unchanged.
+    return await _store_and_enqueue_outbound(
+        db_session, context, tenant, file_bytes, fname,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Feature 17 — Invoice Builder (clone & edit)
+# ---------------------------------------------------------------------------
+#
+# Three endpoints, one shared preparation path. Everything that decides
+# correctness here is deterministic code and none of it is a prompt rule
+# (CONVENTIONS hard rule 3): the totals arithmetic
+# (`services/invoice_builder.compute_totals`), the number formatting
+# (`format_like`), the invoice-number suggestion, which renderer runs
+# (`plan_render_mode`), where a value is printed (`locate_field`) and the
+# duplicate-number refusal below. The LLM sees the generated PDF only after it
+# has been created, through the ordinary outbound extraction pipeline, exactly
+# as it sees an upload.
+
+#: Founder decision D4. `OVERDUE` is a virtual, read-time condition (SENT past
+#: due_date, Feature 7.1/8.1) and is never written to `Invoice.status`, so
+#: accepting `SENT` is what makes an overdue invoice cloneable; the literal is
+#: accepted too in case a future status write ever appears.
+CLONE_ELIGIBLE_STATUSES = ("VERIFIED", "SENT", "PAID", "OVERDUE")
+
+
+class UnlocatedFieldsError(Exception):
+    """Carries the 422 body the FE reads (`{"unlocated_fields": [...]}`).
+
+    Deliberately not an `HTTPException`: FastAPI would wrap the list under
+    `detail`, and `components/builder/BuilderPreview.tsx` reads the key at the
+    top level so it can mark each named field in the form.
+    """
+
+    def __init__(self, fields: list[str]):
+        super().__init__(", ".join(fields))
+        self.fields = fields
+
+
+def _load_clone_source(db_session: Session, context: TenantContext, invoice_id: UUID) -> Invoice:
+    """The source-eligibility rules, in one place for all three endpoints.
+
+    404 for anything that is not this tenant's live OUTBOUND invoice — the same
+    answer for "does not exist" and "belongs to someone else", so the endpoint
+    cannot be used to probe another tenant's ids. 409, with a reason, for a real
+    invoice that simply may not be cloned: a `NEEDS_REVIEW` source is refused
+    because its own extracted values have not been trusted yet and cloning them
+    would propagate an unreviewed reading (D4).
+    """
+    statement = select(Invoice).where(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "OUTBOUND",
+        invoice_not_deleted(),
+    )
+    invoice = db_session.exec(statement).first()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbound invoice not found or access denied.")
+    if (invoice.status or "").upper() not in CLONE_ELIGIBLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot build from an invoice with status '{invoice.status}'. "
+                "Only VERIFIED, SENT, PAID or overdue invoices can be cloned."
+            ),
+        )
+    if not invoice.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The source invoice has no stored PDF to build from.",
+        )
+    return invoice
+
+
+def _assert_invoice_number_unused(
+    db_session: Session,
+    tenant_id: UUID,
+    customer_name: str | None,
+    invoice_number: str | None,
+    exclude_invoice_id: UUID | None = None,
+) -> None:
+    """Founder decision D5: refuse a number already used for this customer.
+
+    The same predicate `queue_worker/outbound_handlers.py` uses for its
+    `duplicate_invoice_number` alert — case-insensitive, whitespace-normalised,
+    scoped to this tenant's OUTBOUND rows — but applied *before* the invoice is
+    created rather than after it has been rendered, stored, charged for and
+    extracted. Auto-increment stays a suggestion; this is the only hard rule
+    about invoice numbers.
+    """
+    number = (invoice_number or "").strip()
+    customer = (customer_name or "").strip()
+    if not number or not customer:
+        return
+    conditions = [
+        Invoice.tenant_id == tenant_id,
+        Invoice.flow_direction == "OUTBOUND",
+        func.lower(func.trim(Invoice.invoice_number)) == number.lower(),
+        func.lower(func.trim(Invoice.customer_name)) == customer.lower(),
+        invoice_not_deleted(),
+    ]
+    if exclude_invoice_id is not None:
+        conditions.append(Invoice.id != exclude_invoice_id)
+    if db_session.exec(select(Invoice).where(*conditions)).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Invoice number already used for this customer",
+        )
+
+
+def _number_style_from_source(source_pdf: bytes, grand_total: float | None) -> str:
+    """A sample of how the source printed money, for `format_like()`.
+
+    Found by looking for the source's own grand total on page 1 in each
+    plausible rendering and returning whichever one is actually printed; falls
+    back to plain `1234.56` when the total is unknown or not found, which is
+    the safe default rather than a guessed locale.
+    """
+    if grand_total is None:
+        return "1234.56"
+    try:
+        import fitz
+
+        with fitz.open(stream=source_pdf, filetype="pdf") as doc:
+            if doc.page_count:
+                page = doc[0]
+                for rendering in number_renderings(Decimal(str(grand_total))):
+                    if page.search_for(rendering):
+                        return rendering
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not sample the source number style: %s", exc)
+    return f"{Decimal(str(grand_total)):.2f}"
+
+
+async def _render_build(db_session: Session, context: TenantContext, req: BuildRequest) -> tuple[bytes, Invoice, dict]:
+    """Shared by preview and create: validate, recompute, render.
+
+    Returns the PDF bytes, the source row and the `builder_intent` payload.
+    Raises `UnlocatedFieldsError` (substitute path only) when a changed value
+    could not be found on the source page — the builder refuses rather than
+    shipping a PDF that still prints the old figure.
+    """
+    source = _load_clone_source(db_session, context, req.source_invoice_id)
+    _assert_invoice_number_unused(
+        db_session, context.tenant_id, req.customer_name, req.invoice_number,
+    )
+
+    # The server always recomputes; a client-supplied total is never trusted and
+    # is not even part of `BuildRequest`.
+    totals = compute_totals(req.items, req.tax_amount)
+    render_mode = plan_render_mode(source, req)
+
+    try:
+        source_pdf = await run_in_threadpool(download_pdf_from_storage, source.file_path)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not read the source invoice PDF: {e}",
+        )
+
+    if render_mode == "substitute":
+        subs = plan_substitutions(source, req, totals)
+        pdf_bytes, unlocated = await run_in_threadpool(
+            substitute, source_pdf, subs, source.coordinates or [],
+        )
+        if unlocated:
+            raise UnlocatedFieldsError(unlocated)
+    else:
+        branding = await run_in_threadpool(
+            harvest_branding, source_pdf, [source.invoice_number, source.customer_name],
+        )
+        # The source's own grand total is the sample that tells the renderer
+        # whether this tenant prints `1,250.00` or `1.250,00`.
+        number_style = _number_style_from_source(source_pdf, source.grand_total)
+        pdf_bytes = await run_in_threadpool(
+            render_invoice, req, totals, branding, number_style,
+        )
+
+    return pdf_bytes, source, builder_intent(req, totals, render_mode)
+
+
+@router.get("/{invoice_id}/build-defaults")
+async def get_build_defaults(
+    invoice_id: UUID,
+    context: TenantContext = Depends(require_can_load),
+    _send_check: TenantContext = Depends(require_can_send_invoices),
+    db_session: Session = Depends(get_db_session),
+):
+    """Feature 17: the prefill for a clone — everything copied, the invoice
+    number incremented and the dates rolled forward by the source's own payment
+    term. Same permission pair as the upload door (Gap 405)."""
+    source = _load_clone_source(db_session, context, invoice_id)
+    return default_build_from_source(source, date.today())
+
+
+@router.post("/build/preview")
+async def preview_built_invoice(
+    req: BuildRequest,
+    context: TenantContext = Depends(require_can_load),
+    _send_check: TenantContext = Depends(require_can_send_invoices),
+    db_session: Session = Depends(get_db_session),
+):
+    """Feature 17: render exactly what `/build` would create, and persist
+    nothing — no `Invoice` row, no blob, no quota charge. The user sees the real
+    output before committing to it."""
+    try:
+        pdf_bytes, _source, _intent = await _render_build(db_session, context, req)
+    except UnlocatedFieldsError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"unlocated_fields": exc.fields},
+        )
+    return Response(content=pdf_bytes, media_type="application/pdf")
+
+
+@router.post("/build", status_code=status.HTTP_201_CREATED)
+async def build_outbound_invoice(
+    req: BuildRequest,
+    context: TenantContext = Depends(require_can_load),
+    _send_check: TenantContext = Depends(require_can_send_invoices),
+    db_session: Session = Depends(get_db_session),
+):
+    """Feature 17: create the cloned invoice.
+
+    Renders the same PDF `/build/preview` just showed, then hands it to the
+    shared `_store_and_enqueue_outbound()` — so it is charged, stored, queued
+    and processed exactly like an upload (D2: a built invoice is billable), and
+    lands on the Sending ledger as an ordinary outbound invoice carrying its
+    lineage (`source_invoice_id`) and its intent (`builder_intent`).
+    """
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    if not tenant.send_invoices_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Send Invoices is not enabled for this tenant. Enable it in Settings first.",
+        )
+
+    try:
+        pdf_bytes, source, intent = await _render_build(db_session, context, req)
+    except UnlocatedFieldsError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"unlocated_fields": exc.fields},
+        )
+
+    return await _store_and_enqueue_outbound(
+        db_session, context, tenant, pdf_bytes,
+        f"{(req.invoice_number or 'invoice').strip()}.pdf",
+        source_invoice_id=source.id,
+        builder_intent=intent,
+    )
 
 
 @router.put("/{invoice_id}/confirm-send", status_code=status.HTTP_200_OK)

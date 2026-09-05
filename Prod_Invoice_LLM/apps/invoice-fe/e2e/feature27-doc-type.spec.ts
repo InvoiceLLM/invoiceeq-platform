@@ -98,7 +98,10 @@ async function selectFileWhenHydrated(
   file: { name: string; mimeType: string; buffer: Buffer },
   reacted: () => Promise<void>
 ) {
-  const dropZoneInput = page.locator('input[type="file"][accept=".pdf"]').first();
+  // FE Feature 19 widened the accept list, so this can no longer key off
+  // `accept=".pdf"`. The exact value is asserted in
+  // e2e/ingestion-image-upload.spec.ts; here it is just a way to find the input.
+  const dropZoneInput = page.locator('input[type="file"]').first();
   await expect(dropZoneInput).toBeAttached({ timeout: FIRST_PAINT_TIMEOUT });
 
   await expect(async () => {
@@ -178,30 +181,47 @@ test.describe("FE Gap 378 — ingestion ledger doc-type badge", () => {
 // DropZone — the accept list is deliberately unchanged
 // ---------------------------------------------------------------------------
 
-test.describe("FE Gap 378 — DropZone accept list is unchanged by this change", () => {
-  test("is still PDF-only, both guards agreeing", async ({ page }) => {
+/**
+ * SUPERSEDED BY FE FEATURE 19 (2026-09-04). This block used to assert the
+ * DropZone was still PDF-only, on the reasoning that Feature 27 widens the list
+ * only behind ENABLE_GENERIC_EXTRACTION. That reasoning was correct for
+ * Feature 27 and is now incomplete: BE Feature 28 converts images to PDF at the
+ * door with NO flag (decision D1), so the image suffixes are offered
+ * unconditionally and the two lists compose.
+ *
+ * The assertion is not deleted, it is inverted and moved: the accept attribute,
+ * both guards, and the copy are covered in
+ * e2e/ingestion-image-upload.spec.ts. What remains here is the part that is
+ * still Feature 27's claim — the flag's own list is never *replaced*, only
+ * unioned, so nothing this spec's feature relies on was narrowed.
+ */
+test.describe("FE Gap 378 — Feature 27's accept list survives Feature 19's widening", () => {
+  test("every ENABLE_GENERIC_EXTRACTION suffix is still offered", async ({ page }) => {
     await stubCommon(page);
     await page.goto("/ingestion", { waitUntil: "domcontentloaded" });
 
-    const dropZoneInput = page.locator('input[type="file"][accept=".pdf"]').first();
+    const dropZoneInput = page.locator('input[type="file"]').first();
     await expect(dropZoneInput).toBeAttached({ timeout: FIRST_PAINT_TIMEOUT });
 
-    // Guard 2 (the picker filter). Feature 27 widens this to
-    // ".pdf,.png,.jpg,.jpeg,.tiff" only behind ENABLE_GENERIC_EXTRACTION, and
-    // no mechanism exposes that flag to this app yet — so PDF-only is the
-    // correct current state, and this assertion is what will fail loudly if
-    // someone widens it without the flag.
-    await expect(dropZoneInput).toHaveAttribute("accept", ".pdf");
+    const accept = (await dropZoneInput.getAttribute("accept")) ?? "";
+    for (const ext of [".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"]) {
+      expect(accept.split(",")).toContain(ext);
+    }
+  });
 
-    // Guard 1 (the suffix check) must agree with guard 2, or a dragged PNG gets
-    // past the picker and is rejected only after selection.
+  test("a format outside both lists is still rejected by the suffix guard", async ({ page }) => {
+    await stubCommon(page);
+    await page.goto("/ingestion", { waitUntil: "domcontentloaded" });
+
+    // Guard 1 (the suffix check) must agree with guard 2, or a dragged file
+    // gets past the picker and is rejected only after selection.
     await selectFileWhenHydrated(
       page,
-      { name: "packing-slip.png", mimeType: "image/png", buffer: Buffer.from("not-really-a-png") },
+      { name: "packing-slip.gif", mimeType: "image/gif", buffer: Buffer.from("GIF89a") },
       async () => {
-        await expect(
-          page.getByText("Invalid file format. Only PDF documents are allowed.")
-        ).toBeVisible({ timeout: 3_000 });
+        await expect(page.getByText("Invalid file format.", { exact: false })).toBeVisible({
+          timeout: 3_000,
+        });
       }
     );
   });

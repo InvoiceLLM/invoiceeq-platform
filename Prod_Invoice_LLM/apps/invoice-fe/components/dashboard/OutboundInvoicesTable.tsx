@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { CheckCircle, AlertCircle, Loader2, Send, Eye, Trash2 } from "lucide-react";
+import { CheckCircle, AlertCircle, Loader2, Send, Eye, Trash2, FilePlus2, GitBranch } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency, formatDate } from "../../lib/utils";
 import { apiClient } from "../../lib/apiClient";
+import { canCloneSource } from "../../types/invoice";
 
 export interface OutboundInvoiceRecord {
   id: string;
@@ -20,6 +21,13 @@ export interface OutboundInvoiceRecord {
   currency?: string | null;
   status: string;
   is_overdue?: boolean;
+  /**
+   * Feature 20 lineage pointer, added to this endpoint's hand-built response
+   * dict by BE task 17.7. Present only on rows the Invoice Builder created;
+   * `null`/absent on every uploaded row, including every row that predates the
+   * builder.
+   */
+  source_invoice_id?: string | null;
 }
 
 // Task 4.1.5: 4-tab shape mirroring inbound's All/Paid/Pending/Rejected --
@@ -202,6 +210,20 @@ export default function OutboundInvoicesTable({
                 <tr key={inv.id} className="hover:bg-slate-900/30 transition-colors duration-150 group">
                   <td className="px-6 py-4 font-mono font-medium text-white group-hover:text-[#3B82F6] transition-colors">
                     {inv.invoice_number || "INV-PENDING"}
+                    {/* Feature 20: lineage. Shown under the number rather than
+                        in its own column because it is present on a minority
+                        of rows and a mostly-empty column costs every row. */}
+                    {inv.source_invoice_id && (
+                      <Link
+                        href={`/invoices/outbound-review/${inv.source_invoice_id}`}
+                        data-testid={`cloned-from-${inv.id}`}
+                        title="Open the invoice this one was created from"
+                        className="mt-1 flex items-center gap-1 font-sans text-[10px] font-medium text-slate-500 transition-colors hover:text-[#3B82F6]"
+                      >
+                        <GitBranch className="w-3 h-3" />
+                        Cloned from
+                      </Link>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span className="font-semibold text-slate-200">
@@ -221,6 +243,20 @@ export default function OutboundInvoicesTable({
                       >
                         <Eye className="w-3.5 h-3.5" />
                       </Link>
+                      {/* Feature 20: clone. Eligibility mirrors BE decision D4
+                          (VERIFIED/SENT/PAID/OVERDUE) so the action is not
+                          offered on a row the builder would 409 on. */}
+                      {canCloneSource(inv.status, inv.is_overdue) && (
+                        <Link
+                          href={`/invoices/outbound-builder?source=${inv.id}`}
+                          data-testid={`clone-invoice-${inv.id}`}
+                          title="New invoice from this"
+                          aria-label={`New invoice from outbound invoice ${inv.invoice_number || inv.id}`}
+                          className="inline-flex items-center rounded-lg p-1.5 text-xs font-semibold text-blue-400 transition-colors hover:bg-slate-800 hover:text-blue-300"
+                        >
+                          <FilePlus2 className="w-3.5 h-3.5" />
+                        </Link>
+                      )}
                       {/* Gap 282: delete action, previously absent from this table. */}
                       <button
                         type="button"

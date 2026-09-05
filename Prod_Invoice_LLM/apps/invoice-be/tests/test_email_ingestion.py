@@ -434,6 +434,11 @@ def test_non_pdf_attachment_is_recorded_against_the_tenant(db_session):
     assert [d.reason for d in dropped] == [inbound_security.REASON_NO_PDF_ATTACHMENT]
     # Sender was registered, so this drop is attributable to their workspace.
     assert dropped[0].tenant_id == MOCK_TENANT_ID
+    # Feature 28: the constant name is unchanged (it is persisted and reported
+    # on) but the detail an Admin reads must describe the *current* rule, or a
+    # tenant whose photo was accepted is still told only PDFs are ingested.
+    assert "PDF or supported image" in dropped[0].detail
+    assert "PNG" in dropped[0].detail
 
 
 def test_free_quota_exhaustion_is_recorded(db_session):

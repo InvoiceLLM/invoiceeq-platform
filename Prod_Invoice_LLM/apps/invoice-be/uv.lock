@@ -1267,6 +1267,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-multipart" },
     { name = "redis" },
+    { name = "reportlab" },
     { name = "sentence-transformers" },
     { name = "sqlglot" },
     { name = "sqlmodel" },
@@ -1278,7 +1279,6 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
-    { name = "reportlab" },
     { name = "ruff" },
 ]
 
@@ -1310,6 +1310,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=4.0.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "redis", specifier = ">=5.0.3" },
+    { name = "reportlab", specifier = ">=4.1.0" },
     { name = "sentence-transformers", specifier = ">=5.6.0" },
     { name = "sqlglot", specifier = "==30.17.0" },
     { name = "sqlmodel", specifier = ">=0.0.16" },
@@ -1321,7 +1322,6 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.1.1" },
     { name = "pytest-asyncio", specifier = ">=0.23.5" },
-    { name = "reportlab", specifier = ">=4.1.0" },
     { name = "ruff", specifier = ">=0.3.2" },
 ]
 

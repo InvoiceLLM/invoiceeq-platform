@@ -53,6 +53,11 @@ from models import (
     TenantAutopilotLog,
     TenantConnection,
 )
+from services.file_intake import (
+    ImageTooLargeError,
+    UnsupportedUploadError,
+    normalize_upload,
+)
 from services.billing_quota import charge_free_quota
 from services.storage import upload_pdf_to_blob_storage
 from utils.connector_files import (
@@ -258,6 +263,30 @@ def run_sync(
             # if-gdrive/else-salesforce pair -- deleting only the else arm
             # would have left a conditional with no fallback.
             file_bytes = download_google_drive_file(access_token, file_id)
+
+            # --- Feature 28: normalise at the door, before anything else ---
+            # Drive now lists images as well as PDFs (decision D3), so a photo
+            # can arrive here. Converting first means the hash below, the quota
+            # charge, the blob write and the Invoice row all see PDF bytes --
+            # and because the conversion is deterministic, the same photo
+            # re-downloaded later hashes the same and dedup Layer 2 still fires.
+            try:
+                normalized = normalize_upload(file_name, file_bytes)
+            except (UnsupportedUploadError, ImageTooLargeError) as norm_exc:
+                logger.warning(
+                    "Autopilot: refusing %s — %s", file_name, norm_exc.detail
+                )
+                _write_log(
+                    db_session, tenant_id, config.source_type,
+                    file_id, content_hash="", status="FAILED",
+                    error_detail=norm_exc.detail,
+                    batch_id=batch_id, trigger=trigger, source_file_name=file_name,
+                )
+                failed += 1
+                continue
+            file_bytes = normalized.pdf_bytes
+            if normalized.was_converted:
+                file_name = normalized.pdf_filename
 
             # --- Dedup Layer 2: Check content hash ---
             content_hash = hashlib.sha256(file_bytes).hexdigest()

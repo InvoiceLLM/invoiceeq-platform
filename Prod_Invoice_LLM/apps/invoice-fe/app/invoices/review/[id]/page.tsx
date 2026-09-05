@@ -1296,7 +1296,7 @@ export default function AuditorReviewPage() {
                   <option value="AI Classification Error">AI Classification Error (Incorrect template match)</option>
                   <option value="Other AI Error">Other AI Error (General extraction failure)</option>
                   <option value="Business Logic Error">Business Logic Error (Duplicate / Invalid business vendor)</option>
-                  <option value="Illegible Document">Illegible Document (Blurred PDF / Corrupted file)</option>
+                  <option value="Illegible Document">Illegible Document (Blurred scan / Corrupted file)</option>
                   <option value="Other Non-AI Error">Other Non-AI Error</option>
                 </select>
               </div>

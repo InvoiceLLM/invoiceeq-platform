@@ -4,6 +4,8 @@
 
 Adds the outbound half of invoice processing: instead of ingesting a vendor's invoice addressed *to* the tenant, this ingests the tenant's own invoice addressed *to their customer*. Upload-only — there is no in-app invoice creation/generation (that's a deliberately separate, deferred concern, see [feature_17_invoice_builder.md](feature_17_invoice_builder.md)) — and gated entirely behind the *Send Invoices* Admin-only toggle in [feature_16_settings.md](feature_16_settings.md).
 
+**Accepts images since Feature 28 (2026-09-04).** `POST /outbound-invoices/upload` takes PNG/JPG/TIFF/WEBP/BMP as well as PDF; `services/file_intake.py::normalize_upload()` converts at the door, ahead of the Gap 343 quota charge, so a refused file still burns nothing. See [feature_28_image_upload_pdf_boundary.md](feature_28_image_upload_pdf_boundary.md).
+
 ### Design decision: a parallel pipeline, not a shared one — ~~current~~ **reversed 2026-08-21 (Gap 283)**
 
 **Original decision (2026-07-29), kept here for the record:** reusing the existing extraction schema (`InvoiceExtractionSchema` in `agents/extraction_agent.py`) would require adding a `customer_name` field to it — a small edit, but still an edit to shipped, tested code. Per an explicit review decision, this was rejected in favor of true zero-touch: a **wholly separate schema, prompt, and graph module**, reusing only pure, already-reusable pieces (`utils/verification_tools.py`'s math/faithfulness checks, `handlers.py::_run_ocr()`) by import, never by edit.

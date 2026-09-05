@@ -1,0 +1,14 @@
+# FE Feature 19: Image Upload Accept — build
+Spec: Prod_Invoice_LLM/apps/invoice-fe/docs/feature_19_image_upload_accept.md
+Started: 2026-09-04 18:05
+Hard stop: 2026-09-04 22:05
+Definition of done: every task below checked; every Verification Plan item run and cited;
+spec body and tracker updated; changes uncommitted.
+Status: COMPLETE (code + FE verification) 2026-09-04. tsc clean; ingestion-image-upload 10/10; feature27 7/7; copy-audit grep 0 hits. Tracker row `[~]`: one verification (real PNG through the dev stack) is owed once BE Feature 28 is deployed. No gap filed — nothing found outside the feature's own scope. FE Gap 457 (Feature 20's, in `app/ingestion/page.tsx`) left untouched and unclaimed; that file is now released. Nothing committed.
+
+- [x] 19.1 `lib/featureFlags.ts`: `IMAGE_UPLOAD_EXTENSIONS` + union logic in `acceptedUploadExtensions()`; unit test for both `ENABLE_GENERIC_EXTRACTION` states and for a failed flag fetch. — done 2026-09-04: `IMAGE_UPLOAD_EXTENSIONS` + de-duplicated union verified by 3 module tests in `e2e/ingestion-image-upload.spec.ts` (`{}`/`null`/flag-false all -> the 8-suffix list; flag-on unions F27's list, `.pdf` first, no dupes) — 10/10 passed.
+- [x] 19.2 `TrainerUploader.tsx` and `TrainerEntryPanel.tsx` onto the shared helper. — done 2026-09-04: both read `acceptedUploadExtensions(loadFeatureFlags())` for `accept` and the drop-path suffix guard; Playwright asserts the trainer input's `accept` equals the helper output.
+- [x] 19.3 `acceptedFormatsLabel()` + the copy audit rows marked "→" in the spec (DropZone, ingestion folder picker, Trainer panel/uploader/scope selector/page, Flows diagram, review-page reason option, IntegrationCard, admin drop-reason label). — done 2026-09-04: all 15 audited literals return 0 hits across app/components/lib (incl. two stale code comments in TrainerEntryPanel/ScopeSelector fixed this run); label unit tests + DropZone copy assertion pass.
+- [x] 19.4 Help Center copy: the three guide files in the audit. — done 2026-09-04: trainer/inbound-email/outbound-email guides reworded, `searchText` extended with photo/scan/image so help search still matches "pdf".
+- [x] 19.5 `e2e/ingestion-image-upload.spec.ts`. — done 2026-09-04: 10 tests (6 module + 4 browser), `10 passed (31.5s)`; file set to serial mode after 3 dev-server-compile flakes under parallel workers.
+- [x] 19.6 Doc + tracker close-out: spec Verification Plan filled with recorded runs; fe_features_tracker.md row -> `[~]`. — done 2026-09-04: spec gained an "As built" section (4 deviations + the feature27 spec inversion) and a 7-row Verification Plan with real command output; tracker row rewritten. Row is `[~]` not `[x]` on the `done` gate's item 2: 19.5's real-PNG dev-stack check asserts BE Feature 28's conversion, which is not deployed, so it has not been run.

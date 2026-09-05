@@ -31,6 +31,12 @@ from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
 from services.billing_quota import charge_free_quota, count_billable_uploads
+from services.file_intake import (
+    ACCEPTED_UPLOAD_SUFFIXES,
+    ImageTooLargeError,
+    UnsupportedUploadError,
+    normalize_upload,
+)
 from azure.storage.queue import QueueClient
 from config import get_settings
 from azure.core.exceptions import ResourceNotFoundError
@@ -378,16 +384,13 @@ async def upload_invoices(
             detail="No files uploaded."
         )
 
-    # 1. Validate that all files are PDFs and contain valid PDF headers (Gap 355)
-    for file in files:
-        fname = (file.filename or "").strip()
-        if not fname.lower().endswith(".pdf"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid file format: {file.filename or 'unnamed'}. Only PDF is allowed."
-            )
-
-    # 2. Read all bytes up front so we can classify duplicates before charging and validate magic bytes.
+    # 1. Read all bytes up front, then normalise each file at the door
+    #    (Feature 28): a PDF passes through byte-identical, an accepted image is
+    #    converted to PDF here and nothing downstream sees anything but a PDF.
+    #    This replaces Gap 355's two-step (filename suffix, then %PDF header)
+    #    check — sniffing the bytes subsumes both and cannot disagree with
+    #    itself. Reading up front is still what lets duplicates be classified
+    #    before quota is charged (Gap 189).
     payloads: list[tuple[str, bytes]] = []
     for file in files:
         fname = file.filename or "invoice.pdf"
@@ -398,14 +401,16 @@ async def upload_invoices(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to read file {fname}: {str(e)}"
             )
-        if not file_bytes.startswith(b"%PDF"):
+        try:
+            normalized = normalize_upload(fname, file_bytes)
+        except (UnsupportedUploadError, ImageTooLargeError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid PDF content in file {fname}. Only valid PDF documents are supported."
+                detail=exc.detail,
             )
-        payloads.append((fname, file_bytes))
+        payloads.append((normalized.pdf_filename, normalized.pdf_bytes))
 
-    # 3. Gap 189: count billable hashes, then lock Tenant and charge that count only.
+    # 2. Gap 189: count billable hashes, then lock Tenant and charge that count only.
     billable = count_billable_uploads(
         db_session, context.tenant_id, [data for _, data in payloads]
     )
@@ -480,15 +485,29 @@ async def start_directory_watcher(
             detail=f"Directory not found: {payload.directory_path}"
         )
 
-    pdf_filenames = sorted(f for f in os.listdir(requested_abs) if f.lower().endswith(".pdf"))
+    # Feature 28: the watched directory may hold images as well as PDFs. The
+    # listing filter is the shared accept list, and each file is normalised to
+    # PDF bytes before anything hashes, charges or stores it.
+    source_filenames = sorted(
+        f for f in os.listdir(requested_abs)
+        if os.path.splitext(f)[1].lower() in ACCEPTED_UPLOAD_SUFFIXES
+    )
     watcher_id = uuid4()
-    if not pdf_filenames:
+    if not source_filenames:
         return {"watcher_id": watcher_id, "status": "completed", "files_found": 0, "files_queued": 0}
 
     payloads: list[tuple[str, bytes]] = []
-    for filename in pdf_filenames:
+    for filename in source_filenames:
         with open(os.path.join(requested_abs, filename), "rb") as f:
-            payloads.append((filename, f.read()))
+            raw_bytes = f.read()
+        try:
+            normalized = normalize_upload(filename, raw_bytes)
+        except (UnsupportedUploadError, ImageTooLargeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=exc.detail,
+            )
+        payloads.append((normalized.pdf_filename, normalized.pdf_bytes))
 
     # Gap 189: same classify → lock → charge path as /upload (shared helpers).
     billable = count_billable_uploads(
@@ -508,7 +527,7 @@ async def start_directory_watcher(
         "watcher_id": watcher_id,
         "status": "completed",
         "batch_id": batch_id,
-        "files_found": len(pdf_filenames),
+        "files_found": len(source_filenames),
         "files_queued": len(job_ids),
         "job_ids": job_ids,
     }

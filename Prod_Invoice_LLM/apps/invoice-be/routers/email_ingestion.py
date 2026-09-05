@@ -19,6 +19,12 @@ from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import Tenant, TenantEmailSender, Invoice
 from routers.invoices import _ingest_single_file
 from services.storage import upload_pdf_to_blob_storage
+from services.file_intake import (
+    ImageTooLargeError,
+    UnsupportedUploadError,
+    normalize_upload,
+    sniff_format,
+)
 from services.inbound_mail_security import (
     REASON_INGEST_FAILED,
     REASON_INGEST_REJECTED,
@@ -449,14 +455,39 @@ async def email_mailintegration_webhook(
     batch_id = uuid4()
     job_ids = []
 
-    pdf_files = [f for f in files if f.filename and f.filename.lower().endswith(".pdf")]
-    if not pdf_files:
+    # Feature 28: an attachment is ingestable if its *bytes* sniff to an
+    # accepted format -- a phone photo named IMG_0421.JPG is in, a GIF named
+    # invoice.pdf is out. The bytes have to be read here for the sniff to be
+    # possible at all; the per-attachment loop below reuses them instead of
+    # re-reading a consumed stream. REASON_NO_PDF_ATTACHMENT keeps its constant
+    # name (it is persisted and reported on); only the detail text moves.
+    attachments: list[tuple[str, bytes]] = []
+    for f in files:
+        try:
+            raw_bytes = await f.read()
+        except Exception as read_exc:
+            logger.error("Failed to read email attachment %s: %s", f.filename, read_exc)
+            record_dropped_email(
+                db_session,
+                reason=REASON_INGEST_FAILED,
+                detail=f"Attachment could not be read: {read_exc}",
+                tenant_id=tenant_id,
+                from_email=sender_email,
+                to_email=to,
+                filename=f.filename,
+            )
+            continue
+        if sniff_format(raw_bytes) is not None:
+            attachments.append((f.filename or "invoice.pdf", raw_bytes))
+
+    if not attachments:
         record_dropped_email(
             db_session,
             reason=REASON_NO_PDF_ATTACHMENT,
             detail=(
-                f"Mail carried {len(files)} attachment(s), none of them a PDF. "
-                "Only PDF attachments are ingested."
+                f"Mail carried {len(files)} attachment(s), none of them a PDF or "
+                "supported image. Only PDF, PNG, JPG, TIFF, WEBP or BMP "
+                "attachments are ingested."
             ),
             tenant_id=tenant_id,
             from_email=sender_email,
@@ -481,13 +512,29 @@ async def email_mailintegration_webhook(
         tenant_name=tenant.name,
     )
 
-    for file in pdf_files:
+    for source_filename, raw_bytes in attachments:
         try:
-            file_bytes = await file.read()
+            # Feature 28: convert here, once, so both the outbound and inbound
+            # branches below hand a PDF to storage/hashing exactly as before.
+            try:
+                normalized = normalize_upload(source_filename, raw_bytes)
+            except (UnsupportedUploadError, ImageTooLargeError) as norm_exc:
+                record_dropped_email(
+                    db_session,
+                    reason=REASON_INGEST_REJECTED,
+                    detail=f"Attachment refused: {norm_exc.detail}",
+                    tenant_id=tenant_id,
+                    from_email=sender_email,
+                    to_email=to,
+                    filename=source_filename,
+                )
+                continue
+            file_bytes = normalized.pdf_bytes
+            filename = normalized.pdf_filename
             if email_set == "outbound":
                 job_id = await _ingest_outbound_email_pdf(
                     file_bytes=file_bytes,
-                    filename=file.filename or "invoice.pdf",
+                    filename=filename,
                     tenant=tenant,
                     context=context,
                     db_session=db_session,
@@ -509,7 +556,7 @@ async def email_mailintegration_webhook(
                             tenant_id=tenant_id,
                             from_email=sender_email,
                             to_email=to,
-                            filename=file.filename,
+                            filename=source_filename,
                         )
                         continue
                     tenant.free_invoices_remaining -= 1
@@ -518,7 +565,7 @@ async def email_mailintegration_webhook(
 
                 job_id = await _ingest_single_file(
                     file_bytes=file_bytes,
-                    filename=file.filename,
+                    filename=filename,
                     tags=["email"],
                     batch_id=batch_id,
                     tenant=tenant,
@@ -538,11 +585,11 @@ async def email_mailintegration_webhook(
                 tenant_id=tenant_id,
                 from_email=sender_email,
                 to_email=to,
-                filename=file.filename,
+                filename=source_filename,
             )
             raise
         except Exception as e:
-            logger.error("Failed to ingest email attachment %s: %s", file.filename, e)
+            logger.error("Failed to ingest email attachment %s: %s", source_filename, e)
             record_dropped_email(
                 db_session,
                 reason=REASON_INGEST_FAILED,
@@ -550,7 +597,7 @@ async def email_mailintegration_webhook(
                 tenant_id=tenant_id,
                 from_email=sender_email,
                 to_email=to,
-                filename=file.filename,
+                filename=source_filename,
             )
 
     return {

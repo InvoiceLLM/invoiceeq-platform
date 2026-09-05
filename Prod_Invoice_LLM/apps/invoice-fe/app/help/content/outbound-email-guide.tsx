@@ -40,11 +40,11 @@ export const OUTBOUND_EMAIL_HELP_SECTIONS: HelpSection[] = [
     id: "outbound-email-overview",
     title: "Outbound Email Audit Guide",
     keywords: ["outbound", "email", "authorized", "audit", "AR", "invoiceeq"],
-    searchText: "outbound email authorized set audit AR mailbox invoiceeq notifications",
+    searchText: "outbound email authorized set audit AR mailbox invoiceeq notifications pdf image photo scan",
     body: (
       <>
         <P>
-          The same shared mailbox (<code className="text-blue-300">invoices@invoiceeq.app</code>) accepts your own outbound invoice PDFs for audit when the sender is on the{" "}
+          The same shared mailbox (<code className="text-blue-300">invoices@invoiceeq.app</code>) accepts your own outbound invoices (PDF or image) for audit when the sender is on the{" "}
           <strong>outbound authorized set</strong>. The app <strong>never emails your customers</strong> — Confirm Send only marks the invoice Sent and can notify selected AR addresses on that set.
         </P>
 
@@ -59,7 +59,7 @@ export const OUTBOUND_EMAIL_HELP_SECTIONS: HelpSection[] = [
           <ol className="space-y-1.5 text-xs text-slate-300 list-decimal pl-5">
             <li>Open <strong>Settings → Email</strong>.</li>
             <li>Add AR addresses under <strong>Outbound authorized emails</strong>.</li>
-            <li>Email your own invoice PDFs to the shared mailbox from those addresses.</li>
+            <li>Email your own invoices (PDF or image) to the shared mailbox from those addresses.</li>
             <li>Enable <strong>Send Invoices</strong> in Service Flow after at least one outbound address is registered (Pro Combined).</li>
             <li>On outbound review, multi-select who should get a staff notification before Confirm Send or Mark Paid.</li>
           </ol>

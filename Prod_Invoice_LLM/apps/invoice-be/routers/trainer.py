@@ -29,6 +29,11 @@ from agents.extraction_agent import run_extraction_agent
 from agents.trainer_agent import run_trainer_agent, ConstraintRefinementError
 from services.storage import LOCAL_STORAGE_DIR, download_pdf_from_storage
 from services import trainer_sessions
+from services.file_intake import (
+    ImageTooLargeError,
+    UnsupportedUploadError,
+    normalize_upload,
+)
 from services.billing_lifecycle import PAID_PLANS
 from services.rule_impact import compute_rule_impact, describe_rule, new_rules
 from telemetry import tracked_llm_call
@@ -602,19 +607,25 @@ async def upload_transient_file(
     tenant_context: TenantContext = Depends(require_paid_plan),
 ):
     """Scope #3 (New Vendor): cold-start from a freshly uploaded sample PDF (Task 10.4)."""
-    fname = (file.filename or "").strip()
-    if not fname.lower().endswith(".pdf"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only PDF files are supported for training.")
+    fname = (file.filename or "").strip() or "sample.pdf"
 
     session_id = str(uuid4())
     session_dir = os.path.join(LOCAL_STORAGE_DIR, "trainer")
     os.makedirs(session_dir, exist_ok=True)
+    # Feature 28: still written as {session_id}.pdf whatever arrived, so
+    # get_session_pdf() and _run_ocr_split() are untouched.
     file_path = os.path.join(session_dir, f"{session_id}.pdf")
 
     try:
         content_bytes = await file.read()
-        if not content_bytes.startswith(b"%PDF"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid PDF content. Only valid PDF files are supported for training.")
+        # Feature 28: sniff-and-normalise at the door replaces the old suffix +
+        # %PDF-header pair; a photo of a sample invoice becomes a PDF here and
+        # the trainer path below never learns it was an image.
+        try:
+            normalized = normalize_upload(fname, content_bytes)
+        except (UnsupportedUploadError, ImageTooLargeError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail)
+        content_bytes = normalized.pdf_bytes
         with open(file_path, "wb") as f:
             f.write(content_bytes)
     except HTTPException:

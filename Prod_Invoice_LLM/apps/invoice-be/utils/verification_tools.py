@@ -676,3 +676,102 @@ def verify_field_confidence(
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Feature 17 — Invoice Builder read-back check
+# ---------------------------------------------------------------------------
+
+_BUILDER_TEXT_FIELDS = ("invoice_number", "customer_name")
+_BUILDER_DATE_FIELDS = ("invoice_date", "due_date")
+_BUILDER_MONEY_FIELDS = ("subtotal", "tax_amount", "grand_total")
+
+
+def _normalize_text(value) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def _normalize_date(value) -> str:
+    """`2026-08-01T00:00:00` / `2026-08-01 ` → `2026-08-01`. The extractor is
+    asked for ISO and usually gives it; anything else is compared verbatim
+    rather than parsed, because a value this check cannot read IS a mismatch."""
+    return str(value or "").split("T")[0].split(" ")[0].strip()
+
+
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
+    """Feature 17: did the generated PDF print what the builder intended?
+
+    `intent` is `Invoice.builder_intent` — the `BuildRequest` the user
+    submitted plus the server-computed `Totals` — and `extracted` is what the
+    ordinary outbound extraction graph read back off the PDF the builder
+    produced. Any disagreement means the render is wrong (a value painted into
+    the wrong span, a number that did not fit, a substitution that landed on a
+    footer repetition), and the invoice must not be sent on that basis.
+
+    Pure and deterministic: exact, whitespace-normalised comparison for text
+    and dates, 0.01 absolute tolerance for money and for each line amount. No
+    model is asked whether the difference matters (CONVENTIONS hard rule 3) —
+    this is the arithmetic self-check the design promised, and a mismatch is
+    always `NEEDS_REVIEW`, never a warning that a human has to notice.
+
+    Returns one dict per mismatched field, `[]` when the read-back agrees.
+    A field the builder never set is skipped: it was inherited from the source
+    PDF and is not this feature's claim.
+    """
+    if not isinstance(intent, dict) or not isinstance(extracted, dict):
+        return []
+
+    mismatches: list[dict] = []
+
+    def report(field: str, intended, actual) -> None:
+        mismatches.append({
+            "field": field,
+            "intended": intended,
+            "extracted": actual,
+        })
+
+    for field in _BUILDER_TEXT_FIELDS:
+        intended = intent.get(field)
+        if intended in (None, ""):
+            continue
+        if _normalize_text(intended) != _normalize_text(extracted.get(field)):
+            report(field, intended, extracted.get(field))
+
+    for field in _BUILDER_DATE_FIELDS:
+        intended = intent.get(field)
+        if intended in (None, ""):
+            continue
+        if _normalize_date(intended) != _normalize_date(extracted.get(field)):
+            report(field, intended, extracted.get(field))
+
+    totals = intent.get("totals") or {}
+    for field in _BUILDER_MONEY_FIELDS:
+        intended = _as_float(totals.get(field))
+        if intended is None:
+            continue
+        actual = _as_float(extracted.get(field))
+        if actual is None or abs(actual - intended) > DEFAULT_ABS_TOLERANCE:
+            report(field, intended, extracted.get(field))
+
+    intended_amounts = totals.get("line_amounts") or []
+    extracted_items = extracted.get("items") or []
+    if intended_amounts and len(extracted_items) != len(intended_amounts):
+        report("items", f"{len(intended_amounts)} line(s)", f"{len(extracted_items)} line(s)")
+    else:
+        for index, raw in enumerate(intended_amounts):
+            intended = _as_float(raw)
+            if intended is None:
+                continue
+            item = extracted_items[index] if index < len(extracted_items) else {}
+            actual = _as_float((item or {}).get("amount"))
+            if actual is None or abs(actual - intended) > DEFAULT_ABS_TOLERANCE:
+                report(f"items[{index}].amount", intended, (item or {}).get("amount"))
+
+    return mismatches

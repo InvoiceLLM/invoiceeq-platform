@@ -4,13 +4,23 @@ import { ZoomIn, ZoomOut, RotateCw, Maximize2, X } from "lucide-react";
 import { useState } from "react";
 
 interface PdfViewerCanvasProps {
-  invoiceId: string;
+  /** Stored invoice to display. Omit when passing `srcUrl` instead. */
+  invoiceId?: string;
+  /**
+   * Feature 20: an explicit PDF URL, used by the Invoice Builder's preview.
+   * That PDF is the response body of a `POST` and has never been stored, so it
+   * has no invoice id to fetch by — the builder hands over an object URL for a
+   * blob it already holds. When set it wins over `invoiceId`; everything else
+   * about this viewer (zoom, rotate, expand modal) is unchanged.
+   */
+  srcUrl?: string;
   title?: string;
   status?: string;
 }
 
 export default function PdfViewerCanvas({
   invoiceId,
+  srcUrl,
   title,
   status,
 }: PdfViewerCanvasProps) {
@@ -24,7 +34,7 @@ export default function PdfViewerCanvas({
   const [modalRotation, setModalRotation] = useState(0);
 
   const isRotated = rotation % 180 !== 0;
-  const pdfUrl = `/api/invoices/${invoiceId}/pdf`;
+  const pdfUrl = srcUrl ?? `/api/invoices/${invoiceId}/pdf`;
 
   const statusBadge: Record<string, string> = {
     COMPLETED: "bg-emerald-500/20 text-emerald-300 border-emerald-600/50",

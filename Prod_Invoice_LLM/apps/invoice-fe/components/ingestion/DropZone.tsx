@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { UploadCloud, FileText, Trash2, AlertCircle } from "lucide-react";
 
 import {
+  acceptedFormatsLabel,
   acceptedUploadExtensions,
   invalidFormatMessage,
   loadFeatureFlags,
@@ -45,10 +46,12 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
  * disagree a user drags a PNG past the picker and is rejected after selection.
  * One `acceptedExtensions` value feeds both.
  *
- * Fail-closed: until the flags resolve, and forever if the fetch fails, the list
- * is `.pdf` alone -- byte-identical to the behaviour before this mechanism
- * existed. With the flag off a non-PDF would lose the multimodal channel
- * silently, which §4's "Non-PDF image support" calls the real defect.
+ * FE FEATURE 19 (BE Feature 28) moved the floor. Images are now converted to
+ * PDF by the backend unconditionally, so the base list always carries the image
+ * suffixes and a failed flag fetch degrades to that list rather than to `.pdf`
+ * alone. Feature 27's flag path is untouched and unions on top of it. The copy
+ * below reads from `acceptedFormatsLabel()` off the SAME array as the two
+ * guards, so the words on screen cannot name a format the input rejects.
  */
 
 export default function DropZone({ files = [], onChange, showQueue = true }: DropZoneProps) {
@@ -66,6 +69,7 @@ export default function DropZone({ files = [], onChange, showQueue = true }: Dro
     };
   }, []);
   const acceptedExtensions = acceptedUploadExtensions(featureFlags);
+  const formatsLabel = acceptedFormatsLabel(acceptedExtensions);
 
   const [isDragActive, setIsDragActive] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -180,10 +184,16 @@ export default function DropZone({ files = [], onChange, showQueue = true }: Dro
 
         <div className="space-y-1">
           <p className="text-xs font-semibold text-white">
-            Drag & drop invoice PDFs here, or <span className="text-[#3B82F6] hover:underline">browse</span>
+            Drag & drop invoices here, or <span className="text-[#3B82F6] hover:underline">browse</span>
           </p>
           <p className="text-[10px] text-slate-500">
-            Accepts PDF documents only. Max size 25MB.
+            Accepts {formatsLabel}. Max size 25MB.
+          </p>
+          {/* Founder decision, 2026-09-04: say the conversion out loud. Without
+              it a user who uploads a photo later finds a `.pdf` filename in the
+              ledger with no explanation of where it came from. */}
+          <p className="text-[10px] text-slate-500">
+            Photos and scans are converted to PDF automatically.
           </p>
         </div>
       </div>

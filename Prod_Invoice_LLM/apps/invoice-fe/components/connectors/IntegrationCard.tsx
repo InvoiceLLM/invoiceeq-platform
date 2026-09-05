@@ -124,7 +124,7 @@ export default function IntegrationCard({
                 <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
                 <span className="text-xs text-slate-300 font-medium">Inbound AP</span>
               </div>
-              <p className="text-[10px] text-slate-500">Where supplier PDFs are picked up from</p>
+              <p className="text-[10px] text-slate-500">Where supplier invoices are picked up from</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-mono truncate max-w-[120px] bg-[#151B26] px-2 py-1 rounded border border-[#222D3D]">

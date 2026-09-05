@@ -2,6 +2,8 @@
 
 **NOVA** is the Smart Invoice Extraction agent. Accept PDF uploads, persist them to Azure Blob Storage, queue background processing, and run the multi-modal LLM extraction + math verification agent to produce structured invoice data.
 
+**Accepts images since Feature 28 (2026-09-04).** `POST /invoices/upload` and the directory watcher no longer require a `.pdf`: `services/file_intake.py::normalize_upload()` sniffs the magic bytes at the door and converts PNG/JPG/TIFF/WEBP/BMP to a PDF once, before hashing, quota, blob write or the queue. Everything described below — `_run_ocr()`, the extraction graph, `Invoice.file_path`, the viewer — still only ever sees a PDF, and a file that already is one passes through byte-identical. See [feature_28_image_upload_pdf_boundary.md](feature_28_image_upload_pdf_boundary.md).
+
 *(Merged 2026-07-13 from the former "Feature 2: Ingestion & Storage Pipeline" and "Feature 5: Multi-Modal Extraction & Verification Agent" docs — upload → OCR → extraction → verification → indexing is one continuous request-to-completion flow with no natural seam between them; see Pipeline Flow below.)*
 
 ### File Coordinates

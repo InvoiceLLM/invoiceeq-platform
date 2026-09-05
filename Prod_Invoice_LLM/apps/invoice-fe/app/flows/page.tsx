@@ -60,10 +60,10 @@ const ACTIVITY_ICONS: Record<ActivityType, string> = {
 
 const INBOUND: FlowDef = {
   id: "inbound", name: "Inbound Extraction Pipeline", badge: "RECEIVE", color: "#3B82F6",
-  description: "Tenant receives a vendor invoice (PDF) → OCR → LangGraph classification → LLM extraction with Trainer rules → 6-check verification → COMPLETED or AUDIT_REQUIRED.",
+  description: "Tenant receives a vendor invoice (PDF or image) → OCR → LangGraph classification → LLM extraction with Trainer rules → 6-check verification → COMPLETED or AUDIT_REQUIRED.",
   nodes: [
-    { id: "upload", label: "PDF Upload", sublabel: "REST / Watcher / Email", icon: "⬆", x: 90, y: 30,
-      explainer: "👤 User uploads an invoice PDF",
+    { id: "upload", label: "Invoice Upload", sublabel: "REST / Watcher / Email", icon: "⬆", x: 90, y: 30,
+      explainer: "👤 User uploads an invoice (PDF, or a photo/scan converted to PDF at the door)",
       agentName: "Invoice Upload Handler", agentRole: "routers/invoices.py",
       activities: [
         { text: "Receiving multipart/form-data — 3.2 MB", type: "info" },
@@ -206,7 +206,7 @@ const OUTBOUND: FlowDef = {
   id: "outbound", name: "Outbound Extraction Pipeline", badge: "SEND", color: "#F59E0B",
   description: "Vendor Flow (Feature 2.1): tenant uploads their own invoice to a customer. Parallel pipeline — zero-touch isolation, separate schema/agent, shared OCR + verification_tools.",
   nodes: [
-    { id: "ob_upload", label: "PDF Upload", sublabel: "Gated: 'Send Invoices' toggle", icon: "⬆", x: 90, y: 30,
+    { id: "ob_upload", label: "Invoice Upload", sublabel: "Gated: 'Send Invoices' toggle", icon: "⬆", x: 90, y: 30,
       explainer: "👤 User uploads an invoice to send",
       agentName: "Outbound Upload Handler", agentRole: "routers/outbound_invoices.py", isNew: true,
       activities: [

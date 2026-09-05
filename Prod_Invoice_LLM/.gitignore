@@ -6,6 +6,13 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+# FE Gap 456: `build/` above is a Python/Node artifact rule, but Next.js
+# file-based routing makes directory names part of the URL — so the Feature 20
+# routes `app/api/outbound-invoices/build/route.ts` and `build/preview/route.ts`
+# were silently untracked and would have shipped a 404 in any fresh clone.
+# Re-included by path rather than by loosening the rule for the whole repo.
+!apps/invoice-fe/app/**/build/
+!apps/invoice-fe/app/**/build/**
 .eggs/
 
 # Environment files

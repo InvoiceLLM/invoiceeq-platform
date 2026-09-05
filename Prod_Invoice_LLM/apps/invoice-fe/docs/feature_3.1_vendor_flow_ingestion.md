@@ -21,6 +21,8 @@ Adds the outbound counterpart to today's upload flow: a tab for uploading the te
 
 **Sending tab:** reuses `DropZone.tsx` unmodified, pointed at the new `/api/invoices-outbound/upload` proxy route instead of `/api/invoices/upload`. `SendInvoiceStatusTable.tsx` polls/streams the new status set (`UPLOADED → PROCESSING_OCR → EXTRACTING_DATA → VERIFIED/NEEDS_REVIEW → SENT → PAID/OVERDUE`) rather than `StatusTable.tsx`'s `COMPLETED`/`AUDIT_REQUIRED` set — different terminal states mean a new component rather than a fork-by-prop of the existing one.
 
+**Deep-linking into the Sending tab (FE Gap 457, 2026-09-04).** `page.tsx` now reads `?tab=sending&builtInvoice=<id>&batch=<id>&name=<label>` through `useSearchParams()` and, once `sendVisible` is known, switches `activeTab` to `sending` and seeds a single `outboundInvoices` row from those ids. The Invoice Builder ([feature_20_invoice_builder.md](feature_20_invoice_builder.md)) is the first caller: a builder-created invoice is an ordinary outbound row, so the seeded entry renders through the same `SendInvoiceStatusTable` + `LogTerminal` pair an upload produces. The default export is now a `Suspense` wrapper (`IngestionPage`) around the page body (`IngestionPageContent`), which `useSearchParams()` requires in the app router. Nothing about the upload path changed.
+
 **`NEEDS_REVIEW` rows** get a "Review" action linking into the outbound Auditor ([feature_4.1_vendor_flow_auditor.md](feature_4.1_vendor_flow_auditor.md)), mirroring how `AUDIT_REQUIRED` rows link today.
 
 ### Explicitly out of scope

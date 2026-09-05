@@ -2,6 +2,8 @@
 
 Integrate secure API credentials exchanges and import pipelines to retrieve files from Google Drive.
 
+**Accepts images since Feature 28 (2026-09-04).** `utils/connector_files.py::list_google_drive_files()` now queries `image/png`, `image/jpeg`, `image/tiff`, `image/webp` and `image/bmp` alongside `application/pdf` — for every tenant, no opt-in (founder decision D3) — and returns each entry's `mime_type`. Both import paths (`services/autopilot_sync.py::run_sync()` and `queue_worker/handlers.py::handle_import_connector_file()`) call `normalize_upload()` on the downloaded bytes before hashing or storing, so Autopilot's content-hash dedup runs on the converted PDF. A folder that already holds photos will therefore ingest and be charged on the next cycle. See [feature_28_image_upload_pdf_boundary.md](feature_28_image_upload_pdf_boundary.md).
+
 > ### ⚠️ Salesforce — removed 2026-08-28, see Gap 334 (BE) / Gap 322 (FE)
 >
 > **Google Drive is now the only connector.** Everything below that refers to Salesforce is

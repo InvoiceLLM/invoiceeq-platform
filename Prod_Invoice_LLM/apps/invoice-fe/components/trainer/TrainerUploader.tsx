@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   UploadCloud,
   Building2,
@@ -10,6 +10,11 @@ import {
   X,
 } from "lucide-react";
 import { TrainerScope, VendorOption } from "@/lib/trainer-service";
+import {
+  acceptedUploadExtensions,
+  loadFeatureFlags,
+  type FeatureFlags,
+} from "@/lib/featureFlags";
 
 /**
  * Feature 6 Component: TrainerUploader (Tasks 6.2 – 6.4)
@@ -39,6 +44,23 @@ export default function TrainerUploader({
 }: TrainerUploaderProps) {
   const [dragActive, setDragActive] = useState(false);
 
+  // FE Feature 19: the accept list is the shared one (`.pdf` + the image
+  // suffixes BE Feature 28 converts at the door), not a hardcoded `.pdf`. Same
+  // `useEffect` + `cancelled` shape as DropZone so one page load makes one
+  // request; a failed fetch still yields the image list, because Feature 28
+  // ships with no flag to fail closed on.
+  const [featureFlags, setFeatureFlags] = useState<FeatureFlags | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadFeatureFlags().then((flags) => {
+      if (!cancelled) setFeatureFlags(flags);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const acceptedExtensions = acceptedUploadExtensions(featureFlags);
+
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -51,7 +73,10 @@ export default function TrainerUploader({
     e.stopPropagation();
     setDragActive(false);
     const file = e.dataTransfer.files?.[0];
-    if (file && (file.type === "application/pdf" || file.name.endsWith(".pdf"))) {
+    // Drop path bypasses `accept` entirely, so it re-checks against the same
+    // list the attribute below is built from.
+    const lowerName = file?.name.toLowerCase() ?? "";
+    if (file && acceptedExtensions.some((ext) => lowerName.endsWith(ext))) {
       onUploadFile(file);
     }
   };
@@ -135,10 +160,10 @@ export default function TrainerUploader({
 
       <label className="cursor-pointer flex items-center justify-center gap-1.5 bg-[#111827]/80 hover:bg-[#1E293B] text-white text-[11px] font-semibold px-3 py-2 rounded-xl border border-[#1E2D45] hover:border-blue-500/40 transition-all shadow-sm">
         <Sparkles className="w-3 h-3 text-blue-400" />
-        <span>{activeFileName ? "Change PDF" : "Browse PDF"}</span>
+        <span>{activeFileName ? "Change file" : "Browse"}</span>
         <input
           type="file"
-          accept=".pdf,application/pdf"
+          accept={acceptedExtensions.join(",")}
           onChange={handleFileChange}
           disabled={isUploading}
           className="hidden"

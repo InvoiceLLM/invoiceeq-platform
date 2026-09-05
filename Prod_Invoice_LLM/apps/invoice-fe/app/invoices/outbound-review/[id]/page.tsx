@@ -2,10 +2,12 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle, Trash2, ChevronDown } from "lucide-react";
+import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle, Trash2, ChevronDown, FilePlus2 } from "lucide-react";
+import Link from "next/link";
 import { apiClient } from "@/lib/apiClient";
 import { formatCurrency } from "@/lib/utils";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
+import { canCloneSource } from "@/types/invoice";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import OutboundAlertConsole, { StandingRuleResult } from "@/components/audit/OutboundAlertConsole";
 import NotifyEmailPicker from "@/components/audit/NotifyEmailPicker";
@@ -330,6 +332,11 @@ export default function OutboundAuditorReviewPage() {
   const isSent = invoice.status === "SENT";
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
   const isResolved = invoice.status === "SENT" || invoice.status === "PAID";
+  // Feature 20 / BE Feature 17 decision D4: this invoice can seed a clone only
+  // once its own values are trusted. The builder page would still refuse a bad
+  // source (the BE 409s on build-defaults) -- this only hides an action that
+  // would bounce.
+  const canClone = canCloneSource(invoice.status);
 
   const flaggedFields = new Set(
     alerts
@@ -388,6 +395,22 @@ export default function OutboundAuditorReviewPage() {
             {actionLoading === "paid" ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
             Mark Paid
           </button>
+        )}
+
+        {/* Feature 20: the builder is reachable from an existing invoice only
+            (founder decision, 2026-09-04) -- this header action and the
+            equivalent row action on OutboundInvoicesTable are the only two
+            ways in. There is no source picker on the Sending tab. */}
+        {canClone && (
+          <Link
+            href={`/invoices/outbound-builder?source=${invoice.id}`}
+            data-testid="clone-invoice"
+            title="Create a new invoice starting from this one"
+            className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-blue-500/50 bg-blue-600/20 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-blue-300 transition hover:bg-blue-600/40"
+          >
+            <FilePlus2 size={13} />
+            New invoice from this
+          </Link>
         )}
 
         {/* Gap 282: delete, offered at every lifecycle stage the same way the

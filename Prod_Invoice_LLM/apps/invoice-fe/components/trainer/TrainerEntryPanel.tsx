@@ -12,6 +12,11 @@ import {
   Inbox,
 } from "lucide-react";
 import { trainerService, VendorOption, VendorInvoiceOption } from "@/lib/trainer-service";
+import {
+  acceptedUploadExtensions,
+  loadFeatureFlags,
+  type FeatureFlags,
+} from "@/lib/featureFlags";
 
 /**
  * Feature 14 Component: TrainerEntryPanel
@@ -21,7 +26,8 @@ import { trainerService, VendorOption, VendorInvoiceOption } from "@/lib/trainer
  * and both land on exactly the same place — that invoice's alert list, next to
  * that invoice's PDF:
  *
- *   1. **Upload a PDF** — works whether the vendor is brand new or already
+ *   1. **Upload a sample invoice** (PDF or photo/scan, FE Feature 19) — works
+ *      whether the vendor is brand new or already
  *      known. Runs the real OCR + extraction flow (`POST /trainer/upload`) and
  *      returns that document's real alerts.
  *   2. **Pick an existing vendor, then pick one of their invoices** — a real
@@ -81,6 +87,19 @@ export default function TrainerEntryPanel({
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
+  // FE Feature 19: shared accept list, same pattern as DropZone/TrainerUploader.
+  const [featureFlags, setFeatureFlags] = useState<FeatureFlags | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadFeatureFlags().then((flags) => {
+      if (!cancelled) setFeatureFlags(flags);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const acceptedExtensions = acceptedUploadExtensions(featureFlags);
+
   // Load the chosen vendor's real invoice list. Re-runs on every vendor change;
   // `cancelled` guards the case where the user switches vendor mid-flight, so a
   // slow earlier response can't overwrite a newer one.
@@ -125,7 +144,8 @@ export default function TrainerEntryPanel({
     setDragActive(false);
     if (isBusy) return;
     const file = e.dataTransfer.files?.[0];
-    if (file && (file.type === "application/pdf" || file.name.endsWith(".pdf"))) {
+    const lowerName = file?.name.toLowerCase() ?? "";
+    if (file && acceptedExtensions.some((ext) => lowerName.endsWith(ext))) {
       onUploadFile(file);
     }
   };
@@ -273,7 +293,7 @@ export default function TrainerEntryPanel({
               <UploadCloud className="w-3.5 h-3.5 text-blue-400" />
             </div>
             <div className="min-w-0">
-              <h3 className="text-xs font-semibold text-white">Upload a PDF</h3>
+              <h3 className="text-xs font-semibold text-white">Upload a sample invoice</h3>
               <p className="text-[11px] text-slate-500">
                 A brand-new vendor, or another sample from a known one. Runs the real
                 extraction, so you get that document&apos;s real alerts.
@@ -287,10 +307,10 @@ export default function TrainerEntryPanel({
             }`}
           >
             <Sparkles className="w-3 h-3 text-blue-400" />
-            <span>Browse PDF</span>
+            <span>Browse</span>
             <input
               type="file"
-              accept=".pdf,application/pdf"
+              accept={acceptedExtensions.join(",")}
               onChange={handleFileChange}
               disabled={isBusy}
               className="hidden"

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send, ChevronDown, Bot, Zap, Settings2 } from "lucide-react";
 import TagSelector from "../../components/ingestion/TagSelector";
 import DropZone from "../../components/ingestion/DropZone";
@@ -12,10 +12,17 @@ import ConnectorBrowseBar from "../../components/ingestion/ConnectorBrowseBar";
 import AutopilotHistoryTable from "../../components/ingestion/AutopilotHistoryTable";
 import FolderTreeExplorer from "../../components/connectors/FolderTreeExplorer";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Lock, FolderOpen } from "lucide-react";
 import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
+import {
+  acceptedFormatsLabel,
+  acceptedUploadExtensions,
+  loadFeatureFlags,
+  type FeatureFlags,
+} from "../../lib/featureFlags";
 
 type IngestionTab = "receiving" | "sending" | "autopilot";
 
@@ -32,7 +39,7 @@ let cachedBatchId: string | null = null;
 let cachedJobIds: string[] = [];
 let cachedTrackedFiles: Array<{ name: string; size: number }> = [];
 
-export default function IngestionPage() {
+function IngestionPageContent() {
   // FE Gap 110: title + NOVA badge now live in Shell's one shared header.
   usePageHeader({
     title: "File Ingestion",
@@ -41,11 +48,30 @@ export default function IngestionPage() {
     agentRole: "Extraction & Validation",
   });
 
+  // FE Gap 457: the Invoice Builder deep-links into this page (see the effect
+  // below the outbound state).
+  const searchParams = useSearchParams();
+
   const [files, setFiles] = useState<File[]>(() => cachedFiles);
   const [tags, setTags] = useState<string[]>(() => cachedTags);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // FE Feature 19: the folder picker below is a THIRD entry point for files,
+  // alongside DropZone's two guards, so it reads the same accept list. Same
+  // one-request-per-page `loadFeatureFlags()` promise the drop zone uses.
+  const [uploadFeatureFlags, setUploadFeatureFlags] = useState<FeatureFlags | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadFeatureFlags().then((flags) => {
+      if (!cancelled) setUploadFeatureFlags(flags);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const acceptedExtensions = acceptedUploadExtensions(uploadFeatureFlags);
 
   // Sync inbound files and tags to cache
   useEffect(() => {
@@ -244,6 +270,38 @@ export default function IngestionPage() {
       cancelled = true;
     };
   }, []);
+
+  // FE Gap 457: the Invoice Builder hands off with
+  // /ingestion?tab=sending&builtInvoice=<invoice_id>&batch=<batch_id>&name=<label>
+  // after POST /outbound-invoices/build. Nothing on this page read those
+  // params, so a freshly created invoice landed on Receiving with an idle
+  // outbound ledger. Seeding one row reuses the upload path's render verbatim:
+  // SendInvoiceStatusTable polls GET /invoices/{id} and LogTerminal subscribes
+  // to the batch id, and both work for a builder-created invoice because it is
+  // an ordinary outbound row.
+  //
+  // Keyed on sendVisible rather than mount-once: it is false until the
+  // service-flow fetch above resolves, and Gap 405 means a user without
+  // canSendInvoices must never be moved onto a tab they cannot see. Re-running
+  // is harmless -- the seed is idempotent on invoice id, and the deps do not
+  // change when the user clicks a tab by hand.
+  useEffect(() => {
+    if (searchParams.get("tab") !== "sending" || !sendVisible) return;
+    setActiveTab("sending");
+
+    const builtInvoice = searchParams.get("builtInvoice");
+    const batch = searchParams.get("batch");
+    if (!builtInvoice || !batch) return;
+    // useSearchParams() already percent-decodes, so the builder's
+    // encodeURIComponent'd label is used as-is -- decoding it a second time
+    // would throw URIError on any invoice number containing a literal "%".
+    const name = searchParams.get("name") || "New invoice";
+    setOutboundInvoices((prev) =>
+      prev.some((inv) => inv.id === builtInvoice)
+        ? prev
+        : [...prev, { id: builtInvoice, batchId: batch, name }]
+    );
+  }, [searchParams, sendVisible]);
 
   const handleOutboundUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -563,16 +621,20 @@ export default function IngestionPage() {
                 // a live repro; this ensures a failure here is never silent
                 // or uncaught, whatever the underlying cause turns out to be.
                 try {
+                  // FE Feature 19: the folder path filters on the same accept
+                  // list the drop zone uses, and its message is built from the
+                  // same list -- otherwise a folder of photos reads as empty.
                   const selectedList = Array.from(e.target.files || []);
-                  const pdfs = selectedList.filter(
-                    (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
-                  );
-                  if (pdfs.length > 0) {
-                    setFiles((prev) => [...prev, ...pdfs]);
-                    setWatcherResult({ files_found: selectedList.length, files_queued: pdfs.length });
+                  const accepted = selectedList.filter((f) => {
+                    const lowerName = f.name.toLowerCase();
+                    return acceptedExtensions.some((ext) => lowerName.endsWith(ext));
+                  });
+                  if (accepted.length > 0) {
+                    setFiles((prev) => [...prev, ...accepted]);
+                    setWatcherResult({ files_found: selectedList.length, files_queued: accepted.length });
                     setWatcherError(null);
                   } else if (selectedList.length > 0) {
-                    setWatcherError("No PDF files found in selected folder.");
+                    setWatcherError(`No ${acceptedFormatsLabel(acceptedExtensions)} files found in selected folder.`);
                   }
                 } catch (err) {
                   console.error("Failed to read selected folder", err);
@@ -927,5 +989,15 @@ export default function IngestionPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// useSearchParams() requires a Suspense boundary in the app router -- same
+// wrapper shape as app/trainer/page.tsx and app/invoices/outbound-builder/page.tsx.
+export default function IngestionPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-xs text-white">Loading File Ingestion…</div>}>
+      <IngestionPageContent />
+    </Suspense>
   );
 }

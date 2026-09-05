@@ -43,6 +43,11 @@ def _publish_sse_events(batch_id: str, payload: dict) -> None:
 
 import io
 from services.storage import download_pdf_from_storage
+from services.file_intake import (
+    ImageTooLargeError,
+    UnsupportedUploadError,
+    normalize_upload,
+)
 
 
 def _serialize_di_field(field) -> dict | None:
@@ -692,6 +697,17 @@ def handle_import_connector_file(
             b"%PDF-1.4 stub content for connector import "
             + f"provider={provider} file_id={file_id}".encode()
         )
+    # Feature 28: the Drive listing now includes images (decision D3), so the
+    # downloaded bytes may be a photo. Normalising here — before the blob write
+    # below — keeps the invariant that storage only ever holds PDFs. The stub
+    # bytes above are already a PDF and pass through unchanged.
+    try:
+        normalized = normalize_upload(f"connector_{provider}_{file_id}", file_bytes)
+    except (UnsupportedUploadError, ImageTooLargeError) as norm_exc:
+        raise RuntimeError(
+            f"Connector import from '{provider}' file_id={file_id} refused: {norm_exc.detail}"
+        ) from norm_exc
+    file_bytes = normalized.pdf_bytes
     file_name = f"connector_{provider}_{file_id}.pdf"
     direction_prefix = "outbound" if direction == "outbound" else "inbound"
     blob_path = f"tenants/{tenant_id}/{direction_prefix}/{batch_id}/{file_name}"

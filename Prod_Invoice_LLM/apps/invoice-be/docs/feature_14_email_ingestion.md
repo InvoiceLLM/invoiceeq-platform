@@ -3,6 +3,8 @@
 1. **Email ingestion (both directions):** PDFs emailed to the **one global** app mailbox. Tenant + direction from the sender’s registered set.
 2. **Staff email notifications (Gap 125):** SendGrid Mail Send to **registered** addresses only. **Never** email customers from this app — staff forward to customers themselves.
 
+**Accepts images since Feature 28 (2026-09-04).** An attachment qualifies when its *bytes* sniff to an accepted format, so a phone photo mailed in as `IMG_0421.JPG` is ingested and converted to PDF before `_ingest_single_file`. `REASON_NO_PDF_ATTACHMENT` keeps its constant name (it is persisted and reported on); only its detail text now names the image formats. See [feature_28_image_upload_pdf_boundary.md](feature_28_image_upload_pdf_boundary.md).
+
 ### Product model (decided 2026-08-10)
 * **Mailbox:** `EMAIL_APP_ADDRESS` (shared). Webhook: `POST /api/v1/email/mailintegration`.
 * **Public URL:** BE ingress is internal-only. Same PayU topology — `invoice-website` relays `POST /api/v1/email/mailintegration` → internal BE (`apps/invoice-website/app/api/v1/email/mailintegration/route.ts`). SendGrid Inbound Parse Destination = **website** FQDN + that path.

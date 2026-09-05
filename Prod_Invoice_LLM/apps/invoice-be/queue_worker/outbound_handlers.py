@@ -98,6 +98,36 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                             alerts.append(dup_alert)
                         status = "NEEDS_REVIEW"
 
+                # Feature 17 (task 17.6): a builder-created invoice checks what
+                # was actually printed against what the builder intended to
+                # print. `builder_intent` is NULL for every uploaded invoice, so
+                # this is inert on the upload path.
+                #
+                # Deterministic arithmetic, not an LLM judgement (CONVENTIONS
+                # hard rule 3): the model's only job here was to read the PDF,
+                # exactly as for an upload. A disagreement means the render is
+                # wrong -- a value painted into the wrong span, a figure that
+                # did not fit -- and the invoice lands NEEDS_REVIEW on the
+                # existing outbound review screen naming the field, rather than
+                # being sent to a customer on a number nobody checked.
+                if invoice.builder_intent:
+                    from utils.verification_tools import verify_builder_readback
+
+                    mismatches = verify_builder_readback(invoice.builder_intent, extracted_data)
+                    if mismatches:
+                        named = ", ".join(m["field"] for m in mismatches)
+                        alerts = list(alerts)
+                        alerts.append({
+                            "type": "builder_render_mismatch",
+                            "message": (
+                                "The generated PDF did not read back as built. "
+                                f"Fields that disagree: {named}."
+                            ),
+                            "fields": mismatches,
+                            "severity": "error",
+                        })
+                        status = "NEEDS_REVIEW"
+
                 invoice.customer_name = customer_name
                 invoice.invoice_number = invoice_number
 

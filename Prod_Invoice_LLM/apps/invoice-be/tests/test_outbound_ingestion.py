@@ -77,20 +77,47 @@ def test_upload_succeeds_when_enabled(db_session):
     mock_queue.send_message.assert_called_once()
 
 
-def test_upload_rejects_non_pdf(db_session):
+def test_upload_rejects_an_unsupported_format(db_session):
+    """Feature 28: the AR door refuses on the same shared accept list as every
+    other door, with the same message."""
+    from services.file_intake import ACCEPTED_FORMATS_DETAIL
+
     _seed_tenant(db_session)
     files = {"file": ("out1.txt", io.BytesIO(b"not a pdf"), "text/plain")}
     response = client.post("/api/v1/outbound-invoices/upload", files=files)
     assert response.status_code == 400
-    assert "Only PDF is allowed" in response.json()["detail"]
+    assert ACCEPTED_FORMATS_DETAIL in response.json()["detail"]
 
 
-def test_upload_rejects_invalid_pdf_magic_bytes(db_session):
+def test_upload_rejects_non_pdf_bytes_under_a_pdf_filename(db_session):
+    from services.file_intake import ACCEPTED_FORMATS_DETAIL
+
     _seed_tenant(db_session)
     files = {"file": ("corrupt.pdf", io.BytesIO(b"plain text without pdf header"), "application/pdf")}
     response = client.post("/api/v1/outbound-invoices/upload", files=files)
     assert response.status_code == 400
-    assert "Invalid PDF content" in response.json()["detail"]
+    assert ACCEPTED_FORMATS_DETAIL in response.json()["detail"]
+
+
+def test_upload_accepts_a_photo_and_stores_it_as_a_pdf(db_session):
+    """Feature 28's positive case at this door. Depth (blob bytes, hash, quota)
+    lives in tests/test_invoice_upload_formats.py against real Postgres; this is
+    the smoke check that keeps it visible in the AR suite."""
+    import pathlib
+
+    _seed_tenant(db_session, send_invoices_enabled=True)
+    photo = (
+        pathlib.Path(__file__).parent / "fixtures" / "image_uploads" / "invoice_photo.png"
+    ).read_bytes()
+    files = {"file": ("IMG_0421.PNG", io.BytesIO(photo), "image/png")}
+
+    with patch("routers.outbound_invoices.upload_pdf_to_blob_storage", return_value="mock/path/out1.pdf") as mock_storage, \
+         patch("routers.outbound_invoices.QueueClient"):
+        response = client.post("/api/v1/outbound-invoices/upload", files=files)
+
+    assert response.status_code == 201, response.text
+    stored_bytes = mock_storage.call_args[0][0]
+    assert stored_bytes.startswith(b"%PDF")
 
 
 # ── Confirm-send endpoint ─────────────────────────────────────────────────────

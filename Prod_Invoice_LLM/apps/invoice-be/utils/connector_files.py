@@ -45,9 +45,26 @@ def list_google_drive_files(
     (routers/connectors.py, which never wants this filter) is unaffected.
     """
     parent = folder_id or "root"
+    # Feature 28 (decision D3): images are listed for every tenant, no opt-in.
+    # They are converted to PDF at the ingestion door (services/file_intake.py),
+    # so a folder of phone photos is now importable. Kept as an explicit clause
+    # list rather than a `mimeType contains 'image/'` prefix match so the query
+    # admits exactly the formats ACCEPTED_IMAGE_SUFFIXES can convert -- Drive
+    # would otherwise hand back HEIC/SVG/GIF that the door then refuses.
+    mime_clauses = " or ".join(
+        f"mimeType = '{mime}'" for mime in (
+            "application/pdf",
+            "image/png",
+            "image/jpeg",
+            "image/tiff",
+            "image/webp",
+            "image/bmp",
+            GOOGLE_DRIVE_FOLDER_MIME_TYPE,
+        )
+    )
     query = (
         "trashed = false and "
-        "(mimeType = 'application/pdf' or mimeType = 'application/vnd.google-apps.folder') and "
+        f"({mime_clauses}) and "
         f"'{parent}' in parents"
     )
     if modified_after is not None:
@@ -66,8 +83,11 @@ def list_google_drive_files(
         {
             "id": f["id"],
             "name": f["name"],
-            "type": "folder" if f["mimeType"] == "application/vnd.google-apps.folder" else "file",
+            "type": "folder" if f["mimeType"] == GOOGLE_DRIVE_FOLDER_MIME_TYPE else "file",
             "size_bytes": int(f.get("size", 0)),
+            # Feature 28: the file browser needs the mime type to show what a
+            # listed entry actually is now that it is not always a PDF.
+            "mime_type": f["mimeType"],
         }
         for f in response.json().get("files", [])
     ]

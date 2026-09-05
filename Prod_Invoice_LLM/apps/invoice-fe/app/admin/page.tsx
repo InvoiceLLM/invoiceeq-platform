@@ -78,7 +78,7 @@ const DROP_REASON_LABELS: Record<string, string> = {
   malformed: "Malformed request",
   unknown_sender: "Sender not registered",
   missing_tenant: "Workspace missing",
-  no_pdf_attachment: "No PDF attached",
+  no_pdf_attachment: "No invoice attachment",
   quota_exhausted: "Free quota exhausted",
   ingest_rejected: "Refused by settings",
   ingest_failed: "Processing failed",

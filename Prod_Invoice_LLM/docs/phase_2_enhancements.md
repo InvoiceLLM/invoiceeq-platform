@@ -6,6 +6,9 @@
 > `feature_N_*.md` spec (per this repo's doc convention) when it's actually
 > scoped — this document is the index, not the design. No Gap should be
 > opened against any of these until that scoping happens.
+>
+> Item 1 (chat attachments) was removed 2026-09-04: it shipped as Feature 26
+> and its Phases 1-5 -- see `apps/invoice-be/docs/feature_26_chat_attached_documents.md`.
 
 ## 5. WAF on Front Door
 
@@ -30,21 +33,6 @@ plus an `AllowAllAzureIPs` rule and two stale personal-IP dev firewall rules;
 Storage has `publicNetworkAccess: Enabled` with an open default network rule.
 Both would be closed by this item rather than patched individually.
 
-## 1. Chat/SAGE — attach a document, ask questions grounded in it + related invoices
-
-Add an upload button to the Chat (SAGE) screen. A user attaches a document
-that isn't itself an invoice — e.g. a Quotation, Proforma Invoice, Delivery
-Challan, or E-way Bill from a vendor — and asks questions about it. The
-answer should be grounded in **both** the attached document's own content
-**and** whatever invoices already in the system relate to it (same vendor,
-same PO, same shipment) — e.g. "does this delivery challan match what we
-were actually invoiced for?"
-
-Open questions for later scoping: how the attached document is matched to
-"related" invoices (vendor name? PO number? manual selection?), whether the
-attached document is persisted or session-only, and whether this reuses the
-existing multimodal extraction path or needs its own lighter-weight read.
-
 ## 2. Accept non-PDF file formats for invoice upload
 
 Today, invoice upload only accepts `.pdf`. Allow common image formats (at
@@ -62,6 +50,10 @@ each upload entry point (`routers/invoices.py`, `routers/outbound_invoices.py`,
 (currently `mimeType = 'application/pdf'` only) if Drive-sourced images
 should be included too.
 
+**Scoped 2026-09-04** → `apps/invoice-be/docs/feature_28_image_upload_pdf_boundary.md`
+(BE) and `apps/invoice-fe/docs/feature_19_image_upload_accept.md` (FE). Awaiting
+founder approval of the spec; not started.
+
 ## 3. Invoice builder — generate an outbound invoice from an existing one
 
 A tool to create a new outbound vendor invoice using an existing one as the
@@ -71,6 +63,18 @@ Open questions for later scoping: how much is copied verbatim vs. meant to
 be edited (line items, amounts, dates), whether this targets recurring
 vendors specifically, and how it relates to the existing outbound invoice
 creation flow.
+
+**Scoped 2026-09-04** → solution section appended to
+`apps/invoice-be/docs/feature_17_invoice_builder.md` (clone-and-edit from an
+existing outbound invoice; its PDF is the template). **Approved and built
+2026-09-04** — BE Feature 17 (all 10 tasks, `tests/test_invoice_builder.py`
+`53 passed` on real Postgres) and FE Feature 20. The open questions above are
+answered by founder decisions D1–D7 in the BE spec: everything is copied and
+everything listed in `BuildRequest` is editable, rows may be added or removed
+(which switches the renderer from in-place substitution to a structured
+re-render), no recurring-vendor targeting, and it enters the existing outbound
+pipeline exactly as an upload does. Still open on both halves: the manual
+dev-stack ("Azure path") verification row.
 
 ## 4. Full-scale platform monitoring — Azure SRE-style
 

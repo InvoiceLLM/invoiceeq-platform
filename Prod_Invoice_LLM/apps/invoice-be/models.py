@@ -210,6 +210,25 @@ class Invoice(SQLModel, table=True):
         default=None, sa_column=Column(JSON_VARIANT, nullable=True)
     )
 
+    # Feature 17 (Invoice Builder): lineage and intent for a *generated*
+    # outbound invoice — one cloned from an existing one and re-rendered by
+    # `services/pdf_substitute.py` / `services/pdf_render.py`.
+    #
+    # `source_invoice_id` is the invoice this one was cloned from. Nullable and
+    # NULL on every uploaded row, which is every row that exists today; the
+    # same-tenant constraint is enforced in code, because the source is always
+    # loaded under `tenant_id` before the clone is allowed.
+    #
+    # `builder_intent` is what the builder INTENDED to print (the `BuildRequest`
+    # plus the server-computed `Totals` and the render mode), kept so that
+    # `utils/verification_tools.py::verify_builder_readback()` can compare it
+    # against what the extractor actually read back off the generated PDF. That
+    # comparison is the feature's self-check and is deterministic arithmetic,
+    # not an LLM judgement (CONVENTIONS hard rule 3). NULL means "not built by
+    # the builder" and skips the check entirely.
+    source_invoice_id: UUID | None = Field(default=None, foreign_key="invoice.id", nullable=True)
+    builder_intent: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+
     # FE Gap 29: dashboard/list filters are always tenant-scoped plus one of
     # status/date/vendor, so composite indexes led by tenant_id (rather than
     # single-column ones) are what the query planner actually uses here.
@@ -218,6 +237,9 @@ class Invoice(SQLModel, table=True):
         sa.Index("ix_invoice_tenant_invoice_date", "tenant_id", "invoice_date"),
         sa.Index("ix_invoice_tenant_vendor_name", "tenant_id", "vendor_name"),
         sa.Index("ix_invoice_tenant_flow_direction", "tenant_id", "flow_direction"),
+        # Feature 17: "show me everything cloned from this invoice", always
+        # tenant-scoped like every other lookup on this table.
+        sa.Index("ix_invoice_tenant_source_invoice_id", "tenant_id", "source_invoice_id"),
     )
 
 

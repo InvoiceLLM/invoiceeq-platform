@@ -1,0 +1,77 @@
+{
+  "pdf": "vector_text_only.pdf",
+  "customer_name": "Pine Ridge Dairy",
+  "invoice_number": "INV-1200",
+  "items": [
+    {
+      "description": "Chilled transport",
+      "quantity": 3.0,
+      "unit_price": 210.0,
+      "amount": 630.0
+    }
+  ],
+  "coordinates": [
+    {
+      "field": "CustomerName",
+      "x": 13.103,
+      "y": 22.601,
+      "width": 12.603,
+      "height": 1.632,
+      "page": 1
+    },
+    {
+      "field": "InvoiceId",
+      "x": 25.8,
+      "y": 15.949,
+      "width": 7.096,
+      "height": 1.632,
+      "page": 1
+    },
+    {
+      "field": "InvoiceDate",
+      "x": 23.374,
+      "y": 17.374,
+      "width": 8.591,
+      "height": 1.632,
+      "page": 1
+    },
+    {
+      "field": "DueDate",
+      "x": 21.133,
+      "y": 18.8,
+      "width": 8.591,
+      "height": 1.632,
+      "page": 1
+    },
+    {
+      "field": "SubTotal",
+      "x": 84.686,
+      "y": 31.281,
+      "width": 4.623,
+      "height": 1.469,
+      "page": 1
+    },
+    {
+      "field": "TotalTax",
+      "x": 84.686,
+      "y": 33.419,
+      "width": 4.623,
+      "height": 1.469,
+      "page": 1
+    },
+    {
+      "field": "InvoiceTotal",
+      "x": 84.686,
+      "y": 35.557,
+      "width": 4.623,
+      "height": 1.469,
+      "page": 1
+    }
+  ],
+  "currency": "USD",
+  "invoice_date": "2026-06-02",
+  "due_date": "2026-07-02",
+  "subtotal": 630.0,
+  "tax_amount": 126.0,
+  "grand_total": 756.0
+}

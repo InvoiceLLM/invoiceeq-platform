@@ -76,7 +76,7 @@ export default function ScopeSelector({
       id: "new_vendor",
       label: "New Vendor",
       description:
-        "Cold-start rules for a brand new vendor. Upload a fresh sample PDF to begin.",
+        "Cold-start rules for a brand new vendor. Upload a fresh sample invoice to begin.",
       icon: FilePlus,
       badgeText: "Cold-Start Upload",
       activeRing: "border-purple-500/60 shadow-purple-500/20",
@@ -124,7 +124,7 @@ export default function ScopeSelector({
                 from `lg` to `xl` because Gap 77 moved these tabs into a shared
                 bar with the grounding control: at lg they now compete with it
                 for the row, and a badge is decoration where the vendor picker
-                / Browse PDF button is function. */}
+                / Browse button is function. */}
             <span
               className={`hidden xl:inline-block text-[9px] px-1.5 py-0.5 rounded border font-mono font-medium ${scope.badgeCls}`}
             >

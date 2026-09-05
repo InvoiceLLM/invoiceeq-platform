@@ -40,13 +40,13 @@ export const INBOUND_EMAIL_HELP_SECTIONS: HelpSection[] = [
     id: "inbound-email-overview",
     title: "Inbound Email Ingestion Guide",
     keywords: ["inbound", "email", "mailbox", "authorized", "ingestion", "attachment"],
-    searchText: "inbound email mailbox authorized senders ingestion attachment pdf allowlist forward invoiceeq",
+    searchText: "inbound email mailbox authorized senders ingestion attachment pdf image photo scan allowlist forward invoiceeq",
     body: (
       <>
         <P>
           All workspaces share one app mailbox:{" "}
           <code className="text-blue-300">invoices@invoiceeq.app</code>. AP addresses on your{" "}
-          <strong>inbound authorized set</strong> can email vendor invoice PDFs there; the app routes them to your workspace as inbound.
+          <strong>inbound authorized set</strong> can email vendor invoices there (PDF or image attachments); the app routes them to your workspace as inbound.
         </P>
 
         <Shot
@@ -60,7 +60,7 @@ export const INBOUND_EMAIL_HELP_SECTIONS: HelpSection[] = [
           <ol className="space-y-1.5 text-xs text-slate-300 list-decimal pl-5">
             <li>Copy the mailbox from <strong>Settings → Email</strong>.</li>
             <li>Add AP addresses to <strong>Inbound authorized emails</strong>.</li>
-            <li>Send/forward supplier PDF invoices from those addresses to the mailbox.</li>
+            <li>Send/forward supplier invoices (PDF or image attachments) from those addresses to the mailbox.</li>
             <li>
               Ops: SendGrid Inbound Parse Destination URL must be the public website host
               (<code className="text-blue-300">…/api/v1/email/mailintegration</code>), not the internal API — GoDaddy MX + Parse host settings are still required for live receive.

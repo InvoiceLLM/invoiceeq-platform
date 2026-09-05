@@ -570,20 +570,32 @@ def test_invoice_status_endpoint_returns_currency(db_session):
     assert data["currency"] == "INR"
 
 
-def test_rejects_non_pdf_file_extension(db_session):
-    """Gap 355 (BE): Non-PDF files (e.g. .docx, .jpg) must be rejected with 400 Bad Request."""
+def test_rejects_unsupported_file_format(db_session):
+    """Gap 355 (BE), rewritten for Feature 28.
+
+    The rule is no longer "must be a PDF" but "must sniff to PDF or a supported
+    image", and the two messages Gap 355 produced (one for the filename suffix,
+    one for the `%PDF` header) collapsed into `ACCEPTED_FORMATS_DETAIL`. A
+    `.docx` is still refused; a `.jpg` no longer is, which is the point of
+    Feature 28 and is covered in tests/test_invoice_upload_formats.py.
+    """
+    from services.file_intake import ACCEPTED_FORMATS_DETAIL
+
     files = {"files": ("invoice.docx", io.BytesIO(b"PK\x03\x04 fake docx content"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
     client = TestClient(app)
     response = client.post("/api/v1/invoices/upload", files=files)
     assert response.status_code == 400
-    assert "Only PDF is allowed" in response.json()["detail"]
+    assert ACCEPTED_FORMATS_DETAIL in response.json()["detail"]
 
 
-def test_rejects_invalid_pdf_magic_bytes(db_session):
-    """Gap 355 (BE): Files with .pdf extension but invalid/corrupt PDF headers must be rejected with 400."""
+def test_rejects_a_file_whose_bytes_are_not_a_supported_format(db_session):
+    """Gap 355 (BE): a `.pdf` name over non-PDF bytes is still refused — under
+    Feature 28 the bytes decide entirely and the filename is not consulted."""
+    from services.file_intake import ACCEPTED_FORMATS_DETAIL
+
     files = {"files": ("fake.pdf", io.BytesIO(b"This is just plain text, not a PDF"), "application/pdf")}
     client = TestClient(app)
     response = client.post("/api/v1/invoices/upload", files=files)
     assert response.status_code == 400
-    assert "Invalid PDF content" in response.json()["detail"]
+    assert ACCEPTED_FORMATS_DETAIL in response.json()["detail"]
 

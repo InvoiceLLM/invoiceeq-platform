@@ -554,7 +554,7 @@ function TrainerContent() {
     ? null
     : isLoadingSession
     ? "Loading the session — one moment."
-    : "Pick an invoice or upload a PDF first.";
+    : "Pick an invoice or upload a sample first.";
 
   const handleSendMessage = async (text: string) => {
     if (!session) {

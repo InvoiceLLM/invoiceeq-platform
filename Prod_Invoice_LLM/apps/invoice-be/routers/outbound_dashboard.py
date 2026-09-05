@@ -111,6 +111,13 @@ async def list_outbound_invoices(
             # explicitly or every consumer of these rows renders "$".
             "currency": inv.currency,
             "status": inv.status,
+            # Feature 17 (task 17.7): lineage for a builder-created invoice --
+            # NULL on every uploaded row. The FE renders a "Cloned from" link
+            # under the invoice number when it is set
+            # (components/dashboard/OutboundInvoicesTable.tsx). No filter
+            # changes; this is one extra key on rows this endpoint already
+            # hand-builds.
+            "source_invoice_id": inv.source_invoice_id,
             "is_overdue": inv.status == "SENT" and inv.due_date is not None and inv.due_date < today,
         }
         for inv in invoices

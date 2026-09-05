@@ -22,6 +22,11 @@
 // means accepting a PNG the extractor would silently drop the visual channel
 // for. Defaulting to `false` degrades to today's behaviour, which is exactly the
 // same fail-closed choice `config.py` makes for every flag's default.
+//
+// FE FEATURE 19 NUANCE: fail-closed still governs FLAG READS, but not the
+// upload accept list's floor. BE Feature 28 ships image->PDF conversion with no
+// flag at all, so `acceptedUploadExtensions()` degrades to the image list, not
+// to `.pdf`, when the fetch fails -- see the comment above that function.
 // =============================================================================
 
 export type FeatureFlags = Record<string, boolean>;
@@ -61,12 +66,39 @@ export function resetFeatureFlagsCache(): void {
  * entirely), and Feature 27 §4 calls out that they must move together or a user
  * drags a PNG past the picker and is rejected after selection.
  *
- * With the flag OFF the list is `.pdf` alone -- byte-identical to before this
- * mechanism existed -- because `document_to_base64_images()` is only reachable
- * through the flag-on graph; with it off a non-PDF loses the multimodal channel
- * silently, which §4's "Non-PDF image support" section calls the real defect.
+ * FE FEATURE 19 / BE FEATURE 28 changes the FLOOR of this list, not the flag.
+ * BE Feature 28 converts images to PDF at the door unconditionally (BE decision
+ * D1 -- no `ENABLE_IMAGE_UPLOAD_CONVERSION`), so the image suffixes are always
+ * offered and the fail-closed default for THIS list is the image list, not
+ * `.pdf` alone: a failed `/config/features` fetch says nothing about a
+ * capability that does not depend on a flag, and degrading to PDF-only would
+ * reject a file the backend would happily have accepted.
+ *
+ * `ENABLE_GENERIC_EXTRACTION` (Feature 27 / FE Gap 378) is untouched and still
+ * read below -- the two COMPOSE. The always-on image list is the base; the
+ * generic-extraction list is unioned on top when that flag is on, so widening
+ * either one never narrows the other.
+ *
+ * `PDF_ONLY_EXTENSIONS` is kept as the label helper's degenerate case and for
+ * any caller that genuinely means "PDF and nothing else".
  */
 export const PDF_ONLY_EXTENSIONS = [".pdf"] as const;
+
+/**
+ * Always offered, flag-independent. Mirrors BE Feature 28's converter input set
+ * (`services/image_conversion.py`); `.pdf` is first so it stays the primary
+ * suggestion in the OS file dialog.
+ */
+export const IMAGE_UPLOAD_EXTENSIONS = [
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".tif",
+  ".tiff",
+  ".webp",
+  ".bmp",
+] as const;
 export const GENERIC_EXTRACTION_EXTENSIONS = [
   ".pdf",
   ".png",
@@ -79,9 +111,41 @@ export const GENERIC_EXTRACTION_EXTENSIONS = [
 ] as const;
 
 export function acceptedUploadExtensions(flags: FeatureFlags | null): string[] {
-  return flags?.ENABLE_GENERIC_EXTRACTION
-    ? [...GENERIC_EXTRACTION_EXTENSIONS]
-    : [...PDF_ONLY_EXTENSIONS];
+  // Union, de-duplicated, first-seen order -- so `.pdf` (first in the base
+  // list) stays first whatever the flag says. The `flags` argument survives
+  // because Feature 27's list may hold suffixes the image list does not.
+  const merged = flags?.ENABLE_GENERIC_EXTRACTION
+    ? [...IMAGE_UPLOAD_EXTENSIONS, ...GENERIC_EXTRACTION_EXTENSIONS]
+    : [...IMAGE_UPLOAD_EXTENSIONS];
+  return Array.from(new Set(merged));
+}
+
+/**
+ * The words on screen for a given accept list.
+ *
+ * Every "what may I upload" string in the app reads from this rather than
+ * spelling the formats out, so the copy and the `accept` attribute cannot
+ * disagree -- the same property FE Gap 378 established for the two guards.
+ *
+ * `.jpeg` and `.tif` are aliases of `.jpg`/`.tiff` and are folded away: a user
+ * does not need to be told both spellings, and "JPG, JPEG" reads like two
+ * different things.
+ */
+const FORMAT_LABEL_ALIASES: Record<string, string> = {
+  jpeg: "JPG",
+  tif: "TIFF",
+};
+
+export function acceptedFormatsLabel(extensions: string[]): string {
+  const names: string[] = [];
+  for (const ext of extensions) {
+    const bare = ext.replace(/^\./, "").toLowerCase();
+    const name = FORMAT_LABEL_ALIASES[bare] ?? bare.toUpperCase();
+    if (!names.includes(name)) names.push(name);
+  }
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
 }
 
 /**

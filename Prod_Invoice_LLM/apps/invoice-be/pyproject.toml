@@ -36,6 +36,14 @@ dependencies = [
     "email-validator>=2.3.0",
     "azure-monitor-opentelemetry>=1.6.0",
     "sqlglot==30.17.0",
+    # Feature 17 (Invoice Builder): `services/pdf_render.py` lays out a cloned
+    # invoice when rows were added or removed (founder decision D3), so this is
+    # a RUNTIME dependency of the API container, not a test-only one. It sat in
+    # the dev group until BE Gap 459 — `docker/Dockerfile.be` and
+    # `Dockerfile.worker` both run `uv sync --frozen --no-dev`, so
+    # `POST /outbound-invoices/build` would have raised ModuleNotFoundError in
+    # every deployed environment while passing locally.
+    "reportlab>=4.1.0",
 ]
 
 [dependency-groups]
@@ -43,7 +51,6 @@ dev = [
     "pytest>=8.1.1",
     "pytest-asyncio>=0.23.5",
     "ruff>=0.3.2",
-    "reportlab>=4.1.0",
 ]
 
 [tool.pytest.ini_options]

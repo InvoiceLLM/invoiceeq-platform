@@ -113,7 +113,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           </li>
           <li>
             <strong className="text-white">New Vendor</strong> — cold-start rules for a
-            vendor you've never seen before. Requires uploading a sample PDF, since
+            vendor you've never seen before. Requires uploading a sample invoice (PDF or photo), since
             there's no production history to load instead.
           </li>
         </ul>
@@ -129,24 +129,24 @@ export const HELP_SECTIONS: HelpSection[] = [
     id: "new-vendor-walkthrough",
     title: "Walkthrough: training a new vendor",
     keywords: ["new vendor", "upload", "cold start", "walkthrough"],
-    searchText: "new vendor upload PDF cold start walkthrough extracted summary",
+    searchText: "new vendor upload PDF photo scan image cold start walkthrough extracted summary",
     body: (
       <>
         <ol className="list-decimal list-inside space-y-2 text-sm text-slate-300">
           <li>Click the <strong>New Vendor</strong> tab.</li>
-          <li>Upload a sample invoice PDF from this vendor.</li>
+          <li>Upload a sample invoice (PDF or photo) from this vendor.</li>
           <li>
             Wait for extraction to finish — the left panel shows the real PDF plus an{" "}
             <strong>Extracted Summary</strong> strip with the actual values the AI read
             off it.
           </li>
-          <li>Check the summary against the PDF. If something's wrong, say so in chat.</li>
+          <li>Check the summary against the PDF in the viewer. If something's wrong, say so in chat.</li>
           <li>Click <strong>Commit to Template Registry</strong> once you're happy.</li>
         </ol>
         <Shot
           src="/help/trainer/02-new-vendor-loaded.png"
           alt="New Vendor scope with a real uploaded PDF and live extracted summary"
-          caption="Real extraction result — vendor, invoice #, dates, and totals are the actual values read from the uploaded PDF, not sample data."
+          caption="Real extraction result — vendor, invoice #, dates, and totals are the actual values read from the uploaded document, not sample data."
         />
         <Callout tone="info">
           Committing a New Vendor template does <strong>not</strong> trigger a

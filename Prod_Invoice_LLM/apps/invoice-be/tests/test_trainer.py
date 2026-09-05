@@ -1383,19 +1383,30 @@ def test_qa_test_passes_a_real_uuid_so_chat_history_actually_loads(trainer_mocks
     assert get_chat_history(str(chat_session_id), db_session) != ""
 
 
-def test_trainer_upload_rejects_non_pdf(db_session):
-    """Gap 355 (BE): /trainer/upload rejects non-PDF file extensions."""
+def test_trainer_upload_rejects_an_unsupported_format(db_session):
+    """Gap 355 (BE), rewritten for Feature 28.
+
+    The trainer door used to carry a message of its own ("Only PDF files are
+    supported for training."). It now shares `ACCEPTED_FORMATS_DETAIL` with the
+    other four doors, so a tenant cannot be told two different rules depending
+    on which upload box they happened to use.
+    """
     import io
+    from services.file_intake import ACCEPTED_FORMATS_DETAIL
+
     files = {"file": ("training.docx", io.BytesIO(b"PK\x03\x04 fake docx content"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
     response = client.post("/api/v1/trainer/upload", files=files)
     assert response.status_code == 400
-    assert "Only PDF files are supported" in response.json()["detail"]
+    assert ACCEPTED_FORMATS_DETAIL in response.json()["detail"]
 
 
-def test_trainer_upload_rejects_invalid_pdf_magic_bytes(db_session):
-    """Gap 355 (BE): /trainer/upload rejects corrupt files without %PDF magic bytes."""
+def test_trainer_upload_rejects_non_pdf_bytes_under_a_pdf_filename(db_session):
+    """Gap 355 (BE): a corrupt file named `.pdf` is still refused — Feature 28
+    decides on the bytes, so the name buys it nothing."""
     import io
+    from services.file_intake import ACCEPTED_FORMATS_DETAIL
+
     files = {"file": ("corrupt.pdf", io.BytesIO(b"plain text without pdf header"), "application/pdf")}
     response = client.post("/api/v1/trainer/upload", files=files)
     assert response.status_code == 400
-    assert "Invalid PDF content" in response.json()["detail"]
+    assert ACCEPTED_FORMATS_DETAIL in response.json()["detail"]
