@@ -98,3 +98,82 @@ def test_soft_delete_preserves_audit_logs_and_hides_from_list(db_session):
 
     again = client.delete(f"/api/v1/invoices/{invoice_id}")
     assert again.status_code == 404
+
+
+def _seed_invoice(db_session, invoice_id, batch_id=None):
+    db_session.add(
+        Invoice(
+            id=invoice_id,
+            tenant_id=MOCK_TENANT_ID,
+            file_path=f"mock/{invoice_id}.pdf",
+            status="COMPLETED",
+            vendor_name="Chunk Vendor",
+            grand_total=10.0,
+            batch_id=batch_id,
+        )
+    )
+
+
+def test_soft_delete_drops_chroma_chunks(db_session, monkeypatch):
+    """Gap 460: single delete calls delete_invoice_chunks after the commit."""
+    import routers.invoices as invoices_router
+
+    invoice_id = uuid4()
+    _seed_invoice(db_session, invoice_id)
+    db_session.commit()
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        invoices_router, "delete_invoice_chunks",
+        lambda inv, tenant: calls.append((inv, tenant)),
+    )
+
+    response = TestClient(app).delete(f"/api/v1/invoices/{invoice_id}")
+    assert response.status_code == 200
+    assert calls == [(str(invoice_id), str(MOCK_TENANT_ID))]
+
+    db_session.expire_all()
+    assert db_session.get(Invoice, invoice_id).deleted_at is not None
+
+
+def test_soft_delete_survives_chroma_failure(db_session, monkeypatch):
+    """Gap 460: an unreachable Chroma is swallowed inside delete_invoice_chunks;
+    the row stays soft-deleted and the caller still gets 200."""
+    import chroma_client
+
+    invoice_id = uuid4()
+    _seed_invoice(db_session, invoice_id)
+    db_session.commit()
+
+    def boom():
+        raise RuntimeError("chroma down")
+
+    monkeypatch.setattr(chroma_client, "get_chroma_client", boom)
+
+    response = TestClient(app).delete(f"/api/v1/invoices/{invoice_id}")
+    assert response.status_code == 200
+
+    db_session.expire_all()
+    assert db_session.get(Invoice, invoice_id).deleted_at is not None
+
+
+def test_batch_rollback_drops_chroma_chunks_for_every_invoice(db_session, monkeypatch):
+    """Gap 460: batch rollback calls delete_invoice_chunks once per invoice."""
+    import routers.invoices as invoices_router
+
+    batch_id = uuid4()
+    ids = [uuid4(), uuid4()]
+    for inv_id in ids:
+        _seed_invoice(db_session, inv_id, batch_id=batch_id)
+    db_session.commit()
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        invoices_router, "delete_invoice_chunks",
+        lambda inv, tenant: calls.append((inv, tenant)),
+    )
+
+    response = TestClient(app).delete(f"/api/v1/invoices/batches/{batch_id}")
+    assert response.status_code == 200
+    assert response.json()["count"] == 2
+    assert sorted(calls) == sorted((str(i), str(MOCK_TENANT_ID)) for i in ids)

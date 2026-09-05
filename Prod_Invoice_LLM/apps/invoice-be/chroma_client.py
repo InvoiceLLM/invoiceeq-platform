@@ -821,10 +821,9 @@ def delete_document_chunks(document_id: str, tenant_id: str) -> None:
     Feature 27 (Gap 385, closing G10's open item): remove every indexed chunk of
     one `Document` row from `docs_{tenant_id}`.
 
-    The sibling of `delete_invoice_chunks()` below, and deliberately **not** the
-    same policy about when to call it. That function is unwired from invoice
-    soft-delete on purpose (Gap 239: a restored invoice must keep its chunks);
-    this one has a caller from the day it is written, because
+    The sibling of `delete_invoice_chunks()` below, which since Gap 460 follows
+    the same policy (called from the soft-delete paths, after the commit).
+    This one has had a caller from the day it was written, because
     `scripts/sweep_sandbox_tenants.py` hard-deletes an expired sandbox
     workspace's rows and, without this, `docs_{tenant_id}` outlives them --
     full page text of that tenant's POs, contracts and negotiated pricing sitting
@@ -944,18 +943,28 @@ def delete_invoice_chunks(invoice_id: str, tenant_id: str) -> None:
     """
     Deletes all indexed vector chunks for a given invoice from that tenant's collection.
 
-    Gap 239: deliberately **not** wired into `routers/invoices.py::delete_invoice`
-    or `::rollback_batch` -- both are soft deletes (Gap 192), which keep the
-    Chroma chunks on purpose so a restore stays possible. Its callers are the
-    orphan-pruning path of `scripts/reembed_chroma_collections.py` and any future
-    hard-delete/purge path. If a hard delete is ever added, it must call this.
+    Gap 460 (reversing Gap 239's placement): now called from
+    `routers/invoices.py::delete_invoice` and `::rollback_batch` after their
+    commit, as well as from the orphan-pruning path of
+    `scripts/reembed_chroma_collections.py`. Gap 192 kept chunks for a restore
+    path that was never built, and the retained chunks kept a deleted invoice
+    answering in RAG chat. A future restore re-indexes from the retained blob.
+
+    Errors are logged and swallowed, matching `delete_document_chunks()`: an
+    unreachable Chroma must not turn a committed soft-delete into a 500.
     """
-    client = get_chroma_client()
-    collection = client.get_or_create_collection(
-        name=_tenant_collection_name(tenant_id),
-        metadata=_collection_metadata(),
-    )
-    collection.delete(where={"invoice_id": str(invoice_id)})
+    try:
+        client = get_chroma_client()
+        collection = client.get_or_create_collection(
+            name=_tenant_collection_name(tenant_id),
+            metadata=_collection_metadata(),
+        )
+        collection.delete(where={"invoice_id": str(invoice_id)})
+    except Exception as e:
+        logger.warning(
+            "Failed to delete Chroma chunks for invoice %s (tenant %s): %s",
+            invoice_id, tenant_id, e,
+        )
 
 
 def has_invoice_chunks(invoice_id: str, tenant_id: str) -> bool:

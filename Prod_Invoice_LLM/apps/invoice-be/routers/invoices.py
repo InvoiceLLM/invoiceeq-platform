@@ -26,7 +26,7 @@ from dependencies import (
     require_can_load_or_api_key,
     TenantContext,
 )
-from chroma_client import delete_document_chunks
+from chroma_client import delete_document_chunks, delete_invoice_chunks
 from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
@@ -837,10 +837,9 @@ async def rollback_batch(
     still: zero rows matched, so the endpoint returned 404 -- "no such batch" --
     about a batch that plainly existed.
 
-    Chunks go here but not on the invoice branch, and that asymmetry is
-    deliberate; `routers/documents.py::delete_document` states the reason (Gap 239
-    retains invoice chunks for a restore path; nothing reads `docs_` yet, so
-    nothing post-filters it either).
+    Gap 460: chunks are dropped for both halves now. The earlier asymmetry (Gap
+    239 retained invoice chunks for a restore path) ended because no restore
+    path was ever built while deleted invoices kept surfacing in RAG chat.
     """
     if context.db_user_id is None:
         raise HTTPException(
@@ -908,6 +907,8 @@ async def rollback_batch(
     # After the commit, and swallowing its own errors (chroma_client.py:639): an
     # unreachable Chroma must not turn a completed rollback into a 500 the caller
     # would retry against rows that are already deleted.
+    for invoice in invoices:
+        delete_invoice_chunks(str(invoice.id), str(context.tenant_id))
     for document in documents:
         delete_document_chunks(str(document.id), str(context.tenant_id))
     if documents:
@@ -1003,8 +1004,16 @@ async def delete_invoice(
     """
     Gap 192: soft-deletes an invoice. Sets deleted_at, keeps the Postgres row and
     all AuditLog history, and appends a DELETE_INVOICE audit entry. Blob Storage
-    and Chroma chunks are retained so a restore path remains possible. Enforces
-    tenant isolation; already-deleted rows return 404.
+    is retained so a restore path remains possible. Enforces tenant isolation;
+    already-deleted rows return 404.
+
+    Gap 460: Chroma chunks are dropped after the commit. They used to be retained
+    alongside the blob, but no restore endpoint exists and the RAG route checks
+    citation existence rather than visibility (Gap 239), so a deleted invoice
+    kept answering in chat while the SQL route hid it. Commit first, chunks
+    second: `delete_invoice_chunks` swallows its own errors, so an unreachable
+    Chroma leaves at most an orphan the prune sweep reaches, never a 500 that a
+    caller would retry against an already-deleted row.
     """
     if context.db_user_id is None:
         raise HTTPException(
@@ -1044,5 +1053,8 @@ async def delete_invoice(
         )
     )
     await run_in_threadpool(db_session.commit)
+
+    # Gap 460: after the commit, error-swallowing (see docstring).
+    delete_invoice_chunks(str(invoice_id), str(context.tenant_id))
 
     return {"success": True}
