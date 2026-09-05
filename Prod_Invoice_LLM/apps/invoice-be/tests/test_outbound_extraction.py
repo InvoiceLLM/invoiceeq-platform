@@ -314,3 +314,113 @@ def test_outbound_invoice_math_mismatch_flags_needs_review():
 
     assert result["status"] == "NEEDS_REVIEW"
     assert any("does not match Grand Total" in a.get("message", "") for a in result["alerts"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BE Gap 467 — the schema widened to the `Invoice` model
+# ═════════════════════════════════════════════════════════════════════════════
+
+def test_the_outbound_schema_covers_every_field_the_inbound_one_does():
+    """The gap in one assertion. `OutboundInvoiceExtractionSchema` was narrower
+    than `InvoiceExtractionSchema` and narrower than the `Invoice` row it
+    writes to, so the builder's read-back check had nothing to compare against
+    and an outbound row left these columns empty for the next clone to inherit.
+
+    `vendor_name` is included deliberately: on the tenant's own invoice the
+    tenant IS the vendor, and `customer_name` is who it is addressed to.
+    `notes` has no inbound counterpart — it is new on both this schema and the
+    `Invoice` model in this same gap."""
+    from agents.extraction_agent import (
+        InvoiceExtractionSchema,
+        OutboundInvoiceLineItem,
+    )
+
+    widened = {
+        "vendor_name", "po_number", "addresses", "references",
+        "payment_instructions", "tax_ids", "compliance_metadata",
+    }
+    assert widened <= set(InvoiceExtractionSchema.model_fields)
+    assert widened <= set(OutboundInvoiceExtractionSchema.model_fields)
+    assert "notes" in OutboundInvoiceExtractionSchema.model_fields
+    assert {"hsn_sac_code", "uom"} <= set(OutboundInvoiceLineItem.model_fields)
+
+    # Mirrored VERBATIM, not paraphrased — two descriptions of one concept are
+    # how a model comes to populate them differently (the `ReferenceDocLineItem`
+    # lesson, recorded on that model).
+    for name in widened:
+        assert (
+            OutboundInvoiceExtractionSchema.model_fields[name].description
+            == InvoiceExtractionSchema.model_fields[name].description
+        ), name
+
+
+def test_every_widened_field_stays_optional_so_a_plain_invoice_is_unchanged():
+    """Additive: a document that prints none of this extracts exactly as it did
+    before, and every stored outbound extraction stays valid."""
+    schema = OutboundInvoiceExtractionSchema(customer_name="Vertex Industries")
+    assert schema.vendor_name is None and schema.po_number is None
+    assert schema.notes is None
+    assert schema.addresses == [] and schema.references == []
+    assert schema.payment_instructions == [] and schema.tax_ids == []
+    assert schema.compliance_metadata == []
+
+
+def test_the_widened_fields_reach_extracted_data():
+    """The graph carries them all the way out, which is what
+    `queue_worker/outbound_handlers.py` persists onto the row."""
+    from agents.extraction_agent import (
+        AddressItem,
+        ComplianceMetadataItem,
+        PaymentInstructionItem,
+        ReferenceItem,
+        TaxIdItem,
+    )
+
+    ocr_text = (
+        "TAX INVOICE\nACME Engineering Ltd\nGSTIN: 27ABCDE1234F1Z5\n"
+        "Bill To: Vertex Industries\n12 Park Road, Andheri\n"
+        "Invoice #: OUT-5001\nPO Number: PO-77219\nSales Order: SO-9912\n"
+        "Line 1   1   100.00   100.00\nTax: 10.00\nTotal: 110.00\n"
+        "Pay by UPI: acme@bank\nIRN: a1b2c3d4\n"
+        "Goods once sold are not returnable."
+    )
+    schema = OutboundInvoiceExtractionSchema(
+        customer_name="Vertex Industries",
+        vendor_name="ACME Engineering Ltd",
+        invoice_number="OUT-5001",
+        po_number="PO-77219",
+        subtotal=100.00,
+        tax_amount=10.00,
+        grand_total=110.00,
+        currency="INR",
+        notes="Goods once sold are not returnable.",
+        addresses=[AddressItem(address_type="billing", text="12 Park Road, Andheri", country="India")],
+        references=[ReferenceItem(ref_type="Sales Order", value="SO-9912")],
+        payment_instructions=[PaymentInstructionItem(method_type="UPI", details="acme@bank")],
+        tax_ids=[TaxIdItem(id_type="GSTIN", value="27ABCDE1234F1Z5", party="vendor")],
+        compliance_metadata=[ComplianceMetadataItem(key="IRN", value="a1b2c3d4")],
+        items=[
+            OutboundInvoiceLineItem(
+                description="Line 1", quantity=1.0, unit_price=100.00, amount=100.00,
+                hsn_sac_code="7214", uom="kg",
+            )
+        ],
+    )
+
+    with patch("agents.extraction_agent.check_token_guardrails", return_value=(True, 100, 128000)), \
+         patch("agents.extraction_agent.get_llm", return_value=_mock_llm(schema)):
+        result = run_outbound_extraction_agent("mock/outbound.pdf", ocr_text, "tenant-1")
+
+    data = result["extracted_data"]
+    assert data["vendor_name"] == "ACME Engineering Ltd"
+    assert data["po_number"] == "PO-77219"
+    assert data["notes"] == "Goods once sold are not returnable."
+    assert [a["text"] for a in data["addresses"]] == ["12 Park Road, Andheri"]
+    assert [r["value"] for r in data["references"]] == ["SO-9912"]
+    assert [p["details"] for p in data["payment_instructions"]] == ["acme@bank"]
+    assert [t["value"] for t in data["tax_ids"]] == ["27ABCDE1234F1Z5"]
+    assert [c["value"] for c in data["compliance_metadata"]] == ["a1b2c3d4"]
+    assert (data["items"][0]["hsn_sac_code"], data["items"][0]["uom"]) == ("7214", "kg")
+    # The verification nodes are untouched by the widening: this invoice still
+    # reconciles and is still VERIFIED.
+    assert result["status"] == "VERIFIED"

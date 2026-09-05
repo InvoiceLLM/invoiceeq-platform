@@ -9,19 +9,20 @@ import type { BuildRequest } from "@/types/invoice";
  * Feature 20, task 20.4: renders the PDF the backend would produce, before
  * anything is stored.
  *
- * `POST /api/outbound-invoices/build/preview` is the one route in this feature
- * that can answer with either a PDF or JSON on the same status-code family, so
- * the branching here is on content-type first and status second:
+ * `POST /api/outbound-invoices/build/preview` answers with either a PDF or
+ * JSON, so the branching here is on content-type first and status second:
  *
  *   200 + application/pdf  → object URL into `PdfViewerCanvas`
  *   409 + json             → duplicate invoice number (founder decision D5).
  *                            Handed up to the page, which shows it against the
  *                            number field in `BuilderForm`.
- *   422 + json             → `{"unlocated_fields": [...]}` from the substitute
- *                            path. Handed up so the affected fields can be
- *                            marked with a "revert to source" action; also
- *                            listed here so the user can see all of them at
- *                            once without hunting the form.
+ *
+ * FE Gap 462 (2026-09-05): the 422 branch is gone. It carried
+ * `{"unlocated_fields": [...]}` from the backend's substitution renderer and
+ * told the user to revert a field to its source value or add/remove a row to
+ * force a re-render — asking them to work around an internal renderer
+ * limitation. That renderer is deleted; every clone re-renders, so preview has
+ * no refusal path left.
  *
  * The object URL is revoked when it is replaced and on unmount — a preview is
  * a multi-megabyte blob and this screen is used iteratively.
@@ -32,7 +33,6 @@ interface BuilderPreviewProps {
   /** Bumped by the page when the form changes, so a stale preview can be labelled as such. */
   dirtySinceLastPreview: boolean;
   onDirtyCleared: () => void;
-  onUnlocatedFields: (fields: string[]) => void;
   onDuplicateNumber: (message: string | null) => void;
   disabled?: boolean;
 }
@@ -41,14 +41,12 @@ export default function BuilderPreview({
   body,
   dirtySinceLastPreview,
   onDirtyCleared,
-  onUnlocatedFields,
   onDuplicateNumber,
   disabled,
 }: BuilderPreviewProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [unlocated, setUnlocated] = useState<string[]>([]);
   const urlRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -66,8 +64,6 @@ export default function BuilderPreview({
   const handlePreview = async () => {
     setLoading(true);
     setError(null);
-    setUnlocated([]);
-    onUnlocatedFields([]);
     onDuplicateNumber(null);
     try {
       const response = await fetch("/api/outbound-invoices/build/preview", {
@@ -92,16 +88,6 @@ export default function BuilderPreview({
           (payload && (payload.detail as string)) || "Invoice number already used for this customer";
         onDuplicateNumber(message);
         setError(message);
-        return;
-      }
-
-      if (response.status === 422 && payload && Array.isArray(payload.unlocated_fields)) {
-        const fields: string[] = payload.unlocated_fields;
-        setUnlocated(fields);
-        onUnlocatedFields(fields);
-        setError(
-          "Some changed values could not be found in the source PDF, so they cannot be substituted in place."
-        );
         return;
       }
 
@@ -142,15 +128,7 @@ export default function BuilderPreview({
           className="flex items-start gap-2 rounded-lg border border-rose-600/40 bg-rose-950/20 px-3 py-2 text-xs text-rose-200"
         >
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <div className="flex flex-col gap-1">
-            <span>{error}</span>
-            {unlocated.length > 0 && (
-              <span data-testid="unlocated-fields" className="text-rose-300/90">
-                Fields: {unlocated.join(", ")} — revert them to the source value on the left, or change
-                the layout by adding/removing a row so the invoice is re-rendered instead.
-              </span>
-            )}
-          </div>
+          <span>{error}</span>
         </div>
       )}
 

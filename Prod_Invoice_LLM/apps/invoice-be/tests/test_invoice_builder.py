@@ -2,11 +2,16 @@
 
 Two halves:
 
-* Pure units — `services/invoice_builder.py`, `services/pdf_substitute.py`,
-  `services/pdf_render.py`, `utils/verification_tools.verify_builder_readback`
-  — run against the committed fixtures in `tests/fixtures/invoice_builder/`
-  (five source PDFs plus the `Invoice.coordinates` Document Intelligence would
-  have stored for each). No Azure call, no database.
+* Pure units — `services/invoice_builder.py`, `services/pdf_render.py`,
+  `utils/verification_tools.verify_builder_readback` — run against the
+  committed fixtures in `tests/fixtures/invoice_builder/` (four source PDFs
+  plus the `Invoice.coordinates` Document Intelligence would have stored for
+  each). No Azure call, no database.
+
+BE Gap 462 (2026-09-05) deleted `services/pdf_substitute.py` and every test
+that exercised it, along with the `date_twice` fixture, which existed only to
+prove substitution could disambiguate a date printed twice. There is one
+renderer now, so there is no render-mode planning to test and no 422 to assert.
 * The three endpoints and the worker hook, against **real Postgres**
   (CONVENTIONS hard rule 2). The quota path under test here goes through
   `SELECT … FOR UPDATE` in `services/billing_quota.charge_free_quota()`, which
@@ -44,17 +49,18 @@ from dependencies import (
 from main import app
 from models import Invoice, Tenant
 from services.invoice_builder import (
+    BuildDeduction,
+    BuildDiscount,
     BuildItem,
     BuildRequest,
+    BuildTax,
     builder_intent,
     compute_totals,
     default_build_from_source,
     next_invoice_number,
-    plan_render_mode,
-    plan_substitutions,
+    totals_for,
 )
-from services.pdf_render import harvest_branding, render_invoice
-from services.pdf_substitute import format_like, locate_field, substitute
+from services.pdf_render import format_like, harvest_branding, render_invoice
 from utils.verification_tools import verify_builder_readback
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "invoice_builder"
@@ -164,37 +170,8 @@ def test_default_build_from_source_leaves_due_date_none_without_a_term():
     assert default_build_from_source(source, date(2026, 9, 1)).due_date is None
 
 
-def test_plan_substitutions_is_empty_for_an_unchanged_request():
-    source = _source_row("us_style")
-    req = default_build_from_source(source, source.invoice_date)
-    req.invoice_number = source.invoice_number
-    req.due_date = source.due_date
-    totals = compute_totals(req.items, req.tax_amount)
-    assert plan_substitutions(source, req, totals) == []
-
-
-def test_plan_substitutions_touches_only_what_changed():
-    source = _source_row("us_style")
-    req = default_build_from_source(source, date(2026, 9, 1))
-    totals = compute_totals(req.items, req.tax_amount)
-    fields = {s.field for s in plan_substitutions(source, req, totals)}
-    assert fields == {"invoice_number", "invoice_date", "due_date"}
-
-
-def test_plan_render_mode_follows_the_line_count():
-    source = _source_row("us_style")  # two lines
-    req = default_build_from_source(source, date(2026, 9, 1))
-    assert plan_render_mode(source, req) == "substitute"
-
-    req.items.append(BuildItem(description="new", quantity=Decimal("1"), unit_price=Decimal("5")))
-    assert plan_render_mode(source, req) == "rerender"
-
-    del req.items[0:2]
-    assert plan_render_mode(source, req) == "rerender"
-
-
 # ═════════════════════════════════════════════════════════════════════════════
-# 17.2 — substitution
+# 17.2 — number formatting (the surviving half of the deleted substitute path)
 # ═════════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.parametrize(
@@ -210,105 +187,6 @@ def test_plan_render_mode_follows_the_line_count():
 )
 def test_format_like(sample, value, expected):
     assert format_like(sample, value) == expected
-
-
-def test_every_planned_field_is_located_within_its_di_polygon():
-    """The header fields carry a Document Intelligence polygon; the rect
-    `locate_field` returns must be the one that polygon points at."""
-    source = _source_row("us_style")
-    req = default_build_from_source(source, date(2026, 9, 1))
-    totals = compute_totals(req.items, req.tax_amount)
-    subs = plan_substitutions(source, req, totals)
-
-    with fitz.open(stream=_pdf("us_style"), filetype="pdf") as doc:
-        page = doc[0]
-        pw, ph = page.rect.width, page.rect.height
-        by_field = {
-            "invoice_number": "InvoiceId",
-            "invoice_date": "InvoiceDate",
-            "due_date": "DueDate",
-        }
-        for sub in subs:
-            di = next(
-                c for c in source.coordinates if c["field"] == by_field[sub.field]
-            )
-            target = fitz.Rect(
-                di["x"] / 100 * pw, di["y"] / 100 * ph,
-                (di["x"] + di["width"]) / 100 * pw, (di["y"] + di["height"]) / 100 * ph,
-            )
-            printed = sub.old_text if sub.kind == "text" else sub.old_value.isoformat()
-            rect = locate_field(page, sub.field, printed, source.coordinates)
-            assert rect is not None, sub.field
-            assert not (rect & target).is_empty, sub.field
-
-
-def test_substitute_rewrites_the_new_values_and_removes_the_old():
-    source = _source_row("us_style")
-    req = default_build_from_source(source, date(2026, 9, 1))
-    req.items[0].quantity = Decimal("6")
-    totals = compute_totals(req.items, req.tax_amount)
-    subs = plan_substitutions(source, req, totals)
-
-    out, unlocated = substitute(_pdf("us_style"), subs, source.coordinates)
-    assert unlocated == []
-
-    with fitz.open(stream=out, filetype="pdf") as doc:
-        text = doc[0].get_text()
-
-    # New values printed…
-    for expected in ("INV-0043", "2026-09-01", "2026-10-01", "1,500.00", "1,850.00", "2,170.00"):
-        assert expected in text, expected
-    # …and the old ones gone.
-    for gone in ("INV-0042", "2026-07-15", "2026-08-14", "1,250.00", "1,600.00", "1,920.00"):
-        assert gone not in text, gone
-
-
-def test_substitute_keeps_the_sources_own_number_and_date_format():
-    """The EU fixture prints `1.250,00` and `15.07.2026`; the clone must too."""
-    source = _source_row("eu_style")
-    req = default_build_from_source(source, date(2026, 9, 1))
-    req.items[0].quantity = Decimal("6")
-    totals = compute_totals(req.items, req.tax_amount)
-
-    out, unlocated = substitute(_pdf("eu_style"), plan_substitutions(source, req, totals), source.coordinates)
-    assert unlocated == []
-
-    with fitz.open(stream=out, filetype="pdf") as doc:
-        text = doc[0].get_text()
-    assert "1.500,00" in text
-    assert "1.850,00" in text
-    assert "01.09.2026" in text
-    assert "1,500.00" not in text
-
-
-def test_substitute_uses_the_di_polygon_when_the_date_is_printed_twice():
-    """`date_twice` repeats the invoice date in two footer sentences. Only the
-    header occurrence carries the `InvoiceDate` polygon, and only it changes."""
-    source = _source_row("date_twice")
-    req = default_build_from_source(source, date(2026, 9, 1))
-    totals = compute_totals(req.items, req.tax_amount)
-
-    out, unlocated = substitute(_pdf("date_twice"), plan_substitutions(source, req, totals), source.coordinates)
-    assert unlocated == []
-
-    with fitz.open(stream=out, filetype="pdf") as doc:
-        text = doc[0].get_text()
-    assert "01/09/2026" in text
-    assert text.count("15/07/2026") == 2  # both footer repetitions survive
-    assert "Invoice Date: 15/07/2026" not in text
-
-
-def test_substitute_reports_an_unlocatable_field_instead_of_raising():
-    """The stored customer name does not match what the page prints, so the
-    substitution cannot be placed. The field name comes back; the endpoint
-    turns that into the 422 the builder screen renders."""
-    source = _source_row("us_style", customer_name="A Name Never Printed Here")
-    req = default_build_from_source(source, date(2026, 9, 1))
-    req.customer_name = "Someone Else Entirely"
-    totals = compute_totals(req.items, req.tax_amount)
-
-    _out, unlocated = substitute(_pdf("us_style"), plan_substitutions(source, req, totals), source.coordinates)
-    assert unlocated == ["customer_name"]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -394,7 +272,7 @@ def _intent_for(source_name: str = "us_style") -> dict:
     source = _source_row(source_name)
     req = default_build_from_source(source, date(2026, 9, 1))
     totals = compute_totals(req.items, req.tax_amount)
-    return builder_intent(req, totals, "substitute")
+    return builder_intent(req, totals)
 
 
 def _extracted_from(intent: dict, **overrides) -> dict:
@@ -544,6 +422,7 @@ def _seed_source(
     name: str = "us_style",
     status: str = "VERIFIED",
     tenant_id: UUID | None = None,
+    columns: dict | None = None,
 ) -> Invoice:
     """A source invoice whose `file_path` points straight at the fixture PDF on
     disk — `download_pdf_from_storage()` reads a local path unchanged, so the
@@ -566,6 +445,10 @@ def _seed_source(
         items=data["items"],
         coordinates=data["coordinates"],
     )
+    # BE Gap 463: the widened columns (addresses, taxes, tax_ids…) an extraction
+    # of a fuller invoice would have written.
+    for key, value in (columns or {}).items():
+        setattr(invoice, key, value)
     db_session.add(invoice)
     db_session.commit()
     db_session.refresh(invoice)
@@ -652,7 +535,7 @@ def test_preview_returns_a_pdf_and_persists_nothing(db_session):
     assert db_session.get(Tenant, TEST_TENANT_ID).free_invoices_remaining == tenant_before
 
 
-def test_preview_renders_the_edited_values_into_the_source_layout(db_session):
+def test_preview_renders_the_edited_values_with_the_sources_branding(db_session):
     source = _seed_source(db_session)
     body = _build_body(source)
     body["items"][0]["quantity"] = "6"
@@ -664,22 +547,35 @@ def test_preview_renders_the_edited_values_into_the_source_layout(db_session):
     assert "INV-0043" in text
     assert "1,500.00" in text          # 6 × 250.00, in the source's separator style
     assert "1,250.00" not in text
-    assert "Precision machining" in text   # the source layout survived
+    assert "Precision machining" in text   # the source's line survived the re-render
 
 
-def test_preview_422s_with_the_unlocated_fields_at_the_top_level(db_session):
-    """The FE reads `unlocated_fields` off the body, not out of `detail`."""
+def test_preview_and_build_both_succeed_on_a_same_row_count_clone(db_session):
+    """BE Gap 462 — the exact case the founder hit in the live UI.
+
+    An ordinary clone keeps the row count and changes the dates and the totals.
+    The old `plan_render_mode()` read that row count, committed to substitution,
+    then could not find the source's printed `invoice_date` / `due_date` /
+    `subtotal` and answered 422 on BOTH endpoints — which is why Preview failed
+    and the Create button appeared to do nothing. Neither may refuse now.
+    """
     source = _seed_source(db_session)
-    source.customer_name = "A Name Never Printed Here"
-    db_session.add(source)
-    db_session.commit()
-
     body = _build_body(source)
-    body["customer_name"] = "Someone Else Entirely"
-    res = client.post("/api/v1/outbound-invoices/build/preview", json=body)
+    assert len(body["items"]) == len(source.items)     # same row count
+    body["invoice_date"] = "2026-09-05"
+    body["due_date"] = "2026-10-05"
+    body["items"][0]["unit_price"] = "275.00"          # moves subtotal and total
 
-    assert res.status_code == 422
-    assert res.json() == {"unlocated_fields": ["customer_name"]}
+    preview = client.post("/api/v1/outbound-invoices/build/preview", json=body)
+    assert preview.status_code == 200, preview.text
+    assert preview.content.startswith(b"%PDF")
+
+    created = client.post("/api/v1/outbound-invoices/build", json=body)
+    assert created.status_code == 201, created.text
+
+    db_session.expire_all()
+    row = db_session.get(Invoice, UUID(created.json()["invoice_id"]))
+    assert row.builder_intent["render_mode"] == "rerender"
 
 
 def test_preview_re_renders_when_a_row_was_added(db_session):
@@ -716,7 +612,7 @@ def test_build_creates_an_outbound_invoice_like_an_upload(db_session, stored_blo
 
     intent = created.builder_intent
     assert intent["invoice_number"] == "INV-0043"
-    assert intent["render_mode"] == "substitute"
+    assert intent["render_mode"] == "rerender"
     assert intent["totals"]["grand_total"] in ("1920.00", 1920.0)
 
     # D2: billable exactly like an upload, and the stored blob is the PDF.
@@ -745,13 +641,11 @@ def test_build_refuses_a_number_already_used_for_the_same_customer(db_session, s
 def test_the_same_number_for_a_different_customer_is_allowed(db_session, stored_blobs):
     source = _seed_source(db_session)
     body = _build_body(source, invoice_number=source.invoice_number, customer_name="Someone Else Ltd")
-    # The customer name is not printed on the source page, so the substitute
-    # path cannot place it — a different customer is a re-render case in
-    # practice; here we only assert the D5 gate does not fire.
     res = client.post("/api/v1/outbound-invoices/build", json=body)
-    assert res.status_code in (201, 422)
-    if res.status_code == 422:
-        assert res.json() == {"unlocated_fields": ["customer_name"]}
+    # BE Gap 462: this used to be `in (201, 422)` because a customer name that
+    # is not printed on the source page could not be substituted. There is no
+    # substitute path left, so a re-target to a new customer simply succeeds.
+    assert res.status_code == 201, res.text
 
 
 def test_build_from_a_needs_review_source_is_refused(db_session, stored_blobs):
@@ -840,3 +734,561 @@ def test_an_uploaded_invoice_is_untouched_by_the_read_back_check(db_session, sto
     )
     assert result["status"] == "VERIFIED"
     assert not any(a["type"] == "builder_render_mismatch" for a in result["alerts"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BE Gap 463 — the widened editable set
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Everything an invoice prints is now editable and, crucially, RE-PRINTED. Since
+# BE Gap 462 deleted substitution, a field `BuildRequest` does not carry is not
+# inherited from the source page any more — it is lost. These tests are the
+# guard on that: what the source row holds, the clone prints.
+
+#: The columns an extraction of a full Indian GST invoice writes, which before
+#: Gap 463 the builder read none of.
+_RICH_COLUMNS = {
+    "vendor_name": "ACME Engineering Ltd",
+    "po_number": "PO-77219",
+    "addresses": [
+        {"address_type": "billing", "text": "12 Park Road, Andheri", "country": "India"},
+        {"address_type": "shipping", "text": "Warehouse 4, Bhiwandi"},
+        {"address_type": "vendor", "text": "9 Mill Street, Pune"},
+    ],
+    "references": [{"ref_type": "Sales Order", "value": "SO-9912"}],
+    "payment_instructions": [{"method_type": "UPI", "details": "acme@bank"}],
+    "tax_ids": [{"id_type": "GSTIN", "value": "27ABCDE1234F1Z5", "party": "vendor"}],
+    "taxes": [
+        {"tax_type": "CGST", "rate_percent": 9.0, "amount": 72.0},
+        {"tax_type": "SGST", "rate_percent": 9.0, "amount": 72.0},
+    ],
+    "discounts": [{"discount_type": "Trade discount", "percent": 2.0, "amount": 32.0}],
+    "deductions": [{"deduction_type": "Retention", "amount": 25.0}],
+    "compliance_metadata": [{"key": "IRN", "value": "a1b2c3d4"}],
+    "discount_percent": 2.0,
+    "discount_amount": 32.0,
+    # BE Gap 467: a real `Invoice.notes` column, so the notes block is now one
+    # of the extractor-written columns a clone reads from.
+    "notes": "Goods once sold are not returnable.",
+}
+
+
+def _rich_source_row(**overrides) -> SimpleNamespace:
+    row = _source_row("us_style", **_RICH_COLUMNS, **overrides)
+    row.items = [
+        {
+            "description": "TMT reinforcement bars",
+            "quantity": 8.0,
+            "unit_price": 5400.0,
+            "amount": 43200.0,
+            "hsn_sac_code": "7214",
+            "uom": "kg",
+            "tax_percent": 18.0,
+        },
+    ]
+    return row
+
+
+def test_default_build_from_source_copies_every_printable_field():
+    """Gap 463's whole claim: the prefill carries the source's addresses, PO
+    number, references, payment instructions, tax IDs, tax/discount/deduction
+    lines and compliance metadata — not just customer, number, dates and rows."""
+    req = default_build_from_source(_rich_source_row(), date(2026, 9, 1))
+
+    assert req.vendor_name == "ACME Engineering Ltd"
+    assert req.po_number == "PO-77219"
+    assert [a.address_type for a in req.addresses] == ["billing", "shipping", "vendor"]
+    assert req.addresses[0].country == "India"
+    assert [(r.ref_type, r.value) for r in req.references] == [("Sales Order", "SO-9912")]
+    assert [(p.method_type, p.details) for p in req.payment_instructions] == [("UPI", "acme@bank")]
+    assert [(t.id_type, t.value, t.party) for t in req.tax_ids] == [
+        ("GSTIN", "27ABCDE1234F1Z5", "vendor")
+    ]
+    assert [(t.tax_type, t.rate_percent, t.amount) for t in req.taxes] == [
+        ("CGST", Decimal("9"), Decimal("72")),
+        ("SGST", Decimal("9"), Decimal("72")),
+    ]
+    assert [(d.discount_type, d.percent, d.amount) for d in req.discounts] == [
+        ("Trade discount", Decimal("2"), Decimal("32"))
+    ]
+    assert [(d.deduction_type, d.amount) for d in req.deductions] == [("Retention", Decimal("25"))]
+    assert [(c.key, c.value) for c in req.compliance_metadata] == [("IRN", "a1b2c3d4")]
+    assert (req.discount_percent, req.discount_amount) == (Decimal("2"), Decimal("32"))
+    # The per-line half of the widening.
+    assert (req.items[0].hsn_sac_code, req.items[0].uom) == ("7214", "kg")
+    assert req.items[0].tax_percent == Decimal("18")
+    # BE Gap 467: `Invoice.notes` exists now, so the notes block is copied off
+    # the source row like everything else above. Gap 463 asserted `is None` here
+    # because there was no column to copy from.
+    assert req.notes == "Goods once sold are not returnable."
+
+
+def test_default_build_from_source_survives_a_malformed_json_column():
+    """These are extractor-written JSON columns, not typed ones. A junk row must
+    be dropped, not turn the prefill endpoint into a 500."""
+    row = _source_row(
+        "us_style",
+        addresses=["not a dict", {"address_type": "billing", "text": "12 Park Road"}],
+        taxes=[{"tax_type": "IGST", "rate_percent": "18"}],
+        references=None,
+    )
+    req = default_build_from_source(row, date(2026, 9, 1))
+
+    assert [a.text for a in req.addresses] == ["12 Park Road"]
+    assert req.taxes[0].rate_percent == Decimal("18")
+    assert req.taxes[0].amount is None
+    assert req.references == []
+
+
+def test_compute_totals_applies_a_per_line_discount_then_a_per_line_tax():
+    totals = compute_totals(
+        [
+            BuildItem(
+                description="a",
+                quantity=Decimal("10"),
+                unit_price=Decimal("100"),
+                discount_percent=Decimal("10"),
+                tax_percent=Decimal("18"),
+            )
+        ],
+        None,
+    )
+    # gross 1000.00 − 100.00 discount = 900.00 printed amount; 18% of that.
+    assert totals.line_discounts == [Decimal("100.00")]
+    assert totals.line_amounts == [Decimal("900.00")]
+    assert totals.line_taxes == [Decimal("162.00")]
+    assert totals.subtotal == Decimal("900.00")
+    assert totals.tax_amount == Decimal("162.00")
+    assert totals.grand_total == Decimal("1062.00")
+
+
+def test_compute_totals_charges_each_rate_on_the_discounted_base():
+    totals = compute_totals(
+        [BuildItem(description="a", quantity=Decimal("1"), unit_price=Decimal("1000"))],
+        None,
+        discounts=[BuildDiscount(discount_type="Trade", percent=Decimal("10"))],
+        taxes=[
+            BuildTax(tax_type="CGST", rate_percent=Decimal("9")),
+            BuildTax(tax_type="SGST", rate_percent=Decimal("9")),
+        ],
+        deductions=[BuildDeduction(deduction_type="Retention", amount=Decimal("50"))],
+    )
+    assert totals.discount_lines == [Decimal("100.00")]
+    assert totals.discount_total == Decimal("100.00")
+    assert totals.tax_lines == [Decimal("81.00"), Decimal("81.00")]   # 9% of 900
+    assert totals.tax_amount == Decimal("162.00")
+    assert totals.deduction_total == Decimal("50.00")
+    # 1000 − 100 + 162 − 50
+    assert totals.grand_total == Decimal("1012.00")
+
+
+def test_compute_totals_prefers_the_printed_amount_over_the_printed_rate():
+    """Invoices print figures that do not reconcile with their own stated rate.
+    The builder transcribes what was entered; it never corrects it."""
+    totals = compute_totals(
+        [BuildItem(description="a", quantity=Decimal("1"), unit_price=Decimal("1000"))],
+        None,
+        taxes=[BuildTax(tax_type="VAT", rate_percent=Decimal("9"), amount=Decimal("100"))],
+    )
+    assert totals.tax_lines == [Decimal("100.00")]
+    assert totals.grand_total == Decimal("1100.00")
+
+
+def test_compute_totals_is_digit_for_digit_unchanged_without_the_new_fields():
+    """Backward compatibility, asserted rather than assumed: a pre-Gap-463 body
+    (no discounts, no deductions, no `taxes`) totals exactly as it always did."""
+    items = [
+        BuildItem(description="a", quantity=Decimal("5"), unit_price=Decimal("250")),
+        BuildItem(description="b", quantity=Decimal("2"), unit_price=Decimal("175")),
+    ]
+    totals = compute_totals(items, Decimal("40"))
+    assert totals.line_amounts == [Decimal("1250.00"), Decimal("350.00")]
+    assert (totals.subtotal, totals.tax_amount, totals.grand_total) == (
+        Decimal("1600.00"), Decimal("40.00"), Decimal("1640.00"),
+    )
+    assert totals.discount_total == Decimal("0.00")
+    assert totals.deduction_total == Decimal("0.00")
+
+
+def test_render_invoice_prints_every_widened_field():
+    req = default_build_from_source(_rich_source_row(), date(2026, 9, 1))
+    req.notes = "Payment within 30 days of the invoice date."
+    totals = totals_for(req)
+
+    pdf_bytes = render_invoice(req, totals, harvest_branding(_pdf("us_style")), "1,234.56")
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        text = "".join(page.get_text() for page in doc)
+
+    assert "PO Number: PO-77219" in text
+    assert "Sales Order: SO-9912" in text
+    # The three party blocks, each with its own address.
+    assert "ACME Engineering Ltd" in text and "9 Mill Street, Pune" in text
+    assert "12 Park Road, Andheri" in text and "India" in text
+    assert "Warehouse 4, Bhiwandi" in text
+    # Line-item columns that only appear when a row uses them.
+    assert "HSN/SAC" in text and "7214" in text
+    assert "kg" in text
+    # Two tax rates, each on its own row, plus the discount and the deduction.
+    assert "CGST (9%)" in text and "SGST (9%)" in text
+    assert "Trade discount (2%)" in text
+    assert "Retention" in text
+    assert "UPI: acme@bank" in text
+    assert "Payment within 30 days of the invoice date." in text
+    assert "GSTIN (vendor): 27ABCDE1234F1Z5" in text
+    assert "IRN: a1b2c3d4" in text
+
+
+def test_render_invoice_omits_the_blocks_a_plain_invoice_has_nothing_for():
+    """No addresses, no references, no per-line HSN — the same four-column
+    table and the same three-row totals block the renderer printed before."""
+    req = default_build_from_source(_source_row("us_style"), date(2026, 9, 1))
+    pdf_bytes = render_invoice(req, totals_for(req), harvest_branding(_pdf("us_style")), "1,234.56")
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        text = "".join(page.get_text() for page in doc)
+
+    for absent in ("HSN/SAC", "UOM", "Ship To", "Payment Instructions", "Notes", "PO Number"):
+        assert absent not in text, absent
+    assert "Bill To" in text and "Subtotal" in text
+
+
+def test_verify_builder_readback_checks_the_discount_and_the_rate_count():
+    intent = _intent_for()
+    intent["totals"]["discount_total"] = "40.00"
+    intent["totals"]["tax_lines"] = ["20.00", "20.00"]
+
+    # A discount read back with the opposite sign is the same claim.
+    agreed = _extracted_from(intent, discount_amount=-40.0, taxes=[{"amount": 20.0}, {"amount": 20.0}])
+    assert verify_builder_readback(intent, agreed) == []
+
+    # A dropped rate line and a wrong discount are both real render defects.
+    drifted = _extracted_from(intent, discount_amount=25.0, taxes=[{"amount": 40.0}])
+    fields = [m["field"] for m in verify_builder_readback(intent, drifted)]
+    assert fields == ["discount_total", "taxes"]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BE Gap 467 — the read-back set widened to the outbound schema
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _widened_intent() -> dict:
+    """An intent carrying every field Gap 463 printed and Gap 463's read-back
+    check could not look at."""
+    intent = _intent_for()
+    intent.update({
+        "vendor_name": "ACME Engineering Ltd",
+        "po_number": "PO-77219",
+        "currency": "USD",
+        "notes": "Goods once sold are not returnable.",
+        "addresses": [{"address_type": "billing", "text": "12 Park Road, Andheri"}],
+        "references": [{"ref_type": "Sales Order", "value": "SO-9912"}],
+        "payment_instructions": [{"method_type": "UPI", "details": "acme@bank"}],
+        "tax_ids": [{"id_type": "GSTIN", "value": "27ABCDE1234F1Z5", "party": "vendor"}],
+        "compliance_metadata": [{"key": "IRN", "value": "a1b2c3d4"}],
+        "items": [{"description": "TMT bars", "hsn_sac_code": "7214", "uom": "kg"}] * len(
+            intent["totals"]["line_amounts"]
+        ),
+    })
+    return intent
+
+
+def _widened_extraction(intent: dict, **overrides) -> dict:
+    extracted = _extracted_from(intent)
+    extracted.update({
+        "vendor_name": "ACME Engineering Ltd",
+        "po_number": "PO-77219",
+        "currency": "USD",
+        "notes": "Goods once sold are not returnable.",
+        "addresses": [{"address_type": "billing", "text": "12 Park Road, Andheri"}],
+        "references": [{"ref_type": "Sales Order", "value": "SO-9912"}],
+        "payment_instructions": [{"method_type": "UPI", "details": "acme@bank"}],
+        "tax_ids": [{"id_type": "GSTIN", "value": "27ABCDE1234F1Z5"}],
+        "compliance_metadata": [{"key": "IRN", "value": "a1b2c3d4"}],
+    })
+    for index, item in enumerate(extracted["items"]):
+        item.update({"hsn_sac_code": "7214", "uom": "kg"})
+    extracted.update(overrides)
+    return extracted
+
+
+def test_a_faithful_read_back_of_every_widened_field_agrees():
+    intent = _widened_intent()
+    assert verify_builder_readback(intent, _widened_extraction(intent)) == []
+
+
+def test_a_silent_extractor_still_asserts_nothing_on_the_widened_fields():
+    """The soft rule `currency` has always used, now applied to every field the
+    schema gained: a reader that returned nothing for a field is not evidence
+    that the render is wrong, and must never put a correct invoice on
+    NEEDS_REVIEW. This is the exact behaviour Gap 463 got by excluding these
+    fields; Gap 467 keeps it while making a WRONG value catchable."""
+    intent = _widened_intent()
+    assert verify_builder_readback(intent, _extracted_from(intent)) == []
+
+
+def test_a_wrong_vendor_name_po_number_or_currency_is_now_caught():
+    intent = _widened_intent()
+    wrong = _widened_extraction(
+        intent, vendor_name="Someone Else Ltd", po_number="PO-00000", currency="EUR",
+    )
+    assert [m["field"] for m in verify_builder_readback(intent, wrong)] == [
+        "currency", "vendor_name", "po_number",
+    ]
+
+
+def test_a_dropped_address_reference_payment_tax_id_or_irn_is_now_caught():
+    """Each list is checked by containment against everything the reader
+    returned for that field — so a value the renderer failed to print is a
+    mismatch, while a reader that merges or re-labels rows is not."""
+    intent = _widened_intent()
+    dropped = _widened_extraction(
+        intent,
+        addresses=[{"address_type": "billing", "text": "somewhere else entirely"}],
+        references=[{"ref_type": "Sales Order", "value": "SO-0000"}],
+        payment_instructions=[{"method_type": "UPI", "details": "someone@else"}],
+        tax_ids=[{"id_type": "GSTIN", "value": "99ZZZZZ0000Z0Z0"}],
+        compliance_metadata=[{"key": "IRN", "value": "deadbeef"}],
+    )
+    assert [m["field"] for m in verify_builder_readback(intent, dropped)] == [
+        "addresses[0]", "references[0]", "payment_instructions[0]",
+        "tax_ids[0]", "compliance_metadata[0]",
+    ]
+
+
+def test_a_reader_that_merges_or_adds_an_address_block_is_not_a_render_fault():
+    """The renderer prints From / Bill To / Ship To separately; a reader that
+    returns them as one block, in another order, or adds the letterhead's own
+    address, has still read back everything that was printed. Counting rows
+    would fail all three."""
+    intent = _widened_intent()
+    merged = _widened_extraction(intent, addresses=[
+        {"address_type": "vendor", "text": "9 Mill Street, Pune"},
+        {"address_type": "billing", "text": "ACME Engineering Ltd, 12 Park Road, Andheri, India"},
+    ])
+    assert verify_builder_readback(intent, merged) == []
+
+
+def test_a_notes_block_read_back_with_a_heading_still_agrees_but_a_lost_one_does_not():
+    intent = _widened_intent()
+    wrapped = _widened_extraction(
+        intent, notes="Notes:  Goods once sold\n are not returnable.",
+    )
+    assert verify_builder_readback(intent, wrapped) == []
+
+    lost = _widened_extraction(intent, notes="Thank you for your business.")
+    assert [m["field"] for m in verify_builder_readback(intent, lost)] == ["notes"]
+
+
+def test_a_wrong_hsn_or_uom_on_a_line_is_now_caught():
+    intent = _widened_intent()
+    bad = _widened_extraction(intent)
+    bad["items"][0]["hsn_sac_code"] = "9999"
+    bad["items"][0]["uom"] = "each"
+    assert [m["field"] for m in verify_builder_readback(intent, bad)] == [
+        "items[0].hsn_sac_code", "items[0].uom",
+    ]
+
+    # …and a reader that simply did not fill the cells is still silent.
+    silent = _widened_extraction(intent)
+    for item in silent["items"]:
+        item.pop("hsn_sac_code"), item.pop("uom")
+    assert verify_builder_readback(intent, silent) == []
+
+
+# ── the endpoints, on a real row ─────────────────────────────────────────────
+
+def test_build_defaults_returns_the_widened_field_set(db_session):
+    source = _seed_source(db_session, columns=_RICH_COLUMNS)
+    res = client.get(f"/api/v1/outbound-invoices/{source.id}/build-defaults")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["vendor_name"] == "ACME Engineering Ltd"
+    assert body["po_number"] == "PO-77219"
+    assert [a["address_type"] for a in body["addresses"]] == ["billing", "shipping", "vendor"]
+    assert [t["tax_type"] for t in body["taxes"]] == ["CGST", "SGST"]
+    assert body["compliance_metadata"] == [{"key": "IRN", "value": "a1b2c3d4"}]
+
+
+def test_preview_prints_the_widened_fields_the_user_edited(db_session):
+    source = _seed_source(db_session, columns=_RICH_COLUMNS)
+    body = _build_body(
+        source,
+        po_number="PO-99999",
+        notes="Late payment attracts 1.5% per month.",
+        addresses=[{"address_type": "billing", "text": "New Buyer Road 7", "country": "India"}],
+    )
+    res = client.post("/api/v1/outbound-invoices/build/preview", json=body)
+
+    assert res.status_code == 200, res.text
+    with fitz.open(stream=res.content, filetype="pdf") as doc:
+        text = "".join(page.get_text() for page in doc)
+    assert "PO Number: PO-99999" in text
+    assert "New Buyer Road 7" in text
+    assert "Late payment attracts 1.5% per month." in text
+    assert "CGST (9%)" in text
+
+
+def test_build_stores_the_widened_intent_on_the_created_row(db_session, stored_blobs):
+    source = _seed_source(db_session, columns=_RICH_COLUMNS)
+    res = client.post("/api/v1/outbound-invoices/build", json=_build_body(source, notes="Thank you."))
+
+    assert res.status_code == 201, res.text
+    db_session.expire_all()
+    built = db_session.get(Invoice, UUID(res.json()["invoice_id"]))
+    intent = built.builder_intent
+    assert intent["po_number"] == "PO-77219"
+    assert intent["notes"] == "Thank you."
+    assert [t["tax_type"] for t in intent["taxes"]] == ["CGST", "SGST"]
+    # The server's own arithmetic, not the client's: 1600 subtotal, the 32.00
+    # trade discount, CGST+SGST at 72.00 each, 25.00 retention.
+    totals = intent["totals"]
+    assert totals["subtotal"] == "1600.00"
+    assert totals["discount_total"] == "32.00"
+    assert totals["tax_amount"] == "144.00"
+    assert totals["deduction_total"] == "25.00"
+    assert totals["grand_total"] == "1687.00"
+
+
+# ── BE Gap 467: the outbound row now carries what the outbound reader read ───
+
+def _widened_readback(intent: dict) -> dict:
+    """What `OutboundInvoiceExtractionSchema` now returns for a generated PDF —
+    the money and dates from the intent, plus every field the schema gained."""
+    extracted = _extracted_from(intent)
+    extracted.update({
+        "vendor_name": intent["vendor_name"],
+        "po_number": intent["po_number"],
+        "currency": intent["currency"],
+        "notes": intent["notes"],
+        "addresses": intent["addresses"],
+        "references": intent["references"],
+        "payment_instructions": intent["payment_instructions"],
+        "tax_ids": intent["tax_ids"],
+        "compliance_metadata": intent["compliance_metadata"],
+        # A rich source prints a trade discount and two tax rates; both are
+        # hard-asserted by the Gap 463 half of the check.
+        "discount_amount": float(intent["totals"]["discount_total"]),
+        "taxes": [{"amount": float(a)} for a in intent["totals"]["tax_lines"]],
+    })
+    return extracted
+
+
+def test_the_outbound_handler_persists_the_widened_columns(db_session, stored_blobs):
+    """Gap 467's first half: the outbound schema reads these, and the outbound
+    worker writes them to the same columns the inbound worker already does. The
+    read-back check must also stay clean on a faithful reading."""
+    source = _seed_source(db_session, columns=_RICH_COLUMNS)
+    res = client.post("/api/v1/outbound-invoices/build", json=_build_body(source))
+    assert res.status_code == 201, res.text
+    db_session.expire_all()
+    built = db_session.get(Invoice, UUID(res.json()["invoice_id"]))
+
+    result = _run_outbound_handler(built, _widened_readback(built.builder_intent))
+    assert result["status"] == "VERIFIED"
+    assert not any(a["type"] == "builder_render_mismatch" for a in result["alerts"])
+
+    db_session.expire_all()
+    row = db_session.get(Invoice, built.id)
+    assert row.vendor_name == "ACME Engineering Ltd"
+    assert row.po_number == "PO-77219"
+    assert [a["text"] for a in row.addresses] == [
+        "12 Park Road, Andheri", "Warehouse 4, Bhiwandi", "9 Mill Street, Pune",
+    ]
+    assert [r["value"] for r in row.references] == ["SO-9912"]
+    assert [p["details"] for p in row.payment_instructions] == ["acme@bank"]
+    assert [t["value"] for t in row.tax_ids] == ["27ABCDE1234F1Z5"]
+    assert [c["value"] for c in row.compliance_metadata] == ["a1b2c3d4"]
+    assert row.notes == "Goods once sold are not returnable."
+
+
+def test_a_silent_reader_cannot_erase_the_notes_the_builder_printed(db_session, stored_blobs):
+    """The one field the builder stamps at creation. A model that did not return
+    the free-text block is not evidence the invoice has none, so the column
+    keeps what was printed."""
+    source = _seed_source(db_session, columns=_RICH_COLUMNS)
+    body = _build_body(source, notes="Late payment attracts 1.5% per month.")
+    built_id = UUID(client.post("/api/v1/outbound-invoices/build", json=body).json()["invoice_id"])
+    db_session.expire_all()
+    built = db_session.get(Invoice, built_id)
+    assert built.notes == "Late payment attracts 1.5% per month."
+
+    _run_outbound_handler(built, _extracted_from(built.builder_intent))
+
+    db_session.expire_all()
+    assert db_session.get(Invoice, built_id).notes == "Late payment attracts 1.5% per month."
+
+
+def test_a_clone_of_a_clone_inherits_the_address_po_number_and_notes(db_session, stored_blobs):
+    """Gap 467's second half, end to end. Generation 1 is an extracted invoice;
+    generation 2 is built from it and processed by the outbound worker, which
+    before this gap left every one of these columns empty on the new row; so
+    generation 3's prefill had nothing to copy and the user's address, PO number
+    and notes were lost one generation after they were typed."""
+    gen1 = _seed_source(db_session, columns=_RICH_COLUMNS)
+
+    gen2_body = _build_body(
+        gen1,
+        po_number="PO-88888",
+        notes="Late payment attracts 1.5% per month.",
+        addresses=[{"address_type": "billing", "text": "New Buyer Road 7", "country": "India"}],
+    )
+    gen2_id = UUID(client.post("/api/v1/outbound-invoices/build", json=gen2_body).json()["invoice_id"])
+    db_session.expire_all()
+    gen2 = db_session.get(Invoice, gen2_id)
+
+    # The worker reads the generated PDF back and writes the columns.
+    _run_outbound_handler(gen2, _widened_readback(gen2.builder_intent))
+    db_session.expire_all()
+    assert db_session.get(Invoice, gen2_id).status == "VERIFIED"
+
+    # Generation 3's prefill, taken off generation 2's own row.
+    gen3 = client.get(f"/api/v1/outbound-invoices/{gen2_id}/build-defaults")
+    assert gen3.status_code == 200, gen3.text
+    prefill = gen3.json()
+    assert prefill["po_number"] == "PO-88888"
+    assert prefill["notes"] == "Late payment attracts 1.5% per month."
+    assert [a["text"] for a in prefill["addresses"]] == ["New Buyer Road 7"]
+    assert prefill["vendor_name"] == "ACME Engineering Ltd"
+    assert [t["value"] for t in prefill["tax_ids"]] == ["27ABCDE1234F1Z5"]
+    assert [c["value"] for c in prefill["compliance_metadata"]] == ["a1b2c3d4"]
+
+    # …and generation 3 actually prints them. The source PDF for this render is
+    # the one generation 2's build wrote into the fake blob store, so the read
+    # is pointed there rather than at Azure.
+    with patch(
+        "routers.outbound_invoices.download_pdf_from_storage",
+        return_value=stored_blobs[str(gen2_id)],
+    ):
+        printed = client.post("/api/v1/outbound-invoices/build/preview", json=prefill)
+    assert printed.status_code == 200, printed.text
+    with fitz.open(stream=printed.content, filetype="pdf") as doc:
+        text = "".join(page.get_text() for page in doc)
+    assert "PO Number: PO-88888" in text
+    assert "New Buyer Road 7" in text
+    assert "Late payment attracts 1.5% per month." in text
+
+
+def test_the_notes_column_is_a_migrated_column_on_a_single_head(db_session):
+    """BE Gap 467's migration: `upgrade head` succeeded and left one head.
+
+    `SQLModel.metadata.create_all()` does not ALTER an existing table, so the
+    column this reads can only have come from `e7f8a9b0c1d2`. The head check is
+    what catches a second migration branching off the same parent, which is how
+    two agents working the same day produce a database nobody can upgrade.
+
+    Nothing here asserts a downgrade path: the founder ruled on 2026-09-05 that
+    this is a dev database in a dev phase and no existing data is migrated."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import text
+
+    heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
+    assert heads == ["e7f8a9b0c1d2"], heads
+
+    column = db_session.exec(
+        text(
+            "SELECT data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_name = 'invoice' AND column_name = 'notes'"
+        )
+    ).one()
+    assert column == ("character varying", "YES")

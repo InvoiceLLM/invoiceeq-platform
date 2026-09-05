@@ -107,7 +107,7 @@ async function openBuilder(page: Page) {
 // Prefill, totals and the layout pill (tasks 20.2 / 20.3)
 // ---------------------------------------------------------------------------
 
-test.describe("Invoice Builder — defaults, totals, layout pill", () => {
+test.describe("Invoice Builder — defaults and totals", () => {
   test("defaults populate every header field and the line-item grid", async ({ page }) => {
     await stubCommon(page);
     await stubBuildDefaults(page);
@@ -145,34 +145,10 @@ test.describe("Invoice Builder — defaults, totals, layout pill", () => {
     await expect(page.getByTestId("totals-subtotal")).toHaveText("$179.96");
     await expect(page.getByTestId("totals-grand-total")).toHaveText("$189.96");
   });
-
-  test("adding or removing a row flips the layout pill to re-rendered", async ({ page }) => {
-    await stubCommon(page);
-    await stubBuildDefaults(page);
-    await openBuilder(page);
-
-    const pill = page.getByTestId("layout-pill");
-    await expect(pill).toHaveAttribute("data-render-mode", "substitute", {
-      timeout: FIRST_PAINT_TIMEOUT,
-    });
-    await expect(pill).toHaveText(/exact copy/);
-
-    await page.getByTestId("add-row").click();
-    await expect(pill).toHaveAttribute("data-render-mode", "rerender");
-    await expect(pill).toHaveText(/re-rendered/);
-
-    // Back to the source's row count → substitution is available again.
-    await page.getByTestId("remove-row-2").click();
-    await expect(pill).toHaveAttribute("data-render-mode", "substitute");
-
-    // Removing below the source count is still "re-rendered", not "exact copy".
-    await page.getByTestId("remove-row-1").click();
-    await expect(pill).toHaveAttribute("data-render-mode", "rerender");
-  });
 });
 
 // ---------------------------------------------------------------------------
-// Preview, 409 and 422 (task 20.4)
+// Preview and 409 (task 20.4)
 // ---------------------------------------------------------------------------
 
 test.describe("Invoice Builder — preview", () => {
@@ -232,28 +208,29 @@ test.describe("Invoice Builder — preview", () => {
     await expect(page.locator("iframe")).toHaveCount(0);
   });
 
-  test("a 422 marks the unlocated fields and revert-to-source restores them", async ({ page }) => {
+
+  test("a same-row-count clone previews with no layout workaround (FE Gap 462)", async ({
+    page,
+  }) => {
+    // The exact case that used to answer 422: the dates and the totals change,
+    // the row count does not. There is no layout pill and no revert prompt any
+    // more -- the backend always re-renders, so preview just returns a PDF.
     await stubCommon(page);
     await stubBuildDefaults(page);
     await page.route("**/api/outbound-invoices/build/preview", (route) =>
-      route.fulfill(json({ unlocated_fields: ["customer_name"] }, 422))
+      route.fulfill({ status: 200, contentType: "application/pdf", body: PDF_BYTES })
     );
     await openBuilder(page);
 
-    await page.getByTestId("builder-input-customer-name").fill("Contoso Ltd", {
+    await page.getByTestId("builder-input-invoice-date").fill("2026-09-05", {
       timeout: FIRST_PAINT_TIMEOUT,
     });
+    await page.getByTestId("item-quantity-0").fill("9");
     await page.getByTestId("preview-button").click();
 
-    await expect(page.getByTestId("unlocated-fields")).toContainText("customer_name", {
-      timeout: ACTION_TIMEOUT,
-    });
-
-    // One click puts the source's own value back, which is always substitutable
-    // because it is already what the source PDF prints.
-    await page.getByTestId("builder-revert-customer-name").click();
-    await expect(page.getByTestId("builder-input-customer-name")).toHaveValue("Northwind Traders");
-    await expect(page.getByTestId("builder-revert-customer-name")).toHaveCount(0);
+    await expect(page.locator("iframe")).toHaveCount(1, { timeout: ACTION_TIMEOUT });
+    await expect(page.getByTestId("preview-error")).toHaveCount(0);
+    await expect(page.getByTestId("layout-pill")).toHaveCount(0);
   });
 });
 
@@ -286,6 +263,70 @@ test.describe("Invoice Builder — create", () => {
     expect(posted.subtotal).toBeUndefined();
     expect(posted.grand_total).toBeUndefined();
     expect(posted.items[0].amount).toBeUndefined();
+  });
+
+  test("FE Gap 463: the widened fields are editable and reach the posted body", async ({ page }) => {
+    // Every field here is one the source PDF prints and the pre-463 body did
+    // not carry. Since BE Gap 462 deleted the substitution renderer, a field
+    // missing from this body is not inherited from the source page — it is
+    // simply not printed — so "did it reach the body" is the whole claim.
+    await stubCommon(page);
+    await stubBuildDefaults(page);
+
+    let posted: any = null;
+    await page.route("**/api/outbound-invoices/build", (route) => {
+      posted = JSON.parse(route.request().postData() || "null");
+      return route.fulfill(json({ batch_id: BATCH_ID, invoice_id: CLONE_ID }));
+    });
+
+    await openBuilder(page);
+    await page.getByTestId("builder-input-po-number").fill("PO-99999", {
+      timeout: FIRST_PAINT_TIMEOUT,
+    });
+    await page.getByTestId("builder-input-vendor-name").fill("ACME Engineering Ltd");
+    await page.getByTestId("builder-input-address-billing").fill("12 Park Road, Andheri");
+    await page.getByTestId("builder-input-address-shipping").fill("Warehouse 4, Bhiwandi");
+    await page.getByTestId("builder-input-notes").fill("Payment within 30 days.");
+
+    await page.getByTestId("references-add").click();
+    await page.getByTestId("references-ref_type-0").fill("Sales Order");
+    await page.getByTestId("references-value-0").fill("SO-9912");
+
+    await page.getByTestId("tax-ids-add").click();
+    await page.getByTestId("tax-ids-id_type-0").fill("GSTIN");
+    await page.getByTestId("tax-ids-value-0").fill("27ABCDE1234F1Z5");
+
+    await page.getByTestId("item-hsn-sac-0").fill("7214");
+    await page.getByTestId("item-uom-0").fill("kg");
+
+    // Two tax rates replace the single Tax box, and the total follows them.
+    await page.getByTestId("add-tax").click();
+    await page.getByTestId("tax-type-0").fill("CGST");
+    await page.getByTestId("tax-rate-0").fill("9");
+    await expect(page.getByTestId("tax-total-0")).toHaveText("$14.40"); // 9% of the 159.97 subtotal, half-up
+
+    await page.locator("header").getByTestId("create-invoice").click();
+    await expect(page).toHaveURL(new RegExp(`/ingestion\\?.*builtInvoice=${CLONE_ID}`), {
+      timeout: ACTION_TIMEOUT,
+    });
+
+    expect(posted.po_number).toBe("PO-99999");
+    expect(posted.vendor_name).toBe("ACME Engineering Ltd");
+    expect(posted.addresses).toEqual([
+      { address_type: "billing", text: "12 Park Road, Andheri", country: null },
+      { address_type: "shipping", text: "Warehouse 4, Bhiwandi", country: null },
+    ]);
+    expect(posted.notes).toBe("Payment within 30 days.");
+    expect(posted.references).toEqual([{ ref_type: "Sales Order", value: "SO-9912" }]);
+    expect(posted.tax_ids).toEqual([
+      { id_type: "GSTIN", value: "27ABCDE1234F1Z5", party: null },
+    ]);
+    expect(posted.items[0].hsn_sac_code).toBe("7214");
+    expect(posted.items[0].uom).toBe("kg");
+    expect(posted.taxes).toEqual([{ tax_type: "CGST", rate_percent: "9", amount: null }]);
+    // Still display-only: no computed figure is ever sent.
+    expect(posted.subtotal).toBeUndefined();
+    expect(posted.grand_total).toBeUndefined();
   });
 
   test("the Sending hand-off opens the Sending tab with the new invoice in the ledger", async ({

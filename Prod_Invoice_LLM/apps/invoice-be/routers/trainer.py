@@ -943,6 +943,12 @@ def list_trainer_vendors(
     """List the tenant's known vendors (with a sample invoice) for the Existing-Vendor picker."""
     stmt = select(Invoice).where(
         Invoice.tenant_id == tenant_context.tenant_id,
+        # BE Gap 467: OUTBOUND rows now carry `vendor_name` too — on the
+        # tenant's own invoice the tenant IS the vendor, so without this filter
+        # the Existing-Vendor picker would offer the tenant their own name as
+        # someone to train an extraction template against. Same Gap 329 shape
+        # and the same one-line answer `routers/dashboard.py` already applies.
+        Invoice.flow_direction == "INBOUND",
         Invoice.vendor_name.is_not(None),
         invoice_not_deleted(),
     )

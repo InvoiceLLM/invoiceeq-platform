@@ -11,9 +11,10 @@ export const dynamic = "force-dynamic";
  * the body as text and would corrupt binary content). It follows
  * `app/api/invoices/[id]/pdf/route.ts` instead and streams the response body
  * straight through, preserving the backend's own content-type. That matters
- * for the error paths: a 409 (duplicate number) or 422 (unlocated fields)
- * comes back as JSON on the same route, and the page distinguishes the two by
- * content-type.
+ * for the error path: a 409 (duplicate number) comes back as JSON on the same
+ * route, and the page distinguishes it from a PDF by content-type. (FE Gap 462
+ * removed the 422 that used to share this route — the substitution renderer it
+ * came from is deleted.)
  */
 export async function POST(request: NextRequest) {
   const backendResponse = await fetch(backendUrl("/outbound-invoices/build/preview"), {

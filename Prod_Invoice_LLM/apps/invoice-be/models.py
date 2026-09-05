@@ -173,6 +173,19 @@ class Invoice(SQLModel, table=True):
     # Never used to email end customers from the app.
     submitted_by_email: str | None = Field(default=None, max_length=255)
 
+    # BE Gap 467: the free-text notes/terms/remarks block an invoice prints.
+    #
+    # Gap 463 shipped `BuildRequest.notes` with no column behind it and recorded
+    # the consequence honestly: the value lived only in `builder_intent`, so it
+    # was never read back and a clone of a clone could not inherit it. Both
+    # halves of that are closed here — `OutboundInvoiceExtractionSchema` now
+    # extracts `notes` and this column stores it, exactly as every other printed
+    # field on this table already is.
+    #
+    # Nullable with no backfill: every existing row keeps NULL, which means "no
+    # notes block was read", never "the invoice had none".
+    notes: str | None = Field(default=None)
+
     # Feature 27 (G9 / E10): the classified document type and the verbatim
     # printed phrase the classifier decided from.
     #
@@ -212,7 +225,7 @@ class Invoice(SQLModel, table=True):
 
     # Feature 17 (Invoice Builder): lineage and intent for a *generated*
     # outbound invoice — one cloned from an existing one and re-rendered by
-    # `services/pdf_substitute.py` / `services/pdf_render.py`.
+    # `services/pdf_render.py` (the only renderer since BE Gap 462).
     #
     # `source_invoice_id` is the invoice this one was cloned from. Nullable and
     # NULL on every uploaded row, which is every row that exists today; the
@@ -900,6 +913,19 @@ class DroppedInboundEmail(SQLModel, table=True):
     # known (e.g. a malformed request with no Content-Length header).
     content_length: int | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    # Gap 464: when the tenant archived this row from the ingestion History
+    # screen (NULL = visible). These rows were Admin-console-only until Gap 464
+    # surfaced them to the tenant they concern as REJECTED runs, and the History
+    # screen's archive contract has to cover everything it shows — a
+    # "archive all" that silently skipped rejected emails would leave the list
+    # non-empty right after the user emptied it.
+    #
+    # Deliberately a hide, not a delete, for the same reason as
+    # `IngestionBatch.archived_at`: `routers/admin.py::list_dropped_emails`
+    # still reads this table as the platform-wide record of every refused
+    # inbound mail, and one tenant tidying their own history must not erase
+    # that. The Admin console read path deliberately does NOT filter on it.
+    archived_at: datetime | None = Field(default=None)
 
 
 class WebhookSubscription(SQLModel, table=True):
@@ -1283,6 +1309,71 @@ class TenantAutopilotLog(SQLModel, table=True):
     # routers/autopilot.py filters `hidden_at IS NULL`; every DEDUP/watermark
     # query in services/autopilot_sync.py deliberately does not.
     hidden_at: datetime | None = Field(default=None)
+
+
+# ---------------------------------------------------------------------------
+# Gap 464 — the ingestion History screen's run ledger
+# ---------------------------------------------------------------------------
+
+class IngestionBatch(SQLModel, table=True):
+    """BE Gap 464: one RUN of ingestion — a manual upload, an inbound email, a
+    connector import — recorded at the door that started it.
+
+    WHY THIS TABLE HAS TO EXIST AT ALL. `batch_id` was already minted at every
+    ingestion door and stamped on the `Invoice`/`Document` rows a run produced,
+    but nothing recorded the RUN itself. That is fine right up until a run
+    produces no `Invoice` row, which is exactly what Feature 27's decision E10
+    does: a classified non-invoice goes to `documents` and the placeholder
+    `invoice` row is DELETED in the same transaction. Deriving history purely
+    from `Invoice` therefore loses the run; deriving it from
+    `Invoice UNION Document` loses a run that produced neither (a rejected
+    upload, an email whose only attachment was refused). A run is a fact of its
+    own and is stored as one.
+
+    WHAT IS DELIBERATELY *NOT* HERE: any per-file outcome. `file_count` is the
+    number of files the door accepted for processing; every outcome — loaded,
+    not-loaded, rejected — is DERIVED at read time from the `Invoice` and
+    `Document` rows carrying this `batch_id`. Gap 427 made the same call on
+    `tenant_autopilot_logs` for the same reason: a stored summary is a second
+    copy of facts that can drift out of agreement with the rows it summarises,
+    and outcomes here genuinely move after the run (a PROCESSING invoice becomes
+    VERIFIED minutes later).
+
+    `archived_at` is a HIDE of the log line, never a delete of anything it
+    describes (founder, 2026-09-05). A history row is DERIVED from the
+    `Invoice`/`Document` records, so a true hard delete would either regenerate
+    on the next read or destroy the provenance of a live invoice. Same
+    semantics as `TenantAutopilotLog.hidden_at`. Real invoice deletion stays on
+    the Audit Queue, where the consequence is visible.
+    """
+    __tablename__ = "ingestion_batches"
+    # The batch_id IS the identity — it is minted at the door and already
+    # stamped on every row the run produced, so a surrogate `id` would be a
+    # second key for the same thing.
+    batch_id: UUID = Field(primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    # Mirrors `Invoice.flow_direction`: INBOUND (AP, receiving) or OUTBOUND
+    # (AR, sending). The History screen's Receiving/Sending filter reads this
+    # rather than joining out to the rows, so an empty run is still filterable.
+    flow_direction: str = Field(default="INBOUND", max_length=20)
+    # 'manual' (a human used the upload door) | 'email' (inbound mailbox) |
+    # 'connector' (Drive import). Autopilot runs are NOT written here — they
+    # already have `tenant_autopilot_logs` and the History screen reads that
+    # table through unchanged (founder: do not touch the Autopilot screen or
+    # its table).
+    trigger: str = Field(max_length=20, index=True)
+    # How many files the door accepted for processing. NOT how many became
+    # invoices — see the class docstring.
+    file_count: int = Field(default=0)
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    archived_at: datetime | None = Field(default=None)
+
+    __table_args__ = (
+        # Every read is "this tenant's runs, newest first, page N" — a
+        # tenant-led composite is what a planner can actually use for that,
+        # same reasoning as `Invoice.__table_args__` (FE Gap 29).
+        sa.Index("ix_ingestion_batches_tenant_started", "tenant_id", "started_at"),
+    )
 
 
 # ---------------------------------------------------------------------------

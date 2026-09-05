@@ -1,12 +1,19 @@
 """Feature 17: the structured re-render, and the branding harvested from the
 source PDF that keeps it recognisable.
 
-This is the "rows were added or removed" half of founder decision D3. You
-cannot insert a line into a fixed printed layout by painting over words, so
-when `plan_render_mode()` says `rerender` the invoice is laid out again from
-scratch with reportlab — but with the source's own logo, header block, page
-size and number formatting lifted off page 1, so the result still looks like
-the tenant's invoice rather than a generic template.
+**This is the only renderer.** BE Gap 462 (2026-09-05) deleted the in-place
+substitution path (`services/pdf_substitute.py`) and with it founder decisions
+D1 and D3: every clone is laid out again from scratch with reportlab — but with
+the source's own logo, header block, page size and number formatting lifted off
+page 1, so the result still looks like the tenant's invoice rather than a
+generic template. The accepted tradeoff, stated by the founder when approving
+the deletion: a clone is a clean re-render carrying the source's branding, NOT
+a pixel-identical copy of the source layout.
+
+The substitution path was deleted rather than fixed because it chose itself on
+row count alone and then refused, with a 422, on the *ordinary* clone — new
+dates and new totals over the same number of rows — asking the user to add or
+remove a row to work around an internal renderer limitation.
 
 Everything here is deterministic. `harvest_branding()` picks the logo by pixel
 area and position, not by asking a model which image is the logo, and returns
@@ -19,15 +26,122 @@ import io
 import logging
 import re
 from dataclasses import dataclass, field as dc_field
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
 import fitz  # PyMuPDF
 
 from services.invoice_builder import BuildRequest, Totals
-from services.pdf_substitute import format_like
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Number formatting
+# ---------------------------------------------------------------------------
+#
+# BE Gap 462 (2026-09-05): these two helpers moved here verbatim from the
+# deleted `services/pdf_substitute.py`. They were always about *reading the
+# source's printed money style and reproducing it*, which the re-render needs
+# just as much as substitution did — `render_invoice()` formats every figure
+# through `format_like()`, and `routers/outbound_invoices.py` samples the
+# source's own grand total through `number_renderings()` to find that style.
+
+_NUM_RE = re.compile(
+    r"^(?P<pre>[^0-9-]*)(?P<sign>-?)(?P<num>[0-9][0-9.,\s ']*[0-9]|[0-9])(?P<post>.*)$"
+)
+_GROUP_CHARS = ".,  '"
+
+
+def format_like(sample: str, value: Decimal) -> str:
+    """Render `value` using the separator style and decimal places of `sample`.
+
+    Pure. `format_like("1.250,00", Decimal("2000"))` → `"2.000,00"`;
+    `format_like("1,250.00", Decimal("2000"))` → `"2,000.00"`;
+    `format_like("1250.00", ...)` → `"2000.00"` (no grouping was observed, so
+    none is invented). Any prefix/suffix in the sample (a currency symbol, a
+    trailing code) is preserved around the new number.
+
+    A separator followed by exactly three digits is read as grouping, not as a
+    decimal point — the standard, and the only reading under which `1.250` and
+    `1,250` both mean one thousand two hundred and fifty.
+    """
+    match = _NUM_RE.match((sample or "").strip())
+    if not match:
+        dec_sep, grp_sep, places, pre, post = ".", "", 2, "", ""
+    else:
+        pre, post = match.group("pre"), match.group("post")
+        num = match.group("num")
+        seps = [(i, c) for i, c in enumerate(num) if c in _GROUP_CHARS]
+        dec_sep, grp_sep, places = "", "", 0
+        if seps:
+            last_i, last_c = seps[-1]
+            tail = len(num) - last_i - 1
+            if last_c in ".," and 1 <= tail <= 2:
+                dec_sep, places = last_c, tail
+                others = [c for i, c in seps[:-1]]
+            else:
+                others = [c for i, c in seps]
+            if others:
+                grp_sep = others[-1]
+
+    quant = Decimal(1).scaleb(-places)
+    q = value.quantize(quant, rounding=ROUND_HALF_UP)
+    sign = "-" if q < 0 else ""
+    digits = f"{abs(q):f}"
+    if "." in digits:
+        int_part, frac = digits.split(".", 1)
+    else:
+        int_part, frac = digits, ""
+
+    if grp_sep:
+        chunks = []
+        while len(int_part) > 3:
+            chunks.insert(0, int_part[-3:])
+            int_part = int_part[:-3]
+        chunks.insert(0, int_part)
+        int_part = grp_sep.join(chunks)
+
+    body = int_part + (dec_sep + frac if places and dec_sep else "")
+    return f"{pre}{sign}{body}{post}"
+
+
+def number_renderings(value: Decimal) -> list[str]:
+    """Every plausible way the source might have printed `value`, most likely
+    first. Used as the search list; whichever one the page actually contains
+    becomes the `format_like` sample for the re-rendered figures."""
+    q = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    plain = f"{abs(q):.2f}"
+    int_part, frac = plain.split(".")
+    sign = "-" if q < 0 else ""
+
+    def grouped(sep: str) -> str:
+        chunks, rest = [], int_part
+        while len(rest) > 3:
+            chunks.insert(0, rest[-3:])
+            rest = rest[:-3]
+        chunks.insert(0, rest)
+        return sep.join(chunks)
+
+    out = [
+        f"{sign}{grouped(',')}.{frac}",
+        f"{sign}{int_part}.{frac}",
+        f"{sign}{grouped('.')},{frac}",
+        f"{sign}{int_part},{frac}",
+        f"{sign}{grouped(' ')},{frac}",
+        f"{sign}{grouped(' ')}.{frac}",
+    ]
+    if frac == "00":
+        out += [f"{sign}{grouped(',')}", f"{sign}{int_part}", f"{sign}{grouped('.')}"]
+    # Quantities print as `2` or `2.5` far more often than `2.00`.
+    trimmed = f"{q.normalize():f}"
+    if trimmed not in out:
+        out.append(trimmed)
+    seen, unique = set(), []
+    for candidate in out:
+        if candidate not in seen:
+            seen.add(candidate)
+            unique.append(candidate)
+    return unique
 
 #: A logo lives in the top band of page 1 and is not a hairline rule or a
 #: background wash. Both thresholds are fractions of the page.
@@ -245,26 +359,102 @@ def render_invoice(
         story.append(Paragraph(f"Invoice Date: {req.invoice_date.isoformat()}", normal))
     if req.due_date:
         story.append(Paragraph(f"Due Date: {req.due_date.isoformat()}", normal))
-    story.append(Spacer(1, 8))
-    story.append(Paragraph("<b>Bill To:</b>", normal))
-    story.append(Paragraph(_escape(req.customer_name or ""), normal))
+    # BE Gap 463: the PO number and the secondary references. Before this they
+    # were carried by `BuildRequest` at all only if `harvest_branding()` had
+    # scraped them into the header band, which it deliberately does not (they
+    # match `_META_LINE` and are dropped as the *source's* metadata).
+    if req.po_number:
+        story.append(Paragraph(f"PO Number: {_escape(req.po_number)}", normal))
+    for reference in req.references:
+        label = (reference.ref_type or "Reference").strip()
+        if (reference.value or "").strip():
+            story.append(Paragraph(f"{_escape(label)}: {_escape(reference.value)}", normal))
+    story.append(Spacer(1, 10))
+
+    usable = doc.width
+
+    # --- the party blocks (BE Gap 463) --------------------------------------
+    #
+    # "From" is the tenant; "Bill To" and "Ship To" are the customer's. Each
+    # column is omitted entirely when it has nothing in it, rather than printed
+    # as an empty heading — an invoice with no shipping address should not
+    # print the words "Ship To".
+    party_columns: list[list] = []
+    vendor_block = _party_block("From", req.vendor_name, _address_text(req.addresses, "vendor"), normal)
+    if vendor_block:
+        party_columns.append(vendor_block)
+    party_columns.append(
+        _party_block("Bill To", req.customer_name, _address_text(req.addresses, "billing"), normal)
+        or [Paragraph("<b>Bill To</b>", normal)]
+    )
+    ship_block = _party_block("Ship To", None, _address_text(req.addresses, "shipping"), normal)
+    if ship_block:
+        party_columns.append(ship_block)
+    # Any address whose type is none of the three known values still prints —
+    # losing an address because the extractor called it something unexpected is
+    # exactly the failure this gap exists to stop.
+    other_block = _party_block("Address", None, _address_text(req.addresses, None), normal)
+    if other_block:
+        party_columns.append(other_block)
+
+    party_table = Table(
+        [party_columns],
+        colWidths=[usable / len(party_columns)] * len(party_columns),
+    )
+    party_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(party_table)
     story.append(Spacer(1, 12))
 
     def fmt(value: Decimal) -> str:
         return format_like(number_style, value)
 
-    rows = [["Description", "Qty", "Unit Price", "Amount"]]
+    # --- the line-item table ------------------------------------------------
+    #
+    # Columns appear only when at least one row uses them (BE Gap 463): a plain
+    # invoice still prints exactly Description / Qty / Unit Price / Amount, the
+    # four columns this table had before, at the same widths.
+    show_hsn = any((i.hsn_sac_code or "").strip() for i in req.items)
+    show_uom = any((i.uom or "").strip() for i in req.items)
+    show_line_discount = any(d for d in totals.line_discounts)
+    show_line_tax = any(t for t in totals.line_taxes)
+
+    spec: list[tuple[str, float]] = [("Description", 0.52)]
+    if show_hsn:
+        spec.append(("HSN/SAC", 0.10))
+    spec.append(("Qty", 0.10))
+    if show_uom:
+        spec.append(("UOM", 0.08))
+    spec.append(("Unit Price", 0.19))
+    if show_line_discount:
+        spec.append(("Discount", 0.13))
+    if show_line_tax:
+        spec.append(("Tax", 0.13))
+    spec.append(("Amount", 0.19))
+    weight_total = sum(weight for _heading, weight in spec)
+    col_widths = [usable * weight / weight_total for _heading, weight in spec]
+
+    rows = [[heading for heading, _weight in spec]]
     for idx, item in enumerate(req.items):
         amount = totals.line_amounts[idx] if idx < len(totals.line_amounts) else Decimal("0.00")
-        rows.append([
-            Paragraph(_escape(item.description or ""), normal),
-            _quantity_text(item.quantity),
-            fmt(item.unit_price if item.unit_price is not None else Decimal("0")),
-            fmt(amount),
-        ])
+        row: list = [Paragraph(_escape(item.description or ""), normal)]
+        if show_hsn:
+            row.append(_escape(item.hsn_sac_code or ""))
+        row.append(_quantity_text(item.quantity))
+        if show_uom:
+            row.append(_escape(item.uom or ""))
+        row.append(fmt(item.unit_price if item.unit_price is not None else Decimal("0")))
+        if show_line_discount:
+            row.append(fmt(totals.line_discounts[idx]) if idx < len(totals.line_discounts) else "")
+        if show_line_tax:
+            row.append(fmt(totals.line_taxes[idx]) if idx < len(totals.line_taxes) else "")
+        row.append(fmt(amount))
+        rows.append(row)
 
-    usable = doc.width
-    table = Table(rows, colWidths=[usable * 0.52, usable * 0.10, usable * 0.19, usable * 0.19], repeatRows=1)
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F3B57")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -276,22 +466,77 @@ def render_invoice(
     story.append(table)
     story.append(Spacer(1, 10))
 
+    # --- the totals block ---------------------------------------------------
+    #
+    # One row per printed figure. Every value comes from `Totals`, i.e. from
+    # `compute_totals()`; nothing here does arithmetic of its own, because two
+    # places computing the same total is how they come to disagree.
     currency = (req.currency or "").strip()
-    summary = Table(
-        [
-            ["Subtotal", fmt(totals.subtotal)],
-            ["Tax", fmt(totals.tax_amount)],
-            [f"Total Due{(' (' + currency + ')') if currency else ''}", fmt(totals.grand_total)],
-        ],
-        colWidths=[usable * 0.81, usable * 0.19],
-    )
+    summary_rows: list[list[str]] = [["Subtotal", fmt(totals.subtotal)]]
+    for idx, discount in enumerate(req.discounts):
+        resolved = totals.discount_lines[idx] if idx < len(totals.discount_lines) else Decimal("0.00")
+        summary_rows.append([_rate_label(discount.discount_type or "Discount", discount.percent), fmt(-resolved)])
+    if not req.discounts and totals.discount_total:
+        summary_rows.append([_rate_label("Discount", req.discount_percent), fmt(-totals.discount_total)])
+    if req.taxes:
+        for idx, tax in enumerate(req.taxes):
+            resolved = totals.tax_lines[idx] if idx < len(totals.tax_lines) else Decimal("0.00")
+            summary_rows.append([_rate_label(tax.tax_type or "Tax", tax.rate_percent), fmt(resolved)])
+    else:
+        summary_rows.append(["Tax", fmt(totals.tax_amount)])
+    for idx, deduction in enumerate(req.deductions):
+        resolved = totals.deduction_lines[idx] if idx < len(totals.deduction_lines) else Decimal("0.00")
+        summary_rows.append([_escape(deduction.deduction_type or "Deduction"), fmt(-resolved)])
+    summary_rows.append([
+        f"Total Due{(' (' + currency + ')') if currency else ''}",
+        fmt(totals.grand_total),
+    ])
+
+    summary = Table(summary_rows, colWidths=[usable * 0.81, usable * 0.19])
+    last = len(summary_rows) - 1
     summary.setStyle(TableStyle([
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("LINEABOVE", (0, 2), (-1, 2), 0.75, colors.black),
-        ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Bold"),
+        ("LINEABOVE", (0, last), (-1, last), 0.75, colors.black),
+        ("FONTNAME", (0, last), (-1, last), "Helvetica-Bold"),
     ]))
     story.append(summary)
+
+    # --- payment, notes, compliance (BE Gap 463) ----------------------------
+    if req.payment_instructions:
+        story.append(Spacer(1, 14))
+        story.append(Paragraph("<b>Payment Instructions</b>", normal))
+        for instruction in req.payment_instructions:
+            label = (instruction.method_type or "").strip()
+            details = (instruction.details or "").strip()
+            if not (label or details):
+                continue
+            story.append(Paragraph(
+                f"{_escape(label)}: {_escape(details)}" if label else _escape(details), normal,
+            ))
+
+    if (req.notes or "").strip():
+        story.append(Spacer(1, 14))
+        story.append(Paragraph("<b>Notes</b>", normal))
+        for line in str(req.notes).splitlines():
+            if line.strip():
+                story.append(Paragraph(_escape(line), normal))
+
+    compliance_lines = [
+        f"{(t.id_type or 'Tax ID').strip()}"
+        + (f" ({t.party.strip()})" if (t.party or "").strip() else "")
+        + f": {(t.value or '').strip()}"
+        for t in req.tax_ids
+        if (t.value or "").strip()
+    ] + [
+        f"{(c.key or '').strip()}: {(c.value or '').strip()}"
+        for c in req.compliance_metadata
+        if (c.value or "").strip()
+    ]
+    if compliance_lines:
+        story.append(Spacer(1, 14))
+        for line in compliance_lines:
+            story.append(Paragraph(_escape(line), small))
 
     if branding.footer_lines:
         story.append(Spacer(1, 18))
@@ -300,6 +545,56 @@ def render_invoice(
 
     doc.build(story)
     return buf.getvalue()
+
+
+def _address_text(addresses, address_type: str | None) -> str:
+    """The address text for one block. `None` means "every address whose type
+    is not one of the three the renderer already places" — an unexpected type
+    is printed rather than dropped (BE Gap 463)."""
+    known = {"billing", "shipping", "vendor"}
+    parts: list[str] = []
+    for address in addresses or []:
+        kind = (address.address_type or "").strip().lower()
+        if address_type is None:
+            if kind in known:
+                continue
+        elif kind != address_type:
+            continue
+        text = (address.text or "").strip()
+        country = (address.country or "").strip()
+        if country and country.lower() not in text.lower():
+            text = f"{text}\n{country}" if text else country
+        if text:
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _party_block(heading: str, name: str | None, address: str, style) -> list:
+    """A titled address column, or `[]` when there is nothing to print."""
+    from reportlab.platypus import Paragraph
+
+    name = (name or "").strip()
+    if not name and not address:
+        return []
+    block = [Paragraph(f"<b>{_escape(heading)}</b>", style)]
+    if name:
+        block.append(Paragraph(_escape(name), style))
+    for line in address.splitlines():
+        if line.strip():
+            block.append(Paragraph(_escape(line), style))
+    return block
+
+
+def _rate_label(label: str, percent: Decimal | None) -> str:
+    """`CGST` → `CGST`, `CGST` + 9 → `CGST (9%)`. The rate is printed as typed
+    (`9`, not `9.00`), the same rule `_quantity_text()` follows."""
+    text = _escape((label or "").strip())
+    if percent is None:
+        return text
+    normalized = Decimal(percent).normalize()
+    if normalized == normalized.to_integral_value():
+        normalized = normalized.quantize(Decimal(1))
+    return f"{text} ({normalized:f}%)"
 
 
 def _quantity_text(quantity: Decimal | None) -> str:

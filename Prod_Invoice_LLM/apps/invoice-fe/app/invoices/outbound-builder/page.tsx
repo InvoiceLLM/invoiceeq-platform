@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Loader2, XCircle, FilePlus2, ArrowLeft } from "lucide-react";
 import BuilderForm from "@/components/builder/BuilderForm";
-import LineItemGrid, { predictRenderMode } from "@/components/builder/LineItemGrid";
+import LineItemGrid from "@/components/builder/LineItemGrid";
 import BuilderPreview from "@/components/builder/BuilderPreview";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import type { BuildDefaults, BuildRequest, BuildResponse } from "@/types/invoice";
@@ -37,16 +37,32 @@ function toDateInput(value: string | null | undefined): string | null {
   return String(value).slice(0, 10);
 }
 
+/**
+ * FE Gap 463: every list is defaulted to `[]` here rather than left undefined.
+ * The BE always sends them, but the form maps over all of them unconditionally
+ * and a single missing key would blank the whole screen — and these are the
+ * fields that, since BE Gap 462, are printed only if this body carries them.
+ */
 function normaliseDefaults(raw: BuildDefaults): BuildDefaults {
   return {
     ...raw,
     invoice_date: toDateInput(raw.invoice_date),
     due_date: toDateInput(raw.due_date),
     items: (raw.items ?? []).map((item) => ({
+      ...item,
       description: item.description ?? "",
       quantity: item.quantity ?? "",
       unit_price: item.unit_price ?? "",
     })),
+    addresses: raw.addresses ?? [],
+    references: raw.references ?? [],
+    payment_instructions: raw.payment_instructions ?? [],
+    tax_ids: raw.tax_ids ?? [],
+    taxes: raw.taxes ?? [],
+    discounts: raw.discounts ?? [],
+    deductions: raw.deductions ?? [],
+    compliance_metadata: raw.compliance_metadata ?? [],
+    notes: raw.notes ?? null,
   };
 }
 
@@ -59,7 +75,6 @@ function OutboundBuilderContent() {
   const [form, setForm] = useState<BuildRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [unlocatedFields, setUnlocatedFields] = useState<string[]>([]);
   const [duplicateNumberError, setDuplicateNumberError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -126,7 +141,6 @@ function OutboundBuilderContent() {
     setCreating(true);
     setCreateError(null);
     setDuplicateNumberError(null);
-    setUnlocatedFields([]);
     try {
       const response = await fetch("/api/outbound-invoices/build", {
         method: "POST",
@@ -142,13 +156,11 @@ function OutboundBuilderContent() {
         setCreateError(message);
         return;
       }
-      if (response.status === 422 && payload && Array.isArray(payload.unlocated_fields)) {
-        setUnlocatedFields(payload.unlocated_fields as string[]);
-        setCreateError(
-          "Some changed values could not be found in the source PDF. Revert them to the source value, or preview again after adding/removing a row."
-        );
-        return;
-      }
+      // FE Gap 462 (2026-09-05): a 422 branch used to sit here, mirroring
+      // Preview's. It was the reason Create appeared to do nothing on an
+      // ordinary clone — the backend's substitution renderer refused, and this
+      // told the user to revert a field or add/remove a row. That renderer is
+      // deleted; `/build` has no 422 contract left.
       if (!response.ok) {
         setCreateError(
           (payload && ((payload.detail as string) || (payload.message as string))) ||
@@ -199,8 +211,6 @@ function OutboundBuilderContent() {
     );
   }
 
-  const renderMode = predictRenderMode(form.items.length, defaults.items.length);
-
   return (
     <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto custom-scrollbar">
       <PageHeaderActions>
@@ -237,23 +247,17 @@ function OutboundBuilderContent() {
             value={form}
             defaults={defaults}
             onChange={patchForm}
-            unlocatedFields={unlocatedFields}
             duplicateNumberError={duplicateNumberError}
             disabled={creating}
           />
-          <LineItemGrid
-            items={form.items}
-            onChange={(items) => patchForm({ items })}
-            sourceItemCount={defaults.items.length}
-            currency={form.currency}
-            taxAmount={form.tax_amount}
-            onTaxChange={(tax_amount) => patchForm({ tax_amount })}
-            disabled={creating}
-          />
+          {/* FE Gap 463: the grid takes the whole request now — the totals
+              depend on the invoice-level discounts, tax rates and deductions
+              it also edits, not on the items alone. */}
+          <LineItemGrid value={form} onChange={patchForm} disabled={creating} />
           <p className="text-[11px] text-slate-500">
-            {renderMode === "substitute"
-              ? "Totals are shown for your benefit and are recalculated on the server before anything is printed."
-              : "Row count changed, so the invoice will be laid out fresh from the source's logo and header. Totals are recalculated on the server."}
+            The invoice is laid out fresh from the source&apos;s logo and header, so rows can be added
+            or removed freely. Totals are shown for your benefit and are recalculated on the server
+            before anything is printed.
           </p>
         </div>
 
@@ -261,7 +265,6 @@ function OutboundBuilderContent() {
           body={form}
           dirtySinceLastPreview={dirtySinceLastPreview}
           onDirtyCleared={() => setDirtySinceLastPreview(false)}
-          onUnlocatedFields={setUnlocatedFields}
           onDuplicateNumber={setDuplicateNumberError}
           disabled={creating}
         />

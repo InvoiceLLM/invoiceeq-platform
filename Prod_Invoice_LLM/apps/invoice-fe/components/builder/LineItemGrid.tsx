@@ -1,66 +1,55 @@
 "use client";
 
-import { Plus, Trash2, Layers, Copy } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
-import { computeTotals } from "@/lib/invoiceBuilderMath";
-import type { BuildItem, BuilderRenderMode } from "@/types/invoice";
+import { totalsFor } from "@/lib/invoiceBuilderMath";
+import type { BuildItem, BuildRequest } from "@/types/invoice";
 
 /**
  * Feature 20: the editable line-item grid of the Invoice Builder.
  *
- * Rows can be added and removed (founder decision D3). That choice is what
- * drives the layout pill in this component's header: BE Feature 17 renders the
- * new PDF by substituting values into the *source* PDF when the row count is
- * unchanged, and falls back to a fresh structured re-render when it is not
- * (`services/invoice_builder.py::plan_render_mode`). The pill mirrors that rule
- * client-side so the user knows which of the two looks they are going to get
- * *before* spending a preview round-trip on it. It is a prediction of the
- * server's decision, never an instruction to it — the render mode is not part
- * of the build request.
+ * Rows can be added and removed freely.
+ *
+ * FE Gap 462 (2026-09-05): this header used to carry a "Layout: exact copy /
+ * re-rendered" pill and a `predictRenderMode()` that mirrored the backend's
+ * `plan_render_mode()`. Both are deleted. There is one renderer now — every
+ * clone is re-rendered with the source's harvested branding — so there is no
+ * mode left to predict and nothing for the user to decide by adding a row.
+ *
+ * FE Gap 463 (2026-09-05): the grid now carries every figure a line prints —
+ * HSN/SAC, unit of measure, a per-line discount and a per-line tax rate — and
+ * the totals block carries the invoice-level discounts, any number of tax rates
+ * and the deductions. That is why the component takes the whole `BuildRequest`
+ * rather than `items` + `taxAmount`: the totals depend on all of it, and
+ * `totalsFor()` (the mirror of BE `totals_for()`) is the single place that
+ * knows how.
  *
  * Amounts are computed by `lib/invoiceBuilderMath.ts` for display only; the
- * server recomputes them from quantity × unit price.
+ * server recomputes them from the same inputs and prints its own result.
  */
 
 interface LineItemGridProps {
-  items: BuildItem[];
-  onChange: (items: BuildItem[]) => void;
-  /** Row count of the source invoice, i.e. `build-defaults` as first loaded. */
-  sourceItemCount: number;
-  currency: string | null;
-  taxAmount: number | string | null;
-  onTaxChange: (next: string) => void;
+  value: BuildRequest;
+  onChange: (patch: Partial<BuildRequest>) => void;
   disabled?: boolean;
 }
 
 const BLANK_ITEM: BuildItem = { description: "", quantity: "1", unit_price: "0" };
 
-/** Mirrors BE `plan_render_mode()`: substitution only survives an unchanged row count. */
-export function predictRenderMode(itemCount: number, sourceItemCount: number): BuilderRenderMode {
-  return itemCount === sourceItemCount ? "substitute" : "rerender";
-}
-
-export default function LineItemGrid({
-  items,
-  onChange,
-  sourceItemCount,
-  currency,
-  taxAmount,
-  onTaxChange,
-  disabled,
-}: LineItemGridProps) {
-  const totals = computeTotals(items, taxAmount);
-  const renderMode = predictRenderMode(items.length, sourceItemCount);
+export default function LineItemGrid({ value, onChange, disabled }: LineItemGridProps) {
+  const items = value.items;
+  const currency = value.currency;
+  const totals = totalsFor(value);
 
   const updateItem = (index: number, patch: Partial<BuildItem>) => {
-    onChange(items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+    onChange({ items: items.map((item, i) => (i === index ? { ...item, ...patch } : item)) });
   };
 
-  const addRow = () => onChange([...items, { ...BLANK_ITEM }]);
-  const removeRow = (index: number) => onChange(items.filter((_, i) => i !== index));
+  const addRow = () => onChange({ items: [...items, { ...BLANK_ITEM }] });
+  const removeRow = (index: number) => onChange({ items: items.filter((_, i) => i !== index) });
 
   const inputClass =
-    "w-full rounded-md border border-[#222D3D] bg-[#1E293B] px-2 py-1.5 text-xs text-slate-200 outline-none transition-colors focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60";
+    "w-full rounded-md border border-[#222D3D] bg-[#1E293B] px-2 py-1.5 text-xs text-slate-200 outline-none transition-colors placeholder:text-slate-600 focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60";
 
   return (
     <section
@@ -74,33 +63,20 @@ export default function LineItemGrid({
             {items.length} rows
           </span>
         </div>
-        <span
-          data-testid="layout-pill"
-          data-render-mode={renderMode}
-          title={
-            renderMode === "substitute"
-              ? "The row count matches the source, so the new PDF is your source PDF with the changed values substituted in place — identical layout, logo and footer."
-              : "You added or removed a row, so the invoice is laid out fresh using the logo and header harvested from the source. The look will be close but not identical."
-          }
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
-            renderMode === "substitute"
-              ? "border-emerald-600/50 bg-emerald-500/10 text-emerald-300"
-              : "border-amber-600/50 bg-amber-500/10 text-amber-300"
-          }`}
-        >
-          {renderMode === "substitute" ? <Copy size={11} /> : <Layers size={11} />}
-          {renderMode === "substitute" ? "Layout: exact copy" : "Layout: re-rendered"}
-        </span>
       </div>
 
       <div className="overflow-x-auto p-3">
-        <table className="w-full border-collapse text-left">
+        <table className="w-full min-w-[720px] border-collapse text-left">
           <thead>
             <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
               <th className="pb-2 pr-3 font-medium">#</th>
               <th className="pb-2 pr-3 font-medium">Description</th>
+              <th className="pb-2 pr-3 font-medium">HSN/SAC</th>
               <th className="pb-2 pr-3 text-right font-medium">Qty</th>
+              <th className="pb-2 pr-3 font-medium">UOM</th>
               <th className="pb-2 pr-3 text-right font-medium">Unit Price</th>
+              <th className="pb-2 pr-3 text-right font-medium">Disc %</th>
+              <th className="pb-2 pr-3 text-right font-medium">Tax %</th>
               <th className="pb-2 pr-3 text-right font-medium">Amount</th>
               <th className="pb-2 text-right font-medium"></th>
             </tr>
@@ -121,6 +97,16 @@ export default function LineItemGrid({
                 </td>
                 <td className="py-2 pr-3">
                   <input
+                    className={`${inputClass} w-24`}
+                    value={item.hsn_sac_code ?? ""}
+                    disabled={disabled}
+                    aria-label={`HSN or SAC code row ${index + 1}`}
+                    data-testid={`item-hsn-sac-${index}`}
+                    onChange={(e) => updateItem(index, { hsn_sac_code: e.target.value })}
+                  />
+                </td>
+                <td className="py-2 pr-3">
+                  <input
                     className={`${inputClass} text-right`}
                     value={String(item.quantity ?? "")}
                     disabled={disabled}
@@ -132,6 +118,16 @@ export default function LineItemGrid({
                 </td>
                 <td className="py-2 pr-3">
                   <input
+                    className={`${inputClass} w-20`}
+                    value={item.uom ?? ""}
+                    disabled={disabled}
+                    aria-label={`Unit of measure row ${index + 1}`}
+                    data-testid={`item-uom-${index}`}
+                    onChange={(e) => updateItem(index, { uom: e.target.value })}
+                  />
+                </td>
+                <td className="py-2 pr-3">
+                  <input
                     className={`${inputClass} text-right`}
                     value={String(item.unit_price ?? "")}
                     disabled={disabled}
@@ -139,6 +135,32 @@ export default function LineItemGrid({
                     aria-label={`Unit price row ${index + 1}`}
                     data-testid={`item-unit-price-${index}`}
                     onChange={(e) => updateItem(index, { unit_price: e.target.value })}
+                  />
+                </td>
+                <td className="py-2 pr-3">
+                  <input
+                    className={`${inputClass} w-20 text-right`}
+                    value={item.discount_percent == null ? "" : String(item.discount_percent)}
+                    disabled={disabled}
+                    inputMode="decimal"
+                    aria-label={`Discount percent row ${index + 1}`}
+                    data-testid={`item-discount-percent-${index}`}
+                    onChange={(e) =>
+                      updateItem(index, { discount_percent: e.target.value === "" ? null : e.target.value })
+                    }
+                  />
+                </td>
+                <td className="py-2 pr-3">
+                  <input
+                    className={`${inputClass} w-20 text-right`}
+                    value={item.tax_percent == null ? "" : String(item.tax_percent)}
+                    disabled={disabled}
+                    inputMode="decimal"
+                    aria-label={`Tax percent row ${index + 1}`}
+                    data-testid={`item-tax-percent-${index}`}
+                    onChange={(e) =>
+                      updateItem(index, { tax_percent: e.target.value === "" ? null : e.target.value })
+                    }
                   />
                 </td>
                 <td
@@ -176,32 +198,254 @@ export default function LineItemGrid({
         </button>
       </div>
 
-      {/* Totals — read-only, recomputed on every keystroke, and recomputed
-          again authoritatively by the server (see lib/invoiceBuilderMath.ts). */}
+      {/* Totals — read-only figures, recomputed on every keystroke, and
+          recomputed again authoritatively by the server (see
+          lib/invoiceBuilderMath.ts). FE Gap 463: the discount, per-rate tax and
+          deduction rows are editable here because they are money, and money
+          belongs next to the figures it changes. */}
       <div className="border-t border-[#222D3D] bg-[#0B1220] px-4 py-3">
-        <dl className="ml-auto flex w-full max-w-xs flex-col gap-1.5 text-xs">
+        <dl className="ml-auto flex w-full max-w-md flex-col gap-1.5 text-xs">
           <div className="flex items-center justify-between text-slate-400">
             <dt>Subtotal</dt>
             <dd data-testid="totals-subtotal" className="font-mono text-slate-200">
               {formatCurrency(totals.subtotal, currency)}
             </dd>
           </div>
-          <div className="flex items-center justify-between text-slate-400">
-            <dt>
-              <label htmlFor="builder-tax-amount">Tax</label>
-            </dt>
-            <dd>
+
+          {value.discounts.map((discount, index) => (
+            <div key={index} className="flex items-center gap-1.5" data-testid={`discount-row-${index}`}>
               <input
-                id="builder-tax-amount"
-                className={`${inputClass} w-28 text-right`}
-                value={taxAmount == null ? "" : String(taxAmount)}
+                className={`${inputClass} flex-1`}
+                placeholder="Discount type"
+                aria-label={`Discount type ${index + 1}`}
+                data-testid={`discount-type-${index}`}
+                value={discount.discount_type ?? ""}
                 disabled={disabled}
-                inputMode="decimal"
-                data-testid="tax-amount"
-                onChange={(e) => onTaxChange(e.target.value)}
+                onChange={(e) =>
+                  onChange({
+                    discounts: value.discounts.map((d, i) =>
+                      i === index ? { ...d, discount_type: e.target.value } : d
+                    ),
+                  })
+                }
               />
-            </dd>
+              <input
+                className={`${inputClass} w-16 text-right`}
+                placeholder="%"
+                inputMode="decimal"
+                aria-label={`Discount percent ${index + 1}`}
+                data-testid={`discount-percent-${index}`}
+                value={discount.percent == null ? "" : String(discount.percent)}
+                disabled={disabled}
+                onChange={(e) =>
+                  onChange({
+                    discounts: value.discounts.map((d, i) =>
+                      i === index ? { ...d, percent: e.target.value === "" ? null : e.target.value } : d
+                    ),
+                  })
+                }
+              />
+              <input
+                className={`${inputClass} w-24 text-right`}
+                placeholder="amount"
+                inputMode="decimal"
+                aria-label={`Discount amount ${index + 1}`}
+                data-testid={`discount-amount-${index}`}
+                value={discount.amount == null ? "" : String(discount.amount)}
+                disabled={disabled}
+                onChange={(e) =>
+                  onChange({
+                    discounts: value.discounts.map((d, i) =>
+                      i === index ? { ...d, amount: e.target.value === "" ? null : e.target.value } : d
+                    ),
+                  })
+                }
+              />
+              <span className="w-24 shrink-0 text-right font-mono text-slate-300" data-testid={`discount-total-${index}`}>
+                −{formatCurrency(totals.discount_lines[index] ?? 0, currency)}
+              </span>
+              <button
+                type="button"
+                onClick={() => onChange({ discounts: value.discounts.filter((_, i) => i !== index) })}
+                disabled={disabled}
+                aria-label={`Remove discount ${index + 1}`}
+                data-testid={`remove-discount-${index}`}
+                className="inline-flex shrink-0 items-center rounded-lg p-1 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+
+          {value.taxes.length === 0 ? (
+            <div className="flex items-center justify-between text-slate-400">
+              <dt>
+                <label htmlFor="builder-tax-amount">Tax</label>
+              </dt>
+              <dd>
+                <input
+                  id="builder-tax-amount"
+                  className={`${inputClass} w-28 text-right`}
+                  value={value.tax_amount == null ? "" : String(value.tax_amount)}
+                  disabled={disabled}
+                  inputMode="decimal"
+                  data-testid="tax-amount"
+                  onChange={(e) => onChange({ tax_amount: e.target.value })}
+                />
+              </dd>
+            </div>
+          ) : (
+            value.taxes.map((tax, index) => (
+              <div key={index} className="flex items-center gap-1.5" data-testid={`tax-row-${index}`}>
+                <input
+                  className={`${inputClass} flex-1`}
+                  placeholder="Tax type (e.g. CGST)"
+                  aria-label={`Tax type ${index + 1}`}
+                  data-testid={`tax-type-${index}`}
+                  value={tax.tax_type ?? ""}
+                  disabled={disabled}
+                  onChange={(e) =>
+                    onChange({
+                      taxes: value.taxes.map((t, i) =>
+                        i === index ? { ...t, tax_type: e.target.value } : t
+                      ),
+                    })
+                  }
+                />
+                <input
+                  className={`${inputClass} w-16 text-right`}
+                  placeholder="%"
+                  inputMode="decimal"
+                  aria-label={`Tax rate ${index + 1}`}
+                  data-testid={`tax-rate-${index}`}
+                  value={tax.rate_percent == null ? "" : String(tax.rate_percent)}
+                  disabled={disabled}
+                  onChange={(e) =>
+                    onChange({
+                      taxes: value.taxes.map((t, i) =>
+                        i === index ? { ...t, rate_percent: e.target.value === "" ? null : e.target.value } : t
+                      ),
+                    })
+                  }
+                />
+                <input
+                  className={`${inputClass} w-24 text-right`}
+                  placeholder="amount"
+                  inputMode="decimal"
+                  aria-label={`Tax amount ${index + 1}`}
+                  data-testid={`tax-amount-${index}`}
+                  value={tax.amount == null ? "" : String(tax.amount)}
+                  disabled={disabled}
+                  onChange={(e) =>
+                    onChange({
+                      taxes: value.taxes.map((t, i) =>
+                        i === index ? { ...t, amount: e.target.value === "" ? null : e.target.value } : t
+                      ),
+                    })
+                  }
+                />
+                <span className="w-24 shrink-0 text-right font-mono text-slate-300" data-testid={`tax-total-${index}`}>
+                  {formatCurrency(totals.tax_lines[index] ?? 0, currency)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onChange({ taxes: value.taxes.filter((_, i) => i !== index) })}
+                  disabled={disabled}
+                  aria-label={`Remove tax ${index + 1}`}
+                  data-testid={`remove-tax-${index}`}
+                  className="inline-flex shrink-0 items-center rounded-lg p-1 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))
+          )}
+
+          {value.deductions.map((deduction, index) => (
+            <div key={index} className="flex items-center gap-1.5" data-testid={`deduction-row-${index}`}>
+              <input
+                className={`${inputClass} flex-1`}
+                placeholder="Deduction (e.g. Retention)"
+                aria-label={`Deduction type ${index + 1}`}
+                data-testid={`deduction-type-${index}`}
+                value={deduction.deduction_type ?? ""}
+                disabled={disabled}
+                onChange={(e) =>
+                  onChange({
+                    deductions: value.deductions.map((d, i) =>
+                      i === index ? { ...d, deduction_type: e.target.value } : d
+                    ),
+                  })
+                }
+              />
+              <input
+                className={`${inputClass} w-24 text-right`}
+                placeholder="amount"
+                inputMode="decimal"
+                aria-label={`Deduction amount ${index + 1}`}
+                data-testid={`deduction-amount-${index}`}
+                value={deduction.amount == null ? "" : String(deduction.amount)}
+                disabled={disabled}
+                onChange={(e) =>
+                  onChange({
+                    deductions: value.deductions.map((d, i) =>
+                      i === index ? { ...d, amount: e.target.value === "" ? null : e.target.value } : d
+                    ),
+                  })
+                }
+              />
+              <span className="w-24 shrink-0 text-right font-mono text-slate-300" data-testid={`deduction-total-${index}`}>
+                −{formatCurrency(totals.deduction_lines[index] ?? 0, currency)}
+              </span>
+              <button
+                type="button"
+                onClick={() => onChange({ deductions: value.deductions.filter((_, i) => i !== index) })}
+                disabled={disabled}
+                aria-label={`Remove deduction ${index + 1}`}
+                data-testid={`remove-deduction-${index}`}
+                className="inline-flex shrink-0 items-center rounded-lg p-1 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-40"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            <button
+              type="button"
+              onClick={() =>
+                onChange({ discounts: [...value.discounts, { discount_type: "", percent: null, amount: null }] })
+              }
+              disabled={disabled}
+              data-testid="add-discount"
+              className="inline-flex items-center gap-1 rounded-lg border border-blue-500/40 bg-blue-600/10 px-2 py-1 text-[11px] font-semibold text-blue-300 transition hover:bg-blue-600/25 disabled:opacity-50"
+            >
+              <Plus className="h-3 w-3" /> Discount
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onChange({ taxes: [...value.taxes, { tax_type: "", rate_percent: null, amount: null }] })
+              }
+              disabled={disabled}
+              data-testid="add-tax"
+              className="inline-flex items-center gap-1 rounded-lg border border-blue-500/40 bg-blue-600/10 px-2 py-1 text-[11px] font-semibold text-blue-300 transition hover:bg-blue-600/25 disabled:opacity-50"
+            >
+              <Plus className="h-3 w-3" /> Tax rate
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onChange({ deductions: [...value.deductions, { deduction_type: "", amount: null }] })
+              }
+              disabled={disabled}
+              data-testid="add-deduction"
+              className="inline-flex items-center gap-1 rounded-lg border border-blue-500/40 bg-blue-600/10 px-2 py-1 text-[11px] font-semibold text-blue-300 transition hover:bg-blue-600/25 disabled:opacity-50"
+            >
+              <Plus className="h-3 w-3" /> Deduction
+            </button>
           </div>
+
           <div className="flex items-center justify-between border-t border-[#222D3D] pt-1.5 text-sm font-semibold text-slate-100">
             <dt>Total</dt>
             <dd data-testid="totals-grand-total" className="font-mono">

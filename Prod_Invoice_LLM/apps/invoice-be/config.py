@@ -166,7 +166,30 @@ class Settings(BaseSettings):
     # (0.90/0.92/0.93/0.95/0.95/0.95 -- nothing observed between 0.60 and 0.90).
     # See `services/document_type_classifier.py::DOC_TYPE_CONFIDENCE_THRESHOLD`
     # for the basis and `tests/fixtures/doc_types/MANIFEST.md` for both numbers.
-    ENABLE_GENERIC_EXTRACTION: bool = False
+    #
+    # ── DEFAULT FLIPPED False -> True, 2026-09-05 (Gap 461) ───────────────────
+    # Founder decision: the flag is already ON in Azure and "should be always
+    # on", so the fail-closed default above had stopped protecting anything and
+    # started doing harm -- a fresh checkout, a new environment, and CI each ran
+    # a DIFFERENT pipeline from the one actually serving users, which is the
+    # condition under which a bug reaches production having passed every local
+    # test. The default now matches the deployment.
+    #
+    # What this does NOT do: it does not satisfy the build/rollout gates above,
+    # and it does not delete the flag-OFF branch (that is still task R12's
+    # removal criterion, unmet -- (c)'s 7-day soak has not been run). The gates
+    # are recorded as met in practice rather than on paper: the rollout gate's
+    # two halves both exist (`GET /documents` = G14, and the FE surface at
+    # `app/documents/page.tsx` = R5(c), commit 510c444), and `test_documents_
+    # table.py` / `test_document_type_classifier.py` / `test_document_delete.py`
+    # ran 243 passed against real Postgres on 2026-09-05.
+    #
+    # KNOWN CONSEQUENCE, accepted knowingly: the 27 flag-OFF parity tests in
+    # `tests/test_generic_extraction.py` read this setting at import time
+    # instead of forcing it, so they now fail on EVERY machine rather than only
+    # on ones with `ENABLE_GENERIC_EXTRACTION=true` in `.env`. That is a defect
+    # in those tests, not in this feature -- see Gap 461 in the tracker.
+    ENABLE_GENERIC_EXTRACTION: bool = True
     # Gap 117: which deployment this process is. Read only by ops scripts that
     # must never touch production data (scripts/grant_test_plan.py), never by
     # request-handling code -- nothing about the product's behaviour should
@@ -379,7 +402,12 @@ class Settings(BaseSettings):
 
     AZURE_OPENAI_ENDPOINT: str = ""
     AZURE_OPENAI_API_KEY: str = ""
-    AZURE_OPENAI_API_VERSION: str = "2024-02-15-preview"
+    # Gap 465 (2026-09-05): GA data-plane version. Was `2024-02-15-preview`, a
+    # preview from before structured outputs existed; `2024-10-21` is GA and was
+    # verified live against the gpt-5-mini deployment with a strict json_schema
+    # response_format on 2026-09-05. This is the ONE place the version lives in
+    # code; infra threads the same value through `azureOpenAiApiVersion`.
+    AZURE_OPENAI_API_VERSION: str = "2024-10-21"
     # Feature 6.1 item A2: the deployment used for the *non-reasoning* half of a
     # chat turn -- routing, summarising rows already computed, answering from
     # retrieved text, and narrating a diff table deterministic code built. None of
@@ -427,7 +455,22 @@ class Settings(BaseSettings):
     # truncated query fails loudly in `execute_generated_sql` rather than quietly.
     AZURE_OPENAI_SQL_MAX_COMPLETION_TOKENS: int = 0
 
-    AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-4o-mini"  # Azure uses deployment name instead of model name
+    # Azure uses the *deployment* name, not the model name. Default matches the
+    # one deployment every environment runs on (was `gpt-4o-mini`, a retired
+    # model no environment has had since Jul 2026 -- Gap 465).
+    AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-5-mini"
+    # Gap 465: deployment for LLM-as-judge (agent eval, production quality
+    # judge). Empty = same as AZURE_OPENAI_DEPLOYMENT_NAME. Exists so a candidate
+    # swap of the primary can be graded by a model that did not change.
+    AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME: str = ""
+    # Gap 465: the two non-OpenAI model choices, previously hardcoded at their
+    # single call sites (`queue_worker/handlers.py::_run_ocr` and
+    # `chroma_client.py::get_embedding_model`). Changing EMBEDDING_MODEL_NAME
+    # invalidates every Chroma collection -- re-embed with
+    # `scripts/reembed_chroma_collections.py`; the Redis query cache key carries
+    # the model name so it does not need flushing.
+    DOC_INTEL_MODEL_ID: str = "prebuilt-invoice"
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
     AZURE_DOC_INTEL_ENDPOINT: str = ""
     AZURE_DOC_INTEL_KEY: str = ""
     # Optional additional Doc Intelligence resources for horizontal scale-out

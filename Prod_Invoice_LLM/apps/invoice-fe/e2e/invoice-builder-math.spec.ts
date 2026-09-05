@@ -62,12 +62,76 @@ test.describe("computeTotals — mirrors BE compute_totals", () => {
   });
 
   test("no items is a zero total, not an error", () => {
-    expect(computeTotals([], 0)).toEqual({
-      amounts: [],
-      subtotal: 0,
-      tax_amount: 0,
-      grand_total: 0,
+    // FE Gap 463 widened `Totals`; the four fields this case has always been
+    // about are still the four that matter, so it asserts on them by name
+    // rather than on the whole object.
+    const totals = computeTotals([], 0);
+    expect(totals.amounts).toEqual([]);
+    expect(totals.subtotal).toBe(0);
+    expect(totals.tax_amount).toBe(0);
+    expect(totals.grand_total).toBe(0);
+  });
+});
+
+/**
+ * FE Gap 463 — the widened arithmetic. Each case here is the same case BE
+ * `tests/test_invoice_builder.py` asserts against `compute_totals()`, for the
+ * same reason the block above exists: if the two disagree, the user is shown a
+ * total the server will not print.
+ */
+test.describe("computeTotals — Gap 463 discounts, rates and deductions", () => {
+  test("a per-line discount comes off before the per-line tax", () => {
+    const totals = computeTotals(
+      [{ quantity: "10", unit_price: "100", discount_percent: "10", tax_percent: "18" }],
+      null
+    );
+    expect(totals.line_discounts).toEqual([100]);
+    expect(totals.amounts).toEqual([900]);
+    expect(totals.line_taxes).toEqual([162]);
+    expect(totals.subtotal).toBe(900);
+    expect(totals.tax_amount).toBe(162);
+    expect(totals.grand_total).toBe(1062);
+  });
+
+  test("every rate is charged on the discounted base, then deductions come off", () => {
+    const totals = computeTotals([{ quantity: "1", unit_price: "1000" }], null, {
+      discounts: [{ discount_type: "Trade", percent: "10", amount: null }],
+      taxes: [
+        { tax_type: "CGST", rate_percent: "9", amount: null },
+        { tax_type: "SGST", rate_percent: "9", amount: null },
+      ],
+      deductions: [{ deduction_type: "Retention", amount: "50" }],
     });
+    expect(totals.discount_lines).toEqual([100]);
+    expect(totals.discount_total).toBe(100);
+    expect(totals.tax_lines).toEqual([81, 81]);
+    expect(totals.tax_amount).toBe(162);
+    expect(totals.deduction_total).toBe(50);
+    expect(totals.grand_total).toBe(1012);
+  });
+
+  test("a typed amount wins over the typed rate, at every level", () => {
+    const totals = computeTotals([{ quantity: "1", unit_price: "1000" }], null, {
+      taxes: [{ tax_type: "VAT", rate_percent: "9", amount: "100" }],
+    });
+    expect(totals.tax_lines).toEqual([100]);
+    expect(totals.grand_total).toBe(1100);
+  });
+
+  test("without any of the new fields the old arithmetic is reproduced exactly", () => {
+    const totals = computeTotals(
+      [
+        { quantity: "5", unit_price: "250" },
+        { quantity: "2", unit_price: "175" },
+      ],
+      "40"
+    );
+    expect(totals.amounts).toEqual([1250, 350]);
+    expect(totals.subtotal).toBe(1600);
+    expect(totals.tax_amount).toBe(40);
+    expect(totals.grand_total).toBe(1640);
+    expect(totals.discount_total).toBe(0);
+    expect(totals.deduction_total).toBe(0);
   });
 });
 

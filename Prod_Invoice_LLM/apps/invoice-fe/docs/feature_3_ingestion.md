@@ -171,3 +171,104 @@ changes and re-running: identical 4 failed / 11 passed at HEAD without them. **N
 nothing was run against a backend that actually returns `doc_type`, because none exists —
 the present-case tests prove the rendering, not the wiring to a real payload, and that
 end-to-end claim belongs to functional-tester after G9 lands.
+
+### The durable ingestion History screen — FE Gap 464 (2026-09-05)
+
+**Additive section. Nothing above is rewritten** (CONVENTIONS hard rule 4). The
+Ingest screen itself, including `StatusTable`, is **unchanged** by this gap.
+
+#### The gap
+
+Three ingestion surfaces existed and none of them was durable:
+
+| Surface | What it showed | Why it was not enough |
+|---|---|---|
+| Ingest `StatusTable` | the batch you just dropped | client state — clears on navigation |
+| `app/documents/page.tsx` | the `documents` table | a separate page for a population the user never thinks of as one; silent about invoices, email and connector runs |
+| Admin console dropped-mail list | rejected inbound email | operator audience, not the tenant whose invoice was refused |
+
+The concrete symptom the founder reported: BE Feature 27 decision E10 routes a
+classified non-invoice to the `documents` table and DELETES the placeholder
+`invoice` row in the same transaction, so a user uploads a delivery note and
+watches the row **vanish from the Ingest status table with no message**.
+
+#### What was built
+
+One **History** screen at `/history`, and a net-zero sidebar swap: "Documents"
+out, "History" in. `app/documents/page.tsx` is deleted.
+
+**It is a LOG, not a data table** (founder ruling). One lightweight row per
+ingestion *run*:
+
+> `Today 09:12 · Upload · Receiving · 3 files: 1 loaded, 1 not loaded, 1 rejected`
+
+Nothing heavy is fetched to render the list. Expanding a row is the **only**
+thing that fetches the full records — extracted fields, alerts, line items,
+`doc_attributes` — from `GET /api/ingestion-history/{runId}/files`. This mirrors
+the Autopilot Sync History contract (BE Gap 427 / FE Gap 428) exactly, and
+`IngestionHistoryTable.tsx` is modelled on `AutopilotHistoryTable.tsx`, which
+already had expand, optimistic dismiss, clear-all and inline action errors.
+
+**Both outcomes are rows.** The `outcome_label` on every file is computed by the
+backend in deterministic code and rendered verbatim — "Loaded — VERIFIED", "Not
+loaded — Delivery note", "Rejected — no invoice content". This component never
+decides whether a file loaded. A not-loaded row is styled sky, **not red**: a
+delivery note that did not become a payable is the system working correctly, and
+colouring it as a failure is what makes a user raise a ticket about a document
+that is perfectly fine.
+
+**Archive is the only word offered.** Not "hide", not "delete". Archiving writes
+`archived_at` on the log row and changes nothing about the invoice or document;
+real invoice deletion stays on the Audit Queue where the consequence is visible.
+Two words for one behaviour is what makes users believe one of them removes the
+invoice. Archive / restore / archive-all, plus an Archived filter, and a
+permanent footnote on the panel stating what archiving does.
+
+#### File coordinates
+
+| File | Named export / function | What it does |
+|---|---|---|
+| `app/history/page.tsx` | `HistoryPage()` | thin shell — heading plus the table, mirroring how `/ingestion` hosts `AutopilotHistoryTable` |
+| `components/ingestion/IngestionHistoryTable.tsx` | `IngestionHistoryTable()` | the whole screen: list, filters, lazy expand, archive/restore/archive-all, pagination |
+| ″ | `RunStatusChip`, `OutcomeBadge`, `RunFileList`, `FilterChip` | presentation; `OutcomeBadge`'s text is the backend's `outcome_label`, verbatim |
+| ″ | `recordSummary()`, `recordCounts()` | pick the six most useful fields per record kind, and the line-item/alert/attribute counts. Not a full field dump — the whole record is on the wire either way, so adding a field here is a rendering change, not an API change |
+| `app/api/ingestion-history/route.ts` | `GET` | proxy → BE `GET /ingestion-history`; query string forwarded verbatim |
+| `app/api/ingestion-history/[runId]/files/route.ts` | `GET` | the expand payload |
+| `app/api/ingestion-history/[runId]/archive/route.ts` | `POST` | archive one run |
+| `app/api/ingestion-history/[runId]/unarchive/route.ts` | `POST` | restore one run |
+| `app/api/ingestion-history/archive-all/route.ts` | `POST` | archive every visible run |
+| `components/layout/Sidebar.tsx` | `menuItems` | "Documents" → "History", same `canAudit` gate |
+
+`app/api/documents/route.ts` is **kept**. BE `GET /documents` is unchanged and
+still served; deleting its only browser-reachable route would be an unrelated
+removal of a live endpoint's access path, not part of this gap.
+
+POST, not DELETE, on the archive routes — deliberately. The HTTP method is part
+of the vocabulary a reader of these files sees, and this screen deletes nothing.
+
+#### Filters
+
+Source chips (All · Manual · Email · Connector · Autopilot), direction chips
+(All · Receiving · Sending) and an Archived toggle. Each is forwarded as a query
+parameter (`trigger`, `flow_direction`, `archived`) and each change resets to
+page 1 — page 3 of a different filter is not a place the user asked to be.
+
+#### Verification (2026-09-05)
+
+`node node_modules/typescript/bin/tsc --noEmit` → **exit 0**, no output (`npx
+tsc` resolves to the wrong package in this checkout).
+
+`npx playwright test e2e/ingestion-history.spec.ts` → **5 passed (54.1s)**,
+against a real `next dev` server with every `/api/**` call stubbed (the house
+pattern). The five: a document-only run renders as an explained row with status
+"Not loaded" and the empty state absent; the full record is fetched **only** on
+expand (`filesCalls` asserted 0 before the click and 1 after) and renders the
+evidence, doc number, line-item and attribute counts; the source/direction/
+archived filters reach the backend as query parameters; the panel offers
+"Archive all" and states invoices are never deleted here, with **zero** buttons
+matching `/delete/i` or `/^hide/i`; and the sidebar swap is net zero — a
+"History" link present, a "Documents" link absent.
+
+**Not verified, and not claimed:** no live end-to-end run against a real
+backend. Every `/api/**` call in the spec is stubbed, so this proves the
+rendering and the request shapes, not the wiring to real data.

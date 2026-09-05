@@ -1730,7 +1730,7 @@ this block is what actually happened, so a reader does not have to diff them.
 | **R9** — `ADVISORY` family (A7) | `[x]` | `0cda980` |
 | **R10** — classifier pre-checks, Gutschrift, `rule_era` (A8) | `[x]` | `c82a751` |
 | **R11** — fixture matrix + A-series tests | `[x]` — **8 new fixtures for A5's four uncovered types (24 total, 13/14 values), all 24 measured through the real classifier: 24/24 correct, 24/24 deterministic, zero model calls.** `DOC_TYPE_CONFIDENCE_THRESHOLD` recalibrated 0.6 → 0.75 on six measured confidences (0.90/0.92/0.93/0.95/0.95/0.95, nothing between 0.60 and 0.90); both numbers kept in `MANIFEST.md` per the standing ruling. Found and fixed **Gap 396** (German transliteration missing from the synonym table — three fixtures were paying for an LLM call and getting the right answer by luck). `tests/test_a_series_fixtures.py` → 55 passed | `478fb89` |
-| **R5** — rollout gate | `[x]` — **(a) FOUNDER RULING given and built**: `GET /config/features` returns the process-wide `ENABLE_*` flags as a flat boolean map, tenant-agnostic, allow-listed **structurally** (name prefix + bool type) rather than by a curated list a forgetful edit could add a secret to; `tests/test_config_features.py` → 7, weighted towards what it must NOT publish. **(b) DropZone widened on BOTH guards** from one flag-derived list — FE Gap 378 closed. **(c) documents-list surface** (`510c444`) | `eb22a7e`, `510c444` |
+| **R5** — rollout gate | `[x]` — **(a) FOUNDER RULING given and built**: `GET /config/features` returns the process-wide `ENABLE_*` flags as a flat boolean map, tenant-agnostic, allow-listed **structurally** (name prefix + bool type) rather than by a curated list a forgetful edit could add a secret to; `tests/test_config_features.py` → 7, weighted towards what it must NOT publish. **(b) DropZone widened on BOTH guards** from one flag-derived list — FE Gap 378 closed. **(c) documents-list surface** (`510c444`) — **superseded 2026-09-05 by Gap 464: the surface MOVED.** `app/documents/page.tsx` is deleted and the sidebar's "Documents" entry is replaced by "History" (`app/history/page.tsx`). R5(c)'s requirement — that a classified non-invoice is visible to whoever uploaded it — is still met, and met better: it is now an explained row in the ingestion log ("Not loaded — Delivery note") in the same list as the invoices from the same upload, instead of a separate page listing only `documents`. The rollout gate is unaffected and stays closed. See §"Superseded (2026-09-05) — R5(c)'s surface moved to the History screen (Gap 464)" | `eb22a7e`, `510c444`, Gap 464 |
 | **R6** — `docs_` lifecycle | `[x]` — the functions exist (`chroma_client.py:639/676/704/723`), Gap 389 withdrew the "defect", and the **sweep wiring landed at Gap 385** (`ORPHAN_SWEEP_PREFIXES`, `delete_tenant_document_collection()` in the sandbox sweep). What was genuinely missing was the **soft-delete path itself** — `deleted_at` existed on the model and nothing ever set it. Now `DELETE /documents/{id}` plus **Gap 397**'s batch-rollback fix, both dropping chunks. Gap 381 item 3 → explicitly deferred as **Gap 399**, anchored by a test | see §10B R6 build note |
 | **R12** — flag-removal criterion text | `[x]` — the four-part criterion is now in `config.py`'s `ENABLE_GENERIC_EXTRACTION` block, with build-gate item 3 marked satisfied and the 0.6 → 0.75 recalibration recorded there so the docstring does not keep citing a number that has changed | — |
 
@@ -2912,3 +2912,62 @@ The estimate explicitly **excludes** anything in Feature 26.1, which is a
 separate spec with its own estimate. If both are wanted, sequence Feature 27
 first — 26.1's Tier-3 vector discovery and its per-type answer behaviour both
 consume this feature's `doc_type`.
+
+---
+
+## Superseded (2026-09-05) — R5(c)'s surface moved to the History screen (Gap 464)
+
+**Additive note. Nothing above is rewritten** (CONVENTIONS hard rule 4); this
+section records what changed underneath task R5(c) and why.
+
+### What R5(c) shipped, and the part of the problem it did not cover
+
+R5(c) closed the rollout gate by building `app/documents/page.tsx` — a sidebar
+page listing the `documents` table, consuming `GET /documents` (G14). That was
+correct for the gate as written: decision E10 deletes the placeholder `invoice`
+row, so without *some* reader a classified delivery note was invisible.
+
+What the founder observed once it was in front of users is that it only answers
+half the question. The user's experience is not "where are my documents"; it is
+"I uploaded five files and one of them vanished from the status table with no
+message". A separate page listing only non-invoices cannot answer that, because:
+
+* the Ingest status table is **client state that clears on navigation**, so
+  there was no durable record of the upload at all once the page was left;
+* email-in and connector imports had **no surface anywhere**, and a rejected
+  inbound mail (`dropped_inbound_emails`) was visible **only in the Admin
+  console** — an operator surface, the wrong audience for the tenant whose
+  invoice was refused;
+* the page listed a population (`documents`) that the user never thought of as
+  a population. They uploaded *files*; some became invoices and some did not.
+
+### What replaced it (BE/FE Gap 464)
+
+One **History** screen, a net-zero sidebar swap: "Documents" out, "History" in,
+and `app/documents/page.tsx` deleted. It is a **log, not a data table** — one
+lightweight row per ingestion *run*, from any door (manual upload, email,
+connector, Autopilot), with the full record fetched only when a row is expanded.
+
+The E10 consequence is now stated rather than hidden: a non-invoice is a normal
+row reading **"Not loaded — Delivery note"**, next to the invoices from the same
+upload reading **"Loaded — VERIFIED"**. Both outcomes are rows; neither is a
+disappearance.
+
+`GET /documents` and `GET /documents/{id}` (G14) are **unchanged and still
+served** — the History drill-down reads `Document` rows directly through the new
+router, and the endpoints remain the tenant-facing read surface for that table.
+
+### What did NOT change, and must not
+
+The reason `documents` is a separate table (this spec's E10, and the `Document`
+model docstring) is untouched, and Gap 464 is **presentation-only**: a
+`Document` row never enters `invoice` or any aggregate. That is asserted, not
+assumed — `tests/test_ingestion_history.py::test_h3_history_surface_does_not_move_dashboard_aggregates`
+brackets every endpoint the gap added, **including the archive writes**, around
+a byte-identical `/dashboard/metrics` comparison. It is deliberately the same
+construction as this spec's T-E10-2 (the Gap 329-shaped test): an implementation
+that read cleanly but stamped something on `invoice` when archiving would pass
+T-E10-2 and fail this one.
+
+The rollout gate stays **closed**. R5(c)'s requirement is met by
+`app/history/page.tsx` in place of `app/documents/page.tsx`.

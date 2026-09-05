@@ -682,9 +682,48 @@ def verify_field_confidence(
 # Feature 17 — Invoice Builder read-back check
 # ---------------------------------------------------------------------------
 
-_BUILDER_TEXT_FIELDS = ("invoice_number", "customer_name")
+#: BE Gap 463: `currency` joins the text fields. BE Gap 467: `vendor_name` and
+#: `po_number` join them too, now that `OutboundInvoiceExtractionSchema`
+#: (agents/extraction_agent.py) carries both — this list was bounded by what the
+#: reader could report, not by what the builder prints.
+_BUILDER_TEXT_FIELDS = ("invoice_number", "customer_name", "currency", "vendor_name", "po_number")
+#: Compared only when the extractor actually returned a value. The renderer
+#: prints the currency once, inside the "Total Due (USD)" label; a model that
+#: returns null there is not evidence that the render is wrong, and asserting on
+#: it would put every built invoice on NEEDS_REVIEW for a soft reading.
+#: BE Gap 467 puts every newly-readable field on this same rule rather than the
+#: hard one: each is printed once, in a header or footer band, and "the reader
+#: did not report it" has to mean skip — the alternative is the exact failure
+#: Gap 463 avoided by excluding them, arriving one gap later by a different door.
+_BUILDER_SOFT_TEXT_FIELDS = ("currency", "vendor_name", "po_number")
+#: BE Gap 467. `(intent key, extraction key, the key on each intended row that
+#: holds the value the renderer actually prints)`. Both sides are lists of
+#: objects and the comparison is deliberately NOT a count: `services/
+#: pdf_render.py` prints addresses as From / Bill To / Ship To blocks and the
+#: extractor legitimately merges, splits or re-labels them, so an equal count is
+#: not what "the render is correct" means. What it means is that every value the
+#: builder printed is findable in what the reader returned — see
+#: `_readback_list_haystack()`.
+_BUILDER_LIST_FIELDS = (
+    ("addresses", "addresses", "text"),
+    ("references", "references", "value"),
+    ("payment_instructions", "payment_instructions", "details"),
+    ("tax_ids", "tax_ids", "value"),
+    ("compliance_metadata", "compliance_metadata", "value"),
+)
+#: BE Gap 467: per-line columns the builder prints and the reader now returns.
+_BUILDER_ITEM_FIELDS = ("hsn_sac_code", "uom")
 _BUILDER_DATE_FIELDS = ("invoice_date", "due_date")
-_BUILDER_MONEY_FIELDS = ("subtotal", "tax_amount", "grand_total")
+#: (key in `builder_intent["totals"]`, key in the extraction result). They were
+#: the same word for all three until Gap 463 added the discount comparison,
+#: where the builder's total is `discount_total` and the extractor's is
+#: `discount_amount`.
+_BUILDER_MONEY_FIELDS = (
+    ("subtotal", "subtotal"),
+    ("tax_amount", "tax_amount"),
+    ("grand_total", "grand_total"),
+    ("discount_total", "discount_amount"),
+)
 
 
 def _normalize_text(value) -> str:
@@ -705,6 +744,30 @@ def _as_float(value):
         return None
 
 
+def _readback_list_haystack(rows) -> str:
+    """BE Gap 467: every string the extractor returned for one list field, run
+    together and whitespace-normalised.
+
+    A printed value is checked for as a SUBSTRING of this, not matched row for
+    row on a particular key, because the two sides genuinely disagree about
+    shape without disagreeing about content: an address the builder holds as
+    `text` comes back with the party name prefixed, a payment instruction split
+    across `method_type`/`details` may come back joined, and the row ORDER is
+    the reader's. Any of those would fail an exact per-row comparison while the
+    PDF is perfectly correct — and a false mismatch here is not cosmetic, it
+    sends the invoice to NEEDS_REVIEW.
+
+    Empty string when the reader returned nothing for the field, which is the
+    signal the caller uses to skip the field entirely."""
+    parts: list[str] = []
+    for row in rows or []:
+        if isinstance(row, dict):
+            parts.extend(str(v) for v in row.values() if isinstance(v, str))
+        elif isinstance(row, str):
+            parts.append(row)
+    return _normalize_text(" ".join(parts))
+
+
 def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
     """Feature 17: did the generated PDF print what the builder intended?
 
@@ -712,8 +775,8 @@ def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
     submitted plus the server-computed `Totals` — and `extracted` is what the
     ordinary outbound extraction graph read back off the PDF the builder
     produced. Any disagreement means the render is wrong (a value painted into
-    the wrong span, a number that did not fit, a substitution that landed on a
-    footer repetition), and the invoice must not be sent on that basis.
+    the wrong span, a number that did not fit, a row that paginated away), and
+    the invoice must not be sent on that basis.
 
     Pure and deterministic: exact, whitespace-normalised comparison for text
     and dates, 0.01 absolute tolerance for money and for each line amount. No
@@ -724,6 +787,27 @@ def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
     Returns one dict per mismatched field, `[]` when the read-back agrees.
     A field the builder never set is skipped: it was inherited from the source
     PDF and is not this feature's claim.
+
+    **What this check covers, and on what terms (BE Gap 467).** The comparison
+    set used to be bounded not by what the builder prints but by what the
+    OUTBOUND extraction schema could read back: Gap 463 widened the builder to
+    print `vendor_name`, `po_number`, addresses, references, payment
+    instructions, tax IDs, compliance metadata, notes and the per-line HSN/UOM
+    columns, and none of them was asserted here, because comparing against a key
+    the reader never fills would have put every built invoice on `NEEDS_REVIEW`
+    for a field nobody looked at. Gap 467 widened
+    `OutboundInvoiceExtractionSchema` to carry all of them, and every one is now
+    compared — **softly**, on exactly the rule `currency` already used: a field
+    the reader returned nothing for is skipped, because "the model did not
+    report it" is not evidence that the render is wrong. What remains asserted
+    hard is what was always asserted hard — the number, the customer, the dates,
+    the money, the line count and each line amount.
+
+    The list fields are compared by CONTAINMENT, not by count: each value the
+    builder printed must appear somewhere in what the reader returned for that
+    field (`_readback_list_haystack()`). A reader that merges two address blocks
+    or adds the letterhead's own address is not a render fault; a reader that
+    cannot find a printed IRN anywhere is.
     """
     if not isinstance(intent, dict) or not isinstance(extracted, dict):
         return []
@@ -741,6 +825,8 @@ def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
         intended = intent.get(field)
         if intended in (None, ""):
             continue
+        if field in _BUILDER_SOFT_TEXT_FIELDS and extracted.get(field) in (None, ""):
+            continue
         if _normalize_text(intended) != _normalize_text(extracted.get(field)):
             report(field, intended, extracted.get(field))
 
@@ -752,13 +838,36 @@ def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
             report(field, intended, extracted.get(field))
 
     totals = intent.get("totals") or {}
-    for field in _BUILDER_MONEY_FIELDS:
-        intended = _as_float(totals.get(field))
+    for intent_key, extracted_key in _BUILDER_MONEY_FIELDS:
+        intended = _as_float(totals.get(intent_key))
         if intended is None:
             continue
-        actual = _as_float(extracted.get(field))
+        # BE Gap 463: a zero discount is not a claim — the builder prints no
+        # discount row at all in that case, so there is nothing to read back.
+        if intent_key == "discount_total" and intended == 0:
+            continue
+        actual = _as_float(extracted.get(extracted_key))
+        # A discount is printed as a deduction (`-100.00`) and read back by
+        # different extractors as either sign; the magnitude is the claim.
+        if intent_key == "discount_total" and actual is not None:
+            actual, intended = abs(actual), abs(intended)
         if actual is None or abs(actual - intended) > DEFAULT_ABS_TOLERANCE:
-            report(field, intended, extracted.get(field))
+            report(intent_key, intended, extracted.get(extracted_key))
+
+    # BE Gap 463: a multi-rate invoice (CGST + SGST printed as two rows) that
+    # reads back as one rate means the renderer collapsed a row the tenant is
+    # legally required to print. Only asserted when the extractor returned a
+    # `taxes` list at all — an empty list is the schema not looking, not the
+    # render being wrong, and the summed figure is already checked above.
+    intended_tax_lines = totals.get("tax_lines") or []
+    extracted_tax_lines = extracted.get("taxes") or []
+    if len(intended_tax_lines) >= 2 and extracted_tax_lines:
+        if len(extracted_tax_lines) != len(intended_tax_lines):
+            report(
+                "taxes",
+                f"{len(intended_tax_lines)} rate(s)",
+                f"{len(extracted_tax_lines)} rate(s)",
+            )
 
     intended_amounts = totals.get("line_amounts") or []
     extracted_items = extracted.get("items") or []
@@ -773,5 +882,49 @@ def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
             actual = _as_float((item or {}).get("amount"))
             if actual is None or abs(actual - intended) > DEFAULT_ABS_TOLERANCE:
                 report(f"items[{index}].amount", intended, (item or {}).get("amount"))
+
+    # --- BE Gap 467: the fields Gap 463 had to leave out ---------------------
+    #
+    # The notes block. Substring rather than equality: the renderer prints it
+    # line by line and a reader may return it wrapped differently or with a
+    # heading attached, neither of which is the render being wrong. Skipped
+    # entirely when the reader returned nothing.
+    intended_notes = _normalize_text(intent.get("notes"))
+    extracted_notes = _normalize_text(extracted.get("notes"))
+    if intended_notes and extracted_notes and intended_notes not in extracted_notes:
+        report("notes", intent.get("notes"), extracted.get("notes"))
+
+    for intent_key, extracted_key, value_key in _BUILDER_LIST_FIELDS:
+        haystack = _readback_list_haystack(extracted.get(extracted_key))
+        if not haystack:
+            continue
+        for index, row in enumerate(intent.get(intent_key) or []):
+            if not isinstance(row, dict):
+                continue
+            needle = _normalize_text(row.get(value_key))
+            if needle and needle not in haystack:
+                report(f"{intent_key}[{index}]", row.get(value_key), extracted.get(extracted_key))
+
+    # Per-line HSN/SAC and unit of measure, index-aligned with the items the
+    # builder sent. Only compared when the line count already agrees (a
+    # mismatched count is reported above and makes index i mean two different
+    # rows), and only when the reader returned a value for that cell.
+    intended_items = intent.get("items") or []
+    if len(extracted_items) == len(intended_items):
+        for index, intended_item in enumerate(intended_items):
+            if not isinstance(intended_item, dict):
+                continue
+            actual_item = extracted_items[index] if isinstance(extracted_items[index], dict) else {}
+            for field in _BUILDER_ITEM_FIELDS:
+                intended_cell = _normalize_text(intended_item.get(field))
+                actual_cell = _normalize_text(actual_item.get(field))
+                if not intended_cell or not actual_cell:
+                    continue
+                if intended_cell != actual_cell:
+                    report(
+                        f"items[{index}].{field}",
+                        intended_item.get(field),
+                        actual_item.get(field),
+                    )
 
     return mismatches

@@ -19,6 +19,7 @@ from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import Tenant, TenantEmailSender, Invoice
 from routers.invoices import _ingest_single_file
 from services.storage import upload_pdf_to_blob_storage
+from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ImageTooLargeError,
     UnsupportedUploadError,
@@ -510,6 +511,21 @@ async def email_mailintegration_webhook(
         # display; this machine-to-machine context never reaches a browser, but
         # populate it anyway so the model has one meaning everywhere.
         tenant_name=tenant.name,
+    )
+
+    # Gap 464: an inbound mail had no tenant-facing home at all before this --
+    # its only trace was a `logger.warning` plus, on a rejection, a
+    # `dropped_inbound_emails` row visible ONLY in the Admin console, which is
+    # the wrong audience for "where did the invoice I emailed in go?". The run
+    # is recorded here, once the attachment set is known, so `file_count` is the
+    # number of files this mail actually offered the pipeline.
+    record_ingestion_batch(
+        db_session,
+        tenant_id=tenant_id,
+        batch_id=batch_id,
+        trigger="email",
+        file_count=len(attachments),
+        flow_direction="OUTBOUND" if email_set == "outbound" else "INBOUND",
     )
 
     for source_filename, raw_bytes in attachments:

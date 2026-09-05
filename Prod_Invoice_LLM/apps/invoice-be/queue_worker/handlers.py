@@ -211,7 +211,9 @@ def _run_ocr(file_path: str, settings: Settings):
             )
             
             poller = client.begin_analyze_document(
-                model_id="prebuilt-invoice",
+                # Gap 465: from settings (was hardcoded "prebuilt-invoice"); getattr so a
+                # test double built from SimpleNamespace still runs.
+                model_id=getattr(settings, "DOC_INTEL_MODEL_ID", "prebuilt-invoice"),
                 body=pdf_bytes,
                 content_type="application/octet-stream"
             )
@@ -643,6 +645,7 @@ def handle_import_connector_file(
     from services.storage import LOCAL_STORAGE_DIR
     from utils.connector_oauth import has_real_credentials, get_valid_access_token
     from utils.connector_files import download_google_drive_file
+    from services.ingestion_batches import record_ingestion_batch
 
     settings = get_settings()
     batch_id = str(uuid4())
@@ -755,6 +758,19 @@ def handle_import_connector_file(
         tenant_uuid = UUID(tenant_id)
 
         def _persist_and_enqueue(session: Session) -> bool:
+            # Gap 464: the connector door is the one door whose batch_id is
+            # minted in the WORKER, not in the router -- routers/connectors.py
+            # only queues a message and has no batch to record. So the History
+            # run row is written here, alongside the Invoice row that carries
+            # the same batch_id.
+            record_ingestion_batch(
+                session,
+                tenant_id=tenant_uuid,
+                batch_id=batch_uuid,
+                trigger="connector",
+                file_count=1,
+                flow_direction="INBOUND",
+            )
             invoice = Invoice(
                 id=invoice_id,
                 tenant_id=tenant_uuid,
@@ -800,6 +816,20 @@ def handle_import_connector_file(
             "blob_path": uploaded_path,
             "direction": direction,
         }
+
+    # Gap 464: the outbound connector import creates no Invoice row at all --
+    # the file is stored for AR record-keeping only -- so the run row IS the
+    # entire record that it happened. Its drill-down is legitimately empty; that
+    # is the honest answer, and an absent History line was the old one.
+    with Session(engine) as _batch_session:
+        record_ingestion_batch(
+            _batch_session,
+            tenant_id=UUID(tenant_id),
+            batch_id=UUID(batch_id),
+            trigger="connector",
+            file_count=1,
+            flow_direction="OUTBOUND",
+        )
 
     logger.info(
         "Connector outbound import stored (no extraction): path=%s", uploaded_path
@@ -1028,6 +1058,13 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     dup_stmt = select(Invoice).where(
                         Invoice.tenant_id == invoice.tenant_id,
                         Invoice.id != invoice.id,
+                        # BE Gap 467: OUTBOUND rows now carry `vendor_name`
+                        # (the issuer, which on the tenant's own invoice is the
+                        # tenant). This is the INBOUND duplicate check, and a
+                        # bill received is never a duplicate of an invoice
+                        # issued -- without this filter a self-billing tenant
+                        # could have an outbound row flag an inbound one.
+                        Invoice.flow_direction == "INBOUND",
                         func.lower(Invoice.invoice_number) == invoice_number.lower(),
                         func.lower(Invoice.vendor_name) == vendor_name.lower()
                     )

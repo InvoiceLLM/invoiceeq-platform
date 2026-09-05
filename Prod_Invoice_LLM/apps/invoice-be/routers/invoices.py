@@ -31,6 +31,7 @@ from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
 from services.billing_quota import charge_free_quota, count_billable_uploads
+from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ACCEPTED_UPLOAD_SUFFIXES,
     ImageTooLargeError,
@@ -417,6 +418,18 @@ async def upload_invoices(
     tenant = charge_free_quota(db_session, context.tenant_id, billable)
 
     batch_id = uuid4()
+    # Gap 464: record the RUN before the files are processed, not after. A run
+    # whose every file is rejected downstream still happened and still belongs
+    # in the History screen -- deriving history from the rows a run produced is
+    # exactly what loses it (models.IngestionBatch).
+    record_ingestion_batch(
+        db_session,
+        tenant_id=context.tenant_id,
+        batch_id=batch_id,
+        trigger="manual",
+        file_count=len(payloads),
+        flow_direction="INBOUND",
+    )
     job_ids = []
     for filename, file_bytes in payloads:
         job_id = await _ingest_single_file(
@@ -516,6 +529,16 @@ async def start_directory_watcher(
     tenant = charge_free_quota(db_session, context.tenant_id, billable)
 
     batch_id = uuid4()
+    # Gap 464: the directory watcher is the same manual door with a different
+    # file picker, so its runs carry the same trigger.
+    record_ingestion_batch(
+        db_session,
+        tenant_id=context.tenant_id,
+        batch_id=batch_id,
+        trigger="manual",
+        file_count=len(payloads),
+        flow_direction="INBOUND",
+    )
     job_ids = []
     for filename, file_bytes in payloads:
         job_id = await _ingest_single_file(

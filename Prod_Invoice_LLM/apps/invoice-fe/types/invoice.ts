@@ -14,25 +14,121 @@
  * arithmetic is display-only (see `lib/invoiceBuilderMath.ts`).
  */
 
-/** A single editable line item. `amount` is never sent — the BE computes it. */
+/** Money-ish wire value: the BE models these as `Decimal`. */
+export type BuildNumber = number | string | null;
+
+/**
+ * FE Gap 463 (2026-09-05): the nested shapes below mirror
+ * `services/invoice_builder.py`'s `BuildAddress`, `BuildReference`,
+ * `BuildPaymentInstruction`, `BuildTaxId`, `BuildTax`, `BuildDiscount`,
+ * `BuildDeduction` and `BuildComplianceItem` — which in turn mirror the
+ * `Invoice` model's JSON columns. Nothing here is FE-only.
+ */
+
+/** `address_type` drives which block the renderer prints it in. */
+export interface BuildAddress {
+  address_type: string;
+  text: string;
+  country: string | null;
+}
+
+export interface BuildReference {
+  ref_type: string;
+  value: string;
+}
+
+export interface BuildPaymentInstruction {
+  method_type: string;
+  details: string;
+}
+
+export interface BuildTaxId {
+  id_type: string;
+  value: string;
+  party: string | null;
+}
+
+/** `amount` blank means "derive it from `rate_percent`" — see `computeTotals`. */
+export interface BuildTax {
+  tax_type: string;
+  rate_percent: BuildNumber;
+  amount: BuildNumber;
+}
+
+export interface BuildDiscount {
+  discount_type: string;
+  percent: BuildNumber;
+  amount: BuildNumber;
+}
+
+export interface BuildDeduction {
+  deduction_type: string;
+  amount: BuildNumber;
+}
+
+export interface BuildComplianceItem {
+  key: string;
+  value: string;
+}
+
+/**
+ * A single editable line item. `amount` is never sent — the BE computes it.
+ *
+ * FE Gap 463 widened this to the rest of what a line prints. The extra fields
+ * are optional because a source invoice extracted by the OUTBOUND schema
+ * carries none of them, and a body without them is still valid to the BE.
+ */
 export interface BuildItem {
   description: string;
   quantity: number | string;
   unit_price: number | string;
+  hsn_sac_code?: string | null;
+  uom?: string | null;
+  discount_percent?: BuildNumber;
+  discount_amount?: BuildNumber;
+  tax_percent?: BuildNumber;
+  tax_amount?: BuildNumber;
 }
 
-/** The full editable surface of a cloned invoice. Everything not listed here is copied from the source by the BE and is not editable in v1. */
+/**
+ * The full editable surface of a cloned invoice.
+ *
+ * FE Gap 463 (founder, 2026-09-05: "user can change everything… all the fields
+ * address, anything thats there in the invoice"). Before this the editable set
+ * stopped at customer/number/dates/currency/items/tax, which was survivable
+ * only while the BE painted the new values onto the source page. BE Gap 462
+ * deleted that renderer, so a field this body does not carry is no longer
+ * inherited — it is simply not printed. Everything below therefore mirrors
+ * `BuildRequest` in `services/invoice_builder.py` field for field.
+ *
+ * Still not here, and still inherited from the source PDF: the logo, the
+ * letterhead and the legal footer, which the BE harvests off page 1.
+ */
 export interface BuildRequest {
   source_invoice_id: string;
   customer_name: string | null;
+  vendor_name: string | null;
   invoice_number: string | null;
   /** ISO `YYYY-MM-DD`. */
   invoice_date: string | null;
   /** ISO `YYYY-MM-DD`; null when the source had no payment term to roll forward. */
   due_date: string | null;
+  po_number: string | null;
   currency: string | null;
   items: BuildItem[];
-  tax_amount: number | string | null;
+  tax_amount: BuildNumber;
+  discount_percent: BuildNumber;
+  discount_amount: BuildNumber;
+  addresses: BuildAddress[];
+  references: BuildReference[];
+  payment_instructions: BuildPaymentInstruction[];
+  tax_ids: BuildTaxId[];
+  taxes: BuildTax[];
+  discounts: BuildDiscount[];
+  deductions: BuildDeduction[];
+  compliance_metadata: BuildComplianceItem[];
+  /** Free text printed under the totals. The BE has no `Invoice.notes` column: it lives in `builder_intent` only, so it is not read back and does not survive into a clone-of-a-clone. */
+  notes: string | null;
 }
 
 /**
@@ -49,13 +145,9 @@ export interface BuildResponse {
   invoice_id: string;
 }
 
-/** `POST /build/preview` 422 body: fields the substitute path could not locate in the source PDF. */
-export interface UnlocatedFieldsError {
-  unlocated_fields: string[];
-}
-
-/** Which renderer the BE will use — mirrors `plan_render_mode()`. */
-export type BuilderRenderMode = "substitute" | "rerender";
+// FE Gap 462 (2026-09-05): `UnlocatedFieldsError` and `BuilderRenderMode` were
+// deleted here along with the backend's substitution renderer. `/build/preview`
+// no longer has a 422 contract, and there is only one render mode.
 
 /**
  * Statuses a source invoice may be in for the Invoice Builder to clone it —

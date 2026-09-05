@@ -254,3 +254,363 @@ added. None of those six files, nor their subjects, is touched here. The
 `tests/realworld_tenant/run_chat_live_test.py` share a module basename with no
 `__init__.py`, which aborts collection — pre-existing, both files tracked,
 neither touched by this build.
+
+---
+
+## Superseded (2026-09-05) — substitution deleted, re-render is the only path (BE Gap 462)
+
+*Additive per CONVENTIONS hard rule 4. Nothing above this line is edited: D1's
+"substitution only", D3's hybrid ruling, the `plan_render_mode()` design, the
+17.2 verification row and the fixture list all stay as written, because they are
+the record of what was decided and shipped on 2026-09-04. This section records
+that both decisions were superseded the following day, and why.*
+
+### What the founder hit
+
+Preview on `/invoices/outbound-builder` failed on the **ordinary** clone, with:
+
+> "Some changed values could not be found in the source PDF… Fields:
+> invoice_date, due_date, subtotal — revert them to the source value, or change
+> the layout by adding/removing a row so the invoice is re-rendered instead."
+
+The Create button took the same `_render_build()` path and failed identically,
+which is why it was reported as "no save button working".
+
+### Root cause
+
+`plan_render_mode()` chose the renderer on **row count alone**:
+
+```python
+return "substitute" if len(req.items) == source_count else "rerender"
+```
+
+A clone normally changes the dates and the totals while keeping the row count.
+So the planner committed to substitution, `substitute()` then could not locate
+the old printed `invoice_date` / `due_date` / `subtotal` spans, and the endpoint
+answered 422. The failure mode is worse than a bug: the 422 asked the *user* to
+perform a layout trick (add or remove a row) to work around an internal renderer
+limitation, on the single most common thing this feature exists to do.
+
+D1 and D3 were each defensible in isolation. Together they produced a renderer
+that selects itself on the wrong signal — row count is not a proxy for "every
+changed value is findable in the source PDF" — and there is no cheap way to make
+it one, because the check that matters can only be run *after* committing to the
+renderer.
+
+### The decision
+
+**Substitution is deleted, not fixed.** Every clone goes through
+`services/pdf_render.py::render_invoice()`, which already harvests the source's
+logo, header block, page size and number style and handles any row count and any
+edit.
+
+**Tradeoff, stated explicitly by the founder when approving this:** a clone is a
+clean re-render carrying the source's branding, **not** a pixel-identical copy of
+the source layout. That is accepted knowingly. "Looks exactly like ours" — D1's
+original selling point — is given up in exchange for a builder that never refuses
+a legitimate edit.
+
+### What was deleted
+
+| Deleted | Note |
+|---|---|
+| `services/pdf_substitute.py` | Whole module (467 lines): `substitute()`, `locate_field()`, `locate_token()`, `candidate_renderings()`, `_di_rects()`, `_span_style()`, `_print_value()`, `DI_FIELD_ALIASES`, `_DATE_RENDERERS`, `_REDACT_INSET`. |
+| `services/invoice_builder.py` | `plan_render_mode()`, the `RenderMode` literal, the `Substitution` dataclass, `plan_substitutions()`, `_num_sub()`, `_plain_number()`. |
+| `routers/outbound_invoices.py` | `UnlocatedFieldsError` and the 422 branch in **both** `/build/preview` and `/build`. The now-unused `JSONResponse` import went with them. |
+| `tests/fixtures/invoice_builder/date_twice.{pdf,json}` | Existed only to prove substitution could disambiguate a date printed twice; nothing else referenced it. Its `_generate.py` entry is gone too. `us_style` and `eu_style` stay — they are the shared source rows for the prefill and re-render tests — as do `raster_logo` and `vector_text_only`, which `harvest_branding()` needs. |
+| `tests/test_invoice_builder.py` | 8 substitution/planner tests and `test_preview_422s_with_the_unlocated_fields_at_the_top_level`. |
+
+### What was deliberately kept
+
+- **`format_like()` and `number_renderings()` moved, verbatim, into
+  `services/pdf_render.py`** (they lived in `pdf_substitute.py`). They were never
+  substitution-specific: they read how the source printed money and reproduce
+  that style, which is exactly what `render_invoice()` and the router's
+  `_number_style_from_source()` need. Deleting the module without moving them
+  first would have broken the re-render path outright. `test_format_like` moves
+  with them and still passes.
+- **The 409 duplicate-number contract (D5) and `_assert_invoice_number_unused()`**
+  — untouched, byte for byte.
+- **`builder_intent["render_mode"]`** — the key stays, hardcoded `"rerender"`.
+  Dropping it would break `verify_builder_readback()` and the review screen for
+  rows written before this change.
+- **`utils/verification_tools.py::verify_builder_readback()`** — inspected and
+  left unchanged; it never branched on render mode. Only a docstring clause that
+  named a substitution failure mode was reworded.
+
+### Verification (real Postgres, `localhost:5433/invoice_db`, 2026-09-05)
+
+| Command | Result |
+|---|---|
+| `pytest tests/test_invoice_builder.py -q` | `45 passed in 28.90s` |
+| `pytest tests/test_outbound_ingestion.py tests/test_outbound_extraction.py -q` | `24 passed in 13.58s` |
+| `pytest -q --ignore=tests/us` | `43 failed, 3075 passed, 3 skipped, 5 deselected in 167.42s` |
+
+The 43 failures are the **same 43** as the 2026-09-04 baseline of
+`43 failed, 3080 passed`, name for name: 27 in `test_generic_extraction.py`
+(Gap 461's flag-OFF parity tests, which now fail everywhere) and 16 across
+`test_ops_recommendation.py`, `test_connectors.py`, `test_agent_eval.py`,
+`test_autopilot.py`, `test_c4_examples_retrieval.py`,
+`test_workflow_drive_archive.py`, `test_workflow_email_summary.py`. **No new
+failure, and nothing in the builder or outbound files.** The pass count moves
+because this change removes 10 test functions and adds 2.
+
+The new test is the founder's exact case:
+`test_preview_and_build_both_succeed_on_a_same_row_count_clone` — same row count,
+changed dates, changed unit price → preview `200 application/pdf` **and** create
+`201`, with `builder_intent["render_mode"] == "rerender"` on the stored row.
+
+### Noted for BE Gap 463, not fixed here
+
+`BuildRequest`'s editable surface is unchanged (customer name, number, dates,
+currency, items, tax). Because a clone is now always re-rendered rather than
+overlaid on the source page, any field the source printed that `BuildRequest`
+does not carry — addresses, PO number, payment instructions, references, per-rate
+tax lines, notes, the vendor's own name — is reproduced only insofar as
+`harvest_branding()` lifts it into the header or footer band. Widening the
+editable set is BE Gap 463, separately approved and separately scoped.
+
+---
+
+## Widened (2026-09-05) — every field an invoice prints is editable (BE Gap 463)
+
+*Additive per CONVENTIONS hard rule 4. Nothing above this line is edited, the
+Gap 462 section included: its "Noted for BE Gap 463, not fixed here" paragraph
+is the statement of the problem this section closes.*
+
+### Why this is a correctness fix, not a convenience one
+
+Founder, 2026-09-05, approving the scope: *"while building new invoice from an
+existing user can change everything… so all the fields address, anything thats
+there in the invoice."*
+
+Under the pre-Gap-462 substitution renderer, a narrow `BuildRequest` was
+survivable: the clone was the source page with a handful of values painted over
+it, so every field nobody edited stayed printed exactly where it was. Gap 462
+deleted that renderer. From that moment a field `BuildRequest` did not carry was
+no longer *inherited* — it was **lost**, surviving only if `harvest_branding()`
+happened to lift it into the header or footer band, which it deliberately does
+not for anything matching `_META_LINE` (dates, numbers, "Bill To", PO). So this
+gap is what puts the addresses, the PO number, the references, the payment
+instructions, the tax IDs and the compliance block back on the page at all.
+
+### The editable surface now
+
+`services/invoice_builder.py`. Field names and shapes are taken from the
+`Invoice` model and from `agents/extraction_agent.py`'s schemas — nothing is
+invented, because a field with no column behind it could be neither prefilled
+from a source nor read back from the output.
+
+| Model | Fields |
+|---|---|
+| `BuildRequest` (was 8 fields) | `source_invoice_id`, `customer_name`, **`vendor_name`**, `invoice_number`, `invoice_date`, `due_date`, **`po_number`**, `currency`, `items`, `tax_amount`, **`discount_percent`**, **`discount_amount`**, **`addresses`**, **`references`**, **`payment_instructions`**, **`tax_ids`**, **`taxes`**, **`discounts`**, **`deductions`**, **`compliance_metadata`**, **`notes`** |
+| `BuildItem` (was 3 fields) | `description`, `quantity`, `unit_price`, **`hsn_sac_code`**, **`uom`**, **`discount_percent`**, **`discount_amount`**, **`tax_percent`**, **`tax_amount`** |
+| New nested models | `BuildAddress` (`address_type`/`text`/`country`), `BuildReference` (`ref_type`/`value`), `BuildPaymentInstruction` (`method_type`/`details`), `BuildTaxId` (`id_type`/`value`/`party`), `BuildTax` (`tax_type`/`rate_percent`/`amount`), `BuildDiscount` (`discount_type`/`percent`/`amount`), `BuildDeduction` (`deduction_type`/`amount`), `BuildComplianceItem` (`key`/`value`) |
+
+Two deliberate departures from the extraction schemas, both documented in code:
+
+- **`amount` is optional on `BuildTax`/`BuildDiscount`** where `TaxItem`/
+  `DiscountItem` make it required. A user editing a CGST line changes the
+  *rate* and expects the figure to follow. A typed amount still wins over a
+  typed rate, at every level — invoices really do print figures that do not
+  reconcile with their own stated rate, and this feature transcribes rather
+  than corrects (the same stance as Gap 46's verbatim directive).
+- **`notes` has no `Invoice` column and this change does not add one.** A
+  migration for a field nothing extracts, filters or reports on was not worth
+  it. The consequence is stated rather than hidden: `notes` lives in
+  `builder_intent`, is printed, is **not** read back, and does **not** survive
+  into a clone-of-a-clone.
+
+Everything else is copied by `default_build_from_source()` off the source row's
+own columns, through `_rows()` / `_opt_dec()` / `_opt_str()` / `_src()`, which
+drop a junk JSON entry rather than turning the prefill endpoint into a 500.
+
+### The arithmetic (`compute_totals`, still the only authority)
+
+Deterministic, `Decimal`, `ROUND_HALF_UP`, never a prompt rule (hard rule 3),
+and still never read from the client:
+
+```
+per line: gross    = round(qty × unit_price, 2)
+          discount = discount_amount, else gross × discount_percent%, else 0
+          amount   = gross − discount        ← printed in the Amount column
+          line tax = tax_amount, else amount × tax_percent%, else 0
+subtotal        = Σ amount
+discount_total  = Σ discounts[] (amount, else % of subtotal)
+                  else invoice discount_amount, else % of subtotal, else 0
+taxable base    = subtotal − discount_total
+tax_amount      = Σ taxes[] (amount, else % of base)
+                  else the invoice tax_amount, else Σ line tax
+deduction_total = Σ deductions[]
+grand_total     = subtotal − discount_total + tax_amount − deduction_total
+```
+
+`Totals` gained `line_discounts`, `line_taxes`, `discount_lines`,
+`discount_total`, `tax_lines`, `deduction_lines`, `deduction_total`. The four
+pre-existing fields keep their meanings, and with no discounts, no deductions
+and no `taxes` list the result is digit-for-digit the pre-Gap-463 arithmetic —
+asserted, not assumed
+(`test_compute_totals_is_digit_for_digit_unchanged_without_the_new_fields`).
+
+New `totals_for(req)` wraps `compute_totals()` over a whole request, so a future
+totals-bearing field cannot be wired into `/build/preview` and forgotten in
+`/build`. Both endpoints call it.
+
+### What `render_invoice()` prints now
+
+In order: harvested logo and letterhead → `INVOICE` → number, invoice date, due
+date, **PO number**, **one line per reference** → a **party-block row** (`From`
+with the vendor name and vendor address, `Bill To` with the customer name and
+billing address, `Ship To`, plus a catch-all block for an address whose type is
+none of the three, so an unexpected `address_type` is printed rather than
+dropped) → the line-item table → the totals block → **payment instructions** →
+**notes** → **tax IDs and compliance metadata** → the harvested footer.
+
+The line-item table's columns are **conditional**: `HSN/SAC`, `UOM`,
+`Discount` and `Tax` appear only when at least one row uses them, so a plain
+invoice still prints exactly the four columns it printed before, at the same
+widths. The totals block prints one row per discount, one row per tax rate
+(`CGST (9%)`), one row per deduction, then `Total Due (CUR)`; with no rate list
+it prints the single `Tax` row as before. Every figure still goes through
+`format_like()` with the source's own number style, and pagination is still
+reportlab's flow with `repeatRows=1`.
+
+### Read-back (`verify_builder_readback`) — what it can and cannot cover
+
+Widened to `currency` (soft: compared only when the extractor actually returned
+one) and to `discount_total` vs the extractor's `discount_amount` (compared by
+magnitude, since a discount prints as a deduction and reads back with either
+sign; skipped entirely when zero). A multi-rate invoice whose rate rows read
+back collapsed is now reported, but only when the extractor returned a `taxes`
+list at all.
+
+**It deliberately does not assert on `vendor_name`, `po_number`, addresses,
+references, payment instructions, tax IDs, compliance metadata, notes or the
+per-line HSN/UOM columns.** `OutboundInvoiceExtractionSchema` has no key for
+any of them, so a comparison would fail permanently and put every built invoice
+on `NEEDS_REVIEW` for a field the reader never looked for. That coverage hole is
+filed as **BE Gap 467 (open, not fixed here)** — closing it means widening the
+outbound extraction schema, which changes what every outbound *upload* extracts,
+not just a built clone, and that is its own scoped change.
+
+### Still not reproducible from a source invoice
+
+- The source's **layout** — unchanged from Gap 462's accepted tradeoff.
+- **`notes`** on a clone-of-a-clone (no column to copy from).
+- Any field the source's own extraction never captured: an OUTBOUND row is
+  extracted with `OutboundInvoiceExtractionSchema`, which writes no
+  `addresses`, `po_number`, `references`, `payment_instructions`, `tax_ids` or
+  `compliance_metadata` at all. The builder now carries and prints all of them,
+  and the prefill copies whatever the row holds — but for a source uploaded
+  through the outbound path those columns are usually empty, so the user types
+  them once and every later clone of *that* invoice still cannot inherit them
+  (same BE Gap 467 root cause: the outbound schema is narrower than the model).
+
+### Verification (real Postgres, `localhost:5433/invoice_db`, 2026-09-05)
+
+| Command | Result |
+|---|---|
+| `pytest tests/test_invoice_builder.py -q` | `58 passed in 30.76s` (was 45; 13 added) |
+| `pytest tests/test_outbound_ingestion.py tests/test_outbound_extraction.py -q` | `24 passed in 14.11s` |
+
+The 13 new tests cover: the prefill copying every widened column; a malformed
+JSON column being dropped rather than raising; per-line discount-then-tax;
+multi-rate tax on the discounted base with a deduction; amount-beats-rate;
+digit-for-digit backward compatibility; the renderer printing every widened
+field; the renderer *omitting* every block a plain invoice has nothing for; the
+read-back's discount/rate-count checks and its refusal to assert on what the
+extractor cannot report; and, on real rows, `/build-defaults` returning the
+widened set, `/build/preview` printing edited addresses/PO/notes, and `/build`
+storing the widened `builder_intent` with server-computed totals.
+
+---
+
+## Read back and inherited (2026-09-05) — the outbound schema caught up (BE Gap 467)
+
+*Additive per CONVENTIONS hard rule 4. This section closes the two holes the Gap
+463 section above names as open — its "not asserted here" paragraph and its
+"every later clone still cannot inherit them" bullet are the statement of the
+problem, and both are now stale as descriptions of the code.*
+
+### What was actually broken
+
+Gap 463 made every printed field **editable and printed**. It could not make any
+of them **verified** or **inherited**, for one shared reason:
+`OutboundInvoiceExtractionSchema` was narrower than the `Invoice` model. The
+reader had no key for `vendor_name`, `po_number`, addresses, references, payment
+instructions, tax IDs, compliance metadata or the per-line HSN/UOM columns, and
+`Invoice` had no `notes` column at all.
+
+So: `verify_builder_readback()` excluded all of them (a comparison against a key
+the reader never fills would put **every** built invoice on `NEEDS_REVIEW` for a
+field nobody looked at), and the worker wrote none of them onto the clone's row,
+so the *next* clone's prefill had nothing to copy. A user typed an address once
+and lost it one generation later.
+
+### `Invoice.notes` is now a real column
+
+Gap 463 recorded the consequence of not adding it honestly, and this is the
+reversal: `BuildRequest.notes` no longer lives only inside `builder_intent`.
+Migration `e7f8a9b0c1d2`, one nullable `add_column`, no backfill (founder ruling,
+2026-09-05: dev environment, dev phase, no existing data is migrated).
+
+- `POST /outbound-invoices/build` stamps `Invoice.notes` at creation, through a
+  new `notes` keyword on the shared `_store_and_enqueue_outbound()` — NULL for
+  every upload, set only by the builder.
+- `builder_intent` still carries it too (it carries the whole request), which is
+  where the review screen reads it from. Two writers, one value, deliberately.
+- `default_build_from_source()` copies it off the source row like every other
+  field, which is what makes a clone of a clone inherit it.
+- The worker's write is `extracted_data.get("notes") or invoice.notes` — a
+  reader that did not return the free-text block must not erase what the builder
+  is known to have printed.
+
+### The read-back check, widened on the rule `currency` already used
+
+`utils/verification_tools.py::verify_builder_readback()`. Every field the schema
+gained is now compared, and every one is compared **softly**: a field the reader
+returned nothing for is skipped, because "the model did not report it" is not
+evidence the render is wrong. That is exactly the guarantee Gap 463 bought by
+excluding these fields — kept, while making a *wrong* value catchable. What is
+asserted hard is what always was: the number, the customer, the dates, the
+money, the line count and each line amount.
+
+| Field | Comparison | Why not something stricter |
+|---|---|---|
+| `vendor_name`, `po_number` | exact, whitespace-normalised, soft | Each is printed once in a header band; the reader returns it or it does not. |
+| `notes` | substring, soft | The renderer prints it line by line; a reader may return it wrapped differently or with a "Notes:" heading attached. Neither is a render fault. |
+| `addresses`, `references`, `payment_instructions`, `tax_ids`, `compliance_metadata` | **containment**, soft | Counting rows would fail three correct cases: the renderer prints From / Bill To / Ship To separately and a reader may merge them, re-order them, or add the letterhead's own address. What "correct" means here is that every value the builder printed is findable in what the reader returned — `_readback_list_haystack()`. |
+| per-line `hsn_sac_code`, `uom` | exact per index, soft, only when the line count already agrees | A mismatched line count is already reported, and index *i* would otherwise mean two different rows. |
+
+A false mismatch here is not cosmetic — it sends a correct invoice to
+`NEEDS_REVIEW` — which is why every one of these leans towards silence over a
+guess, and why none of them asks a model whether the difference matters
+(CONVENTIONS hard rule 3).
+
+### Verification (real Postgres, `localhost:5433/invoice_db`, 2026-09-05)
+
+| Command | Result |
+|---|---|
+| `pytest tests/test_invoice_builder.py -q` | `68 passed in 8.95s` (was 58; 11 added, 1 re-baselined) |
+| `pytest tests/test_outbound_extraction.py -q` | `13 passed in 5.67s` (3 added) |
+
+Re-baselined: `test_verify_builder_readback_does_not_assert_on_what_the_extractor
+_cannot_report` asserted the *absence* of the coverage this gap adds; it is
+replaced by `test_a_silent_extractor_still_asserts_nothing_on_the_widened_fields`
+(the guarantee it was really protecting) plus the cases that catch a wrong value.
+
+**The clone-of-a-clone claim, proven end to end rather than asserted.**
+`test_a_clone_of_a_clone_inherits_the_address_po_number_and_notes` runs three
+generations on real rows: generation 1 is an extracted invoice with the full
+column set; generation 2 is built from it through `POST /build` with a new PO
+number, new address and new notes, then processed by the real outbound worker,
+which reads the generated PDF back and writes the columns; generation 3's
+`GET /build-defaults` is then read off generation 2's **own row** and asserted to
+carry the PO number, the address and the notes — and `POST /build/preview`
+confirms generation 3 actually prints all three. Before this gap, generation 2's
+row held none of them and generation 3 inherited nothing.
+
+Also covered: `test_the_outbound_handler_persists_the_widened_columns` (the
+worker writes all eight columns and the read-back stays clean on a faithful
+reading), `test_a_silent_reader_cannot_erase_the_notes_the_builder_printed`, and
+`test_the_notes_column_is_a_migrated_column_on_a_single_head`.

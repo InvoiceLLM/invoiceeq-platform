@@ -15,7 +15,6 @@ Committing them keeps `tests/test_invoice_builder.py` free of any Azure call.
 
   us_style        — `1,250.00` separators, ISO dates
   eu_style        — `1.250,00` separators, `dd.mm.yyyy` dates
-  date_twice      — the invoice date printed in the header AND in the footer
   raster_logo     — a real embedded PNG logo (branding harvest must find it)
   vector_text_only — no image at all (branding harvest must not crash)
 """
@@ -138,16 +137,13 @@ def _coordinates(pdf_path: pathlib.Path, printed: dict) -> list[dict]:
             hits = page.search_for(text)
             if not hits:
                 continue
-            # Header fields take the FIRST hit in reading order — the
-            # `date_twice` fixture repeats the invoice date in the footer and
-            # the polygon deliberately points at the header occurrence only.
+            # Header fields take the FIRST hit in reading order.
             # The three totals take the LAST hit, because a single-line invoice
             # prints the same figure as the line amount higher up the page and
             # Document Intelligence would label the totals-block occurrence,
             # not the table cell. (Getting this backwards is not academic: the
             # first cut of these fixtures pointed `SubTotal` at the line-item
-            # cell, and `substitute()` then rewrote that cell twice and left the
-            # real subtotal printing the old figure.)
+            # cell rather than the totals block.)
             if key in ("subtotal", "tax_amount", "grand_total"):
                 rect = max(hits, key=lambda r: (round(r.y0, 1), r.x0))
             else:
@@ -207,30 +203,6 @@ FIXTURES: dict[str, dict] = {
             "subtotal": 1600.0, "tax_amount": 304.0, "grand_total": 1904.0,
         },
         "footer": ["Zahlbar innerhalb von 30 Tagen."],
-    },
-    "date_twice": {
-        "printed": {
-            "customer_name": "Harbour Logistics",
-            "invoice_number": "INV-0500",
-            "invoice_date": "15/07/2026",
-            "due_date": "14/08/2026",
-            "items": [
-                {"description": "Freight handling", "quantity": "10", "unit_price": "80.00", "amount": "800.00"},
-            ],
-            "subtotal": "800.00",
-            "tax_amount": "160.00",
-            "grand_total": "960.00",
-        },
-        "values": {
-            "currency": "GBP",
-            "invoice_date": "2026-07-15",
-            "due_date": "2026-08-14",
-            "subtotal": 800.0, "tax_amount": 160.0, "grand_total": 960.0,
-        },
-        "footer": [
-            "This invoice was issued on 15/07/2026 and supersedes any prior quotation.",
-            "Queries within 14 days of 15/07/2026 please.",
-        ],
     },
     "raster_logo": {
         "logo": True,

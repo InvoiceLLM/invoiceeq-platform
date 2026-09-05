@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   UploadCloud,
-  Files,
+  History,
   MessageSquare,
   GraduationCap,
   Settings,
@@ -68,12 +68,17 @@ export default function Sidebar() {
     // route -- there was nowhere real to land. Now points at the real
     // /invoices queue screen.
     { name: "Audit Queue", href: "/invoices", icon: ListChecks, visible: canAudit },
-    // Feature 27 E10 / task R5(c). A classified non-invoice document leaves the
-    // `invoice` table entirely, so it is absent from both Ingest and the Audit
-    // Queue by design -- this is the only place it is visible. Gated on the same
-    // permission as the audit queue: it is the same population of uploaded
-    // documents, minus the ones that turned out to be payables.
-    { name: "Documents", href: "/documents", icon: Files, visible: canAudit },
+    // FE Gap 464: this slot held "Documents" (/documents, Feature 27 task
+    // R5(c)) until 2026-09-05. A NET-ZERO SWAP, decided by the founder: that
+    // page listed only the `documents` table, which answered "where did my
+    // delivery note go?" and nothing else -- an upload that failed, a rejected
+    // inbound email and a connector import had no durable surface anywhere.
+    // /history is one screen covering all of them, and a classified non-invoice
+    // appears there as an explained row instead of a disappearance.
+    // Gated on the same permission as the audit queue for the same reason the
+    // Documents entry was: it is the same population of uploaded files, whether
+    // or not they turned out to be payables.
+    { name: "History", href: "/history", icon: History, visible: canAudit },
     // AI Trainer link for rule scope fine-tuning & sandbox evaluation (Feature 6)
     { name: "AI Trainer", href: "/trainer", icon: GraduationCap, visible: canTrain },
     { name: "Chat", href: "/chat", icon: MessageSquare, visible: true },

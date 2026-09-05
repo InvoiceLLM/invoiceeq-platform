@@ -176,6 +176,14 @@ class OutboundInvoiceLineItem(BaseModel):
     quantity: Optional[float] = Field(default=None, description="Quantity of the item")
     unit_price: Optional[float] = Field(default=None, description="Unit price of the item. CRITICAL: If the printed figure is negative (prefixed with '-' or in parentheses), you MUST extract it as a negative number (e.g., -5000.0).")
     amount: float = Field(description="Total amount for this line item. Transcribe printed figure verbatim. CRITICAL: If the printed figure represents a credit, discount, negative adjustment, or credit-note/debit-note line (often prefixed with a minus sign '-' or enclosed in parentheses like '(5,000)'), you MUST extract it as a negative number (e.g. -5000.0). Do not strip the minus sign or convert it to a positive magnitude.")
+    # BE Gap 467: the two per-line columns an outbound invoice genuinely prints
+    # and `InvoiceLineItem` already carries. Wording copied from that model
+    # verbatim, for the reason recorded on `ReferenceDocLineItem`: the two
+    # schemas describe the same concept, and two descriptions of one concept are
+    # how a model comes to populate them differently. Additive and Optional, so
+    # every existing outbound extraction stays valid.
+    hsn_sac_code: Optional[str] = Field(default=None, description="HSN/SAC code (mandatory for Indian GST)")
+    uom: Optional[str] = Field(default=None, description="Unit of measure (e.g., each, kg, hours)")
 
 
 class OutboundInvoiceExtractionSchema(BaseModel):
@@ -210,6 +218,40 @@ class OutboundInvoiceExtractionSchema(BaseModel):
     # same shared `Invoice.taxes` JSON column (models.py) both directions already
     # write to.
     taxes: List[TaxItem] = Field(default=[], description="Detailed list of taxes, one entry per printed tax line (e.g. CGST 9% and SGST 9% as two separate entries). Transcribe each component amount verbatim as printed.")
+    # ---- BE Gap 467: the rest of what an outbound invoice prints -----------
+    #
+    # Everything below already existed on `InvoiceExtractionSchema` (INBOUND)
+    # and already has an `Invoice` column behind it — this schema was simply
+    # narrower than the table it writes to, which had two consequences. (1)
+    # `verify_builder_readback()` could not assert on any of these fields,
+    # because comparing against a key the reader never fills would put every
+    # built invoice on NEEDS_REVIEW for a field nobody looked at. (2) an
+    # OUTBOUND row left them empty, so the builder's prefill had nothing to
+    # copy and a clone of a clone could not inherit an address, a PO number or
+    # a payment instruction the user had typed one generation earlier.
+    #
+    # The descriptions are `InvoiceExtractionSchema`'s VERBATIM, not paraphrased
+    # — same rule and same reason as `ReferenceDocLineItem`: these two schemas
+    # describe one concept each, and two descriptions of one concept are how a
+    # model comes to populate them differently. `vendor_name` reads correctly
+    # unchanged here: on the tenant's own invoice the tenant IS the vendor, and
+    # `customer_name` above is who it is addressed to.
+    #
+    # All Optional / empty-list defaults, so every stored outbound extraction
+    # stays valid and a document that prints none of this extracts exactly as
+    # it does today.
+    vendor_name: Optional[str] = Field(default=None, description="Name of the vendor")
+    po_number: Optional[str] = Field(default=None, description="Purchase order (PO) number")
+    tax_ids: List[TaxIdItem] = Field(default=[], description="List of tax registration numbers")
+    payment_instructions: List[PaymentInstructionItem] = Field(default=[], description="Payment methods")
+    references: List[ReferenceItem] = Field(default=[], description="Secondary document references")
+    addresses: List[AddressItem] = Field(default=[], description="Addresses")
+    compliance_metadata: List[ComplianceMetadataItem] = Field(default=[], description="E-invoicing compliance metadata")
+    # No inbound counterpart to mirror: `InvoiceExtractionSchema` has no notes
+    # field, and `Invoice.notes` is added by this same gap. Described as
+    # transcription-only for the same reason as every figure above — a model
+    # asked to "summarise the terms" writes something the invoice does not say.
+    notes: Optional[str] = Field(default=None, description="Free-text notes, terms or remarks block printed on the invoice (e.g. 'Payment due within 30 days', delivery terms, a thank-you line). Transcribe the printed text verbatim; do not summarise, translate or invent one. Null if the invoice prints no such block.")
 
 
 # ---------------------------------------------------------------------------
@@ -746,16 +788,19 @@ def _build_outbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[s
     """Text-only outbound extraction prompt. Same tenant's-own-invoice framing
     as `build_outbound_multimodal_prompt`. Gap 283 additionally threads the
     COMPLEX classification and the dynamic-QA findings through here, which the
-    old 2-node outbound graph had no way to produce. Deliberately does NOT ask
-    for `discounts[]`/`deductions[]`/`compliance_metadata[]` the way the inbound
-    COMPLEX prompt does — `OutboundInvoiceExtractionSchema` has no such LIST
-    fields, so asking for them would invite the model to invent a place to put
-    them. `taxes[]` is the exception, and does get asked for: the schema carries
-    it (post-Gap-283 correction) precisely so the summed `tax_amount` on a
-    split-tax invoice has verifiable components to fall back on. The schema does
-    carry top-level scalar `discount_percent`/`discount_amount`/`round_off`
-    (Gap 293) — no extra prompt text needed for those, same as inbound, since
-    the schema field descriptions alone drive structured-output extraction."""
+    old 2-node outbound graph had no way to produce.
+
+    BE Gap 467 corrects what this docstring used to say. It read "deliberately
+    does NOT ask for `discounts[]`/`deductions[]`/`compliance_metadata[]` …
+    `OutboundInvoiceExtractionSchema` has no such LIST fields" — that premise is
+    gone: the schema now carries `tax_ids`, `payment_instructions`,
+    `references`, `addresses` and `compliance_metadata` (`discounts`/
+    `deductions` remain top-level scalars only, per Gap 293). The COMPLEX branch
+    below therefore names the compliance/banking lists the way the inbound
+    COMPLEX prompt does, and nothing else changes: the SCHEMA is the contract
+    and its field descriptions are what drive structured output. Prompt wording
+    stays minimal and deliberately states no rule that decides correctness —
+    every such check is deterministic code (CONVENTIONS hard rule 3)."""
     prompt = (
         "This is the tenant's own outbound invoice, being sent to a customer. "
         "Extract structured details from the following OCR text:\n\n"
@@ -767,7 +812,11 @@ def _build_outbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[s
             "lines, or specialised compliance identifiers). Read the totals block carefully: "
             "`tax_amount` must be the sum of every printed tax component, transcribed verbatim, "
             "and every individual printed tax line (e.g. CGST 9%, SGST 9%, IGST 18%) must ALSO be "
-            "listed separately in `taxes` with its own verbatim amount.\n\n"
+            "listed separately in `taxes` with its own verbatim amount. "
+            # BE Gap 467: the schema now has somewhere to put these.
+            "Also transcribe any printed tax registration numbers, banking/payment instructions, "
+            "secondary document references, addresses and e-invoicing compliance identifiers into "
+            "their list fields.\n\n"
         )
     dynamic_qa_context = state.get("dynamic_qa_context")
     if dynamic_qa_context:

@@ -161,6 +161,32 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 # writes, so persist the components rather than verifying against
                 # them and then dropping them on the floor.
                 invoice.taxes = extracted_data.get("taxes") or []
+                # BE Gap 467: the rest of what `OutboundInvoiceExtractionSchema`
+                # now reads. Every one of these is a column this table already
+                # had and only the INBOUND handler ever wrote — the outbound
+                # schema was narrower than the row it persists to, so an
+                # outbound invoice's own vendor name, PO number, addresses,
+                # references, payment instructions, tax IDs and compliance
+                # identifiers were dropped even when they were printed on the
+                # page. Written here with the same shape and the same
+                # `get(..., default)` behaviour as the inbound block in
+                # `queue_worker/handlers.py` (`invoice.tax_ids = ...` and the
+                # lines around it), so one field cannot mean two things
+                # depending on which door the document came through.
+                invoice.vendor_name = extracted_data.get("vendor_name")
+                invoice.po_number = extracted_data.get("po_number")
+                # `or invoice.notes`, unlike every other line here: the BUILDER
+                # already stamped the notes block it printed (routers/
+                # outbound_invoices.py::_store_and_enqueue_outbound), and a
+                # model that simply did not return the free-text block is not
+                # evidence the invoice has none. On an upload the column is NULL
+                # at this point, so this is a plain write there.
+                invoice.notes = extracted_data.get("notes") or invoice.notes
+                invoice.tax_ids = extracted_data.get("tax_ids", [])
+                invoice.payment_instructions = extracted_data.get("payment_instructions", [])
+                invoice.references = extracted_data.get("references", [])
+                invoice.addresses = extracted_data.get("addresses", [])
+                invoice.compliance_metadata = extracted_data.get("compliance_metadata", [])
 
                 session.add(invoice)
                 session.commit()

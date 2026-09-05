@@ -60,3 +60,107 @@ Adds the outbound half of invoice processing: instead of ingesting a vendor's in
 * **Gap 243 regression coverage (2026-08-17)**: `tests/test_direction_aware_chat.py::test_needs_review_outbound_invoice_also_triggers_rag_indexing` (inverted from a prior test that asserted the buggy skip) and `::test_unextracted_outbound_invoice_is_not_rag_indexed` (the widened gate is still bounded — a FAILED extraction stays out), plus `tests/test_rag.py::test_outbound_resolve_backfills_rag_index_for_an_unindexed_invoice`.
 * **Gap 283 regression coverage (2026-08-21)**: same two files, re-run unchanged in substance after the graph consolidation — `tests/test_outbound_extraction.py` (5) + `tests/test_extraction.py` (7) + `tests/test_verification_overrides.py` (9) = 21 passed, matching the baseline captured before any edit. Two mechanical test edits were needed: `test_outbound_extraction.py`'s `patch()` targets moved to `agents.extraction_agent.*` (the wrapper no longer owns `get_llm`/`check_token_guardrails` in its module globals; its `import`s still go through the wrapper so the re-exports stay covered), and `test_outbound_verify_node_gets_the_same_parameterization` now passes `flow_direction: "OUTBOUND"` — without it, the shared `verify_node` would have graded the INBOUND profile and the test would have kept passing for the wrong reason. Still fully mocked: no live Azure OpenAI/Document Intelligence call in any of it, so the outbound COMPLEX/dynamic-QA path has not been exercised against a real model or a real outbound PDF.
 * **Manual Verification** (not yet done — no live BE/DB/real LLM in this pass, all tests run against mocked OCR/LLM + SQLite): the 4 manual checks originally listed here (Send-Invoices-off rejection, a real clean PDF reaching `VERIFIED`, a real wrong-total PDF reaching `NEEDS_REVIEW`, a real inbound upload confirming zero dispatch regression) still need to be run against a live `docker compose` stack with real Azure OCR/LLM calls before this is considered production-verified.
+
+---
+
+## Widened (2026-09-05) — the outbound schema now matches the `Invoice` model (BE Gap 467)
+
+Additive section. Everything above stands as the record of how the outbound flow was built;
+this records what changed, including where it makes an older sentence above stale.
+
+### The problem, in one sentence
+
+`OutboundInvoiceExtractionSchema` was **narrower than the `Invoice` row it writes to**. It
+carried `customer_name`, `invoice_number`, both dates, `subtotal`/`tax_amount`/`grand_total`,
+`currency`, `round_off`, `discount_percent`/`discount_amount`, `items` and `taxes` — and
+nothing else. `InvoiceExtractionSchema` (INBOUND) carried, and `Invoice` had columns for,
+seven more fields plus two per-line ones that outbound simply could not report.
+
+Two consequences, both real rather than theoretical:
+
+1. **A printed field was read and then discarded.** An outbound invoice with an address block,
+   a PO number, a GSTIN, an IRN or a bank account printed on it stored none of them, because
+   there was no schema key to put them in.
+2. **The Invoice Builder's read-back check could not see them.** Gap 463 widened the builder to
+   *print* all of these, and `verify_builder_readback()` deliberately excluded every one of
+   them from its comparison — comparing against a key the reader never fills would have put
+   every built invoice on `NEEDS_REVIEW` for a field nobody looked at. And because an OUTBOUND
+   row left the columns empty, the builder's prefill had nothing to copy: a user who typed an
+   address on a clone found that the *next* clone of that invoice could not inherit it.
+
+### What changed
+
+**Schema (`agents/extraction_agent.py`).** `OutboundInvoiceExtractionSchema` gains
+`vendor_name`, `po_number`, `tax_ids`, `payment_instructions`, `references`, `addresses`,
+`compliance_metadata` and `notes`; `OutboundInvoiceLineItem` gains `hsn_sac_code` and `uom`.
+
+Every description except `notes` is **`InvoiceExtractionSchema`'s verbatim, not paraphrased** —
+the rule already recorded on `ReferenceDocLineItem` and the reason for it: two descriptions of
+one concept are how a model comes to populate them differently, and these two schemas are
+routinely compared field-for-field. `vendor_name` reads correctly unchanged, because on the
+tenant's own invoice the tenant *is* the vendor and `customer_name` is who it is addressed to.
+`notes` has no inbound counterpart to mirror and is described as transcription-only, for the
+same reason every figure on the schema is: a model asked to "summarise the terms" writes
+something the invoice does not say.
+
+All fields are Optional or default to an empty list, so every stored outbound extraction stays
+valid and a document that prints none of this extracts exactly as it did before.
+
+**This makes two sentences above stale, stated rather than left to be discovered.** The
+Functionality section's field list for `extract_node` and the Gap 283 paragraph's "the one
+place the COMPLEX path is not mirrored verbatim: `_build_outbound_text_prompt` does not ask the
+model to fill `discounts[]`/`compliance_metadata[]`, because `OutboundInvoiceExtractionSchema`
+has no such fields" both describe the pre-467 schema. `compliance_metadata` is now asked for
+and now exists; `discounts[]`/`deductions[]` remain deliberately absent as *list* fields (the
+top-level scalar `discount_percent`/`discount_amount` from Gap 293 are what outbound uses). The
+follow-up that paragraph called "a deliberate follow-up, not part of Gap 283" is this gap.
+
+**Prompt.** `_build_outbound_text_prompt`'s COMPLEX branch names the compliance/banking lists
+the way the inbound COMPLEX prompt does. That is the whole prompt change: the **schema is the
+contract**, its field descriptions are what drive structured output, and no rule that decides
+correctness lives in prompt text (CONVENTIONS hard rule 3).
+
+**Persistence (`queue_worker/outbound_handlers.py`).** The handler now writes
+`vendor_name`, `po_number`, `notes`, `tax_ids`, `payment_instructions`, `references`,
+`addresses` and `compliance_metadata` onto the row — the same columns, in the same shape, with
+the same `get(..., default)` behaviour as the inbound block in `queue_worker/handlers.py`, so
+one field cannot mean two things depending on which door the document came through.
+
+`notes` is the one exception to "plain write": it is `extracted_data.get("notes") or
+invoice.notes`, because the **builder** already stamped the notes block it printed at creation
+time, and a model that did not return a free-text block is not evidence the invoice has none.
+On an upload the column is NULL at that point, so it is a plain write there.
+
+**New column.** `Invoice.notes: str | None`, nullable, migration `e7f8a9b0c1d2` (one
+`add_column`, no backfill — founder ruling 2026-09-05: dev environment, dev phase, no existing
+data is migrated). NULL means "no notes block was read", never "the invoice printed none".
+
+### The consequence of populating `vendor_name` on an OUTBOUND row — and the two guards it needed
+
+This is the Gap 329 shape: a column that used to be INBOUND-only in practice starts carrying
+OUTBOUND rows, and every query that reads it without a `flow_direction` filter silently
+changes meaning. Two sites were unfiltered and were fixed in the same change:
+
+| Site | Why it mattered | Fix |
+|---|---|---|
+| `routers/trainer.py::list_trainer_vendors` | The Existing-Vendor picker would have offered the tenant **their own name** as a vendor to train an extraction template against. | `flow_direction == "INBOUND"` |
+| `queue_worker/handlers.py`, the Layer-2 duplicate check | A bill *received* is never a duplicate of an invoice *issued*; a self-billing tenant could have an outbound row flag an inbound one. | `flow_direction == "INBOUND"` |
+
+The inbound dashboard (`routers/dashboard.py`), the inbound invoice list (`routers/invoices.py`)
+and `services/rule_impact.py` were already filtered — Gap 329's own fix. Read sites that
+deliberately stay unfiltered: `routers/audit.py`'s display join and `agents/query_agent.py`'s
+tenant-wide distinct-vendor count and name search, all of which are direction-agnostic by
+intent.
+
+### Verification (real Postgres, `localhost:5433/invoice_db`, 2026-09-05)
+
+`pytest tests/test_outbound_extraction.py -q` → **`13 passed in 5.67s`** (3 new: the schema
+covers every field the inbound one does and mirrors its descriptions verbatim; every widened
+field stays Optional; the widened fields reach `extracted_data` through the real graph).
+
+`pytest tests/test_outbound_ingestion.py tests/test_trainer.py tests/test_chat_attachments.py
+tests/test_direction_aware_chat.py tests/test_extraction_benchmark.py
+tests/test_invoice_reconciliation.py -q` → **`256 passed, 1 skipped in 25.49s`**.
+
+The builder half, including the end-to-end clone-of-a-clone proof, is recorded in
+[feature_17_invoice_builder.md](feature_17_invoice_builder.md) § "Read back and inherited".

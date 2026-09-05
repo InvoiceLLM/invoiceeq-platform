@@ -77,3 +77,112 @@ None on the FE. Reads `source_invoice_id` that BE task 17.7 adds to the outbound
 ### Founder decisions (2026-09-04)
 
 - **Entry points stay on an existing invoice only** — the outbound review page header and the outbound table row. No "Start from a previous invoice" button on the Sending tab and no source-picker component: the user chooses the source first, then builds. Revisit only if the picker is asked for after real use.
+
+---
+
+## Superseded (2026-09-05) — the layout pill and the 422 surface are deleted (FE Gap 462)
+
+*Additive per CONVENTIONS hard rule 4. The 20.4 task line, the 20.1/20.3–20.4
+verification rows and the "Built (2026-09-04)" text above are left exactly as
+written — they record what shipped that day, including the 422 handling and the
+pill. This section records that the backend contract they were built against no
+longer exists.*
+
+### What changed underneath this screen
+
+BE Gap 462 deleted the backend's in-place substitution renderer. Preview and
+create always re-render now, so:
+
+- **`POST /build/preview` has no 422 contract.** It answers `200
+  application/pdf` or `409` (duplicate number, D5) — nothing else this screen
+  branches on.
+- **`POST /build` has no 422 contract** either.
+- **There is no render mode to predict.** Row count no longer selects anything.
+
+The user-visible defect this fixes: Preview failed on the ordinary clone with
+"Some changed values could not be found in the source PDF… revert them to the
+source value, or change the layout by adding/removing a row", and the Create
+button failed the same way — reported by the founder as "no save button
+working".
+
+### What was deleted here
+
+| File | Deleted |
+|---|---|
+| `components/builder/LineItemGrid.tsx` | `predictRenderMode()` and the `data-testid="layout-pill"` badge ("Layout: exact copy" / "Layout: re-rendered"), its tooltip and its `Copy`/`Layers` icons. The now-unused `sourceItemCount` prop went with it. |
+| `components/builder/BuilderPreview.tsx` | The 422 branch, the `unlocated` state, the `onUnlocatedFields` prop and the `data-testid="unlocated-fields"` line that told the user to revert a field or add/remove a row. 409 handling is untouched. |
+| `components/builder/BuilderForm.tsx` | The `unlocatedFields` prop, the `flagged` field state (yellow border + warning triangle) and its `AlertTriangle` import. |
+| `app/invoices/outbound-builder/page.tsx` | `unlocatedFields` state, the 422 branch in `handleCreate()`, and the `renderMode` mirror plus the conditional caption under the grid (now a single fixed line). |
+| `types/invoice.ts` | `UnlocatedFieldsError` and the `BuilderRenderMode` union. |
+| `e2e/outbound-builder.spec.ts` | "adding or removing a row flips the layout pill to re-rendered" and "a 422 marks the unlocated fields and revert-to-source restores them". |
+
+**Kept deliberately:** the per-field **"Revert to source"** button in
+`BuilderForm`. It is an ordinary editing convenience on a cloned value — undo an
+edit — and was never part of the 422 path, even though the 422 leaned on it.
+
+### Verification (2026-09-05)
+
+| Check | Result |
+|---|---|
+| `node node_modules/typescript/bin/tsc --noEmit` | exit 0, no output (`npx tsc` resolves to the wrong package in this checkout) |
+| `npx playwright test e2e/outbound-builder.spec.ts` | **16 passed (1.2m)** |
+
+The replacement spec is
+`"a same-row-count clone previews with no layout workaround (FE Gap 462)"`: it
+changes the invoice date and a quantity while keeping the row count — the exact
+shape that used to 422 — and asserts the PDF viewer appears, `preview-error` has
+count 0 and `layout-pill` has count 0.
+
+**The standing caveat above still stands and is not weakened by this change.**
+Every `/api/**` call in that spec is stubbed with `page.route()`, so it encodes
+the new contract rather than observing it. The `20.6 (live)` row remains **not
+run** — a dev-stack session is still owed.
+
+---
+
+## Widened (2026-09-05) — the whole invoice is editable on this screen (FE Gap 463)
+
+*Additive per CONVENTIONS hard rule 4; nothing above this line is edited.*
+Mirrors BE Gap 463 (`feature_17_invoice_builder.md` §"Widened (2026-09-05)").
+
+Founder, 2026-09-05: *"while building new invoice from an existing user can
+change everything… so all the fields address, anything thats there in the
+invoice."* This is not cosmetic: since BE Gap 462 deleted the substitution
+renderer, a field this screen does not post is not inherited from the source
+page any more — it is not printed at all.
+
+### What changed
+
+| File | Change |
+|---|---|
+| `types/invoice.ts` | `BuildRequest` gains `vendor_name`, `po_number`, `discount_percent`, `discount_amount`, `addresses`, `references`, `payment_instructions`, `tax_ids`, `taxes`, `discounts`, `deductions`, `compliance_metadata`, `notes`; `BuildItem` gains `hsn_sac_code`, `uom`, `discount_percent`, `discount_amount`, `tax_percent`, `tax_amount`. Eight new interfaces (`BuildAddress`, `BuildReference`, `BuildPaymentInstruction`, `BuildTaxId`, `BuildTax`, `BuildDiscount`, `BuildDeduction`, `BuildComplianceItem`) mirror the pydantic models one for one, plus a shared `BuildNumber` alias. |
+| `lib/invoiceBuilderMath.ts` | `computeTotals(items, taxAmount, extras?)` mirrors the extended BE arithmetic line for line — per-line discount then per-line tax, invoice-level discount, any number of tax rates on the discounted base, deductions — with a typed amount always beating a typed rate. New `totalsFor(request)` mirrors BE `totals_for()`. `Totals` gains `line_discounts`, `line_taxes`, `discount_lines`, `discount_total`, `tax_lines`, `deduction_lines`, `deduction_total`. Still display-only: **no computed figure is ever posted.** |
+| `components/builder/BuilderForm.tsx` | `vendor_name` and `po_number` join the header fields (same `BuilderField` styling and revert-to-source strip). Three new sections: **Addresses** (Bill To / Ship To / Your Address, as textareas backed by the typed entries in `addresses`), **References & Payment** (repeatable reference rows, repeatable payment-instruction rows, a notes/terms textarea), **Tax IDs & Compliance** (repeatable rows). Two new local components: `BuilderTextArea` and a generic `ListEditor` — all four repeatable lists are `{label, value}` pairs, so one editor serves them rather than four near-copies. Exported helpers `addressText()` / `withAddress()` keep an address whose type the FE has no box for exactly where it was, and drop an entry when its box is cleared so the BE prints no empty heading. |
+| `components/builder/LineItemGrid.tsx` | Props are now `{ value: BuildRequest, onChange, disabled }` instead of `items`/`currency`/`taxAmount`/`onTaxChange` — the totals depend on the invoice-level discounts, tax rates and deductions the same block edits. New per-line columns: HSN/SAC, UOM, Disc %, Tax %. The totals block gained editable discount rows, per-rate tax rows (the single `tax-amount` box still shows while `taxes` is empty, so the old contract is intact), deduction rows and three `Add` buttons. |
+| `app/invoices/outbound-builder/page.tsx` | `normaliseDefaults()` defaults every new list to `[]` and `notes` to `null`, and spreads the source item so the per-line additions survive; `LineItemGrid` is passed the whole form. |
+
+Currency stays read-only, as before.
+
+### Verification (2026-09-05)
+
+| Command | Result |
+|---|---|
+| `node node_modules/typescript/bin/tsc --noEmit` | exit 0, no output (`npx tsc` resolves to the wrong package here) |
+| `npx playwright test e2e/invoice-builder-math.spec.ts` | **14 passed (18.5s)** (was 10; 4 added) |
+| `npx playwright test e2e/outbound-builder.spec.ts` | **16 passed** (1 added) — two runs hit environmental flakes (a Chromium "Target crashed" and an `EADDRINUSE :::3100` from a stale dev server); each affected test was re-run individually and passed. |
+
+The four new math cases are the same cases BE
+`tests/test_invoice_builder.py` asserts against `compute_totals()`. The
+`no items is a zero total` case now asserts field by field rather than on the
+whole object, because `Totals` grew.
+
+The new browser case, `"FE Gap 463: the widened fields are editable and reach
+the posted body"`, fills the PO number, vendor name, both addresses, notes, a
+reference row, a tax-ID row, the per-line HSN/UOM and a CGST rate, asserts the
+rate's computed figure (`$14.40`, 9% of the 159.97 subtotal, half-up — the same
+number the BE computes), then asserts the posted body carries all of it and
+still carries no `subtotal`/`grand_total`.
+
+**The standing caveat is unchanged and not weakened.** Every `/api/**` call in
+that spec is stubbed, so it encodes the contract rather than observing it. The
+`20.6 (live)` dev-stack row remains **not run** — still owed.

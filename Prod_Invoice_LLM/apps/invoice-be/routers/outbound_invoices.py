@@ -4,7 +4,6 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4, UUID
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Response, status
-from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
@@ -28,15 +27,17 @@ from models import Invoice, Tenant, User
 from services.invoice_builder import (
     BuildRequest,
     builder_intent,
-    compute_totals,
     default_build_from_source,
-    plan_render_mode,
-    plan_substitutions,
+    totals_for,
 )
-from services.pdf_render import harvest_branding, render_invoice
-from services.pdf_substitute import _number_renderings as number_renderings, substitute
+from services.pdf_render import (
+    harvest_branding,
+    number_renderings,
+    render_invoice,
+)
 from services.storage import download_pdf_from_storage
 from services.billing_quota import charge_free_quota, count_billable_uploads
+from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ImageTooLargeError,
     UnsupportedUploadError,
@@ -102,6 +103,7 @@ async def _store_and_enqueue_outbound(
     *,
     source_invoice_id: UUID | None = None,
     builder_intent: dict | None = None,
+    notes: str | None = None,
 ) -> dict:
     """The tail every outbound ingestion door shares: quota, blob, row, queue.
 
@@ -121,7 +123,12 @@ async def _store_and_enqueue_outbound(
     `populate_existing=True` (Gap 343) so the allowance is never evaluated
     against a stale copy.
 
-    The two keyword arguments are NULL for uploads and set only by the builder.
+    The three keyword arguments are NULL for uploads and set only by the
+    builder. BE Gap 467 added `notes`: the builder knows the notes block it is
+    about to print, so the column is stamped at creation rather than waiting for
+    the worker to read it back off the PDF — an upload has no such knowledge and
+    passes None, leaving the extraction pass (which now reads `notes`) as the
+    only writer on that door.
     """
     invoice_id = uuid4()
     batch_id = uuid4()
@@ -159,10 +166,24 @@ async def _store_and_enqueue_outbound(
         submitted_by_email=_submitter_email_from_context(db_session, context),
         source_invoice_id=source_invoice_id,
         builder_intent=builder_intent,
+        notes=notes,
     )
     db_session.add(db_invoice)
     await run_in_threadpool(db_session.commit)
     db_session.refresh(db_invoice)
+
+    # Gap 464: one AR upload is one run. Recorded after the Invoice row commits
+    # rather than at the mint above, because everything between them (quota
+    # refusal, blob failure) raises -- a run row written first would be a
+    # History line for an upload that never happened.
+    record_ingestion_batch(
+        db_session,
+        tenant_id=context.tenant_id,
+        batch_id=batch_id,
+        trigger="manual",
+        file_count=1,
+        flow_direction="OUTBOUND",
+    )
 
     try:
         settings = get_settings()
@@ -276,30 +297,20 @@ async def upload_outbound_invoice(
 # correctness here is deterministic code and none of it is a prompt rule
 # (CONVENTIONS hard rule 3): the totals arithmetic
 # (`services/invoice_builder.compute_totals`), the number formatting
-# (`format_like`), the invoice-number suggestion, which renderer runs
-# (`plan_render_mode`), where a value is printed (`locate_field`) and the
-# duplicate-number refusal below. The LLM sees the generated PDF only after it
-# has been created, through the ordinary outbound extraction pipeline, exactly
-# as it sees an upload.
+# (`format_like`), the invoice-number suggestion and the duplicate-number
+# refusal below. The LLM sees the generated PDF only after it has been created,
+# through the ordinary outbound extraction pipeline, exactly as it sees an
+# upload.
+#
+# BE Gap 462 (2026-09-05): there is no longer a renderer to choose. The
+# substitution path and its `plan_render_mode()` are deleted — every clone goes
+# through `render_invoice()` with the source's harvested branding.
 
 #: Founder decision D4. `OVERDUE` is a virtual, read-time condition (SENT past
 #: due_date, Feature 7.1/8.1) and is never written to `Invoice.status`, so
 #: accepting `SENT` is what makes an overdue invoice cloneable; the literal is
 #: accepted too in case a future status write ever appears.
 CLONE_ELIGIBLE_STATUSES = ("VERIFIED", "SENT", "PAID", "OVERDUE")
-
-
-class UnlocatedFieldsError(Exception):
-    """Carries the 422 body the FE reads (`{"unlocated_fields": [...]}`).
-
-    Deliberately not an `HTTPException`: FastAPI would wrap the list under
-    `detail`, and `components/builder/BuilderPreview.tsx` reads the key at the
-    top level so it can mark each named field in the form.
-    """
-
-    def __init__(self, fields: list[str]):
-        super().__init__(", ".join(fields))
-        self.fields = fields
 
 
 def _load_clone_source(db_session: Session, context: TenantContext, invoice_id: UUID) -> Invoice:
@@ -401,9 +412,14 @@ async def _render_build(db_session: Session, context: TenantContext, req: BuildR
     """Shared by preview and create: validate, recompute, render.
 
     Returns the PDF bytes, the source row and the `builder_intent` payload.
-    Raises `UnlocatedFieldsError` (substitute path only) when a changed value
-    could not be found on the source page — the builder refuses rather than
-    shipping a PDF that still prints the old figure.
+
+    BE Gap 462 (2026-09-05): this used to pick between an in-place substitution
+    on the source PDF and a structured re-render, on row count alone, and raise
+    `UnlocatedFieldsError` → 422 when substitution could not find a changed
+    value in the source page. That fired on the *normal* clone (same rows, new
+    dates, new totals) and told the user to add or remove a row to force the
+    other renderer. Both the planner and the 422 are gone; `render_invoice()`
+    handles any row count and any edit, so there is no refusal path left here.
     """
     source = _load_clone_source(db_session, context, req.source_invoice_id)
     _assert_invoice_number_unused(
@@ -411,9 +427,10 @@ async def _render_build(db_session: Session, context: TenantContext, req: BuildR
     )
 
     # The server always recomputes; a client-supplied total is never trusted and
-    # is not even part of `BuildRequest`.
-    totals = compute_totals(req.items, req.tax_amount)
-    render_mode = plan_render_mode(source, req)
+    # is not even part of `BuildRequest`. BE Gap 463: `totals_for()` rather than
+    # `compute_totals(items, tax)` directly, so the widened discount/tax/
+    # deduction inputs cannot be forgotten at one of the two call sites.
+    totals = totals_for(req)
 
     try:
         source_pdf = await run_in_threadpool(download_pdf_from_storage, source.file_path)
@@ -423,25 +440,17 @@ async def _render_build(db_session: Session, context: TenantContext, req: BuildR
             detail=f"Could not read the source invoice PDF: {e}",
         )
 
-    if render_mode == "substitute":
-        subs = plan_substitutions(source, req, totals)
-        pdf_bytes, unlocated = await run_in_threadpool(
-            substitute, source_pdf, subs, source.coordinates or [],
-        )
-        if unlocated:
-            raise UnlocatedFieldsError(unlocated)
-    else:
-        branding = await run_in_threadpool(
-            harvest_branding, source_pdf, [source.invoice_number, source.customer_name],
-        )
-        # The source's own grand total is the sample that tells the renderer
-        # whether this tenant prints `1,250.00` or `1.250,00`.
-        number_style = _number_style_from_source(source_pdf, source.grand_total)
-        pdf_bytes = await run_in_threadpool(
-            render_invoice, req, totals, branding, number_style,
-        )
+    branding = await run_in_threadpool(
+        harvest_branding, source_pdf, [source.invoice_number, source.customer_name],
+    )
+    # The source's own grand total is the sample that tells the renderer
+    # whether this tenant prints `1,250.00` or `1.250,00`.
+    number_style = _number_style_from_source(source_pdf, source.grand_total)
+    pdf_bytes = await run_in_threadpool(
+        render_invoice, req, totals, branding, number_style,
+    )
 
-    return pdf_bytes, source, builder_intent(req, totals, render_mode)
+    return pdf_bytes, source, builder_intent(req, totals)
 
 
 @router.get("/{invoice_id}/build-defaults")
@@ -468,13 +477,7 @@ async def preview_built_invoice(
     """Feature 17: render exactly what `/build` would create, and persist
     nothing — no `Invoice` row, no blob, no quota charge. The user sees the real
     output before committing to it."""
-    try:
-        pdf_bytes, _source, _intent = await _render_build(db_session, context, req)
-    except UnlocatedFieldsError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"unlocated_fields": exc.fields},
-        )
+    pdf_bytes, _source, _intent = await _render_build(db_session, context, req)
     return Response(content=pdf_bytes, media_type="application/pdf")
 
 
@@ -502,19 +505,16 @@ async def build_outbound_invoice(
             detail="Send Invoices is not enabled for this tenant. Enable it in Settings first.",
         )
 
-    try:
-        pdf_bytes, source, intent = await _render_build(db_session, context, req)
-    except UnlocatedFieldsError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"unlocated_fields": exc.fields},
-        )
+    pdf_bytes, source, intent = await _render_build(db_session, context, req)
 
     return await _store_and_enqueue_outbound(
         db_session, context, tenant, pdf_bytes,
         f"{(req.invoice_number or 'invoice').strip()}.pdf",
         source_invoice_id=source.id,
         builder_intent=intent,
+        # BE Gap 467: onto the row's own column, not only into `builder_intent`
+        # — that is what lets a clone of this clone inherit the notes block.
+        notes=req.notes,
     )
 
 
