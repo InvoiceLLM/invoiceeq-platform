@@ -272,3 +272,11 @@ matching `/delete/i` or `/^hide/i`; and the sidebar swap is net zero — a
 **Not verified, and not claimed:** no live end-to-end run against a real
 backend. Every `/api/**` call in the spec is stubbed, so this proves the
 rendering and the request shapes, not the wiring to real data.
+
+#### Reaching this screen on the deployed origin — FE Gap 469 (2026-09-05)
+
+The screen above is served by invoice-fe, but nobody reaches invoice-fe directly: its Container App ingress is internal, and the public origin is **invoice-website**, which rewrites an explicit allowlist of paths through to it (`fePages` and `feApiPrefixes` in `apps/invoice-website/next.config.js`, plus a matching negative lookahead in `apps/invoice-website/middleware.ts`'s matcher).
+
+A path absent from those three lists is taken by Clerk's middleware on the website origin and never rewritten, so it fails **above** invoice-fe — the sidebar link renders, the URL changes, and the app frame stays empty. That is precisely what FE Gap 469 was: `/history` and `/api/ingestion-history` were added to invoice-fe by FE Gap 464 without being added here.
+
+**Standing rule for this feature and every other:** a new top-level folder under `app/` or `app/api/` in invoice-fe is not reachable in a deployed environment until it is added to `fePages` / `feApiPrefixes` **and** the middleware matcher, in the same change. Local `next dev` will not catch the omission — invoice-fe serves itself directly there. Prior occurrences: `auth` (2026-08-04), `webhooks` (FE Gap 107), `docs` (Gap 230).

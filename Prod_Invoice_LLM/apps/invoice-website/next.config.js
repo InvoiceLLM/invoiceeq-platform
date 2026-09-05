@@ -12,7 +12,19 @@ const nextConfig = {
     const feUrl = process.env.FE_INTERNAL_URL;
     if (!feUrl) throw new Error("FE_INTERNAL_URL is not set but ENABLE_FE_PROXY=true");
 
-    const fePages = ["dashboard", "chat", "ingestion", "invoices", "trainer", "settings", "admin", "flows", "help"];
+    const fePages = ["dashboard", "chat", "ingestion", "invoices", "trainer", "settings", "admin", "flows", "help", "history"];
+    // Bug fix (2026-09-05, FE Gap 469): "history" was missing. FE Gap 464 added
+    // invoice-fe's app/history/page.tsx and swapped the sidebar's "Documents"
+    // entry for "History", but this array was never re-diffed against
+    // apps/invoice-fe/app/ -- so on the public invoice-website origin the
+    // sidebar link rendered, the click navigated, and nothing was ever
+    // rewritten to invoice-fe: the main panel stayed empty. Confirmed live
+    // before the fix: invoice-fe's container has .next/server/app/history/
+    // page.js built and present, and invoice-be's request log had never once
+    // seen /api/v1/ingestion-history -- the request died at this tier. Same
+    // class of miss as "auth" (2026-08-04), "webhooks" (2026-08-05) and "docs"
+    // (Gap 230). invoice-website has no app/history/ of its own, so this page
+    // prefix cannot shadow a real local route.
     // Bug fix (2026-08-04): "auth" was missing from this list even though
     // invoice-fe has its own app/api/auth/ route directory. useAuth.ts's
     // fetchAuth() calls a relative `GET /api/auth/me`, which resolves against
@@ -53,7 +65,14 @@ const nextConfig = {
     // Fixing that needs a per-path rule, not a prefix, so it is left alone.
     // invoice-website's own app/api/contact/ is local for the same reason.
     // Comment-only update -- the feApiPrefixes array itself is unchanged.
-    const feApiPrefixes = ["admin", "audit", "auth", "autopilot", "chat", "connectors", "dashboard", "docs", "email", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
+    // FE Gap 469 (2026-09-05): "ingestion-history" added alongside the "history"
+    // page prefix above -- the History screen's five proxy routes all live under
+    // invoice-fe's app/api/ingestion-history/, and without this the screen would
+    // load but every one of its calls would 404 on this origin. invoice-website
+    // has no app/api/ingestion-history/ of its own. Still deliberately absent,
+    // unchanged by this fix: "billing" (shadows a real local route, see above),
+    // "documents" and "config" (no page served through this proxy calls them).
+    const feApiPrefixes = ["admin", "audit", "auth", "autopilot", "chat", "connectors", "dashboard", "docs", "email", "ingestion-history", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
 
     const pageRewrites = [
       ...fePages.flatMap((p) => [
