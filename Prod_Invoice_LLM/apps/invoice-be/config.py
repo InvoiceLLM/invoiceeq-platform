@@ -189,6 +189,15 @@ class Settings(BaseSettings):
     # instead of forcing it, so they now fail on EVERY machine rather than only
     # on ones with `ENABLE_GENERIC_EXTRACTION=true` in `.env`. That is a defect
     # in those tests, not in this feature -- see Gap 461 in the tracker.
+    #
+    # ═══ ALWAYS TRUE. NEVER SET THIS TO FALSE. ═══════════════════════════════
+    # Founder ruling, 2026-09-05: "the flag is always on". Not a default to be
+    # overridden per environment -- on everywhere, permanently. Do not set it
+    # False in `.env`, in `infra/params.*.json`, in a test, or "temporarily" to
+    # debug something. There is no supported configuration of this product in
+    # which it is False, and the OFF branch below it is unexercised dead code.
+    # Deleting the flag and that branch outright was started as Gap 468 and
+    # deliberately reverted by the founder -- the setting stays, pinned True.
     ENABLE_GENERIC_EXTRACTION: bool = True
     # Gap 117: which deployment this process is. Read only by ops scripts that
     # must never touch production data (scripts/grant_test_plan.py), never by
