@@ -369,3 +369,344 @@ def test_v29_reconciliation_never_crosses_a_tenant_boundary(db):
     )
     assert result["references"][0]["outcome"] == "not_found"
     assert result["unreferenced_invoices"] == []
+
+
+# ===========================================================================
+# The signed money ledger — Gap 472
+# ===========================================================================
+# Probe turn A4 (PO + credit note, "after the credit is applied what do we owe
+# Apex?") failed on all three candidate models because nothing computed the
+# answer. These tests are the arithmetic, not the narration: the prompt rule
+# that makes the model read the block out is asserted in
+# `tests/test_chat_attachments.py`.
+
+
+def _term(doc_type, amount, number=None, currency="USD", source="attachment"):
+    return {
+        "doc_type": doc_type,
+        "doc_number": number,
+        "amount": amount,
+        "currency": currency,
+        "source": source,
+    }
+
+
+def test_a4_credit_note_against_the_po_is_the_probe_turn_verbatim():
+    """The exact shape of turn A4: $452 invoiced, $20 credited, $432 PO."""
+    result = dc.compute_amount_owed(
+        [
+            _term("INVOICE", 452, "APS-410093", source="invoice"),
+            _term("CREDIT_NOTE", 20, "CN-APEX-01"),
+        ],
+        {
+            "doc_type": "PURCHASE_ORDER",
+            "doc_number": "PO-US-7002",
+            "amount": 432,
+            "currency": "USD",
+        },
+    )
+    assert result["net"] == "432"
+    assert result["currency"] == "USD"
+    assert result["complete"] is True
+    # The second half of the expected answer: the net EQUALS what was authorised.
+    assert result["agreed"]["status"] == "match"
+    assert result["agreed"]["delta"] == "0"
+    assert result["agreed"]["doc_number"] == "PO-US-7002"
+
+
+def test_every_money_doc_type_carries_its_sign_not_just_credit_notes():
+    """The founder's scoping call: one ledger, not a credit-note special case."""
+    assert dc.owed_sign("INVOICE") == 1
+    assert dc.owed_sign("PROFORMA_INVOICE") == 1
+    assert dc.owed_sign("DEBIT_NOTE") == 1
+    assert dc.owed_sign("CREDIT_NOTE") == -1
+    assert dc.owed_sign("RECEIPT") == -1
+    assert dc.owed_sign("REMITTANCE_ADVICE") == -1
+    # Lower case and padding are the same type -- doc_type reaches here from an
+    # extractor, not from a literal.
+    assert dc.owed_sign("  credit_note ") == -1
+
+
+def test_a_document_with_no_money_claim_contributes_nothing():
+    """A delivery note or GRN on the same table must not move the number, and a
+    statement of account must not either -- its total is the balance of the very
+    invoices being summed, so adding it would double-count."""
+    for doc_type in ("DELIVERY_NOTE", "GRN", "STATEMENT_OF_ACCOUNT", "OTHER", "CONTRACT"):
+        assert dc.owed_sign(doc_type) is None
+    result = dc.compute_amount_owed(
+        [
+            _term("INVOICE", 500, "I-1", source="invoice"),
+            _term("CREDIT_NOTE", 100, "C-1"),
+            _term("DELIVERY_NOTE", 999, "DN-1"),
+            _term("STATEMENT_OF_ACCOUNT", 12345, "SOA-1"),
+        ]
+    )
+    assert result["net"] == "400"
+    assert [t["doc_number"] for t in result["terms"]] == ["I-1", "C-1"]
+
+
+def test_a_debit_note_adds_and_a_receipt_clears():
+    assert dc.compute_amount_owed(
+        [_term("INVOICE", 500, source="invoice"), _term("DEBIT_NOTE", 50)]
+    )["net"] == "550"
+    assert dc.compute_amount_owed(
+        [_term("INVOICE", 500, source="invoice"), _term("RECEIPT", 500)]
+    )["net"] == "0"
+    assert dc.compute_amount_owed(
+        [_term("INVOICE", 2500, source="invoice"), _term("REMITTANCE_ADVICE", 2500)]
+    )["net"] == "0"
+
+
+def test_a_lone_claim_produces_no_ledger_at_all():
+    """None, not a net equal to the invoice. There is no arithmetic to state and
+    a block saying "net owed = the invoice total" is noise the model would then
+    feel obliged to narrate."""
+    assert dc.compute_amount_owed([_term("INVOICE", 100, source="invoice")]) is None
+    assert dc.compute_amount_owed([]) is None
+    assert dc.compute_amount_owed([_term("DELIVERY_NOTE", 100)]) is None
+    # But a lone REDUCTION is a real question ("we paid this, what now?").
+    assert dc.compute_amount_owed([_term("CREDIT_NOTE", 100)])["net"] == "-100"
+
+
+def test_mixed_currencies_stop_the_sum_and_say_so():
+    """Same hard stop as `_compare_one()`: no FX rate exists in this module and
+    inventing one produces a confident wrong answer about money."""
+    result = dc.compute_amount_owed(
+        [_term("INVOICE", 100, "I-1", "USD", "invoice"), _term("CREDIT_NOTE", 10, "C-1", "EUR")]
+    )
+    assert result["net"] is None
+    assert result["complete"] is False
+    assert "EUR" in result["blocked_reason"] and "USD" in result["blocked_reason"]
+
+
+def test_the_agreed_documents_currency_can_block_the_sum_too():
+    result = dc.compute_amount_owed(
+        [_term("INVOICE", 100, "I-1", "USD", "invoice"), _term("CREDIT_NOTE", 10, "C-1", "USD")],
+        {"doc_type": "PURCHASE_ORDER", "doc_number": "PO-1", "amount": 90, "currency": "GBP"},
+    )
+    assert result["net"] is None
+    assert "GBP" in result["blocked_reason"]
+
+
+def test_an_unreadable_total_is_never_worth_zero():
+    """Treating a missing figure as nought is exactly how a credit note silently
+    stops being applied. The term is named and the net is marked provisional."""
+    result = dc.compute_amount_owed(
+        [
+            _term("INVOICE", 100, "I-1", source="invoice"),
+            _term("CREDIT_NOTE", None, "C-1"),
+        ]
+    )
+    assert result["net"] == "100"
+    assert result["complete"] is False
+    assert [t["doc_number"] for t in result["ignored_terms"]] == ["C-1"]
+    assert "not readable" in result["ignored_terms"][0]["reason"]
+
+
+def test_net_higher_and_net_lower_than_what_was_authorised():
+    over = dc.compute_amount_owed(
+        [_term("INVOICE", 500, source="invoice"), _term("DEBIT_NOTE", 50)],
+        {"doc_type": "PURCHASE_ORDER", "doc_number": "PO-1", "amount": 500, "currency": "USD"},
+    )
+    assert over["agreed"]["status"] == "net_higher" and over["agreed"]["delta"] == "50"
+    under = dc.compute_amount_owed(
+        [_term("INVOICE", 500, source="invoice"), _term("CREDIT_NOTE", 50)],
+        {"doc_type": "QUOTATION", "doc_number": "Q-1", "amount": 500, "currency": "USD"},
+    )
+    assert under["agreed"]["status"] == "net_lower" and under["agreed"]["delta"] == "-50"
+
+
+def test_a_half_cent_apart_is_a_match_not_a_discrepancy():
+    """Same tolerance the header diff uses -- two independently OCR'd pages."""
+    result = dc.compute_amount_owed(
+        [_term("INVOICE", "452.005", source="invoice"), _term("CREDIT_NOTE", 20)],
+        {"doc_type": "PURCHASE_ORDER", "doc_number": "PO-1", "amount": 432, "currency": "USD"},
+    )
+    assert result["agreed"]["status"] == "match"
+
+
+def test_only_commitment_documents_are_the_agreed_figure():
+    for doc_type in ("PURCHASE_ORDER", "QUOTATION", "ORDER_CONFIRMATION", "CONTRACT"):
+        assert dc.is_agreed_figure_doc_type(doc_type) is True
+    for doc_type in ("INVOICE", "CREDIT_NOTE", "RECEIPT", "DELIVERY_NOTE", None, ""):
+        assert dc.is_agreed_figure_doc_type(doc_type) is False
+
+
+# ===========================================================================
+# Contract terms — Gap 473
+# ===========================================================================
+# Probe turn B4: "per this contract, is the sales tax on Redwood invoice
+# RFG-500712 correct? Show the expected figure." All three candidate models
+# answered "the contract does not state a tax amount", because nothing parsed
+# the rate and nothing computed 8.25% of 1,500.00.
+
+
+def _span(text, page=1):
+    return {"document": text, "page": page, "metadata": {}, "distance": 0.1}
+
+
+class _Inv:
+    """The two fields the expected-figure comparison reads, and nothing else --
+    it takes an ORM row in production but must not depend on one."""
+
+    def __init__(self, subtotal=None, tax_amount=None, number="RFG-500712", currency="USD"):
+        self.subtotal = subtotal
+        self.tax_amount = tax_amount
+        self.invoice_number = number
+        self.currency = currency
+
+
+def test_b4_the_probe_turn_verbatim():
+    """8.25% of a 1,500.00 subtotal is 123.75; the invoice printed 90.00."""
+    terms = dc.extract_contract_terms(
+        [_span("Section 4. Sales tax shall be charged at 8.25% on all services.", page=2)]
+    )
+    assert [t["key"] for t in terms] == ["sales_tax_rate"]
+    assert terms[0]["value"] == "8.25"
+    assert terms[0]["page"] == 2
+    assert "8.25%" in terms[0]["source_text"]
+
+    expected = dc.compare_contract_terms_to_invoice(terms, _Inv(1500, 90))
+    assert expected["expected_tax"] == "123.75"
+    assert expected["invoice_tax"] == "90.00"
+    assert expected["delta"] == "-33.75"
+    assert expected["status"] == "under_charged"
+    assert expected["invoice_number"] == "RFG-500712"
+    # The evidence travels with the figure -- that is what makes it quotable
+    # without the model reasoning over free document text.
+    assert "8.25" in expected["source_text"]
+
+
+def test_a_percentage_is_read_however_the_document_spells_it():
+    for text, value in (
+        ("VAT at 20%", "20"),
+        ("GST of 18 %", "18"),
+        ("Sales tax: 8.25 percent", "8.25"),
+        ("service tax rate of 12.5 per cent", "12.5"),
+    ):
+        terms = dc.extract_contract_terms([_span(text)])
+        assert terms and terms[0]["value"] == value, text
+
+
+def test_a_rate_named_twice_is_reported_once():
+    """A contract that repeats a rate is not self-contradictory, and emitting
+    both invites an answer that says it is."""
+    terms = dc.extract_contract_terms(
+        [
+            _span("Sales tax at 8.25% applies.", page=1),
+            _span("As stated, sales tax at 8.25% applies to all invoices.", page=4),
+        ]
+    )
+    assert len([t for t in terms if t["key"] == "sales_tax_rate"]) == 1
+    assert terms[0]["page"] == 1  # first match wins
+
+
+def test_discount_late_fee_and_payment_terms_are_reported_but_never_computed():
+    """No unambiguous base exists on the invoice for a discount or a late fee,
+    and days are not money. Guessing a base is a confident wrong number."""
+    terms = dc.extract_contract_terms(
+        [
+            _span(
+                "A discount of 5% applies. Late payment interest of 1.5% per month. "
+                "Payment terms are Net 30.",
+            )
+        ]
+    )
+    keys = {t["key"] for t in terms}
+    assert {"discount_rate", "late_fee_rate", "payment_terms_days"} <= keys
+    days = next(t for t in terms if t["key"] == "payment_terms_days")
+    assert days["value"] == "30" and days["unit"] == "days"
+    # None of them produces an expected figure.
+    assert dc.compare_contract_terms_to_invoice(
+        [t for t in terms if t["key"] != "sales_tax_rate"], _Inv(1500, 90)
+    ) is None
+
+
+def test_within_n_days_is_the_same_payment_term():
+    terms = dc.extract_contract_terms([_span("Invoices are payable within 45 days.")])
+    days = next(t for t in terms if t["key"] == "payment_terms_days")
+    assert days["value"] == "45"
+
+
+def test_no_terms_and_no_text_produce_nothing_rather_than_a_guess():
+    assert dc.extract_contract_terms([]) == []
+    assert dc.extract_contract_terms([_span("")]) == []
+    assert dc.extract_contract_terms([_span("This agreement is governed by Oregon law.")]) == []
+    assert dc.compare_contract_terms_to_invoice([], _Inv(1500, 90)) is None
+
+
+def test_a_missing_subtotal_blocks_the_expected_figure():
+    """The 'missing value treated as zero' mistake, refused here as everywhere
+    else in this module: with no subtotal there is nothing to apply a rate to."""
+    terms = dc.extract_contract_terms([_span("Sales tax at 8.25%.")])
+    assert dc.compare_contract_terms_to_invoice(terms, _Inv(None, 90)) is None
+
+
+def test_an_invoice_with_no_tax_figure_is_reported_not_called_a_variance():
+    """'Under-charged by the whole amount' would be a claim the data does not
+    support -- the invoice simply states no tax."""
+    terms = dc.extract_contract_terms([_span("Sales tax at 8.25%.")])
+    result = dc.compare_contract_terms_to_invoice(terms, _Inv(1500, None))
+    assert result["status"] == "invoice_tax_missing"
+    assert result["delta"] is None
+    assert result["expected_tax"] == "123.75"
+
+
+def test_match_and_over_charged():
+    terms = dc.extract_contract_terms([_span("Sales tax at 10%.")])
+    assert dc.compare_contract_terms_to_invoice(terms, _Inv(1000, 100))["status"] == "match"
+    # Same half-cent tolerance the rest of the module uses.
+    assert dc.compare_contract_terms_to_invoice(terms, _Inv(1000, "100.005"))["status"] == "match"
+    over = dc.compare_contract_terms_to_invoice(terms, _Inv(1000, 150))
+    assert over["status"] == "over_charged" and over["delta"] == "50.00"
+
+
+# ---------------------------------------------------------------------------
+# Gap 475 / Gap 476 -- both found by the 29.8 probe re-run, 2026-09-06
+# ---------------------------------------------------------------------------
+
+
+def test_gap475_a_credit_note_that_prints_its_own_total_negative_is_not_double_negated():
+    """Probe turn A4's real defect, hiding behind a passing regex.
+
+    The Apex credit note prints "Total Credit: -$21.60", so extraction returns
+    grand_total = -21.6. `-1 * -21.6` ADDED the credit: net 475.20 where the
+    answer is 432.00. The sign belongs to the document type, not to how the
+    document chose to print its own total.
+    """
+    from services.document_comparison import compute_amount_owed
+
+    negative = compute_amount_owed(
+        [
+            {"doc_type": "INVOICE", "doc_number": "APS-410093", "amount": 453.6, "currency": "USD"},
+            {"doc_type": "CREDIT_NOTE", "doc_number": "CN-APS-0021", "amount": -21.6, "currency": "USD"},
+        ],
+        agreed={"doc_type": "PURCHASE_ORDER", "doc_number": "PO-US-7002", "amount": 432.0, "currency": "USD"},
+    )
+    assert negative["net"] == "432.0"
+    assert negative["agreed"]["status"] == "match"
+
+    # The same credit note printed positive must give the identical answer.
+    positive = compute_amount_owed(
+        [
+            {"doc_type": "INVOICE", "doc_number": "APS-410093", "amount": 453.6, "currency": "USD"},
+            {"doc_type": "CREDIT_NOTE", "doc_number": "CN-APS-0021", "amount": 21.6, "currency": "USD"},
+        ],
+        agreed={"doc_type": "PURCHASE_ORDER", "doc_number": "PO-US-7002", "amount": 432.0, "currency": "USD"},
+    )
+    assert positive["net"] == negative["net"]
+    assert [t["sign"] for t in positive["terms"]] == [t["sign"] for t in negative["terms"]]
+
+
+def test_gap475_a_negative_invoice_total_still_adds_by_its_type():
+    """The rule is uniform, not a credit-note special case: an invoice keeps its
+    +1 whatever sign the extractor read off the page."""
+    from services.document_comparison import compute_amount_owed
+
+    result = compute_amount_owed(
+        [
+            {"doc_type": "INVOICE", "doc_number": "INV-1", "amount": -100.0, "currency": "USD"},
+            {"doc_type": "CREDIT_NOTE", "doc_number": "CN-1", "amount": 40.0, "currency": "USD"},
+        ]
+    )
+    assert result["net"] == "60.0"

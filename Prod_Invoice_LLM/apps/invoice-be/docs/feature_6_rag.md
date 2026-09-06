@@ -171,7 +171,10 @@ No LangChain `@tool` decorators, no function-calling; the model never chooses a 
 |---|---|---|
 | `_generation_llm()` | `gpt-5-mini`, reasoning effort + completion cap (A1) | SQL generation, CHAT route |
 | `_fast_llm()` | `gpt-5-mini` — `AZURE_OPENAI_FAST_DEPLOYMENT_NAME` is blank by founder decision; the `gpt-4o` fallback path exists but is inert | Routing, summaries, RAG answer, F26 narration |
-| Embeddings | `BAAI/bge-m3` SentenceTransformer, in-process, unit-norm | Chroma index/query, SQL example retrieval |
+| Embeddings | `BAAI/bge-m3` SentenceTransformer, in-process, unit-norm — name now from `EMBEDDING_MODEL_NAME` (Gap 465) | Chroma index/query, SQL example retrieval |
+| `judge` role (Gap 465) | `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME`, blank = primary | `services/agent_eval.py`, `services/online_quality_judge.py` (still call `get_llm()`; `get_llm_for_role("judge")` is available for the swap) |
+
+Since Gap 465 (2026-09-05) every row above resolves through `utils/model_registry.resolve_model(role)` — see `feature_2_pipeline_extraction.md` §"Model registry". `AZURE_OPENAI_API_VERSION` is `2024-10-21` (GA). To put GPT-5.6 Luna behind `_fast_llm()`: deploy it with `infra/model-deployment.bicep`, set `AZURE_OPENAI_FAST_DEPLOYMENT_NAME=gpt-5.6-luna`; the registry already knows its context and price.
 
 ### Tasks
 - [x] **Task 6.1: Setup Chat Sessions & Threads API**
@@ -1220,7 +1223,7 @@ at four call sites (`query_agent.py:248, 3599, 3867, 4142`).
 
 *Capacity.* `gpt-4o` was raised from **10 to 100** on the dev resource at the
 founder's instruction (`az cognitiveservices account deployment create`, verified:
-`gpt-5-mini 300`, `gpt-4o 100`). `infra/gpt4o-deployment.bicep` was updated to
+`gpt-5-mini 300`, `gpt-4o 100`). `infra/gpt4o-deployment.bicep` (deleted 2026-09-05 by Gap 465; replaced by the parameterised `infra/model-deployment.bicep`) was updated to
 match in the same pass — it still declared `capacity int = 10`, and a bicep run
 would have silently reverted the change and produced 429s with nothing in the code
 to explain them.
@@ -1744,7 +1747,7 @@ instead, and `tests/test_a2_fast_deployment.py` now fails at the source if anyon
 hands the fast model to the generation loop.
 
 **Both caveats closed before any code was written.** Capacity: `gpt-4o` raised
-10 → 100, written back into `infra/gpt4o-deployment.bicep`. Structured output:
+10 → 100, written back into `infra/gpt4o-deployment.bicep` (since replaced by `infra/model-deployment.bicep`, Gap 465). Structured output:
 asked directly on the real deployment — `with_structured_output(QueryRoutingSchema)`
 works and agrees with `gpt-5-mini` 3/3.
 
@@ -1929,3 +1932,183 @@ when C4 landed; the C4 after-run is one command:
 `scratchpad/golden_diff.py` compares two runs case by case. C4 is not called
 "proven" until that comparison shows pass_rate, faithfulness and accuracy within
 noise of the baseline and the attribute/metric cases passing.
+
+---
+
+## §Attachment intents and the amount-owed ledger — 2026-09-06 (Gaps 470, 472)
+
+Written from the founder's 8-document attachment probe
+(`docs/extraction_benchmark/runs/matrix-20260905T092330Z/chat_report_20260906.md` §3).
+Five of the twelve attachment turns failed **identically on gpt-5.6-luna,
+gpt-5-mini and gpt-5.6-terra**, which is what makes them agent-logic defects
+rather than model defects and why swapping the model would not have moved any of
+them.
+
+### What an attached document's question routes to
+
+`_classify_attachment_intent()` (`agents/query_agent.py`) is deterministic — a
+keyword pattern and a doc-type table, no model — and resolves to one of: read the
+document, compare it to invoices, reconcile a list of references, compare two
+attachments to each other, or ask which of those the user meant.
+
+Two changes to that classifier, both because a real question fell to the
+"read or compare?" card and wasted a turn:
+
+* **Gap 470.** `_RECONCILE_INTENT_KEYWORDS` gained the payment vocabulary
+  (`pay/pays/paid/payment/settle/settles/remit/remits/remittance/covers/cover/
+  missing/have invoices for/do we have`), and an **advisory** document type
+  (`STATEMENT_OF_ACCOUNT`, `REMITTANCE_ADVICE`) with no keyword hit now routes to
+  reconcile instead of clarifying. Reconciling is the only thing anyone does with
+  a statement; asking is a wasted turn.
+* **Gap 472.** The same list gained the amount-owed vocabulary
+  (`owe/owes/owed/owing/due/balance/net of/net amount/after the credit/credit
+  note/credit is applied/debit note/left to pay/still to pay/how much do we/how
+  much is`). Probe turn A4 — *"after the credit is applied, what do we owe
+  Apex?"* — matched nothing in the pre-472 list and never reached any comparison
+  at all.
+
+The clarify card remains the fail-safe for everything still unmatched. That is
+deliberate: running the wrong machinery quietly is worse than one extra question.
+
+### Naming every reference, not counting them (Gap 470)
+
+The `list_reconcile` branch composed its prose from outcome **counts** —
+"I checked 2 reference(s)… 1 agree. 1 reference invoices I have no record of." —
+while every per-reference fact (`doc_number`, `stated_amount`, `invoice_amount`,
+`invoice_status`, `delta`) sat in the payload and reached only the table. The
+summary now appends one line per reference and up to ten unreferenced open
+invoices **after** the existing count sentence, so the prose answers "which
+one?" without the user opening the table, and no earlier caller's first sentence
+changed.
+
+### The amount-owed ledger (Gap 472)
+
+Both comparison prompts tell the model *"You MUST NOT compute, re-derive, sum, or
+correct any figure yourself"* (hard rule 3). That rule is correct and is not
+relaxed. The consequence is that **any** money question the product wants
+answered must be computed in Python first — and before Gap 472 the amount owed
+was not computed anywhere, so A4 had no honest answer available and all three
+models hedged.
+
+`compute_amount_owed()` in `services/document_comparison.py` (a module that
+contains no LLM and may not gain one) is a **signed ledger**, not credit-note
+arithmetic. The founder's scoping call on 2026-09-06 widened it deliberately: a
+credit note is one term with one sign, and a credit-note special case would have
+failed the next probe turn that attached a receipt.
+
+| document type | role in the ledger |
+|---|---|
+| `INVOICE`, `PROFORMA_INVOICE`, `DEBIT_NOTE` | term, **+1** |
+| `CREDIT_NOTE`, `RECEIPT`, `REMITTANCE_ADVICE` | term, **−1** |
+| `PURCHASE_ORDER`, `QUOTATION`, `ORDER_CONFIRMATION`, `CONTRACT` | **not a term** — the authorised figure the net is checked against |
+| `DELIVERY_NOTE`, `GRN`, `STATEMENT_OF_ACCOUNT`, `OTHER`, anything absent | **no contribution** |
+
+The sign map is intentionally **not exhaustive** over Feature 27's fourteen
+types. An absent type contributes nothing, so a delivery note (no money claim)
+and a statement of account (a balance over the very invoices being summed —
+adding its total would double-count) stay out by construction rather than by a
+rule someone has to remember.
+
+Three behaviours worth stating because they are easy to "fix" wrongly later:
+
+* **A lone claim produces no ledger.** `compute_amount_owed()` returns `None`
+  when there is nothing to adjust. A block reading "net owed = the invoice total"
+  is noise the model then feels obliged to narrate.
+* **Mixed currencies stop the sum**, with a `blocked_reason` and no figure —
+  the same hard stop `_compare_one()` already makes, for the same reason: this
+  module holds no FX rate, and inventing one produces a confident wrong answer
+  about money.
+* **An unreadable total is never zero.** The term goes to `ignored_terms`,
+  `complete` goes False, and the answer must call the net provisional and name
+  the document holding it up. Treating a missing figure as nought is exactly how
+  a credit note silently stops being applied.
+
+`_amount_owed_block()` assembles the terms and runs on **both** attachment
+branches — attachment-vs-invoice and attachment-vs-attachment. It has to, because
+turn A4 attaches two documents and therefore lands on the doc-to-doc branch. It
+also resolves two things a naive assembly gets wrong: the adjusting document is
+usually a **sibling** attachment rather than the one whose id the question
+carried, and on the doc-to-doc branch **no invoice has been loaded**, so the ones
+confirmed against either attachment earlier in the conversation are fetched —
+without them A4's net is the credit note by itself.
+
+Both prompts gained a narrow rule: when `amount_owed` is present it **is** the
+answer to what is owed; state `net` with its currency, list `terms` as given
+(sign 1 adds, −1 subtracts), never re-derive them, call an incomplete net
+provisional, and report `agreed.status` (`match` / `net_higher` / `net_lower`)
+when a PO or quotation is on the table. The model reads the ledger out; it does
+not build one.
+
+### Contract terms: a rate the diff could not see (Gap 473)
+
+Probe turn B4 — *"per this contract, is the sales tax on Redwood invoice
+RFG-500712 correct? Show the expected figure"* — was answered "the contract does
+not state a tax amount" by all three models, while the contract states 8.25% on
+page 2. Three separate failures were stacked, and fixing any one alone leaves the
+turn failing:
+
+1. **Routing.** `CONTRACT` biases to the READ branch, which is right for "what
+   are the payment terms?" and wrong for a question naming an invoice. B4's
+   wording matched no comparison keyword, so it fell to the clarify card.
+2. **No text.** A contract has no priced lines, so the header/line diff had
+   nothing to compare and the rate was never in the JSON.
+3. **No arithmetic.** Even given the sentence, no model may compute 8.25% of
+   1,500.00 — hard rule 3, printed verbatim in that same prompt.
+
+The compare branch's standing invariant is that *"a hostile document's text
+cannot reach"* the figures it reports. The founder's call (2026-09-06) preserved
+it rather than pasting contract text into the money prompt: **the rate is parsed
+in Python, the expected figure is computed in Python, and the document's own
+words cross over only as a quoted span attached to a computed number, fenced as
+untrusted.** The model reads a result out; it never reasons over contract prose
+to produce money.
+
+`extract_contract_terms()` lifts sales-tax/VAT/GST/service-tax rates, a looser
+tax rate, discount, late-fee/interest and payment-terms days — each with its page
+and a ~200-character verbatim span. `compare_contract_terms_to_invoice()` applies
+**only the tax rate** to the invoice subtotal, giving `expected_tax`,
+`invoice_tax`, `delta` and `status` (`match` / `over_charged` / `under_charged` /
+`invoice_tax_missing`) in 2dp `Decimal`.
+
+Four refusals, each a wrong answer avoided:
+
+* **A discount or late-fee rate computes nothing.** There is no unambiguous base
+  on the invoice — a discount of what, applied when? — and guessing one produces
+  a confident wrong number. The term is reported, not applied.
+* **Payment terms are days, not money.** Reported only.
+* **A missing subtotal blocks the expected figure**, rather than treating the
+  missing value as zero.
+* **An invoice stating no tax is `invoice_tax_missing`, not a variance.**
+  "Under-charged by the whole amount" is a claim the data does not support.
+
+Nothing requiring interpretation — obligations, termination, liability caps — is
+parsed at all. A regex that "understands" a contract is a confident wrong answer
+waiting to happen, and those questions stay the read branch's job.
+
+`_contract_terms_block()` runs only for `CONTRACT`, `QUOTATION` and
+`ORDER_CONFIRMATION`, and searches that one attachment's chunks with a **fixed**
+query rather than the user's question: letting the question steer retrieval would
+let a hostile document influence which of its own pages is quoted beside the
+money figures. It never raises — a Chroma outage returns the pre-gap comparison
+unchanged.
+
+The routing half was fixed with keywords, not by moving the bias: `correct /
+incorrect / charged / overcharged / undercharged / expected figure / should have
+/ should be / as agreed / agreed rate / contracted rate / per this contract` and
+their variants. `CONTRACT` still biases to READ, because a terms question still
+belongs there; these keywords are what tell a terms question from "does this
+invoice agree with the agreement?". `correct` and `charged` are broad on purpose
+— about an attached document they are comparison words nearly every time, and a
+false positive costs an unasked-for comparison while a false negative costs the
+wasted clarify turn B4 measured.
+
+### Still open from the same probe
+
+Turn B5 — two attachments plus an invoice question compared to each other rather
+than each to its own invoice — is tasklist item 5.5 and is **not** fixed by any of
+the above. Its routing is why A4 reaches the doc-to-doc branch at all; the ledger
+was put on both branches so the correct answer does not wait for that fix.
+
+### Superseded in part by Feature 29 (2026-09-06)
+
+The evidence sent to the summary prompt (SQL projection), the C4 static examples tail, the intent keyword lists in §"Attachment intents", and the answer-cache key are all redesigned in `feature_29_llm_optimisation.md` (tasks 29.5, 29.11–29.15). Nothing here is edited in place; that spec cross-references the sections it replaces.

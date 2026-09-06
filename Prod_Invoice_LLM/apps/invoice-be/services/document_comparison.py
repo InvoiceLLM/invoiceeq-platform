@@ -1223,3 +1223,383 @@ def record_comparison(
         except Exception:
             pass
         return None
+
+
+# ===========================================================================
+# Amount owed — the signed money ledger (Gap 472)
+# ===========================================================================
+# Probe turn A4 attached a PO and a credit note and asked "after the credit is
+# applied, what do we owe Apex?". All three candidate models failed it the same
+# way, because nothing had computed the answer: the compare JSON carried the
+# invoice header diff and the credit note's own header, and the models were
+# forbidden (correctly) from doing the subtraction themselves. Hard rule 3 says
+# the arithmetic is ours, so here it is.
+#
+# The founder's scoping call (2026-09-06) was to generalise past credit notes:
+# every money-family document has a defined SIGN against what is owed, so one
+# signed ledger answers the credit-note question and the debit-note, receipt and
+# remittance ones with the same code, instead of a credit-note special case that
+# fails the next probe turn.
+#
+# No LLM here either — this module still contains none and may not gain one.
+
+#: What each document type does to the amount owed. Deliberately NOT exhaustive
+#: over Feature 27's fourteen types: a type absent here contributes no term,
+#: which is the safe default. A delivery note or GRN carries no money claim, and
+#: a statement of account asserts a BALANCE rather than a term (adding its total
+#: would double-count the very invoices it lists).
+_OWED_SIGN_BY_DOC_TYPE: Dict[str, int] = {
+    # Claims on us / by us.
+    "INVOICE": 1,
+    "PROFORMA_INVOICE": 1,
+    "DEBIT_NOTE": 1,
+    # Reductions.
+    "CREDIT_NOTE": -1,
+    "RECEIPT": -1,
+    "REMITTANCE_ADVICE": -1,
+}
+
+#: Document types whose total is the AGREED figure the net is checked against,
+#: rather than a term in the ledger. A PO is what was authorised; the net of the
+#: money documents either equals it or does not, and that comparison is the
+#: second half of A4's expected answer.
+_AGREED_FIGURE_DOC_TYPES: Tuple[str, ...] = (
+    "PURCHASE_ORDER",
+    "QUOTATION",
+    "ORDER_CONFIRMATION",
+    "CONTRACT",
+)
+
+
+def owed_sign(doc_type: Optional[str]) -> Optional[int]:
+    """+1, -1, or None for a type that contributes no term. Table lookup only."""
+    if not doc_type:
+        return None
+    return _OWED_SIGN_BY_DOC_TYPE.get(str(doc_type).strip().upper())
+
+
+def is_agreed_figure_doc_type(doc_type: Optional[str]) -> bool:
+    """True for a PO/quotation/order confirmation/contract — the figure the net
+    is checked against, never a term in the sum."""
+    if not doc_type:
+        return False
+    return str(doc_type).strip().upper() in _AGREED_FIGURE_DOC_TYPES
+
+
+def compute_amount_owed(
+    terms: Sequence[Dict[str, Any]],
+    agreed: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Net amount owed across signed money documents. Deterministic, `Decimal`.
+
+    `terms` are `{doc_type, doc_number, amount, currency, source}` mappings --
+    attached money documents and the matched invoice rows, in whatever order.
+    `agreed` is the optional `{doc_type, doc_number, amount, currency}` of the PO
+    or quotation the net is checked against.
+
+    Returns None when there is nothing worth stating, and None is a real answer
+    here rather than a failure: a lone invoice with no adjustment needs no
+    arithmetic, and printing "net owed = the invoice total" would be noise the
+    model would then feel obliged to narrate.
+
+    Two refusals, both deliberate:
+
+    * **Mixed currencies stop the sum.** Same reason `_compare_one()` hard-stops:
+      this module holds no FX rate and inventing one produces a confident wrong
+      answer about money. The result says so instead and carries no `net`.
+    * **A term with no amount stops the sum being complete.** A document whose
+      total the extractor could not read is not worth zero -- treating a missing
+      figure as nought is exactly how a credit note silently stops being applied.
+      Unusable terms are named in `ignored_terms` and `complete` goes False, so
+      the answer can say which document is holding the arithmetic up.
+    """
+    usable: List[Dict[str, Any]] = []
+    ignored: List[Dict[str, Any]] = []
+    currencies: set = set()
+
+    for term in terms or []:
+        sign = owed_sign(term.get("doc_type"))
+        if sign is None:
+            continue
+        amount = _to_decimal(term.get("amount"))
+        # Gap 475: THE SIGN COMES FROM THE DOCUMENT TYPE, NEVER FROM HOW THE
+        # DOCUMENT PRINTED ITS OWN TOTAL. Probe turn A4 caught this: the Apex
+        # credit note says "Total Credit: -$21.60", so extraction returned
+        # grand_total = -21.6, and `-1 * -21.6` added 21.60 to the amount owed
+        # instead of subtracting it -- 475.20 where the answer is 432.00. A
+        # credit note that prints 21.60 and one that prints -21.60 are the same
+        # document and must produce the same term, so only the magnitude is
+        # taken here. `_OWED_SIGN_BY_DOC_TYPE` is the only thing that decides
+        # direction.
+        if amount is not None:
+            amount = abs(amount)
+        row = {
+            "doc_type": str(term.get("doc_type") or "").strip().upper(),
+            "doc_number": term.get("doc_number"),
+            "source": term.get("source"),
+            "sign": sign,
+            "amount": str(amount) if amount is not None else None,
+            "currency": _normalize_currency(term.get("currency")) or None,
+        }
+        if amount is None:
+            row["reason"] = "the document's total was not readable, so it is not in the sum"
+            ignored.append(row)
+            continue
+        usable.append(dict(row, _amount=amount))
+        if row["currency"]:
+            currencies.add(row["currency"])
+
+    # Nothing to add up, or nothing to ADJUST -- a single positive claim on its
+    # own is not a ledger and needs no arithmetic stated.
+    if not ignored and (not usable or (len(usable) < 2 and usable[0]["sign"] > 0)):
+        return None
+
+    agreed_currency = _normalize_currency((agreed or {}).get("currency")) or None
+    if agreed_currency:
+        currencies.add(agreed_currency)
+
+    public = [{k: v for k, v in r.items() if k != "_amount"} for r in usable]
+
+    if len(currencies) > 1:
+        return {
+            "net": None,
+            "currency": None,
+            "complete": False,
+            "terms": public,
+            "ignored_terms": ignored,
+            "blocked_reason": (
+                "The documents are in different currencies ("
+                + ", ".join(sorted(currencies))
+                + "). No net was computed: converting between currencies is not "
+                "something this comparison does."
+            ),
+        }
+
+    net = sum((r["sign"] * r["_amount"] for r in usable), Decimal("0"))
+
+    result: Dict[str, Any] = {
+        "net": str(net),
+        "currency": next(iter(currencies), None),
+        "terms": public,
+        "ignored_terms": ignored,
+        # Only assert the net is final when every term was usable. A net computed
+        # over most of the documents is a wrong net, and the answer has to be
+        # able to say so rather than present it as complete.
+        "complete": not ignored,
+    }
+
+    agreed_amount = _to_decimal((agreed or {}).get("amount"))
+    if agreed_amount is not None:
+        delta = net - agreed_amount
+        result["agreed"] = {
+            "doc_type": str((agreed or {}).get("doc_type") or "").strip().upper() or None,
+            "doc_number": (agreed or {}).get("doc_number"),
+            "amount": str(agreed_amount),
+            "delta": str(delta),
+            "status": (
+                "match"
+                if abs(delta) <= AMOUNT_TOLERANCE
+                else ("net_higher" if delta > 0 else "net_lower")
+            ),
+        }
+    return result
+
+
+# ===========================================================================
+# Contract terms — deterministic extraction and the expected figure (Gap 473)
+# ===========================================================================
+# Probe turn B4 asked "per this contract, is the sales tax on Redwood invoice
+# RFG-500712 correct? Show the expected figure" and all three candidate models
+# answered "the contract does not state a tax amount". Both halves of that were
+# true of the machinery, not of the document:
+#
+#   1. A contract states RATES AND TERMS IN PROSE. It has no priced line items,
+#      so the header/line diff the comparison branch computes has nothing to
+#      compare and the 8.25% never appears in the JSON at all.
+#   2. Even handed the sentence, no model may turn 8.25% and a 1,500.00 subtotal
+#      into 123.75 -- hard rule 3, and both comparison prompts say so verbatim.
+#
+# So the rate is parsed here, in Python, and the expected figure is computed
+# here too. The model's only job is to read the result out and quote the span it
+# came from. The founder's call (2026-09-06) was explicitly this shape rather
+# than pasting the contract text into the money prompt: the compare branch's
+# invariant is that "a hostile document's text cannot reach" the figures, and a
+# quoted evidence span attached to a number Python computed keeps that true.
+#
+# What is deliberately NOT attempted: reading obligations, termination clauses,
+# liability caps or anything else that needs interpretation. A regex that
+# "understands" a contract is a confident wrong answer waiting to happen. Only
+# figures with an unambiguous printed form are lifted; everything else stays the
+# read branch's job.
+
+#: A percentage written any of the ways these documents actually write it:
+#: "8.25%", "8.25 %", "at 8.25 percent", "rate of 8.25%".
+_PERCENT = r"(\d{1,3}(?:\.\d{1,4})?)\s*(?:%|percent\b|per cent\b)"
+
+#: `(term_key, label, pattern)`. Each pattern captures the number in group 1.
+#: Order matters: the first match for a key wins, so the more specific spelling
+#: is listed before the looser one.
+_CONTRACT_TERM_PATTERNS: Tuple[Tuple[str, str, str], ...] = (
+    (
+        "sales_tax_rate",
+        "sales tax rate",
+        r"(?:sales\s+tax|vat|gst|service\s+tax)\b[^.\n]{0,40}?" + _PERCENT,
+    ),
+    (
+        "tax_rate",
+        "tax rate",
+        r"\btax\b[^.\n]{0,40}?" + _PERCENT,
+    ),
+    (
+        "discount_rate",
+        "discount rate",
+        r"\bdiscount\b[^.\n]{0,40}?" + _PERCENT,
+    ),
+    (
+        "late_fee_rate",
+        "late fee rate",
+        r"(?:late\s+(?:fee|payment|charge)|interest)\b[^.\n]{0,40}?" + _PERCENT,
+    ),
+)
+
+#: Payment terms are days, not a percentage, so they get their own pattern.
+_PAYMENT_DAYS_PATTERN = r"(?:net\s*(\d{1,3})\b|within\s+(\d{1,3})\s+days)"
+
+#: How much of the sentence a term was found in is quoted back as evidence. Long
+#: enough to be checkable against the PDF, short enough not to become a second
+#: copy of the contract inside a money prompt.
+_TERM_SPAN_CHARS = 200
+
+
+def _money2(value: Decimal) -> Decimal:
+    """Two decimal places, for figures this block puts side by side in prose."""
+    return value.quantize(Decimal("0.01"))
+
+
+def _span_around(text: str, start: int, end: int) -> str:
+    """The sentence-ish window a match sits in, whitespace-collapsed."""
+    left = max(0, start - _TERM_SPAN_CHARS // 2)
+    right = min(len(text), end + _TERM_SPAN_CHARS // 2)
+    return re.sub(r"\s+", " ", text[left:right]).strip()
+
+
+def extract_contract_terms(spans: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rate-like terms from a document's own text chunks. Regex only, no LLM.
+
+    `spans` are `search_attachment_chunks()` results -- `{document, page, ...}`.
+    Returns `[{key, label, value, unit, page, source_text}]`, at most one entry
+    per key, in the order the keys are declared.
+
+    One entry per key on purpose: a contract that names a rate twice names the
+    same rate twice, and emitting both invites an answer that presents a document
+    as self-contradictory when it is not. First match wins, which is the earliest
+    chunk searched and the most specific spelling.
+    """
+    found: Dict[str, Dict[str, Any]] = {}
+    for span in spans or []:
+        text = str((span or {}).get("document") or "")
+        if not text:
+            continue
+        page = (span or {}).get("page")
+        lowered = text.lower()
+        for key, label, pattern in _CONTRACT_TERM_PATTERNS:
+            if key in found:
+                continue
+            match = re.search(pattern, lowered, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = _to_decimal(match.group(1))
+            if value is None:
+                continue
+            found[key] = {
+                "key": key,
+                "label": label,
+                "value": str(value),
+                "unit": "percent",
+                "page": page,
+                "source_text": _span_around(text, match.start(), match.end()),
+            }
+        if "payment_terms_days" not in found:
+            match = re.search(_PAYMENT_DAYS_PATTERN, lowered, flags=re.IGNORECASE)
+            if match:
+                days = _to_decimal(match.group(1) or match.group(2))
+                if days is not None:
+                    found["payment_terms_days"] = {
+                        "key": "payment_terms_days",
+                        "label": "payment terms",
+                        "value": str(days),
+                        "unit": "days",
+                        "page": page,
+                        "source_text": _span_around(text, match.start(), match.end()),
+                    }
+
+    # `tax_rate` is the LOOSE spelling and `sales_tax_rate` the specific one --
+    # "sales tax shall be charged at 8.25%" matches both, and both describe the
+    # same fact. Reporting it twice is how an answer ends up presenting a
+    # document as stating two rates when it states one.
+    if "sales_tax_rate" in found:
+        found.pop("tax_rate", None)
+
+    order = [k for k, _, _ in _CONTRACT_TERM_PATTERNS] + ["payment_terms_days"]
+    return [found[k] for k in order if k in found]
+
+
+def compare_contract_terms_to_invoice(
+    terms: Sequence[Dict[str, Any]],
+    invoice: Any,
+) -> Optional[Dict[str, Any]]:
+    """What the contract's rate implies, against what the invoice charged.
+
+    Deterministic and `Decimal`. Returns None when nothing could be checked --
+    no rate term, or no invoice subtotal to apply it to -- and None is a real
+    answer: the terms are still reported separately, and computing against a
+    missing subtotal would be the "missing value treated as zero" mistake the
+    rest of this module refuses to make.
+
+    Only the TAX rate produces an expected figure. A discount or late-fee rate
+    has no unambiguous base on the invoice (a discount of what, applied when?),
+    and a payment-terms day count is not money at all, so those are carried as
+    stated terms with nothing computed from them. Guessing a base would produce a
+    confident wrong number about money, which is the thing this module exists to
+    prevent.
+    """
+    rate_term = next(
+        (t for t in terms or [] if t.get("key") in ("sales_tax_rate", "tax_rate")), None
+    )
+    if rate_term is None:
+        return None
+
+    rate = _to_decimal(rate_term.get("value"))
+    subtotal = _to_decimal(getattr(invoice, "subtotal", None))
+    charged = _to_decimal(getattr(invoice, "tax_amount", None))
+    if rate is None or subtotal is None:
+        return None
+
+    expected = (subtotal * rate / Decimal("100")).quantize(Decimal("0.01"))
+    result: Dict[str, Any] = {
+        "term": rate_term["key"],
+        "rate_percent": str(rate),
+        "page": rate_term.get("page"),
+        "source_text": rate_term.get("source_text"),
+        "invoice_number": getattr(invoice, "invoice_number", None),
+        "currency": _normalize_currency(getattr(invoice, "currency", None)) or None,
+        "subtotal": str(_money2(subtotal)),
+        "expected_tax": str(expected),
+        "invoice_tax": str(_money2(charged)) if charged is not None else None,
+    }
+    if charged is None:
+        # The invoice states no tax figure. Reportable, but not a variance --
+        # "under-charged by the whole amount" would be a claim the data does not
+        # support.
+        result["delta"] = None
+        result["status"] = "invoice_tax_missing"
+        return result
+
+    delta = _money2(charged - expected)
+    result["delta"] = str(delta)
+    result["status"] = (
+        "match"
+        if abs(delta) <= AMOUNT_TOLERANCE
+        else ("over_charged" if delta > 0 else "under_charged")
+    )
+    return result

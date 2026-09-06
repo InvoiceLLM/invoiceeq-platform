@@ -3417,3 +3417,7 @@ trimmed), and **H9** (see the track record in E-7).
 Part 2's Tier-3 discovery and its per-type answer behaviour both consume
 Feature 27's `doc_type`. Built first, Part 2 is limited to Part 1's three-value
 vocabulary and will need revisiting.
+
+### Superseded in part by Feature 29 (2026-09-06)
+
+The two-attachment dispatch (doc-to-doc by default), the narration model for the attachment branches (`long_doc` role), and the intent classifier's keyword lists are redesigned in `feature_29_llm_optimisation.md` (tasks 29.7, 29.10, 29.11, 29.13). Gaps 470–473 (2026-09-06) are recorded in `feature_6_rag.md` §"Attachment intents and the amount-owed ledger".
