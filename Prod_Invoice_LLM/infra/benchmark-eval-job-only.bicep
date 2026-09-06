@@ -90,6 +90,9 @@ param image string = 'acrinvoicellmdev2.azurecr.io/invoice-be:latest'
 @description('Azure OpenAI deployment used by both tracks.')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
+@description('Gap 465: Azure OpenAI data-plane api-version (GA 2024-10-21). Single source for every container env AZURE_OPENAI_API_VERSION; keep equal to config.py.')
+param azureOpenAiApiVersion string = '2024-10-21'
+
 @description('Cron (UTC). 03:00 -- after caj-overdue-sweep-dev\'s 02:00. (Originally also chosen to stay clear of Feature 24\'s caj-ops-digest-dev 01/07/13/19:00 slots; that job was superseded and deleted 2026-08-25.) Kept identical to 08-apps.bicep\'s benchmarkEvalCron; the two must not drift.')
 param benchmarkEvalCron string = '0 3 * * *'
 
@@ -151,6 +154,7 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     appInsightsConnectionString: appInsights.properties.ConnectionString
     cpu: '1.0'
     memory: '2.0Gi'

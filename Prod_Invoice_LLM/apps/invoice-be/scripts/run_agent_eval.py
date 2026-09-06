@@ -157,7 +157,8 @@ from services.ops_recommendation import (  # noqa: E402
     mirror_recommendation_pass,
     run_recommendation_pass,
 )
-from utils.llm import SUPPORTED_LLM_PROVIDERS  # noqa: E402
+from utils.llm import SUPPORTED_LLM_PROVIDERS, get_llm_for_role  # noqa: E402
+from utils.model_registry import cost_usd, prices_for, resolve_model  # noqa: E402
 
 logger = logging.getLogger("run_agent_eval")
 
@@ -996,6 +997,13 @@ def _region_invoice_chunk_map(region: dict, seeded_ids: dict) -> dict:
     return mapping
 
 
+def _priced_model_name(model_under_test: Optional[str]) -> str:
+    """`"azure:gpt-5.6-luna"` -> `"gpt-5.6-luna"`; None -> the configured primary."""
+    if model_under_test:
+        return model_under_test.split(":", 1)[-1]
+    return resolve_model("primary").deployment
+
+
 def summarise(turns: list[dict]) -> dict:
     """Per-path min/typical/worst — the shape Feature 21's open cost/latency
     question is asked in."""
@@ -1058,14 +1066,19 @@ def summarise(turns: list[dict]) -> dict:
             "judge_llm_calls_total": sum(t.get("judge_llm_calls") or 0 for t in rows),
             "errors": sum(1 for t in rows if t.get("error")),
             "tokens_by_agent": _agent_rollup(rows),
-            # gpt-5-mini list price, the same $0.25/$2.00 per 1M the previous
-            # round costed against, so the two are comparable.
+            # Gap 465: priced at each turn's model-under-test registry list
+            # price, so a candidate run reports its own bill rather than
+            # gpt-5-mini's. `model_under_test` is "<provider>:<model>" or None
+            # (= the application's configured primary).
             "cost_per_turn_usd": round(
-                (
-                    sum(t.get("tokens_in") or 0 for t in rows) * 0.25
-                    + sum(t.get("tokens_out") or 0 for t in rows) * 2.00
+                sum(
+                    cost_usd(
+                        _priced_model_name(t.get("model_under_test")),
+                        t.get("tokens_in") or 0,
+                        t.get("tokens_out") or 0,
+                    )
+                    for t in rows
                 )
-                / 1_000_000
                 / len(rows),
                 5,
             )
@@ -1305,8 +1318,11 @@ def main() -> None:
     # substitution run is graded by the same judge as the baseline it will be
     # compared against. This ordering is the comparability guarantee -- see the
     # module docstring's point 2.
-    judge_llm = get_llm()
-    print(f"Judge/model: {type(judge_llm).__name__}")
+    # Gap 465/466: the judge resolves through the registry's `judge` role, so
+    # AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME can pin it independently of the primary
+    # (blank = primary, i.e. exactly `get_llm()` as before).
+    judge_llm = get_llm_for_role("judge")
+    print(f"Judge/model: {type(judge_llm).__name__} ({resolve_model('judge').deployment})")
     model_under_test = describe_model_under_test(args.provider, args.model)
     args.out = args.out or default_output_path(model_under_test)
     if model_under_test:
@@ -1487,11 +1503,12 @@ def main() -> None:
         # identifies which judge produced its figures without reading into
         # `turns`, for the same reason `model_under_test` is.
         "judge_mode": "none" if args.no_score else args.judge,
-        # Stated because `summarise()`'s cost figure does NOT reprice a
-        # candidate: it applies gpt-5-mini's list rate to whatever tokens were
-        # burned, which makes the number a token-normalised comparison, not the
-        # candidate's real bill.
-        "cost_basis": "gpt-5-mini list price ($0.25/$2.00 per 1M) applied to every run",
+        # Gap 465: priced per turn at the model-under-test's registry list
+        # price (utils/model_registry.MODEL_CATALOG).
+        "cost_basis": (
+            f"utils/model_registry list price for {_priced_model_name(model_under_test)} "
+            f"(USD per 1M in/out: {prices_for(_priced_model_name(model_under_test))})"
+        ),
         "summary": summary,
         "persisted_rows": persisted,
         "turns": turns,

@@ -439,8 +439,8 @@ def get_embedding_model():
     if _embedding_model is None:
         with _embedding_lock:
             if _embedding_model is None:
-                logger.info("Loading sentence-transformers BAAI/bge-m3 model...")
-                _embedding_model = SentenceTransformer("BAAI/bge-m3")
+                logger.info("Loading sentence-transformers %s model...", settings.EMBEDDING_MODEL_NAME)
+                _embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)  # Gap 465: from settings
     return _embedding_model
 
 def _tenant_collection_name(tenant_id: str) -> str:
@@ -550,7 +550,11 @@ def get_document_collection(tenant_id: str):
 #: deterministic, so the only thing that can invalidate an entry is a model
 #: change -- which is a deploy, and a deploy is a new process with a new prefix.
 _QUERY_EMBEDDING_TTL_SECONDS = 24 * 60 * 60
-_QUERY_EMBEDDING_PREFIX = "query_embedding:bge-m3:v1:"
+# Gap 465: the model name is part of the key, so a model swap cannot serve a
+# vector of the wrong space from cache; no flush needed.
+def _query_embedding_prefix() -> str:
+    name = (get_settings().EMBEDDING_MODEL_NAME or "unknown").split("/")[-1].lower()
+    return f"query_embedding:{name}:v1:"
 
 
 def embed_query(text: str) -> list[float]:
@@ -571,7 +575,7 @@ def embed_query(text: str) -> list[float]:
     """
     import hashlib
 
-    key = _QUERY_EMBEDDING_PREFIX + hashlib.sha256(
+    key = _query_embedding_prefix() + hashlib.sha256(
         " ".join((text or "").split()).lower().encode("utf-8")
     ).hexdigest()
 

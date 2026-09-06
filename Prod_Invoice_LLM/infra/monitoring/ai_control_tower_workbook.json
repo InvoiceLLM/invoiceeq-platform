@@ -860,7 +860,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nlet calls = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"llm_agent_call\"\n    | extend d = parse_json(Properties)\n    | extend\n        agent_name = tostring(d.agent_name),\n        model      = tostring(d.model),\n        status     = tostring(d.status),\n        tokens_in  = toint(d.tokens_in),\n        tokens_out = toint(d.tokens_out),\n        run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | lookup kind=leftouter rates on model\n    | extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0);\nlet cost7d = calls\n    | where TimeGenerated > ago(7d)\n    | summarize calls = count(), cost_usd = sum(cost_usd) by agent_name\n    | project Metric = strcat(agent_name, \" — cost (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\");\nlet cost30d = calls\n    | summarize calls = count(), cost_usd = sum(cost_usd) by agent_name\n    | project Metric = strcat(agent_name, \" — cost (30d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\");\ncost7d\n| union cost30d\n| order by Metric asc",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-6-astra\",  10.00, 12.50,\n    \"gpt-5.6-luna\",  0.20,  1.20,\n    \"gpt-5.6-terra\", 2.00, 12.00,\n    \"gpt-5.6-sol\",   5.00, 30.00,\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nlet calls = AppEvents\n    | where TimeGenerated > ago(30d)\n    | where Name == \"llm_agent_call\"\n    | extend d = parse_json(Properties)\n    | extend\n        agent_name = tostring(d.agent_name),\n        model      = tostring(d.model),\n        status     = tostring(d.status),\n        tokens_in  = toint(d.tokens_in),\n        tokens_out = toint(d.tokens_out),\n        run_source = tostring(d.run_source)\n    | extend run_source = iff(isempty(run_source), \"production\", run_source)\n    | where run_source == \"production\"\n    | lookup kind=leftouter rates on model\n    | extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0);\nlet cost7d = calls\n    | where TimeGenerated > ago(7d)\n    | summarize calls = count(), cost_usd = sum(cost_usd) by agent_name\n    | project Metric = strcat(agent_name, \" — cost (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\");\nlet cost30d = calls\n    | summarize calls = count(), cost_usd = sum(cost_usd) by agent_name\n    | project Metric = strcat(agent_name, \" — cost (30d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\");\ncost7d\n| union cost30d\n| order by Metric asc",
         "size": 0,
         "title": "Cost by agent — 7d vs 30d (USD, production only).",
         "queryType": 0,
@@ -891,7 +891,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-6-astra\",  10.00, 12.50,\n    \"gpt-5.6-luna\",  0.20,  1.20,\n    \"gpt-5.6-terra\", 2.00, 12.00,\n    \"gpt-5.6-sol\",   5.00, 30.00,\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source == \"production\"\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
         "size": 0,
         "title": "Spend — production only — 7d (USD). Gap 324 split: real user chat traffic, was mixed with job runs in one table below.",
         "queryType": 0,
@@ -922,7 +922,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source in (\"golden\", \"predeploy\")\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-6-astra\",  10.00, 12.50,\n    \"gpt-5.6-luna\",  0.20,  1.20,\n    \"gpt-5.6-terra\", 2.00, 12.00,\n    \"gpt-5.6-sol\",   5.00, 30.00,\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(7d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend\n    model      = tostring(d.model),\n    tokens_in  = toint(d.tokens_in),\n    tokens_out = toint(d.tokens_out),\n    run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| where run_source in (\"golden\", \"predeploy\")\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), cost_usd = sum(cost_usd) by run_source\n| project Metric = strcat(run_source, \" — spend (7d)\"), Value = round(cost_usd, 4), Detail = strcat(calls, \" calls, USD\")\n| order by Metric asc",
         "size": 0,
         "title": "Spend — job runs only — 7d (USD). golden = nightly/adhoc benchmark, predeploy = CI pre-deploy gate. Gap 324 split from the production table above.",
         "queryType": 0,
@@ -948,6 +948,76 @@
         }
       },
       "name": "a2b-spend-by-job"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Model comparison — *per-deployment cost, latency and golden-bank runs* (Gap 466, 2026-09-05)\n\nEvery LLM call carries `model` (the Azure deployment) and `run_source`, so a candidate deployment (`gpt-5.6-luna` / `terra` / `sol`, `gpt-6-astra`) shows up here the moment its calls reach Application Insights. Accuracy per model comes from the offline matrix (`docs/extraction_benchmark/runs/matrix-*/summary.md`), not from telemetry — this section is cost, error rate and latency only. Local runs with `--no-mirror` or without `APPLICATIONINSIGHTS_CONNECTION_STRING` never appear.",
+        "style": "info"
+      },
+      "name": "model-comparison-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-6-astra\",  10.00, 12.50,\n    \"gpt-5.6-luna\",  0.20,  1.20,\n    \"gpt-5.6-terra\", 2.00, 12.00,\n    \"gpt-5.6-sol\",   5.00, 30.00,\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(30d)\n| where Name == \"llm_agent_call\"\n| extend d = parse_json(Properties)\n| extend model = tostring(d.model), status = tostring(d.status),\n         tokens_in = toint(d.tokens_in), tokens_out = toint(d.tokens_out),\n         latency_ms = toreal(d.latency_ms), run_source = tostring(d.run_source)\n| extend run_source = iff(isempty(run_source), \"production\", run_source)\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| summarize calls = count(), error_pct = round(100.0 * countif(status != \"success\") / count(), 1),\n            tokens_in = sum(tokens_in), tokens_out = sum(tokens_out),\n            cost_usd = round(sum(cost_usd), 4),\n            usd_per_1k_calls = round(1000.0 * sum(cost_usd) / count(), 3),\n            p50_ms = round(percentile(latency_ms, 50), 0), p95_ms = round(percentile(latency_ms, 95), 0)\n  by model, run_source\n| order by run_source asc, cost_usd desc",
+        "size": 0,
+        "title": "LLM calls by model × run_source — 30d: calls, error %, tokens, USD, USD per 1k calls, p50/p95 ms.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "cost_usd",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "Default",
+                    "thresholdValue": null,
+                    "representation": "blue",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "mc1-calls-by-model"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let rates = datatable(model:string, usd_per_1m_in:real, usd_per_1m_out:real)\n[\n    \"gpt-6-astra\",  10.00, 12.50,\n    \"gpt-5.6-luna\",  0.20,  1.20,\n    \"gpt-5.6-terra\", 2.00, 12.00,\n    \"gpt-5.6-sol\",   5.00, 30.00,\n    \"gpt-5-mini\",   0.25,  2.00,\n    \"gpt-5\",        1.25, 10.00,\n    \"gpt-4o-mini\",  0.15,  0.60,\n    \"gpt-4o\",       2.50, 10.00,\n    \"mock\",         0.0,   0.0\n];\nAppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"agent_eval_summary\"\n| extend d = parse_json(Properties)\n| extend model_under_test = tostring(d.model_under_test), run_label = tostring(d.run_label),\n         judge_mode = tostring(d.judge_mode), turns = toint(d.turns), errors = toint(d.errors),\n         llm_calls = toint(d.llm_calls_total), tokens_in = toint(d.tokens_in_total), tokens_out = toint(d.tokens_out_total),\n         pass_rate = toreal(d.pass_rate), generated_at = tostring(d.generated_at)\n| extend model = iff(isempty(model_under_test), \"configured primary\", tostring(split(model_under_test, \":\")[-1]))\n| lookup kind=leftouter rates on model\n| extend cost_usd = iff(isnull(usd_per_1m_in), real(null), (tokens_in * usd_per_1m_in + tokens_out * usd_per_1m_out) / 1000000.0)\n| project TimeGenerated, model, run_label, judge_mode, turns, errors, pass_rate, llm_calls,\n          cost_usd = round(cost_usd, 4), usd_per_turn = round(cost_usd / iff(turns == 0, 1, turns), 5)\n| order by TimeGenerated desc\n| take 30",
+        "size": 0,
+        "title": "Golden-bank runs by model_under_test — 90d, most recent 30 (from agent_eval_summary; pass_rate null where the event predates that field).",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "cost_usd",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "Default",
+                    "thresholdValue": null,
+                    "representation": "blue",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "mc2-golden-runs-by-model"
     },
     {
       "type": 1,

@@ -62,8 +62,10 @@ jobs:
           CLERK_SECRET_KEY: "sk_test_ci_only_unused"
           TOKEN_ENCRYPTION_KEY: ${{ steps.keygen.outputs.key }}
           AZURE_OPENAI_ENDPOINT: "https://openai-invoice-llm-dev.openai.azure.com/"
-          AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-5-mini"
-          AZURE_OPENAI_API_VERSION: "2024-02-15-preview"
+          AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-5.6-luna"  # Gap 466: dev primary since 2026-09-06; keep equal to params.dev.json
+          AZURE_OPENAI_FAST_DEPLOYMENT_NAME: "gpt-5.6-luna"
+          AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME: "gpt-5-mini"
+          AZURE_OPENAI_API_VERSION: "2024-10-21"  # Gap 465: GA; keep equal to infra/params.dev.json azureOpenAiApiVersion
           AZURE_OPENAI_API_KEY: ${{ steps.kv.outputs.openai_key }}
           AZURE_DOC_INTEL_ENDPOINT: "https://docintel-invoice-llm-dev.cognitiveservices.azure.com/"
           AZURE_DOC_INTEL_KEY: ${{ steps.kv.outputs.docintel_key }}

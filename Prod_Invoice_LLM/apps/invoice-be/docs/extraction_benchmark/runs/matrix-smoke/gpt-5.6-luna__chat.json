@@ -1,0 +1,163 @@
+{
+  "run_at": "2026-09-05T09:20:14.995559",
+  "paths": [
+    "default"
+  ],
+  "model_under_test": "azure:gpt-5.6-luna",
+  "api_version_override": "2024-10-21",
+  "judge_mode": "separate",
+  "cost_basis": "utils/model_registry list price for gpt-5.6-luna (USD per 1M in/out: (0.2, 1.2))",
+  "summary": {
+    "default": {
+      "turns": 1,
+      "llm_calls_min": 3,
+      "llm_calls_median": 3,
+      "llm_calls_max": 3,
+      "llm_calls_total": 3,
+      "latency_ms_min": 8831.3,
+      "latency_ms_median": 8831.3,
+      "latency_ms_max": 8831.3,
+      "tokens_in_total": 9298,
+      "tokens_out_total": 328,
+      "pass_rate": 0.0,
+      "faithfulness_mean": 0.5,
+      "relevance_mean": 1.0,
+      "accuracy_mean": 1.0,
+      "context_mean": 1.0,
+      "context_scored_turns": 1,
+      "orchestration_mean": null,
+      "orchestration_scored_turns": 0,
+      "persona_mean": 1.0,
+      "persona_scored_turns": 1,
+      "context_drift_mean": null,
+      "context_drift_scored_turns": 0,
+      "judge_mode": [
+        "separate"
+      ],
+      "helpfulness_mean": null,
+      "helpfulness_scored_turns": 0,
+      "completeness_mean": null,
+      "completeness_scored_turns": 0,
+      "tone_mean": null,
+      "tone_scored_turns": 0,
+      "judge_llm_calls_total": 5,
+      "errors": 0,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 271,
+          "tokens_out": 43,
+          "latency_ms": 2298.6
+        },
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 6270,
+          "tokens_out": 251,
+          "latency_ms": 3952.7
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 2757,
+          "tokens_out": 34,
+          "latency_ms": 2058.3
+        }
+      },
+      "cost_per_turn_usd": 0.00225
+    }
+  },
+  "persisted_rows": 0,
+  "turns": [
+    {
+      "case_id": "titan_steel_payment_status",
+      "path": "default",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "session_id": "dfcc6cf9-abf7-413b-9764-34d825374094",
+      "turn_index": 1,
+      "agent_name": "chat.default_path",
+      "model_under_test": "azure:gpt-5.6-luna",
+      "question": "has the Titan Steel Distributors invoice been paid",
+      "answer": "Payment status isn’t tracked for this inbound invoice in the available data. Its `COMPLETED` status reflects invoice processing, not payment or settlement.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\nTSD-620458 | Titan Steel Distributors |  | INBOUND | 2026-07-02 | 2026-08-01 | 18450.00 | USD | COMPLETED | ",
+      "answer_prose": "Payment status isn’t tracked for this inbound invoice in the available data. Its `COMPLETED` status reflects invoice processing, not payment or settlement.",
+      "appended_blocks": "### Query Results\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\nTSD-620458 | Titan Steel Distributors |  | INBOUND | 2026-07-02 | 2026-08-01 | 18450.00 | USD | COMPLETED | ",
+      "context": "DATABASE RESULTS:\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\nTSD-620458 | Titan Steel Distributors |  | INBOUND | 2026-07-02 | 2026-08-01 | 18450.00 | USD | COMPLETED | ",
+      "executed_queries": "SQL EXECUTED:\nSELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND ((flow_direction = 'INBOUND' AND LOWER(vendor_name) LIKE LOWER('%Titan Steel Distributors%')) OR (flow_direction = 'OUTBOUND' AND LOWER(customer_name) LIKE LOWER('%Titan Steel Distributors%')))",
+      "fetched_invoice_numbers": [
+        "TSD-620458"
+      ],
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND ((flow_direction = 'INBOUND' AND LOWER(vendor_name) LIKE LOWER('%Titan Steel Distributors%')) OR (flow_direction = 'OUTBOUND' AND LOWER(customer_name) LIKE LOWER('%Titan Steel Distributors%')))",
+      "citations": [],
+      "latency_ms": 8831.3,
+      "llm_call_count": 3,
+      "llm_events": [
+        {
+          "agent_name": "chat.classify",
+          "model": "gpt-5.6-luna",
+          "tokens_in": 271,
+          "tokens_out": 43,
+          "latency_ms": 2298.61,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_generation",
+          "model": "gpt-5.6-luna",
+          "tokens_in": 6270,
+          "tokens_out": 251,
+          "latency_ms": 3952.68,
+          "status": "success",
+          "llm_calls": 1
+        },
+        {
+          "agent_name": "chat.sql_summary",
+          "model": "gpt-5.6-luna",
+          "tokens_in": 2757,
+          "tokens_out": 34,
+          "latency_ms": 2058.28,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 9298,
+      "tokens_out": 328,
+      "tokens_by_agent": {
+        "chat.classify": {
+          "calls": 1,
+          "tokens_in": 271,
+          "tokens_out": 43,
+          "latency_ms": 2298.6
+        },
+        "chat.sql_generation": {
+          "calls": 1,
+          "tokens_in": 6270,
+          "tokens_out": 251,
+          "latency_ms": 3952.7
+        },
+        "chat.sql_summary": {
+          "calls": 1,
+          "tokens_in": 2757,
+          "tokens_out": 34,
+          "latency_ms": 2058.3
+        }
+      },
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 0.5,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": 1.0,
+      "orchestration_score": null,
+      "persona_score": 1.0,
+      "context_drift_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "Payment status isn’t tracked for this inbound invoice in the available data.",
+        "This inbound invoice's `COMPLETED` status reflects invoice processing, not payment or settlement."
+      ],
+      "score_notes": "faithfulness: 1/2 claims supported | unsupported: This inbound invoice's `COMPLETED` status reflects invoice processing, not payment or settlement. | relevance: 1.0 [no_results_report, fixed by kind] (States that payment status is not tracked for this inbound invoice and therefore cannot confirm whether it has been paid.) | accuracy: 1.0 (The answer correctly states that payment status isn’t tracked and that COMPLETED is a document-processing status, not a payment/settlement indicator.) | context: 1.00 (precision 1.00, recall 1.00; expected ['TSD-620458'], fetched ['TSD-620458']) | orchestration: not scored (no gradeable figures in the answer) | persona: 1.0 [status semantics, payment tracking, document processing] (The assistant correctly treated COMPLETED as a processing status and stated payment status is not tracked, matching the expected domain interpretation.)",
+      "judge_llm_calls": 5
+    }
+  ]
+}

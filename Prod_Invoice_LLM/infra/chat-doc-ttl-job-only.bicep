@@ -97,6 +97,9 @@ param chatDocTtlLimit int = 500
 @description('Azure OpenAI deployment name. The shared scheduled-job module made this required in 308dd55 (config.py reads it at import; this script never calls the model). gpt-5-mini is the one deployment this environment runs on.')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
+@description('Gap 465: Azure OpenAI data-plane api-version (GA 2024-10-21). Single source for every container env AZURE_OPENAI_API_VERSION; keep equal to config.py.')
+param azureOpenAiApiVersion string = '2024-10-21'
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
@@ -141,6 +144,7 @@ module chatDocTtlJob './modules/compute/scheduled-job.bicep' = {
     cronExpression: chatDocTtlCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     appInsightsConnectionString: appInsights.properties.ConnectionString
     cpu: '0.5'
     memory: '1.0Gi'

@@ -12,6 +12,11 @@ param azureOpenAiDeploymentName string
 
 @description('Feature 6.1 A2: fast, non-reasoning deployment for routing, summarising and narration. Empty = use azureOpenAiDeploymentName.')
 param azureOpenAiFastDeploymentName string = ''
+@description('Gap 466: deployment used as the LLM judge (agent eval, benchmark job). Empty = use azureOpenAiDeploymentName. Pinned to gpt-5-mini across the Luna migration so eval scores stay comparable.')
+param azureOpenAiJudgeDeploymentName string = ''
+
+@description('Gap 465: Azure OpenAI data-plane api-version. GA 2024-10-21 verified live 2026-09-05. Must equal config.py AZURE_OPENAI_API_VERSION; one value, threaded from params.*.json.')
+param azureOpenAiApiVersion string = '2024-10-21'
 param azureDocIntelEndpoint string
 param acrName string
 param storageAccountName string
@@ -299,7 +304,7 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'AZURE_OPENAI_API_VERSION'
-              value: '2024-02-15-preview'
+              value: azureOpenAiApiVersion
             }
             {
               name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
@@ -308,6 +313,10 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_OPENAI_FAST_DEPLOYMENT_NAME'
               value: azureOpenAiFastDeploymentName
+            }
+            {
+              name: 'AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME'
+              value: azureOpenAiJudgeDeploymentName
             }
             {
               name: 'AZURE_DOC_INTEL_ENDPOINT'

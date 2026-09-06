@@ -3,7 +3,7 @@ targetScope = 'resourceGroup'
 // Narrow, standalone deployment for ONE resource: the Feature 23 AI Control
 // Tower workbook (Wave 5, 2026-08-24). Not routed through 08-apps.bicep/
 // 09-monitoring.bicep, for the same reason workbook-cost-health-only.bicep
-// and gpt4o-deployment.bicep aren't: this repo's known params.dev.json
+// and model-deployment.bicep (formerly gpt4o-deployment.bicep) aren't: this repo's known params.dev.json
 // image-tag/naming-prefix drift (Gap 298) makes a full stage deploy risky,
 // and this workbook only touches a Microsoft.Insights/workbooks resource
 // that no other stage owns.

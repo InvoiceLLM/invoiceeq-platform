@@ -1,0 +1,92 @@
+{
+  "label": "luna-run3",
+  "run_at": "2026-09-06T12:20:37.429997+00:00",
+  "model_primary": "gpt-5.6-luna",
+  "api_version": "2024-10-21",
+  "registry": {
+    "primary": {
+      "role": "primary",
+      "provider": "azure",
+      "deployment": "gpt-5.6-luna",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.2,
+      "price_out": 1.2
+    },
+    "fast": {
+      "role": "fast",
+      "provider": "azure",
+      "deployment": "gpt-5.6-luna",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.2,
+      "price_out": 1.2
+    },
+    "judge": {
+      "role": "judge",
+      "provider": "azure",
+      "deployment": "gpt-5-mini",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.25,
+      "price_out": 2.0
+    },
+    "doc_intel_model_id": "prebuilt-invoice",
+    "embedding_model": "BAAI/bge-m3"
+  },
+  "invoices": 27,
+  "errors": 0,
+  "invoice_accuracy_pct": 33.3,
+  "field_accuracy_pct": 80.6,
+  "per_field": {
+    "Actual Tax": {
+      "correct": 26,
+      "total": 27,
+      "accuracy_pct": 96.3
+    },
+    "Actual Total": {
+      "correct": 27,
+      "total": 27,
+      "accuracy_pct": 100.0
+    },
+    "Actual Status": {
+      "correct": 19,
+      "total": 27,
+      "accuracy_pct": 70.4
+    },
+    "Actual Alert Type": {
+      "correct": 15,
+      "total": 27,
+      "accuracy_pct": 55.6
+    }
+  },
+  "line_items": {
+    "tp": 45,
+    "predicted": 45,
+    "expected": 45,
+    "precision_pct": 100.0,
+    "recall_pct": 100.0,
+    "f1_pct": 100.0
+  },
+  "cost_per_invoice_usd": 0.00207,
+  "latency_s": {
+    "p50": 25.38,
+    "p95": 47.065,
+    "max": 47.573,
+    "mean": 27.438
+  },
+  "llm_calls": 65,
+  "tokens_in": 130891,
+  "tokens_out": 24722,
+  "models_seen": [
+    "gpt-5.6-luna"
+  ],
+  "cost_usd": 0.0558,
+  "cost_note": null
+}

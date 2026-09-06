@@ -1,0 +1,134 @@
+{
+  "models": [
+    "gpt-5.6-luna"
+  ],
+  "baseline": "gpt-5.6-luna",
+  "api_version": "2024-10-21",
+  "results": {
+    "gpt-5.6-luna": {
+      "extraction": null,
+      "doctype": {
+        "metric": 100.0,
+        "metric_name": "doc-type accuracy %",
+        "errors": 0,
+        "cost_usd": 0.0093,
+        "cost_per_1k_calls": 0.387,
+        "p95": 3.075,
+        "calls": 24,
+        "tokens": [
+          39660,
+          1139
+        ]
+      },
+      "sql": {
+        "metric": 100.0,
+        "metric_name": "SQL exec-correct %",
+        "sql_turns": 1,
+        "scored": 1,
+        "mean_attempts": 1,
+        "cost_usd": 0.00225,
+        "cost_per_1k_calls": 0.751,
+        "p95": 8.831,
+        "calls": 3
+      },
+      "chat": {
+        "metric": 1.0,
+        "metric_name": "judge accuracy (0-1)",
+        "faithfulness": 0.5,
+        "relevance": 1.0,
+        "passed_pct": 0.0,
+        "turns": 1,
+        "errors": 0,
+        "cost_usd": 0.00225,
+        "cost_per_turn": 0.00225,
+        "cost_per_1k_calls": 0.751,
+        "p95": 8.831,
+        "calls": 3,
+        "tokens": [
+          9298,
+          328
+        ],
+        "judge_mode": "separate"
+      },
+      "judge": {
+        "metric": 0.0,
+        "metric_name": "mean |\u0394 accuracy| vs current judge (lower = more stable)",
+        "rescored_accuracy_mean": 1.0,
+        "original_accuracy_mean": 1.0,
+        "pass_flip_pct": 0.0,
+        "turns": 1,
+        "cost_usd": 0.00147,
+        "cost_per_1k_calls": 0.293,
+        "p95": null,
+        "calls": 5
+      }
+    }
+  },
+  "runs": [
+    {
+      "model": "gpt-5.6-luna",
+      "task": "extraction",
+      "rc": 1,
+      "wall_s": 2.8,
+      "log": "gpt-5.6-luna__extraction.log"
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "task": "doctype",
+      "rc": 0,
+      "wall_s": 71.0,
+      "log": "gpt-5.6-luna__doctype.log"
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "task": "chat+sql",
+      "rc": 0,
+      "wall_s": 54.7,
+      "log": "gpt-5.6-luna__chat.log"
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "task": "judge",
+      "rc": 0,
+      "wall_s": 23.3,
+      "log": "gpt-5.6-luna__judge.log"
+    }
+  ],
+  "registry": {
+    "primary": {
+      "role": "primary",
+      "provider": "azure",
+      "deployment": "gpt-5-mini",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.25,
+      "price_out": 2.0
+    },
+    "fast": {
+      "role": "fast",
+      "provider": "azure",
+      "deployment": "gpt-5-mini",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.25,
+      "price_out": 2.0
+    },
+    "judge": {
+      "role": "judge",
+      "provider": "azure",
+      "deployment": "gpt-5-mini",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.25,
+      "price_out": 2.0
+    },
+    "doc_intel_model_id": "prebuilt-invoice",
+    "embedding_model": "BAAI/bge-m3"
+  }
+}

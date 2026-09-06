@@ -23,6 +23,9 @@ param networkIsolation bool = false
 @description('Azure OpenAI Model Deployment Name')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
+@description('Gap 465: OpenAI model name behind the deployment. Split from the deployment name so a deployment can be renamed or point at a new model (e.g. gpt-5.6-luna) without the two being one param. Empty = same as azureOpenAiDeploymentName.')
+param azureOpenAiModelName string = ''
+
 @description('Azure OpenAI Model Version - verify current availability before deploying: az cognitiveservices account list-models --location <region> -o table')
 param azureOpenAiModelVersion string
 
@@ -45,7 +48,7 @@ module openai './modules/ai/openai.bicep' = {
     location: location
     openaiName: 'openai-${namingPrefix}-${environment}'
     deploymentName: azureOpenAiDeploymentName
-    modelName: azureOpenAiDeploymentName
+    modelName: empty(azureOpenAiModelName) ? azureOpenAiDeploymentName : azureOpenAiModelName
     modelVersion: azureOpenAiModelVersion
     networkIsolation: networkIsolation
     subnetId: aiSubnetId

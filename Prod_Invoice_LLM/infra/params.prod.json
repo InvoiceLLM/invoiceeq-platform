@@ -53,6 +53,12 @@
     "azureOpenAiModelVersion": {
       "value": "2025-08-07"
     },
+    "azureOpenAiModelName": {
+      "value": "gpt-5-mini"
+    },
+    "azureOpenAiApiVersion": {
+      "value": "2024-10-21"
+    },
     "openAiCapacity": {
       "value": 500
     },

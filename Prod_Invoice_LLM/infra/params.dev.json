@@ -57,13 +57,22 @@
       "value": "pk_test_Z3JlYXQtYmFib29uLTExLmNsZXJrLmFjY291bnRzLmRldiQ"
     },
     "azureOpenAiDeploymentName": {
-      "value": "gpt-5-mini"
+      "value": "gpt-5.6-luna"
     },
     "azureOpenAiFastDeploymentName": {
-      "value": ""
+      "value": "gpt-5.6-luna"
+    },
+    "azureOpenAiJudgeDeploymentName": {
+      "value": "gpt-5-mini"
     },
     "azureOpenAiModelVersion": {
-      "value": "2025-08-07"
+      "value": "2026-07-09"
+    },
+    "azureOpenAiModelName": {
+      "value": "gpt-5.6-luna"
+    },
+    "azureOpenAiApiVersion": {
+      "value": "2024-10-21"
     },
     "alertEmail": {
       "value": "sbanerji@admsofttech.com"

@@ -1,0 +1,34 @@
+{
+ "label": "gpt-5.6-luna",
+ "turns": [
+  {
+   "id": "A8",
+   "question": "What is the combined grand total of invoices BRL-200981 and TSD-620458?",
+   "answer": "The combined grand total is **USD 12,943.91**.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | grand_total | currency\n--- | --- | --- | --- | --- | ---\nBRL-200981 | Blue Ridge Logistics |  | INBOUND | 2386.31 | USD\nTSD-620458 | Titan Steel Distributors |  | INBOUND | 10557.60 | USD",
+   "latency_s": 13.4,
+   "passed": true
+  },
+  {
+   "id": "A9",
+   "question": "Why was no sales tax charged on the Cascade Manufacturing Co invoice CMC-330217?",
+   "answer": "No sales tax was charged because Cascade Manufacturing Co applied the resale exemption certificate **OR-EX-88231**, which it noted was on file. The invoice therefore shows **USD 0.00** in sales tax.\n\n**Citations:**\n[Source: Cascade Manufacturing Co (Page 1)](file:///api/v1/invoices/3fde9037-d633-4101-bcec-e441ac1834b7/pdf), [Source: Summit Office Supplies (Page 1)](file:///api/v1/invoices/0346e9ae-e840-41d8-8eca-caab9d0494f3/pdf), [Source: Blue Ridge Logistics (Page 1)](file:///api/v1/invoices/fc18fe40-9353-4fdd-b889-535583512853/pdf), [Source: Apex Print Solutions (Page 1)](file:///api/v1/invoices/5964ffe9-d673-4ad8-a7e9-dd51aa1a06e7/pdf), [Source: Redwood Facilities Group (Page 1)](file:///api/v1/invoices/c563058b-452a-4f5e-b405-36d59bc23656/pdf)",
+   "latency_s": 5.0,
+   "passed": true
+  },
+  {
+   "id": "B6",
+   "question": "Which inbound invoice has the highest grand total?",
+   "answer": "The highest grand total among the returned inbound invoices is **TSD-620458 from Titan Steel Distributors: USD 10,557.60**. It is marked **AUDIT_REQUIRED** due to a steel-plates line-item calculation mismatch.\n\n### Query Results\n\ninvoice_number | vendor_name | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | ---\nTSD-620458 | Titan Steel Distributors | 10557.60 | USD | AUDIT_REQUIRED | [{\"type\": \"line_item_calculation_mismatch\", \"field\": \"items\", \"message\": \"Line item 'Steel plates' amount (3510.00) does not match calculated amount (3150.00) based on qty/unit_price/discount/tax\", \"severity\": \"error\"}]",
+   "latency_s": 8.9,
+   "passed": true
+  },
+  {
+   "id": "B7",
+   "question": "List the inbound invoices that carry no PO number.",
+   "answer": "Both inbound invoices carry no PO number:\n\n- **APS-410093** \u2014 Apex Print Solutions, dated 2026-06-05, **USD**\n- **SOS-100442** \u2014 Summit Office Supplies, dated 2026-06-03, **USD**\n\n**APS-410093** is flagged **AUDIT_REQUIRED** for a line-item calculation mismatch.\n\n### Query Results\n\ninvoice_number | vendor_name | flow_direction | invoice_date | po_number | currency\n--- | --- | --- | --- | --- | ---\nAPS-410093 | Apex Print Solutions | INBOUND | 2026-06-05 |  | USD\nSOS-100442 | Summit Office Supplies | INBOUND | 2026-06-03 |  | USD",
+   "latency_s": 6.9,
+   "passed": true
+  }
+ ],
+ "passed": 4
+}

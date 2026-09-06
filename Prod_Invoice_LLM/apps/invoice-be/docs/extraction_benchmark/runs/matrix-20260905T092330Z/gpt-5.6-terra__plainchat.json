@@ -1,0 +1,34 @@
+{
+ "label": "gpt-5.6-terra",
+ "turns": [
+  {
+   "id": "A8",
+   "question": "What is the combined grand total of invoices BRL-200981 and TSD-620458?",
+   "answer": "The combined grand total is USD 12,943.91. Note that TSD-620458 is marked **AUDIT_REQUIRED** due to a Steel plates line-item calculation mismatch.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nBRL-200981 | Blue Ridge Logistics |  | INBOUND | 2026-06-10 | 2386.31 | USD | COMPLETED | []\nTSD-620458 | Titan Steel Distributors |  | INBOUND | 2026-06-22 | 10557.60 | USD | AUDIT_REQUIRED | [{\"type\": \"line_item_calculation_mismatch\", \"field\": \"items\", \"message\": \"Line item 'Steel plates' amount (3510.00) does not match calculated amount (3150.00) based on qty/unit_price/discount/tax\", \"severity\": \"error\"}]",
+   "latency_s": 12.6,
+   "passed": true
+  },
+  {
+   "id": "A9",
+   "question": "Why was no sales tax charged on the Cascade Manufacturing Co invoice CMC-330217?",
+   "answer": "No sales tax was charged because Cascade Manufacturing Co has a **resale exemption certificate (OR-EX-88231)** on file for invoice **CMC-330217**. The invoice explicitly notes that the exemption was applied.\n\n**Citations:**\n[Source: Cascade Manufacturing Co (Page 1)](file:///api/v1/invoices/3fde9037-d633-4101-bcec-e441ac1834b7/pdf), [Source: Summit Office Supplies (Page 1)](file:///api/v1/invoices/0346e9ae-e840-41d8-8eca-caab9d0494f3/pdf), [Source: Blue Ridge Logistics (Page 1)](file:///api/v1/invoices/fc18fe40-9353-4fdd-b889-535583512853/pdf), [Source: Apex Print Solutions (Page 1)](file:///api/v1/invoices/5964ffe9-d673-4ad8-a7e9-dd51aa1a06e7/pdf), [Source: Redwood Facilities Group (Page 1)](file:///api/v1/invoices/c563058b-452a-4f5e-b405-36d59bc23656/pdf)",
+   "latency_s": 5.0,
+   "passed": true
+  },
+  {
+   "id": "B6",
+   "question": "Which inbound invoice has the highest grand total?",
+   "answer": "The highest inbound invoice grand total is **TSD-620458** from **Titan Steel Distributors**: **USD 10,557.60** (dated June 22, 2026). It is marked **AUDIT_REQUIRED** due to a line-item calculation mismatch.\n\n### Query Results\n\ninvoice_number | vendor_name | grand_total | currency | invoice_date | status | sa_alerts\n--- | --- | --- | --- | --- | --- | ---\nTSD-620458 | Titan Steel Distributors | 10557.60 | USD | 2026-06-22 | AUDIT_REQUIRED | [{\"type\": \"line_item_calculation_mismatch\", \"field\": \"items\", \"message\": \"Line item 'Steel plates' amount (3510.00) does not match calculated amount (3150.00) based on qty/unit_price/discount/tax\", \"severity\": \"error\"}]\nCMC-330217 | Cascade Manufacturing Co | 2600.00 | USD | 2026-06-14 | COMPLETED | []\nBRL-200981 | Blue Ridge Logistics | 2386.31 | USD | 2026-06-10 | COMPLETED | []\nRFG-500712 | Redwood Facilities Group | 1590.00 | USD | 2026-06-18 | COMPLETED | []\nAPS-410093 | Apex Print Solutions | 453.60 | USD | 2026-06-05 | AUDIT_REQUIRED | [{\"type\": \"line_item_calculation_mismatch\", \"field\": \"items\", \"message\": \"Line item 'Business cards (5,000 qty)' amount (420.00) does not match calculated amount (400.00) based on qty/unit_price/discount/tax\", \"severity\": \"error\"}]\nSOS-100442 | Summit Office Supplies | 450.00 | USD | 2026-06-03 | COMPLETED | []",
+   "latency_s": 6.0,
+   "passed": true
+  },
+  {
+   "id": "B7",
+   "question": "List the inbound invoices that carry no PO number.",
+   "answer": "Two inbound invoices have no PO number recorded:\n\n- SOS-100442 \u2014 Summit Office Supplies \u2014 USD 450.00  \n- APS-410093 \u2014 Apex Print Solutions \u2014 USD 453.60 *(AUDIT_REQUIRED: line-item calculation mismatch flagged)*\n\n### Query Results\n\ninvoice_number | vendor_name | flow_direction | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nSOS-100442 | Summit Office Supplies | INBOUND | 2026-06-03 |  | 450.00 | USD | COMPLETED | \nAPS-410093 | Apex Print Solutions | INBOUND | 2026-06-05 |  | 453.60 | USD | AUDIT_REQUIRED | ",
+   "latency_s": 5.9,
+   "passed": true
+  }
+ ],
+ "passed": 4
+}

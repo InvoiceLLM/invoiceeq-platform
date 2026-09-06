@@ -1,0 +1,771 @@
+{
+  "task": "judge",
+  "judge_deployment": "gpt-6-astra",
+  "judge_mode": "separate",
+  "source_run": "gpt-5-mini__chat.json",
+  "source_model_under_test": "azure:gpt-5-mini",
+  "run_at": "2026-09-05T19:22:34.633410+00:00",
+  "turns_rescored": 36,
+  "turns_skipped": 0,
+  "per_metric": {
+    "faithfulness_score": {
+      "original_mean": 0.783,
+      "rescored_mean": 0.846,
+      "mean_abs_delta": 0.075,
+      "n": 34
+    },
+    "relevance_score": {
+      "original_mean": 0.992,
+      "rescored_mean": 0.967,
+      "mean_abs_delta": 0.042,
+      "n": 36
+    },
+    "accuracy_score": {
+      "original_mean": 0.542,
+      "rescored_mean": 0.592,
+      "mean_abs_delta": 0.119,
+      "n": 36
+    },
+    "context_score": {
+      "original_mean": 0.793,
+      "rescored_mean": 0.793,
+      "mean_abs_delta": 0.0,
+      "n": 32
+    },
+    "persona_score": {
+      "original_mean": 0.766,
+      "rescored_mean": 0.732,
+      "mean_abs_delta": 0.056,
+      "n": 27
+    }
+  },
+  "pass_flips": 7,
+  "pass_flip_pct": 19.4,
+  "judge_llm_calls": 177,
+  "tokens_in": 130593,
+  "tokens_out": 28920,
+  "cost_usd": 1.66743,
+  "cost_per_1k_calls_usd": 9.421,
+  "turns": [
+    {
+      "case_id": "titan_steel_payment_status",
+      "original": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.6,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "rajesh_steel_cgst",
+      "original": {
+        "faithfulness_score": 0.3333333333333333,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.75,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "datapipe_vs_stratedge",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "freight_per_vendor",
+      "original": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.3333333333333333,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.8,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "bolts_reconciliation",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.0,
+        "persona_score": null
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "zero_result_vendor",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "zero_result_typo_vendor",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "payment_terms_document",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.3636363636363636,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.3636363636363636,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "out_of_scope_code_request",
+      "original": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "rescored": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "greeting_no_tool",
+      "original": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "rescored": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "large_invoice_full_detail",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "small_invoice_full_detail",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "multi_part_totals_and_dates",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "all_vendors_over_twenty_thousand",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "two_vendors_two_questions",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.9,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "line_item_breakdown_completeness",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "unsupported_field_asks_for_alternative",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.65,
+        "context_score": null,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "zero_result_with_useful_redirect",
+      "original": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.3333333333333333,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.85,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "hostile_user_tone",
+      "original": {
+        "faithfulness_score": 0.2857142857142857,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.25,
+        "relevance_score": 0.7,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "internals_probe_no_leak",
+      "original": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 0.7,
+        "accuracy_score": 0.0,
+        "context_score": null,
+        "persona_score": null
+      },
+      "rescored": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": null,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "cross_currency_total_refused",
+      "original": {
+        "faithfulness_score": 0.6666666666666666,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.85,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "india_mixed_gst_slab_lines",
+      "original": {
+        "faithfulness_score": 0.8,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 0.7,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "india_ganesh_subtotal_reconciliation",
+      "original": {
+        "faithfulness_score": 0.7142857142857143,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.7142857142857143,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.7,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "india_reverse_charge_vendor",
+      "original": {
+        "faithfulness_score": 0.3333333333333333,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.6666666666666666,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "india_outbound_only_disambiguation",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.75,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "india_no_due_date_refusal",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.8,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "us_zero_tax_exemption_reason",
+      "original": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "us_flagged_inbound_invoices",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.85,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "us_freight_per_vendor_multi",
+      "original": {
+        "faithfulness_score": 0.375,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.375,
+        "relevance_score": 0.7,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "us_outbound_flagged_and_billed_to",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.8,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "us_cross_invoice_grand_total",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "eu_mixed_vat_rates",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "eu_currency_confusion_trap",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "error": null
+    },
+    {
+      "case_id": "eu_reverse_charge_inbound_line",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.65,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "eu_outbound_reverse_charge_vs_domestic",
+      "original": {
+        "faithfulness_score": 0.6,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 0.7272727272727273,
+        "relevance_score": 0.7,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    },
+    {
+      "case_id": "eu_benelux_line_understated",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.7,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+{
+  "models": [
+    "gpt-5.6-terra"
+  ],
+  "baseline": "gpt-5-mini",
+  "api_version": "2024-10-21",
+  "results": {
+    "gpt-5.6-terra": {
+      "extraction": {
+        "metric": 59.3,
+        "metric_name": "field accuracy %",
+        "invoice_accuracy_pct": 0.0,
+        "line_p": 95.6,
+        "line_r": 95.6,
+        "line_f1": 95.6,
+        "per_field": {
+          "Actual Tax": 96.3,
+          "Actual Total": 100.0,
+          "Actual Status": 33.3,
+          "Actual Alert Type": 7.4
+        },
+        "errors": 0,
+        "cost_usd": 0.5078,
+        "cost_per_invoice": 0.01881,
+        "cost_per_1k_calls": 7.812,
+        "p95": 54.652,
+        "calls": 65,
+        "tokens": [
+          132981,
+          20155
+        ]
+      },
+      "doctype": {
+        "metric": 100.0,
+        "metric_name": "doc-type accuracy %",
+        "errors": 0,
+        "cost_usd": 0.08882,
+        "cost_per_1k_calls": 3.701,
+        "p95": 2.605,
+        "calls": 24,
+        "tokens": [
+          39660,
+          792
+        ]
+      },
+      "sql": {
+        "metric": 44.4,
+        "metric_name": "SQL exec-correct %",
+        "sql_turns": 27,
+        "scored": 27,
+        "mean_attempts": 1,
+        "cost_usd": 0.65181,
+        "cost_per_1k_calls": 9.312,
+        "p95": 13.208,
+        "calls": 70
+      },
+      "chat": {
+        "metric": 0.622,
+        "metric_name": "judge accuracy (0-1)",
+        "faithfulness": 0.727,
+        "relevance": 0.975,
+        "passed_pct": 25.0,
+        "turns": 36,
+        "errors": 0,
+        "cost_usd": 0.71403,
+        "cost_per_turn": 0.01983,
+        "cost_per_1k_calls": 8.207,
+        "p95": 11.255,
+        "calls": 87,
+        "tokens": [
+          297927,
+          9848
+        ],
+        "judge_mode": "separate"
+      }
+    }
+  },
+  "runs": [
+    {
+      "model": "gpt-5.6-terra",
+      "task": "extraction",
+      "rc": 0,
+      "wall_s": 792.9,
+      "log": "gpt-5.6-terra__extraction.log"
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "task": "doctype",
+      "rc": 0,
+      "wall_s": 67.8,
+      "log": "gpt-5.6-terra__doctype.log"
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "task": "chat+sql",
+      "rc": -9,
+      "wall_s": 8122.8,
+      "log": "gpt-5.6-terra__chat.log"
+    }
+  ],
+  "registry": {
+    "primary": {
+      "role": "primary",
+      "provider": "azure",
+      "deployment": "gpt-5-mini",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.25,
+      "price_out": 2.0
+    },
+    "fast": {
+      "role": "fast",
+      "provider": "azure",
+      "deployment": "gpt-5-mini",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.25,
+      "price_out": 2.0
+    },
+    "judge": {
+      "role": "judge",
+      "provider": "azure",
+      "deployment": "gpt-5-mini",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 0.25,
+      "price_out": 2.0
+    },
+    "doc_intel_model_id": "prebuilt-invoice",
+    "embedding_model": "BAAI/bge-m3"
+  }
+}

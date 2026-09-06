@@ -3,7 +3,7 @@ targetScope = 'resourceGroup'
 // Narrow, standalone deployment for ONE resource: the Feature 19/20 Cost +
 // Health/Performance Azure Workbook (Area 1 + Area 2 combined per the
 // founder's 2026-08-23 scoping decision). Not routed through
-// 08-apps.bicep/09-monitoring.bicep for the same reason gpt4o-deployment.bicep
+// 08-apps.bicep/09-monitoring.bicep for the same reason model-deployment.bicep (formerly gpt4o-deployment.bicep)
 // and the deleted agent-eval-job-only.bicep weren't: this repo's known
 // params.dev.json image-tag drift makes a full stage deploy risky, and this
 // workbook only touches a Microsoft.Insights/workbooks resource that no

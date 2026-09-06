@@ -234,7 +234,18 @@ def build_llm(
             # default. langchain-openai maps `max_tokens` to
             # `max_completion_tokens` for reasoning deployments itself.
             if reasoning_effort:
-                kwargs["reasoning_effort"] = reasoning_effort
+                # Gap 465: the registry knows whether this deployment accepts the
+                # knob. A non-reasoning deployment (gpt-4o) rejects the parameter
+                # outright, so drop it with a warning rather than kill the call.
+                from utils.model_registry import catalog_entry_for
+                if catalog_entry_for(deployment).reasoning_capable:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                else:
+                    logger.warning(
+                        "reasoning_effort=%r requested for deployment %r, which the model "
+                        "registry marks non-reasoning; parameter dropped.",
+                        reasoning_effort, deployment,
+                    )
             # Feature 6.1 A3: with streaming, Azure only reports token usage if
             # asked to put it on the final chunk. Without this, every streamed
             # call would log tokens_in=0 and B1's cached/reasoning counts would
@@ -270,4 +281,20 @@ def get_llm(max_tokens: int | None = None):
     setting = get_settings()
     provider = getattr(setting, "LLM_PROVIDER", "mock").lower()
     return build_llm(provider, max_tokens=max_tokens)
+
+
+def get_llm_for_role(role: str, max_tokens: int | None = None):
+    """Gap 465: build the LLM for a registry role -- `primary`, `fast`, `judge`.
+
+    Resolves the deployment through `utils/model_registry.resolve_model`, so a
+    role whose deployment setting is blank gets the primary, exactly as
+    `_fast_llm()` in `agents/query_agent.py` has always behaved. Mock/Ollama
+    providers ignore the role (one model for everything).
+    """
+    from utils.model_registry import resolve_model
+
+    spec = resolve_model(role)  # type: ignore[arg-type]
+    if spec.provider != "azure":
+        return build_llm(spec.provider, max_tokens=max_tokens)
+    return build_llm("azure", model=spec.deployment, api_version=spec.api_version, max_tokens=max_tokens)
 

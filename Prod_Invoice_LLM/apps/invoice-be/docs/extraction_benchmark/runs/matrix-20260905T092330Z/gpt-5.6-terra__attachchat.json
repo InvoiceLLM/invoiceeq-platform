@@ -1,0 +1,683 @@
+{
+  "label": "gpt-5.6-terra",
+  "tenant_id": "528daa2c-9c2c-46a9-b61c-d46144d03a57",
+  "attachments": {
+    "po_summit": {
+      "id": "78b2f64c-0648-4940-8d7e-97a22419de65",
+      "session_id": "f490e178-bfc7-4519-9dd3-050d56641a94",
+      "filename": "PO-US-7001_summit.pdf",
+      "doc_type": "PURCHASE_ORDER",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PO-US-7001",
+      "party_name": "Summit Office Supplies",
+      "doc_date": "2026-05-28",
+      "currency": "USD",
+      "grand_total": 450.0,
+      "file_size_bytes": 1983,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 1,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "PURCHASE_ORDER",
+        "doc_number": "PO-US-7001",
+        "party_name": "Summit Office Supplies",
+        "doc_date": "2026-05-28",
+        "currency": "USD",
+        "subtotal": 450.0,
+        "tax_amount": 0.0,
+        "grand_total": 450.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 1,
+        "lines": [
+          {
+            "description": "Laptop stands",
+            "quantity": 10.0,
+            "unit_price": 45.0,
+            "amount": 450.0
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "po_apex": {
+      "id": "ea9c16b7-1037-43f3-83a6-c1bbae8a6cfd",
+      "session_id": "f490e178-bfc7-4519-9dd3-050d56641a94",
+      "filename": "PO-US-7002_apex.pdf",
+      "doc_type": "PURCHASE_ORDER",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PO-US-7002",
+      "party_name": "Apex Print Solutions",
+      "doc_date": "2026-05-30",
+      "currency": "USD",
+      "grand_total": 432.0,
+      "file_size_bytes": 1975,
+      "candidate_invoice_ids": [
+        "5964ffe9-d673-4ad8-a7e9-dd51aa1a06e7"
+      ],
+      "confirmed_invoice_ids": [],
+      "line_count": 1,
+      "match_tier": 2,
+      "match_summary": "probable match: APS-410093 (same party and date window)",
+      "attachment_count": 2,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "PURCHASE_ORDER",
+        "doc_number": "PO-US-7002",
+        "party_name": "Apex Print Solutions",
+        "doc_date": "2026-05-30",
+        "currency": "USD",
+        "subtotal": 400.0,
+        "tax_amount": 32.0,
+        "grand_total": 432.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 1,
+        "lines": [
+          {
+            "description": "Business cards (5,000 qty)",
+            "quantity": 5000.0,
+            "unit_price": 0.08,
+            "amount": 400.0
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "cn_apex": {
+      "id": "e2981f69-43fe-4c27-b912-3cbd019ff88c",
+      "session_id": "f490e178-bfc7-4519-9dd3-050d56641a94",
+      "filename": "CN-APS-0021_apex_credit_note.pdf",
+      "doc_type": "CREDIT_NOTE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "CN-APS-0021",
+      "party_name": "Apex Print Solutions",
+      "doc_date": "2026-06-20",
+      "currency": "USD",
+      "grand_total": -21.6,
+      "file_size_bytes": 1997,
+      "candidate_invoice_ids": [
+        "5964ffe9-d673-4ad8-a7e9-dd51aa1a06e7"
+      ],
+      "confirmed_invoice_ids": [],
+      "line_count": 2,
+      "match_tier": 2,
+      "match_summary": "probable match: APS-410093 (same party and date window)",
+      "attachment_count": 3,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "CREDIT_NOTE",
+        "doc_number": "CN-APS-0021",
+        "party_name": "Apex Print Solutions",
+        "doc_date": "2026-06-20",
+        "currency": "USD",
+        "subtotal": null,
+        "tax_amount": -1.6,
+        "grand_total": -21.6,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 2,
+        "lines": [
+          {
+            "description": "Correction: business cards over-billed (5,000 x $0.08 = $400.00, billed $420.00)",
+            "quantity": null,
+            "unit_price": null,
+            "amount": -20.0
+          },
+          {
+            "description": "Sales tax 8% on correction",
+            "quantity": null,
+            "unit_price": null,
+            "amount": -1.6
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "qt_titan": {
+      "id": "bcc86215-da36-426e-87ae-1aba8ad83e86",
+      "session_id": "f490e178-bfc7-4519-9dd3-050d56641a94",
+      "filename": "QTN-TSD-3310_titan_quotation.pdf",
+      "doc_type": "QUOTATION",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "QTN-TSD-3310",
+      "party_name": "Titan Steel Distributors",
+      "doc_date": "2026-06-01",
+      "currency": "USD",
+      "grand_total": 10176.0,
+      "file_size_bytes": 2032,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 3,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 4,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "QUOTATION",
+        "doc_number": "QTN-TSD-3310",
+        "party_name": "Titan Steel Distributors",
+        "doc_date": "2026-06-01",
+        "currency": "USD",
+        "subtotal": 9600.0,
+        "tax_amount": 576.0,
+        "grand_total": 10176.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 3,
+        "lines": [
+          {
+            "description": "Steel beams",
+            "quantity": 20.0,
+            "unit_price": 310.0,
+            "amount": 6200.0
+          },
+          {
+            "description": "Steel plates",
+            "quantity": 15.0,
+            "unit_price": 210.0,
+            "amount": 3150.0
+          },
+          {
+            "description": "Delivery",
+            "quantity": 1.0,
+            "unit_price": 250.0,
+            "amount": 250.0
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "soa_blueridge": {
+      "id": "d2cc68dd-d555-454b-b4d3-517258a9bbbb",
+      "session_id": "f490e178-bfc7-4519-9dd3-050d56641a94",
+      "filename": "SOA-BRL-2026-06_blue_ridge_statement.pdf",
+      "doc_type": "STATEMENT_OF_ACCOUNT",
+      "extraction_status": "EXTRACTED",
+      "doc_number": null,
+      "party_name": "Blue Ridge Logistics",
+      "doc_date": "2026-06-30",
+      "currency": "USD",
+      "grand_total": 3366.31,
+      "file_size_bytes": 1994,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 0,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 5,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "STATEMENT_OF_ACCOUNT",
+        "doc_number": null,
+        "party_name": "Blue Ridge Logistics",
+        "doc_date": "2026-06-30",
+        "currency": "USD",
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": 3366.31,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 0,
+        "lines": [],
+        "referenced_document_count": 2
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "dn_cascade": {
+      "id": "87faeab3-102e-43e4-afe3-07b3be033d91",
+      "session_id": "bd6ec6ad-453b-4e53-b53d-eafd39670430",
+      "filename": "DN-CMC-5540_cascade_delivery_note.pdf",
+      "doc_type": "DELIVERY_NOTE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "DN-CMC-5540",
+      "party_name": "Cascade Manufacturing Co",
+      "doc_date": "2026-06-12",
+      "currency": null,
+      "grand_total": null,
+      "file_size_bytes": 1999,
+      "candidate_invoice_ids": [
+        "3fde9037-d633-4101-bcec-e441ac1834b7"
+      ],
+      "confirmed_invoice_ids": [],
+      "line_count": 2,
+      "match_tier": 1,
+      "match_summary": "matches CMC-330217 by document number",
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "DELIVERY_NOTE",
+        "doc_number": "DN-CMC-5540",
+        "party_name": "Cascade Manufacturing Co",
+        "doc_date": "2026-06-12",
+        "currency": null,
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": null,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 2,
+        "lines": [
+          {
+            "description": "CNC machined parts",
+            "quantity": 50.0,
+            "unit_price": null,
+            "amount": null
+          },
+          {
+            "description": "Custom tooling",
+            "quantity": 2.0,
+            "unit_price": null,
+            "amount": null
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "ra_northpoint": {
+      "id": "64f8e687-9ab8-42f9-af04-ae9c76c0917e",
+      "session_id": "bd6ec6ad-453b-4e53-b53d-eafd39670430",
+      "filename": "RA-NPR-8871_northpoint_remittance.pdf",
+      "doc_type": "REMITTANCE_ADVICE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "RA-NPR-8871",
+      "party_name": "NorthPoint Retail Inc.",
+      "doc_date": "2026-07-02",
+      "currency": "USD",
+      "grand_total": 2500.0,
+      "file_size_bytes": 1942,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 0,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 2,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "REMITTANCE_ADVICE",
+        "doc_number": "RA-NPR-8871",
+        "party_name": "NorthPoint Retail Inc.",
+        "doc_date": "2026-07-02",
+        "currency": "USD",
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": 2500.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 0,
+        "lines": [],
+        "referenced_document_count": 1
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "ct_redwood": {
+      "id": "39056800-e055-4605-afd5-7afd4bd8b6b2",
+      "session_id": "bd6ec6ad-453b-4e53-b53d-eafd39670430",
+      "filename": "CT-RFG-2026_redwood_service_contract.pdf",
+      "doc_type": "CONTRACT",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "CT-RFG-2026-04",
+      "party_name": "Redwood Facilities Group",
+      "doc_date": null,
+      "currency": "USD",
+      "grand_total": null,
+      "file_size_bytes": 2064,
+      "candidate_invoice_ids": [
+        "c563058b-452a-4f5e-b405-36d59bc23656"
+      ],
+      "confirmed_invoice_ids": [],
+      "line_count": 2,
+      "match_tier": 1,
+      "match_summary": "matches RFG-500712 by document number",
+      "attachment_count": 3,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "CONTRACT",
+        "doc_number": "CT-RFG-2026-04",
+        "party_name": "Redwood Facilities Group",
+        "doc_date": null,
+        "currency": "USD",
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": null,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 2,
+        "lines": [
+          {
+            "description": "Janitorial services (monthly)",
+            "quantity": null,
+            "unit_price": 1200.0,
+            "amount": null
+          },
+          {
+            "description": "Consumable supplies at cost, capped at $300.00 per month",
+            "quantity": null,
+            "unit_price": 300.0,
+            "amount": null
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    }
+  },
+  "passed": 11,
+  "total": 16,
+  "single_doc": "6/9",
+  "two_docs": "1/3",
+  "no_attachment": "4/4",
+  "p95_s": 5.4,
+  "turns": [
+    {
+      "id": "A1",
+      "attachments": [
+        "po_summit"
+      ],
+      "intent": "read",
+      "question": "What is this document, who is the vendor, and what is the order total?",
+      "answer": "- **Document:** Purchase Order, **PO-US-7001** (dated May 28, 2026).\n- **Vendor:** Summit Office Supplies, Austin, TX.\n- **Order total:** **$450.00 USD**.  \n\nThe document also states that it \u201cdoes not authorize payment\u201d and invoices should reference this PO number. *(Page 1)*",
+      "latency_s": 3.8,
+      "error": null,
+      "passed": true,
+      "required": [
+        "purchase order",
+        "Summit",
+        "450"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "A2",
+      "attachments": [
+        "po_summit"
+      ],
+      "intent": "compare",
+      "question": "Which invoice in our system does this PO relate to, and does it match on quantity, price and total?",
+      "answer": "PO-US-7001 relates to invoice **SOS-100442** from Summit Office Supplies. The invoice is **COMPLETED** and the comparison outcome is **match**.\n\n- **Quantity:** Match \u2014 Laptop stands: 10.0 ordered and 10.0 invoiced; delta 0.0.\n- **Unit price:** Match \u2014 45.0 on both documents; delta 0.0.\n- **Line amount / subtotal:** Match \u2014 450.0 on both documents; delta 0.0.\n- **Tax:** Match \u2014 0.0 on both documents.\n- **Grand total:** Match \u2014 450.0 on both documents; delta 0.0.\n\nBoth documents are in USD, with one line item each and no unmatched lines.",
+      "latency_s": 3.5,
+      "error": null,
+      "passed": true,
+      "required": [
+        "SOS-100442",
+        "(match|agree|consistent|same|no discrepanc)"
+      ],
+      "forbidden": [
+        "(mismatch|does not match|doesn't match)"
+      ],
+      "confirm_step": true
+    },
+    {
+      "id": "A3",
+      "attachments": [
+        "po_apex"
+      ],
+      "intent": "compare",
+      "question": "Compare this PO with the matching Apex Print Solutions invoice. Any discrepancies?",
+      "answer": "PO **PO-US-7002** (Apex Print Solutions) was compared with invoice **APS-410093**. The invoice is marked **AUDIT_REQUIRED**.\n\nThere are discrepancies:\n\n- **Subtotal:** PO **USD 400.0**; invoice **USD 420.0** \u2014 invoice higher by **USD 20.0**.\n- **Tax amount:** PO **USD 32.0**; invoice **USD 33.6** \u2014 invoice higher by **USD 1.6**.\n- **Grand total:** PO **USD 432.0**; invoice **USD 453.6** \u2014 invoice higher by **USD 21.6**.\n\nFor the matched business-cards line:\n- Quantity is **5000.0** on both documents, with a quantity delta of **0.0**.\n- Unit price is **0.08** on both documents, with a price delta of **0.00**.\n- However, the line amount is **400.0** on the PO and **420.0** on the invoice, a difference of **20.0**.\n\nAll lines were matched; there are no unmatched reference or invoice lines. The comparison treats the invoice as an adjustment (**DELTA**) because the document does not state how it corrects the original.",
+      "latency_s": 5.8,
+      "error": null,
+      "passed": true,
+      "required": [
+        "APS-410093",
+        "(420|20\\.00|discrepan|mismatch|differ|over)"
+      ],
+      "forbidden": [],
+      "confirm_step": true
+    },
+    {
+      "id": "A4",
+      "attachments": [
+        "po_apex",
+        "cn_apex"
+      ],
+      "intent": "read",
+      "question": "Using the PO and the credit note together: after the credit is applied, what do we owe Apex, and does that equal the PO total?",
+      "answer": "The credit note is treated as a **DELTA adjustment**, not a replacement, because it does not state its correction method.\n\nI can\u2019t state the post-credit amount owed or confirm whether it equals the PO total, because the computed comparison contains no resulting net balance or equality result, and I cannot derive one.\n\nThe documents have no matched lines:\n- **PO-US-7002 only:** \u201cBusiness cards (5,000 qty)\u201d \u2014 quantity `5000.0`, unit price `0.08`, amount `400.0`.\n- **CN-APS-0021 only:** \u201cCorrection: business cards over-billed \u2026\u201d \u2014 amount `-20.0`.\n- **CN-APS-0021 only:** \u201cSales tax 8% on correction\u201d \u2014 amount `-1.6`.\n\nSince the mode is **both**, quantity and price were considered, but there were zero matched lines.",
+      "latency_s": 5.4,
+      "error": null,
+      "passed": false,
+      "required": [
+        "432",
+        "(yes|equal|match|same)"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "A5",
+      "attachments": [
+        "qt_titan"
+      ],
+      "intent": "compare",
+      "question": "Check the Titan Steel invoice against this quotation line by line. Which line differs and by how much?",
+      "answer": "Invoice **TSD-620458** differs from quotation **QTN-TSD-3310** on one matched line:\n\n- **Steel plates:** quotation amount **USD 3150.0**; invoice amount **USD 3510.0**; difference **USD 360.0 higher** on the invoice.\n\nThe other matched lines show no amount difference:\n\n- **Steel beams:** amount delta **USD 0.0**\n- **Delivery:** amount delta **USD 0.0**\n\nAll three lines were matched, with no unmatched lines. The invoice is marked **AUDIT_REQUIRED**.",
+      "latency_s": 3.1,
+      "error": null,
+      "passed": true,
+      "required": [
+        "TSD-620458",
+        "(steel plates|plates)",
+        "(360|3,?510|3,?150)"
+      ],
+      "forbidden": [],
+      "confirm_step": true
+    },
+    {
+      "id": "A6",
+      "attachments": [
+        "qt_titan",
+        "po_summit"
+      ],
+      "intent": "compare",
+      "question": "Of these two documents, which one has an invoice that matches it exactly and which one has a billing discrepancy?",
+      "answer": "Neither document has an exactly matching invoice in this comparison.\n\n- **Quotation QTN-TSD-3310 \u2014 Titan Steel Distributors:** its Steel beams, Steel plates, and Delivery lines appear only on the quotation.\n- **Purchase Order PO-US-7001 \u2014 Summit Office Supplies:** its Laptop stands line appears only on the purchase order.\n\nThere are no matched line items. The comparison therefore indicates a billing/document mismatch for both documents, rather than one exact match and one discrepancy.",
+      "latency_s": 3.9,
+      "error": null,
+      "passed": true,
+      "required": [
+        "Summit",
+        "Titan",
+        "(discrepan|differ|mismatch|over)"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "A7",
+      "attachments": [
+        "soa_blueridge"
+      ],
+      "intent": "reconcile",
+      "question": "Reconcile this statement against our records. Which lines do we have invoices for and which are missing?",
+      "answer": "I checked 2 reference(s) on that document against your invoices. 1 agree. 1 reference invoices I have no record of.",
+      "latency_s": 0.0,
+      "error": null,
+      "passed": false,
+      "required": [
+        "BRL-200981",
+        "BRL-201044",
+        "(missing|not (found|in|on)|no (record|invoice)|unmatched|cannot find|can't find)"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "A8",
+      "attachments": null,
+      "intent": null,
+      "question": "What is the combined grand total of invoices BRL-200981 and TSD-620458?",
+      "answer": "The combined grand total is **USD 12,943.91** for invoices BRL-200981 and TSD-620458. **TSD-620458 has an audit-required line-item calculation mismatch.**\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | grand_total | currency\n--- | --- | --- | --- | --- | ---\nBRL-200981 | Blue Ridge Logistics |  | INBOUND | 2386.31 | USD\nTSD-620458 | Titan Steel Distributors |  | INBOUND | 10557.60 | USD",
+      "latency_s": 0.0,
+      "error": null,
+      "passed": true,
+      "required": [
+        "12,?943\\.91"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "A9",
+      "attachments": null,
+      "intent": null,
+      "question": "Why was no sales tax charged on the Cascade Manufacturing Co invoice CMC-330217?",
+      "answer": "No sales tax was charged because Cascade Manufacturing Co applied a **resale exemption**, citing exemption certificate **OR-EX-88231**; the invoice states that the certificate was on file. The invoice total is **$2,600.00 USD** with **$0.00 USD** sales tax.\n\n**Citations:**\n[Source: Cascade Manufacturing Co (Page 1)](file:///api/v1/invoices/3fde9037-d633-4101-bcec-e441ac1834b7/pdf), [Source: Summit Office Supplies (Page 1)](file:///api/v1/invoices/0346e9ae-e840-41d8-8eca-caab9d0494f3/pdf), [Source: Blue Ridge Logistics (Page 1)](file:///api/v1/invoices/fc18fe40-9353-4fdd-b889-535583512853/pdf), [Source: Apex Print Solutions (Page 1)](file:///api/v1/invoices/5964ffe9-d673-4ad8-a7e9-dd51aa1a06e7/pdf), [Source: Redwood Facilities Group (Page 1)](file:///api/v1/invoices/c563058b-452a-4f5e-b405-36d59bc23656/pdf)",
+      "latency_s": 0.0,
+      "error": null,
+      "passed": true,
+      "required": [
+        "(exempt|OR-EX-88231|certificate)"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "B1",
+      "attachments": [
+        "dn_cascade"
+      ],
+      "intent": "read",
+      "question": "What was delivered on this delivery note and against which PO?",
+      "answer": "Delivered against **PO-88342**:\n\n- **50 pcs** of CNC machined parts\n- **2 sets** of custom tooling\n\nThe note states that the goods were shipped in full against that PO. *(Page 1)*",
+      "latency_s": 2.8,
+      "error": null,
+      "passed": true,
+      "required": [
+        "50",
+        "(CNC|machined)",
+        "PO-88342"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "B2",
+      "attachments": [
+        "dn_cascade"
+      ],
+      "intent": "compare",
+      "question": "Do the delivered quantities match the Cascade Manufacturing invoice CMC-330217?",
+      "answer": "Yes. The delivered quantities match invoice **CMC-330217** for both matched items:\n\n- **CNC machined parts:** reference **50.0 pcs**; invoice **50.0 pcs**; quantity delta **0.0**\n- **Custom tooling:** reference **2.0 sets**; invoice **2.0 sets**; quantity delta **0.0**\n\nThe invoice has one additional unmatched line: **Freight**, quantity **1.0**. The delivery note has **2** lines and the invoice has **3** lines.",
+      "latency_s": 4.0,
+      "error": null,
+      "passed": true,
+      "required": [
+        "CMC-330217",
+        "(match|agree|consistent|same)"
+      ],
+      "forbidden": [
+        "(short[- ]shipped|do not match|does not match|don't match)"
+      ],
+      "confirm_step": true
+    },
+    {
+      "id": "B3",
+      "attachments": [
+        "ra_northpoint"
+      ],
+      "intent": "reconcile",
+      "question": "Which of our outbound invoices does this remittance pay, and is it paid in full?",
+      "answer": "I checked 1 reference(s) on that document against your invoices. 1 agree.",
+      "latency_s": 0.1,
+      "error": null,
+      "passed": false,
+      "required": [
+        "IEQ-US-9001",
+        "(full|2,?500)"
+      ],
+      "forbidden": [],
+      "confirm_step": true
+    },
+    {
+      "id": "B4",
+      "attachments": [
+        "ct_redwood"
+      ],
+      "intent": "compare",
+      "question": "Per this contract, is the sales tax on Redwood invoice RFG-500712 correct? Show the expected figure.",
+      "answer": "The contract does not state a tax amount, so no expected sales-tax figure can be determined from it.\n\nInvoice **RFG-500712** shows tax of **USD 90.0**, but the comparison marks the contract tax amount as missing. Therefore, the tax cannot be verified as correct or incorrect against this contract.",
+      "latency_s": 3.3,
+      "error": null,
+      "passed": false,
+      "required": [
+        "RFG-500712",
+        "123\\.75",
+        "(90|incorrect|wrong|under|discrepan|differ)"
+      ],
+      "forbidden": [],
+      "confirm_step": true
+    },
+    {
+      "id": "B5",
+      "attachments": [
+        "dn_cascade",
+        "ct_redwood"
+      ],
+      "intent": "compare",
+      "question": "Looking at both documents, which vendor invoice needs follow-up with the vendor and why?",
+      "answer": "Neither attachment is a vendor invoice: they are a delivery note from **Cascade Manufacturing Co** (DN-CMC-5540) and a contract from **Redwood Facilities Group** (CT-RFG-2026-04).\n\nThey require follow-up because they do not appear to be comparable transaction documents:\n\n- **0** line items matched.\n- The delivery note contains **CNC machined parts** and **Custom tooling**.\n- The contract contains **Janitorial services (monthly)** and **Consumable supplies at cost, capped at $300.00 per month**.\n- All **4** lines are unmatched, indicating the documents concern different vendors and different goods/services.\n\nThis was a **quantity-only** comparison; prices were not compared, since a delivery note does not price goods by design. The appropriate follow-up is to obtain the actual vendor invoice or the correct related contract/delivery document, rather than treating either attachment as an invoice discrepancy.",
+      "latency_s": 5.4,
+      "error": null,
+      "passed": false,
+      "required": [
+        "Redwood",
+        "(tax|123\\.75|90)"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "B6",
+      "attachments": null,
+      "intent": null,
+      "question": "Which inbound invoice has the highest grand total?",
+      "answer": "Titan Steel Distributors\u2019 inbound invoice **TSD-620458** has the highest stated grand total: **USD 10,557.60**. It is marked **AUDIT_REQUIRED**.\n\n### Query Results\n\ninvoice_number | vendor_name | grand_total | currency | invoice_date | status\n--- | --- | --- | --- | --- | ---\nTSD-620458 | Titan Steel Distributors | 10557.60 | USD | 2026-06-22 | AUDIT_REQUIRED",
+      "latency_s": 0.1,
+      "error": null,
+      "passed": true,
+      "required": [
+        "(TSD-620458|Titan)",
+        "10,?557\\.60"
+      ],
+      "forbidden": [],
+      "confirm_step": false
+    },
+    {
+      "id": "B7",
+      "attachments": null,
+      "intent": null,
+      "question": "List the inbound invoices that carry no PO number.",
+      "answer": "Both inbound invoices carry no PO number:\n\n- **APS-410093 \u2014 Apex Print Solutions** (USD 453.60; status: **AUDIT_REQUIRED**)\n- **SOS-100442 \u2014 Summit Office Supplies** (USD 450.00; status: **COMPLETED**)\n\nAPS-410093 also has an audit alert for a line-item calculation mismatch.\n\n### Query Results\n\ninvoice_number | vendor_name | flow_direction | invoice_date | due_date | grand_total | currency | po_number | status\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nAPS-410093 | Apex Print Solutions | INBOUND | 2026-06-05 |  | 453.60 | USD |  | AUDIT_REQUIRED\nSOS-100442 | Summit Office Supplies | INBOUND | 2026-06-03 |  | 450.00 | USD |  | COMPLETED",
+      "latency_s": 0.1,
+      "error": null,
+      "passed": true,
+      "required": [
+        "SOS-100442",
+        "APS-410093"
+      ],
+      "forbidden": [
+        "BRL-200981|CMC-330217|RFG-500712|TSD-620458"
+      ],
+      "confirm_step": false
+    }
+  ]
+}

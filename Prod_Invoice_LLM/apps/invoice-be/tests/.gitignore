@@ -9,7 +9,8 @@ eu/
 india/
 us/
 run_chat_harness.py
-run_extraction_harness.py
+# run_extraction_harness.py is no longer ignored: since Gap 466 (2026-09-05) it is the
+# model-swap gate (scoring + cost), i.e. source. The workbook and PDFs above stay local.
 seed_test_tenants_local.py
 setup_test_tenants.py
 test_tenants_local.json

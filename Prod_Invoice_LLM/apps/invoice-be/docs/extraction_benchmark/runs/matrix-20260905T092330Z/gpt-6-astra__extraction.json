@@ -1,0 +1,92 @@
+{
+  "label": "gpt-6-astra",
+  "run_at": "2026-09-05T10:59:09.443983+00:00",
+  "model_primary": "gpt-6-astra",
+  "api_version": "2024-10-21",
+  "registry": {
+    "primary": {
+      "role": "primary",
+      "provider": "azure",
+      "deployment": "gpt-6-astra",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 10.0,
+      "price_out": 12.5
+    },
+    "fast": {
+      "role": "fast",
+      "provider": "azure",
+      "deployment": "gpt-6-astra",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 10.0,
+      "price_out": 12.5
+    },
+    "judge": {
+      "role": "judge",
+      "provider": "azure",
+      "deployment": "gpt-6-astra",
+      "api_version": "2024-10-21",
+      "context_limit": 400000,
+      "encoding": "o200k_base",
+      "reasoning_capable": true,
+      "price_in": 10.0,
+      "price_out": 12.5
+    },
+    "doc_intel_model_id": "prebuilt-invoice",
+    "embedding_model": "BAAI/bge-m3"
+  },
+  "invoices": 27,
+  "errors": 2,
+  "invoice_accuracy_pct": 0.0,
+  "field_accuracy_pct": 57.4,
+  "per_field": {
+    "Actual Tax": {
+      "correct": 25,
+      "total": 27,
+      "accuracy_pct": 92.6
+    },
+    "Actual Total": {
+      "correct": 25,
+      "total": 27,
+      "accuracy_pct": 92.6
+    },
+    "Actual Status": {
+      "correct": 8,
+      "total": 27,
+      "accuracy_pct": 29.6
+    },
+    "Actual Alert Type": {
+      "correct": 4,
+      "total": 27,
+      "accuracy_pct": 14.8
+    }
+  },
+  "line_items": {
+    "tp": 45,
+    "predicted": 45,
+    "expected": 45,
+    "precision_pct": 100.0,
+    "recall_pct": 100.0,
+    "f1_pct": 100.0
+  },
+  "cost_per_invoice_usd": 0.05705,
+  "latency_s": {
+    "p50": 31.338,
+    "p95": 59.825,
+    "max": 142.23,
+    "mean": 36.846
+  },
+  "llm_calls": 64,
+  "tokens_in": 124039,
+  "tokens_out": 23996,
+  "models_seen": [
+    "gpt-6-astra"
+  ],
+  "cost_usd": 1.5403,
+  "cost_note": null
+}

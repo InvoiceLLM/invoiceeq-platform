@@ -23,8 +23,14 @@ param nextPublicClerkPublishableKey string
 @description('Azure OpenAI Model Deployment Name')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
+@description('Gap 465: Azure OpenAI data-plane api-version (GA 2024-10-21). Single source for every container env AZURE_OPENAI_API_VERSION; keep equal to config.py.')
+param azureOpenAiApiVersion string = '2024-10-21'
+
 @description('Feature 6.1 item A2: deployment for the non-reasoning half of a chat turn -- routing, summarising already-computed rows, answering from retrieved text, narrating a diff table. Empty means "use azureOpenAiDeploymentName", which is exactly the behaviour before A2 existed. SQL generation never uses this: it is the one call that genuinely reasons, and item A1 tunes its reasoning_effort separately.')
 param azureOpenAiFastDeploymentName string = ''
+
+@description('Gap 466: deployment used as the LLM judge (agent eval, benchmark job). Empty = use azureOpenAiDeploymentName. Pinned to gpt-5-mini across the Luna migration so eval scores stay comparable.')
+param azureOpenAiJudgeDeploymentName string = ''
 
 @description('Image tag for backend API container')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
@@ -292,7 +298,9 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     image: backendImage
@@ -361,7 +369,9 @@ module billingLifecycleJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     cpu: '0.25'
     memory: '0.5Gi'
   }
@@ -383,7 +393,9 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     storageAccountName: storageAccountName
@@ -489,7 +501,9 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -526,7 +540,9 @@ module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -631,7 +647,9 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     // Both scripts emit telemetry (extraction's tracked_llm_call() sites,
     // Track 2's track_eval_result()/track_agent_call()) -- without this it
     // would silently no-op to stdout instead of reaching appi-invoicellm-dev.

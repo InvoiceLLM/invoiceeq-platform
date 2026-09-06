@@ -43,8 +43,14 @@ param image string = 'acrinvoicellmdev2.azurecr.io/invoice-be:latest'
 @description('Azure OpenAI deployment the sweep scripts would use if they ever made an LLM call (they do not; config.py reads it at import).')
 param azureOpenAiDeploymentName string = 'gpt-5-mini'
 
+@description('Gap 465: Azure OpenAI data-plane api-version (GA 2024-10-21). Single source for every container env AZURE_OPENAI_API_VERSION; keep equal to config.py.')
+param azureOpenAiApiVersion string = '2024-10-21'
+
 @description('Fast/non-reasoning deployment. Deliberately empty: founder decision 2026-09-04 to stay on gpt-5-mini everywhere.')
 param azureOpenAiFastDeploymentName string = ''
+
+@description('Gap 466: deployment used as the LLM judge (agent eval, benchmark job). Empty = use azureOpenAiDeploymentName. Pinned to gpt-5-mini across the Luna migration so eval scores stay comparable.')
+param azureOpenAiJudgeDeploymentName string = ''
 
 @description('Cron (UTC) for the outbound overdue-webhook sweep. Mirrors 08-apps.bicep.')
 param overdueSweepCron string = '0 2 * * *'
@@ -102,7 +108,9 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -128,7 +136,9 @@ module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -162,7 +172,9 @@ module billingLifecycleJob './modules/compute/scheduled-job.bicep' = {
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     cpu: '0.25'
     memory: '0.5Gi'
   }

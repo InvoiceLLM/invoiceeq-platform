@@ -1,0 +1,71 @@
+{
+  "task": "judge",
+  "judge_deployment": "gpt-5.6-luna",
+  "judge_mode": "separate",
+  "source_run": "gpt-5.6-luna__chat.json",
+  "source_model_under_test": "azure:gpt-5.6-luna",
+  "run_at": "2026-09-05T09:20:39.266588+00:00",
+  "turns_rescored": 1,
+  "turns_skipped": 0,
+  "per_metric": {
+    "faithfulness_score": {
+      "original_mean": 0.5,
+      "rescored_mean": 0.5,
+      "mean_abs_delta": 0.0,
+      "n": 1
+    },
+    "relevance_score": {
+      "original_mean": 1.0,
+      "rescored_mean": 1.0,
+      "mean_abs_delta": 0.0,
+      "n": 1
+    },
+    "accuracy_score": {
+      "original_mean": 1.0,
+      "rescored_mean": 1.0,
+      "mean_abs_delta": 0.0,
+      "n": 1
+    },
+    "context_score": {
+      "original_mean": 1.0,
+      "rescored_mean": 1.0,
+      "mean_abs_delta": 0.0,
+      "n": 1
+    },
+    "persona_score": {
+      "original_mean": 1.0,
+      "rescored_mean": 1.0,
+      "mean_abs_delta": 0.0,
+      "n": 1
+    }
+  },
+  "pass_flips": 0,
+  "pass_flip_pct": 0.0,
+  "judge_llm_calls": 5,
+  "tokens_in": 3480,
+  "tokens_out": 641,
+  "cost_usd": 0.00147,
+  "cost_per_1k_calls_usd": 0.293,
+  "turns": [
+    {
+      "case_id": "titan_steel_payment_status",
+      "original": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "error": null
+    }
+  ]
+}

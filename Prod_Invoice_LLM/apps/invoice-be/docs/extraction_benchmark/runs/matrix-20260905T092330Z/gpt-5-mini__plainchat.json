@@ -1,0 +1,34 @@
+{
+ "label": "gpt-5-mini",
+ "turns": [
+  {
+   "id": "A8",
+   "question": "What is the combined grand total of invoices BRL-200981 and TSD-620458?",
+   "answer": "Combined grand total for BRL-200981 and TSD-620458 is USD 12,943.91. Note: invoice TSD-620458 is flagged \"AUDIT_REQUIRED\" with an sa_alert: \"Line item 'Steel plates' amount (3510.00) does not match calculated amount (3150.00)\".\n\n### Query Results\n\ncurrency | combined_grand_total | invoice_count\n--- | --- | ---\nUSD | 12943.91 | 2",
+   "latency_s": 25.3,
+   "passed": true
+  },
+  {
+   "id": "A9",
+   "question": "Why was no sales tax charged on the Cascade Manufacturing Co invoice CMC-330217?",
+   "answer": "The invoice CMC-330217 shows tax_amount = USD 0.00, and the record contains no reason for that. Common explanations are a tax-exempt or resale sale (resale certificate on file), an interstate sale where the vendor has no sales-tax nexus, or tax included/not shown separately; please check the invoice text for an exemption note, the buyer\u2019s resale certificate and the vendor\u2019s state/nexus, or contact the vendor to confirm.\n\n### Query Results\n\ninvoice_number | vendor_name | subtotal | tax_amount | grand_total | currency\n--- | --- | --- | --- | --- | ---\nCMC-330217 | Cascade Manufacturing Co | 2600.00 | 0.00 | 2600.00 | USD",
+   "latency_s": 22.5,
+   "passed": true
+  },
+  {
+   "id": "B6",
+   "question": "Which inbound invoice has the highest grand total?",
+   "answer": "The highest inbound grand total returned is invoice TSD-620458 (Titan Steel Distributors), dated 2026-06-22, for USD 10,557.60 (PO-71004); the invoice is flagged AUDIT_REQUIRED.\n\n### Query Results\n\ninvoice_number | vendor_name | flow_direction | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nTSD-620458 | Titan Steel Distributors | INBOUND | 2026-06-22 |  | 10557.60 | USD | AUDIT_REQUIRED | PO-71004",
+   "latency_s": 11.6,
+   "passed": true
+  },
+  {
+   "id": "B7",
+   "question": "List the inbound invoices that carry no PO number.",
+   "answer": "Two inbound invoices have no PO number recorded (po_number is null): SOS-100442 (Summit Office Supplies) and APS-410093 (Apex Print Solutions). APS-410093 is flagged with an sa_alerts line-item calculation mismatch and is in status AUDIT_REQUIRED; SOS-100442 is COMPLETED.\n\n### Query Results\n\ninvoice_number | vendor_name | flow_direction | invoice_date | due_date | grand_total | currency | status | po_number\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nSOS-100442 | Summit Office Supplies | INBOUND | 2026-06-03 |  | 450.00 | USD | COMPLETED | \nAPS-410093 | Apex Print Solutions | INBOUND | 2026-06-05 |  | 453.60 | USD | AUDIT_REQUIRED | ",
+   "latency_s": 14.5,
+   "passed": true
+  }
+ ],
+ "passed": 4
+}
