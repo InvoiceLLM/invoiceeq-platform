@@ -301,6 +301,20 @@ def count_tokens(text: str) -> int:
         return len(text) // 4
 
 
+def _judge_context(result: dict, recorder) -> str:
+    """Gap 478: the app's own `judge_evidence.context` when present, else the recorder's.
+
+    The two are unioned rather than replaced when both exist and differ, so a
+    document chunk the recorder saw but the app did not narrate from is still
+    evidence -- an answer is never penalised for evidence being *more* complete.
+    """
+    app_ctx = ((result or {}).get("judge_evidence") or {}).get("context") or ""
+    rec_ctx = recorder.context() if recorder is not None else ""
+    if app_ctx and rec_ctx and rec_ctx not in app_ctx:
+        return app_ctx + "\n\n" + rec_ctx
+    return app_ctx or rec_ctx
+
+
 class _ToolOutputRecorder:
     """Everything this turn actually retrieved — the faithfulness evidence.
 
@@ -643,10 +657,20 @@ def run_turn(
         "answer": content,
         "answer_prose": prose,
         "appended_blocks": appended,
-        "context": recorder.context(),
+        # Gap 478 (2026-09-07): the evidence is what the APP narrated from, not
+        # what this recorder happened to intercept. The recorder wraps only
+        # `execute_generated_sql` and `query_invoice_chunks`; the full-record
+        # block (Feature 29 task 29.5) and the computed-figures block (29.6)
+        # pass through neither, so the judge was shown a context without the
+        # figures the answer used and marked them unsupported -- 0.00
+        # faithfulness on correct answers, the recorder docstring's own Gap 316
+        # bug back again. `judge_evidence` is attached by `run_query_agent()`
+        # on every non-cached turn; the recorder stays as the fallback.
+        "context": _judge_context(result, recorder),
+        "evidence_source": "app" if (result.get("judge_evidence") or {}).get("context") else "recorder",
         # The other half of the faithfulness evidence: what was asked for, not
         # just what came back. See `_ToolOutputRecorder.executed_queries()`.
-        "executed_queries": recorder.executed_queries(),
+        "executed_queries": (result.get("judge_evidence") or {}).get("executed_queries") or recorder.executed_queries(),
         # Deterministic input to `context_score` — see `fetched_invoice_numbers()`.
         "fetched_invoice_numbers": sorted(recorder.fetched_invoice_numbers()),
         "generated_sql": result.get("generated_sql"),
@@ -681,6 +705,10 @@ def score_turn(turn: dict, case: GoldenCase, judge_llm, combined_judge: bool = F
         context=turn["context"],
         expected_answer=case.expected_answer,
         llm=judge_llm,
+        # Gap 479: the checklist the accuracy judge grades on. Empty on a case
+        # the facts file does not know, which falls back to the prose.
+        required_facts=getattr(case, "required_facts", ()) or (),
+        forbidden=getattr(case, "forbidden", ()) or (),
         executed_queries=turn.get("executed_queries"),
         expected_invoice_ids=case.expected_invoice_numbers,
         fetched_invoice_ids=turn.get("fetched_invoice_numbers"),
@@ -1004,6 +1032,263 @@ def _priced_model_name(model_under_test: Optional[str]) -> str:
     return resolve_model("primary").deployment
 
 
+# ---------------------------------------------------------------------------
+# Feature 29 task 29.3 — failure taxonomy
+# ---------------------------------------------------------------------------
+#
+# A pass rate says how often the assistant is wrong. It does not say WHY, and
+# spec section 2.3 had to hand-classify 36 turns to find that "the model was
+# given the wrong evidence" and "the model was forbidden to compute what the
+# question needed" were two different problems with two different fixes. That
+# classification is done here instead, in code, so the next run answers the
+# question for free and a bucket that is not falling is visibly the next task.
+#
+# Deterministic on purpose (hard rule 3): every rule below reads a recorded
+# field of the turn, not the prose. No judge, no keyword list over the answer.
+
+FAILURE_BUCKETS = (
+    "no_route",        # the turn never reached a route that could answer
+    "no_evidence",     # a route ran and put nothing in front of the model
+    "wrong_evidence",  # evidence was fetched and it was the wrong evidence
+    "no_computation",  # the evidence was right; the figure was never computed
+    "narration",       # right evidence, right figure, the prose went beyond it
+    "judge",           # the answer looks right and the judge disagreed
+)
+
+#: Above this, the accuracy judge thinks the answer is essentially right, so a
+#: `passed == False` on top of it is a grading disagreement rather than a wrong
+#: answer. Deliberately high: spec section 2.5 measured pass flips of 5.6-27.8%
+#: between judges, so this bucket is meant to catch the clear cases only.
+JUDGE_DISAGREEMENT_ACCURACY = 0.8
+
+#: Below this, the answer is not faithful to what it was shown -- the prose said
+#: something the evidence did not support.
+NARRATION_FAITHFULNESS = 0.7
+
+
+def classify_failure(turn: dict, case=None) -> str:
+    """Which of the six buckets one FAILED turn belongs in.
+
+    Precedence is from the earliest point in the pipeline outwards, because a
+    turn that never retrieved anything cannot also be a narration failure and
+    counting it twice is how a taxonomy stops being a decomposition. Read in
+    order; the first rule that matches wins.
+    """
+    if turn.get("error"):
+        return "no_route"
+
+    context = (turn.get("context") or "").strip()
+    fetched = turn.get("fetched_invoice_numbers") or []
+    executed = turn.get("executed_queries") or []
+    citations = turn.get("citations") or []
+    expected_numbers = getattr(case, "expected_invoice_numbers", None) if case else None
+
+    # 1. no_route -- nothing was even attempted. No SQL, no document search, no
+    #    citation: the classifier sent the turn to plain chat and plain chat has
+    #    no data channel at all. This is the 9-of-36 shape in section 2.3.
+    if not executed and not citations and not turn.get("generated_sql"):
+        return "no_route"
+
+    # 2. no_evidence -- a route ran and produced nothing to read.
+    if not context:
+        return "no_evidence"
+
+    # 3. wrong_evidence -- the retrieval set is knowably wrong. Only decidable
+    #    when the case declares one (`expected_invoice_numbers`); `()` is a real
+    #    expectation ("the correct retrieval is nothing") and is respected.
+    if expected_numbers is not None:
+        if set(fetched) != set(expected_numbers):
+            return "wrong_evidence"
+    elif turn.get("context_score") is not None and turn["context_score"] < 1.0:
+        return "wrong_evidence"
+
+    # 4. judge -- the accuracy judge is nearly satisfied and the turn still
+    #    failed. Checked before the two content buckets because if the grader and
+    #    the answer disagree, attributing the failure to the pipeline is a guess.
+    accuracy = turn.get("accuracy_score")
+    if accuracy is not None and accuracy >= JUDGE_DISAGREEMENT_ACCURACY:
+        return "judge"
+
+    # 5. narration -- the prose went past the evidence.
+    faithfulness = turn.get("faithfulness_score")
+    if faithfulness is not None and faithfulness < NARRATION_FAITHFULNESS:
+        return "narration"
+
+    # 6. no_computation -- right evidence, faithful prose, wrong or missing
+    #    figure. The residual, and named as such: it is where "the model was
+    #    forbidden to compute what the question needed" lands (line-sum checks,
+    #    cross-currency, per-line GST), which is task 29.6's bucket.
+    return "no_computation"
+
+
+def taxonomy_report(turns: list[dict], case_by_id: dict) -> dict:
+    """One line per failed turn, plus counts that sum to the failure count."""
+    lines: list[dict] = []
+    counts = {bucket: 0 for bucket in FAILURE_BUCKETS}
+    for turn in turns:
+        if turn.get("passed"):
+            continue
+        bucket = classify_failure(turn, case_by_id.get(turn["case_id"]))
+        counts[bucket] += 1
+        lines.append(
+            {
+                "case_id": turn["case_id"],
+                "bucket": bucket,
+                "accuracy": turn.get("accuracy_score"),
+                "faithfulness": turn.get("faithfulness_score"),
+                "context": turn.get("context_score"),
+                "route_evidence": bool((turn.get("context") or "").strip()),
+            }
+        )
+    return {"lines": lines, "counts": counts, "failures": len(lines)}
+
+
+def print_taxonomy(report: dict) -> None:
+    print("\n=== failure taxonomy (task 29.3) ===")
+    for line in report["lines"]:
+        print(
+            f"  {line['bucket']:<15} {line['case_id']:<42} "
+            f"acc={line['accuracy']} faith={line['faithfulness']} "
+            f"ctx={line['context']} evidence={'yes' if line['route_evidence'] else 'NONE'}"
+        )
+    total = sum(report["counts"].values())
+    print("  " + "-" * 70)
+    for bucket in FAILURE_BUCKETS:
+        print(f"  {bucket:<15} {report['counts'][bucket]}")
+    print(f"  {'TOTAL':<15} {total}  (failed turns: {report['failures']})")
+    assert total == report["failures"], "taxonomy counts must sum to the failure count"
+
+
+# ---------------------------------------------------------------------------
+# Feature 29 task 29.2 — judge calibration (Cohen's kappa)
+# ---------------------------------------------------------------------------
+#
+# Spec section 2.5: rescoring the same answers with a different judge flipped
+# 5.6-27.8% of pass verdicts, so "any chat delta under ~10 points is inside
+# judge noise today". A number nobody has checked against a human is not a
+# measurement. This computes Cohen's kappa between the judge's binary verdict
+# and a human's on the same turns, and the founder's gate is kappa >= 0.6.
+#
+# Kappa rather than raw agreement because raw agreement is flattered by an
+# unbalanced set: a judge that failed everything would score 78% agreement on a
+# set that is 78% failures, and be worthless.
+
+KAPPA_GATE = 0.6
+
+
+def cohens_kappa(pairs) -> dict:
+    """Cohen's kappa for two raters over binary labels.
+
+    `pairs` is an iterable of `(rater_a, rater_b)` booleans. Returns the kappa,
+    the raw agreement, the 2x2 table and `n`, because a kappa without its n and
+    its marginals cannot be argued with.
+    """
+    both_pass = both_fail = a_only = b_only = 0
+    for a, b in pairs:
+        a, b = bool(a), bool(b)
+        if a and b:
+            both_pass += 1
+        elif not a and not b:
+            both_fail += 1
+        elif a:
+            a_only += 1
+        else:
+            b_only += 1
+    n = both_pass + both_fail + a_only + b_only
+    if n == 0:
+        return {"kappa": None, "n": 0, "agreement": None,
+                "table": {"both_pass": 0, "both_fail": 0, "a_only": 0, "b_only": 0}}
+
+    observed = (both_pass + both_fail) / n
+    a_pass = (both_pass + a_only) / n
+    b_pass = (both_pass + b_only) / n
+    expected = a_pass * b_pass + (1 - a_pass) * (1 - b_pass)
+    if expected == 1.0:
+        # Both raters gave the same label to everything. Kappa is undefined
+        # (0/0), and reporting 0.0 would read as "no agreement" when in fact
+        # they agreed on every item. Say so instead.
+        kappa = None
+    else:
+        kappa = (observed - expected) / (1 - expected)
+    return {
+        "kappa": None if kappa is None else round(kappa, 3),
+        "n": n,
+        "agreement": round(observed, 3),
+        "expected_agreement": round(expected, 3),
+        "table": {
+            "both_pass": both_pass,
+            "both_fail": both_fail,
+            "judge_pass_human_fail": a_only,
+            "human_pass_judge_fail": b_only,
+        },
+    }
+
+
+def load_calibration_set(path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def calibration_report(calibration: dict) -> dict:
+    """Kappa over every entry that carries both verdicts, with its provenance."""
+    entries = calibration.get("entries") or []
+    usable = [
+        e for e in entries
+        if e.get("judge_verdict") in (True, False) and e.get("human_verdict") in (True, False)
+    ]
+    stats = cohens_kappa((e["judge_verdict"], e["human_verdict"]) for e in usable)
+    graders = sorted({(e.get("grader") or "unknown") for e in usable})
+    disagreements = [
+        {
+            "case_id": e.get("case_id"),
+            "judge": e["judge_verdict"],
+            "human": e["human_verdict"],
+            "human_note": e.get("human_note"),
+        }
+        for e in usable
+        if e["judge_verdict"] != e["human_verdict"]
+    ]
+    return {
+        "source_run": calibration.get("source_run"),
+        "judge_model": calibration.get("judge_model"),
+        "entries": len(entries),
+        "scored": len(usable),
+        "graders": graders,
+        "rater_count": len(graders),
+        "provisional": bool(calibration.get("provisional")),
+        "gate": KAPPA_GATE,
+        "passes_gate": bool(stats["kappa"] is not None and stats["kappa"] >= KAPPA_GATE),
+        "disagreements": disagreements,
+        **stats,
+    }
+
+
+def print_calibration(report: dict) -> None:
+    print("\n=== judge calibration (task 29.2) ===")
+    print(f"  source run    : {report.get('source_run')}")
+    print(f"  judge model   : {report.get('judge_model')}")
+    print(f"  entries       : {report['entries']}  scored: {report['scored']}")
+    print(f"  raters        : {report['rater_count']}  {report['graders']}")
+    print(f"  agreement     : {report['agreement']} (expected by chance {report.get('expected_agreement')})")
+    print(f"  table         : {report['table']}")
+    print(f"  COHEN'S KAPPA : {report['kappa']}  (n={report['n']}, gate >= {report['gate']})")
+    if report["kappa"] is None:
+        print("  !! kappa is undefined -- both raters gave every item the same label.")
+    elif report["passes_gate"]:
+        print("  gate: PASS")
+    else:
+        print("  gate: FAIL -- every accuracy claim in Feature 29 is blocked until this clears.")
+    if report["provisional"]:
+        print(
+            "  !! PROVISIONAL: the human verdicts in this file were derived by the build "
+            "session from each case's human-written `expected_answer`, NOT hand-graded by "
+            "the founder. Until the founder confirms them this kappa is an upper bound on "
+            "what a second independent rater would produce, not a measurement of one."
+        )
+    for row in report["disagreements"]:
+        print(f"    disagree {row['case_id']}: judge={row['judge']} human={row['human']} -- {row['human_note']}")
+
+
 def summarise(turns: list[dict]) -> dict:
     """Per-path min/typical/worst — the shape Feature 21's open cost/latency
     question is asked in."""
@@ -1212,6 +1497,29 @@ def main() -> None:
     # Left as None so a substitution run can default to its own file rather
     # than overwriting the baseline output the docs quote figures from.
     parser.add_argument("--out", default=None)
+    # Feature 29 task 29.3.
+    parser.add_argument(
+        "--taxonomy",
+        action="store_true",
+        help=(
+            "After scoring, print one line per FAILED turn tagged with its failure bucket "
+            "(no_route / no_evidence / wrong_evidence / no_computation / narration / judge) "
+            "and the bucket counts, which sum to the failure count. Deterministic; no extra "
+            "LLM calls and no extra cost."
+        ),
+    )
+    # Feature 29 task 29.2.
+    parser.add_argument(
+        "--calibration-set",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Compute Cohen's kappa between the judge's verdicts and the human verdicts in "
+            "PATH (e.g. tests/golden_calibration.json) and exit without running any case. "
+            "Reads stored verdict pairs only -- no model is called, so it is free and "
+            "reproducible. Gate: kappa >= 0.6."
+        ),
+    )
     # Phase 4 substitution axis. Test-time only -- see the module docstring.
     parser.add_argument(
         "--provider",
@@ -1281,6 +1589,16 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING)
+
+    # Feature 29 task 29.2. First thing in main() and it returns: calibration
+    # reads stored verdict pairs, calls no model and touches no telemetry, so it
+    # must not attach an exporter, tag a run source or seed a database. A gate
+    # check has to be free, or it will not be run before every accuracy claim.
+    if args.calibration_set:
+        report = calibration_report(load_calibration_set(args.calibration_set))
+        print_calibration(report)
+        print("\n" + json.dumps(report, indent=2))
+        return
 
     # Gap 304: every `llm_agent_call` emitted from here on belongs to this eval
     # run, not to production. Set before the first graded turn (and before the
@@ -1468,6 +1786,13 @@ def main() -> None:
 
     summary = summarise(turns)
 
+    # Feature 29 task 29.3. Deterministic, no extra call, so it is computed on
+    # every run and only PRINTED under the flag -- the counts ride in the saved
+    # payload either way, which is what makes a bucket trend possible at all.
+    taxonomy = taxonomy_report(turns, case_by_id) if not args.no_score else None
+    if taxonomy and args.taxonomy:
+        print_taxonomy(taxonomy)
+
     persisted = 0
     # A substitution run is opt-in for persistence. `agent_eval_run` is the
     # baseline quality trend the workbook charts; a candidate's scores landing
@@ -1510,6 +1835,9 @@ def main() -> None:
             f"(USD per 1M in/out: {prices_for(_priced_model_name(model_under_test))})"
         ),
         "summary": summary,
+        # Task 29.3: the bucket counts travel with the run, so a later run can be
+        # compared bucket-for-bucket without re-deriving them from the turns.
+        "failure_taxonomy": taxonomy,
         "persisted_rows": persisted,
         "turns": turns,
     }

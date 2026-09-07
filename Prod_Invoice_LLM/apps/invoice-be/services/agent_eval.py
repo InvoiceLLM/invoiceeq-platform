@@ -204,7 +204,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -376,6 +376,33 @@ class ScoreWithReason(BaseModel):
 
     score: float = Field(description="A number between 0.0 and 1.0 inclusive.")
     reason: str = Field(default="", description="One short sentence of justification.")
+
+
+class FactVerdict(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    id: str = Field(
+        default="",
+        description="The checklist line's id exactly as given: R1, R2, ... for required facts; F1, F2, ... for forbidden assertions.",
+    )
+    fact: str = Field(description="The required fact or forbidden assertion, copied verbatim (without its id).")
+    met: bool = Field(
+        description=(
+            "For a REQUIRED fact: true if the answer states it or it follows "
+            "directly from what the answer states. For a FORBIDDEN assertion: "
+            "true if the answer makes that assertion."
+        )
+    )
+    reason: str = Field(default="", description="One short sentence of justification.")
+
+
+class FactChecklistVerdict(BaseModel):
+    """Gap 479: accuracy as a checklist, not a 0/0.5/1.0 impression."""
+
+    model_config = {"extra": "forbid"}
+
+    required: list[FactVerdict] = Field(default_factory=list)
+    forbidden: list[FactVerdict] = Field(default_factory=list)
 
 
 class RelevanceVerdict(BaseModel):
@@ -741,7 +768,12 @@ def score_relevance(question: str, answer: str, llm: Any) -> tuple[Optional[floa
 
 
 def score_accuracy(
-    question: str, expected_answer: Optional[str], actual_answer: str, llm: Any
+    question: str,
+    expected_answer: Optional[str],
+    actual_answer: str,
+    llm: Any,
+    required_facts: Sequence[str] = (),
+    forbidden: Sequence[str] = (),
 ) -> tuple[Optional[float], list[str], int]:
     """Agreement with the golden set's reference answer.
 
@@ -749,11 +781,29 @@ def score_accuracy(
     are prose with a stated grading rubric ("the correct number/entity is
     required; a rounded restatement alongside the exact figure does not fail"),
     so the comparison has to be semantic on the asserted facts.
+
+    **Gap 479 (2026-09-07) -- the checklist path.** When the case supplies
+    `required_facts`, accuracy is `met / len(required_facts)`, each fact judged
+    on its own, and any `forbidden` assertion the answer makes drops the score
+    to 0.0. The prose reference is not shown to the judge on this path at all.
+
+    Why: the prose references mix the facts an answer must state with grading
+    notes ("Bonus, not required to pass: ..."), negative instructions ("naming
+    any other vendor is wrong") and figures the question never asked for. The
+    old prompt told the judge to grade on "every fact the reference asserts"
+    and offered only 0.0 / 0.5 / 1.0, so an answer that named the exact vendor,
+    invoice and figure scored 0.5 for lacking the bonus -- below the 0.70 floor.
+    On the 2026-09-06 calibration set that single mechanism failed 14 of the 28
+    answers a reader marks correct. A checklist cannot do that: a fact is met
+    or it is not, and the score is the fraction, not an impression.
     """
-    if not (expected_answer or "").strip():
+    if not (expected_answer or "").strip() and not required_facts:
         return None, ["accuracy: not scored (no reference answer for this case)"], 0
     if not (actual_answer or "").strip():
         return 0.0, ["accuracy: 0.00 (empty answer)"], 0
+
+    if required_facts:
+        return _score_accuracy_checklist(question, actual_answer, llm, required_facts, forbidden)
 
     prompt = (
         "Compare an assistant's ANSWER against the REFERENCE answer for the same "
@@ -783,6 +833,99 @@ def score_accuracy(
     score = _clamp(result.score)
     note = f"accuracy: {score if score is not None else 'unparseable'} ({result.reason.strip()[:160]})"
     return score, [note], 1
+
+
+def _match_checklist_verdicts(result, required_facts, forbidden):
+    """Map the judge's verdicts onto the checklist by id (R1.., F1..), with a
+    positional fallback for verdicts that carry no id. Returns two lists the
+    length of the checklists; None where no verdict could be matched."""
+
+    def _norm(v):
+        return (v.id or "").strip().upper().rstrip(".")
+
+    by_id = {}
+    for v in list(result.required or []) + list(result.forbidden or []):
+        key = _norm(v)
+        if key and key not in by_id:
+            by_id[key] = v
+
+    def _fill(prefix, facts, positional):
+        unlabeled = [v for v in positional if not _norm(v)]
+        out = []
+        for i in range(len(facts)):
+            v = by_id.get(f"{prefix}{i + 1}")
+            if v is None and i < len(unlabeled):
+                v = unlabeled[i]
+            out.append(v)
+        return out
+
+    return (
+        _fill("R", required_facts, list(result.required or [])),
+        _fill("F", forbidden, list(result.forbidden or [])),
+    )
+
+
+def _score_accuracy_checklist(
+    question: str,
+    actual_answer: str,
+    llm: Any,
+    required_facts: Sequence[str],
+    forbidden: Sequence[str],
+) -> tuple[Optional[float], list[str], int]:
+    """Gap 479: one verdict per required fact and per forbidden assertion."""
+    req = "\n".join(f"R{i + 1}. {f}" for i, f in enumerate(required_facts))
+    forb = "\n".join(f"F{i + 1}. {f}" for i, f in enumerate(forbidden)) or "(none)"
+    prompt = (
+        "You are grading an assistant's ANSWER to a QUESTION against a checklist.\n\n"
+        "REQUIRED FACTS -- for each one, decide `met`: true if the answer states "
+        "it, or it follows directly from what the answer states. Wording, order, "
+        "formatting, thousands separators and currency symbols vs codes do not "
+        "matter; a figure must agree to the cent. Extra correct detail in the "
+        "answer never counts against it. A fact is NOT met if the answer is "
+        "silent on it or contradicts it.\n\n"
+        "FORBIDDEN ASSERTIONS -- for each one, decide `met`: true ONLY if the "
+        "answer actually makes that assertion. An answer that merely does not "
+        "mention the topic has NOT made the assertion.\n\n"
+        "Return one verdict per checklist line. Put required-fact verdicts in "
+        "`required` and forbidden-assertion verdicts in `forbidden`, and on EVERY "
+        "verdict set `id` to the line's id exactly as written (R1, R2, ... / F1, "
+        "F2, ...) and `fact` to the line's text. Your own world knowledge is "
+        "never evidence; grade only what the answer says.\n\n"
+        f"QUESTION:\n{question}\n\n"
+        f"REQUIRED FACTS:\n{req}\n\n"
+        f"FORBIDDEN ASSERTIONS:\n{forb}\n\n"
+        f"ANSWER:\n{_truncate(actual_answer, MAX_CONTEXT_CHARS)}\n"
+    )
+    result = _invoke_structured(llm, FactChecklistVerdict, prompt, "eval.accuracy")
+    if result is None:
+        return None, ["accuracy: not scored (judge unavailable)"], 1
+
+    # Verdicts are matched to checklist lines BY ID, never by which list they
+    # came back in. Found live on the first re-score (2026-09-07): gpt-5-mini
+    # put the required line R1 inside `forbidden` with met=true, and a parser
+    # that trusted list membership scored a correct answer 0.0 for a forbidden
+    # assertion it never made. A verdict with no usable id falls back to its
+    # position within its own list, which is what the unit tests construct. A
+    # required line with no verdict at all is NOT met -- the harness must not
+    # go green on a short reply.
+    req_verdicts, forb_verdicts = _match_checklist_verdicts(result, required_facts, forbidden)
+    met = sum(1 for v in req_verdicts if v is not None and v.met)
+    score = met / len(required_facts)
+
+    hit = [v for v in forb_verdicts if v is not None and v.met]
+    notes = [f"accuracy: {score:.2f} ({met}/{len(required_facts)} required facts met)"]
+    missing = [
+        (v.fact if v is not None else required_facts[i])
+        for i, v in enumerate(req_verdicts)
+        if v is None or not v.met
+    ]
+    if missing:
+        notes.append("missing: " + "; ".join(m[:120] for m in missing[:3]))
+    if hit:
+        score = 0.0
+        notes.append("forbidden: " + "; ".join(v.fact[:120] for v in hit[:3]))
+        notes[0] = f"accuracy: 0.00 (forbidden assertion made; {met}/{len(required_facts)} facts were met)"
+    return score, notes, 1
 
 
 # ---------------------------------------------------------------------------
@@ -1751,6 +1894,8 @@ def score_answer(
     combined_judge: bool = False,
     drift: Optional[DriftExpectation] = None,
     generated_sql: Optional[str] = None,
+    required_facts: Sequence[str] = (),
+    forbidden: Sequence[str] = (),
 ) -> EvalScores:
     """Every metric for one answer, plus the pass/fail decision.
 
@@ -1821,7 +1966,10 @@ def score_answer(
     # metrics the feature doc names, it needs the reference answer (which the
     # combined prompt is deliberately not shown, so faithfulness cannot be
     # contaminated by it), and it is skipped entirely on cases with no reference.
-    accuracy, notes, calls = score_accuracy(question, expected_answer, answer, llm)
+    accuracy, notes, calls = score_accuracy(
+        question, expected_answer, answer, llm,
+        required_facts=required_facts, forbidden=forbidden,
+    )
     scores.accuracy_score = accuracy
     scores.notes.extend(notes)
     scores.judge_llm_calls += calls
@@ -1861,16 +2009,37 @@ def score_answer(
 
 
 def decide_pass(scores: EvalScores) -> bool:
-    """Every dimension that produced a number must clear its own floor.
+    """Accuracy is the verdict; faithfulness and relevance are diagnostics.
 
-    An answer with no scored dimension at all is a fail, not a pass: "nothing
-    could be graded" is not evidence of quality, and a harness that defaulted to
-    pass would go green on the day the judge broke.
+    **Gap 479 (2026-09-07).** The rule before this was an AND of three floors --
+    faithfulness >= 0.80, relevance >= 0.70, accuracy >= 0.70 -- so one noisy
+    sub-score anywhere sank the turn. On the 2026-09-06 calibration set that
+    failed 20 of the 28 answers a reader marks correct and passed none it would
+    fail (Cohen's kappa 0.151). Half of those deaths were on the faithfulness
+    floor, judged against evidence that did not contain the figures the app had
+    computed (Gap 478); the other half were 0.5 accuracies for a missing bonus.
+
+    Now:
+      * accuracy scored -> pass iff accuracy >= ACCURACY_FLOOR, EXCEPT that a
+        faithfulness of exactly 0.0 still fails: that is "every factual claim
+        the answer makes is absent from ALL of its evidence", the fabrication
+        case, and a right-by-accident answer must not pass on it.
+      * accuracy not scored (no reference) -> the old rule over what was scored.
+      * nothing scored -> fail; a harness that defaulted to pass would go green
+        on the day the judge broke.
+
+    Faithfulness below its floor but above zero, and relevance below its floor,
+    are still recorded and trended -- they now tell the reader WHY, instead of
+    voting.
     """
+    if scores.accuracy_score is not None:
+        if scores.faithfulness_score is not None and scores.faithfulness_score <= 0.0:
+            return False
+        return scores.accuracy_score >= ACCURACY_FLOOR
+
     checks = [
         (scores.faithfulness_score, FAITHFULNESS_FLOOR),
         (scores.relevance_score, RELEVANCE_FLOOR),
-        (scores.accuracy_score, ACCURACY_FLOOR),
     ]
     graded = [(value, floor) for value, floor in checks if value is not None]
     if not graded:

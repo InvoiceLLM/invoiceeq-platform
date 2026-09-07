@@ -97,6 +97,9 @@ def main(argv=None) -> int:
             "rescored": {m: fresh.get(m) for m in METRICS},
             "original_passed": t.get("passed"),
             "rescored_passed": fresh.get("passed"),
+            # Gap 479: the judge's own reasons travel with the re-score, so a
+            # verdict that moved can be read rather than guessed at.
+            "rescored_notes": fresh.get("score_notes"),
             "error": err,
         })
         print(f"  {t.get('case_id'):<40} acc {original.get('accuracy_score')} -> {fresh.get('accuracy_score')}")

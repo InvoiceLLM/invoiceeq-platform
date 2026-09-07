@@ -720,9 +720,14 @@ def test_score_answer_populates_all_six_scores():
 
 
 def test_a_fabricated_figure_is_not_redeemed_by_being_on_topic():
-    """Three floors, not one average: 0.5 faithfulness + 1.0 relevance +
-    1.0 accuracy averages to 0.83, which would pass. It must not."""
-    assert decide_pass(EvalScores(faithfulness_score=0.5, relevance_score=1.0, accuracy_score=1.0)) is False
+    """Gap 479 re-baselined this test. Faithfulness 0.0 -- every claim absent
+    from ALL evidence, the fabrication case -- still fails regardless of
+    accuracy. Faithfulness 0.5 with accuracy 1.0 now PASSES: on the 2026-09-06
+    calibration set that shape was a correct answer judged against evidence
+    that lacked the app's computed block (Gap 478), and the old AND of three
+    floors failed 14 of 28 correct answers on it."""
+    assert decide_pass(EvalScores(faithfulness_score=0.0, relevance_score=1.0, accuracy_score=1.0)) is False
+    assert decide_pass(EvalScores(faithfulness_score=0.5, relevance_score=1.0, accuracy_score=1.0)) is True
 
 
 def test_a_case_with_no_reference_answer_passes_on_the_dimensions_it_has():

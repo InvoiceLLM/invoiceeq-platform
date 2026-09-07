@@ -294,6 +294,58 @@ change, and what not to build yet.
 7. Persisted: the turn, its plan (when on), the payload hash, the gate outcome. Nothing new is
    cached on the answer cache without a plan-keyed entry (task 29.12).
 
+> **Build note, 2026-09-06 (task 29.5, as built).** Steps 4 and 5 above are live. What was built
+> and where it departs from the paragraph above:
+>
+> 1. **`services/full_records.py` is new and `agents/query_agent._full_record_block_for()` now
+>    delegates to it.** The block itself is not new — Gap 310 shipped it on the SQL route in August —
+>    so this task is better described as *widening an existing block to what §2.3 measured* than as
+>    building one. Keeping the old name and its `@tracked_dependency("chat.full_record_block")` span
+>    means the dependency telemetry, the boundary test and every existing call site are unchanged.
+>    `fetch_full_records()` returns a typed `FullRecordSet` (records, chunks, cap state,
+>    `provenance()`) and `full_record_block()` renders it; `full_record_block_for()` is the one-call
+>    fail-soft wrapper the agent uses.
+> 2. **Two bounds, not one.** The invoice cap is 25 (decision 1) and is
+>    `Settings.CHAT_FULL_RECORD_MAX_INVOICES`. Document pages have their **own** bound,
+>    `Settings.CHAT_FULL_RECORD_CHUNK_INVOICES = 5`, because they are the expensive axis (an 11-page
+>    invoice measured 16,010 tokens in `query_tools`) and they answer a detail question, not a
+>    listing one. A turn over the page bound still gets all 25 structured rows and is **told** the
+>    document wording is not attached, rather than being left to invent it. There is also a
+>    turn-wide 24,000-character ceiling on page text.
+> 3. **Over the cap now discloses instead of returning nothing.** Gap 310's bound returned `""` past
+>    three invoices, which is how a 40-invoice turn ended up answering from a 2-column projection
+>    with no hint that detail existed and had been withheld. Past 25 the block states the count,
+>    lists the ids, forbids per-invoice detail and asks the user to narrow. `tests/
+>    test_chat_sql_quality.py::test_full_record_block_is_bounded_to_a_few_identified_invoices` was
+>    updated to assert the ruled behaviour instead of the old silence.
+> 4. **Wired on three routes, not one.** §6 says "the SQL route after ids are known, and the general
+>    route once the resolver binds an invoice". `resolve_entities()` is task 29.11 and is not built
+>    yet, so the binding used on the non-SQL routes is a new deterministic helper,
+>    `query_agent.invoice_ids_named_in()`: an exact, case- and whitespace-insensitive
+>    `invoice_number` match on tokens of the shape `_INVOICE_NUMBER_PATTERN` already recognises,
+>    parameterised and tenant-scoped. It either finds the number the user typed or finds nothing, so
+>    it cannot bind the wrong invoice; fuzzy matching, vendor resolution and the "did you mean" path
+>    stay in 29.11 where they can clarify. The RAG route also feeds it the invoice ids its own
+>    citations already carried and never looked up.
+> 5. **The summary model is chosen by the evidence in the prompt, not by the route's name.**
+>    Decision 2 ruled gpt-5-mini for the full-record route and Luna for the attachment branches.
+>    `utils/llm.get_chat_summary_llm()` resolves a new `chat_summary` registry role from
+>    `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME` → the **judge** deployment → the primary. The judge
+>    rung is deliberate: every environment already sets the judge to gpt-5-mini, so an environment
+>    that has never heard of the new variable still behaves as decision 2 requires instead of quietly
+>    narrating on Luna. `query_agent._chat_summary_llm()` is used only where a full-record block was
+>    actually built; a turn that identified no invoice is bit-identical to before.
+> 6. **Every full-record block is also appended to `judge_context_parts`** on all three routes (Gap
+>    304 half 2). A figure read off `taxes` that the judge cannot see scores unfaithful for the sole
+>    reason that the judge was shown less evidence than the model was.
+>
+> **Found while verifying, filed not fixed: Gap 477.** `tests/test_chat_sql_quality.py` has 18
+> failures that predate this task — the Gap 471 live-Azure shape, one file over — and the standing
+> 43-failure baseline does not include them. Proven not to be 29.5's by swapping `git show
+> HEAD:agents/query_agent.py` in and getting the same 18 names. It is filed with a proposed fix and
+> a founder go is pending, per the 2026-09-06 rule that every failure is discussed before it is
+> fixed.
+
 **A chat turn with one attachment.** Unchanged shape (Feature 26): intent → compare / reconcile /
 read. `_amount_owed_block()` and `_contract_terms_block()` run on the compare branch; the narration
 call uses `get_long_doc_llm()` once 29.10 decides the role. Gate as above.
@@ -376,6 +428,49 @@ Grouped into four tracks. Each task is independently completable and testable; �
   = wrong, n reported); extraction report lists all ground-truth fields with the composite as headline.
   Luna baseline re-run on the fixed harness → `runs/luna-baseline-<date>/`.
 
+> **Build note, 2026-09-07 (tasks 29.1, 29.2, 29.3 as built).**
+>
+> **29.1.** The registry work landed as specified and the Azure half turned out to be already
+> done. `az cognitiveservices account deployment list -n openai-invoicellm-dev -g
+> rg-invoice-llm-dev` returns `gpt-5-mini`, `gpt-4o`, `gpt-5.6-luna`, `gpt-5.6-terra` and nothing
+> else — `gpt-5.6-sol` and `gpt-6-astra` had already been deleted, and Terra is present as
+> decision 9 requires — and `az containerapp job show` on all six `caj-*-dev` jobs shows
+> luna / luna / gpt-5-mini with api-version `2024-10-21` already set. **No `az` mutation was
+> run**; issuing a no-op `job update` would have created a new revision of six jobs for nothing.
+> `infra/model-deployment.bicep`'s role comment was **wrong** — it claimed Terra had been
+> deleted — and is rewritten. Two design points worth recording: the 5.6 family's context is
+> **1,050,000 with a separate 922,000-token input budget** (`CatalogEntry.max_input_tokens`),
+> because total context and usable prompt budget are different numbers; and `recall_note` exists
+> because **a 1M-token window is not a 1M-token memory** — Luna's MRCR is ~41% against Terra's
+> 89%+, which is the whole reason the `long_doc` role exists. `gpt-5.6-sol` and `gpt-6-astra`
+> keep their catalog rows, marked `DELETED`: a deleted deployment still has historical telemetry
+> and cost rows to price, and removing a row would silently reprice them at zero via
+> `DEFAULT_SPEC`.
+>
+> **29.2 — the result changes what the rest of this feature may claim.** κ = **0.151** on n = 36
+> (agreement 0.444 against 0.346 expected by chance), against a gate of 0.6. **The gate fails.**
+> The 2×2 is entirely one-directional: `both_pass 8, both_fail 8, judge_pass_human_fail 0,
+> human_pass_judge_fail 20`. The judge never passes something a reader would fail, and fails 20
+> of the 28 answers a reader marks correct against this file's own reference text. §2.5 already
+> said "any chat delta under ~10 points is inside judge noise"; this is stronger than that — the
+> **level** is wrong, not just the noise. Every accuracy claim in this feature is blocked until
+> it clears, which is decision 4's rule applied to itself.
+>
+> The calibration file is honest about what it is. Every entry is
+> `grader: "expected-text (founder to confirm)"`, the file declares `provisional: true` and
+> `rater_count: 1`, and its `caveat` states that the rater is **the same session that wrote the
+> code under test** — the exact bias decision 4's second rater exists to remove. Six entries are
+> marked `FOUNDER TO CONFIRM` because the reference text does not decide them. `--calibration-set`
+> calls no model, so the gate is free to check before any claim.
+>
+> **29.3.** Six buckets, deterministic, precedence earliest-in-the-pipeline-first so no turn can
+> be counted twice, and the printer asserts the counts sum to the failure count. Baseline on the
+> 2026-09-06 run: `wrong_evidence` 9, `no_computation` 9, `narration` 4, `judge` 4, `no_route` 2,
+> `no_evidence` 0. The counts ride in every saved payload, printed only under `--taxonomy`, so a
+> bucket trend costs nothing. **`no_evidence = 0` must be read with Gap 478** — the harness's
+> context always carries the SQL results table, so that bucket cannot fire on this harness
+> whatever the route did.
+
 **Track B — evidence and contract (chat without attachment)**
 - **29.5** `fetch_full_records()` + `full_record_block()`; wired into the SQL route after ids are
   known and into the general route when the resolver binds an invoice; **cap = 25** (decision 1);
@@ -426,6 +521,50 @@ Grouped into four tracks. Each task is independently completable and testable; �
 - **29.10** `tests/golden_long_doc.json` (5 cases: multi-page contract, 3-page statement, 2 long POs,
   long delivery note); Terra vs Luna on the attachment branches; role decided by the 2-pt rule; env +
   bicep for `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`.
+
+> **Build note, 2026-09-07 (tasks 29.6, 29.9, 29.12 as built; 29.5's measurement).**
+>
+> **29.6.** `check_line_arithmetic()` reads the invoice's own `items`, not the results table, and
+> that is the whole point: the existing reconcile in `_computed_figures_block_for()` only fires
+> when the generated SQL projected `line_qty`/`line_unit_price`/`line_amount`, which rules 6d and
+> 11 discourage — so the golden line-check cases arrived with the lines in the record and no
+> arithmetic done on them. Three rules are recorded in the code because each is a way to produce a
+> *false* finding: a line with no quantity or unit price is **skipped, not zeroed**; its printed
+> amount still counts toward the subtotal comparison; mismatches are never truncated by the
+> reporting cap. Both halves render through one `_computed_block_wrapper()` so the model sees one
+> block with one instruction, and the mismatch instruction sits in the **header** — an instruction
+> placed where data sits reads as data, which a live gpt-5-mini demonstrated by copying one into a
+> user's answer.
+>
+> **29.9, and where it stops.** The gate, the named-figure regeneration and the abstain payload
+> are built, tested and live on the SQL route behind `ENABLE_ANSWER_CONTRACT_GATE` (default on),
+> with the outcome on `ChatTurn.answer_gate` so the control is measurable. `result["provenance"]`
+> is populated from 29.5's `FullRecordSet`. **`routers/chat.py::MessageResponse` was deliberately
+> not widened** (Gap 474, founder go pending), so provenance reaches the cache, the telemetry and
+> any in-process caller and **not the browser**. §6 step 6 says provenance is "attached to the
+> response for the FE's existing citation rendering"; that half is built and not yet reachable,
+> and the task stays `[~]` until Gap 474 is decided. The larger half of the test file is the
+> half that proves the gate does **not** fire — on dates in three renderings, bare years, counts
+> under ten, identifiers, and figures rendered differently from the row — because a gate with
+> false positives replaces correct answers with abstentions.
+>
+> **29.12.** The bypass was removed by removing its premise. `_attachment_dimension()` folds the
+> sorted attachment ids into the key, so the collision Feature 26's B1 protected against cannot
+> happen; a turn with no attachment keeps a byte-identical key, so nothing in Redis is orphaned.
+> The caching decision moved **up** to `_run_query_agent()`, above the attachment gate, where the
+> ids are known and where `_attachment_answer_is_cacheable()` can refuse a confirm or clarify card
+> — a card is a question, and replaying it after the user has answered is a loop. B1's test was
+> amended rather than deleted: it now pins the new behaviour and still pins that the branch
+> functions themselves contain no cache call.
+>
+> **29.5's golden re-run, reported as measured.** pass **22.2%** (8/36), judge accuracy 0.611,
+> faithfulness 0.751, latency median 9.7 s, **$0.00248/turn**. Accuracy and latency beat both
+> as-is baselines; the pass rate does not, and it is far from the 52.8% full-record result. This
+> is **not** read as "29.5 failed", for two filed reasons: **Gap 478** — the harness grades
+> against `recorder.context()` and never sees the full-record block, so 0 of 36 turns show it on
+> a build that attaches it on three routes — and **29.2's κ of 0.151**, which says the pass metric
+> itself is not currently trustworthy. The honest statement is that *the golden harness cannot
+> presently measure this task*, and both blockers are filed rather than worked around.
 
 **Track D — grounding and the generic layer**
 - **29.11** `resolve_entities()`; automatic clarify on 0/>1; keyword lists demoted to fallback behind
@@ -548,3 +687,25 @@ Dev only. Every step is gated by the previous one's evidence; nothing here touch
 | 9 | Terra | **Keep Terra until 29.10 runs; delete Sol and Astra now** | 29.1 |
 
 No open decisions remain. The spec is ready for the founder's build go.
+
+### Build note — the judge (Gap 479, 2026-09-07)
+
+§2.5 said the judge was noisy. Reading the 36 judged answers showed it was **biased down**, not
+noisy: 28 reference-correct answers, 8 judge passes, zero false passes, κ 0.151. Four mechanisms,
+all in `services/agent_eval.py`: a 3-valued accuracy with the floor above its middle value; prose
+references whose bonus notes and negative instructions were graded as required facts; faithfulness
+judged against the recorder's evidence rather than the app's (Gap 478); and an AND of three floors.
+The founder confirmed ~80% by reading the answers and approved all four fixes.
+
+What changed, and what did not:
+- **References are now structured** in `benchmarks/agent_eval_golden_facts.json` (`required` /
+  `forbidden` / `notes`); the prose `expected_answer` is untouched and stays the human reference.
+- **Accuracy is a checklist**: met ÷ required, forbidden hit → 0. The prose is not shown to the judge.
+- **Pass = accuracy ≥ 0.70**, with faithfulness 0.0 still a fail. Faithfulness and relevance are
+  diagnostics.
+- **Evidence = `judge_evidence.context`** (Gap 478), unioned with the recorder's.
+- Judge deployment, floors, and the 36 questions are unchanged.
+
+Consequence for §2.3's numbers: the "pass %" column of every run before 2026-09-07 was produced
+by the old rule and is not comparable to runs after it. Task 29.2's calibration must be re-run on
+the new rule, and decision 4's 100-turn set is still owed.

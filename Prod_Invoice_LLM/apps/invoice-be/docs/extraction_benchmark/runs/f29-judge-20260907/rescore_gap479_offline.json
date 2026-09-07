@@ -1,0 +1,807 @@
+{
+  "task": "judge",
+  "judge_deployment": "gpt-5-mini",
+  "judge_mode": "separate",
+  "source_run": "agent_eval_output.json",
+  "source_model_under_test": null,
+  "run_at": "2026-09-06T21:15:57.079777+00:00",
+  "turns_rescored": 36,
+  "turns_skipped": 0,
+  "per_metric": {
+    "faithfulness_score": {
+      "original_mean": 0.751,
+      "rescored_mean": 0.766,
+      "mean_abs_delta": 0.027,
+      "n": 33
+    },
+    "relevance_score": {
+      "original_mean": 0.975,
+      "rescored_mean": 0.983,
+      "mean_abs_delta": 0.042,
+      "n": 36
+    },
+    "accuracy_score": {
+      "original_mean": 0.611,
+      "rescored_mean": 0.764,
+      "mean_abs_delta": 0.264,
+      "n": 36
+    },
+    "context_score": {
+      "original_mean": 0.739,
+      "rescored_mean": 0.739,
+      "mean_abs_delta": 0.0,
+      "n": 32
+    },
+    "persona_score": {
+      "original_mean": 0.773,
+      "rescored_mean": 0.812,
+      "mean_abs_delta": 0.016,
+      "n": 32
+    }
+  },
+  "pass_flips": 15,
+  "pass_flip_pct": 41.7,
+  "judge_llm_calls": 176,
+  "tokens_in": 130656,
+  "tokens_out": 120352,
+  "cost_usd": 0.27337,
+  "cost_per_1k_calls_usd": 1.553,
+  "turns": [
+    {
+      "case_id": "titan_steel_payment_status",
+      "original": {
+        "faithfulness_score": 0.6,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.6,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/5 claims supported | unsupported: This data does not track payment/settlement.; That status reflects extraction/workflow, not whether it was paid. | relevance: 1.0 [out_of_scope_refusal, fixed by kind] (The response declines to provide payment confirmation because the dataset doesn't track payment/settlement and directs the user to the appropriate systems to ve) | accuracy: 1.00 (1/1 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['TSD-620458'], fetched ['TSD-620458']) | orchestration: not scored (no gradeable figures in the answer) | persona: 1.0 [status semantics, payment tracking] (Correctly treated COMPLETED as a document-processing status (not payment), stated payment/settlement is not tracked for inbound invoices, and did not assert the)",
+      "error": null
+    },
+    {
+      "case_id": "rajesh_steel_cgst",
+      "original": {
+        "faithfulness_score": 0.6666666666666666,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.6666666666666666,
+        "relevance_score": 0.4,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 2/3 claims supported | unsupported: Payment status is not tracked for inbound invoices in this data. | relevance: 0.4 [direct_answer, judged] (It provides a related figure (total tax) but does not give the specific CGST amount requested, so the central information is missing.) | accuracy: 0.00 (forbidden assertion made; 0/1 facts were met) | missing: States the CGST as INR 9,000.00. | forbidden: Claims that no per-component (CGST/SGST) breakdown is stored or identifiable. | context: 1.00 (precision 1.00, recall 1.00; expected ['INDIA-20260722-003'], fetched ['INDIA-20260722-003']) | orchestration: 1/1 figures trace to the evidence | persona: 0.0 [tax components] (The assistant wrongly claimed no CGST breakdown was stored and treated only a combined tax as present, but the invoice actually itemizes CGST INR 9,000 (and SGS)",
+      "error": null
+    },
+    {
+      "case_id": "datapipe_vs_stratedge",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Directly identifies which vendor had the larger invoice and provides both invoice totals.) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['DPS-9981', 'SEP-4410'], fetched ['DPS-9981', 'SEP-4410']) | orchestration: 2/2 figures trace to the evidence | persona: 1.0 [invoice totals, amount comparison] (Both invoice totals were reported correctly and the comparison between DataPipe Solutions (USD 42,300.00) and StratEdge Partners (USD 27,950.00) is accurate.)",
+      "error": null
+    },
+    {
+      "case_id": "freight_per_vendor",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (The response directly identifies the single vendor that billed shipping and provides the exact total with a clear line-item breakdown.) | accuracy: 1.00 (2/2 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['BRL-7702'], fetched ['BRL-7702']) | orchestration: 3/3 figures trace to the evidence (1 small bare integer(s) skipped) | persona: 1.0 [category judgement, arithmetic honesty] (Correctly identified only Blue Ridge Logistics as billing freight and used the line-item amount USD 1,120.00 (4\u00d7USD 280.00) rather than the invoice grand total.)",
+      "error": null
+    },
+    {
+      "case_id": "bolts_reconciliation",
+      "original": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 0/3 claims supported | unsupported: 5,000 \u00d7 USD 0.08 = USD 400.00.; invoice US-20260722-001 records the bolts line amount (and grand_total) as USD 420.00.; invoice US-20260722-001 status is AUDIT_REQUIRED. | relevance: 1.0 [direct_answer, judged] (Directly answers the yes/no question, shows the calculation, and points out the recorded discrepancy and invoice status.) | accuracy: 1.00 (3/3 required facts met) | context: 0.00 (precision 0.00, recall 0.00; expected ['US-20260722-001'], fetched []) | context missed: US-20260722-001 | orchestration: 2/5 figures trace to the evidence (1 small bare integer(s) skipped) | untraceable figures: 5,000, 0.08, 400.00 | persona: 1.0 [arithmetic honesty, status semantics] (Correctly computed 5,000 \u00d7 USD 0.08 = USD 400.00, flagged the printed bolts line as USD 420.00 (USD 20 discrepancy), and correctly noted the AUDIT_REQUIRED stat)",
+      "error": null
+    },
+    {
+      "case_id": "zero_result_vendor",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 1/1 claims supported | relevance: 1.0 [no_results_report, fixed by kind] (The response explicitly reports that no invoices reference 'Nonexistent Holdings', so it correctly states no matching results were found.) | accuracy: 1.00 (1/1 required facts met) | context: 1.00 (correctly fetched nothing) | orchestration: not scored (no gradeable figures in the answer) | persona: 1.0 [vendor matching, spend aggregation] (The assistant correctly reported that no invoices reference that vendor and therefore no spend can be totaled, rather than returning a fabricated $0.00.)",
+      "error": null
+    },
+    {
+      "case_id": "zero_result_typo_vendor",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 1/1 claims supported | relevance: 1.0 [no_results_report, fixed by kind] (The response states that the invoice does not contain a billed total, i.e., nothing matching the requested total was found.) | accuracy: 0.00 (forbidden assertion made; 2/2 facts were met) | forbidden: Asserts that the Titan Steel Distributors invoice does not state a total. | context: 1.00 (correctly fetched nothing) | orchestration: 1/1 figures trace to the evidence | persona: 0.5 [vendor identification, invoice total extraction] (The assistant failed to note the vendor name misspelling and asserted a missing billed total instead of proposing the corrected vendor name for confirmation, so)",
+      "error": null
+    },
+    {
+      "case_id": "payment_terms_document",
+      "original": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.3636363636363636,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.3636363636363636,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 1/2 claims supported | unsupported: None of the invoices returned include vendor payment terms | relevance: 1.0 [direct_answer, judged] (Directly states that payment_instructions is NULL/empty on all returned invoices, answering the question exactly.) | accuracy: 0.00 (forbidden assertion made; 0/2 facts were met) | missing: Reports Blue Ridge Logistics (BRL-7702) payment terms as net 30 from the invoice date.; Reports Titan Steel Distributors (TSD-620458) terms as remit within 30 days with 1.5% monthly interest on late payment. | forbidden: Says no invoice states payment terms / payment terms are not available. | context: 0.36 (precision 0.22, recall 1.00; expected ['BRL-7702', 'TSD-620458'], fetched ['BRL-7702', 'DPS-9981', 'INDIA-20260722-003', 'KWF-2026-0042', 'MIS-2026-0881', 'RFG-2026-114', 'SEP-4410', 'TSD-620458']) | orchestration: not scored (no gradeable figures in the answer) | persona: not scored (no domain judgement required by this turn)",
+      "error": null
+    },
+    {
+      "case_id": "out_of_scope_code_request",
+      "original": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "rescored": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: not scored (no factual claims in the answer) | relevance: 1.0 [out_of_scope_refusal, fixed by kind] (The assistant refused to write general-purpose code and instead declined, offering invoice/platform-related help, so this is an out-of-scope refusal.) | accuracy: 1.00 (1/1 required facts met) | context: 1.00 (correctly fetched nothing) | orchestration: not scored (no gradeable figures in the answer) | persona: not scored (no domain judgement required by this turn)",
+      "error": null
+    },
+    {
+      "case_id": "greeting_no_tool",
+      "original": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "rescored": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": null
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: not scored (no factual claims in the answer) | relevance: 1.0 [capability_or_greeting, fixed by kind] (The response is a greeting that also offers help and describes the assistant's role with invoices/platform, so it fits the capability_or_greeting category.) | accuracy: 1.00 (1/1 required facts met) | context: 1.00 (correctly fetched nothing) | orchestration: not scored (no gradeable figures in the answer) | persona: not scored (no domain judgement required by this turn)",
+      "error": null
+    },
+    {
+      "case_id": "large_invoice_full_detail",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Directly provides the invoice total, tax amount, and payment terms as requested.) | accuracy: 0.00 (forbidden assertion made; 2/3 facts were met) | missing: States payment terms of net 45 days (with 2% monthly interest on late payment). | forbidden: Says payment terms are not stated / not recorded / not available. | context: 1.00 (precision 1.00, recall 1.00; expected ['MIS-2026-0881'], fetched ['MIS-2026-0881']) | orchestration: 4/4 figures trace to the evidence | persona: 0.5 [total and tax amounts, payment terms] (The assistant correctly reported the total and tax amounts to the cent but incorrectly claimed the invoice had no payment terms\u2014 the document specifies net 45 d)",
+      "error": null
+    },
+    {
+      "case_id": "small_invoice_full_detail",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Gives all three requested items: total, tax amount, and states the payment terms (not stated).) | accuracy: 0.00 (forbidden assertion made; 2/3 facts were met) | missing: States payment terms of net 45 days (with 2% monthly interest on late payment). | forbidden: Says payment terms are not stated / not recorded / not available. | context: 1.00 (precision 1.00, recall 1.00; expected ['KWF-2026-0042'], fetched ['KWF-2026-0042']) | orchestration: 3/3 figures trace to the evidence (1 small bare integer(s) skipped) | persona: 0.5 [invoice total, tax amount, payment terms/document semantics] (Amounts are correct, but the assistant incorrectly stated payment terms were not present when the document specifies net 45 days and 2% monthly interest.)",
+      "error": null
+    },
+    {
+      "case_id": "multi_part_totals_and_dates",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Directly states the total, tax amount, and due date for the specified Titan Steel Distributors invoice.) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['TSD-620458'], fetched ['TSD-620458']) | orchestration: 4/4 figures trace to the evidence | persona: 1.0 [tax components, invoice total, payment due date] (All three required domain facts (total USD 18,450.00, tax USD 1,476.00, due 2026-08-01) are correctly stated with no incorrect tax splitting or status inference)",
+      "error": null
+    },
+    {
+      "case_id": "all_vendors_over_twenty_thousand",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Gives a concise list of vendors and their invoice amounts above USD 20,000, directly matching the request.) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['DPS-9981', 'MIS-2026-0881', 'SEP-4410'], fetched ['DPS-9981', 'MIS-2026-0881', 'SEP-4410']) | orchestration: 4/4 figures trace to the evidence | persona: 1.0 [currency comparison, threshold filtering, vendor invoice amounts] (Correctly identified the three USD invoices above the USD 20,000 threshold and excluded the INR invoice (no exchange rate provided).)",
+      "error": null
+    },
+    {
+      "case_id": "two_vendors_two_questions",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 7/7 claims supported | relevance: 1.0 [direct_answer, judged] (Gives both billed amounts with invoice dates/IDs and identifies which invoice is older, directly answering the question.) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['BRL-7702', 'US-20260722-001'], fetched ['BRL-7702', 'US-20260722-001']) | orchestration: 7/7 figures trace to the evidence | persona: 1.0 [invoice amounts, invoice dates/age, currency] (Both invoice amounts and dates were identified correctly (USD amounts matched invoices BRL-7702 and US-20260722-001, and Harbor Tech's date is earlier).)",
+      "error": null
+    },
+    {
+      "case_id": "line_item_breakdown_completeness",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 0.7,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (The response directly lists the invoice number and breaks down the line-item charges and payment terms, which matches the user's request.) | accuracy: 0.50 (1/2 required facts met) | missing: Lists the Warehouse storage line: USD 5,000.00. | context: 0.00 (precision 0.00, recall 0.00; expected ['BRL-7702'], fetched []) | context missed: BRL-7702 | orchestration: 2/3 figures trace to the evidence (2 small bare integer(s) skipped) | untraceable figures: 1,120.00 | persona: 0.5 [line items, invoice total, charge categorization] (The assistant listed the freight line but omitted the required 'Warehouse storage' line (and thus the invoice total), so the breakdown is incomplete.)",
+      "error": null
+    },
+    {
+      "case_id": "unsupported_field_asks_for_alternative",
+      "original": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 0.00 (3 claims asserted with no tool context at all) | relevance: 1.0 [no_results_report, fixed by kind] (The invoice schema contains no field for finance approval and the status values do not indicate finance approval, so you cannot determine which invoices were ap) | accuracy: 1.00 (1/1 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: not scored (no gradeable figures in the answer) | persona: 1.0 [status semantics, approval workflow, schema interpretation] (Correctly identifies that the schema contains no finance-approval field and that the 'status' is a processing/extraction state, so approval cannot be determined)",
+      "error": null
+    },
+    {
+      "case_id": "zero_result_with_useful_redirect",
+      "original": {
+        "faithfulness_score": 0.75,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [no_results_report, fixed by kind] (The reply clearly reports that no invoices match Acme Corp or May 2026 and states which documents are available.) | accuracy: 1.00 (1/1 required facts met) | context: 1.00 (correctly fetched nothing) | orchestration: 1/1 figures trace to the evidence | persona: 1.0 [vendor existence, invoice date range, document matching] (Correctly reports no Acme Corp or May 2026 invoices and lists the vendors actually present, matching the reference judgement.)",
+      "error": null
+    },
+    {
+      "case_id": "hostile_user_tone",
+      "original": {
+        "faithfulness_score": 0.375,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.16666666666666666,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 1/6 claims supported | unsupported: The invoice records a tax_amount of USD 3,384.00.; The taxes array is empty.; The subtotal is empty. | relevance: 1.0 [direct_answer, judged] (Directly reports the total spend found (grand_total USD 42,300.00) and notes the missing itemized breakdown.) | accuracy: 1.00 (1/1 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['DPS-9981'], fetched ['DPS-9981']) | orchestration: 2/3 figures trace to the evidence | untraceable figures: 3,384.00 | persona: 1.0 [invoice total, tax components, line items, status semantics] (The assistant correctly returned the grand total in USD, reported the recorded combined tax amount without inventing any CGST/SGST/IGST split, noted the lack of)",
+      "error": null
+    },
+    {
+      "case_id": "internals_probe_no_leak",
+      "original": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": null,
+        "persona_score": null
+      },
+      "rescored": {
+        "faithfulness_score": null,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": null
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: not scored (no factual claims in the answer) | relevance: 1.0 [direct_answer, judged] (Directly states that no SQL was run and therefore no table or query details can be provided, which answers the user's question precisely.) | accuracy: 1.00 (1/1 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: not scored (no gradeable figures in the answer) | persona: not scored (no domain judgement required by this turn)",
+      "error": null
+    },
+    {
+      "case_id": "cross_currency_total_refused",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Directly reports the total spend per currency and clarifies that amounts are not converted, matching the user's request for total spend.) | accuracy: 1.00 (3/3 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: 2/2 figures trace to the evidence | persona: 1.0 [currency, aggregation across invoices, exchange rate] (Correctly reported per-currency totals and explicitly stated amounts must not be combined without an exchange rate.)",
+      "error": null
+    },
+    {
+      "case_id": "india_mixed_gst_slab_lines",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 0.7,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 5/5 claims supported | relevance: 1.0 [direct_answer, judged] (Directly states the number of line items and lists each item with its GST rate, matching the question.) | accuracy: 1.00 (4/4 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['BL-2026-1450'], fetched ['BL-2026-1450']) | orchestration: 8/9 figures trace to the evidence (7 small bare integer(s) skipped) | untraceable figures: 13,500.00 | persona: 1.0 [line item count, tax components (GST rates)] (Correctly identified three line items and the per-line GST slabs (5%, 12%, 18%) without fabricating per-line tax rupee amounts.)",
+      "error": null
+    },
+    {
+      "case_id": "india_ganesh_subtotal_reconciliation",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Directly answers the reconciliation question and quantifies the 1,000 INR mismatch between computed and printed line amounts.) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['GHS-2026-0334'], fetched ['GHS-2026-0334']) | orchestration: 6/6 figures trace to the evidence | persona: 1.0 [arithmetic honesty, line item calculation] (The assistant correctly reports that 100 \u00d7 INR 380 = INR 38,000 but the printed line amount is INR 39,000, a INR 1,000 discrepancy, as required.)",
+      "error": null
+    },
+    {
+      "case_id": "india_reverse_charge_vendor",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 2/2 claims supported | relevance: 1.0 [direct_answer, judged] (Directly names the vendor and cites the specific invoice that indicates a Reverse Charge Mechanism, precisely answering the question.) | accuracy: 1.00 (2/2 required facts met) | context: 0.00 (precision 0.00, recall 0.00; expected ['KE-2026-0089'], fetched []) | context missed: KE-2026-0089 | orchestration: 1/1 figures trace to the evidence (1 small bare integer(s) skipped) | persona: 1.0 [Reverse charge (RCM)] (Correctly identified Konkan Exports Pvt Ltd (invoice KE-2026-0089) as billed under RCM and noted the invoice treats GST as informational/not added.)",
+      "error": null
+    },
+    {
+      "case_id": "india_outbound_only_disambiguation",
+      "original": {
+        "faithfulness_score": 0.4,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 0.5,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 5/10 claims supported | unsupported: The invoice shows tax_amount INR 17,100.00.; an sa_alert flags a subtotal_mismatch on a line item.; Implementation and training: printed amount INR 95,000.00. | relevance: 1.0 [direct_answer, judged] (Directly identifies the outbound invoice sent to Anand Distributors and provides the requested invoice details and relevant discrepancies.) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['IEQ-IN-7002'], fetched ['IEQ-IN-7002']) | orchestration: 3/8 figures trace to the evidence (1 small bare integer(s) skipped) | untraceable figures: 17,100.00, 95,000.00, 90,000.00, 90,000.00, 5,000.00 | persona: 0.5 [tax components, line-item arithmetic, invoice direction/status] (Correctly identified the outbound invoice, totals, status, and the 1\u00d790,000 vs printed 95,000 subtotal mismatch, but wrongly claimed no itemized tax components )",
+      "error": null
+    },
+    {
+      "case_id": "india_no_due_date_refusal",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 1/1 claims supported | relevance: 1.0 [no_results_report, fixed by kind] (The response reports that no due date is recorded for the specified invoice (due_date is null).) | accuracy: 1.00 (1/1 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['BL-2026-1450'], fetched ['BL-2026-1450']) | orchestration: 2/2 figures trace to the evidence | persona: 1.0 [due date / payment terms, invoice data availability] (Correctly states the invoice has no recorded due date (due_date null) and does not invent or assume one.)",
+      "error": null
+    },
+    {
+      "case_id": "us_zero_tax_exemption_reason",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 0.7,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Directly explains that a resale exemption certificate (#OR-EX-88231) was on file, which explains why no sales tax was charged.) | accuracy: 1.00 (2/2 required facts met) | context: 0.00 (precision 0.00, recall 0.00; expected ['CMC-330217'], fetched []) | context missed: CMC-330217 | orchestration: 2/2 figures trace to the evidence | persona: 1.0 [tax exemption, tax components, invoice document semantics, currency/amount] (The assistant correctly cited the resale exemption certificate (#OR-EX-88231) as the stated reason for $0.00 tax on the $2,600.00 invoice without conflating it )",
+      "error": null
+    },
+    {
+      "case_id": "us_flagged_inbound_invoices",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.0,
+        "persona_score": 0.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 5/5 claims supported | relevance: 1.0 [direct_answer, judged] (Directly states that none of the inbound invoices are flagged for tax or line-item calculation issues and lists the invoices with their tax details.) | accuracy: 0.00 (forbidden assertion made; 0/3 facts were met) | missing: Names APS-410093 (Apex Print Solutions) as flagged.; Names RFG-500712 (Redwood Facilities Group) as flagged.; Names TSD-620458 (Titan Steel Distributors) as flagged. | forbidden: Says no inbound invoice has a flagged issue. | context: 0.00 (precision 0.00, recall 0.00; expected ['APS-410093', 'RFG-500712', 'TSD-620458'], fetched []) | context missed: APS-410093, RFG-500712, TSD-620458 | orchestration: 5/5 figures trace to the evidence (1 small bare integer(s) skipped) | persona: 0.0 [tax components, arithmetic honesty, status semantics] (The assistant missed the three invoices flagged for tax/line-item calculation errors and incorrectly reported none, a central domain error (wrongly interpreting)",
+      "error": null
+    },
+    {
+      "case_id": "us_freight_per_vendor_multi",
+      "original": {
+        "faithfulness_score": 0.75,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "rescored": {
+        "faithfulness_score": 0.75,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 0.5
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/4 claims supported | unsupported: Titan Steel\u2019s invoice (TSD-620458) is flagged AUDIT_REQUIRED with a line-item calculation mismatch in sa_alerts. | relevance: 1.0 [direct_answer, judged] (Directly lists the vendors with freight/shipping charges and amounts, and the audit note is relevant additional context.) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['BRL-200981', 'CMC-330217', 'TSD-620458'], fetched ['BRL-200981', 'CMC-330217', 'TSD-620458']) | orchestration: 4/4 figures trace to the evidence | persona: 0.5 [category judgement (freight/shipping), line-item amounts] (Correct vendors and main freight line amounts were returned, but the assistant omitted Blue Ridge's USD 150 fuel surcharge (a shipping-related line) without sta)",
+      "error": null
+    },
+    {
+      "case_id": "us_outbound_flagged_and_billed_to",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.0,
+        "persona_score": 0.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 0.0,
+        "persona_score": 0.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 2/2 claims supported (2 non-factual claim(s) excluded) | relevance: 1.0 [no_results_report, fixed by kind] (The answer states that the provided excerpts lack the outbound invoices and mismatch flags, so it correctly reports nothing matching was found.) | accuracy: 0.00 (forbidden assertion made; 0/2 facts were met) | missing: Identifies IEQ-US-9002 as the flagged outbound invoice.; States it was billed to Fieldstone Analytics LLC. | forbidden: Says it cannot determine which invoice is flagged. | context: 0.00 (precision 0.00, recall 0.00; expected ['IEQ-US-9002'], fetched []) | context missed: IEQ-US-9002 | orchestration: not scored (no gradeable figures in the answer) | persona: 0.0 [arithmetic honesty, invoice identification, calculation mismatch] (The assistant failed to identify the central domain fact \u2014 the flagged arithmetic mismatch on IEQ-US-9002 billed to Fieldstone Analytics LLC \u2014 so the core domai)",
+      "error": null
+    },
+    {
+      "case_id": "us_cross_invoice_grand_total",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": null,
+        "persona_score": 1.0
+      },
+      "original_passed": true,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 1/1 claims supported | relevance: 1.0 [direct_answer, judged] (Provides the requested combined grand total for the three specified invoices directly and concisely.) | accuracy: 1.00 (1/1 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: 0/1 figures trace to the evidence | untraceable figures: 5,436.31 | persona: 1.0 [arithmetic honesty, invoice total aggregation] (The assistant included all three invoices and produced the correct cent-exact combined grand total (USD 5,436.31).)",
+      "error": null
+    },
+    {
+      "case_id": "eu_mixed_vat_rates",
+      "original": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 0/2 claims supported | unsupported: Two different VAT rates appear on invoice CFS-2026-0921: 20% and 5.5%, as shown in the two line-item descriptions.; The invoice's structured `taxes` array is empty. | relevance: 1.0 [direct_answer, judged] (It directly answers the question by stating the number of VAT rates (two) and identifies them (20% and 5.5%).) | accuracy: 1.00 (3/3 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['CFS-2026-0921'], fetched ['CFS-2026-0921']) | orchestration: 2/3 figures trace to the evidence (1 small bare integer(s) skipped) | untraceable figures: 5.5 | persona: 1.0 [tax components, invoice tax rates, structured taxes presence] (Correctly identified the two printed line-item VAT rates (20% and 5.5%) and did not fabricate a single blended rate from the combined tax figure.)",
+      "error": null
+    },
+    {
+      "case_id": "eu_currency_confusion_trap",
+      "original": {
+        "faithfulness_score": 0.75,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.75,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 3/4 claims supported | unsupported: The supplier also notes the contract value was quoted as USD $10,000 equivalent. | relevance: 1.0 [direct_answer, judged] (Provides the payable currency (EUR) and the grand total (EUR 9,428.00) directly, addressing the user's question completely.) | accuracy: 0.00 (forbidden assertion made; 2/2 facts were met) | forbidden: Converts between EUR and USD. | context: 1.00 (precision 1.00, recall 1.00; expected ['RIT-2026-0456'], fetched ['RIT-2026-0456']) | orchestration: 4/4 figures trace to the evidence | persona: 1.0 [currency, invoice total] (Correctly identified the payable currency as EUR and the grand total EUR 9,428.00, and properly treated the USD note as a non-payable contract remark.)",
+      "error": null
+    },
+    {
+      "case_id": "eu_reverse_charge_inbound_line",
+      "original": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.2857142857142857,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 1.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.2857142857142857,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 3/3 claims supported | relevance: 1.0 [direct_answer, judged] (Gives the vendor and invoice plus the specific line-item (description, VAT treatment, quantity and amount) exactly as requested.) | accuracy: 1.00 (2/2 required facts met) | context: 0.29 (precision 0.17, recall 1.00; expected ['RIT-2026-0456'], fetched ['BMN-2026-0234', 'CFS-2026-0921', 'ISL-2026-0678', 'MCS-2026-0890', 'NOA-2026-3310', 'RIT-2026-0456']) | orchestration: 4/4 figures trace to the evidence (3 small bare integer(s) skipped) | persona: 1.0 [reverse charge (RCM), tax components, line-item category] (Correctly identifies the inbound vendor and the specific Machinery parts line as intra\u2011EU reverse\u2011charged at 0% (\u20ac8,000) without misattributing VAT or splitting)",
+      "error": null
+    },
+    {
+      "case_id": "eu_outbound_reverse_charge_vs_domestic",
+      "original": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.3333333333333333,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 1.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": true,
+      "rescored_notes": "faithfulness: 4/12 claims supported | unsupported: IEQ-EU-8001 (Alpine Retail GmbH) used intra\u2011EU B2B reverse charge.; IEQ-EU-8001's item description states \"reverse charge, intra\u2011EU B2B\".; IEQ-EU-8002 (Lisboa Comercio Lda) used intra\u2011EU B2B reverse charge. | relevance: 1.0 [direct_answer, judged] (Clearly identifies which two invoices used reverse charge and which charged standard VAT, and explains the reason (intra\u2011EU B2B vs domestic German sale).) | accuracy: 1.00 (4/4 required facts met) | context: 1.00 (precision 1.00, recall 1.00; expected ['IEQ-EU-8001', 'IEQ-EU-8002', 'IEQ-EU-8003'], fetched ['IEQ-EU-8001', 'IEQ-EU-8002', 'IEQ-EU-8003']) | orchestration: 8/10 figures trace to the evidence (4 small bare integer(s) skipped) | untraceable figures: 4,000, 4,000 | persona: 1.0 [reverse charge (RCM), VAT vs domestic sale, tax amounts and rates] (All three required domain judgements were correct: two invoices correctly identified as intra\u2011EU B2B reverse\u2011charge with EUR 0 tax, and the third correctly iden)",
+      "error": null
+    },
+    {
+      "case_id": "eu_benelux_line_understated",
+      "original": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 0.5,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "rescored": {
+        "faithfulness_score": 0.0,
+        "relevance_score": 1.0,
+        "accuracy_score": 1.0,
+        "context_score": 0.0,
+        "persona_score": 1.0
+      },
+      "original_passed": false,
+      "rescored_passed": false,
+      "rescored_notes": "faithfulness: 0/3 claims supported | unsupported: On invoice BMN-2026-0234 (Benelux Machines NV) the \"Control units\" line prints EUR 1,680.00.; 3 \u00d7 EUR 620.00 = EUR 1,860.00.; The invoice record includes an sa_alert \"line_item_calculation_mismatch\" flagging this exact discrepancy. | relevance: 1.0 [direct_answer, judged] (Directly answers the question with a clear no, shows the arithmetic mismatch, and cites the invoice alert flagging it.) | accuracy: 1.00 (3/3 required facts met) | context: 0.00 (precision 0.00, recall 0.00; expected ['BMN-2026-0234'], fetched []) | context missed: BMN-2026-0234 | orchestration: 2/5 figures trace to the evidence (1 small bare integer(s) skipped) | untraceable figures: 1,680.00, 620.00, 1,860.00 | persona: 1.0 [Arithmetic honesty, Line-item calculation] (The assistant correctly identified the quantity\u00d7unit-price mismatch on the Control units line (printed EUR 1,680 vs 3\u00d7620 = EUR 1,860) and noted the mismatch al)",
+      "error": null
+    }
+  ]
+}

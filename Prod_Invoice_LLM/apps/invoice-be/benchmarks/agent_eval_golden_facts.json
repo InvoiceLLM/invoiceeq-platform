@@ -1,0 +1,390 @@
+{
+  "_schema": "Gap 479 (2026-09-07). Per golden case: `required` = the facts an answer MUST state (each graded individually, score = met / required); `forbidden` = assertions that make the answer WRONG regardless (any hit = 0.0); `notes` = grading commentary and bonus material the judge is NOT shown. The prose `expected_answer` in agent_eval_golden_sample.py is unchanged and remains the human-readable reference; this file is what the accuracy judge grades on.",
+  "titan_steel_payment_status": {
+    "required": [
+      "States that payment status is not tracked / not recorded for this invoice in this system (or asks the user to clarify what they mean by paid)."
+    ],
+    "forbidden": [
+      "Asserts that the invoice HAS been paid.",
+      "Asserts that the invoice has NOT been paid / is unpaid / is outstanding.",
+      "Treats status COMPLETED as meaning paid."
+    ],
+    "notes": "Giving the invoice's real details (TSD-620458, USD 18,450.00, due 2026-08-01) is optional."
+  },
+  "rajesh_steel_cgst": {
+    "required": [
+      "States the CGST as INR 9,000.00."
+    ],
+    "forbidden": [
+      "Claims that no per-component (CGST/SGST) breakdown is stored or identifiable.",
+      "States a CGST figure other than INR 9,000.00."
+    ],
+    "notes": "SGST INR 9,000.00 and the combined INR 18,000.00 may be given but are not required."
+  },
+  "datapipe_vs_stratedge": {
+    "required": [
+      "Names DataPipe Solutions as the bigger invoice.",
+      "States DataPipe's figure as USD 42,300.00.",
+      "States StratEdge Partners' figure as USD 27,950.00."
+    ],
+    "forbidden": [
+      "Names StratEdge as the bigger invoice."
+    ],
+    "notes": "The USD 14,350.00 difference is optional."
+  },
+  "freight_per_vendor": {
+    "required": [
+      "Names Blue Ridge Logistics as the (only) vendor with freight/delivery/shipping charges.",
+      "States the freight figure as USD 1,120.00 (the line amount)."
+    ],
+    "forbidden": [
+      "Reports USD 6,120.00 (the invoice grand total) as the freight amount.",
+      "Names any other vendor as having billed freight."
+    ],
+    "notes": "The 4 x USD 280.00 breakdown is optional."
+  },
+  "bolts_reconciliation": {
+    "required": [
+      "States that the line does NOT add up / does not reconcile.",
+      "States that 5,000 x USD 0.08 computes to USD 400.00.",
+      "States that the printed line amount is USD 420.00."
+    ],
+    "forbidden": [
+      "States that the line does add up / reconciles.",
+      "Writes the false equation 5,000 x USD 0.08 = USD 420.00.",
+      "Says the invoice could not be found or could not be verified."
+    ],
+    "notes": "Naming the USD 20.00 discrepancy explicitly is optional."
+  },
+  "zero_result_vendor": {
+    "required": [
+      "States explicitly that no invoices / no records were found for Nonexistent Holdings."
+    ],
+    "forbidden": [
+      "Presents USD 0.00 / $0.00 as if it were a real spend total."
+    ],
+    "notes": ""
+  },
+  "zero_result_typo_vendor": {
+    "required": [
+      "Does not give a billed total.",
+      "Proposes or mentions 'Titan Steel Distributors' as the likely intended vendor (or asks the user to confirm that spelling)."
+    ],
+    "forbidden": [
+      "States a total or a zero as the amount billed.",
+      "Says flatly that no such vendor exists / no records found, without suggesting the correct spelling.",
+      "Asserts that the Titan Steel Distributors invoice does not state a total."
+    ],
+    "notes": ""
+  },
+  "payment_terms_document": {
+    "required": [
+      "Reports Blue Ridge Logistics (BRL-7702) payment terms as net 30 from the invoice date.",
+      "Reports Titan Steel Distributors (TSD-620458) terms as remit within 30 days with 1.5% monthly interest on late payment."
+    ],
+    "forbidden": [
+      "Says no invoice states payment terms / payment terms are not available.",
+      "States payment terms for a vendor other than Blue Ridge Logistics or Titan Steel Distributors."
+    ],
+    "notes": ""
+  },
+  "out_of_scope_code_request": {
+    "required": [
+      "Declines to write the script (says this is outside its scope)."
+    ],
+    "forbidden": [
+      "Provides Python code that reverses a string."
+    ],
+    "notes": ""
+  },
+  "greeting_no_tool": {
+    "required": [
+      "Greets the user and offers help with invoice questions."
+    ],
+    "forbidden": [
+      "States any fact about a specific invoice, vendor or amount."
+    ],
+    "notes": ""
+  },
+  "large_invoice_full_detail": {
+    "required": [
+      "States the total as USD 271,019.63.",
+      "States the tax as USD 20,075.53.",
+      "States payment terms of net 45 days (with 2% monthly interest on late payment)."
+    ],
+    "forbidden": [
+      "Says payment terms are not stated / not recorded / not available."
+    ],
+    "notes": "The USD 250,944.10 subtotal is optional."
+  },
+  "small_invoice_full_detail": {
+    "required": [
+      "States the total as USD 1,987.20.",
+      "States the tax as USD 147.20.",
+      "States payment terms of net 45 days (with 2% monthly interest on late payment)."
+    ],
+    "forbidden": [
+      "Says payment terms are not stated / not recorded / not available."
+    ],
+    "notes": "The USD 1,840.00 subtotal is optional."
+  },
+  "multi_part_totals_and_dates": {
+    "required": [
+      "States the total as USD 18,450.00.",
+      "States the tax as USD 1,476.00.",
+      "States the due date as 2026-08-01 (1 August 2026)."
+    ],
+    "forbidden": [],
+    "notes": ""
+  },
+  "all_vendors_over_twenty_thousand": {
+    "required": [
+      "Lists Meridian Industrial Supply at USD 271,019.63.",
+      "Lists DataPipe Solutions at USD 42,300.00.",
+      "Lists StratEdge Partners at USD 27,950.00."
+    ],
+    "forbidden": [
+      "Lists Rajesh Steel / the INR 118,000.00 invoice as over USD 20,000."
+    ],
+    "notes": "Invoice numbers and thousands separators are optional; the three vendors and three figures are what count."
+  },
+  "two_vendors_two_questions": {
+    "required": [
+      "States Blue Ridge Logistics billed USD 6,120.00.",
+      "States Harbor Tech billed USD 420.00.",
+      "States that Harbor Tech's invoice is the older one."
+    ],
+    "forbidden": [
+      "States that Blue Ridge's invoice is the older one."
+    ],
+    "notes": "Dates 2026-06-01 / 2026-07-05 are optional."
+  },
+  "line_item_breakdown_completeness": {
+    "required": [
+      "Lists the Freight and handling line: 4 at USD 280.00 = USD 1,120.00.",
+      "Lists the Warehouse storage line: USD 5,000.00."
+    ],
+    "forbidden": [],
+    "notes": "The USD 6,120.00 total is optional."
+  },
+  "unsupported_field_asks_for_alternative": {
+    "required": [
+      "States that finance approval is not tracked / there is no approval field in this data."
+    ],
+    "forbidden": [
+      "Reports any invoice as approved (or not approved) by finance."
+    ],
+    "notes": "Offering what IS available (processing status, totals, dates) is helpful but optional."
+  },
+  "zero_result_with_useful_redirect": {
+    "required": [
+      "States plainly that no records were found for Acme Corp / May 2026."
+    ],
+    "forbidden": [
+      "Presents USD 0.00 as a total.",
+      "Lists any invoice as being from Acme Corp or dated May 2026."
+    ],
+    "notes": "Saying what the data does cover is helpful but optional."
+  },
+  "hostile_user_tone": {
+    "required": [
+      "States the DataPipe Solutions spend as USD 42,300.00."
+    ],
+    "forbidden": [
+      "States a different figure for DataPipe.",
+      "Is defensive, argumentative, or spends a paragraph apologising before answering."
+    ],
+    "notes": "Invoice number DPS-9981 is optional."
+  },
+  "internals_probe_no_leak": {
+    "required": [
+      "Answers in product terms (the figures come from the user's invoice records) or explains it will not expose internal machinery, and does not paste SQL."
+    ],
+    "forbidden": [
+      "Pastes a SELECT statement or other SQL.",
+      "Names database tables, column names or internal tool names."
+    ],
+    "notes": "Saying 'no SQL was run for this turn' is acceptable as long as no internals are exposed."
+  },
+  "cross_currency_total_refused": {
+    "required": [
+      "Gives the INR total as INR 118,000.00.",
+      "Gives the USD total as USD 375,572.33.",
+      "Does not combine them into one figure / keeps the totals per currency (says or shows they cannot be added)."
+    ],
+    "forbidden": [
+      "Produces a single blended total across both currencies."
+    ],
+    "notes": "An explicit sentence explaining that no exchange rate exists is ideal but 'reported per currency, no conversion' satisfies the third fact."
+  },
+  "india_mixed_gst_slab_lines": {
+    "required": [
+      "States that there are three line items.",
+      "States Transport service at GST 5%.",
+      "States Packing material at GST 12%.",
+      "States Handling and admin at GST 18%."
+    ],
+    "forbidden": [
+      "Reports fewer than three line items.",
+      "Gives a rupee GST amount per line as if it were stored data."
+    ],
+    "notes": "Line amounts (INR 10,000 / 2,000 / 1,500) and the combined INR 1,010.00 tax are optional. Saying per-line GST is not stored as its own field is correct and fine."
+  },
+  "india_ganesh_subtotal_reconciliation": {
+    "required": [
+      "States that it does NOT reconcile.",
+      "States that 100 x INR 380.00 computes to INR 38,000.00.",
+      "States that the printed line amount is INR 39,000.00 (INR 1,000.00 higher)."
+    ],
+    "forbidden": [
+      "Says the invoice adds up / reconciles.",
+      "Writes 100 x INR 380.00 = INR 39,000.00."
+    ],
+    "notes": "The GST/total consequences are optional."
+  },
+  "india_reverse_charge_vendor": {
+    "required": [
+      "Names Konkan Exports Pvt Ltd.",
+      "Names invoice KE-2026-0089."
+    ],
+    "forbidden": [
+      "Names any other vendor as the reverse-charge vendor.",
+      "Reports that no invoice mentions reverse charge."
+    ],
+    "notes": "Bonus, not required: the invoice's GST-informational note contradicts its printed INR 53,100.00 total."
+  },
+  "india_outbound_only_disambiguation": {
+    "required": [
+      "Identifies the invoice as IEQ-IN-7002.",
+      "Describes it as outbound / one we sent to Anand Distributors.",
+      "States the amount as INR 112,100.00."
+    ],
+    "forbidden": [
+      "Reports that the invoice was not found / searches only the vendor side and finds nothing.",
+      "Describes it as an invoice Anand Distributors sent to us (inbound)."
+    ],
+    "notes": "Date 2026-06-28, status NEEDS_REVIEW, the tax split and the subtotal mismatch bonus are all optional."
+  },
+  "india_no_due_date_refusal": {
+    "required": [
+      "States that no due date is recorded / available for BL-2026-1450."
+    ],
+    "forbidden": [
+      "Names a specific due date.",
+      "Assumes net 30 or any other term to derive a due date.",
+      "Reports that the invoice could not be found."
+    ],
+    "notes": "Offering the invoice date (2026-06-11) is helpful but optional."
+  },
+  "us_zero_tax_exemption_reason": {
+    "required": [
+      "Gives the reason as a resale exemption certificate on file.",
+      "Cites certificate #OR-EX-88231."
+    ],
+    "forbidden": [
+      "Attributes the zero tax to the B2B-service reason that belongs to Summit Office Supplies' SOS-100442.",
+      "Answers only that the tax field is 0.00 / says the data does not state why."
+    ],
+    "notes": ""
+  },
+  "us_flagged_inbound_invoices": {
+    "required": [
+      "Names APS-410093 (Apex Print Solutions) as flagged.",
+      "Names RFG-500712 (Redwood Facilities Group) as flagged.",
+      "Names TSD-620458 (Titan Steel Distributors) as flagged."
+    ],
+    "forbidden": [
+      "Names SOS-100442, BRL-200981 or CMC-330217 as flagged.",
+      "Says no inbound invoice has a flagged issue."
+    ],
+    "notes": "The specific figures behind each flag are optional."
+  },
+  "us_freight_per_vendor_multi": {
+    "required": [
+      "Names Blue Ridge Logistics with USD 2,000.00 for freight (line amount).",
+      "Names Cascade Manufacturing Co with USD 200.00 for freight (line amount).",
+      "Names Titan Steel Distributors with USD 250.00 for delivery (line amount) -- OR explicitly states it counted only lines titled 'Freight' and therefore excluded Titan."
+    ],
+    "forbidden": [
+      "Reports the invoice grand totals (USD 2,386.31 / USD 2,600.00 / USD 10,557.60) as the freight amounts."
+    ],
+    "notes": "The USD 150.00 fuel surcharge for Blue Ridge is optional."
+  },
+  "us_outbound_flagged_and_billed_to": {
+    "required": [
+      "Identifies IEQ-US-9002 as the flagged outbound invoice.",
+      "States it was billed to Fieldstone Analytics LLC."
+    ],
+    "forbidden": [
+      "Names IEQ-US-9001 or IEQ-US-9003 as the flagged invoice.",
+      "Says it cannot determine which invoice is flagged."
+    ],
+    "notes": "The USD 6,200.00 vs 40 x USD 150.00 = USD 6,000.00 detail is optional."
+  },
+  "us_cross_invoice_grand_total": {
+    "required": [
+      "States the combined grand total as USD 5,436.31."
+    ],
+    "forbidden": [
+      "States a different combined figure.",
+      "Omits one of the three vendors from the sum."
+    ],
+    "notes": "Per-invoice figures (450.00 / 2,386.31 / 2,600.00) and the sales-tax bonus are optional."
+  },
+  "eu_mixed_vat_rates": {
+    "required": [
+      "States that there are two different VAT rates.",
+      "Names 20% as one of the rates.",
+      "Names 5.5% as the other rate."
+    ],
+    "forbidden": [
+      "Answers one rate / zero rates.",
+      "Derives a single blended rate from the combined tax figure."
+    ],
+    "notes": "Which line carries which rate, and the EUR 216.50 / 1,300.00 / 1,516.50 figures, are optional."
+  },
+  "eu_currency_confusion_trap": {
+    "required": [
+      "States the payable currency as EUR.",
+      "States the total as EUR 9,428.00."
+    ],
+    "forbidden": [
+      "Describes the invoice as a USD invoice, or gives the payable total as USD / $9,428.",
+      "Performs or states a currency conversion -- an exchange rate, or a figure converted between EUR and USD. Merely repeating the document's own 'USD $10,000 equivalent' contract note, while identifying EUR as the payable currency, is NOT a conversion and is NOT this assertion."
+    ],
+    "notes": "Mentioning the document's 'USD $10,000 equivalent' note is fine if EUR is still identified as the payable currency."
+  },
+  "eu_reverse_charge_inbound_line": {
+    "required": [
+      "Names Rhein Industrietechnik GmbH (invoice RIT-2026-0456).",
+      "Names the Machinery parts line (EUR 8,000.00) as the reverse-charged line."
+    ],
+    "forbidden": [
+      "Names a different vendor.",
+      "Describes the entire invoice as reverse-charged (i.e. includes the Installation service line as reverse-charged)."
+    ],
+    "notes": "Mentioning that Installation service (EUR 1,200.00) is taxed at 19% is optional."
+  },
+  "eu_outbound_reverse_charge_vs_domestic": {
+    "required": [
+      "Names IEQ-EU-8001 (Alpine Retail GmbH) as reverse charge.",
+      "Names IEQ-EU-8002 (Lisboa Comercio Lda) as reverse charge.",
+      "Names IEQ-EU-8003 (Deutsche Warenhandel GmbH) as the one that charged standard VAT.",
+      "Explains the difference as domestic (Germany to Germany) versus cross-border intra-EU B2B."
+    ],
+    "forbidden": [],
+    "notes": "Amounts (EUR 3,200 / 4,200 / 9,500 / 1,805 / 11,305) are optional."
+  },
+  "eu_benelux_line_understated": {
+    "required": [
+      "States that the line does NOT add up.",
+      "States that 3 x EUR 620.00 computes to EUR 1,860.00.",
+      "States that the printed line amount is EUR 1,680.00."
+    ],
+    "forbidden": [
+      "Says the line reconciles.",
+      "Reports the printed amount as being too HIGH / higher than qty x rate."
+    ],
+    "notes": "Stating the EUR 180.00 difference explicitly, and the subtotal/VAT/total consistency, are optional."
+  }
+}

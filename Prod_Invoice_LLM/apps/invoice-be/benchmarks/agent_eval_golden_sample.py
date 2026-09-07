@@ -111,6 +111,17 @@ class GoldenCase:
     #: docstring for why merging those rows into one tenant would have falsified
     #: several of the reference answers above rather than extended the set.
     tenant_id: str = TENANT_ID
+    #: Gap 479 (2026-09-07). The accuracy judge grades THESE, one fact at a
+    #: time, not the prose `expected_answer` above. The prose mixes required
+    #: facts with grading notes, bonus material and negative instructions, and a
+    #: judge told to match "every fact the reference asserts" scored 14 of 28
+    #: correct answers exactly 0.5 for lacking a bonus. Populated from
+    #: `benchmarks/agent_eval_golden_facts.json` at import; empty for a case
+    #: that file does not know, in which case the judge falls back to the prose.
+    required_facts: tuple[str, ...] = ()
+    #: Assertions that make an answer wrong regardless of what else it gets
+    #: right (any hit scores 0.0). Same source file.
+    forbidden: tuple[str, ...] = ()
     #: Gap 307 (2026-08-26): a `services.agent_eval.DriftExpectation`, or None.
     #: None on every case in this file and that is not an oversight — a
     #: standalone question has no earlier turn to have drifted from, so the
@@ -1192,3 +1203,43 @@ def auto_promoted_cases(db_session) -> list[GoldenCase]:
             )
         )
     return cases
+
+
+# ---------------------------------------------------------------------------
+# Gap 479 -- structured grading facts, merged from the sibling JSON file
+# ---------------------------------------------------------------------------
+def _apply_golden_facts(cases: list) -> list:
+    """Attach `required_facts` / `forbidden` from `agent_eval_golden_facts.json`.
+
+    Kept as a JSON sibling rather than inline so the 36 case definitions above
+    are untouched (hard rule 4) and the facts are reviewable as data. A case the
+    file does not name keeps empty tuples and the judge grades the prose as
+    before -- never silently un-graded.
+    """
+    import json
+    import os
+    from dataclasses import replace
+
+    path = os.path.join(os.path.dirname(__file__), "agent_eval_golden_facts.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            facts = json.load(f)
+    except (OSError, ValueError):
+        return cases
+    out = []
+    for case in cases:
+        spec = facts.get(case.case_id)
+        if isinstance(spec, dict):
+            out.append(
+                replace(
+                    case,
+                    required_facts=tuple(spec.get("required") or ()),
+                    forbidden=tuple(spec.get("forbidden") or ()),
+                )
+            )
+        else:
+            out.append(case)
+    return out
+
+
+CASES = _apply_golden_facts(CASES)
