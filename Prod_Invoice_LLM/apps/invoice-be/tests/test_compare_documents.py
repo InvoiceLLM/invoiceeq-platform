@@ -710,3 +710,197 @@ def test_gap475_a_negative_invoice_total_still_adds_by_its_type():
         ]
     )
     assert result["net"] == "60.0"
+
+
+# ---------------------------------------------------------------------------
+# Feature 29 task 29.6 — line arithmetic computed in Python
+# ---------------------------------------------------------------------------
+
+
+def _check(items, **kwargs):
+    from services.document_comparison import check_line_arithmetic
+
+    return check_line_arithmetic(items, **kwargs)
+
+
+def test_29_6_a_line_that_reconciles_is_reported_as_a_match():
+    result = _check(
+        [{"description": "MS Angle", "quantity": 10, "unit_price": 100.0, "amount": 1000.0}],
+        subtotal=1000.0,
+        currency="INR",
+    )
+    assert result["status"] == "ok"
+    assert (result["checked"], result["matched"], result["skipped"]) == (1, 1, 0)
+    assert result["mismatches"] == []
+    assert result["subtotal_verdict"] == "match"
+
+
+def test_29_6_the_live_gap_269_false_equation_is_caught_in_python():
+    """The exact live failure this task exists for: a model printed
+    "5000.00 units x USD 0.08 = USD 420.00" when 5000 x 0.08 is 400.00. Nothing
+    here asks a model to multiply."""
+    result = _check(
+        [{"description": "Bolts", "quantity": 5000, "unit_price": 0.08, "amount": 420.0}],
+        currency="USD",
+    )
+    assert result["matched"] == 0
+    mismatch = result["mismatches"][0]
+    assert mismatch["computed_amount"] == Decimal("400.00")
+    assert mismatch["printed_amount"] == Decimal("420.00")
+    assert mismatch["delta"] == Decimal("20.00")
+    assert mismatch["verdict"] == "over_stated"
+
+
+def test_29_6_an_understated_line_is_named_as_understated():
+    result = _check([{"quantity": 3, "unit_price": 10.0, "amount": 25.0}])
+    assert result["mismatches"][0]["verdict"] == "under_stated"
+    assert result["mismatches"][0]["delta"] == Decimal("-5.00")
+
+
+def test_29_6_a_line_with_no_quantity_is_skipped_not_zeroed():
+    """A service or freight line that prints only an amount is normal. Treating
+    its missing quantity as 0 would compute 0 and report a mismatch on a
+    perfectly good line -- a false finding, which is worse than none."""
+    result = _check(
+        [
+            {"description": "Goods", "quantity": 2, "unit_price": 50.0, "amount": 100.0},
+            {"description": "Freight", "amount": 30.0},
+        ],
+        subtotal=130.0,
+    )
+    assert (result["checked"], result["matched"], result["skipped"]) == (1, 1, 1)
+    assert result["mismatches"] == []
+    # The uncheckable line's money still counts towards the subtotal comparison,
+    # or every invoice with one service line would report a false shortfall.
+    assert result["lines_total"] == Decimal("130.00")
+    assert result["computed_total"] == Decimal("100.00")
+    assert result["subtotal_verdict"] == "match"
+
+
+def test_29_6_half_a_cent_of_rounding_is_not_a_discrepancy():
+    """Rounding to two places is universal in extracted documents. Flagging it
+    would bury the real findings."""
+    ok = _check([{"quantity": 3, "unit_price": 3.3333, "amount": 10.0}])
+    assert ok["matched"] == 1 and ok["mismatches"] == []
+
+    not_ok = _check([{"quantity": 3, "unit_price": 3.30, "amount": 10.0}])
+    assert not_ok["mismatches"], "a whole cent difference is a discrepancy"
+
+
+def test_29_6_the_subtotal_is_checked_against_the_sum_of_the_lines():
+    result = _check(
+        [
+            {"quantity": 1, "unit_price": 100.0, "amount": 100.0},
+            {"quantity": 1, "unit_price": 50.0, "amount": 50.0},
+        ],
+        subtotal=160.0,
+        currency="EUR",
+    )
+    assert result["lines_total"] == Decimal("150.00")
+    assert result["subtotal_delta"] == Decimal("10.00")
+    assert result["subtotal_verdict"] == "over_stated"
+
+
+def test_29_6_no_lines_is_not_an_error_and_renders_nothing():
+    from services.document_comparison import render_line_arithmetic
+
+    for empty in (None, [], "not a list"):
+        result = _check(empty)
+        assert result["status"] == "no_lines"
+        assert render_line_arithmetic(result) == ""
+
+
+def test_29_6_mismatches_are_never_truncated_by_the_reporting_cap():
+    """A 300-line invoice's per-line dump is not an answer, so matching lines are
+    capped -- but a mismatch is the finding, and dropping one would hide exactly
+    what the check was run for."""
+    from services.document_comparison import MAX_REPORTED_LINES
+
+    items = [{"quantity": 1, "unit_price": 1.0, "amount": 1.0} for _ in range(MAX_REPORTED_LINES + 20)]
+    items.append({"quantity": 2, "unit_price": 5.0, "amount": 99.0})
+    result = _check(items)
+
+    assert len(result["lines"]) <= MAX_REPORTED_LINES
+    assert len(result["mismatches"]) == 1
+    assert any(row["verdict"] == "over_stated" for row in result["lines"])
+
+
+def test_29_6_the_rendered_block_states_both_figures_and_never_an_equation():
+    """Gap 269's rule, now enforced by what the block CAN say: for a line that
+    does not reconcile it prints the printed amount, the computed amount and the
+    difference, and there is no equals-sign form anywhere in the renderer."""
+    from services.document_comparison import render_line_arithmetic
+
+    text = render_line_arithmetic(
+        _check([{"description": "Bolts", "quantity": 5000, "unit_price": 0.08, "amount": 420.0}], currency="USD"),
+        label="INV-1",
+    )
+    assert "printed USD 420.00" in text
+    assert "computes to USD 400.00" in text
+    assert "USD 20.00 over-stated" in text
+    assert "=" not in text
+
+
+def test_29_6_the_check_reaches_the_computed_figures_block():
+    """The wiring, asserted on the prompt block rather than inferred: a turn with
+    NO results table at all still gets its line arithmetic, because the lines came
+    from the record, not from the SELECT list."""
+    from agents import query_agent
+    from services import full_records
+
+    record_set = full_records.FullRecordSet(
+        records=[
+            full_records.FullRecord(
+                invoice_id="11111111-1111-1111-1111-111111111111",
+                record={
+                    "invoice_number": "BOLT-1",
+                    "currency": "USD",
+                    "subtotal": 420.0,
+                    "items": [
+                        {"description": "Bolts", "quantity": 5000, "unit_price": 0.08, "amount": 420.0}
+                    ],
+                },
+            )
+        ]
+    )
+
+    block = query_agent._computed_figures_block_for(None, record_set)
+
+    assert "COMPUTED FIGURES" in block
+    assert "line arithmetic for BOLT-1" in block
+    assert "computes to USD 400.00" in block
+    # The mismatch instruction has to be in the header, where an instruction
+    # reads as an instruction rather than as data.
+    assert "do not reconcile" in block.split("- line arithmetic")[0]
+
+
+def test_29_6_a_reconciling_invoice_adds_no_mismatch_instruction():
+    from agents import query_agent
+    from services import full_records
+
+    record_set = full_records.FullRecordSet(
+        records=[
+            full_records.FullRecord(
+                invoice_id="22222222-2222-2222-2222-222222222222",
+                record={
+                    "invoice_number": "OK-1",
+                    "currency": "USD",
+                    "subtotal": 100.0,
+                    "items": [{"quantity": 2, "unit_price": 50.0, "amount": 100.0}],
+                },
+            )
+        ]
+    )
+
+    block = query_agent._computed_figures_block_for(None, record_set)
+    assert "1 line(s) checked, 1 agree, 0 do not" in block
+    assert "do not reconcile" not in block
+
+
+def test_29_6_no_record_set_is_byte_identical_to_before():
+    """The turn that identified no invoice must render exactly what it rendered
+    before this task existed."""
+    from agents import query_agent
+
+    assert query_agent._computed_figures_block_for(None) == ""
+    assert query_agent._computed_figures_block_for(None, None) == ""

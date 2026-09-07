@@ -562,16 +562,27 @@ def test_gap_431_the_comparison_branch_now_carries_line_items(db_session):
 def test_no_branch_of_the_attached_document_turn_touches_the_answer_cache(
     db_session, message, branch
 ):
-    """B1. The cache is keyed on `(tenant_id, normalized_query)` with no
-    attachment dimension, so "does this match?" asked about two different POs
-    would collide on one entry and serve the first document's figures for the
-    second.
+    """B1, **as amended by Feature 29 task 29.12 (2026-09-06)**.
 
-    The bypass is already true by control flow — the gate returns before
-    `get_cached_answer()` and no branch calls `set_cached_answer()`. This test
-    exists so it stays true: Part 2 added an expensive branch (a vector search
-    plus a narration call) inside exactly the function a future implementer would
-    most plausibly want to cache.
+    B1's premise was: the cache is keyed on `(tenant_id, normalized_query)` with
+    no attachment dimension, so "does this match?" asked about two different POs
+    would collide on one entry and serve the first document's figures for the
+    second. The bypass was the mitigation.
+
+    Task 29.12 removed the premise instead. `_cache_key()` now folds the sorted
+    attachment ids into the key (`_attachment_dimension()`), so the collision
+    B1 was protecting against cannot happen, and an attachment turn is cached
+    like any other -- which is worth real money, because Part 2's branch is a
+    vector search plus a narration call and every re-ask paid for both again.
+
+    What this test still pins, and the reason it was not deleted: **the branch
+    functions themselves must remain cache-free.** The read and the write live in
+    `_run_query_agent()`, above the gate, where the attachment ids are known and
+    where the `needs_confirmation` rule can be applied
+    (`_attachment_answer_is_cacheable()`). A `set_cached_answer()` appearing
+    inside one of these branches would be caching a payload whose confirm-card
+    state the caller has not checked. `tests/test_c2_cache_correctness.py` covers
+    the new key and the cacheability rule.
     """
     import agents.query_agent as qa
 
@@ -582,13 +593,34 @@ def test_no_branch_of_the_attached_document_turn_touches_the_answer_cache(
         db_session.add(attachment)
         db_session.commit()
 
-    with patch.object(qa, "get_cached_answer") as get_cached, patch.object(
+    with patch.object(qa, "get_cached_answer", return_value=None) as get_cached, patch.object(
         qa, "set_cached_answer"
     ) as set_cached:
         _run(db_session, attachment, message)
 
-    get_cached.assert_not_called()
-    set_cached.assert_not_called()
+    # 29.12: the cache IS now consulted for an attachment turn -- exactly once,
+    # and with the attachment id in the key. A read that did not carry the id
+    # would be the collision B1 was written about.
+    assert get_cached.call_count == 1
+    assert str(attachment.id) in get_cached.call_args.args[3]
+
+    # The write is conditional on the payload, and the clarify branch returns a
+    # card, which is a question and must never be replayed.
+    if branch == "clarify":
+        set_cached.assert_not_called()
+    else:
+        assert set_cached.call_count <= 1
+        if set_cached.call_count:
+            assert str(attachment.id) in set_cached.call_args.args[4]
+
+    # And the branch functions themselves stay cache-free: the source of the two
+    # branches must not mention either cache function at all.
+    import inspect
+
+    for func in (qa._run_attachment_content_branch, qa._run_attached_document_turn):
+        source = inspect.getsource(func)
+        assert "set_cached_answer(" not in source
+        assert "get_cached_answer(" not in source
 
 
 # ---------------------------------------------------------------------------

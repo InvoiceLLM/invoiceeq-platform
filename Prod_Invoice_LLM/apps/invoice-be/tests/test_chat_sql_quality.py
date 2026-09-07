@@ -1106,27 +1106,48 @@ def test_full_record_block_fails_soft_when_the_fetch_raises(db_session):
     assert result["content"].startswith("Formatted summary.")
 
 
-def test_full_record_block_is_bounded_to_a_few_identified_invoices(db_session):
+def test_full_record_block_is_bounded_to_a_few_identified_invoices(db_session, monkeypatch):
     """A turn that identified 40 rows is an aggregate or a listing, not a detail
     question, and 40 complete records would be both useless and the single
     largest thing in the prompt. `MAX_FULL_RECORD_INVOICES` is that bound, and
     it is a policy recorded in code -- the same posture as
-    `query_tools.MAX_FULL_RECORD_CHUNK_CHARS`."""
-    invoices = [
-        _seed_rajesh_steel(db_session)
-        for _ in range(query_agent.MAX_FULL_RECORD_INVOICES + 1)
-    ]
-    assert query_agent._full_record_block_for(
+    `query_tools.MAX_FULL_RECORD_CHUNK_CHARS`.
+
+    **Updated by Feature 29 task 29.5 (spec section 11 decision 1, founder-ruled
+    2026-09-06).** Two things changed and both are asserted here rather than
+    quietly dropped: the bound went 3 -> 25, and going OVER it no longer returns
+    an empty string. Returning nothing was the actual defect -- a turn that
+    identified 40 invoices then answered from a 2-13-column projection with no
+    disclosure that the detail existed and had been withheld. Past the bound the
+    block now names the count, lists the ids and tells the turn to ask the user
+    to narrow, which is a true statement about what the turn found. What it must
+    still NOT do is carry per-invoice detail, and that is asserted too.
+
+    The bound is monkeypatched down to 3 for this test so it seeds four rows
+    instead of 26; the number under test is the behaviour at the boundary, not
+    the constant, which `tests/test_full_records.py` pins to 25 directly.
+    """
+    monkeypatch.setattr(query_agent.full_records, "DEFAULT_MAX_INVOICES", 3)
+    monkeypatch.setattr(
+        query_agent.full_records, "_cap", lambda explicit: 3 if explicit is None else int(explicit)
+    )
+    invoices = [_seed_rajesh_steel(db_session) for _ in range(4)]
+
+    over = query_agent._full_record_block_for(
         [str(i.id) for i in invoices], str(MOCK_TENANT_ID), db_session
-    ) == ""
+    )
+    assert "4 invoices" in over
+    assert "narrower" in over
+    assert '"tax_type": "CGST"' not in over
+
     # One under the bound still gets the full treatment.
     kept = query_agent._full_record_block_for(
-        [str(i.id) for i in invoices[: query_agent.MAX_FULL_RECORD_INVOICES]],
+        [str(i.id) for i in invoices[:3]],
         str(MOCK_TENANT_ID),
         db_session,
     )
     assert kept.count("FULL INVOICE RECORD(S)") == 1
-    assert kept.count('"tax_type": "CGST"') == query_agent.MAX_FULL_RECORD_INVOICES
+    assert kept.count('"tax_type": "CGST"') == 3
 
 
 def _bulky_items(marker: str, lines: int) -> list[dict]:
@@ -1177,7 +1198,11 @@ def test_full_record_block_is_bounded_by_its_character_budget(db_session):
             vendor_name=f"Bulk Vendor {marker}",
             invoice_number=f"BULK-{marker}",
             grand_total=1000.0,
-            items=_bulky_items(marker, 22),
+            # 110 lines, not 22: task 29.5 raised the budget from 12,000 to
+            # 60,000 characters with the invoice cap (3 -> 25), so the fixture
+            # has to grow with it or the precondition below stops being true and
+            # the test silently stops testing the cap.
+            items=_bulky_items(marker, 110),
         )
         for marker in ("A", "B", "C")
     ]
@@ -1214,7 +1239,7 @@ def test_full_record_block_still_shows_one_record_larger_than_the_whole_budget(d
         vendor_name="Bulk Vendor HUGE",
         invoice_number="BULK-HUGE",
         grand_total=1000.0,
-        items=_bulky_items("HUGE", 200),
+        items=_bulky_items("HUGE", 450),  # 29.5: budget 12,000 -> 60,000
     )
     assert _rendered_size(db_session, huge) > query_agent.MAX_FULL_RECORD_BLOCK_CHARS
 

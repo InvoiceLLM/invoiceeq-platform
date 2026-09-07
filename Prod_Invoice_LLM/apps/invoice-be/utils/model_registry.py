@@ -40,7 +40,7 @@ from typing import Dict, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-Role = Literal["primary", "fast", "judge"]
+Role = Literal["primary", "fast", "judge", "chat_summary", "long_doc"]
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,22 @@ class CatalogEntry:
     price_out: float
     # Free-text provenance so the next person knows which sheet these came from.
     note: str = ""
+    # Feature 29 task 29.1. The GPT-5.6 family's total context and its usable
+    # INPUT budget are different numbers (1,050,000 vs 922,000): the rest is
+    # reserved for reasoning + output. `context_limit` is what a "will this fit"
+    # guard must not exceed in total; `max_input_tokens` is what a prompt builder
+    # may actually spend. `None` means "not published separately" and callers
+    # fall back to `context_limit`, which is what every pre-5.6 entry does.
+    max_input_tokens: Optional[int] = None
+    # Feature 29 task 29.1. Long-context RECALL is a separate property from
+    # context SIZE, and conflating them is how a 1M-token window gets treated as
+    # a 1M-token memory. Measured on the 16-turn attachment probe and in the
+    # published MRCR numbers the founder's 2026-09-05 brief carries: Luna's
+    # multi-round coreference recall is 41% where Terra's is 89%+, which is why
+    # Terra is the `long_doc` candidate (task 29.10) even though Luna is primary.
+    # Free text on purpose -- it is a warning for a human choosing a role, not a
+    # number any code branches on.
+    recall_note: str = ""
 
 
 # Verified against `az cognitiveservices account list-models` on the dev
@@ -66,11 +82,43 @@ MODEL_CATALOG: Dict[str, CatalogEntry] = {
     # --- GPT-6 (Azure 2026-09-03). Priced per the founder's 2026-09-05 brief; no mini
     # variant; context assumed 400k like the GPT-5 line until measured. In the catalog
     # so a matrix run against it prices correctly -- NOT a recommendation. ---
-    "gpt-6-astra": CatalogEntry(400_000, "o200k_base", True, 10.00, 12.50, "founder brief 2026-09-05; agentic focus"),
+    "gpt-6-astra": CatalogEntry(
+        400_000, "o200k_base", True, 10.00, 12.50,
+        "founder brief 2026-09-05; agentic focus. DEPLOYMENT DELETED on dev 2026-09-06 "
+        "(Feature 29 decision 9) -- the entry stays so historical matrix events and cost "
+        "rows still price correctly, and so a future re-deploy does not land on DEFAULT_SPEC.",
+    ),
     # --- GPT-5.6 family (Azure GA 2026-07-09) ---
-    "gpt-5.6-luna": CatalogEntry(400_000, "o200k_base", True, 0.20, 1.20, "founder brief 2026-09-05"),
-    "gpt-5.6-terra": CatalogEntry(400_000, "o200k_base", True, 2.00, 12.00, "founder brief 2026-09-05"),
-    "gpt-5.6-sol": CatalogEntry(400_000, "o200k_base", True, 5.00, 30.00, "founder brief 2026-09-05; promo $4/$20 to 2026-11-30"),
+    # Context corrected 2026-09-06 (Feature 29 task 29.1): the 5.6 family is
+    # 1,050,000 total with a 922,000-token input budget, not the 400,000 the GPT-5
+    # line carries. The old value was a copy of the GPT-5 row and would have made
+    # `token_management` refuse prompts the model accepts.
+    "gpt-5.6-luna": CatalogEntry(
+        1_050_000, "o200k_base", True, 0.20, 1.20, "founder brief 2026-09-05",
+        max_input_tokens=922_000,
+        recall_note=(
+            "Long-context RECALL is the weak axis, not context size: MRCR ~41% vs Terra 89%+, "
+            "and on the 16-turn attachment probe Luna scored 4/12 against Terra's 7/12 BEFORE "
+            "the Gaps 470/472/473/475/476 agent fixes. Fine as primary/fast and as the "
+            "attachment narrator (16/16 after those fixes); do NOT hand it a long document "
+            "and expect it to find one clause in the middle -- that is the `long_doc` role."
+        ),
+    ),
+    "gpt-5.6-terra": CatalogEntry(
+        1_050_000, "o200k_base", True, 2.00, 12.00, "founder brief 2026-09-05",
+        max_input_tokens=922_000,
+        recall_note=(
+            "MRCR 89%+; the long-document recall candidate. Kept on dev by decision 9 until "
+            "task 29.10's 5-case `golden_long_doc.json` decides the `long_doc` role by the "
+            "2-point rule. 10x Luna's input price, so it is a role, never the default."
+        ),
+    ),
+    "gpt-5.6-sol": CatalogEntry(
+        1_050_000, "o200k_base", True, 5.00, 30.00,
+        "founder brief 2026-09-05; promo $4/$20 to 2026-11-30. DEPLOYMENT DELETED on dev "
+        "2026-09-06 (Feature 29 decision 9) -- entry retained for historical pricing.",
+        max_input_tokens=922_000,
+    ),
     # --- GPT-5 family (2025-08-07) ---
     "gpt-5-mini": CatalogEntry(400_000, "o200k_base", True, 0.25, 2.00, "live deployment; workbook table"),
     "gpt-5-nano": CatalogEntry(400_000, "o200k_base", True, 0.05, 0.40, "Azure list 2025-08"),
@@ -130,6 +178,17 @@ def context_limit_for(model_or_deployment: Optional[str]) -> int:
     return catalog_entry_for(model_or_deployment).context_limit
 
 
+def max_input_tokens_for(model_or_deployment: Optional[str]) -> int:
+    """The prompt budget, which is not always the context window (task 29.1)."""
+    entry = catalog_entry_for(model_or_deployment)
+    return entry.max_input_tokens or entry.context_limit
+
+
+def recall_note_for(model_or_deployment: Optional[str]) -> str:
+    """The long-context recall warning for this model, or `""` (task 29.1)."""
+    return catalog_entry_for(model_or_deployment).recall_note
+
+
 def encoding_for(model_or_deployment: Optional[str]) -> str:
     return catalog_entry_for(model_or_deployment).encoding
 
@@ -185,6 +244,30 @@ def resolve_model(role: Role = "primary", settings=None) -> ModelSpec:
             deployment = (getattr(settings, "AZURE_OPENAI_FAST_DEPLOYMENT_NAME", "") or "").strip() or primary
         elif role == "judge":
             deployment = (getattr(settings, "AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME", "") or "").strip() or primary
+        elif role == "long_doc":
+            # Feature 29 task 29.1 / decision 9. The role a long attached document
+            # is read on. Falls back to FAST, not to primary, so an environment
+            # that has not set it behaves exactly as it does today -- the role is
+            # inert until task 29.10 measures Terra against Luna and something is
+            # actually set. `recall_note` on the catalog entry is why the role
+            # exists at all: context size and context recall are different
+            # properties and only one of them is a number in this table.
+            deployment = (
+                (getattr(settings, "AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME", "") or "").strip()
+                or (getattr(settings, "AZURE_OPENAI_FAST_DEPLOYMENT_NAME", "") or "").strip()
+                or primary
+            )
+        elif role == "chat_summary":
+            # Feature 29 decision 2: the full-record chat route narrates on
+            # gpt-5-mini. Falls back to the JUDGE deployment before the primary,
+            # because judge is already gpt-5-mini in every environment -- so an
+            # environment that never sets the new variable still gets the ruled
+            # behaviour instead of quietly narrating on Luna.
+            deployment = (
+                (getattr(settings, "AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME", "") or "").strip()
+                or (getattr(settings, "AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME", "") or "").strip()
+                or primary
+            )
         else:
             deployment = primary
         api_version = settings.AZURE_OPENAI_API_VERSION

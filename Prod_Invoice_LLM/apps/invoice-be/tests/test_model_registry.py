@@ -50,8 +50,94 @@ def test_catalog_longest_prefix_match(name, expected_key):
 
 def test_luna_does_not_collapse_onto_gpt5():
     assert reg.catalog_entry_for("gpt-5.6-luna") is not reg.MODEL_CATALOG["gpt-5"]
-    assert reg.context_limit_for("gpt-5.6-luna") == 400_000
+    # Feature 29 task 29.1: the 5.6 family is 1,050,000 wide, not 400,000. The
+    # old value was a copy of the GPT-5 row and would have had the token
+    # guardrail refuse prompts the model actually accepts.
+    assert reg.context_limit_for("gpt-5.6-luna") == 1_050_000
     assert reg.prices_for("gpt-5.6-luna") == (0.20, 1.20)
+
+
+def test_the_five_six_family_input_budget_is_smaller_than_its_context():
+    """Task 29.1. Total context and usable INPUT budget are different numbers on
+    this family (1,050,000 vs 922,000) -- the rest is reserved for reasoning and
+    output. A prompt builder that spends the whole context window is the bug this
+    field exists to prevent."""
+    for name in ("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"):
+        assert reg.context_limit_for(name) == 1_050_000
+        assert reg.max_input_tokens_for(name) == 922_000
+
+    # Every other family publishes one number; the helper falls back to it, so a
+    # caller never has to special-case `None`.
+    assert reg.max_input_tokens_for("gpt-5-mini") == reg.context_limit_for("gpt-5-mini")
+    assert reg.max_input_tokens_for("never-heard-of-it") == 128_000
+
+
+def test_recall_is_recorded_separately_from_context_size():
+    """Task 29.1. A 1M-token window is not a 1M-token memory, and conflating the
+    two is exactly how Luna would end up reading long contracts. The warning is
+    on the catalog entry, next to the size, so the two are read together."""
+    luna = reg.recall_note_for("gpt-5.6-luna")
+    terra = reg.recall_note_for("gpt-5.6-terra")
+    assert "41%" in luna and "long_doc" in luna
+    assert "89%" in terra
+    # Not every model carries one; the helper is safe on the ones that do not.
+    assert reg.recall_note_for("gpt-5-mini") == ""
+    assert reg.recall_note_for("never-heard-of-it") == ""
+
+
+def test_long_doc_role_falls_back_to_fast_so_it_is_inert_until_29_10():
+    """Decision 9: Terra is kept but the role is not chosen yet. With
+    `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` unset the role must resolve to
+    exactly what `_fast_llm()` resolves to, so shipping the seam changes nothing."""
+
+    class _S:
+        LLM_PROVIDER = "azure"
+        AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-5.6-luna"
+        AZURE_OPENAI_FAST_DEPLOYMENT_NAME = "gpt-5.6-luna"
+        AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME = "gpt-5-mini"
+        AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME = ""
+        AZURE_OPENAI_API_VERSION = "2024-10-21"
+
+    settings = _S()
+    assert reg.resolve_model("long_doc", settings).deployment == "gpt-5.6-luna"
+    assert reg.resolve_model("long_doc", settings).deployment == reg.resolve_model("fast", settings).deployment
+
+    settings.AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME = "gpt-5.6-terra"
+    spec = reg.resolve_model("long_doc", settings)
+    assert spec.deployment == "gpt-5.6-terra"
+    assert spec.context_limit == 1_050_000
+
+
+def test_chat_summary_role_prefers_the_judge_deployment_over_the_primary():
+    """Feature 29 decision 2 (task 29.5). Every environment already sets the
+    judge to gpt-5-mini, so an environment that never sets the new variable must
+    still narrate the full-record route on gpt-5-mini rather than on Luna."""
+
+    class _S:
+        LLM_PROVIDER = "azure"
+        AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-5.6-luna"
+        AZURE_OPENAI_FAST_DEPLOYMENT_NAME = "gpt-5.6-luna"
+        AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME = "gpt-5-mini"
+        AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME = ""
+        AZURE_OPENAI_API_VERSION = "2024-10-21"
+
+    settings = _S()
+    assert reg.resolve_model("chat_summary", settings).deployment == "gpt-5-mini"
+
+    settings.AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME = "gpt-5.6-terra"
+    assert reg.resolve_model("chat_summary", settings).deployment == "gpt-5.6-terra"
+
+
+def test_deleted_deployments_keep_their_catalog_entry():
+    """Decision 9 deleted `gpt-5.6-sol` and `gpt-6-astra` from the dev account.
+    The catalog rows stay: a deleted deployment still has historical telemetry
+    and cost rows to price, and a row removed here would silently reprice them at
+    zero via `DEFAULT_SPEC`."""
+    for name in ("gpt-5.6-sol", "gpt-6-astra"):
+        entry = reg.catalog_entry_for(name)
+        assert entry is not reg.DEFAULT_SPEC
+        assert "DELETED" in entry.note
+    assert reg.cost_usd("gpt-6-astra", 1_000_000, 0) == pytest.approx(10.00)
 
 
 def test_live_primary_has_a_real_context_window():

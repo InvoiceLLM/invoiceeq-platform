@@ -278,6 +278,27 @@ class Settings(BaseSettings):
     # from under a conversation they are still having, so the conservative
     # direction here is longer, not shorter.
     CHAT_ATTACHMENT_TTL_DAYS: int = 30
+    # Feature 29 task 29.5 / spec §11 decision 1 (founder, 2026-09-06). How many
+    # invoices one chat turn may read IN FULL (every column, JSON fields parsed,
+    # plus that invoice's document pages). 25. Past it the turn does not go
+    # silent -- `services/full_records.py` renders the ids, the count and an ask
+    # to narrow, because the failure this replaces (Gap 310's bound of 3) was a
+    # 40-invoice turn answering from a 2-column projection with no disclosure.
+    CHAT_FULL_RECORD_MAX_INVOICES: int = 25
+    # The second, independent bound: how many invoices may have their DOCUMENT
+    # PAGES fetched in one turn. Page text is the expensive axis (an 11-page
+    # invoice measured 16,010 tokens), and it is a detail-question need, not a
+    # listing need -- so the structured rows scale to 25 and the document text
+    # does not. 0 disables document text on this route entirely.
+    CHAT_FULL_RECORD_CHUNK_INVOICES: int = 5
+    # Feature 29 task 29.9. The answer contract: every number in the narration
+    # must appear in the evidence the turn was given. On a violation the turn is
+    # regenerated ONCE with the offending figure named, and if it violates again
+    # it abstains (decision 3 wording). Default ON because an invented figure is
+    # the worst failure this product has, but flagged because a gate with false
+    # positives suppresses correct answers -- if that is ever observed, this is
+    # the switch, and the observation belongs in a Gap entry either way.
+    ENABLE_ANSWER_CONTRACT_GATE: bool = True
     # Feature 26 Part 2 (`docs/feature_26_chat_attached_documents.md`, E-1/E-3):
     # let an attached document be asked open-ended questions about its own
     # CONTENT -- "what are the payment terms?", "who signed it?" -- instead of
@@ -472,6 +493,26 @@ class Settings(BaseSettings):
     # judge). Empty = same as AZURE_OPENAI_DEPLOYMENT_NAME. Exists so a candidate
     # swap of the primary can be graded by a model that did not change.
     AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME: str = ""
+    # Feature 29 task 29.5 / spec §11 decision 2 (founder, 2026-09-06): the model
+    # that NARRATES a full-record chat turn. The evidence for that route is a
+    # 25-invoice structured block plus document pages, and the measured winner on
+    # it was gpt-5-mini (22.2% -> 52.8% on the 36-case golden set, vs Luna's 27.8%
+    # -> 37.1%), while Luna stays on the attachment branches where it scored
+    # 16/16. Empty = same as AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME (and, if that is
+    # empty too, the primary), because the judge deployment is already the one
+    # environment variable every environment sets to gpt-5-mini -- so an
+    # environment that never heard of this setting behaves exactly as decision 2
+    # requires with no change at all.
+    AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME: str = ""
+    # Feature 29 task 29.1 / spec section 11 decision 9. The deployment a LONG
+    # attached document is read on. Context SIZE and context RECALL are different
+    # properties: the 5.6 family is 1,050,000 tokens wide, but Luna's multi-round
+    # coreference recall is ~41% where Terra's is 89%+, and on the pre-fix
+    # attachment probe Terra found 7 of 12 answers to Luna's 4. Empty = same as
+    # AZURE_OPENAI_FAST_DEPLOYMENT_NAME, so the role is INERT until task 29.10
+    # measures the two on `tests/golden_long_doc.json` and the founder's 2-point
+    # rule picks one. Nothing changes behaviour by shipping this setting.
+    AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME: str = ""
     # Gap 465: the two non-OpenAI model choices, previously hardcoded at their
     # single call sites (`queue_worker/handlers.py::_run_ocr` and
     # `chroma_client.py::get_embedding_model`). Changing EMBEDDING_MODEL_NAME

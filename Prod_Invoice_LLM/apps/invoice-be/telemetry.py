@@ -1037,6 +1037,12 @@ class ChatTurn:
         "zero_result_fallback_recovered", "zero_result_diagnosis", "citation_count", "result_invoice_count",
         "tool_output", "turn_index", "seconds_since_prev_turn", "error_type",
         "drift_flags",
+        # Feature 29 task 29.9: what the answer-contract gate did on this turn --
+        # "skipped" / "ok" / "regenerated_ok" / "regenerated_unsupported" /
+        # "abstained" / "regeneration_failed". Empty on every route that has no
+        # gate, which is how "how often does the gate fire?" stays a well-formed
+        # rate rather than a count with no denominator.
+        "answer_gate",
     )
 
     def __init__(self, *, session_id: str = "", tenant_id: str = "") -> None:
@@ -1072,6 +1078,7 @@ class ChatTurn:
         # detected), set by `agents/query_agent.py::run_query_agent()` after
         # the turn resolves. See `services/turn_drift.py`.
         self.drift_flags: list = []
+        self.answer_gate = ""
 
     def record_llm_call(self, agent_name: str, tokens_in: int, tokens_out: int) -> None:
         """One `tracked_llm_call()` finished inside this turn."""
@@ -1113,6 +1120,7 @@ class ChatTurn:
             "turn_index": self.turn_index,
             "seconds_since_prev_turn": self.seconds_since_prev_turn,
             "error_type": self.error_type,
+            "answer_gate": self.answer_gate,
             "drift_flags": ",".join(self.drift_flags),
         }
 

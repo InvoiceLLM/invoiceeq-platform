@@ -20,14 +20,36 @@ targetScope = 'resourceGroup'
 // Availability was verified 2026-09-05 with
 //   az cognitiveservices account list-models -n openai-invoicellm-dev -g rg-invoice-llm-dev
 // -> gpt-5.6-luna / gpt-5.6-terra / gpt-5.6-sol, version 2026-07-09, GlobalStandard.
-// 2026-09-06 (Gap 466 decision): only gpt-5.6-luna is kept on dev (primary + fast);
-// gpt-5.6-terra, gpt-5.6-sol and gpt-6-astra were deleted after the matrix.
-// gpt-5-mini stays as judge + fallback and is no longer the 04-ai.bicep-managed deployment.
+//
+// ROLES ON DEV, as of 2026-09-06 (Feature 29 task 29.1; decisions 2 and 9).
+// Corrected here because the previous version of this comment said Terra had
+// been deleted, and it had not been:
+//
+//   gpt-5.6-luna   primary + fast + the attachment-branch narrator (16/16 on the
+//                  16-turn probe after Gaps 470/472/473/475/476).
+//   gpt-5-mini     judge, and the FULL-RECORD chat narrator (decision 2:
+//                  22.2% -> 52.8% on the golden set with full records, vs Luna's
+//                  27.8% -> 37.1%). `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`.
+//   gpt-5.6-terra  KEPT (decision 9) as the `long_doc` candidate until task 29.10
+//                  runs `tests/golden_long_doc.json` on Terra vs Luna and the
+//                  2-point rule picks one. `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`
+//                  is unset, so the role currently falls back to fast and Terra
+//                  serves no live traffic -- it is a candidate, not a default.
+//   gpt-4o         legacy, retiring; kept only so historical rows still price.
+//
+// DELETED after the matrix: gpt-5.6-sol and gpt-6-astra. Verified 2026-09-06
+// with `az cognitiveservices account deployment list -n openai-invoicellm-dev
+// -g rg-invoice-llm-dev` -> gpt-5-mini, gpt-4o, gpt-5.6-luna, gpt-5.6-terra and
+// nothing else. Their `utils/model_registry.py` catalog rows are deliberately
+// KEPT and marked DELETED: historical telemetry and cost rows still have to
+// price, and removing a row would silently reprice them at zero.
 //
 // The deployment name is what the app reads (`AZURE_OPENAI_DEPLOYMENT_NAME`,
-// `AZURE_OPENAI_FAST_DEPLOYMENT_NAME`, `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME`);
-// `utils/model_registry.py` maps it to context/price by longest-prefix match,
-// so keep the deployment name starting with the model name.
+// `AZURE_OPENAI_FAST_DEPLOYMENT_NAME`, `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME`,
+// `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`,
+// `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`); `utils/model_registry.py` maps it to
+// context/price by longest-prefix match, so keep the deployment name starting
+// with the model name.
 
 @description('Existing Azure OpenAI account in this resource group.')
 param openaiAccountName string

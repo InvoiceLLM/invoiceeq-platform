@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Callable, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 import telemetry
 from telemetry import tracked_dependency, tracked_llm_call
 from utils.llm import build_llm, get_llm
 from utils.rule_schema import normalize_constraints
 from services.turn_drift import detect_turn_drift
+from services import full_records
 from chroma_client import query_invoice_chunks
 # Gap 313: the persona is imported, never re-typed. `agents/sage_prompts.py` is
 # pure text plus a `models.Invoice` reflection -- no langgraph, no tool module --
@@ -174,24 +175,72 @@ def chat_rules_version(tenant_id: str, db_session) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
 
 
-def _cache_key(tenant_id: str, user_message: str, rules_version: str | None = None) -> str:
+def _attachment_dimension(attachment_ids) -> str:
+    """The attachment half of the cache key. Feature 29 task 29.12.
+
+    The key was `(tenant_id, normalized_query, rules_version)`. "Does this match
+    our invoice?" asked about two different purchase orders is the *same* six
+    words about *different documents*, so those two turns collided on one entry
+    and the second question would have been served the first document's figures.
+    Feature 26 dealt with that by never touching the cache on any attachment
+    branch at all -- correct as a v1 rule, and expensive: every re-ask of the
+    same question about the same document paid a full comparison and a full
+    narration again.
+
+    Adding the dimension is what makes the bypass unnecessary. Order-insensitive
+    (a two-document turn is the same turn whichever order the ids arrive in) and
+    hashed, so a key length stays bounded no matter how many ids a turn carries.
+    Empty ids produce `""`, which keeps every non-attachment key byte-identical
+    to what it was before this change -- so no existing entry is orphaned.
+    """
+    ids = sorted({str(i) for i in (attachment_ids or []) if i})
+    if not ids:
+        return ""
+    digest = hashlib.sha256("|".join(ids).encode("utf-8")).hexdigest()[:12]
+    return f":att={digest}"
+
+
+def _cache_key(
+    tenant_id: str,
+    user_message: str,
+    rules_version: str | None = None,
+    attachment_ids=None,
+) -> str:
     suffix = f":rules={rules_version}" if rules_version else ""
-    return f"chat_answer_cache:{tenant_id}:{_normalize_query(user_message)}{suffix}"
+    return (
+        f"chat_answer_cache:{tenant_id}:{_normalize_query(user_message)}"
+        f"{suffix}{_attachment_dimension(attachment_ids)}"
+    )
 
 
-def get_cached_answer(tenant_id: str, user_message: str, rules_version: str | None = None) -> dict | None:
+def get_cached_answer(
+    tenant_id: str,
+    user_message: str,
+    rules_version: str | None = None,
+    attachment_ids=None,
+) -> dict | None:
     try:
-        raw = _get_redis_client().get(_cache_key(tenant_id, user_message, rules_version))
+        raw = _get_redis_client().get(
+            _cache_key(tenant_id, user_message, rules_version, attachment_ids)
+        )
         return json.loads(raw) if raw else None
     except Exception as e:
         logger.warning("Chat answer cache lookup failed, proceeding without cache: %s", e)
         return None
 
 
-def set_cached_answer(tenant_id: str, user_message: str, result: dict, rules_version: str | None = None) -> None:
+def set_cached_answer(
+    tenant_id: str,
+    user_message: str,
+    result: dict,
+    rules_version: str | None = None,
+    attachment_ids=None,
+) -> None:
     try:
         _get_redis_client().set(
-            _cache_key(tenant_id, user_message, rules_version), json.dumps(result), ex=CACHE_TTL_SECONDS
+            _cache_key(tenant_id, user_message, rules_version, attachment_ids),
+            json.dumps(result),
+            ex=CACHE_TTL_SECONDS,
         )
     except Exception as e:
         logger.warning("Chat answer cache write failed: %s", e)
@@ -620,6 +669,50 @@ def _fast_llm():
         return get_llm()
 
 
+def _chat_summary_llm():
+    """The narration model for a turn whose prompt carries FULL RECORDS.
+
+    Feature 29 task 29.5, spec §11 decision 2 (founder, 2026-09-06): the chat
+    summary model is **split by route** -- gpt-5-mini narrates the full-record
+    route, Luna narrates the attachment branches. Measured, not stylistic: with
+    full records in the prompt gpt-5-mini went 22.2% -> 52.8% on the 36-case
+    golden set while Luna went 27.8% -> 37.1% (spec §2.3), and on the 16-turn
+    attachment probe Luna scored 16/16 (§2.4).
+
+    So this is used **only** where a full-record block was actually built. A turn
+    that identified no invoice keeps `_fast_llm()`, unchanged -- the split is
+    about which evidence shape the model is reading, not about the route's name.
+
+    Fail-soft for the same reason `_fast_llm()` is: a narration call that raises
+    is a dead chat turn, a slightly different deployment is not.
+    """
+    from config import get_settings
+    from utils.model_registry import resolve_model
+
+    settings = get_settings()
+    provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+    if provider != "azure":
+        # Mock/Ollama have one model for everything; going through the registry
+        # here would only add a way for the test suite to diverge from `get_llm`.
+        return get_llm()
+    try:
+        deployment = resolve_model("chat_summary", settings).deployment
+        # Constructed through THIS MODULE's `build_llm` binding, exactly as
+        # `_fast_llm()` does, and deliberately not through
+        # `utils.llm.get_chat_summary_llm()`. Two things depend on that:
+        # `scripts/run_agent_eval.py`'s `--provider/--model` override patches the
+        # bindings in this module, and Gap 471's rule is that a unit test which
+        # patches this module must not be able to leak a live Azure call. A
+        # helper that reaches into `utils.llm` directly is unreachable from both.
+        return build_llm("azure", model=deployment)
+    except Exception:  # pragma: no cover - never fail a turn over a deployment name
+        logger.warning(
+            "29.5: could not build the chat-summary deployment; falling back to the default.",
+            exc_info=True,
+        )
+        return get_llm()
+
+
 def classify_query(query: str, tenant_id: str = "") -> str:
     """Classifies user queries into RAG, SQL, or CHAT.
 
@@ -808,6 +901,53 @@ def _normalize_string_equality(sql: str) -> str:
 def _find_invoice_number_candidate(user_message: str) -> str | None:
     match = _INVOICE_NUMBER_PATTERN.search(user_message)
     return match.group(0) if match else None
+
+
+def invoice_ids_named_in(user_message: str, tenant_id: str, db_session) -> list[str]:
+    """Every invoice this question names by number, resolved to ids. Feature 29 task 29.5.
+
+    The non-SQL routes never had this. §2.3's context audit found nine of 36
+    golden turns answered on the `general` route with **no rows at all** -- "the
+    invoice is not in the provided context" -- for questions that named the
+    invoice in the first six words. The SQL route has three separate deterministic
+    nets under a missed lookup (`lookup_invoice_by_number_fallback`,
+    `category_search_fallback`, `_harvest_invoice_ids_via_companion_query`); the
+    RAG and CHAT routes had none, so a question that named an invoice and did not
+    classify as SQL answered from nothing.
+
+    Deliberately narrow: an exact, case- and whitespace-insensitive match on
+    `invoice_number` for tokens of the shape `_INVOICE_NUMBER_PATTERN` already
+    recognises. No fuzzy matching and no vendor-name resolution -- that is task
+    29.11's `resolve_entities()`, which has to be able to say "did you mean" and
+    to clarify on more than one candidate. This one either finds the exact number
+    the user typed or finds nothing, so it cannot bind the wrong invoice.
+
+    Parameterised, tenant-scoped, and fail-soft: any error returns `[]`.
+    """
+    if not user_message or not tenant_id:
+        return []
+    candidates = list(dict.fromkeys(_INVOICE_NUMBER_PATTERN.findall(user_message)))
+    if not candidates:
+        return []
+    try:
+        rows = db_session.execute(
+            text(
+                "SELECT id FROM invoice WHERE tenant_id = :tenant_id "
+                "AND TRIM(LOWER(invoice_number)) IN :candidates"
+            ).bindparams(bindparam("candidates", expanding=True)),
+            {
+                "tenant_id": str(tenant_id),
+                "candidates": [c.strip().lower() for c in candidates],
+            },
+        ).fetchall()
+    except Exception as e:
+        logger.warning("29.5: named-invoice lookup failed (non-fatal): %s", e)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return []
+    return [str(r[0]) for r in rows]
 
 
 def lookup_invoice_by_number_fallback(candidate: str, tenant_id: str, db_session) -> str | None:
@@ -2908,22 +3048,30 @@ def _payment_status_block_for(user_message: str) -> str:
     return payment_status_block
 
 
-# Gap 310. How many identified invoices' full ORM rows one turn will put in front
-# of the summary model.
+# Gap 310, widened by Feature 29 task 29.5. How many identified invoices' full
+# ORM rows one turn will put in front of the summary model.
 #
-# Three, not "all of them": this block exists to answer a DETAIL question about
-# the invoice(s) a turn is actually about, and a turn that identified 40 rows is
-# an aggregate or a listing, where 40 complete records would be both useless and
-# the single largest thing in the prompt. Same reasoning (and same "a bound is a
-# policy recorded in code" posture) as `query_tools.MAX_FULL_RECORD_CHUNK_CHARS`.
-MAX_FULL_RECORD_INVOICES = 3
+# It was three: "a turn that identified 40 rows is an aggregate or a listing, so
+# 40 complete records would be both useless and the single largest thing in the
+# prompt." The measurement in `docs/feature_29_llm_optimisation.md` §2.3 changed
+# the trade: on the 36-case golden set, full records took gpt-5-mini from 22.2%
+# to 52.8% pass, and the biggest single failure bucket was turns that were shown
+# a 2-13-column projection and asked a question the projection could not answer.
+# The founder ruled 25 (spec §11 decision 1) and ruled out the old over-cap
+# behaviour of returning nothing at all: past the cap the block now states the
+# count, lists the ids and asks the user to narrow.
+#
+# The number itself lives in `Settings.CHAT_FULL_RECORD_MAX_INVOICES`; this
+# module constant is the default and the name the tests address.
+MAX_FULL_RECORD_INVOICES = full_records.DEFAULT_MAX_INVOICES
 
 # Total characters of rendered record JSON one turn may add. `items` is unbounded
 # in principle (a consolidated invoice can carry hundreds of lines), so the block
 # is filled record-by-record until this budget is spent and whatever did not fit
 # is DISCLOSED in the block rather than silently dropped -- the same honesty rule
-# `get_full_record`'s `columns_omitted` / `pages_omitted` follow.
-MAX_FULL_RECORD_BLOCK_CHARS = 12_000
+# `get_full_record`'s `columns_omitted` / `pages_omitted` follow. Raised with the
+# invoice cap (3 -> 25) in task 29.5.
+MAX_FULL_RECORD_BLOCK_CHARS = full_records.MAX_RECORD_BLOCK_CHARS
 
 # Identity columns dropped from the rendered record before the answering model
 # ever sees it (Gap 294). `get_full_record` returns the whole row -- correctly,
@@ -2938,7 +3086,29 @@ MAX_FULL_RECORD_BLOCK_CHARS = 12_000
 # Removed here rather than in `get_full_record` deliberately: this is Feature 6's
 # prompt-building policy, not a change to what the tool reports to a caller that
 # legitimately needs the row.
-_PROMPT_EXCLUDED_RECORD_FIELDS = ("id", "tenant_id")
+_PROMPT_EXCLUDED_RECORD_FIELDS = full_records.PROMPT_EXCLUDED_RECORD_FIELDS
+
+
+@tracked_dependency("chat.full_record_block", "PostgreSQL")
+def _full_record_set_for(invoice_ids, tenant_id: str, db_session):
+    """The same fetch as `_full_record_block_for()`, returning the SET.
+
+    Feature 29 task 29.6 needs the parsed `items` and `subtotal` of each
+    identified invoice as well as the rendered block, and fetching twice would
+    mean two Chroma round-trips per turn for one turn's worth of evidence. The
+    SQL route calls this once and renders from it; the RAG and CHAT routes, which
+    need the block only, keep calling `_full_record_block_for()`. Both carry the
+    same dependency span, and a turn only ever calls one of them.
+    """
+    try:
+        return full_records.fetch_full_records(invoice_ids, tenant_id, db_session)
+    except Exception as e:
+        logger.warning("Full-record fetch failed (non-fatal): %s", e)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
+        return full_records.FullRecordSet()
 
 
 @tracked_dependency("chat.full_record_block", "PostgreSQL")
@@ -2974,11 +3144,21 @@ def _full_record_block_for(
         (`db_session.get()` on a primary key) that costs microseconds to just
         answer. The model's only real job here is reading a field it can already
         see.
-      * **Bounded on both axes** (`MAX_FULL_RECORD_INVOICES`,
-        `MAX_FULL_RECORD_BLOCK_CHARS`), so it can never inherit SAGE's
-        unmeasured cost profile: no document pages are fetched
-        (`include_document_pages=False`), no Chroma call is made, and an
-        aggregate over hundreds of rows adds nothing at all.
+
+    **Feature 29 task 29.5 moved the implementation into
+    `services/full_records.py` and changed three things**, all of them measured
+    or founder-ruled rather than tidied:
+
+      * the invoice bound went 3 -> **25** (spec §11 decision 1);
+      * past the bound the block no longer returns `""` -- silence was what let a
+        40-invoice turn answer from a 2-column projection with no disclosure --
+        it states the count, lists the ids and asks the user to narrow;
+      * **document pages are attached again** for a small number of invoices
+        (`CHAT_FULL_RECORD_CHUNK_INVOICES`, default 5). Gap 310 passed
+        `include_document_pages=False` on cost grounds; §2.3's context audit then
+        measured **zero document chunks in the prompt on all 36 golden turns**,
+        which is the `no_evidence` bucket. The cost argument still holds for a
+        25-invoice listing, which is why the two bounds are separate.
 
     Tenant isolation is `get_full_record`'s own, unchanged and not re-implemented
     here: it compares `invoice.tenant_id` against the caller's tenant and returns
@@ -2990,83 +3170,7 @@ def _full_record_block_for(
     Fail-soft, like everything else on this route: any failure returns `""` and
     the turn answers from the results table exactly as it did before.
     """
-    if not invoice_ids:
-        return ""
-    unique_ids = list(dict.fromkeys(str(i) for i in invoice_ids if i))
-    if not unique_ids or len(unique_ids) > MAX_FULL_RECORD_INVOICES:
-        return ""
-
-    try:
-        # Function-local import, kept. It was originally required for two reasons
-        # (`query_tools` imported this module, so a module-level import here was a
-        # cycle; and a boundary test forbade `query_tools` at this module's import
-        # scope) -- Gap 316 removed both when it deleted the orchestrator and the
-        # three tools that needed this module. It stays local because it is only
-        # needed on the turns that identified an invoice.
-        from agents.query_tools import get_full_record
-
-        rendered: list[str] = []
-        used = 0
-        held_back = 0
-        for invoice_id in unique_ids:
-            result = get_full_record(
-                invoice_id, tenant_id, db_session, include_document_pages=False
-            )
-            if result.status != "ok" or not result.record:
-                continue
-            # Gap 294: strip the identity UUIDs before rendering, so the
-            # answering prompt cannot contain a tenant id at all.
-            safe_record = {
-                name: value
-                for name, value in result.record.items()
-                if name not in _PROMPT_EXCLUDED_RECORD_FIELDS
-            }
-            text_value = json.dumps(safe_record, indent=2, default=str)
-            if used + len(text_value) > MAX_FULL_RECORD_BLOCK_CHARS and rendered:
-                held_back += 1
-                continue
-            rendered.append(text_value)
-            used += len(text_value)
-
-        if not rendered:
-            return ""
-
-        omission_note = (
-            f"\n({held_back} further identified invoice record(s) were held back for "
-            f"size and are NOT shown here -- do not describe this as every matching "
-            f"invoice's detail.)"
-            if held_back
-            else ""
-        )
-        return (
-            "\nFULL INVOICE RECORD(S) -- every field stored for the invoice(s) this query "
-            "identified, read straight off the database row rather than from the SELECT list "
-            "above. The results table shows only the columns the query happened to ask for; "
-            "this is the rest of the record, including fields the SQL schema description does "
-            "not list at all: `taxes` (the itemized tax components, each with its own tax_type, "
-            "rate_percent and amount -- this is where a CGST/SGST/VAT breakdown lives), "
-            "`subtotal`, `tax_ids`, `discounts`, `deductions`, `payment_instructions`, "
-            "`references`, `compliance_metadata`, and the full `items` line list.\n"
-            "Use it to answer detail the results table cannot, and quote figures from it "
-            "EXACTLY as stored -- never derive, split or estimate one (a tax total halved into "
-            "two invented components is the specific failure this block exists to stop). A "
-            "field that is null, absent or an empty list is genuinely not recorded on that "
-            "invoice: say so plainly instead of inferring it. This is background context, not "
-            "something to recite -- do not dump the record, do not print raw UUIDs, and do not "
-            "volunteer fields the user did not ask about."
-            f"{omission_note}\n"
-            + "\n".join(rendered)
-            + "\n"
-        )
-    except Exception as e:
-        # Never fatal. The turn still has its results table, which is exactly the
-        # answer it would have given before this block existed.
-        logger.warning("Full-record context fetch failed (non-fatal): %s", e)
-        try:
-            db_session.rollback()
-        except Exception:
-            pass
-        return ""
+    return full_records.full_record_block_for(invoice_ids, tenant_id, db_session)
 
 
 # Gap 315. How many per-vendor subtotal groups one turn's computed block may
@@ -3097,8 +3201,22 @@ def _cells_are_numeric(cells: list[str]) -> bool:
 
 
 @tracked_dependency("chat.computed_figures_block", "InProc")
-def _computed_figures_block_for(db_result: str | None) -> str:
+def _computed_figures_block_for(db_result: str | None, record_set=None) -> str:
     """Every total this answer might state, added up in Python before the model runs.
+
+    **Feature 29 task 29.6 added the second source.** Everything below the next
+    paragraph works off the RESULTS TABLE, so it only fires when the generated
+    SQL happened to project `line_qty` / `line_unit_price` / `line_amount` --
+    and rules 6d and 11 discourage exactly that projection on most questions. The
+    golden set's line-check cases therefore arrived with the invoice's `items`
+    present in the full record and no arithmetic done on them at all (spec
+    section 2.3: "model forbidden to compute what the question needed", ~6 of 36
+    turns). `record_set` is task 29.5's `FullRecordSet`; when it carries records,
+    `services.document_comparison.check_line_arithmetic()` runs per invoice over
+    that invoice's own `items` and its subtotal, so the check happens whenever the
+    lines EXIST rather than whenever the SQL was written a particular way. Both
+    sources are deterministic Python and neither asks a model to multiply
+    (hard rule 3).
 
     **Gap 315, and why this exists at all.** Gap 273 stopped the *database* from
     aggregating rule 6d's line-item queries (letting SQL both find and sum the
@@ -3144,8 +3262,13 @@ def _computed_figures_block_for(db_result: str | None) -> str:
     "YOU compute this total" instruction -- degraded to the pre-Gap-315 behaviour,
     never a failed turn.
     """
+    # 29.6: the line check comes from the RECORD, so it is computed even on a
+    # turn whose results table is empty or absent -- which is most of the
+    # line-check cases, and the reason this is not folded into the table path.
+    record_lines = _line_arithmetic_lines_for(record_set)
+
     if not db_result or db_result.strip() == NO_RECORDS_FOUND:
-        return ""
+        return _computed_block_wrapper(record_lines, has_mismatch=_has_line_mismatch(record_set))
 
     try:
         # Function-local for the same reason as `_full_record_block_for()`'s
@@ -3257,37 +3380,96 @@ def _computed_figures_block_for(db_result: str | None) -> str:
             lines.extend(f"    {line}" for line in result.formatted)
             if result.operation == RECONCILE_LINE_ITEMS and result.mismatches:
                 has_mismatch = True
-        if not lines:
-            return ""
-
-        header = (
-            "\nCOMPUTED FIGURES -- every number below was added up in Python from the rows "
-            "in the results table above, by a deterministic function, not by a model. They "
-            "are therefore correct: use them as they stand and do NOT add, subtract, average "
-            "or re-derive any figure yourself. Never combine currencies -- no exchange rate "
-            "exists in this product. These are working notes for you, NOT text to show the "
-            "user: write your answer as your own sentences, never reproduce this block, its "
-            "bullets or its labels, and if the question did not ask for a total, do not "
-            "volunteer one."
-        )
-        if has_mismatch:
-            # Kept in the header rather than beside the figure it applies to: an
-            # instruction sitting where data sits reads as data, and a live SAGE
-            # run had gpt-5-mini copy exactly such a parenthetical straight into a
-            # user's answer (see `render_grounded_arithmetic`).
-            header += (
-                " One or more lines below do not reconcile: for those, state the printed "
-                "amount, the computed amount and the difference. Never write such a line as "
-                "an 'x = y' equation -- that is the false statement this block exists to "
-                "make impossible."
-            )
-        return header + "\n" + "\n".join(lines) + "\n"
+        # 29.6: the per-invoice line check goes FIRST, because it is the answer
+        # to "does this invoice add up" and the table totals are context for it.
+        lines = record_lines + lines
+        has_mismatch = has_mismatch or _has_line_mismatch(record_set)
+        return _computed_block_wrapper(lines, has_mismatch=has_mismatch)
     except Exception as e:
         # Never fatal. The turn keeps its results table and the prompt keeps its
         # original "YOU compute this total" instruction, which is exactly the
-        # answer it would have given before this block existed.
+        # answer it would have given before this block existed. The record-side
+        # half is independent of whatever failed here, so it is still returned.
         logger.warning("Computed-figures block failed (non-fatal): %s", e)
+        return _computed_block_wrapper(record_lines, has_mismatch=_has_line_mismatch(record_set))
+
+
+def _computed_block_wrapper(lines: list[str], *, has_mismatch: bool) -> str:
+    """The COMPUTED FIGURES header/footer around whatever was actually computed.
+
+    Extracted by task 29.6 so the results-table half and the full-record line
+    check render one block with one instruction, rather than two blocks the model
+    has to reconcile. `""` when nothing was computed, which keeps the prompt's
+    fallback "YOU compute this total" wording exactly as it was.
+    """
+    if not lines:
         return ""
+    header = (
+        "\nCOMPUTED FIGURES -- every number below was added up in Python by a deterministic "
+        "function, not by a model: from the rows in the results table above, and from the "
+        "stored line items of the invoice(s) this turn identified. They "
+        "are therefore correct: use them as they stand and do NOT add, subtract, average "
+        "or re-derive any figure yourself. Never combine currencies -- no exchange rate "
+        "exists in this product. These are working notes for you, NOT text to show the "
+        "user: write your answer as your own sentences, never reproduce this block, its "
+        "bullets or its labels, and if the question did not ask for a total, do not "
+        "volunteer one."
+    )
+    if has_mismatch:
+        # Kept in the header rather than beside the figure it applies to: an
+        # instruction sitting where data sits reads as data, and a live SAGE
+        # run had gpt-5-mini copy exactly such a parenthetical straight into a
+        # user's answer (see `render_grounded_arithmetic`).
+        header += (
+            " One or more lines below do not reconcile: for those, state the printed "
+            "amount, the computed amount and the difference. Never write such a line as "
+            "an 'x = y' equation -- that is the false statement this block exists to "
+            "make impossible."
+        )
+    return header + "\n" + "\n".join(lines) + "\n"
+
+
+def _line_arithmetic_checks(record_set):
+    """`[(label, check), ...]` from a task 29.5 `FullRecordSet`. Never raises."""
+    checks = []
+    if record_set is None or not getattr(record_set, "records", None):
+        return checks
+    try:
+        from services.document_comparison import check_line_arithmetic
+
+        for rec in record_set.records:
+            row = rec.record or {}
+            check = check_line_arithmetic(
+                row.get("items"),
+                subtotal=row.get("subtotal"),
+                currency=row.get("currency"),
+            )
+            if check.get("status") == "ok" and check.get("checked"):
+                checks.append((rec.invoice_number or rec.invoice_id, check))
+    except Exception as e:  # pragma: no cover - arithmetic never kills a turn
+        logger.warning("29.6 line-arithmetic check failed (non-fatal): %s", e)
+    return checks
+
+
+def _line_arithmetic_lines_for(record_set) -> list[str]:
+    """The rendered bullet lines for the computed-figures block."""
+    try:
+        from services.document_comparison import render_line_arithmetic
+
+        rendered = []
+        for label, check in _line_arithmetic_checks(record_set):
+            text = render_line_arithmetic(check, label=str(label))
+            if text:
+                rendered.append(text)
+        return rendered
+    except Exception as e:  # pragma: no cover
+        logger.warning("29.6 line-arithmetic render failed (non-fatal): %s", e)
+        return []
+
+
+def _has_line_mismatch(record_set) -> bool:
+    """True when any identified invoice has a line that does not reconcile."""
+    return any(check.get("mismatches") for _, check in _line_arithmetic_checks(record_set))
 
 
 # The two halves of the summary prompt's line-item arithmetic instruction. Which
@@ -3359,6 +3541,199 @@ _JSONB_READ_FROM_RECORD_NOTE = (
     "JSONB -- do not un-nest or filter on this in SQL; the answering step reads it "
     "from the identified invoice's full record"
 )
+
+
+# ---------------------------------------------------------------------------
+# Feature 29 task 29.9 — the answer contract
+# ---------------------------------------------------------------------------
+#
+# Everything before this point makes sure the model is SHOWN the right evidence
+# and handed every figure pre-computed. Nothing before this point checks what it
+# then said. Spec section 2.3 measured ~4 of 36 golden failures as "answer
+# correct, one sub-claim unsupported", and Gap 269's false equation was a number
+# the model produced that appeared in no payload at all.
+#
+# The contract is one sentence: **every number in the prose must appear in the
+# evidence the turn was given.** A number that does not is either invented or
+# derived, and this product forbids both (hard rule 3). The enforcement is a
+# deterministic scan, one regeneration naming the offending figure, then abstain.
+#
+# WHAT IS DELIBERATELY NOT CHECKED, because a gate with false positives is worse
+# than no gate -- it would abstain on correct answers:
+#
+#   * years and dates (2026, 2026-08-01, 01/08/2026) -- they are formatted
+#     differently in prose than in a row and are not money;
+#   * ordinals and small counts under `_GATE_MIN_MAGNITUDE` ("the 2 invoices",
+#     "3 lines") -- a count is derived from the rows themselves, which the model
+#     is allowed to count, and every such number would otherwise have to be
+#     pre-computed to be sayable;
+#   * anything inside a code span or a markdown table the code appended after
+#     the model's prose (`_split_appended_blocks` does the same separation for
+#     the judge) -- the results table is not the model's claim.
+#
+# What IS checked is the shape that has actually been wrong: a money figure or a
+# percentage stated in the narration.
+
+#: Below this, a number in prose is a count or an ordinal, not a claim about
+#: money. See the list above for why the floor exists at all.
+_GATE_MIN_MAGNITUDE = Decimal("10")
+
+#: Numbers that look like a figure. Money with separators, decimals, percentages.
+_GATE_NUMBER_PATTERN = re.compile(r"(?<![\w.-])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+)(?![\w-])")
+
+#: A date, in the three shapes this product renders. Matched and removed BEFORE
+#: numbers are extracted, so `2026-08-01` never contributes 2026, 8 and 1.
+_GATE_DATE_PATTERN = re.compile(
+    r"\b(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{1,2}\s+"
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})\b",
+    re.IGNORECASE,
+)
+
+#: A bare four-digit year on its own is a date too.
+_GATE_YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
+
+
+def _gate_normalise(token: str) -> Optional[Decimal]:
+    """`"1,234.50"` -> `Decimal("1234.50")`; None when it is not a number."""
+    try:
+        return Decimal(token.replace(",", ""))
+    except (InvalidOperation, ValueError, AttributeError):
+        return None
+
+
+def _gate_numbers_in(text: str) -> set:
+    """Every checkable figure in `text`, normalised, dates and years removed."""
+    if not text:
+        return set()
+    cleaned = _GATE_DATE_PATTERN.sub(" ", text)
+    cleaned = _GATE_YEAR_PATTERN.sub(" ", cleaned)
+    found = set()
+    for token in _GATE_NUMBER_PATTERN.findall(cleaned):
+        value = _gate_normalise(token)
+        if value is None:
+            continue
+        found.add(value)
+    return found
+
+
+def _gate_evidence_numbers(*texts) -> set:
+    """Every number the turn was ALLOWED to say, from every evidence block.
+
+    Dates and years are stripped from the prose side, not from here: evidence is
+    a superset and a stray year in it can only ever make the gate more permissive
+    on a number the prose was going to have to justify anyway.
+    """
+    found = set()
+    for text in texts:
+        if not text:
+            continue
+        for token in _GATE_NUMBER_PATTERN.findall(str(text)):
+            value = _gate_normalise(token)
+            if value is not None:
+                found.add(value)
+    return found
+
+
+def _answer_contract_gate(prose: str, evidence_numbers: set) -> dict:
+    """Which figures in the narration are not in the evidence.
+
+    Returns `{"status": "ok"|"unsupported", "unsupported": [Decimal, ...],
+    "checked": int}`. Never raises and never rewrites the prose: the caller
+    decides whether to regenerate or abstain, because those cost a call and a
+    turn respectively and this function must stay free to run on every turn.
+
+    Equality is numeric, not textual, so `400`, `400.00` and `400.0` are the same
+    figure -- the alternative (string matching) would fail the gate on correct
+    answers purely for rendering a stored `400.0` as `$400.00`.
+    """
+    prose_numbers = {n for n in _gate_numbers_in(prose or "") if abs(n) >= _GATE_MIN_MAGNITUDE}
+    unsupported = sorted(n for n in prose_numbers if n not in evidence_numbers)
+    return {
+        "status": "unsupported" if unsupported else "ok",
+        "unsupported": unsupported,
+        "checked": len(prose_numbers),
+    }
+
+
+def _gate_regeneration_directive(unsupported) -> str:
+    """The one retry, with the offending figure NAMED.
+
+    Naming it matters: "be more faithful" is the instruction that has already
+    failed everywhere else in this file. This says which number is the problem
+    and what the only two acceptable outcomes are.
+    """
+    figures = ", ".join(str(n) for n in unsupported)
+    return (
+        "\n\nCORRECTION REQUIRED. Your previous answer stated "
+        f"{'these figures' if len(unsupported) > 1 else 'this figure'}: {figures}. "
+        f"{'They do' if len(unsupported) > 1 else 'It does'} not appear anywhere in the "
+        "evidence you were given, which means "
+        f"{'they were' if len(unsupported) > 1 else 'it was'} derived or invented. You may "
+        "not compute, sum, convert or estimate a figure -- every number you state must be "
+        "copied exactly from the evidence above. Rewrite the answer using only figures that "
+        "appear there. If the question cannot be answered without a figure that is not "
+        "present, say plainly that it is not available and name what IS on file instead."
+    )
+
+
+def _answer_gate_enabled() -> bool:
+    """Read at call time so a test's monkeypatch is seen (same rule as `_redis()`)."""
+    try:
+        from config import get_settings
+
+        return bool(getattr(get_settings(), "ENABLE_ANSWER_CONTRACT_GATE", True))
+    except Exception:  # pragma: no cover
+        return True
+
+
+def _abstain_on_file_from(invoice_ids, record_set) -> list:
+    """What IS on file, for decision 3's middle clause.
+
+    An abstention that only says "I don't know" hides that the system holds most
+    of what was asked for. This names the invoices the turn actually found, by
+    the identifier the user uses, never by UUID.
+    """
+    if record_set is not None and getattr(record_set, "records", None):
+        return [
+            f"{rec.invoice_number or 'an invoice'}"
+            + (f" ({rec.record.get('vendor_name')})" if rec.record.get("vendor_name") else "")
+            for rec in record_set.records[:5]
+        ]
+    count = len(invoice_ids or [])
+    return [f"{count} matching invoice row(s) from this question's query"] if count else []
+
+
+def _abstain_payload(missing, on_file=None, next_step: str = "") -> dict:
+    """The turn's refusal, in the shape decision 3 ruled (founder, 2026-09-06).
+
+    "I can't confirm X: <what IS on file>. Want me to <nearest thing>?" -- three
+    parts, all required. An abstention that only says "I don't know" is a worse
+    answer than a wrong one, because it hides that the system holds most of what
+    was asked for and gives the user nowhere to go next.
+
+    Returned as a payload rather than only as prose so the FE can render it as a
+    card and the eval harness can assert on `status` instead of on wording.
+    **Gap 474 note:** `routers/chat.py::MessageResponse` does not yet carry this
+    key, so today it reaches the answer text and the telemetry but not the
+    browser. That gap is filed with a proposed fix and awaits a founder go; this
+    payload is built to the shape that fix will expose.
+    """
+    missing_list = [str(m) for m in (missing or []) if str(m).strip()]
+    on_file_list = [str(o) for o in (on_file or []) if str(o).strip()]
+    gap = missing_list[0] if missing_list else "that"
+    held = (
+        "what I do have on file: " + "; ".join(on_file_list)
+        if on_file_list
+        else "I have no record on file that bears on it"
+    )
+    step = next_step.strip() or "narrow the question to one invoice or one vendor and ask again"
+    return {
+        "status": "insufficient_evidence",
+        "missing": missing_list,
+        "on_file": on_file_list,
+        "next_step": step,
+        "message": f"I can't confirm {gap} -- {held}. Want me to {step}?",
+    }
 
 
 def _sql_type_for(annotation) -> str:
@@ -6150,11 +6525,15 @@ def _run_attachment_content_branch(
     no figure of its own. Every number this feature states comes from the
     comparison branch, which a hostile document's text cannot reach.
 
-    The answer cache is not touched on this path — see B1. `get_cached_answer()`
-    / `set_cached_answer()` are keyed on `(tenant_id, normalized_query)` with no
-    attachment dimension, so the same question about two different documents
-    would collide on one entry. Bypass is the v1 rule, and it is a tested
-    invariant rather than an accident of control flow.
+    This branch does not itself read or write the answer cache, and that is now a
+    division of labour rather than a bypass. B1's original rule was "never cache
+    an attachment turn", because the key had no attachment dimension and the same
+    question about two different documents collided on one entry. Feature 29 task
+    29.12 added the dimension, so the caching decision moved UP to
+    `_run_query_agent()`, where the attachment ids are known and where
+    `_attachment_answer_is_cacheable()` can refuse to store a confirm or clarify
+    card. Nothing in here caches anything, which is what keeps that decision in
+    one place.
     """
     from services.chat_document_search import (
         DEFAULT_SEARCH_LIMIT,
@@ -6350,6 +6729,28 @@ The user asked: {_wrap_user_input(user_message, tenant_id)}
     }
 
 
+def _attachment_answer_is_cacheable(result) -> bool:
+    """Whether an attachment turn's answer may be written to the answer cache.
+
+    Task 29.12. Two kinds of payload are never cached, and both would be actively
+    wrong to serve twice:
+
+      * anything carrying `needs_confirmation` -- a confirm card ("is this the
+        right invoice?") or a clarify card is a QUESTION, and replaying it after
+        the user has answered it is a loop;
+      * an error or empty payload -- caching a failure serves it for the whole
+        TTL, which is the rule `get_cached_answer()` has always followed for
+        failed lookups.
+    """
+    if not isinstance(result, dict) or not (result.get("content") or "").strip():
+        return False
+    if result.get("needs_confirmation"):
+        return False
+    if result.get("attachment_confirmation") or result.get("attachment_clarification"):
+        return False
+    return True
+
+
 def _uuid_or_none(value):
     """Session ids arrive as strings from the router and as UUIDs from the
     worker; the equality check above has to survive both."""
@@ -6409,10 +6810,12 @@ def _run_query_agent(
     # also what hard rule 3 wants: a branch that decides which data a financial
     # answer is computed from is not a thing to ask a model about.
     #
-    # The cache is deliberately bypassed too. `get_cached_answer()` is keyed on
-    # (tenant_id, normalized_query) with no attachment dimension, so "does this
-    # match?" asked about two different POs would collide on one cache entry and
-    # serve the first document's figures for the second document.
+    # The cache used to be bypassed here too, because the key had no attachment
+    # dimension and "does this match?" asked about two different POs would
+    # collide on one entry and serve the first document's figures for the second.
+    # Feature 29 task 29.12 added the dimension (`_attachment_dimension()`), so
+    # the gate below now reads and writes the cache under a key that carries the
+    # sorted attachment ids.
     # Gap 441: a question that plainly refers to an attached document but
     # carries no id -- "and what does the PO say about freight?" -- is about that
     # document, not a fresh ledger query. Three conditions, all required: no
@@ -6430,7 +6833,37 @@ def _run_query_agent(
         attachment_id = str(attachment_ids[0])
 
     if attachment_id:
-        return _run_attached_document_turn(
+        # Feature 29 task 29.12. This branch used to bypass the cache entirely
+        # because the key had no attachment dimension (see
+        # `_attachment_dimension()`); it now has one, so the same question about
+        # the same document(s) can be served from cache and the same question
+        # about a different document cannot collide with it.
+        #
+        # The two existing guards still apply and are the reason this is safe:
+        # a narrowing follow-up is never cached (C2), and a turn that asks for a
+        # confirmation or a clarification returns `needs_confirmation` and is not
+        # written (below) -- serving a stale "is this the right invoice?" card
+        # would be answering a question the user has already answered.
+        turn_attachment_ids = sorted(
+            {str(i) for i in ([attachment_id] + [str(x) for x in (attachment_ids or [])]) if i}
+        )
+        attachment_rules_version = chat_rules_version(tenant_id, db_session)
+        attachment_cached = (
+            None
+            if _is_narrowing_followup(user_message)
+            else get_cached_answer(
+                tenant_id, user_message, attachment_rules_version, turn_attachment_ids
+            )
+        )
+        if attachment_cached is not None:
+            logger.info(
+                "Serving cached attachment answer for tenant %s (task 29.12)", tenant_id
+            )
+            turn.status = telemetry.TURN_STATUS_CACHE_HIT
+            turn.route = "cached"
+            return attachment_cached
+
+        attachment_result = _run_attached_document_turn(
             session_id=session_id,
             user_message=user_message,
             tenant_id=tenant_id,
@@ -6441,6 +6874,17 @@ def _run_query_agent(
             attachment_intent=attachment_intent,
             attachment_ids=[str(i) for i in (attachment_ids or [])],
         )
+        if _attachment_answer_is_cacheable(attachment_result) and not _is_narrowing_followup(
+            user_message
+        ):
+            set_cached_answer(
+                tenant_id,
+                user_message,
+                attachment_result,
+                attachment_rules_version,
+                turn_attachment_ids,
+            )
+        return attachment_result
 
     # C2 (Feature 6.1): a narrowing follow-up is not cacheable and must not be
     # answered from the cache. The key is `(tenant_id, normalized_query)` with no
@@ -6576,6 +7020,9 @@ def _run_query_agent(
     response_text = ""
     generated_sql = None
     citations = []
+    # 29.5 / 29.9: set on the SQL route, read at the bottom of the turn.
+    full_record_set = None
+    gate_abstention = None
     route_succeeded = False
     # Feature 18 (Gap 231): which invoices fed this reply. Request-local by
     # construction; empty means "couldn't determine", never "no invoices".
@@ -6723,9 +7170,10 @@ def _run_query_agent(
                 # rest of the columns the hand-typed schema block never listed.
                 # Generic and unconditional (see `_full_record_block_for`), bounded,
                 # and empty for aggregate/listing turns.
-                full_record_block = _full_record_block_for(
+                full_record_set = _full_record_set_for(
                     result_invoice_ids, tenant_id, db_session
                 )
+                full_record_block = full_records.full_record_block(full_record_set)
                 if full_record_block:
                     # Gap 304 half (2): the record is now part of what the answer
                     # is allowed to be grounded in, so the online quality judge
@@ -6739,7 +7187,12 @@ def _run_query_agent(
                 # "YOU compute this total" wording) whenever the table cannot be
                 # read or nothing in it is summable -- see
                 # `_computed_figures_block_for`.
-                computed_figures_block = _computed_figures_block_for(db_result)
+                # 29.6: the same record set feeds the line check, so an invoice
+                # whose SQL never projected its line columns still gets its
+                # arithmetic done in Python.
+                computed_figures_block = _computed_figures_block_for(
+                    db_result, full_record_set
+                )
                 line_item_total_instruction = (
                     _DETERMINISTIC_TOTALS_INSTRUCTION
                     if computed_figures_block
@@ -6785,14 +7238,23 @@ User Query: {_wrap_user_input(user_message, tenant_id)}
                     # turn never reaches here), so
                     # `countif(zero_result) / count()` over `chat.sql_summary` is
                     # a well-formed rate with no separate denominator to build.
+                    # Feature 29 task 29.5 / decision 2: the narration model is
+                    # chosen by what the prompt CARRIES, not by the route's name.
+                    # A prompt with full records goes to the chat-summary
+                    # deployment (gpt-5-mini, 52.8% vs Luna's 37.1% on exactly
+                    # this evidence shape); a turn that identified no invoice
+                    # keeps `fast_llm` and is bit-identical to before.
+                    summary_llm = (
+                        _chat_summary_llm() if full_record_block else fast_llm
+                    )
                     with tracked_llm_call(
                         "chat.sql_summary",
-                        llm=fast_llm,
+                        llm=summary_llm,
                         tenant_id=tenant_id,
                         zero_result=outcome.zero_result,
                         zero_result_fallback_recovered=outcome.zero_result_fallback_recovered,
                     ):
-                        final_res = _answer_text(fast_llm, summary_prompt, progress)  # A3
+                        final_res = _answer_text(summary_llm, summary_prompt, progress)  # A3
                     # One blank line before the heading, one after -- db_result
                     # itself now starts directly with the table (see
                     # execute_generated_sql's own comment on why the leading
@@ -6808,8 +7270,67 @@ User Query: {_wrap_user_input(user_message, tenant_id)}
                     # deterministically by `execute_generated_sql` and is already
                     # column-hygiened, so it is appended afterwards and left
                     # untouched.
+                    # Feature 29 task 29.9 -- the answer contract. Everything
+                    # above hands the model pre-computed figures; this is the
+                    # only step that checks what it then said. One regeneration
+                    # naming the offending figure, then abstain (decision 3).
+                    gate_prose = final_res.content
+                    gate_outcome = "skipped"
+                    if _answer_gate_enabled():
+                        evidence_numbers = _gate_evidence_numbers(
+                            db_result, computed_figures_block, full_record_block
+                        )
+                        verdict = _answer_contract_gate(gate_prose, evidence_numbers)
+                        gate_outcome = verdict["status"]
+                        if verdict["status"] == "unsupported":
+                            logger.warning(
+                                "29.9 answer contract: %d figure(s) not in the evidence (%s); "
+                                "regenerating once.",
+                                len(verdict["unsupported"]),
+                                ", ".join(str(n) for n in verdict["unsupported"]),
+                            )
+                            try:
+                                with tracked_llm_call(
+                                    "chat.sql_summary_regenerated",
+                                    llm=summary_llm,
+                                    tenant_id=tenant_id,
+                                ):
+                                    retry = _answer_text(
+                                        summary_llm,
+                                        summary_prompt
+                                        + _gate_regeneration_directive(verdict["unsupported"]),
+                                        progress,
+                                    )
+                                gate_prose = retry.content
+                                verdict = _answer_contract_gate(gate_prose, evidence_numbers)
+                                gate_outcome = (
+                                    "regenerated_ok"
+                                    if verdict["status"] == "ok"
+                                    else "regenerated_unsupported"
+                                )
+                            except Exception as e:
+                                # A failed retry must not lose the first answer.
+                                logger.warning("29.9 regeneration failed (non-fatal): %s", e)
+                                gate_outcome = "regeneration_failed"
+                        if verdict["status"] == "unsupported" and gate_outcome != "regeneration_failed":
+                            abstention = _abstain_payload(
+                                missing=[
+                                    f"the figure(s) {', '.join(str(n) for n in verdict['unsupported'])}, "
+                                    "which do not appear in anything I retrieved for this question"
+                                ],
+                                on_file=_abstain_on_file_from(result_invoice_ids, full_record_set),
+                                next_step=(
+                                    "show you the rows I did find so you can see the figures "
+                                    "they actually carry"
+                                ),
+                            )
+                            gate_abstention = abstention
+                            gate_prose = abstention["message"]
+                            gate_outcome = "abstained"
+                            turn.stop_reason = "answer_contract_abstain"
+                    turn.answer_gate = gate_outcome
                     response_text = (
-                        redact_query_internals(final_res.content, tenant_id)
+                        redact_query_internals(gate_prose, tenant_id)
                         + f"\n\n### Query Results\n\n{db_result}"
                     )
                     route_succeeded = True
@@ -6902,6 +7423,26 @@ User Query: {_wrap_user_input(user_message, tenant_id)}
                 )
             citations[:] = [c for c in citations if str(c.get("invoice_id")) in existing_ids]
 
+        # Feature 29 task 29.5. The RAG route knew which invoices its chunks came
+        # from and never looked a single one of them up: it answered questions
+        # about amounts, tax and payment terms from page text alone, with the
+        # structured row -- `taxes`, `subtotal`, `payment_instructions`,
+        # `sa_alerts` -- sitting one primary-key read away. Spec section 2.3
+        # measured the cost of that: wrong/partial evidence was the largest
+        # failure bucket. It also picks up an invoice the user named by number
+        # even when no chunk cited it, which is the `no_evidence` bucket (9 of
+        # 36 golden turns answered "the invoice is not in the provided context").
+        rag_invoice_ids = [
+            str(c["invoice_id"]) for c in citations if c.get("invoice_id")
+        ] + invoice_ids_named_in(user_message, tenant_id, db_session)
+        rag_full_record_block = _full_record_block_for(
+            rag_invoice_ids, tenant_id, db_session
+        )
+        if rag_full_record_block:
+            # Gap 304 half (2): evidence the answer is grounded in must also be
+            # evidence the online quality judge is shown, or a correct figure read
+            # off the row scores unfaithful for having been invisible to the judge.
+            judge_context_parts.append(rag_full_record_block.strip())
 
         system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
@@ -6921,7 +7462,7 @@ when you use one.
 {_INJECTION_GUARD_INSTRUCTION}
 {PROMPT_REQUEST_SECTION_MARKER}
 {context_str}
-
+{rag_full_record_block}
 {tenant_stats}
 {rules_block}{chat_rules_block}
 {style_block}
@@ -6931,10 +7472,13 @@ Conversation History (Short-term context):
         progress("composing_answer", route="RAG")
         try:
             # Feature 23 Phase 1
+            # 29.5 / decision 2, same rule as the SQL route: a prompt carrying
+            # full records narrates on the chat-summary deployment.
+            rag_llm = _chat_summary_llm() if rag_full_record_block else fast_llm
             with tracked_llm_call(
-                "chat.rag_answer", llm=fast_llm, tenant_id=tenant_id, chunk_count=len(chunks)
+                "chat.rag_answer", llm=rag_llm, tenant_id=tenant_id, chunk_count=len(chunks)
             ):
-                res = _answer_text(fast_llm, f"{system_prompt}\nUser Query: {wrapped_user_message}", progress)  # A3
+                res = _answer_text(rag_llm, f"{system_prompt}\nUser Query: {wrapped_user_message}", progress)  # A3
             response_text = res.content
 
             # Append clean formatted citations list to answer text
@@ -6963,6 +7507,23 @@ Conversation History (Short-term context):
             turn.stop_reason = "rag_answer_failed"
             
     elif route != "SQL":  # CHAT -- still the catch-all for anything that is not SQL or RAG
+        # Feature 29 task 29.5. Nine of the 36 golden turns landed here with no
+        # rows at all and answered "the invoice is not in the provided context"
+        # for a question that NAMED the invoice -- the `no_evidence` bucket, and
+        # the single most embarrassing failure shape in the whole set, because
+        # the row was one primary-key read away and the classifier's opinion was
+        # the only thing standing between the user and it. A named invoice is a
+        # deterministic lookup, not a routing decision (hard rule 3): if the
+        # question names one, its full record is evidence on this route too.
+        chat_invoice_ids = invoice_ids_named_in(user_message, tenant_id, db_session)
+        chat_full_record_block = _full_record_block_for(
+            chat_invoice_ids, tenant_id, db_session
+        )
+        if chat_full_record_block:
+            judge_context_parts.append(chat_full_record_block.strip())
+            for invoice_id in chat_invoice_ids:
+                if str(invoice_id) not in result_invoice_ids:
+                    result_invoice_ids.append(str(invoice_id))
         system_prompt = f"""{CHAT_PERSONA_BLOCK}
 
 For THIS step there is no query result and no document context: this turn is ordinary conversation
@@ -6974,6 +7535,7 @@ SCOPE: found live, 2026-08-19 -- asked to "write some code," this route complied
 FORMATTING: Format your answer in Markdown. Use a bullet list when listing multiple items rather than a run-on sentence.
 
 {tenant_stats}
+{chat_full_record_block}
 {style_block}
 {_INJECTION_GUARD_INSTRUCTION}
 Conversation History:
@@ -6981,9 +7543,13 @@ Conversation History:
 """
         progress("composing_answer", route="CHAT")
         try:
+            # 29.5 / decision 2: with full records in the prompt this is no
+            # longer "ordinary conversation" -- it is a grounded answer, and it
+            # narrates on the chat-summary deployment like the other two routes.
+            chat_llm = _chat_summary_llm() if chat_full_record_block else llm
             # Feature 23 Phase 1
-            with tracked_llm_call("chat.conversational", llm=llm, tenant_id=tenant_id):
-                res = llm.invoke(f"{system_prompt}\nUser Message: {wrapped_user_message}")
+            with tracked_llm_call("chat.conversational", llm=chat_llm, tenant_id=tenant_id):
+                res = chat_llm.invoke(f"{system_prompt}\nUser Message: {wrapped_user_message}")
             response_text = res.content
             progress("answer_ready", route="CHAT")
         except Exception as e:
@@ -7064,6 +7630,20 @@ Conversation History:
         "citations": citations,
         "result_invoice_ids": result_invoice_ids[:MAX_SNAPSHOT_INVOICE_IDS],
     }
+    # Feature 29 task 29.9: what each claim can be traced to -- the invoice row,
+    # its number, and the document chunks that were in front of the model. Built
+    # from the same `FullRecordSet` the prompt was built from, so it cannot drift
+    # from what was actually shown.
+    #
+    # **Gap 474**: `routers/chat.py::MessageResponse` does not carry this key
+    # yet, so today it reaches the cache, the telemetry and any in-process caller
+    # but NOT the browser. The gap is filed with a proposed additive fix and
+    # needs a founder go; the key is populated now so that fix is a one-line
+    # schema change rather than a second pass over this file.
+    if full_record_set is not None and getattr(full_record_set, "records", None):
+        result["provenance"] = full_record_set.provenance()
+    if gate_abstention is not None:
+        result["abstention"] = gate_abstention
     # Gap 436: the snapshot is rewritten from what this turn actually returned,
     # before the cache write, so the next turn inherits the subject even when
     # this one is later served from cache.

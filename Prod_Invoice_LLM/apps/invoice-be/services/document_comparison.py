@@ -1603,3 +1603,210 @@ def compare_contract_terms_to_invoice(
         else ("over_charged" if delta > 0 else "under_charged")
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Feature 29 task 29.6 — line arithmetic, computed in Python
+# ---------------------------------------------------------------------------
+#
+# WHY THIS IS NOT THE SAME AS `_computed_figures_block_for()`'s existing
+# reconcile. That one works off the RESULTS TABLE, so it only fires when the
+# generated SQL happened to project `line_qty` / `line_unit_price` /
+# `line_amount`. Rules 6d and 11 discourage exactly that projection on most
+# questions, so on the golden set the line-check cases (`bolts_reconciliation`,
+# `india_ganesh_*`, `eu_benelux_*`) arrived with the invoice's `items` present
+# in the full record and no arithmetic done on them at all -- spec section 2.3's
+# "model forbidden to compute what the question needed" bucket, ~6 of 36 turns.
+#
+# This works off the invoice's own `items` list, which task 29.5 now puts in
+# front of the model on every route, so the check runs whenever the lines exist
+# rather than whenever the SQL was written a particular way.
+#
+# Deterministic (hard rule 3). No LLM decides whether a line reconciles; the
+# model is handed the verdict and quotes it.
+
+#: Half a cent. Rounding to two places is normal and universal in extracted
+#: documents, so a difference at or below this is not a discrepancy -- flagging
+#: it would bury the real ones. Applied to the ABSOLUTE difference, per line.
+LINE_ARITHMETIC_TOLERANCE = Decimal("0.005")
+
+#: How many lines one check will report individually. A 300-line consolidated
+#: invoice's per-line dump is not an answer; past this the counts and the
+#: mismatching lines are still reported in full and the matching ones are not
+#: enumerated. Mismatches are never truncated -- they are the finding.
+MAX_REPORTED_LINES = 40
+
+
+def check_line_arithmetic(
+    items: Any,
+    *,
+    subtotal: Any = None,
+    currency: Optional[str] = None,
+    tolerance: Decimal = LINE_ARITHMETIC_TOLERANCE,
+) -> Dict[str, Any]:
+    """`quantity x unit_price` vs the printed `amount`, per line, plus the
+    subtotal against the sum of the lines.
+
+    Returns a dict rather than a dataclass to match `compare_documents()` and
+    `compute_amount_owed()` next door, both of which are rendered straight into
+    a prompt block and a payload.
+
+        {
+          "status": "ok" | "no_lines",
+          "currency": str | None,
+          "checked": int,          # lines with all three numbers present
+          "skipped": int,          # lines missing a quantity or a unit price
+          "matched": int,
+          "lines": [ {line_number, description, quantity, unit_price,
+                      printed_amount, computed_amount, delta, verdict} ],
+          "mismatches": [ ...the same rows, verdict != "match"... ],
+          "lines_total": Decimal | None,     # sum of the PRINTED amounts
+          "computed_total": Decimal | None,  # sum of qty x price
+          "subtotal": Decimal | None,
+          "subtotal_delta": Decimal | None,
+          "subtotal_verdict": "match" | "over_stated" | "under_stated" | None,
+        }
+
+    Three deliberate positions, each of which has burned this repo before:
+
+      * **A line missing a quantity or a unit price is SKIPPED, not zeroed.**
+        A service line that prints only an amount is normal; treating its
+        missing quantity as 0 would compute 0 and report a mismatch on a
+        perfectly good line. The skip count is returned so an answer can say
+        "12 of 15 lines were checkable" instead of implying all 15 were.
+      * **`skipped` lines are excluded from `computed_total` but INCLUDED in
+        `lines_total`.** The printed amount is real money whether or not it was
+        checkable, so the subtotal comparison has to count it or it would report
+        a false shortfall on every invoice with one service line.
+      * **Exact decimal arithmetic**, via `_to_decimal()`, never float. `Decimal(0.08)`
+        is 0.08000000000000000166..., which is how Gaps 266 and 272 got their
+        garbage digits into rendered figures.
+    """
+    rows = items if isinstance(items, (list, tuple)) else []
+    result: Dict[str, Any] = {
+        "status": "no_lines",
+        "currency": (currency or None),
+        "checked": 0,
+        "skipped": 0,
+        "matched": 0,
+        "lines": [],
+        "mismatches": [],
+        "lines_total": None,
+        "computed_total": None,
+        "subtotal": (lambda v: None if v is None else _money2(v))(_to_decimal(subtotal)),
+        "subtotal_delta": None,
+        "subtotal_verdict": None,
+    }
+    if not rows:
+        return result
+
+    lines_total = Decimal("0")
+    computed_total = Decimal("0")
+    saw_printed = False
+    reported: List[Dict[str, Any]] = []
+
+    for index, raw in enumerate(rows):
+        line = _line_of(raw)
+        quantity = _to_decimal(line.get("quantity"))
+        unit_price = _to_decimal(line.get("unit_price"))
+        printed = _to_decimal(line.get("amount"))
+
+        if printed is not None:
+            printed = _money2(printed)
+            lines_total += printed
+            saw_printed = True
+
+        if quantity is None or unit_price is None or printed is None:
+            result["skipped"] += 1
+            continue
+
+        computed = _money2(quantity * unit_price)
+        computed_total += computed
+        delta = _money2(printed - computed)
+        verdict = (
+            "match"
+            if abs(delta) <= tolerance
+            else ("over_stated" if delta > 0 else "under_stated")
+        )
+        result["checked"] += 1
+        if verdict == "match":
+            result["matched"] += 1
+
+        row = {
+            "line_number": line.get("line_number") if line.get("line_number") is not None else index + 1,
+            "description": line.get("description"),
+            "quantity": quantity,
+            "unit_price": unit_price,
+            "printed_amount": printed,
+            "computed_amount": computed,
+            "delta": delta,
+            "verdict": verdict,
+        }
+        if verdict != "match":
+            result["mismatches"].append(row)
+        reported.append(row)
+
+    result["status"] = "ok" if (result["checked"] or result["skipped"]) else "no_lines"
+    result["lines_total"] = _money2(lines_total) if saw_printed else None
+    result["computed_total"] = _money2(computed_total) if result["checked"] else None
+
+    # Mismatches always survive the cap; matching lines fill what is left.
+    if len(reported) > MAX_REPORTED_LINES:
+        kept = list(result["mismatches"])
+        for row in reported:
+            if len(kept) >= MAX_REPORTED_LINES:
+                break
+            if row["verdict"] == "match":
+                kept.append(row)
+        reported = sorted(kept, key=lambda r: (r["line_number"] is None, r["line_number"]))
+    result["lines"] = reported
+
+    subtotal_value = result["subtotal"]
+    if subtotal_value is not None and result["lines_total"] is not None:
+        delta = _money2(subtotal_value - result["lines_total"])
+        result["subtotal_delta"] = delta
+        result["subtotal_verdict"] = (
+            "match"
+            if abs(delta) <= tolerance
+            else ("over_stated" if delta > 0 else "under_stated")
+        )
+    return result
+
+
+def render_line_arithmetic(check: Dict[str, Any], *, label: str = "") -> str:
+    """One `check_line_arithmetic()` result as prompt text. `""` when nothing
+    was checkable, so a caller can concatenate without guarding."""
+    if not check or check.get("status") != "ok" or not check.get("checked"):
+        return ""
+    currency = (check.get("currency") or "").strip()
+    prefix = f"{currency} " if currency else ""
+    head = f"- line arithmetic{(' for ' + label) if label else ''}: "
+    parts = [
+        f"{head}{check['checked']} line(s) checked, {check['matched']} agree, "
+        f"{len(check['mismatches'])} do not"
+        + (f", {check['skipped']} not checkable (no quantity or unit price)" if check["skipped"] else "")
+        + "."
+    ]
+    for row in check["mismatches"]:
+        parts.append(
+            f"    line {row['line_number']} "
+            f"{(str(row['description'])[:60] + ': ') if row.get('description') else ''}"
+            f"printed {prefix}{row['printed_amount']}, but "
+            f"{row['quantity']} x {prefix}{row['unit_price']} computes to "
+            f"{prefix}{row['computed_amount']} -- {prefix}{abs(row['delta'])} "
+            f"{'over' if row['verdict'] == 'over_stated' else 'under'}-stated."
+        )
+    if check.get("lines_total") is not None:
+        parts.append(f"    sum of the printed line amounts: {prefix}{check['lines_total']}")
+    if check.get("subtotal_verdict"):
+        if check["subtotal_verdict"] == "match":
+            parts.append(
+                f"    the stored subtotal {prefix}{check['subtotal']} equals the sum of the lines."
+            )
+        else:
+            parts.append(
+                f"    the stored subtotal {prefix}{check['subtotal']} does NOT equal the sum of "
+                f"the lines ({prefix}{check['lines_total']}) -- a "
+                f"{prefix}{abs(check['subtotal_delta'])} difference."
+            )
+    return "\n".join(parts)

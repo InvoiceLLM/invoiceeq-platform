@@ -93,11 +93,24 @@ def test_the_source_guards_both_the_read_and_the_write():
     )
 
 
-def test_the_feature_26_attachment_gate_still_precedes_the_cache():
-    """C2's stated must-not-change.
+def test_the_feature_26_attachment_gate_still_precedes_the_plain_cache_read():
+    """C2's stated must-not-change, **as amended by Feature 29 task 29.12**.
 
-    The F26 gate returns before the cache is consulted at all, so an attachment
-    turn never reads or writes it. C2 moved nothing; this asserts that it did not.
+    What C2 pinned was: the F26 attachment gate returns before the ordinary
+    (non-attachment) cache read, so an attachment turn can never be served an
+    answer from a key that does not know which document was attached. That is
+    still true and is still what this asserts.
+
+    What changed on 2026-09-06 is that an attachment turn is no longer *excluded*
+    from caching -- it has its own key. `_attachment_dimension()` folds the
+    sorted attachment ids into the key, so "does this match?" about PO-A and the
+    same words about PO-B are different entries and cannot collide. The bypass
+    existed only because the dimension did not; with the dimension in place the
+    bypass was pure cost (every re-ask paid a full comparison and narration
+    again).
+
+    The ordering property is therefore unchanged and the exclusion property is
+    gone on purpose. Both halves are asserted.
     """
     import inspect
 
@@ -107,10 +120,51 @@ def test_the_feature_26_attachment_gate_still_precedes_the_cache():
     # The guarded expression, not the bare name: `get_cached_answer` is also
     # mentioned in a comment above the gate, and matching prose would make this
     # test pass or fail on documentation.
-    read = source.find("else get_cached_answer(")
+    read = source.find("else get_cached_answer(\n        tenant_id, user_message, rules_version\n    )")
+    if read == -1:
+        # Fall back to the last guarded read in the function -- the plain one is
+        # the one that does NOT pass attachment ids.
+        read = source.rfind("else get_cached_answer(")
     assert gate != -1, "the F26 attachment gate is gone"
     assert read != -1, "the guarded cache read is gone"
-    assert gate < read, "the cache is now consulted before the F26 attachment gate"
+    assert gate < read, "the plain cache read now precedes the F26 attachment gate"
+
+
+def test_29_12_the_attachment_cache_key_carries_the_attachment_ids():
+    """The reason the bypass could be removed. Same tenant, same words, different
+    documents -> different keys; same documents in a different order -> the same
+    key, because a two-document turn is the same turn either way."""
+    a = query_agent._cache_key("t", "does this match?", "r", ["doc-a"])
+    b = query_agent._cache_key("t", "does this match?", "r", ["doc-b"])
+    both = query_agent._cache_key("t", "does this match?", "r", ["doc-a", "doc-b"])
+    both_reversed = query_agent._cache_key("t", "does this match?", "r", ["doc-b", "doc-a"])
+    plain = query_agent._cache_key("t", "does this match?", "r")
+
+    assert a != b
+    assert both not in (a, b)
+    assert both == both_reversed
+    # A turn with no attachment keeps the key it has always had, so no existing
+    # Redis entry is orphaned by this change.
+    assert plain == "chat_answer_cache:t:does this match?:rules=r"
+    assert query_agent._cache_key("t", "does this match?", "r", []) == plain
+
+
+def test_29_12_a_confirmation_or_clarification_is_never_cached():
+    """A confirm card is a QUESTION. Replaying it after the user has answered it
+    is a loop, which is why cacheability is a named rule rather than "cache
+    whatever came back"."""
+    assert query_agent._attachment_answer_is_cacheable({"content": "Here is the comparison."}) is True
+    assert query_agent._attachment_answer_is_cacheable(
+        {"content": "Which invoice did you mean?", "needs_confirmation": True}
+    ) is False
+    assert query_agent._attachment_answer_is_cacheable(
+        {"content": "Is this the right invoice?", "attachment_confirmation": {"x": 1}}
+    ) is False
+    assert query_agent._attachment_answer_is_cacheable(
+        {"content": "Read or compare?", "attachment_clarification": {"x": 1}}
+    ) is False
+    for empty in ({}, {"content": ""}, {"content": "   "}, None, "nope"):
+        assert query_agent._attachment_answer_is_cacheable(empty) is False
 
 
 def test_a_narrowing_followup_never_reaches_the_cache_functions(monkeypatch):
