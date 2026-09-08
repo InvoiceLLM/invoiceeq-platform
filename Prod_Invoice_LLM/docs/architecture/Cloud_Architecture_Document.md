@@ -269,7 +269,7 @@ Non-secret configuration is passed as plain env vars from `params.<env>.json` th
 | `SANDBOX_KEYS_ENABLED`             | `False`             | not declared in bicep → `False` | —                                | Feature 25 sandbox API keys (website mirrors it with `NEXT_PUBLIC_SANDBOX_KEYS_ENABLED`)      |
 | `ALLOW_MOCK_AUTH`                  | `False`             | never declared in bicep       | —                                  | Gap 359 guard: `config.py` refuses to start with `ALLOW_MOCK_AUTH=true` unless `ENVIRONMENT` is a recognised non-production value (default `ENVIRONMENT="production"`) |
 
-**Model-registry variables** (Gaps 465/466, Feature 29; `utils/model_registry.py` roles `primary | fast | judge | chat_summary | long_doc`) — declared on be, worker and every job:
+**Model-registry variables** (Gaps 465/466, Feature 29; `utils/model_registry.py` roles `primary | fast | judge | chat_summary`; `long_doc` removed 2026-09-07, Gap 489) — declared on be, worker and every job:
 
 | Env var                                    | `config.py` default              | Dev Azure          |
 |--------------------------------------------|----------------------------------|--------------------|
@@ -278,7 +278,6 @@ Non-secret configuration is passed as plain env vars from `params.<env>.json` th
 | `AZURE_OPENAI_FAST_DEPLOYMENT_NAME`        | `""` → primary                   | `gpt-5.6-luna`     |
 | `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME`       | `""` → primary                   | `gpt-5-mini`       |
 | `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`| `""` → judge                     | `gpt-5-mini` — bicep/params threading **in progress, uncommitted 2026-09-07**; at `HEAD` the var is not set on the apps and resolves to judge (`gpt-5-mini`) anyway |
-| `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`    | `""` → fast (role inert)         | `""` — same uncommitted threading |
 | `LLM_PROVIDER`                             | `azure`                          | `azure` (hard-coded in bicep) |
 
 > **`NEXT_PUBLIC_*` variables are build-time.** `docker/Dockerfile.fe` and `docker/Dockerfile.website` take `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_WEBSITE_URL` / `NEXT_PUBLIC_FE_URL`, `ENABLE_FE_PROXY` and (website) `FE_INTERNAL_URL` as `ARG`s and fail the build if the publishable key is empty; `deploy-dev.yml` / `deploy-prod.yml` resolve them in a `resolve-fqdns` job (publishable key read from the committed `params.<env>.json`, website URL from `customDomainName`) and pass them as `build_args`. The runtime env copies in `invoice-fe.bicep` / `invoice-website.bicep` are informational only.
@@ -382,7 +381,7 @@ A load test (150 PDFs) is planned to validate this design under real concurrent 
 |--------------------------|------------------------------------------|
 | **Account**              | `openai-<namingPrefix>-<env>` (`openai-invoicellm-dev`), kind `OpenAI`, SKU `S0` (`modules/ai/openai.bicep`) |
 | **Deployments in use (2026-09-07)** | `gpt-5.6-luna` (model version `2026-07-09`, GlobalStandard, `openAiCapacity = 300`) — roles **primary + fast**; `gpt-5-mini` — roles **judge + chat_summary** (pinned so eval scores stay comparable across the Luna migration, Gap 466; the explicit `chat_summary` bicep param is uncommitted Feature 29 phase-2 work as of 2026-09-07 — at `HEAD` the role falls back to judge, same model). `04-ai.bicep` declares one deployment (`azureOpenAiDeploymentName`); additional deployments are created with the standalone `infra/model-deployment.bicep`. API version `2024-10-21` everywhere (Gap 465; replaced `2024-02-15-preview`) |
-| **Also present in the account** | `gpt-5.6-terra` (long_doc candidate; role inert until Feature 29 task 29.10 decides) and `gpt-4o` (retiring; no role points at it; catalog entry kept for historical pricing) — per the `az … deployment list` recorded in the BE tracker on 2026-09-06. `gpt-6-astra` and `gpt-5.6-sol` deployments are **deleted** |
+| **Also present in the account** | `gpt-4o` only — `gpt-5.6-terra` was deleted 2026-09-07 after Feature 29 task 29.10 (Gap 489) (retiring; no role points at it; catalog entry kept for historical pricing) — per the `az … deployment list` recorded in the BE tracker on 2026-09-06. `gpt-6-astra` and `gpt-5.6-sol` deployments are **deleted** |
 | **Removed candidates**   | Ollama (`ca-ollama-eval-dev`, `ollama-eval-only.bicep`) removed 2026-09-01 — no Ollama resource is declared in `infra/`; `LLM_PROVIDER=ollama` remains a local-only code path (`OLLAMA_MODEL` default `llama3.2:latest`) |
 | **Region**               | `eastus2` (same RG)                      |
 | **Access**               | `publicNetworkAccess: Enabled` on dev; private endpoint + `Disabled` only when `networkIsolation=true` |
@@ -1126,7 +1125,7 @@ From the `env:` blocks of `modules/compute/*.bicep` (2026-09-07). "Jobs" = every
 | `AZURE_OPENAI_API_KEY`                     | BE, Worker, Jobs            | KV `AZURE-OPENAI-API-KEY`                  |
 | `AZURE_OPENAI_API_VERSION`                 | BE, Worker, Jobs            | Param `2024-10-21`                         |
 | `AZURE_OPENAI_DEPLOYMENT_NAME`, `..._FAST_...`, `..._JUDGE_...` | BE, Worker, Jobs   | Param (§4.4 model table)                   |
-| `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`, `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` | BE, Worker, Jobs | Param — **in progress, uncommitted 2026-09-07** (not in `HEAD` bicep) |
+| `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME` (`…LONG_DOC…` removed 2026-09-07, Gap 489) | BE, Worker, Jobs | Param — **in progress, uncommitted 2026-09-07** (not in `HEAD` bicep) |
 | `AZURE_DOC_INTEL_ENDPOINT`                 | BE, Worker                  | Param (account endpoint)                   |
 | `AZURE_DOC_INTEL_KEY`                      | BE, Worker                  | KV `AZURE-DOC-INTEL-KEY`                   |
 | `AZURE_DOC_INTEL_ENDPOINT_2/3`, `AZURE_DOC_INTEL_KEY_2/3` | Worker (only if `docIntelInstanceCount >= 2/3`) | KV                  |

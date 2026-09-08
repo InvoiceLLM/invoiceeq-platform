@@ -652,7 +652,7 @@ Custom events `llm_agent_call` (every LLM call, with role/deployment/tokens/cost
 
 ### 7.6 Model Layer — roles and registry (Gaps 465/466, Feature 29)
 
-`utils/model_registry.py` defines `Role = primary | fast | judge | chat_summary | long_doc` and a `MODEL_CATALOG` keyed by deployment-name prefix (longest-prefix match; unknown names fall back to `DEFAULT_SPEC`, 128k context) carrying context window, usable input budget, tokenizer encoding and per-token prices for cost telemetry. `resolve_model(role)` reads the deployment for that role from `config.py`:
+`utils/model_registry.py` defines `Role = primary | fast | judge | chat_summary` (`long_doc` removed 2026-09-07, Gap 489) and a `MODEL_CATALOG` keyed by deployment-name prefix (longest-prefix match; unknown names fall back to `DEFAULT_SPEC`, 128k context) carrying context window, usable input budget, tokenizer encoding and per-token prices for cost telemetry. `resolve_model(role)` reads the deployment for that role from `config.py`:
 
 | Role | Setting | Default (`config.py`) | Dev (`params.dev.json`) | Prod params | Used by |
 |---|---|---|---|---|---|
@@ -660,9 +660,8 @@ Custom events `llm_agent_call` (every LLM call, with role/deployment/tokens/cost
 | `fast` | `AZURE_OPENAI_FAST_DEPLOYMENT_NAME` | "" (= primary) | `gpt-5.6-luna` | — | `classify_query`, short narrations (A2) |
 | `judge` | `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME` | "" (= primary) | `gpt-5-mini` | — | `agent_eval`, `online_quality_judge` |
 | `chat_summary` | `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME` | "" (= judge) | `gpt-5-mini` | "" | full-record narration (§29.5) |
-| `long_doc` | `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` | "" (inert) | "" | "" | reserved for §29.10; `gpt-5.6-terra` is the candidate, not measured |
 
-`utils/llm.py` exposes `build_llm()`, `get_llm()`, `get_llm_for_role()`, `get_chat_summary_llm()`, `get_long_doc_llm()` over providers `azure` / `ollama` (`OLLAMA_MODEL`, local only) / `mock` (tests). Data-plane `AZURE_OPENAI_API_VERSION = "2024-10-21"` is one value threaded through `config.py`, both params files and `modules/compute/invoice-be.bicep`. Retired: `gpt-4o` / `gpt-4o-mini` as deployments (catalog rows kept only so historical events still price), `gpt-6-astra` and `gpt-5.6-sol` (deleted from dev 2026-09-06), api-version `2024-02-15-preview`, the Ollama eval container.
+`utils/llm.py` exposes `build_llm()`, `get_llm()`, `get_llm_for_role()`, `get_chat_summary_llm()` over providers `azure` / `ollama` (`OLLAMA_MODEL`, local only) / `mock` (tests). Data-plane `AZURE_OPENAI_API_VERSION = "2024-10-21"` is one value threaded through `config.py`, both params files and `modules/compute/invoice-be.bicep`. Retired: `gpt-4o` / `gpt-4o-mini` as deployments (catalog rows kept only so historical events still price), `gpt-6-astra` and `gpt-5.6-sol` (deleted from dev 2026-09-06), api-version `2024-02-15-preview`, the Ollama eval container.
 
 ---
 
@@ -1094,7 +1093,7 @@ What actually runs today (2026-09-07): the backend suite (`apps/invoice-be/tests
 | **NOVA / SENTINEL / SAGE / EVOLVE** | Product names for the extraction graph, the verification + auditor layer, the chat agent, and the trainer respectively |
 | **doc_type**             | One of the 14 Feature 27 document types assigned before extraction; the money family (INVOICE, PROFORMA_INVOICE, CREDIT_NOTE, DEBIT_NOTE) lands in `invoice`, everything else in `documents` |
 | **Door**                 | Any intake path that creates ingestion work: manual upload, watcher, connector import, Autopilot, email-in, API key, outbound upload, Trainer upload |
-| **Role (model)**         | `primary` / `fast` / `judge` / `chat_summary` / `long_doc` in `utils/model_registry.py` — a purpose, resolved to an Azure OpenAI deployment per environment |
+| **Role (model)**         | `primary` / `fast` / `judge` / `chat_summary` in `utils/model_registry.py` — a purpose, resolved to an Azure OpenAI deployment per environment |
 | **Plug & Play**          | Feature 25 — tenant API keys with a workflow policy, sandbox tenants, widget tokens and output destinations |
 | **Gap N**                | A numbered defect/decision entry in the per-app feature trackers; every code change is tied to one |
 

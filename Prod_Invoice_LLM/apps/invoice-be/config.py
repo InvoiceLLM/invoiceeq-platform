@@ -299,6 +299,48 @@ class Settings(BaseSettings):
     # positives suppresses correct answers -- if that is ever observed, this is
     # the switch, and the observation belongs in a Gap entry either way.
     ENABLE_ANSWER_CONTRACT_GATE: bool = True
+    # --- Feature 29 phase 2: capability flags -------------------------------
+    #
+    # Every capability added in phase 2 sits behind its own flag, all default
+    # False, for one measurable reason: a live golden run is expensive (the
+    # 2026-09-07 36-case run took 7h39m against the throttled dev endpoint), so
+    # a regression has to be attributable to ONE capability from a single run's
+    # turn records rather than by re-running with things switched off. The
+    # harness writes the active set onto every turn (`capability_flags`), next
+    # to the route it took.
+    #
+    # These are process-wide, never per-tenant, like every other flag here.
+    #
+    # Feature 29 task 29.11 (phase-2 P2.1). `agents/entity_resolver.py::resolve_entities()`
+    # binds the invoice / vendor / attachment a question names, and demotes the keyword
+    # lists in `query_agent.py` to a fallback. OFF means today's keyword routing is the
+    # only path, which is exactly the behaviour before the resolver existed.
+    ENABLE_ENTITY_RESOLVER: bool = False
+    #
+    # Feature 29 task 29.14 (phase-2 P2.2/P2.3). The four semantic views plus `METRICS` /
+    # `query_metric()`; when on, schema linking prefers a metric over raw tables. OFF means
+    # the generated SQL still goes at the base tables. The views themselves are created by
+    # an add-only migration and exist whether or not this is on -- the flag gates *use*,
+    # not existence, so turning it off never leaves a query pointing at a missing view.
+    ENABLE_SEMANTIC_VIEWS: bool = False
+    #
+    # Feature 29 task 29.15 (phase-2 P2.5). Retrieved certified Q->SQL examples replace the
+    # static examples tail in the SQL prompt (Feature 6.1 item C4). OFF keeps the static
+    # tail. Only rows marked certified are ever retrievable, on or off.
+    ENABLE_CERTIFIED_EXAMPLES: bool = False
+    #
+    # Feature 29 task 29.16 (phase-2 P2.6). The `knowledge_{tenant}` collection behind
+    # `lookup_glossary()` / `lookup_rule()` -- what 'total' means here, and the regional
+    # rule cards from task 29.17. OFF means no glossary resolution and no rule card is
+    # ever surfaced; a compliance question falls back to the ordinary routes.
+    ENABLE_KNOWLEDGE_LAYER: bool = False
+    #
+    # Feature 29 task 29.18 (phase-2 P3.6). Cohere rerank-v4 between the bge-m3 retrieval
+    # and the LLM. OFF is the shipped path. This one is additionally gated on a
+    # go/no-go on the Cohere spend and on CP2 showing that RANKING, not retrieval, is
+    # the recall limit -- it must not be flipped on a hunch.
+    ENABLE_RERANK: bool = False
+    # --- end Feature 29 phase 2 capability flags ----------------------------
     # Feature 26 Part 2 (`docs/feature_26_chat_attached_documents.md`, E-1/E-3):
     # let an attached document be asked open-ended questions about its own
     # CONTENT -- "what are the payment terms?", "who signed it?" -- instead of
@@ -504,15 +546,6 @@ class Settings(BaseSettings):
     # environment that never heard of this setting behaves exactly as decision 2
     # requires with no change at all.
     AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME: str = ""
-    # Feature 29 task 29.1 / spec section 11 decision 9. The deployment a LONG
-    # attached document is read on. Context SIZE and context RECALL are different
-    # properties: the 5.6 family is 1,050,000 tokens wide, but Luna's multi-round
-    # coreference recall is ~41% where Terra's is 89%+, and on the pre-fix
-    # attachment probe Terra found 7 of 12 answers to Luna's 4. Empty = same as
-    # AZURE_OPENAI_FAST_DEPLOYMENT_NAME, so the role is INERT until task 29.10
-    # measures the two on `tests/golden_long_doc.json` and the founder's 2-point
-    # rule picks one. Nothing changes behaviour by shipping this setting.
-    AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME: str = ""
     # Gap 465: the two non-OpenAI model choices, previously hardcoded at their
     # single call sites (`queue_worker/handlers.py::_run_ocr` and
     # `chroma_client.py::get_embedding_model`). Changing EMBEDDING_MODEL_NAME

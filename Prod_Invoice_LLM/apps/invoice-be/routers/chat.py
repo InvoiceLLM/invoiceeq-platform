@@ -215,6 +215,28 @@ class MessageResponse(BaseModel):
     reconciliation: dict | None = None
     # Gap 387 (Phase 2.3): two attached documents compared to each other.
     attachment_pair_comparison: dict | None = None
+    # Gap 474 (2026-09-07, founder: "Yes, widen it now"). Feature 29 tasks 29.5 and
+    # 29.9 put both of these on the agent result and this model dropped them, so
+    # provenance reached the cache, the telemetry and any in-process caller but
+    # never the browser -- and 29.9's own spec line says provenance is "attached to
+    # the response for the FE's existing citation rendering".
+    #
+    # `provenance`: per-claim {invoice id, column, chunk id, function} from
+    # `FullRecordSet.provenance()` (agents/query_agent.py, `result["provenance"]`).
+    # `abstention`: `_abstain_payload()`'s decision-3 refusal card --
+    # {status, missing, on_file, next_step, message} -- so the FE can render the
+    # three parts rather than re-parsing the prose, and the probe can assert on
+    # `status` instead of on wording.
+    #
+    # ONLY these two were added. Checked against the agent rather than assumed:
+    # `amount_owed` and `contract_terms` are nested INSIDE the comparison payloads
+    # and already reach the browser through `attachment_comparison` /
+    # `attachment_pair_comparison`; `line_arithmetic` and `abstain_reason` are not
+    # top-level result keys at all (the arithmetic is rendered into the prompt's
+    # computed-figures block). Declaring keys the agent never emits would put a
+    # contract in the FE's hands that the BE does not honour.
+    provenance: list | None = None
+    abstention: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -234,6 +256,11 @@ ATTACHMENT_CONTRACT_KEYS: tuple[str, ...] = (
     "unmatched",
     "reconciliation",
     "attachment_pair_comparison",
+    # Gap 474. Added to BOTH ends by adding them here -- this tuple is what
+    # `extract_attachment_payload()` persists and what `_with_attachment_payload()`
+    # flattens back out, which is exactly why it exists as one tuple.
+    "provenance",
+    "abstention",
 )
 
 

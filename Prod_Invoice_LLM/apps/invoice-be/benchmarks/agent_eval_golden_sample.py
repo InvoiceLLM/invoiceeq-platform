@@ -122,6 +122,17 @@ class GoldenCase:
     #: Assertions that make an answer wrong regardless of what else it gets
     #: right (any hit scores 0.0). Same source file.
     forbidden: tuple[str, ...] = ()
+    #: Feature 29 phase-2 P0.5 (Gap 483). The document(s) this turn is asked
+    #: WITH, by `scripts/attach_chat_eval.py::build_documents()` key -- e.g.
+    #: ("po_apex", "cn_apex"). Empty on every case that asks the database
+    #: alone, which is every case above. One key takes the single-attachment
+    #: branch, two take the pair branch; that distinction is the whole point of
+    #: turns A4 and B5, so it is carried as a tuple and not a single id.
+    attachment_keys: tuple[str, ...] = ()
+    #: The attachment intent the UI would send ("read" / "compare" /
+    #: "reconcile"), or None to let the router classify it. Carried because the
+    #: probe sends it and a turn graded without it is not the same turn.
+    attachment_intent: Optional[str] = None
     #: Gap 307 (2026-08-26): a `services.agent_eval.DriftExpectation`, or None.
     #: None on every case in this file and that is not an oversight — a
     #: standalone question has no earlier turn to have drifted from, so the
@@ -1131,6 +1142,8 @@ def chunks_for_tenant(tenant_id: str) -> list[dict]:
 
 __all__ = [
     "ALL_ROWS",
+    "ATTACHMENT_CASES",
+    "LONG_DOC_CASES",
     "CASES",
     "EU_TENANT_ID",
     "INDIA_TENANT_ID",
@@ -1243,3 +1256,381 @@ def _apply_golden_facts(cases: list) -> list:
 
 
 CASES = _apply_golden_facts(CASES)
+
+
+# ---------------------------------------------------------------------------
+# Feature 29 phase-2 P0.5 (Gap 483) -- the 16-turn attachment probe as golden cases
+# ---------------------------------------------------------------------------
+#
+# `scripts/attach_chat_eval.py` grades these 16 turns with deterministic regexes
+# and is KEPT for ad-hoc use -- it is the only thing that can run them end to end
+# today, because it uploads the eight documents over HTTP and waits for the queue
+# worker to extract them. This block is the same 16 turns expressed as
+# `GoldenCase`s with prose facts, so that one live golden run can cover the
+# attachment branches instead of a separate probe invocation.
+#
+# THEY ARE DELIBERATELY NOT IN `CASES`. Two reasons, both of which would corrupt a
+# number if ignored:
+#   1. Twelve of the sixteen need a document attached. The golden harness has no
+#      document-seeding step yet, so adding them to the default path would run
+#      them with no attachment and fail twelve turns for a reason that has nothing
+#      to do with the model. The CP1 baseline is measured off `CASES`.
+#   2. The four that need no attachment (A8, A9, B6, B7) are ordinary database
+#      questions and could be merged today, but splitting the probe across two
+#      lists would make the drift test below meaningless.
+#
+# The figures are the US benchmark fixtures in `benchmarks/region_seed_fixtures.py`
+# (`US_TENANT_ID`), which is the same data the 2026-09-06 probe ran against:
+# SOS-100442 450.00, BRL-200981 2,386.31, CMC-330217 2,600.00, APS-410093 453.60
+# (subtotal 420.00), RFG-500712 1,590.00 (subtotal 1,500.00, tax 90.00),
+# TSD-620458 10,557.60, IEQ-US-9001 2,500.00 outbound.
+ATTACHMENT_CASES: list[GoldenCase] = [
+    GoldenCase(
+        case_id="attach_a1",
+        question=(
+            "What is this document, who is the vendor, and what is the order total?"
+        ),
+        expected_answer=(
+            "It is a purchase order from Summit Office Supplies with an order total of "
+            "USD 450.00. Naming the PO number and the line items is optional."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A1",
+        why_on_file=(
+            "The simplest read of an attached document: type, party, total. If this "
+            "fails, nothing further on the attachment branch is interpretable."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("po_summit",),
+        attachment_intent="read",
+    ),
+    GoldenCase(
+        case_id="attach_a2",
+        question=(
+            "Which invoice in our system does this PO relate to, and does it match on "
+            "quantity, price and total?"
+        ),
+        expected_answer=(
+            "The PO relates to invoice SOS-100442, and it matches -- same quantity, unit "
+            "price and total (USD 450.00). Reporting a discrepancy is wrong."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A2",
+        why_on_file=(
+            "The clean-match control for the compare branch. A comparison that cannot "
+            "say 'these agree' is as broken as one that cannot find a difference."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("po_summit",),
+        attachment_intent="compare",
+        expected_invoice_numbers=("SOS-100442",),
+    ),
+    GoldenCase(
+        case_id="attach_a3",
+        question=(
+            "Compare this PO with the matching Apex Print Solutions invoice. Any "
+            "discrepancies?"
+        ),
+        expected_answer=(
+            "The PO matches invoice APS-410093 on the goods (subtotal USD 420.00), and the "
+            "answer must surface the difference the PO does not cover -- the invoice's "
+            "USD 453.60 grand total carries USD 33.60 of tax the PO does not show, or the "
+            "USD 20.00 credit-note context. Naming APS-410093 is required."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A3",
+        why_on_file="The discrepancy counterpart to A2, on a real inbound vendor.",
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("po_apex",),
+        attachment_intent="compare",
+        expected_invoice_numbers=("APS-410093",),
+    ),
+    GoldenCase(
+        case_id="attach_a4",
+        question=(
+            "Using the PO and the credit note together: after the credit is applied, what "
+            "do we owe Apex, and does that equal the PO total?"
+        ),
+        expected_answer=(
+            "USD 432.00 -- the PO total of USD 452.00 less the USD 20.00 credit -- and yes, "
+            "that is what is owed. Gap 475: the credit note prints its total as '-$21.60', "
+            "so an answer that subtracts the sign twice and lands on 475.20 is wrong even "
+            "if it also mentions 432."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A4 (Gap 472, Gap 475)",
+        why_on_file=(
+            "Two attachments and a signed money ledger. Failed identically on all three "
+            "models before Gap 472: nobody computed 452 - 20 and the turn fell to the "
+            "clarify card. Gap 475 then found the probe's own regex could pass it on a "
+            "wrong net, which is why the forbidden list here names 475.20 explicitly."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("po_apex", "cn_apex"),
+        attachment_intent="read",
+    ),
+    GoldenCase(
+        case_id="attach_a5",
+        question=(
+            "Check the Titan Steel invoice against this quotation line by line. Which line "
+            "differs and by how much?"
+        ),
+        expected_answer=(
+            "Invoice TSD-620458's steel plates line differs from the quotation. The answer "
+            "must name the invoice, the plates line, and the figure -- the USD 360.00 "
+            "difference (3,510.00 quoted against 3,150.00, or the reverse)."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A5",
+        why_on_file="Line-level comparison against a quotation, not a header total.",
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("qt_titan",),
+        attachment_intent="compare",
+        expected_invoice_numbers=("TSD-620458",),
+    ),
+    GoldenCase(
+        case_id="attach_a6",
+        question=(
+            "Of these two documents, which one has an invoice that matches it exactly and "
+            "which one has a billing discrepancy?"
+        ),
+        expected_answer=(
+            "Summit's document matches its invoice exactly; Titan's has the billing "
+            "discrepancy. Both vendors must be named and assigned to the right side."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A6",
+        why_on_file=(
+            "Two attachments, each compared to its OWN invoice, with opposite verdicts -- "
+            "the pair branch must not collapse them into a doc-to-doc comparison."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("qt_titan", "po_summit"),
+        attachment_intent="compare",
+    ),
+    GoldenCase(
+        case_id="attach_a7",
+        question=(
+            "Reconcile this statement against our records. Which lines do we have invoices "
+            "for and which are missing?"
+        ),
+        expected_answer=(
+            "BRL-200981 is on file; BRL-201044 is not. Both references must be NAMED, not "
+            "counted -- 'one agrees, one has no record' is the failure Gap 470 fixed."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A7 (Gap 470)",
+        why_on_file=(
+            "Failed identically on all three models: the prose gave counts instead of "
+            "identifiers, which is useless to someone reconciling a statement."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("soa_blueridge",),
+        attachment_intent="reconcile",
+    ),
+    GoldenCase(
+        case_id="attach_a8",
+        question=(
+            "What is the combined grand total of invoices BRL-200981 and TSD-620458?"
+        ),
+        expected_answer=(
+            "USD 12,943.91 -- BRL-200981 at USD 2,386.31 plus TSD-620458 at USD 10,557.60."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A8",
+        why_on_file=(
+            "A plain database question asked in the same session as the attachment turns, "
+            "so a session carrying documents is shown not to break ordinary questions."
+        ),
+        tenant_id=US_TENANT_ID,
+        expected_invoice_numbers=("BRL-200981", "TSD-620458"),
+    ),
+    GoldenCase(
+        case_id="attach_a9",
+        question=(
+            "Why was no sales tax charged on the Cascade Manufacturing Co invoice "
+            "CMC-330217?"
+        ),
+        expected_answer=(
+            "Because the customer is tax-exempt -- exemption certificate OR-EX-88231 is on "
+            "the invoice. Any one of: exempt, the certificate number, or the certificate "
+            "itself."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS A9",
+        why_on_file="Plain question; the reason is on the record and must be quoted, not guessed.",
+        tenant_id=US_TENANT_ID,
+        expected_invoice_numbers=("CMC-330217",),
+    ),
+    GoldenCase(
+        case_id="attach_b1",
+        question="What was delivered on this delivery note and against which PO?",
+        expected_answer=(
+            "50 CNC-machined parts, against PO-88342. Quantity, what it was, and the PO "
+            "number are all required."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS B1",
+        why_on_file="Read of a non-invoice document type whose key field is a PO reference.",
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("dn_cascade",),
+        attachment_intent="read",
+    ),
+    GoldenCase(
+        case_id="attach_b2",
+        question=(
+            "Do the delivered quantities match the Cascade Manufacturing invoice CMC-330217?"
+        ),
+        expected_answer=(
+            "Yes -- the delivered quantities match CMC-330217. Reporting a short shipment "
+            "or a mismatch is wrong."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS B2",
+        why_on_file="The clean-match control on the delivery-note branch.",
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("dn_cascade",),
+        attachment_intent="compare",
+        expected_invoice_numbers=("CMC-330217",),
+    ),
+    GoldenCase(
+        case_id="attach_b3",
+        question=(
+            "Which of our outbound invoices does this remittance pay, and is it paid in full?"
+        ),
+        expected_answer=(
+            "It pays outbound invoice IEQ-US-9001, in full -- USD 2,500.00. The invoice "
+            "must be named."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS B3 (Gap 470)",
+        why_on_file=(
+            "Failed identically on all three models: the turn fell to a clarify card and "
+            "then answered in counts. The remittance names the invoice it pays."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("ra_northpoint",),
+        attachment_intent="reconcile",
+        expected_invoice_numbers=("IEQ-US-9001",),
+    ),
+    GoldenCase(
+        case_id="attach_b4",
+        question=(
+            "Per this contract, is the sales tax on Redwood invoice RFG-500712 correct? "
+            "Show the expected figure."
+        ),
+        expected_answer=(
+            "No. The contract's 8.25% on the USD 1,500.00 subtotal is USD 123.75, against "
+            "the USD 90.00 actually invoiced on RFG-500712. The invoice number and the "
+            "123.75 figure are both required."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS B4 (Gap 473)",
+        why_on_file=(
+            "Failed identically on all three models: the contract has no priced lines, its "
+            "text was walled off from the money prompt, and the model may not multiply. "
+            "Gap 473 parses the rate and computes the expected figure in Python."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("ct_redwood",),
+        attachment_intent="compare",
+        expected_invoice_numbers=("RFG-500712",),
+    ),
+    GoldenCase(
+        case_id="attach_b5",
+        question=(
+            "Looking at both documents, which vendor invoice needs follow-up with the "
+            "vendor and why?"
+        ),
+        expected_answer=(
+            "Redwood -- its sales tax is under-charged (USD 90.00 against the USD 123.75 "
+            "the contract's 8.25% requires). Cascade's delivery note reconciles cleanly."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS B5 (task 29.7, Gap 476)",
+        why_on_file=(
+            "Two unrelated attachments, each belonging to a different vendor's invoice. "
+            "Every model compared the two documents to EACH OTHER instead. Gap 476 then "
+            "found task 29.7's own doc-to-doc pattern matched this turn's opening words "
+            "'both documents' and sent it straight back to that branch."
+        ),
+        tenant_id=US_TENANT_ID,
+        attachment_keys=("dn_cascade", "ct_redwood"),
+        attachment_intent="compare",
+    ),
+    GoldenCase(
+        case_id="attach_b6",
+        question="Which inbound invoice has the highest grand total?",
+        expected_answer=(
+            "Titan Steel Distributors' TSD-620458, at USD 10,557.60."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS B6",
+        why_on_file="Plain aggregate in an attachment-carrying session.",
+        tenant_id=US_TENANT_ID,
+        expected_invoice_numbers=("TSD-620458",),
+    ),
+    GoldenCase(
+        case_id="attach_b7",
+        question="List the inbound invoices that carry no PO number.",
+        expected_answer=(
+            "SOS-100442 and APS-410093, and only those two. Naming any of BRL-200981, "
+            "CMC-330217, RFG-500712 or TSD-620458 is wrong -- they all carry a PO."
+        ),
+        source="scripts/attach_chat_eval.py SESSIONS B7",
+        why_on_file=(
+            "A negative filter, where the failure mode is over-inclusion. The forbidden "
+            "list is what makes it gradeable."
+        ),
+        tenant_id=US_TENANT_ID,
+        expected_invoice_numbers=("SOS-100442", "APS-410093"),
+    ),
+]
+
+ATTACHMENT_CASES = _apply_golden_facts(ATTACHMENT_CASES)
+
+
+# ---------------------------------------------------------------------------
+# The long-document cases (Feature 29 task 29.10 / phase-2 P1.5)
+# ---------------------------------------------------------------------------
+def _long_doc_cases() -> list[GoldenCase]:
+    """`tests/golden_long_doc.json` as `GoldenCase`s.
+
+    Loaded from the JSON rather than written out here because that file is itself
+    GENERATED from `benchmarks/long_doc_fixtures.py` -- the figures in the expected
+    answers are derived from the same data that renders the PDFs, and re-typing them
+    into this module would reintroduce exactly the transcription drift that
+    generation exists to prevent.
+
+    A missing or malformed file yields an empty list rather than raising: these five
+    cases are additive, and a golden run must not be prevented from measuring the
+    other fifty-two by a problem with them.
+    """
+    import json
+    import os
+
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tests", "golden_long_doc.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for spec in doc.get("cases") or []:
+        out.append(
+            GoldenCase(
+                case_id=spec["case_id"],
+                question=spec["question"],
+                expected_answer=spec["expected_answer"],
+                source="tests/golden_long_doc.json (generated from benchmarks/long_doc_fixtures.py)",
+                why_on_file=spec["why_on_file"],
+                tenant_id=US_TENANT_ID,
+                attachment_keys=tuple(spec.get("attachment_keys") or ()),
+                attachment_intent=spec.get("attachment_intent"),
+                required_facts=tuple(spec.get("required") or ()),
+                forbidden=tuple(spec.get("forbidden") or ()),
+            )
+        )
+    return out
+
+
+LONG_DOC_CASES: list[GoldenCase] = _long_doc_cases()
+
+# Gap 483 (founder, 2026-09-07: "Fixture loader in the harness"). The attachment and
+# long-document cases now run in the DEFAULT golden set, because
+# `run_agent_eval.py::seed_case_attachments()` can seed their documents through the
+# product's own extraction pipeline. Until that existed they were held back
+# deliberately -- twelve of them would have run with no attachment and failed for a
+# reason that had nothing to do with the model, on the very run CP1's baseline is
+# measured from.
+#
+# They stay addressable under their own names so the drift guard in
+# `tests/test_attachment_golden_cases.py` can still compare them turn for turn
+# against `scripts/attach_chat_eval.py`.
+CASES.extend(ATTACHMENT_CASES)
+CASES.extend(LONG_DOC_CASES)

@@ -327,29 +327,3 @@ def get_chat_summary_llm(max_tokens: int | None = None):
         )
         return get_llm(max_tokens=max_tokens)
 
-
-def get_long_doc_llm(max_tokens: int | None = None):
-    """Feature 29 task 29.1 — the model a LONG attached document is read on.
-
-    Resolution order is `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` → the **fast**
-    deployment → the primary, so with the variable unset this returns exactly
-    what `_fast_llm()` returns and the role costs nothing until it is chosen.
-
-    The role exists because context size and context recall are different
-    properties (`CatalogEntry.recall_note`): the GPT-5.6 family is 1,050,000
-    tokens wide, and Luna still loses a clause in the middle of a long contract
-    where Terra does not (MRCR ~41% vs 89%+). Task 29.10 decides it on
-    `tests/golden_long_doc.json` by the founder's 2-point rule; until then this
-    is a named seam, not a behaviour change.
-
-    Fail-soft like `_fast_llm()`: a narration call that raises is a dead chat
-    turn.
-    """
-    try:
-        return get_llm_for_role("long_doc", max_tokens=max_tokens)
-    except Exception:  # pragma: no cover - never fail a turn over a deployment name
-        logger.warning(
-            "Could not build the long-doc deployment; falling back to the default.",
-            exc_info=True,
-        )
-        return get_llm(max_tokens=max_tokens)

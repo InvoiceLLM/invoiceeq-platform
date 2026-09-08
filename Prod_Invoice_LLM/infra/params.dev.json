@@ -65,6 +65,24 @@
     "azureOpenAiJudgeDeploymentName": {
       "value": "gpt-5-mini"
     },
+    "azureOpenAiChatSummaryDeploymentName": {
+      "value": "gpt-5-mini"
+    },
+    "enableEntityResolver": {
+      "value": false
+    },
+    "enableSemanticViews": {
+      "value": false
+    },
+    "enableCertifiedExamples": {
+      "value": false
+    },
+    "enableKnowledgeLayer": {
+      "value": false
+    },
+    "enableRerank": {
+      "value": false
+    },
     "azureOpenAiModelVersion": {
       "value": "2026-07-09"
     },

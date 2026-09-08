@@ -34,7 +34,12 @@ from typing import Any, Optional
 
 from benchmarks.extraction.documents import CLEAN_DOCUMENTS
 from benchmarks.extraction.harness import BenchmarkResult
-from benchmarks.extraction.metrics import build_confusion, field_accuracy, recall_by_alert_type
+from benchmarks.extraction.metrics import (
+    build_confusion,
+    field_accuracy,
+    field_accuracy_by_field,
+    recall_by_alert_type,
+)
 from benchmarks.extraction.mutations import (
     MUTATION_ABS_FLOOR,
     MUTATION_REL,
@@ -257,6 +262,11 @@ def summarise(result: BenchmarkResult) -> dict[str, Any]:
         "seeded_cases": len(result.seeded_outcomes),
         "confusion_matrix": matrix.as_dict(),
         "recall_by_alert_type": recall_by_alert_type(result.seeded_outcomes),
+        # Gap 485: per-field accuracy, so the composite below is actionable.
+        # Composite stays the headline; this says which field earned it.
+        "field_accuracy_by_field": field_accuracy_by_field(
+            [c for o in result.clean_outcomes for c in o.comparisons]
+        ),
         "field_accuracy": {
             "correct": correct,
             "total": total,
@@ -336,6 +346,19 @@ def render_run_markdown(summary: dict[str, Any], result: BenchmarkResult) -> str
     if fa["total"]:
         add(f"**{fa['correct']}/{fa['total']} fields correct = {pct(fa['ratio'])}**")
         add("")
+        # Gap 485. Worst-first, because the ordering IS the recommendation; ties
+        # broken by sample size so a 0/1 field does not outrank a 12/40 one.
+        by_field = summary.get("field_accuracy_by_field") or {}
+        if by_field:
+            add("### Accuracy per field (every ground-truth field, worst first)")
+            add("")
+            add("| Field | Correct | Total | Accuracy |")
+            add("|---|---|---|---|")
+            for name, b in sorted(
+                by_field.items(), key=lambda kv: (kv[1]["ratio"], -kv[1]["total"], kv[0])
+            ):
+                add(f"| `{name}` | {b['correct']} | {b['total']} | {pct(b['ratio'])} |")
+            add("")
         add("| Document | Correct | Total | Wrong fields |")
         add("|---|---|---|---|")
         for outcome in result.clean_outcomes:

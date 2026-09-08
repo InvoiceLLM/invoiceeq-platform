@@ -182,6 +182,18 @@ def main() -> int:
         fa = summary["field_accuracy"]
         if fa["total"]:
             print(f"  field accuracy ............ {fa['correct']}/{fa['total']} = {pct(fa['ratio'])}")
+            # Gap 485: the composite is the headline; these say which field earned
+            # it. Worst first -- that ordering is the recommendation.
+            by_field = summary.get("field_accuracy_by_field") or {}
+            if by_field:
+                print("  per field (worst first):")
+                for name, b in sorted(
+                    by_field.items(),
+                    key=lambda kv: (kv[1]["ratio"], -kv[1]["total"], kv[0]),
+                ):
+                    print(
+                        f"    {name:<28} {b['correct']:>4}/{b['total']:<4} = {pct(b['ratio'])}"
+                    )
         for entry in summary["missed_cases"]:
             print(f"  MISSED {entry['case_id']}: expected {entry['expected']}, fired {entry['fired']}")
         for entry in summary["false_positive_documents"]:

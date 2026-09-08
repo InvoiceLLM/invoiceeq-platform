@@ -1,0 +1,97 @@
+{
+  "_schema": "Feature 29 task 29.10 / phase-2 P1.5. Five golden cases on the attachment branches, over the multi-page fixtures in benchmarks/long_doc_fixtures.py. `required` / `forbidden` are prose facts graded by the same checklist judge as benchmarks/agent_eval_golden_facts.json (Gap 479). Every expected figure is DERIVED from the fixture module, never transcribed - regenerate this file with the generator rather than hand-editing a number.",
+  "_generated_from": "benchmarks/long_doc_fixtures.py",
+  "_founder_spot_check": "OWED. The fixture figures are authored by the build session, not taken from real documents, and task 29.10's Terra-vs-Luna role decision rests on them.",
+  "cases": [
+    {
+      "case_id": "long_doc_contract_late_fee",
+      "attachment_keys": [
+        "lc_contract"
+      ],
+      "attachment_intent": "read",
+      "question": "Per this agreement, what interest do we owe on an overdue invoice, and which clause says so?",
+      "expected_answer": "1.5% per month, under clause 27.4. The 2.0% in clause 12.1 is a prompt-payment DISCOUNT, not the overdue interest rate.",
+      "required": [
+        "States the overdue interest as 1.5% per month.",
+        "Attributes it to clause 27.4."
+      ],
+      "forbidden": [
+        "States the overdue interest as 2.0% (that is clause 12.1's prompt-payment discount).",
+        "States that the agreement does not specify an interest rate on overdue amounts."
+      ],
+      "why_on_file": "The rate sits in clause 27.4 of a four-page agreement, with a decoy percentage in clause 12.1 earlier in the document. A model that grabs the first percentage it sees answers 2.0%. This is the long-context recall case."
+    },
+    {
+      "case_id": "long_doc_statement_unmatched_line",
+      "attachment_keys": [
+        "lc_statement"
+      ],
+      "attachment_intent": "reconcile",
+      "question": "Reconcile this 70-line statement against our records. Which line has no invoice on file?",
+      "expected_answer": "BRL-201062 (USD 2,788.30) is the line with no invoice on file. It must be named, not counted.",
+      "required": [
+        "Names BRL-201062 as the statement line with no invoice on file."
+      ],
+      "forbidden": [
+        "Reports only a count of unmatched lines without naming the reference.",
+        "Names a different invoice as the unmatched one."
+      ],
+      "why_on_file": "Line 62 of 70, on the last page. Gap 470's 'name every reference' rule, asked at a length where the model has to actually retain the page."
+    },
+    {
+      "case_id": "long_doc_po_outlier_line",
+      "attachment_keys": [
+        "lc_po_alpha"
+      ],
+      "attachment_intent": "read",
+      "question": "On this 60-line purchase order, is any line priced out of step with the rest? Give the line number and its unit price.",
+      "expected_answer": "Line 47, at USD 212.75 per unit against a range of 18.40 to 28.40 on every other line.",
+      "required": [
+        "Identifies line 47 as the out-of-step line.",
+        "States its unit price as USD 212.75."
+      ],
+      "forbidden": [
+        "States that every line is consistently priced.",
+        "Identifies a line other than 47 as the outlier."
+      ],
+      "why_on_file": "Requires scanning all 60 lines across three pages and comparing them, not reading a header. The outlier is an order of magnitude above its neighbours."
+    },
+    {
+      "case_id": "long_doc_po_delivery_term",
+      "attachment_keys": [
+        "lc_po_beta"
+      ],
+      "attachment_intent": "read",
+      "question": "Does this purchase order allow us to ship it in parts?",
+      "expected_answer": "No. The order states that partial shipments are not permitted. The term is in the footer, after all 55 line items.",
+      "required": [
+        "States that partial shipments are not permitted under this order."
+      ],
+      "forbidden": [
+        "States that partial shipments are permitted.",
+        "States that the order is silent on partial shipments."
+      ],
+      "why_on_file": "The decisive term is one line at the very end, after 55 rows of line items - the position a model summarising the table will skip."
+    },
+    {
+      "case_id": "long_doc_delivery_shortfall",
+      "attachment_keys": [
+        "lc_delivery_note"
+      ],
+      "attachment_intent": "compare",
+      "question": "On this delivery note, were all 70 lines delivered in full? Name any line that was short.",
+      "expected_answer": "No - 3 lines were short by 3 units each: lines 11, 29, 63. All three must be named.",
+      "required": [
+        "States that not all lines were delivered in full.",
+        "Names line 11 as short-shipped.",
+        "Names line 29 as short-shipped.",
+        "Names line 63 as short-shipped."
+      ],
+      "forbidden": [
+        "States that every line was delivered in full.",
+        "Reports only a count of short lines without naming them."
+      ],
+      "why_on_file": "Three shortfalls scattered across 70 lines and three pages, the last at line 63. Finding one or two of three is the realistic partial-recall failure."
+    }
+  ]
+}

@@ -78,34 +78,25 @@ def test_recall_is_recorded_separately_from_context_size():
     on the catalog entry, next to the size, so the two are read together."""
     luna = reg.recall_note_for("gpt-5.6-luna")
     terra = reg.recall_note_for("gpt-5.6-terra")
-    assert "41%" in luna and "long_doc" in luna
+    assert "41%" in luna and "3/3" in luna
     assert "89%" in terra
     # Not every model carries one; the helper is safe on the ones that do not.
     assert reg.recall_note_for("gpt-5-mini") == ""
     assert reg.recall_note_for("never-heard-of-it") == ""
 
 
-def test_long_doc_role_falls_back_to_fast_so_it_is_inert_until_29_10():
-    """Decision 9: Terra is kept but the role is not chosen yet. With
-    `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` unset the role must resolve to
-    exactly what `_fast_llm()` resolves to, so shipping the seam changes nothing."""
+def test_there_is_no_long_doc_role_after_29_10():
+    """Task 29.10 / Gap 489 (2026-09-07). Luna and Terra both scored 3/3 on the
+    five long-document golden cases, so the 2-point rule kept Luna for everything,
+    Terra's deployment was deleted, and the inert `long_doc` role and its
+    `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` setting were removed rather than left
+    as one more variable nobody sets. This pins the removal."""
+    from typing import get_args
+    from config import Settings
 
-    class _S:
-        LLM_PROVIDER = "azure"
-        AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-5.6-luna"
-        AZURE_OPENAI_FAST_DEPLOYMENT_NAME = "gpt-5.6-luna"
-        AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME = "gpt-5-mini"
-        AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME = ""
-        AZURE_OPENAI_API_VERSION = "2024-10-21"
-
-    settings = _S()
-    assert reg.resolve_model("long_doc", settings).deployment == "gpt-5.6-luna"
-    assert reg.resolve_model("long_doc", settings).deployment == reg.resolve_model("fast", settings).deployment
-
-    settings.AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME = "gpt-5.6-terra"
-    spec = reg.resolve_model("long_doc", settings)
-    assert spec.deployment == "gpt-5.6-terra"
-    assert spec.context_limit == 1_050_000
+    assert "long_doc" not in get_args(reg.Role)
+    assert "AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME" not in Settings.model_fields
+    assert set(get_args(reg.Role)) == {"primary", "fast", "judge", "chat_summary"}
 
 
 def test_chat_summary_role_prefers_the_judge_deployment_over_the_primary():

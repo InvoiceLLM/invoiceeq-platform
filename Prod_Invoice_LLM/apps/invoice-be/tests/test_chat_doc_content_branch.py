@@ -202,8 +202,17 @@ def _run(db_session, attachment, message, *, llm=None, spans=_SPANS, turn=None, 
         "services.chat_document_search.search_attachment_chunks", return_value=spans
     ) as search, patch.object(qa, "classify_query") as classify, patch.object(
         qa, "get_llm", autospec=True
-    ) as get_llm, patch.object(qa, "tracked_llm_call"):
+    ) as get_llm, patch.object(
+        # Gap 477 (2026-09-07). Gap 471's fix, one file over: `_fast_llm()` and
+        # `_chat_summary_llm()` only return `get_llm()` when their deployment
+        # setting is blank, and `.env` sets AZURE_OPENAI_FAST_DEPLOYMENT_NAME, so
+        # they take the `build_llm("azure", model=...)` branch. Unpatched, these
+        # tests made a real paid Azure call and the capturing double never saw
+        # the prompt they assert on.
+        qa, "build_llm", autospec=True
+    ) as build_llm, patch.object(qa, "tracked_llm_call"):
         get_llm.return_value = llm
+        build_llm.return_value = llm
         result = qa._run_query_agent(
             session_id=str(attachment.session_id),
             user_message=message,
@@ -899,7 +908,25 @@ def test_flag_off_the_answer_turn_is_part_1s_comparison_whatever_the_question_as
         run = _run(db_session, attachment, "what are the payment terms?")
 
     compare.assert_called_once()
-    run.search.assert_not_called()
+    # RE-BASELINED 2026-09-07 (Gap 477, founder: "re-baseline the 38").
+    # Was: `run.search.assert_not_called()` -- with the content-branch flag off,
+    # nothing was supposed to read the attachment's chunks at all. **Gap 473**
+    # then made the comparison itself read them, on purpose: a CONTRACT carries
+    # its rates in prose ("sales tax at 8.25%") and nowhere else, so the tax
+    # check has to fetch that span to compute an expected figure in Python.
+    # The call below is that fetch, and its query is the giveaway -- a fixed
+    # terms vocabulary, not the user's question.
+    #
+    # What this test protects is unchanged and still asserted: the flag-off turn
+    # is Part 1's COMPARISON, not the content branch. `evidence` (the content
+    # branch's output) must still be absent.
+    assert run.search.call_count == 1
+    terms_query = run.search.call_args[0][2]
+    assert "sales tax" in terms_query and "payment terms" in terms_query, terms_query
+    assert "what are the payment terms?" != terms_query, (
+        "the search used the USER's question, so this is the content branch, "
+        "not Gap 473's contract-terms lookup"
+    )
     assert "attachment_comparison" in run.result
     assert "evidence" not in run.result
     assert run.result["result_invoice_ids"] == [str(inv.id)]
@@ -1043,9 +1070,18 @@ def test_v30_neither_match_still_clarifies_for_every_family_including_advisory()
     never rescues a question we failed to recognise at all."""
     import agents.query_agent as qa
 
-    for doc_type in ("INVOICE", "DELIVERY_NOTE", "CONTRACT", "STATEMENT_OF_ACCOUNT",
-                     "REMITTANCE_ADVICE", "ORDER_CONFIRMATION", "RECEIPT", "OTHER"):
+    # RE-BASELINED 2026-09-07 (Gap 477, founder: "re-baseline the 38").
+    # Was: every doc type had to fall to "clarify" on an unrecognised question.
+    # Gap 470 deliberately changed that for the two ADVISORY types -- a statement
+    # of account and a remittance advice exist to be reconciled, and defaulting
+    # them to a clarify card is what made probe turns A7 and B3 fail on all three
+    # models. The rule this test protects is unchanged and still asserted below:
+    # an unrecognised question is never rescued into "content" or "compare".
+    for doc_type in ("INVOICE", "DELIVERY_NOTE", "CONTRACT",
+                     "ORDER_CONFIRMATION", "RECEIPT", "OTHER"):
         assert qa._classify_attachment_intent("hello there", doc_type) == "clarify", doc_type
+    for doc_type in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+        assert qa._classify_attachment_intent("hello there", doc_type) == "reconcile", doc_type
 
 
 def test_v30_the_intent_split_still_makes_no_llm_call():

@@ -386,5 +386,172 @@
       "Reports the printed amount as being too HIGH / higher than qty x rate."
     ],
     "notes": "Stating the EUR 180.00 difference explicitly, and the subtotal/VAT/total consistency, are optional."
+  },
+  "attach_a1": {
+    "required": [
+      "Identifies the document as a purchase order.",
+      "Names Summit Office Supplies as the vendor.",
+      "States the order total as USD 450.00."
+    ],
+    "forbidden": [
+      "States an order total other than USD 450.00."
+    ],
+    "notes": "The PO number and the line items are optional."
+  },
+  "attach_a2": {
+    "required": [
+      "Names invoice SOS-100442 as the related invoice.",
+      "States that the PO and the invoice agree / match on quantity, price and total."
+    ],
+    "forbidden": [
+      "Reports a mismatch or discrepancy between the PO and SOS-100442."
+    ],
+    "notes": "The USD 450.00 figure may be quoted but is not required."
+  },
+  "attach_a3": {
+    "required": [
+      "Names invoice APS-410093 as the matching invoice.",
+      "Surfaces the difference between the PO and the invoice -- the USD 33.60 tax on top of the USD 420.00 subtotal, the USD 453.60 grand total, or the USD 20.00 credit."
+    ],
+    "forbidden": [
+      "States that the PO and APS-410093 agree in every respect with no difference at all."
+    ],
+    "notes": "Any one of the differing figures is enough; the point is that a difference is reported."
+  },
+  "attach_a4": {
+    "required": [
+      "States the amount owed to Apex after the credit as USD 432.00.",
+      "Confirms that USD 432.00 equals the PO total."
+    ],
+    "forbidden": [
+      "States the amount owed as USD 475.20 (the double-signed credit -- Gap 475).",
+      "States an amount owed other than USD 432.00."
+    ],
+    "notes": "The arithmetic 452.00 - 20.00 may be shown but is not required. Gap 475: the credit note prints '-$21.60', so the sign must be taken once, not twice."
+  },
+  "attach_a5": {
+    "required": [
+      "Names invoice TSD-620458.",
+      "Identifies the steel plates line as the one that differs.",
+      "Gives the difference figure -- USD 360.00, or the 3,510.00 against 3,150.00 pair."
+    ],
+    "forbidden": [
+      "States that every line agrees."
+    ],
+    "notes": "Either direction of the 3,510 / 3,150 comparison is acceptable."
+  },
+  "attach_a6": {
+    "required": [
+      "Says Summit's document is the one whose invoice matches exactly.",
+      "Says Titan's document is the one with the billing discrepancy."
+    ],
+    "forbidden": [
+      "Assigns the discrepancy to Summit or the exact match to Titan.",
+      "Compares the two attached documents to each other instead of each to its own invoice."
+    ],
+    "notes": ""
+  },
+  "attach_a7": {
+    "required": [
+      "Names BRL-200981 as a statement line we have an invoice for.",
+      "Names BRL-201044 as the line that is missing / has no invoice on file."
+    ],
+    "forbidden": [
+      "Reports only counts (e.g. 'one agrees, one has no record') without naming the references."
+    ],
+    "notes": "Gap 470: every reference must be named, not counted."
+  },
+  "attach_a8": {
+    "required": [
+      "States the combined grand total as USD 12,943.91."
+    ],
+    "forbidden": [
+      "States a combined total other than USD 12,943.91."
+    ],
+    "notes": "The components USD 2,386.31 and USD 10,557.60 may be shown but are not required."
+  },
+  "attach_a9": {
+    "required": [
+      "States that no sales tax was charged because the customer is tax-exempt (naming the exemption, the certificate, or certificate number OR-EX-88231)."
+    ],
+    "forbidden": [
+      "Attributes the zero tax to a zero rate, an error, or a missing figure rather than an exemption."
+    ],
+    "notes": ""
+  },
+  "attach_b1": {
+    "required": [
+      "States that 50 units were delivered.",
+      "Identifies the goods as CNC-machined parts.",
+      "Names PO-88342 as the PO it was delivered against."
+    ],
+    "forbidden": [
+      "States a delivered quantity other than 50."
+    ],
+    "notes": ""
+  },
+  "attach_b2": {
+    "required": [
+      "Names invoice CMC-330217.",
+      "States that the delivered quantities match / agree with the invoice."
+    ],
+    "forbidden": [
+      "Reports a short shipment or a quantity mismatch against CMC-330217."
+    ],
+    "notes": ""
+  },
+  "attach_b3": {
+    "required": [
+      "Names outbound invoice IEQ-US-9001 as the one the remittance pays.",
+      "States that it is paid in full (or gives the full USD 2,500.00)."
+    ],
+    "forbidden": [
+      "Asks a clarifying question instead of answering, when the remittance names the invoice.",
+      "Reports only counts without naming the invoice."
+    ],
+    "notes": "Gap 470."
+  },
+  "attach_b4": {
+    "required": [
+      "Names invoice RFG-500712.",
+      "States the expected sales tax as USD 123.75.",
+      "States that the invoiced tax is wrong / under-charged (or gives the USD 90.00 actually invoiced)."
+    ],
+    "forbidden": [
+      "States that the sales tax on RFG-500712 is correct.",
+      "States an expected tax figure other than USD 123.75."
+    ],
+    "notes": "Gap 473: 8.25% of USD 1,500.00 = USD 123.75, computed in Python, not by the model."
+  },
+  "attach_b5": {
+    "required": [
+      "Names Redwood as the vendor needing follow-up.",
+      "Gives the reason as the sales tax -- under-charged, USD 90.00 against USD 123.75."
+    ],
+    "forbidden": [
+      "Names Cascade as the vendor needing follow-up.",
+      "Compares the delivery note and the contract to each other instead of each to its own invoice."
+    ],
+    "notes": "Task 29.7 / Gap 476. The opening words 'both documents' must not route this to the doc-to-doc branch."
+  },
+  "attach_b6": {
+    "required": [
+      "Names TSD-620458 (or Titan Steel Distributors) as the highest-grand-total inbound invoice.",
+      "States the grand total as USD 10,557.60."
+    ],
+    "forbidden": [
+      "Names a different invoice as the highest."
+    ],
+    "notes": ""
+  },
+  "attach_b7": {
+    "required": [
+      "Names SOS-100442 as an inbound invoice with no PO number.",
+      "Names APS-410093 as an inbound invoice with no PO number."
+    ],
+    "forbidden": [
+      "Includes BRL-200981, CMC-330217, RFG-500712 or TSD-620458 in the list -- all four carry a PO."
+    ],
+    "notes": "The failure mode here is over-inclusion, which is what the forbidden line grades."
   }
 }

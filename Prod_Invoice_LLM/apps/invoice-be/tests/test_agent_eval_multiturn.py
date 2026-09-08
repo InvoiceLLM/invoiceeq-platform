@@ -337,7 +337,12 @@ def test_the_tier_is_additive_the_single_turn_bank_is_untouched():
 
     # 35 at Gap 307; +1 on 2026-09-03 for Feature 6.1 C3's `zero_result_typo_vendor`
     # (a misspelt vendor must become a proposal, never a figure or a flat "none").
-    assert len(CASES) == 36
+    # Gap 483 (2026-09-07): 36 -> 57. Feature 29 added 16 attachment cases and 5
+    # long-document cases to the single-turn bank once the harness could seed their
+    # documents. The rule this test protects is that the MULTI-TURN tier is additive
+    # and does not touch the single-turn bank, which is asserted below; the count is
+    # here so a change to the bank has to be looked at once.
+    assert len(CASES) == 57
     assert not (single_turn_ids & drift_ids)
     assert all(getattr(case, "drift", None) is None for case in CASES)
 

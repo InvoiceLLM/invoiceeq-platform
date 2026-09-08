@@ -462,7 +462,22 @@ def test_the_default_chat_route_reuses_these_two_functions():
             elif isinstance(func, ast.Attribute):
                 called.add(func.attr)
 
-    assert "get_full_record" in called
+    # RE-BASELINED 2026-09-07 (Gap 477, founder: "re-baseline the 38").
+    # Was `assert "get_full_record" in called`. Feature 29 task 29.5 replaced that
+    # single-invoice helper with `fetch_full_records()` / `FullRecordSet` in
+    # `services/full_records.py`, which fetches up to the decision-1 cap of 25 in
+    # one call and carries provenance. The old name is genuinely gone; asserting it
+    # was asserting the absence of 29.5.
+    #
+    # The RULE this test exists for is unchanged, and is what is asserted now: the
+    # chat route must REUSE the shared record fetch and the shared summation rather
+    # than reimplement either. Two copies of one tenant check is how a bypass path
+    # gets built by accident, and two copies of one summation is how an arithmetic
+    # rule drifts.
+    assert "fetch_full_records" in called, (
+        "the chat route no longer calls the shared full-record fetch -- if it now "
+        "builds records inline, the tenant scoping and provenance live in two places"
+    )
     assert "compute" in called
     # And nothing that plans, generates SQL or loops came back with them.
     for gone in ("identify_invoices", "search_invoices", "aggregate",

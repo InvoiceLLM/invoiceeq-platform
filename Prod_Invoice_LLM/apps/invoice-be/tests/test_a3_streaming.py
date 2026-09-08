@@ -186,11 +186,27 @@ def test_exactly_the_four_phrasing_sites_stream_and_generation_does_not():
     import inspect
 
     src = inspect.getsource(query_agent)
-    # Three since Gap 387 (Phase 2.3): compare, content, and the attachment-pair
-    # narration -- all three phrase a table Python already computed.
-    assert src.count("_answer_text(llm, system_prompt, progress)") == 3, "the three F26 narrations"
-    assert "_answer_text(fast_llm, summary_prompt, progress)" in src, "chat.sql_summary"
-    assert '_answer_text(fast_llm, f"{system_prompt}\\nUser Query: {wrapped_user_message}", progress)' in src, "chat.rag_answer"
+    # RE-BASELINED 2026-09-07 (Gap 477, founder: "re-baseline the 38"): 3 -> 4.
+    # Was three since Gap 387 (compare, content, attachment-pair). Feature 29 task
+    # 29.5 added a fourth -- the full-record narration on the SQL/RAG route -- and
+    # it belongs in this set for exactly the reason the set exists: like the other
+    # three, it phrases a table Python has already computed, so it may stream.
+    #
+    # The invariant this test protects is not the number, it is that SQL GENERATION
+    # never streams (asserted below). The count is here so a new narration site has
+    # to be looked at once rather than appearing silently.
+    assert src.count("_answer_text(llm, system_prompt, progress)") == 4, (
+        "the four narration sites: compare, content, attachment-pair, and 29.5's "
+        "full-record summary -- all four phrase a table Python already computed"
+    )
+    # RE-BASELINED 2026-09-07 (Gap 477). Both sites still stream; the LLM BINDING was
+    # renamed by Feature 29 task 29.5, which split the summary model out of the fast
+    # one (decision 2: gpt-5-mini narrates the full-record route, Luna keeps the
+    # attachment branches). `fast_llm` -> `summary_llm` on the SQL summary and
+    # `rag_llm` on the RAG answer. Asserting the old names asserted the absence of
+    # that split, not a streaming property.
+    assert "_answer_text(summary_llm, summary_prompt, progress)" in src, "chat.sql_summary"
+    assert '_answer_text(rag_llm, f"{system_prompt}\\nUser Query: {wrapped_user_message}", progress)' in src, "chat.rag_answer"
     # SQL generation is structured output and must never go through here.
     loop_src = inspect.getsource(query_agent.run_sql_generation_loop)
     assert "_answer_text(" not in loop_src

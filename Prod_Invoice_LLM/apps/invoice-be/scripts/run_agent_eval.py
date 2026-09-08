@@ -585,6 +585,173 @@ def _split_appended_blocks(content: str) -> tuple[str, str]:
     return prose.strip(), "\n\n".join(appended)
 
 
+#: Feature 29 phase-2 P0.6 (Gap 482). The capabilities added in phase 2, each
+#: behind its own flag. Listed here rather than derived by scanning `Settings`
+#: for `ENABLE_*` on purpose: the older flags (generic extraction, async queue,
+#: streaming) are not phase-2 capabilities, and sweeping them in would make
+#: `capability_flags` mean "every switch in the process" instead of "the
+#: capabilities under test", which is the attribution this field exists for.
+CAPABILITY_FLAGS = (
+    "ENABLE_ENTITY_RESOLVER",
+    "ENABLE_SEMANTIC_VIEWS",
+    "ENABLE_CERTIFIED_EXAMPLES",
+    "ENABLE_KNOWLEDGE_LAYER",
+    "ENABLE_RERANK",
+)
+
+
+def fresh_tenant_map(tenant_ids) -> dict[str, str]:
+    """`{original tenant id: a fresh uuid4}`, one entry per distinct id, order kept.
+
+    Gap 484 (task 29.4a). **What this does and does not fix, stated plainly**, because
+    the task was written as "so cache and prior answers cannot leak between runs" and
+    three mechanisms already stop that: the harness seeds a NEW in-memory SQLite
+    database per run, `get_cached_answer` is stubbed to return None, and Chroma is
+    stubbed with fixtures. No answer from a previous run can reach this one today.
+
+    What fixed tenant ids do still cost:
+
+      * **The persist path.** `--persist-url` writes `agent_eval_run` rows to a real
+        Postgres. With constant tenant ids every run in history piles up under the same
+        tenant, so "this tenant's eval history" cannot separate one run from the next.
+      * **Any run made without the stubs** -- a live-backend run, or a future harness
+        that talks to a real Redis/Chroma. Then the constant ids are a genuine
+        cross-run cache collision, and the flag is what makes that run safe.
+
+    So this is isolation for the runs that will exist, not a fix for a leak observed
+    today, and it must not be cited as the latter.
+    """
+    from uuid import uuid4
+
+    return {str(t): str(uuid4()) for t in dict.fromkeys(str(x) for x in tenant_ids)}
+
+
+def _active_capability_flags() -> list[str]:
+    """The phase-2 capability flags that are ON in this process, sorted.
+
+    Read per turn rather than once per run because a run may legitimately flip a
+    flag between paths; the cost is one cached `get_settings()` lookup. A flag
+    absent from `Settings` (an older build, or one deleted after its capability
+    became unconditional) is skipped rather than raising -- this is telemetry on
+    a 7-hour run and must never be the thing that ends it.
+    """
+    from config import get_settings
+
+    settings = get_settings()
+    return sorted(
+        name for name in CAPABILITY_FLAGS if bool(getattr(settings, name, False))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gap 483 -- attachment fixtures, seeded through the real pipeline
+# ---------------------------------------------------------------------------
+
+#: Where a fixture key comes from. Both builders write a PDF per key and return
+#: `{key: path}`, so the harness does not care which one owns a given key.
+_FIXTURE_BUILDERS = (
+    "scripts.attach_chat_eval:build_documents",
+    "benchmarks.long_doc_fixtures:build_long_documents",
+)
+
+
+def build_attachment_fixtures(docs_dir: str) -> dict:
+    """`{fixture key: pdf path}` for every attachment fixture in the repo.
+
+    Both sets are generated rather than committed -- the figures inside them are
+    ground truth, and a committed binary drifts from the module that describes it.
+    """
+    import importlib
+
+    paths: dict = {}
+    for spec in _FIXTURE_BUILDERS:
+        module_name, func_name = spec.split(":")
+        module = importlib.import_module(module_name)
+        built = getattr(module, func_name)(docs_dir)
+        overlap = set(built) & set(paths)
+        assert not overlap, f"two fixture builders claim the same key(s): {overlap}"
+        paths.update(built)
+    return paths
+
+
+def seed_case_attachments(case, db_session, tenant_id: str, fixture_paths: dict) -> tuple:
+    """Attach this case's fixtures to a fresh chat session; return `(session_id, ids)`.
+
+    **The session id is returned, and the caller MUST ask the turn on it.** The agent
+    resolves an attachment by `(session_id, attachment_id)` together, so an attachment
+    hung off a different session than the question is answered with "I can't find that
+    attachment on this conversation" -- a 9ms turn, zero LLM calls, and a golden case
+    that looks like a model failure but is a harness wiring bug. That is exactly what
+    the first live smoke test of this loader produced.
+
+    **Why this goes through `extract_attachment()` rather than writing a row with a
+    hand-made `extracted_json`.** The whole point of an attachment golden case is that
+    the document was read by the product's own extractor -- doc-type discrimination,
+    the REFERENCE profile, candidate matching and the denormalised columns the chat
+    branches actually read. A fabricated row would grade the chat prompt against
+    evidence no user could ever have produced, which is the failure mode Gap 478 was.
+    So this is the same function the queue worker calls, on the same blob path.
+
+    It is therefore genuinely slow (one OCR + one extraction per document) and it
+    costs money. That is why it runs ONLY for cases that declare `attachment_keys`.
+    """
+    from uuid import UUID, uuid4
+
+    from models import ChatAttachment, ChatSession
+    from services.attachment_extraction import extract_attachment
+    from services.storage import upload_pdf_to_blob_storage
+
+    keys = tuple(getattr(case, "attachment_keys", ()) or ())
+    if not keys:
+        return None, []
+
+    # `ChatSession.tenant_id` / `ChatAttachment.tenant_id` are UUID columns, and the
+    # harness carries tenant ids around as strings (`GoldenCase.tenant_id` is a str,
+    # and `--fresh-tenants` generates str uuid4s). Coerced once here rather than at
+    # each call site.
+    tenant_uuid = tenant_id if isinstance(tenant_id, UUID) else UUID(str(tenant_id))
+
+    chat = ChatSession(tenant_id=tenant_uuid, title=f"golden-{case.case_id}")
+    db_session.add(chat)
+    db_session.commit()
+    db_session.refresh(chat)
+
+    attachment_ids = []
+    for key in keys:
+        path = fixture_paths.get(key)
+        assert path, f"{case.case_id}: no fixture built for attachment key {key!r}"
+        data = Path(path).read_bytes()
+        attachment_id = uuid4()
+        blob_path = upload_pdf_to_blob_storage(
+            data, str(tenant_uuid), f"chat-attachments/{attachment_id}"
+        )
+        row = ChatAttachment(
+            id=attachment_id,
+            tenant_id=tenant_uuid,
+            session_id=chat.id,
+            filename=f"{key}.pdf",
+            blob_path=blob_path,
+            file_size_bytes=len(data),
+            extraction_status="PENDING",
+        )
+        db_session.add(row)
+        db_session.commit()
+        db_session.refresh(row)
+
+        extract_attachment(row, db_session)
+        db_session.refresh(row)
+        # Recorded, never raised: `extract_attachment` records failure on the row by
+        # design, and a document the product could not read is a real condition the
+        # turn should be graded on -- not a reason to abandon the run.
+        print(
+            f"  attached {key}: status={row.extraction_status} "
+            f"doc_type={row.doc_type} number={getattr(row, 'doc_number', None)}"
+        )
+        attachment_ids.append(str(row.id))
+
+    return str(chat.id), attachment_ids
+
+
 # ---------------------------------------------------------------------------
 # One turn
 # ---------------------------------------------------------------------------
@@ -600,6 +767,7 @@ def run_turn(
     model_under_test: Optional[str] = None,
     session_id: Optional[str] = None,
     turn_index: int = 1,
+    attachment_ids: Optional[list] = None,
 ) -> dict:
     """One real turn through one path, measured. Never raises — a failure is data.
 
@@ -630,7 +798,21 @@ def run_turn(
                 # regional cases are seeded under their own ids and the
                 # generated SQL is tenant-scoped, so this is what keeps a
                 # US-tenant question from reading the base tenant's rows.
-                result = run_query_agent(session_id, case.question, case.tenant_id, session)
+                # Gap 483: an attachment case takes the attachment branches, which
+                # are a different code path from the SQL/RAG/CHAT router -- passing
+                # the ids is what selects it. ONE id takes the single-document
+                # branch and TWO take the pair branch, and that distinction is the
+                # whole point of turns A4, A6 and B5, so the two are not collapsed.
+                _att = list(attachment_ids or [])
+                result = run_query_agent(
+                    session_id,
+                    case.question,
+                    case.tenant_id,
+                    session,
+                    attachment_id=_att[0] if len(_att) == 1 else None,
+                    attachment_ids=_att if len(_att) > 1 else None,
+                    attachment_intent=getattr(case, "attachment_intent", None),
+                )
             except Exception as e:  # a harness failure is data too
                 error = f"{type(e).__name__}: {e}"
                 logger.exception("Turn raised for %s/%s", case.case_id, path)
@@ -673,7 +855,46 @@ def run_turn(
         "executed_queries": (result.get("judge_evidence") or {}).get("executed_queries") or recorder.executed_queries(),
         # Deterministic input to `context_score` — see `fetched_invoice_numbers()`.
         "fetched_invoice_numbers": sorted(recorder.fetched_invoice_numbers()),
+        # Gap 484 (2026-09-07). The other half of that comparison, and it was
+        # missing: `run_model_matrix.py::digest_eval` grades SQL exec-correctness
+        # with `set(expected) <= set(fetched)`, but nothing ever wrote the
+        # expected side into the record, so that branch had never executed and
+        # every published "SQL exec-correct %" silently came from its fallback --
+        # the judge's accuracy score. A deterministic metric must not be graded by
+        # a model (hard rule 3), least of all one measured at kappa 0.151.
+        # `()` and `None` are kept distinct: `()` means "the correct retrieval is
+        # nothing", which is a real expectation, and `None` means the case states
+        # none, which must leave the turn unscored rather than scored as perfect.
+        "expected_invoice_numbers": (
+            None if case.expected_invoice_numbers is None
+            else list(case.expected_invoice_numbers)
+        ),
         "generated_sql": result.get("generated_sql"),
+        # Feature 29 phase-2 P0.6 (Gap 482). Which route the turn actually took
+        # and which capability flags were on while it took it. A live golden run
+        # is expensive -- the 2026-09-07 36-case run took 7h39m against the
+        # throttled dev endpoint -- so a regression has to be attributable to one
+        # capability from ONE run's records, not by re-running with things off.
+        # `route` is what `run_query_agent()` decided (SQL / RAG / CHAT, or the
+        # attachment branches); `capability_flags` is the active set, recorded
+        # even when empty so a run with every flag off is distinguishable from a
+        # run made before this field existed.
+        #
+        # Gap 487: read from `judge_evidence`, which is where the agent actually
+        # puts it -- there is no top-level `result["route"]`, and reading one gave
+        # `None` on every turn, i.e. a field that looked populated and attributed
+        # nothing. An attachment turn returns before `judge_evidence` is built, so
+        # it has no route of its own; it is labelled for what it is rather than
+        # left null and counted with the failures.
+        "route": (
+            (result.get("judge_evidence") or {}).get("route")
+            or ("attachment" if (attachment_ids or []) else None)
+        ),
+        "capability_flags": _active_capability_flags(),
+        # Gap 483. Which documents this turn was actually given, so an attachment
+        # turn's result can never be read as if it had been asked with none.
+        "attachment_ids": list(attachment_ids or []),
+        "attachment_keys": list(getattr(case, "attachment_keys", ()) or ()),
         "citations": result.get("citations") or [],
         "latency_ms": round(latency_ms, 1),
         "llm_call_count": counter.call_count,
@@ -1586,6 +1807,16 @@ def main() -> None:
             "quality trend; rows written this way carry model_under_test in notes."
         ),
     )
+    parser.add_argument(
+        "--fresh-tenants",
+        action="store_true",
+        help=(
+            "seed this run under freshly generated tenant uuids instead of the fixed "
+            "fixture ids, and record the mapping in the output. See fresh_tenant_map() "
+            "for exactly what this isolates -- it is the persist path and any "
+            "un-stubbed run, not the answer cache, which is already stubbed."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING)
@@ -1658,9 +1889,23 @@ def main() -> None:
     )
     SQLModel.metadata.create_all(engine)
 
+    # Gap 484. Built before seeding because every id below is read through it;
+    # empty when the flag is off, and `.get(x, x)` then leaves every id exactly as
+    # it was, so the default path is byte-identical to before this existed.
+    tenant_map = (
+        fresh_tenant_map([TENANT_ID, *REGION_TENANTS]) if args.fresh_tenants else {}
+    )
+    if tenant_map:
+        print("\n--- fresh tenants (Gap 484) ---")
+        for original, fresh in tenant_map.items():
+            print(f"  {original} -> {fresh}")
+
+    def _tenant(original):
+        return tenant_map.get(str(original), str(original))
+
     turns: list[dict] = []
     with Session(engine) as session:
-        seeded_ids = _seed(session, ALL_ROWS)
+        seeded_ids = _seed(session, ALL_ROWS, tenant_id=_tenant(TENANT_ID))
         invoice_chunks = _build_invoice_chunk_map(seeded_ids)
         # Wave 3: the India/US/EU banks, each under its own tenant id in this
         # same database. `seeded_ids` is deliberately NOT merged with these --
@@ -1668,10 +1913,10 @@ def main() -> None:
         # US tenant, with different totals, so one flat number->id map would
         # silently bind one tenant's document pages to the other's row.
         for region_tenant_id, region in REGION_TENANTS.items():
-            region_ids = _seed(session, region["rows"], tenant_id=region_tenant_id)
+            region_ids = _seed(session, region["rows"], tenant_id=_tenant(region_tenant_id))
             invoice_chunks.update(_region_invoice_chunk_map(region, region_ids))
             print(
-                f"seeded tenant {region['label']} ({region_tenant_id}): "
+                f"seeded tenant {region['label']} ({_tenant(region_tenant_id)}): "
                 f"{len(region_ids)} invoice(s), {len(region['chunks'])} document chunk(s)"
             )
         for invoice_number, spec in ((LARGE.invoice_number, LARGE), (SMALL.invoice_number, SMALL)):
@@ -1685,10 +1930,41 @@ def main() -> None:
         # this block only because it is handed the already-built `judge_llm`
         # object -- it resolves no model of its own, so the override cannot
         # reach it.
+        # Gap 484: a case still names the fixture tenant, but the rows were seeded
+        # under the fresh one, so the case has to be re-pointed or every query would
+        # be tenant-scoped to an empty tenant. `replace` rather than mutation because
+        # GoldenCase is frozen and the module-level list must not be edited in place.
+        if tenant_map:
+            from dataclasses import replace as _replace
+
+            selected = [_replace(c, tenant_id=_tenant(c.tenant_id)) for c in selected]
+
+        # Gap 483. Built once per run, and ONLY if some selected case needs one --
+        # generating and extracting documents costs an OCR and an extraction call
+        # each, so a plain SQL-only run must not pay for it.
+        _needs_attachments = any(getattr(c, "attachment_keys", ()) for c in selected)
+        fixture_paths = {}
+        if _needs_attachments:
+            import tempfile as _tempfile
+
+            _docs_dir = _tempfile.mkdtemp(prefix="golden-attachments-")
+            fixture_paths = build_attachment_fixtures(_docs_dir)
+            print(
+                f"\n--- attachment fixtures (Gap 483) ---\n"
+                f"  built {len(fixture_paths)} document(s) in {_docs_dir}"
+            )
+
         with _candidate_model(args.provider, args.model, args.api_version):
             for case in selected:
                 for path in paths:
                     print(f"\n=== {case.case_id} [{path}] ===")
+                    case_session_id, case_attachments = (
+                        seed_case_attachments(
+                            case, session, case.tenant_id, fixture_paths
+                        )
+                        if getattr(case, "attachment_keys", ())
+                        else (None, [])
+                    )
                     turn = run_turn(
                         case,
                         path,
@@ -1702,6 +1978,10 @@ def main() -> None:
                         chunks_for_tenant(case.tenant_id),
                         invoice_chunks,
                         model_under_test=model_under_test,
+                        attachment_ids=case_attachments,
+                        # the turn must run ON the session the documents were
+                        # attached to -- see seed_case_attachments()'s docstring
+                        session_id=case_session_id,
                     )
                     print(
                         f"  llm_calls={turn['llm_call_count']}  latency={turn['latency_ms']:.0f}ms  "

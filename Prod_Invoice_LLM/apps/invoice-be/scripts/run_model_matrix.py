@@ -122,18 +122,32 @@ def digest_eval(d: dict | None, model: str) -> tuple[dict | None, dict | None]:
     cost = cost_usd(model, tin, tout)
     calls = sum(int(t.get("llm_call_count") or 0) for t in turns)
 
-    sql_turns = [t for t in turns if t.get("generated_sql")]
+    # Gap 484: the denominator is the SQL-ROUTE CASE SET, not "the turns that came
+    # back with SQL". A turn that timed out, crashed or never emitted a statement is
+    # a turn the SQL route got wrong, and dropping it reports the highest score on
+    # the worst run. `all_turns` is used deliberately -- `turns` above has already
+    # filtered errors out for the cost/latency figures, where excluding them is
+    # right, and for correctness it is not.
+    #
+    # A case is SQL-gradeable when it declares an expected retrieval set. `()` is a
+    # real expectation ("fetch nothing"); `None` means the case declares none and
+    # the turn stays unscored rather than being guessed at.
+    all_turns = list(d.get("turns") or [])
+    sql_turns = [t for t in all_turns if t.get("generated_sql")]
+    gradeable = [t for t in all_turns if t.get("expected_invoice_numbers") is not None]
     exec_ok = []
+    for t in gradeable:
+        expected = set(t.get("expected_invoice_numbers") or [])
+        fetched = set(t.get("fetched_invoice_numbers") or [])
+        # An errored turn fetched nothing, so it scores 0 here without a special
+        # case -- which is the point: timeout = wrong, by construction.
+        exec_ok.append(1.0 if expected <= fetched else 0.0)
     attempts = []
     for t in sql_turns:
-        exp = t.get("expected_invoice_numbers") or None
-        fetched = set(t.get("fetched_invoice_numbers") or [])
-        if exp:
-            exec_ok.append(1.0 if set(exp) <= fetched else 0.0)
-        elif t.get("accuracy_score") is not None:
-            exec_ok.append(1.0 if (t.get("accuracy_score") or 0) >= 0.8 else 0.0)
         gen_events = [e for e in (t.get("llm_events") or []) if "sql" in str(e.get("agent_name", e)).lower() and "summary" not in str(e.get("agent_name", e)).lower()]
         attempts.append(len(gen_events) if gen_events else 1)
+    sql_errors = sum(1 for t in gradeable if t.get("error"))
+    sql_no_statement = sum(1 for t in gradeable if not t.get("generated_sql"))
     sql_p95 = _pct([t.get("latency_ms", 0) / 1000.0 for t in sql_turns], 0.95)
     sql_tin = sum(int(t.get("tokens_in") or 0) for t in sql_turns)
     sql_tout = sum(int(t.get("tokens_out") or 0) for t in sql_turns)
@@ -142,8 +156,17 @@ def digest_eval(d: dict | None, model: str) -> tuple[dict | None, dict | None]:
     c = {
         "metric": round(100.0 * statistics.mean(exec_ok), 1) if exec_ok else None,
         "metric_name": "SQL exec-correct %",
+        # Gap 484: `n` is the fixed denominator the percentage is over, and it is
+        # reported next to the percentage so a number can never again be quoted
+        # without the base it was computed on.
+        "n": len(exec_ok),
+        "sql_pass_pct": round(100.0 * statistics.mean(exec_ok), 1) if exec_ok else None,
         "sql_turns": len(sql_turns),
         "scored": len(exec_ok),
+        # How the denominator was spent, so a low score is attributable.
+        "errored": sql_errors,
+        "no_statement": sql_no_statement,
+        "graded_by": "deterministic set comparison (expected <= fetched)",
         "mean_attempts": _mean(attempts),
         "cost_usd": round(sql_cost, 5),
         "cost_per_1k_calls": round(sql_cost / sql_calls * 1000, 3) if sql_calls else None,

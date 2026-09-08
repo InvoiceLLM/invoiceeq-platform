@@ -30,24 +30,22 @@ targetScope = 'resourceGroup'
 //   gpt-5-mini     judge, and the FULL-RECORD chat narrator (decision 2:
 //                  22.2% -> 52.8% on the golden set with full records, vs Luna's
 //                  27.8% -> 37.1%). `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`.
-//   gpt-5.6-terra  KEPT (decision 9) as the `long_doc` candidate until task 29.10
-//                  runs `tests/golden_long_doc.json` on Terra vs Luna and the
-//                  2-point rule picks one. `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`
-//                  is unset, so the role currently falls back to fast and Terra
-//                  serves no live traffic -- it is a candidate, not a default.
+//   gpt-5.6-terra  DELETED 2026-09-07 (task 29.10 / Gap 489): on the five
+//                  long-document golden cases Luna and Terra both scored 3/3, so
+//                  the 2-point rule kept Luna and the `long_doc` role was removed
+//                  from code and infra rather than left as an inert variable.
 //   gpt-4o         legacy, retiring; kept only so historical rows still price.
 //
-// DELETED after the matrix: gpt-5.6-sol and gpt-6-astra. Verified 2026-09-06
-// with `az cognitiveservices account deployment list -n openai-invoicellm-dev
-// -g rg-invoice-llm-dev` -> gpt-5-mini, gpt-4o, gpt-5.6-luna, gpt-5.6-terra and
-// nothing else. Their `utils/model_registry.py` catalog rows are deliberately
+// DELETED: gpt-5.6-sol and gpt-6-astra after the matrix (2026-09-06), gpt-5.6-terra
+// after task 29.10 (2026-09-07). Verified 2026-09-07 with `az cognitiveservices
+// account deployment list -n openai-invoicellm-dev -g rg-invoice-llm-dev` ->
+// gpt-5-mini, gpt-4o, gpt-5.6-luna and nothing else. Their `utils/model_registry.py` catalog rows are deliberately
 // KEPT and marked DELETED: historical telemetry and cost rows still have to
 // price, and removing a row would silently reprice them at zero.
 //
 // The deployment name is what the app reads (`AZURE_OPENAI_DEPLOYMENT_NAME`,
 // `AZURE_OPENAI_FAST_DEPLOYMENT_NAME`, `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME`,
-// `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`,
-// `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`); `utils/model_registry.py` maps it to
+// `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`); `utils/model_registry.py` maps it to
 // context/price by longest-prefix match, so keep the deployment name starting
 // with the model name.
 

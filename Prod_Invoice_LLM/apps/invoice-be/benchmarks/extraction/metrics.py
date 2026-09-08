@@ -155,6 +155,47 @@ def field_accuracy(comparisons: Iterable[FieldComparison]) -> tuple[int, int, fl
     return correct, total, (correct / total if total else 0.0)
 
 
+def normalise_field_name(field_name: str) -> str:
+    """`items[3].amount` -> `items[].amount`; every other name unchanged.
+
+    Line-item comparisons are emitted one per line index, so without this a
+    per-field table would have a row per line of every invoice in the bank --
+    hundreds of rows, each with a denominator of one, which is not a measurement
+    of anything. Collapsing the index is what makes "amount" a field with a real
+    sample size.
+    """
+    if field_name.startswith("items[") and "]." in field_name:
+        return "items[]." + field_name.split("].", 1)[1]
+    return field_name
+
+
+def field_accuracy_by_field(
+    comparisons: Iterable[FieldComparison],
+) -> dict[str, dict[str, Any]]:
+    """Per-field `{correct, total, ratio}`, line-item indices collapsed.
+
+    Gap 485. The composite `field_accuracy()` above is the headline and stays the
+    headline; this is what makes it actionable. A single ratio over every field of
+    every document cannot say WHICH field is weak, and the failure mode it hides is
+    the one that matters: forty fields at 100% will carry one field at 70% to a
+    98.8% composite, and the composite is what gets quoted.
+
+    Every field that was compared appears, including the ones at 100% -- a report
+    that listed only failures could not be used to see that a field stopped being
+    extracted at all (its total would simply drop, invisibly).
+    """
+    buckets: dict[str, dict[str, Any]] = {}
+    for c in comparisons:
+        name = normalise_field_name(c.field_name)
+        bucket = buckets.setdefault(name, {"correct": 0, "total": 0, "ratio": 0.0})
+        bucket["total"] += 1
+        if c.correct:
+            bucket["correct"] += 1
+    for bucket in buckets.values():
+        bucket["ratio"] = bucket["correct"] / bucket["total"] if bucket["total"] else 0.0
+    return buckets
+
+
 # ---------------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------------
@@ -329,6 +370,8 @@ __all__ = [
     "build_confusion",
     "compare_fields",
     "field_accuracy",
+    "field_accuracy_by_field",
+    "normalise_field_name",
     "recall_by_alert_type",
     "score_seeded",
     "values_match",

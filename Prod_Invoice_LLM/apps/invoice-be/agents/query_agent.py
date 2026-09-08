@@ -6960,6 +6960,47 @@ def _run_query_agent(
     tenant_stats = _get_tenant_stats_summary(tenant_id, db_session)
     wrapped_user_message = _wrap_user_input(user_message, tenant_id)
 
+    # Feature 29 task 29.11 (Gap 490). Deterministic entity resolution runs BEFORE
+    # the keyword classifier, behind `ENABLE_ENTITY_RESOLVER` (default False, Gap
+    # 482). With the flag on: an invoice number or vendor name the question uses
+    # is bound exactly and tenant-scoped, or -- when it matches nothing, or more
+    # than one thing -- the turn stops here with a clarify card that lists the
+    # candidates. No model is consulted (hard rule 3). With the flag off this
+    # block is skipped and the pre-29.11 keyword routing is the only path.
+    from config import get_settings as _get_settings_29_11  # local, like every other settings read in this module
+
+    resolved_invoice_ids: list[str] = []
+    if bool(getattr(_get_settings_29_11(), "ENABLE_ENTITY_RESOLVER", False)):
+        from agents.entity_resolver import resolve_entities  # local: keeps the eval-harness import graph flat
+
+        resolution = resolve_entities(user_message, tenant_id, db_session)
+        blocking = [e for e in resolution.unresolved if e.kind in ("invoice", "vendor")]
+        if blocking:
+            clarify_text = resolution.clarify_message()
+            logger.info("29.11: entity clarification for session %s: %s", session_id, clarify_text)
+            progress("awaiting_entity_clarification")
+            turn.status = telemetry.TURN_STATUS_SUCCESS
+            turn.stop_reason = "awaiting_entity_clarification"
+            return {
+                "content": clarify_text,
+                "generated_sql": "",
+                "citations": [],
+                "result_invoice_ids": [],
+                "entity_clarification": {
+                    "message": clarify_text,
+                    "entities": [
+                        {
+                            "kind": e.kind,
+                            "mention": e.mention,
+                            "status": e.status,
+                            "candidates": [{"id": c.id, "label": c.label} for c in e.candidates[:5]],
+                        }
+                        for e in blocking
+                    ],
+                },
+            }
+        resolved_invoice_ids = resolution.invoice_ids
+
     # 1. Routing classification
     route = classify_query(user_message, tenant_id=str(tenant_id))
     logger.info("Selected Route: %s", route)
@@ -7435,6 +7476,8 @@ User Query: {_wrap_user_input(user_message, tenant_id)}
         rag_invoice_ids = [
             str(c["invoice_id"]) for c in citations if c.get("invoice_id")
         ] + invoice_ids_named_in(user_message, tenant_id, db_session)
+        # 29.11: what the resolver bound (session references, when the flag is on)
+        rag_invoice_ids += [i for i in resolved_invoice_ids if i not in rag_invoice_ids]
         rag_full_record_block = _full_record_block_for(
             rag_invoice_ids, tenant_id, db_session
         )
@@ -7516,6 +7559,8 @@ Conversation History (Short-term context):
         # deterministic lookup, not a routing decision (hard rule 3): if the
         # question names one, its full record is evidence on this route too.
         chat_invoice_ids = invoice_ids_named_in(user_message, tenant_id, db_session)
+        # 29.11: what the resolver bound (session references, when the flag is on)
+        chat_invoice_ids += [i for i in resolved_invoice_ids if i not in chat_invoice_ids]
         chat_full_record_block = _full_record_block_for(
             chat_invoice_ids, tenant_id, db_session
         )

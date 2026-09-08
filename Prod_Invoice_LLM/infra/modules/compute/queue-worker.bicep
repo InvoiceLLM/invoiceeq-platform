@@ -15,6 +15,9 @@ param azureOpenAiFastDeploymentName string = ''
 @description('Gap 466: deployment used as the LLM judge (agent eval, benchmark job). Empty = use azureOpenAiDeploymentName. Pinned to gpt-5-mini across the Luna migration so eval scores stay comparable.')
 param azureOpenAiJudgeDeploymentName string = ''
 
+@description('Feature 29 decision 2: deployment that narrates the full-record chat route (gpt-5-mini in dev; Luna keeps the attachment branches). Empty = use azureOpenAiJudgeDeploymentName, then azureOpenAiDeploymentName -- the pre-29.5 behaviour.')
+param azureOpenAiChatSummaryDeploymentName string = ''
+
 @description('Gap 465: Azure OpenAI data-plane api-version. GA 2024-10-21 verified live 2026-09-05. Must equal config.py AZURE_OPENAI_API_VERSION; one value, threaded from params.*.json.')
 param azureOpenAiApiVersion string = '2024-10-21'
 param azureDocIntelEndpoint string
@@ -92,6 +95,21 @@ param enableAsyncChatQueue bool = false
 
 @description('Feature 6.1 A3: stream phrasing calls as progress events. Off = .invoke().')
 param enableChatStreaming bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See config.py.')
+param enableEntityResolver bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See config.py.')
+param enableSemanticViews bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See config.py.')
+param enableCertifiedExamples bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See config.py.')
+param enableKnowledgeLayer bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See config.py.')
+param enableRerank bool = false
 
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
@@ -319,6 +337,10 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: azureOpenAiJudgeDeploymentName
             }
             {
+              name: 'AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME'
+              value: azureOpenAiChatSummaryDeploymentName
+            }
+            {
               name: 'AZURE_DOC_INTEL_ENDPOINT'
               value: azureDocIntelEndpoint
             }
@@ -413,6 +435,26 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'ENABLE_CHAT_STREAMING'
               value: enableChatStreaming ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_ENTITY_RESOLVER'
+              value: enableEntityResolver ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_SEMANTIC_VIEWS'
+              value: enableSemanticViews ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_CERTIFIED_EXAMPLES'
+              value: enableCertifiedExamples ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_KNOWLEDGE_LAYER'
+              value: enableKnowledgeLayer ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_RERANK'
+              value: enableRerank ? 'true' : 'false'
             }
           ], docIntel2Env, docIntel3Env)
           // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence

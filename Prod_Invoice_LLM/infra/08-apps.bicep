@@ -32,6 +32,9 @@ param azureOpenAiFastDeploymentName string = ''
 @description('Gap 466: deployment used as the LLM judge (agent eval, benchmark job). Empty = use azureOpenAiDeploymentName. Pinned to gpt-5-mini across the Luna migration so eval scores stay comparable.')
 param azureOpenAiJudgeDeploymentName string = ''
 
+@description('Feature 29 decision 2: deployment that narrates the full-record chat route (gpt-5-mini in dev; Luna keeps the attachment branches). Empty = use azureOpenAiJudgeDeploymentName, then azureOpenAiDeploymentName -- the pre-29.5 behaviour.')
+param azureOpenAiChatSummaryDeploymentName string = ''
+
 @description('Image tag for backend API container')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -102,6 +105,21 @@ param enableAsyncChatQueue bool = false
 
 @description('Feature 6.1 A3: stream the summary/RAG/narration text as `streaming` progress events on the async chat path. Off = every site uses .invoke(). Inert on the synchronous path regardless.')
 param enableChatStreaming bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See apps/invoice-be/config.py.')
+param enableEntityResolver bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See apps/invoice-be/config.py.')
+param enableSemanticViews bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See apps/invoice-be/config.py.')
+param enableCertifiedExamples bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See apps/invoice-be/config.py.')
+param enableKnowledgeLayer bool = false
+
+@description('Feature 29 phase-2 capability flag; default false. See apps/invoice-be/config.py.')
+param enableRerank bool = false
 
 @description('Subscription ID for services/azure_cost.py and ops_recommendation.py -- see invoice-be.bicep for why this was missing.')
 param azureSubscriptionId string = subscription().subscriptionId
@@ -301,6 +319,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     image: backendImage
@@ -332,6 +351,11 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     enableProductionQualityJudge: enableProductionQualityJudge
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
+enableEntityResolver: enableEntityResolver
+    enableSemanticViews: enableSemanticViews
+    enableCertifiedExamples: enableCertifiedExamples
+    enableKnowledgeLayer: enableKnowledgeLayer
+    enableRerank: enableRerank
     enableAsyncChatQueue: enableAsyncChatQueue
     enableChatStreaming: enableChatStreaming
     azureSubscriptionId: azureSubscriptionId
@@ -372,6 +396,7 @@ module billingLifecycleJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
     cpu: '0.25'
     memory: '0.5Gi'
   }
@@ -383,6 +408,11 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     location: location
     enableGenericExtraction: enableGenericExtraction
     enableGenericDocChat: enableGenericDocChat
+enableEntityResolver: enableEntityResolver
+    enableSemanticViews: enableSemanticViews
+    enableCertifiedExamples: enableCertifiedExamples
+    enableKnowledgeLayer: enableKnowledgeLayer
+    enableRerank: enableRerank
     enableAsyncChatQueue: enableAsyncChatQueue
     enableChatStreaming: enableChatStreaming
     caeId: cae.id
@@ -396,6 +426,7 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
     azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     storageAccountName: storageAccountName
@@ -504,6 +535,7 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -543,6 +575,7 @@ module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -650,6 +683,12 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiApiVersion: azureOpenAiApiVersion
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    enableEntityResolver: enableEntityResolver
+    enableSemanticViews: enableSemanticViews
+    enableCertifiedExamples: enableCertifiedExamples
+    enableKnowledgeLayer: enableKnowledgeLayer
+    enableRerank: enableRerank
     // Both scripts emit telemetry (extraction's tracked_llm_call() sites,
     // Track 2's track_eval_result()/track_agent_call()) -- without this it
     // would silently no-op to stdout instead of reaching appi-invoicellm-dev.

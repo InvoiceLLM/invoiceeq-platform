@@ -108,6 +108,16 @@ def _run_turn(
         patch("agents.query_agent.classify_query", return_value=route),
         patch("agents.query_agent.query_invoice_chunks", return_value=chunks or []),
         patch("agents.query_agent.get_llm", return_value=llm),
+        # Gap 477 (2026-09-07, founder: "Mock the 26, re-baseline the 38, fix the 5").
+        # `build_llm` is patched alongside `get_llm`, for Gap 471's reason one file
+        # over: `_fast_llm()` and `_chat_summary_llm()` return `get_llm()` only when
+        # their deployment setting is blank. `.env` sets
+        # AZURE_OPENAI_FAST_DEPLOYMENT_NAME=gpt-5.6-luna, so they take the
+        # `build_llm("azure", model=...)` branch instead -- which this stack did not
+        # cover, so every one of these tests made a REAL, paid Azure call and then
+        # failed on `llm.summary_prompts` being empty, because the recording double
+        # never saw the prompt.
+        patch("agents.query_agent.build_llm", return_value=llm),
         patch("agents.query_agent.get_cached_answer", return_value=None),
         patch("agents.query_agent.set_cached_answer"),
         patch("agents.query_agent._get_tenant_stats_summary", return_value=""),

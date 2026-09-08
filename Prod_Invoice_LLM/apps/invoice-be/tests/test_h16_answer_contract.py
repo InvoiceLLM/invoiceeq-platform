@@ -350,7 +350,13 @@ def test_v27_the_persist_side_and_the_wire_side_cannot_drift():
     """
     from routers.chat import ATTACHMENT_CONTRACT_KEYS, MessageResponse
 
-    assert set(ATTACHMENT_CONTRACT_KEYS) == set(CONTRACT_KEYS)
+    # Gap 474 (2026-09-07, founder: "Yes, widen it now") added `provenance` and
+    # `abstention` to the wire contract. This test's rule -- persist side and wire
+    # side cannot drift -- is unchanged and is what is asserted: every key this file
+    # knows about must be in the router's tuple, and the router may carry the two
+    # Feature 29 additions on top.
+    assert set(CONTRACT_KEYS) <= set(ATTACHMENT_CONTRACT_KEYS)
+    assert set(ATTACHMENT_CONTRACT_KEYS) - set(CONTRACT_KEYS) == {"provenance", "abstention"}
     for key in ATTACHMENT_CONTRACT_KEYS:
         assert key in MessageResponse.model_fields, (
             f"{key} is persisted but is not a MessageResponse field, so it can "

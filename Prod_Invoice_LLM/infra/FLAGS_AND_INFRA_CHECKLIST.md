@@ -33,7 +33,7 @@ Bicep param defaults (`08-apps.bicep` lines 92-104) are all `false`. Anything no
 | `azureOpenAiApiVersion` | `2024-10-21` | `2024-10-21` | `AZURE_OPENAI_API_VERSION` |
 | `openAiCapacity` | 300 | 500 | — |
 
-Role → deployment mapping lives in `apps/invoice-be/utils/model_registry.py` (roles primary / fast / judge / chat_summary / long_doc). `gpt-4o`, `astra`, `sol` deployments are gone; any doc or script still naming them is stale. Prod params lack the fast and judge deployment names: fill them in before a prod deploy or the registry falls back to primary for every role.
+Role → deployment mapping lives in `apps/invoice-be/utils/model_registry.py` (roles primary / fast / judge / chat_summary — `long_doc` removed 2026-09-07, Gap 489). `terra`, `astra`, `sol` deployments are gone (`gpt-4o` still exists, unused); any doc or script still naming them is stale. Prod params lack the fast and judge deployment names: fill them in before a prod deploy or the registry falls back to primary for every role.
 
 ## 3. Scheduled jobs: declared vs deployed
 

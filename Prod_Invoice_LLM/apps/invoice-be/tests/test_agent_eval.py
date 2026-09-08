@@ -1469,10 +1469,25 @@ def test_the_regional_cases_were_added_without_moving_any_existing_case():
     from benchmarks.agent_eval_golden_sample import TENANT_ID
     from benchmarks.region_seed_fixtures import REGION_TENANTS
 
+    # RE-BASELINED 2026-09-07 (Gap 477, founder: "re-baseline the 38"). Two things
+    # moved under this test and neither is Wave 3 being disturbed:
+    #   * base is 21, not 20 -- a case was added to the base tenant after Wave 3 and
+    #     this count was never updated. It has been the repo's standing single test
+    #     failure since; it is a stale constant, not a case that changed tenant.
+    #   * Feature 29 added 21 ATTACHMENT and LONG-DOCUMENT cases on the US tenant
+    #     (Gaps 483/486). They are a later wave and are excluded here rather than
+    #     counted as regional, so Wave 3's own "five per region" rule below still
+    #     means what it was written to mean.
+    # The rule this test protects -- an existing case never silently changes tenant
+    # -- is unchanged and still asserted.
     cases, _rows = _golden_cases()
+    later_wave = {c.case_id for c in cases
+                  if c.case_id.startswith(("attach_", "long_doc_"))}
+    assert len(later_wave) == 21, f"expected Feature 29's 21 cases, found {len(later_wave)}"
+    cases = [c for c in cases if c.case_id not in later_wave]
     regional = [c for c in cases if c.tenant_id != TENANT_ID]
     base = [c for c in cases if c.tenant_id == TENANT_ID]
-    assert len(base) == 20, "an existing case changed tenant"
+    assert len(base) == 21, "an existing case changed tenant"
     assert len(regional) == 15
     # Breadth over volume was the explicit goal -- five per region, not fifteen
     # drained out of India.

@@ -630,7 +630,6 @@ Scripts with no job definition (run by hand): `reconcile_stuck_invoices.py` (FE 
 | `fast` | `AZURE_OPENAI_FAST_DEPLOYMENT_NAME` | `""` | -> primary | `gpt-5.6-luna` | `_fast_llm()` classify / summary (F6.1 A2) |
 | `judge` | `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME` | `""` | -> primary | `gpt-5-mini` | `agent_eval.py`, `online_quality_judge.py` |
 | `chat_summary` | `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME` | `""` | -> judge -> primary | `gpt-5-mini` | full-record chat narration (Feature 29 decision 2) |
-| `long_doc` | `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` | `""` | -> fast -> primary | `""` (inert until task 29.10 decides Terra vs Luna) | `get_long_doc_llm()` |
 
 Catalog entries: `gpt-6-astra` (deployment deleted 2026-09-06), `gpt-5.6-luna` (1,050,000 ctx / 922,000 input, $0.20/$1.20; weak long-context recall), `gpt-5.6-terra` ($2/$12, `long_doc` candidate), `gpt-5.6-sol` (deleted), `gpt-5-mini`, `gpt-5-nano`, `gpt-5`, `gpt-4o-mini` / `gpt-4o` / `gpt-3.5-turbo` (retiring; kept for historical pricing), `llama3.2` / `llama3` (Ollama), `mock`. `AZURE_OPENAI_API_VERSION = "2024-10-21"` (Gap 465; `2024-02-15-preview` is gone). Non-LLM models: `DOC_INTEL_MODEL_ID = "prebuilt-invoice"`, `EMBEDDING_MODEL_NAME = "BAAI/bge-m3"`, `OLLAMA_MODEL = "llama3.2:latest"` (local provider only). SQL reasoning knobs (F6.1 A1): `AZURE_OPENAI_SQL_REASONING_EFFORT = ""`, `AZURE_OPENAI_SQL_MAX_COMPLETION_TOKENS = 0` (unset).
 

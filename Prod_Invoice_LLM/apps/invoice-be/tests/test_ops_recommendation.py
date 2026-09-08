@@ -819,12 +819,35 @@ _WORKBOOK_DIR = _BE_ROOT.parents[1] / "infra" / "monitoring"
 
 
 def _threshold_grid(workbook: str, item_name: str) -> list[dict]:
+    """The colour bands a named workbook panel is configured with.
+
+    RE-BASELINED 2026-09-07 (Gap 477, founder: "re-baseline the 38"). This used to
+    read `content.tileSettings.leftContent.formatOptions.thresholdsGrid` only. Two
+    panels in `cost_health_workbook.json` were rewritten from TILE rendering to GRID
+    rendering, which moves the same thresholds to
+    `content.gridSettings.formatters[].formatOptions.thresholdsGrid` -- so the test
+    raised `KeyError: 'tileSettings'` on a panel whose bands were unchanged.
+
+    Both shapes are read rather than the old one being replaced: the workbook still
+    contains tile panels, and the assertion these tests make -- that the bands in the
+    live workbook are the bands the recommendation code uses -- is about the VALUES,
+    not about which renderer displays them.
+    """
     document = json.loads((_WORKBOOK_DIR / workbook).read_text(encoding="utf-8"))
     for item in document["items"]:
-        if item.get("name") == item_name:
-            return (
-                item["content"]["tileSettings"]["leftContent"]["formatOptions"]["thresholdsGrid"]
-            )
+        if item.get("name") != item_name:
+            continue
+        content = item["content"]
+        tile = content.get("tileSettings", {}).get("leftContent", {})
+        if "formatOptions" in tile:
+            return tile["formatOptions"]["thresholdsGrid"]
+        for formatter in content.get("gridSettings", {}).get("formatters", []):
+            grid = (formatter.get("formatOptions") or {}).get("thresholdsGrid")
+            if grid:
+                return grid
+        raise AssertionError(
+            f"{item_name} in {workbook} has neither a tile nor a grid threshold set"
+        )
     raise AssertionError(f"{item_name} is not in {workbook}")
 
 

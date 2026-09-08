@@ -1,0 +1,438 @@
+{
+  "run_at": "2026-09-07T13:03:12.402420",
+  "paths": [
+    "default"
+  ],
+  "model_under_test": "azure:gpt-5.6-luna",
+  "api_version_override": null,
+  "judge_mode": "separate",
+  "cost_basis": "utils/model_registry list price for gpt-5.6-luna (USD per 1M in/out: (0.2, 1.2))",
+  "summary": {
+    "default": {
+      "turns": 5,
+      "llm_calls_min": 0,
+      "llm_calls_median": 1,
+      "llm_calls_max": 1,
+      "llm_calls_total": 3,
+      "latency_ms_min": 4.9,
+      "latency_ms_median": 2822.4,
+      "latency_ms_max": 3530.1,
+      "tokens_in_total": 9694,
+      "tokens_out_total": 245,
+      "pass_rate": 0.0,
+      "faithfulness_mean": 0.0,
+      "relevance_mean": 1.0,
+      "accuracy_mean": 0.8,
+      "context_mean": null,
+      "context_scored_turns": 0,
+      "orchestration_mean": 0.0,
+      "orchestration_scored_turns": 4,
+      "persona_mean": 0.75,
+      "persona_scored_turns": 4,
+      "context_drift_mean": null,
+      "context_drift_scored_turns": 0,
+      "judge_mode": [
+        "separate"
+      ],
+      "helpfulness_mean": null,
+      "helpfulness_scored_turns": 0,
+      "completeness_mean": null,
+      "completeness_scored_turns": 0,
+      "tone_mean": null,
+      "tone_scored_turns": 0,
+      "judge_llm_calls_total": 20,
+      "errors": 0,
+      "tokens_by_agent": {
+        "chat.attachment_content": {
+          "calls": 3,
+          "tokens_in": 9694,
+          "tokens_out": 245,
+          "latency_ms": 8838.9
+        }
+      },
+      "cost_per_turn_usd": 0.00045
+    }
+  },
+  "failure_taxonomy": {
+    "lines": [
+      {
+        "case_id": "long_doc_contract_late_fee",
+        "bucket": "no_route",
+        "accuracy": 1.0,
+        "faithfulness": 0.0,
+        "context": null,
+        "route_evidence": false
+      },
+      {
+        "case_id": "long_doc_statement_unmatched_line",
+        "bucket": "no_route",
+        "accuracy": 1.0,
+        "faithfulness": 0.0,
+        "context": null,
+        "route_evidence": false
+      },
+      {
+        "case_id": "long_doc_po_outlier_line",
+        "bucket": "no_route",
+        "accuracy": 1.0,
+        "faithfulness": 0.0,
+        "context": null,
+        "route_evidence": false
+      },
+      {
+        "case_id": "long_doc_po_delivery_term",
+        "bucket": "no_route",
+        "accuracy": 1.0,
+        "faithfulness": 0.0,
+        "context": null,
+        "route_evidence": false
+      },
+      {
+        "case_id": "long_doc_delivery_shortfall",
+        "bucket": "no_route",
+        "accuracy": 0.0,
+        "faithfulness": 0.0,
+        "context": null,
+        "route_evidence": false
+      }
+    ],
+    "counts": {
+      "no_route": 5,
+      "no_evidence": 0,
+      "wrong_evidence": 0,
+      "no_computation": 0,
+      "narration": 0,
+      "judge": 0
+    },
+    "failures": 5
+  },
+  "persisted_rows": 0,
+  "turns": [
+    {
+      "case_id": "long_doc_contract_late_fee",
+      "path": "default",
+      "tenant_id": "ecb1e827-c6f7-4bd9-9297-99b3cdea2dd8",
+      "session_id": "32f91af4-8db2-4955-aeec-2dc5e98d0345",
+      "turn_index": 1,
+      "agent_name": "chat.default_path",
+      "model_under_test": "azure:gpt-5.6-luna",
+      "question": "Per this agreement, what interest do we owe on an overdue invoice, and which clause says so?",
+      "answer": "- **Interest owed:** **1.5% per month**, accruing from the invoice’s due date until it is paid.\n- **Clause:** **27.4**, on **page 2**.",
+      "answer_prose": "- **Interest owed:** **1.5% per month**, accruing from the invoice’s due date until it is paid.\n- **Clause:** **27.4**, on **page 2**.",
+      "appended_blocks": "",
+      "context": "",
+      "evidence_source": "recorder",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "expected_invoice_numbers": null,
+      "generated_sql": "",
+      "route": "attachment",
+      "capability_flags": [],
+      "attachment_ids": [
+        "2e084ddd-f3b4-44b0-93f7-778884ca4040"
+      ],
+      "attachment_keys": [
+        "lc_contract"
+      ],
+      "citations": [],
+      "latency_ms": 2822.4,
+      "llm_call_count": 1,
+      "llm_events": [
+        {
+          "agent_name": "chat.attachment_content",
+          "model": "gpt-5.6-luna",
+          "tokens_in": 3147,
+          "tokens_out": 93,
+          "latency_ms": 2716.71,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 3147,
+      "tokens_out": 93,
+      "tokens_by_agent": {
+        "chat.attachment_content": {
+          "calls": 1,
+          "tokens_in": 3147,
+          "tokens_out": 93,
+          "latency_ms": 2716.7
+        }
+      },
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 0.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": null,
+      "orchestration_score": 0.0,
+      "persona_score": 1.0,
+      "context_drift_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "Interest owed: 1.5% per month, accruing from the invoice’s due date until it is paid.",
+        "Clause: 27.4, on page 2."
+      ],
+      "score_notes": "faithfulness: 0.00 (2 claims asserted with no tool context at all) | relevance: 1.0 [direct_answer, judged] (Directly answers both parts by giving the interest rate (1.5%/month) and citing clause 27.4 on page 2.) | accuracy: 1.00 (2/2 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: 0/2 figures trace to the evidence (1 small bare integer(s) skipped) | untraceable figures: 1.5, 27.4 | persona: 1.0 [late payment interest, contract clause interpretation, discount vs interest distinction] (Correctly identifies the 1.5% per month overdue interest in clause 27.4 and distinguishes the 2.0% in clause 12.1 as a prompt-payment discount.)",
+      "judge_llm_calls": 4
+    },
+    {
+      "case_id": "long_doc_statement_unmatched_line",
+      "path": "default",
+      "tenant_id": "ecb1e827-c6f7-4bd9-9297-99b3cdea2dd8",
+      "session_id": "097ce386-8bd1-42c9-83bd-9ca536932cf1",
+      "turn_index": 1,
+      "agent_name": "chat.default_path",
+      "model_under_test": "azure:gpt-5.6-luna",
+      "question": "Reconcile this 70-line statement against our records. Which line has no invoice on file?",
+      "answer": "I checked 70 reference(s) on that document against your invoices. 70 reference invoices I have no record of.\n\n- BRL-201001: no invoice with this number in your records.\n- BRL-201002: no invoice with this number in your records.\n- BRL-201003: no invoice with this number in your records.\n- BRL-201004: no invoice with this number in your records.\n- BRL-201005: no invoice with this number in your records.\n- BRL-201006: no invoice with this number in your records.\n- BRL-201007: no invoice with this number in your records.\n- BRL-201008: no invoice with this number in your records.\n- BRL-201009: no invoice with this number in your records.\n- BRL-201010: no invoice with this number in your records.\n- BRL-201011: no invoice with this number in your records.\n- BRL-201012: no invoice with this number in your records.\n- BRL-201013: no invoice with this number in your records.\n- BRL-201014: no invoice with this number in your records.\n- BRL-201015: no invoice with this number in your records.\n- BRL-201016: no invoice with this number in your records.\n- BRL-201017: no invoice with this number in your records.\n- BRL-201018: no invoice with this number in your records.\n- BRL-201019: no invoice with this number in your records.\n- BRL-201020: no invoice with this number in your records.\n- BRL-201021: no invoice with this number in your records.\n- BRL-201022: no invoice with this number in your records.\n- BRL-201023: no invoice with this number in your records.\n- BRL-201024: no invoice with this number in your records.\n- BRL-201025: no invoice with this number in your records.\n- BRL-201026: no invoice with this number in your records.\n- BRL-201027: no invoice with this number in your records.\n- BRL-201028: no invoice with this number in your records.\n- BRL-201029: no invoice with this number in your records.\n- BRL-201030: no invoice with this number in your records.\n- BRL-201031: no invoice with this number in your records.\n- BRL-201032: no invoice with this number in your records.\n- BRL-201033: no invoice with this number in your records.\n- BRL-201034: no invoice with this number in your records.\n- BRL-201035: no invoice with this number in your records.\n- BRL-201036: no invoice with this number in your records.\n- BRL-201037: no invoice with this number in your records.\n- BRL-201038: no invoice with this number in your records.\n- BRL-201039: no invoice with this number in your records.\n- BRL-201040: no invoice with this number in your records.\n- BRL-201041: no invoice with this number in your records.\n- BRL-201042: no invoice with this number in your records.\n- BRL-201043: no invoice with this number in your records.\n- BRL-201044: no invoice with this number in your records.\n- BRL-201045: no invoice with this number in your records.\n- BRL-201046: no invoice with this number in your records.\n- BRL-201047: no invoice with this number in your records.\n- BRL-201048: no invoice with this number in your records.\n- BRL-201049: no invoice with this number in your records.\n- BRL-201050: no invoice with this number in your records.\n- BRL-201051: no invoice with this number in your records.\n- BRL-201052: no invoice with this number in your records.\n- BRL-201053: no invoice with this number in your records.\n- BRL-201054: no invoice with this number in your records.\n- BRL-201055: no invoice with this number in your records.\n- BRL-201056: no invoice with this number in your records.\n- BRL-201057: no invoice with this number in your records.\n- BRL-201058: no invoice with this number in your records.\n- BRL-201059: no invoice with this number in your records.\n- BRL-201060: no invoice with this number in your records.\n- BRL-201061: no invoice with this number in your records.\n- BRL-201062: no invoice with this number in your records.\n- BRL-201063: no invoice with this number in your records.\n- BRL-201064: no invoice with this number in your records.\n- BRL-201065: no invoice with this number in your records.\n- BRL-201066: no invoice with this number in your records.\n- BRL-201067: no invoice with this number in your records.\n- BRL-201068: no invoice with this number in your records.\n- BRL-201069: no invoice with this number in your records.\n- BRL-201070: no invoice with this number in your records.",
+      "answer_prose": "I checked 70 reference(s) on that document against your invoices. 70 reference invoices I have no record of.\n\n- BRL-201001: no invoice with this number in your records.\n- BRL-201002: no invoice with this number in your records.\n- BRL-201003: no invoice with this number in your records.\n- BRL-201004: no invoice with this number in your records.\n- BRL-201005: no invoice with this number in your records.\n- BRL-201006: no invoice with this number in your records.\n- BRL-201007: no invoice with this number in your records.\n- BRL-201008: no invoice with this number in your records.\n- BRL-201009: no invoice with this number in your records.\n- BRL-201010: no invoice with this number in your records.\n- BRL-201011: no invoice with this number in your records.\n- BRL-201012: no invoice with this number in your records.\n- BRL-201013: no invoice with this number in your records.\n- BRL-201014: no invoice with this number in your records.\n- BRL-201015: no invoice with this number in your records.\n- BRL-201016: no invoice with this number in your records.\n- BRL-201017: no invoice with this number in your records.\n- BRL-201018: no invoice with this number in your records.\n- BRL-201019: no invoice with this number in your records.\n- BRL-201020: no invoice with this number in your records.\n- BRL-201021: no invoice with this number in your records.\n- BRL-201022: no invoice with this number in your records.\n- BRL-201023: no invoice with this number in your records.\n- BRL-201024: no invoice with this number in your records.\n- BRL-201025: no invoice with this number in your records.\n- BRL-201026: no invoice with this number in your records.\n- BRL-201027: no invoice with this number in your records.\n- BRL-201028: no invoice with this number in your records.\n- BRL-201029: no invoice with this number in your records.\n- BRL-201030: no invoice with this number in your records.\n- BRL-201031: no invoice with this number in your records.\n- BRL-201032: no invoice with this number in your records.\n- BRL-201033: no invoice with this number in your records.\n- BRL-201034: no invoice with this number in your records.\n- BRL-201035: no invoice with this number in your records.\n- BRL-201036: no invoice with this number in your records.\n- BRL-201037: no invoice with this number in your records.\n- BRL-201038: no invoice with this number in your records.\n- BRL-201039: no invoice with this number in your records.\n- BRL-201040: no invoice with this number in your records.\n- BRL-201041: no invoice with this number in your records.\n- BRL-201042: no invoice with this number in your records.\n- BRL-201043: no invoice with this number in your records.\n- BRL-201044: no invoice with this number in your records.\n- BRL-201045: no invoice with this number in your records.\n- BRL-201046: no invoice with this number in your records.\n- BRL-201047: no invoice with this number in your records.\n- BRL-201048: no invoice with this number in your records.\n- BRL-201049: no invoice with this number in your records.\n- BRL-201050: no invoice with this number in your records.\n- BRL-201051: no invoice with this number in your records.\n- BRL-201052: no invoice with this number in your records.\n- BRL-201053: no invoice with this number in your records.\n- BRL-201054: no invoice with this number in your records.\n- BRL-201055: no invoice with this number in your records.\n- BRL-201056: no invoice with this number in your records.\n- BRL-201057: no invoice with this number in your records.\n- BRL-201058: no invoice with this number in your records.\n- BRL-201059: no invoice with this number in your records.\n- BRL-201060: no invoice with this number in your records.\n- BRL-201061: no invoice with this number in your records.\n- BRL-201062: no invoice with this number in your records.\n- BRL-201063: no invoice with this number in your records.\n- BRL-201064: no invoice with this number in your records.\n- BRL-201065: no invoice with this number in your records.\n- BRL-201066: no invoice with this number in your records.\n- BRL-201067: no invoice with this number in your records.\n- BRL-201068: no invoice with this number in your records.\n- BRL-201069: no invoice with this number in your records.\n- BRL-201070: no invoice with this number in your records.",
+      "appended_blocks": "",
+      "context": "",
+      "evidence_source": "recorder",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "expected_invoice_numbers": null,
+      "generated_sql": "",
+      "route": "attachment",
+      "capability_flags": [],
+      "attachment_ids": [
+        "fca4c4d0-7c9c-4719-b7aa-0e67105f44f9"
+      ],
+      "attachment_keys": [
+        "lc_statement"
+      ],
+      "citations": [],
+      "latency_ms": 4.9,
+      "llm_call_count": 0,
+      "llm_events": [],
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tokens_by_agent": {},
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 0.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": null,
+      "orchestration_score": 0.0,
+      "persona_score": 0.0,
+      "context_drift_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "I checked 70 reference(s) on that document against your invoices.",
+        "70 reference invoices I have no record of.",
+        "- BRL-201001: no invoice with this number in your records.",
+        "- BRL-201002: no invoice with this number in your records.",
+        "- BRL-201003: no invoice with this number in your records.",
+        "- BRL-201004: no invoice with this number in your records.",
+        "- BRL-201005: no invoice with this number in your records.",
+        "- BRL-201006: no invoice with this number in your records.",
+        "- BRL-201007: no invoice with this number in your records.",
+        "- BRL-201008: no invoice with this number in your records.",
+        "- BRL-201009: no invoice with this number in your records.",
+        "- BRL-201010: no invoice with this number in your records."
+      ],
+      "score_notes": "faithfulness: 0.00 (12 claims asserted with no tool context at all) | relevance: 1.0 [direct_answer, judged] (The response directly lists every line with no invoice and states all 70 references are missing, which answers the question completely.) | accuracy: 1.00 (1/1 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: 0/70 figures trace to the evidence (2 small bare integer(s) skipped) | untraceable figures: 201001, 201002, 201003, 201004, 201005, 201006 | persona: 0.0 [invoice reconciliation, missing-invoice identification] (The assistant incorrectly marked all 70 lines as having no invoice instead of naming the single missing line (BRL-201062) as required.)",
+      "judge_llm_calls": 4
+    },
+    {
+      "case_id": "long_doc_po_outlier_line",
+      "path": "default",
+      "tenant_id": "ecb1e827-c6f7-4bd9-9297-99b3cdea2dd8",
+      "session_id": "a1b06fbd-e2e1-4709-b35f-e97066abb5e8",
+      "turn_index": 1,
+      "agent_name": "chat.default_path",
+      "model_under_test": "azure:gpt-5.6-luna",
+      "question": "On this 60-line purchase order, is any line priced out of step with the rest? Give the line number and its unit price.",
+      "answer": "Yes. **Line 47** is priced out of step with the other lines:\n\n- **Line 47 — Hydraulic component 047**\n- **Unit price: USD 212.75**\n\nThe other listed unit prices are in the **USD 18.40–28.40** range. (Page 2)",
+      "answer_prose": "Yes. **Line 47** is priced out of step with the other lines:\n\n- **Line 47 — Hydraulic component 047**\n- **Unit price: USD 212.75**\n\nThe other listed unit prices are in the **USD 18.40–28.40** range. (Page 2)",
+      "appended_blocks": "",
+      "context": "",
+      "evidence_source": "recorder",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "expected_invoice_numbers": null,
+      "generated_sql": "",
+      "route": "attachment",
+      "capability_flags": [],
+      "attachment_ids": [
+        "2fa01e8e-2a53-4539-a57e-cbfd2d81be54"
+      ],
+      "attachment_keys": [
+        "lc_po_alpha"
+      ],
+      "citations": [],
+      "latency_ms": 3530.1,
+      "llm_call_count": 1,
+      "llm_events": [
+        {
+          "agent_name": "chat.attachment_content",
+          "model": "gpt-5.6-luna",
+          "tokens_in": 3307,
+          "tokens_out": 124,
+          "latency_ms": 3400.82,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 3307,
+      "tokens_out": 124,
+      "tokens_by_agent": {
+        "chat.attachment_content": {
+          "calls": 1,
+          "tokens_in": 3307,
+          "tokens_out": 124,
+          "latency_ms": 3400.8
+        }
+      },
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 0.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": null,
+      "orchestration_score": 0.0,
+      "persona_score": 1.0,
+      "context_drift_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "Line 47 is priced out of step with the other lines:",
+        "Line 47 — Hydraulic component 047",
+        "Unit price: USD 212.75",
+        "The other listed unit prices are in the USD 18.40–28.40 range. (Page 2)"
+      ],
+      "score_notes": "faithfulness: 0.00 (4 claims asserted with no tool context at all) | relevance: 1.0 [direct_answer, judged] (Provides the requested line number and unit price and notes the price range for the other lines, directly answering the question.) | accuracy: 1.00 (2/2 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: 0/3 figures trace to the evidence (4 small bare integer(s) skipped) | untraceable figures: 212.75, 18.40, 28.40 | persona: 1.0 [line-item pricing, price-consistency/outlier detection] (Correctly identified Line 47 as a unit-price outlier (USD 212.75) versus the USD 18.40–28.40 range on the other lines.)",
+      "judge_llm_calls": 4
+    },
+    {
+      "case_id": "long_doc_po_delivery_term",
+      "path": "default",
+      "tenant_id": "ecb1e827-c6f7-4bd9-9297-99b3cdea2dd8",
+      "session_id": "6f5cf0de-6887-45e0-bd19-148dc0de8586",
+      "turn_index": 1,
+      "agent_name": "chat.default_path",
+      "model_under_test": "azure:gpt-5.6-luna",
+      "question": "Does this purchase order allow us to ship it in parts?",
+      "answer": "No. The purchase order states: **“partial shipments are NOT permitted under this order.”** (Page 3)",
+      "answer_prose": "No. The purchase order states: **“partial shipments are NOT permitted under this order.”** (Page 3)",
+      "appended_blocks": "",
+      "context": "",
+      "evidence_source": "recorder",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "expected_invoice_numbers": null,
+      "generated_sql": "",
+      "route": "attachment",
+      "capability_flags": [],
+      "attachment_ids": [
+        "dd4aa6d2-c3ad-4ff5-b518-2eb710735ec8"
+      ],
+      "attachment_keys": [
+        "lc_po_beta"
+      ],
+      "citations": [],
+      "latency_ms": 2841.7,
+      "llm_call_count": 1,
+      "llm_events": [
+        {
+          "agent_name": "chat.attachment_content",
+          "model": "gpt-5.6-luna",
+          "tokens_in": 3240,
+          "tokens_out": 28,
+          "latency_ms": 2721.45,
+          "status": "success",
+          "llm_calls": 1
+        }
+      ],
+      "tokens_in": 3240,
+      "tokens_out": 28,
+      "tokens_by_agent": {
+        "chat.attachment_content": {
+          "calls": 1,
+          "tokens_in": 3240,
+          "tokens_out": 28,
+          "latency_ms": 2721.4
+        }
+      },
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 0.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 1.0,
+      "context_score": null,
+      "orchestration_score": null,
+      "persona_score": 1.0,
+      "context_drift_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "The purchase order states: **“partial shipments are NOT permitted under this order.”** (Page 3)"
+      ],
+      "score_notes": "faithfulness: 0.00 (1 claims asserted with no tool context at all) | relevance: 1.0 [direct_answer, judged] (Direct yes/no answer to the user's question with a supporting quote from the purchase order.) | accuracy: 1.00 (1/1 required facts met) | context: not scored (no expected invoice set on this case) | orchestration: not scored (no gradeable figures in the answer); 1 small bare integer(s) skipped | persona: 1.0 [shipping/partial-shipment terms, purchase order contract terms] (The assistant correctly read and reported the PO term prohibiting partial shipments exactly as stated.)",
+      "judge_llm_calls": 4
+    },
+    {
+      "case_id": "long_doc_delivery_shortfall",
+      "path": "default",
+      "tenant_id": "ecb1e827-c6f7-4bd9-9297-99b3cdea2dd8",
+      "session_id": "dfb83331-bd51-4a94-991b-87f0e442c3f1",
+      "turn_index": 1,
+      "agent_name": "chat.default_path",
+      "model_under_test": "azure:gpt-5.6-luna",
+      "question": "On this delivery note, were all 70 lines delivered in full? Name any line that was short.",
+      "answer": "I could not find any invoice matching that document (DN-CMC-2026-3390). Tell me the invoice number you want it compared against and I will use that.",
+      "answer_prose": "I could not find any invoice matching that document (DN-CMC-2026-3390). Tell me the invoice number you want it compared against and I will use that.",
+      "appended_blocks": "",
+      "context": "",
+      "evidence_source": "recorder",
+      "executed_queries": "",
+      "fetched_invoice_numbers": [],
+      "expected_invoice_numbers": null,
+      "generated_sql": "",
+      "route": "attachment",
+      "capability_flags": [],
+      "attachment_ids": [
+        "43516025-d0c0-42a6-ab40-6a1918a29744"
+      ],
+      "attachment_keys": [
+        "lc_delivery_note"
+      ],
+      "citations": [],
+      "latency_ms": 107.4,
+      "llm_call_count": 0,
+      "llm_events": [],
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tokens_by_agent": {},
+      "error": null,
+      "judge_mode": "separate",
+      "faithfulness_score": 0.0,
+      "relevance_score": 1.0,
+      "accuracy_score": 0.0,
+      "context_score": null,
+      "orchestration_score": 0.0,
+      "persona_score": null,
+      "context_drift_score": null,
+      "helpfulness_score": null,
+      "completeness_score": null,
+      "tone_score": null,
+      "passed": false,
+      "claims": [
+        "I could not find any invoice matching that document (DN-CMC-2026-3390)."
+      ],
+      "score_notes": "faithfulness: 0.00 (1 claims asserted with no tool context at all) | relevance: 1.0 [clarifying_question, judged] (Asks for the invoice number needed to compare against the delivery note, which directly resolves what's missing to answer whether any lines were short.) | accuracy: 0.00 (0/4 required facts met) | missing: States that not all lines were delivered in full.; Names line 11 as short-shipped.; Names line 29 as short-shipped. | context: not scored (no expected invoice set on this case) | orchestration: 0/2 figures trace to the evidence | untraceable figures: 2026, 3390 | persona: not scored (judge unavailable)",
+      "judge_llm_calls": 4
+    }
+  ]
+}

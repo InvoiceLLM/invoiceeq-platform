@@ -56,6 +56,14 @@ def _extraction_summary(**overrides):
         },
         "recall_by_alert_type": {},
         "field_accuracy": {"correct": 81, "total": 81, "ratio": 1.0, "note": ""},
+        # Gap 485 (2026-09-07): per-field accuracy joined the summary so the
+        # composite above is actionable. Present here because this fixture
+        # exists to be the same SHAPE as summarise() returns, and the test
+        # below compares the two key sets exactly.
+        "field_accuracy_by_field": {
+            "grand_total": {"correct": 4, "total": 4, "ratio": 1.0},
+            "items[].amount": {"correct": 12, "total": 12, "ratio": 1.0},
+        },
         "false_positive_documents": [
             {"case_id": "outbound_trade_discount__clean", "alerts": ["tax_mismatch"]}
         ],

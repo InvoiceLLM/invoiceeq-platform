@@ -182,11 +182,17 @@ def test_every_golden_case_with_a_reference_has_a_checklist():
 
 
 def test_facts_file_names_only_real_cases():
-    from benchmarks.agent_eval_golden_sample import CASES
+    # Gap 483 (2026-09-07): the universe widened from CASES to CASES +
+    # ATTACHMENT_CASES when the 16 attachment-probe turns were added as golden
+    # cases. They are deliberately kept off the default path (twelve of them need
+    # a document the harness cannot yet seed), so checking only CASES reported all
+    # sixteen as orphans. The assertion itself is unchanged and just as strict:
+    # a facts key naming no case at all is still a failure.
+    from benchmarks.agent_eval_golden_sample import ATTACHMENT_CASES, CASES
 
     path = Path(__file__).resolve().parents[1] / "benchmarks" / "agent_eval_golden_facts.json"
     facts = json.loads(path.read_text(encoding="utf-8"))
-    ids = {c.case_id for c in CASES}
+    ids = {c.case_id for c in CASES} | {c.case_id for c in ATTACHMENT_CASES}
     unknown = [k for k in facts if not k.startswith("_") and k not in ids]
     assert unknown == [], unknown
 

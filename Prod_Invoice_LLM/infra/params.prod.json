@@ -50,6 +50,24 @@
     "azureOpenAiDeploymentName": {
       "value": "gpt-5-mini"
     },
+    "azureOpenAiChatSummaryDeploymentName": {
+      "value": ""
+    },
+    "enableEntityResolver": {
+      "value": false
+    },
+    "enableSemanticViews": {
+      "value": false
+    },
+    "enableCertifiedExamples": {
+      "value": false
+    },
+    "enableKnowledgeLayer": {
+      "value": false
+    },
+    "enableRerank": {
+      "value": false
+    },
     "azureOpenAiModelVersion": {
       "value": "2025-08-07"
     },

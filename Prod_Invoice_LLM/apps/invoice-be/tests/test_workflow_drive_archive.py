@@ -703,6 +703,18 @@ def test_approve_archives_to_drive_on_postgres():
     config_was_created = False
     previous_destinations = None
     with Session(pg_engine) as pg_session:
+        # Gap 477 (2026-09-07, founder: "fix the 5"). This test seeded its rows into
+        # POSTGRES while the autouse `override_db_session` fixture still pointed the
+        # app's `get_db_session` at the module's in-memory SQLite engine -- so the
+        # endpoint looked for `PG-HUMAN` in SQLite, found nothing, and returned
+        # `404 Invoice not found or access denied`. It was not an environment
+        # problem and not a missing credential: the request and the fixture were
+        # talking to two different databases, which is the exact class of defect
+        # CONVENTIONS hard rule 2 exists for.
+        def _use_postgres():
+            yield pg_session
+
+        app.dependency_overrides[get_db_session] = _use_postgres
         def get_db_session_override():
             yield pg_session
 
@@ -753,6 +765,9 @@ def test_approve_archives_to_drive_on_postgres():
             human_invoice = _seed_invoice(pg_session, invoice_number="PG-DRIVE-HUMAN")
             key_invoice = _seed_invoice(pg_session, invoice_number="PG-DRIVE-KEY")
             created_invoice_ids = [human_invoice.id, key_invoice.id]
+            # Gap 477: committed before the request. They were only `add()`ed, so the
+            # endpoint's own transaction could not see them and returned 404.
+            pg_session.commit()
 
             creds, scope, folder, upload, pdf = _drive_patches()
             with creds, scope, folder, upload as mock_upload, pdf:

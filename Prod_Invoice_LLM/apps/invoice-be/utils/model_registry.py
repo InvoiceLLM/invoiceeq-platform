@@ -40,7 +40,7 @@ from typing import Dict, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-Role = Literal["primary", "fast", "judge", "chat_summary", "long_doc"]
+Role = Literal["primary", "fast", "judge", "chat_summary"]
 
 
 @dataclass(frozen=True)
@@ -66,8 +66,9 @@ class CatalogEntry:
     # context SIZE, and conflating them is how a 1M-token window gets treated as
     # a 1M-token memory. Measured on the 16-turn attachment probe and in the
     # published MRCR numbers the founder's 2026-09-05 brief carries: Luna's
-    # multi-round coreference recall is 41% where Terra's is 89%+, which is why
-    # Terra is the `long_doc` candidate (task 29.10) even though Luna is primary.
+    # multi-round coreference recall is 41% where Terra's is 89%+. Task 29.10
+    # (2026-09-07) measured both on `tests/golden_long_doc.json`: 3/3 each, so no
+    # separate long-document role exists and Terra's deployment was deleted.
     # Free text on purpose -- it is a warning for a human choosing a role, not a
     # number any code branches on.
     recall_note: str = ""
@@ -100,8 +101,8 @@ MODEL_CATALOG: Dict[str, CatalogEntry] = {
             "Long-context RECALL is the weak axis, not context size: MRCR ~41% vs Terra 89%+, "
             "and on the 16-turn attachment probe Luna scored 4/12 against Terra's 7/12 BEFORE "
             "the Gaps 470/472/473/475/476 agent fixes. Fine as primary/fast and as the "
-            "attachment narrator (16/16 after those fixes); do NOT hand it a long document "
-            "and expect it to find one clause in the middle -- that is the `long_doc` role."
+            "attachment narrator (16/16 after those fixes). Task 29.10 (2026-09-07): on the five "
+            "long-document golden cases Luna matched Terra 3/3, so it reads long documents too."
         ),
     ),
     "gpt-5.6-terra": CatalogEntry(
@@ -244,19 +245,6 @@ def resolve_model(role: Role = "primary", settings=None) -> ModelSpec:
             deployment = (getattr(settings, "AZURE_OPENAI_FAST_DEPLOYMENT_NAME", "") or "").strip() or primary
         elif role == "judge":
             deployment = (getattr(settings, "AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME", "") or "").strip() or primary
-        elif role == "long_doc":
-            # Feature 29 task 29.1 / decision 9. The role a long attached document
-            # is read on. Falls back to FAST, not to primary, so an environment
-            # that has not set it behaves exactly as it does today -- the role is
-            # inert until task 29.10 measures Terra against Luna and something is
-            # actually set. `recall_note` on the catalog entry is why the role
-            # exists at all: context size and context recall are different
-            # properties and only one of them is a number in this table.
-            deployment = (
-                (getattr(settings, "AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME", "") or "").strip()
-                or (getattr(settings, "AZURE_OPENAI_FAST_DEPLOYMENT_NAME", "") or "").strip()
-                or primary
-            )
         elif role == "chat_summary":
             # Feature 29 decision 2: the full-record chat route narrates on
             # gpt-5-mini. Falls back to the JUDGE deployment before the primary,

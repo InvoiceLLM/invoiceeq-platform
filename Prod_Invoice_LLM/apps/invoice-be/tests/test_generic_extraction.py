@@ -527,6 +527,25 @@ def test_gap_435_reference_direction_takes_the_generic_spine_for_advisory_types_
 
 
 @pytest.fixture
+def generic_flag_off(monkeypatch):
+    """Turn `ENABLE_GENERIC_EXTRACTION` OFF for one test.
+
+    Added 2026-09-07 (Gap 477, founder: "re-baseline the 38"). Every flag-off test
+    below used to rely on the ambient default being False. Commit `1228edf` pinned
+    the flag **True** with a do-not-disable note, so the default is now the opposite
+    of what they assumed and 26 of them failed -- not because the flag-off path
+    broke, but because they were never actually exercising it by choice.
+
+    Turning it off explicitly is the honest fix: the flag-off path still exists,
+    still has to keep working, and a test of it should say so rather than inherit
+    it from a default that has now changed twice.
+    """
+    monkeypatch.setattr(config.settings, "ENABLE_GENERIC_EXTRACTION", False)
+    assert ea.get_settings().ENABLE_GENERIC_EXTRACTION is False
+    return False
+
+
+@pytest.fixture
 def generic_flag_on(monkeypatch):
     """Turn `ENABLE_GENERIC_EXTRACTION` on for one test.
 
@@ -540,11 +559,21 @@ def generic_flag_on(monkeypatch):
     return True
 
 
-def test_the_flag_defaults_off_so_this_whole_path_is_unreachable_by_default():
-    """E1/E3's fail-closed default, asserted here rather than assumed by every
-    other test in this section. A deployment that has not thought about Feature 27
-    gets today's behaviour."""
-    assert ea.get_settings().ENABLE_GENERIC_EXTRACTION is False
+def test_the_flag_is_pinned_on_and_must_not_be_disabled():
+    """RE-BASELINED 2026-09-07 (Gap 477). Was
+    `test_the_flag_defaults_off_so_this_whole_path_is_unreachable_by_default`,
+    asserting E1/E3's fail-closed default.
+
+    Commit `1228edf` pinned `ENABLE_GENERIC_EXTRACTION` **True** with an explicit
+    do-not-disable note: generic extraction is no longer an opt-in experiment, it is
+    how non-invoice documents are read, and Feature 26's attachment branches depend
+    on it. The old assertion was not describing a safety property any more, it was
+    describing a decision that had been reversed.
+
+    Kept, inverted, rather than deleted -- the flag's value is load-bearing and a
+    silent flip back to False would take the attachment features with it."""
+    assert ea.get_settings().ENABLE_GENERIC_EXTRACTION is True
+    assert config.Settings.model_fields["ENABLE_GENERIC_EXTRACTION"].default is True
 
 
 def test_the_generic_profile_entry_has_the_shape_a2_specifies():
@@ -625,7 +654,7 @@ def test_doc_type_is_normalised_before_the_family_lookup(generic_flag_on, doc_ty
 
 
 @pytest.mark.parametrize("doc_type", _GENERIC_ELIGIBLE_DOC_TYPES)
-def test_flag_off_falls_through_to_exactly_the_existing_profile(doc_type):
+def test_flag_off_falls_through_to_exactly_the_existing_profile(doc_type, generic_flag_off):
     """E3: with the flag off, nothing about profile resolution changes — asserted
     as identity with `resolve_direction_profile`'s own answer, not merely as "not
     generic"."""
@@ -634,7 +663,7 @@ def test_flag_off_falls_through_to_exactly_the_existing_profile(doc_type):
     assert resolve_extraction_profile("INBOUND", doc_type).schema is InvoiceExtractionSchema
 
 
-def test_flag_off_is_identical_to_resolve_direction_profile_for_every_combination():
+def test_flag_off_is_identical_to_resolve_direction_profile_for_every_combination(generic_flag_off):
     """The exhaustive form of E3 for this function: every direction the codebase
     can produce (including the absent and typo'd cases) crossed with every value in
     the closed taxonomy plus `None`.
@@ -928,7 +957,7 @@ def _referenced_globals(fn):
 # --- Group 1: graph structure (E3's "byte-identical, testably") ---------------
 
 
-def test_flag_off_the_compiled_graph_does_not_contain_the_doc_type_node_at_all():
+def test_flag_off_the_compiled_graph_does_not_contain_the_doc_type_node_at_all(generic_flag_off):
     """E3's real assertion. Not "doc_type comes back None" — that would also be
     true of a node that ran and returned nothing. The node is not in the compiled
     graph, so there is no execution path through it to reason about."""
@@ -944,7 +973,7 @@ def test_flag_off_the_entry_point_is_still_the_complexity_classifier():
     assert ("__start__", "classify_doc_type") not in _edges(ea.graph)
 
 
-def test_flag_off_resolves_to_the_module_level_graph_object_itself():
+def test_flag_off_resolves_to_the_module_level_graph_object_itself(generic_flag_off):
     """Identity, not equivalence: the flag-off pipeline runs the same compiled
     object it ran before Feature 27 existed."""
     assert ea.resolve_extraction_graph() is ea.graph
@@ -1016,9 +1045,7 @@ def test_the_doc_type_node_has_a_friendly_log_line_like_every_other_node():
 # --- Group 2: real runs through the real graph --------------------------------
 
 
-def test_flag_off_a_full_run_never_calls_the_classifier_and_uses_the_invoice_schema(
-    monkeypatch,
-):
+def test_flag_off_a_full_run_never_calls_the_classifier_and_uses_the_invoice_schema(monkeypatch, generic_flag_off):
     """The end-to-end half of E3, on the founder's own symptom document: a delivery
     challan with the flag off is still extracted on `InvoiceExtractionSchema`, on
     the inbound status vocabulary, and the classifier is never reached — asserted
@@ -1245,7 +1272,7 @@ def test_extract_node_extracts_a_classified_delivery_note_on_the_generic_schema(
     assert llm.schemas == [GenericDocumentSchema]
 
 
-def test_extract_node_ignores_the_doc_type_when_the_flag_is_off(monkeypatch):
+def test_extract_node_ignores_the_doc_type_when_the_flag_is_off(monkeypatch, generic_flag_off):
     """The same state, the same classified type, flag off → `InvoiceExtractionSchema`.
     The state key existing is not what changes behaviour; the flag is."""
     assert ea.get_settings().ENABLE_GENERIC_EXTRACTION is False
@@ -1302,7 +1329,7 @@ def test_the_multimodal_prompt_binds_the_classified_type_instead_of_defaulting_t
     assert _OVERLAYS["OTHER"] not in text
 
 
-def test_the_invoice_multimodal_builder_is_still_called_unbound_and_unchanged(monkeypatch):
+def test_the_invoice_multimodal_builder_is_still_called_unbound_and_unchanged(monkeypatch, generic_flag_off):
     """The binding above must touch nothing else: every non-GENERIC profile still
     goes through `profile.build_multimodal_prompt(ocr_text, images, rules)`
     exactly as it did, with no `doc_type` anywhere near it."""
@@ -1573,7 +1600,7 @@ def test_each_rubrics_status_pair_agrees_with_the_profile_it_will_be_used_with(
 # --- `resolve_verification_rubric`: when the map is consulted at all -----------
 
 
-def test_flag_off_never_consults_the_rubric_map(recording_rubric_map):
+def test_flag_off_never_consults_the_rubric_map(recording_rubric_map, generic_flag_off):
     """E3/E6: "With the flag OFF, `verify_node` never consults the map." Asserted on
     the map itself, not on the output — an invoice produces the same alerts either
     way, so an equality assertion here would pass against a fully-gated
@@ -1586,7 +1613,7 @@ def test_flag_off_never_consults_the_rubric_map(recording_rubric_map):
     assert recording_rubric_map.lookups == []
 
 
-def test_flag_off_verify_node_never_consults_the_rubric_map_either(recording_rubric_map):
+def test_flag_off_verify_node_never_consults_the_rubric_map_either(recording_rubric_map, generic_flag_off):
     """The same assertion one level up, through the real node, for the state that
     would otherwise reach the quantity rubric."""
     assert ea.get_settings().ENABLE_GENERIC_EXTRACTION is False
@@ -1685,9 +1712,7 @@ def test_t_r_1_a_delivery_note_with_no_prices_raises_no_arithmetic_alerts(
     assert result["feedback"] == []
 
 
-def test_t_r_1_the_same_delivery_note_under_the_flag_off_still_runs_the_money_checks(
-    spied_math_checks,
-):
+def test_t_r_1_the_same_delivery_note_under_the_flag_off_still_runs_the_money_checks(spied_math_checks, generic_flag_off):
     """The negative half of T-R-1, kept as a test rather than as a claim: with the
     flag off this document takes the identical path it always has — both checks
     attempted, both returning None because the fields are absent, an
@@ -1841,7 +1866,7 @@ def _verify_invoice_and_capture(monkeypatch, doc_type):
     return result, calls
 
 
-def test_t_r_3_an_invoice_produces_the_identical_alert_set_with_the_flag_on(monkeypatch):
+def test_t_r_3_an_invoice_produces_the_identical_alert_set_with_the_flag_on(monkeypatch, generic_flag_off):
     """**T-R-3 — the regression proof, and the reason `resolve_verification_rubric`
     has no money-family exclusion.** The money rubric is today's behaviour written
     down, so consulting it for an INVOICE must resolve to the same checks, with the
@@ -2091,7 +2116,7 @@ def test_t_r_7_a_non_invoice_document_produces_no_low_confidence_field_alerts(
     assert result["status"] == "EXTRACTED"
 
 
-def test_t_r_7_the_same_document_under_the_flag_off_still_runs_the_critic(spied_critic):
+def test_t_r_7_the_same_document_under_the_flag_off_still_runs_the_critic(spied_critic, generic_flag_off):
     """The negative half of T-R-7, kept as a test rather than as a claim. This is
     the assertion the pre-G7 marker made, preserved verbatim for the flag-OFF case
     it is still true of: two alerts, a review status, and the check attempted.
@@ -2259,7 +2284,7 @@ def test_a_non_invoice_documents_null_tax_amount_is_not_backfilled_from_di(
     assert extracted["tax_amount"] is None
 
 
-def test_the_same_delivery_note_under_the_flag_off_is_still_backfilled(monkeypatch):
+def test_the_same_delivery_note_under_the_flag_off_is_still_backfilled(monkeypatch, generic_flag_off):
     """The negative half. With the flag off this is Gap 68's behaviour, untouched —
     which is also what makes the gate's effect visible rather than asserted."""
     assert ea.get_settings().ENABLE_GENERIC_EXTRACTION is False
@@ -2615,7 +2640,7 @@ def test_generic_is_not_an_accepted_flow_direction(flow_direction):
 
 
 @pytest.mark.parametrize("flow_direction", ["REFERNCE", "NONSENSE", "GENERIC", "  inbound "])
-def test_e9_raises_with_the_flag_off_too(flow_direction):
+def test_e9_raises_with_the_flag_off_too(flow_direction, generic_flag_off):
     """**E9 is the single deliberate exception to E3**, and this is the test that
     holds that exception honest in the configuration that is actually deployed
     today. Gating a fail-loud correction behind the flag would leave the footgun
@@ -2638,7 +2663,7 @@ def test_e9_raises_with_the_flag_on_too(generic_flag_on, flow_direction):
         resolve_direction_profile(flow_direction)
 
 
-def test_e9_is_the_only_visible_behaviour_change_with_the_flag_off():
+def test_e9_is_the_only_visible_behaviour_change_with_the_flag_off(generic_flag_off):
     """E3's guarantee, restated for G6 specifically: with the flag off, every
     input the codebase can actually produce resolves to the same profile object it
     did before this change, and the *only* difference anywhere is that a value no

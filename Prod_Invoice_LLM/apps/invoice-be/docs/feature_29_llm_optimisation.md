@@ -75,6 +75,13 @@ unless stated; differences under ~3 points are within run-to-run noise on 27 inv
 | (d) $ per turn / p95 s | $0.0062 / 34.0 | **$0.0022** / **11.2** | $0.0198 / 11.3 | $0.0517 / 16.6 | $0.0847 / 20.6 |
 | (e) judge mean abs δ vs current / pass flips % | **0.097 / 5.6** | 0.191 / 22.2 | 0.169 / 27.8 | 0.156 / 22.2 | 0.119 / 19.4 |
 
+**Row (c) is not a deterministic measurement — annotated 2026-09-07 (Gap 484), not deleted.**
+The harness never wrote `expected_invoice_numbers` into a turn record, so `digest_eval`'s
+`set(expected) <= set(fetched)` branch never executed and these five figures were produced by
+the **judge's** `accuracy_score >= 0.8` — the judge later measured at κ 0.151. The varying n
+(31 / 27 / 27 / 25 / 27 for one 36-case set) is the floating denominator of the same defect.
+Both are fixed; no figure in this row is comparable to one produced after 2026-09-07.
+
 List price per 1M in/out: gpt-5-mini $0.25/$2.00 · Luna $0.20/$1.20 · Terra $2.00/$12.00 · Sol
 $5.00/$30.00 · Astra $10.00/$12.50.
 
@@ -103,6 +110,7 @@ closed at 98.8 / 98.8 / 99.3.**
 | gpt-5-mini | **full record** (every column + items/taxes/alerts, no router, no SQL) | **0.761** | **0.891** | **52.8** | 18,534 | 12.5 |
 | gpt-5.6-luna | as-is | 0.583 | 0.824 | 27.8 | 8,618 | 11.2 |
 | gpt-5.6-luna | full record | 0.671 | 0.846 | 37.1 (n=35) | 17,724 | 38.3 |
+| gpt-5.6-luna | **as built, fixed judge (2026-09-07)** | **0.757** | **0.891** | **72.2** | 7,869 | — |
 
 **What the context audit showed (Luna as-is, 36 turns).** The invoice table has 45 columns. The
 generated SELECT projected 2–13 of them; `items`, `taxes`, `sa_alerts`, `payment_instructions`,
@@ -112,6 +120,17 @@ context"). One turn returned 402 rows for an aggregate question. Failures theref
 evidence (9), wrong/partial evidence (~17), model forbidden to compute what the question needed (~6:
 line-sum checks, cross-currency refusal, GST slab per line), and judge-strictness (~4: answer correct,
 one sub-claim unsupported).
+
+**The 2026-09-07 row is the first number in this table that is a measurement of the product.** Every
+row above it was produced by the pre-Gap-479 judge, which failed 20 of the 28 answers a reader marks
+correct (κ 0.151); the rows are kept because they are the history the fix was found from, not because
+they are comparable. On the fixed judge, live (`runs/f29-golden-20260907/`, 36 turns, judge gpt-5-mini):
+**κ 0.852 / agreement 94.4% against the reference verdicts, gate ≥ 0.6 passes, 0 false passes, 2 false
+fails** — one a transient Postgres connection drop inside the run, one **Gap 480**. Task 29.5's evidence
+wiring is confirmed on live data (Gap 478): `evidence_source = "app"` on 31 of 36 turns and the graded
+context carries `FULL INVOICE RECORD(S)` on 22 of 36, against **0 of 36** on the same build the day
+before. Failure taxonomy: `wrong_evidence` 9 → 4, `no_computation` 9 → 4, `narration` 4 → 0, `judge`
+4 → 0, `no_route` 2, `no_evidence` 0.
 
 **Cost.** Full-record turns are ~18k input tokens (≈$0.0045 gpt-5-mini, ≈$0.0037 Luna at list) versus
 1–3k today, but replace 2–4 chained calls with one. Net per-turn cost is roughly flat; latency halves on
@@ -164,7 +183,7 @@ probe re-run is still owed** — Gaps 470/472/473 stay open until it is recorded
 |---|---|---|---|
 | **primary** | `gpt-5.6-luna` (2026-07-09) | extraction, SQL generation, trainer, dashboard | 99.3 extraction at 1/3 the cost of gpt-5-mini; SQL within noise of Terra at 1/9 the cost. Founder override of `decision.md`'s Terra-for-SQL (cost) |
 | **fast** | `gpt-5.6-luna` | chat narration, routing, guards, classifier fallback | best pass % as-is; cheapest; lowest p95. Founder override of Astra (cost, 2 pts inside noise) |
-| **long_doc** | `gpt-5.6-terra` — *pending* | `attachment_compare`, `attachment_pair_compare`, attached-doc answer | 7/12 vs 4/12 on the probe; **gated on 5 long-doc golden cases (task 29.10)**; Luna stays if within 2 pts; Claude Sonnet 5 (Foundry) only if Terra is also weak |
+| ~~**long_doc**~~ | **none — role removed 2026-09-07 (task 29.10, Gap 489)** | attached-doc answer stays on `fast` = Luna | Luna 3/3 vs Terra 3/3 on the gradable long-doc golden cases (§8 29.10 result); 2-pt rule keeps Luna; Terra deployment deleted; `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` and `get_long_doc_llm()` removed rather than left as an inert variable |
 | **judge** | `gpt-5-mini` | `run_agent_eval.py`, online quality signals | lowest pass-flip rate (5.6%); must differ from primary |
 | **chat without attachment** | `gpt-5-mini` for the full-record summary call | the Step-4 full-record route | 52.8% vs Luna 37.1% on full records — the one place gpt-5-mini beat Luna outright |
 | escalation | none | — | Sol/Astra did not beat Terra by >2 pts on extraction; **deleted** (task 29.1) |
@@ -238,8 +257,9 @@ change, and what not to build yet.
 | path | named function / component | new or edit | what it does |
 |---|---|---|---|
 | `utils/model_registry.py` | `MODEL_CATALOG`, `CatalogEntry.recall_note` | edit | 5.6-family context → 1,050,000 / 922,000 input; `recall_note` field; Sol/Astra entries marked deleted |
-| `utils/llm.py` | `get_long_doc_llm()` | new | resolves the `long_doc` role (env `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`), falls back to `_fast_llm()` when unset |
-| `config.py` | `Settings.AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`, `Settings.CHAT_FULL_RECORD_MAX_INVOICES`, `Settings.ENABLE_CHAT_PLANNER` | edit | new settings, all defaulted to today's behaviour |
+| `utils/llm.py` | ~~`get_long_doc_llm()`~~ | removed 2026-09-07 | added by 29.1, deleted by 29.10 / Gap 489 with the `long_doc` role and its setting |
+| `agents/entity_resolver.py` | `resolve_entities()`, `ResolutionResult`, `ResolvedEntity`, `Candidate` | new (29.11) | deterministic invoice / vendor / attachment / session-reference binding; 0 or >1 → clarify card; wired into `_run_query_agent()` behind `ENABLE_ENTITY_RESOLVER` |
+| `config.py` | `Settings.CHAT_FULL_RECORD_MAX_INVOICES`, `Settings.ENABLE_CHAT_PLANNER`, `Settings.ENABLE_ENTITY_RESOLVER` (~~`AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`~~ removed, Gap 489) | edit | new settings, all defaulted to today's behaviour |
 | `agents/query_agent.py` | `_run_query_agent()` | edit | after SQL identifies ids, calls `fetch_full_records()`; passes the full-record block + chunks to the summary prompt |
 | `agents/query_agent.py` | `_amount_owed_block()`, `_contract_terms_block()` | exist (Gaps 472/473) | unchanged; listed because 29.7 wires them on the per-document path |
 | `agents/query_agent.py` | `_run_attachment_pair_turn()` | edit | task 29.7: when both documents have confirmed invoices and the question is not "compare these two", run each document against its own invoice and merge |
@@ -263,7 +283,7 @@ change, and what not to build yet.
 | `scripts/attach_chat_eval.py` | `main()` | new (formalise the probe) | the 16-turn attachment probe as a versioned script: fresh sessions, cache flush, per-model JSON |
 | `tests/golden_calibration.json` | — | new | ≥30 (target 100) hand-graded turns with human verdicts |
 | `tests/golden_long_doc.json` | — | new | 5 long-document cases for the `long_doc` role gate |
-| `infra/modules/compute/*.bicep`, `08-apps.bicep`, `params.dev.json` | `azureOpenAiLongDocDeploymentName` | edit | new env var on be, worker and the 6 jobs |
+| `infra/modules/compute/*.bicep`, `08-apps.bicep`, `params.dev.json` | ~~`azureOpenAiLongDocDeploymentName`~~ | added P0.4, removed 2026-09-07 | Gap 489: the param and env var are gone from all three modules, `08-apps` and both params files; `tests/test_model_role_env_wiring.py` pins that they stay gone |
 | `infra/model-deployment.bicep` | comment | edit | Sol/Astra removed; roles documented |
 | `docs/feature_6_rag.md`, `docs/feature_26_chat_attached_documents.md` | §"Superseded by Feature 29" | edit | cross-reference only |
 
@@ -348,7 +368,7 @@ change, and what not to build yet.
 
 **A chat turn with one attachment.** Unchanged shape (Feature 26): intent → compare / reconcile /
 read. `_amount_owed_block()` and `_contract_terms_block()` run on the compare branch; the narration
-call uses `get_long_doc_llm()` once 29.10 decides the role. Gate as above.
+call uses the `fast` role (Luna) — 29.10 measured no long-document advantage for Terra, so there is no separate long-doc model (Gap 489). Gate as above.
 
 **A chat turn with two attachments.** Task 29.7: if the question names or implies an invoice and both
 documents have confirmed invoices, each document is compared to *its own* invoice and the two
@@ -447,6 +467,19 @@ Grouped into four tracks. Each task is independently completable and testable; �
 > and cost rows to price, and removing a row would silently reprice them at zero via
 > `DEFAULT_SPEC`.
 >
+> **Env wiring completed 2026-09-07 (phase-2 P0.4, Gap 481).** 29.1 left the two roles
+> readable only from code: `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME` and
+> `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` were on `Settings` but on no container, so both
+> roles resolved by fallback and `params.dev.json` did not record which deployment was in
+> force. Both are now params on `invoice-be.bicep`, `queue-worker.bicep` and
+> `scheduled-job.bicep`, threaded from `08-apps.bicep` to all six module invocations that
+> already take the judge param, with dev pinning chat_summary = `gpt-5-mini` (decision 2)
+> and long_doc = `''` (inert until CP1) and prod carrying both keys empty. The wiring is
+> pinned by `tests/test_model_role_env_wiring.py`, whose load-bearing test compares the
+> bicep env names against the real `Settings` fields — pydantic ignores an unmatched name
+> in silence, so a typo there is invisible everywhere else. `az bicep build` clean on all
+> four files; **not deployed**, the push is the founder's.
+>
 > **29.2 — the result changes what the rest of this feature may claim.** κ = **0.151** on n = 36
 > (agreement 0.444 against 0.346 expected by chance), against a gate of 0.6. **The gate fails.**
 > The 2×2 is entirely one-directional: `both_pass 8, both_fail 8, judge_pass_human_fail 0,
@@ -470,6 +503,34 @@ Grouped into four tracks. Each task is independently completable and testable; �
 > bucket trend costs nothing. **`no_evidence = 0` must be read with Gap 478** — the harness's
 > context always carries the SQL results table, so that bucket cannot fire on this harness
 > whatever the route did.
+
+
+> **Build note, 2026-09-07 (task 29.4 a/b as built; phase-2 P1.1/P1.2, Gap 484).**
+>
+> **29.4b found something bigger than a denominator.** `digest_eval` grades SQL
+> exec-correctness with `set(expected) <= set(fetched)` — but `run_turn()` never wrote
+> `expected_invoice_numbers` into a turn record, so that branch had **never executed**,
+> and every "SQL exec-correct %" this project has published came from its fallback: the
+> judge's `accuracy_score >= 0.8`. §2.1's row (c) (32.3 / 40.7 / 44.4 / 28.0 / 44.4) is
+> therefore a judge score labelled as a deterministic one, produced by the judge Gap 479
+> later measured at κ 0.151. The row is annotated, not deleted — it is the measurement
+> that led here. The ground truth is now recorded per turn, with `()` ("fetch nothing",
+> a real expectation) kept distinct from `None` ("this case declares none", which stays
+> unscored rather than counting as perfect).
+>
+> The denominator itself is now the **case set**: errored turns are graded, not dropped,
+> and an errored turn fetched nothing so it scores zero with no special case — timeout =
+> wrong by construction. `n`, `errored`, `no_statement` and `graded_by` ride in the
+> payload so a percentage cannot be quoted without its base. The old behaviour is why one
+> 36-case set reported n = 31/27/27/25/27 across five models.
+>
+> **29.4a `--fresh-tenants` is narrower than the task text implies, and the code says so.**
+> "So cache and prior answers cannot leak between runs" is already guaranteed three times
+> over — a new in-memory SQLite database per run, `get_cached_answer` stubbed to None, and
+> Chroma stubbed with fixtures. What constant tenant ids still cost is the **persist path**
+> (every run's `agent_eval_run` rows land under one tenant and cannot be separated) and any
+> future run made without those stubs. `fresh_tenant_map()`'s docstring records that
+> distinction so the flag is never cited as a fix for a leak it does not close.
 
 **Track B — evidence and contract (chat without attachment)**
 - **29.5** `fetch_full_records()` + `full_record_block()`; wired into the SQL route after ids are
@@ -518,9 +579,49 @@ Grouped into four tracks. Each task is independently completable and testable; �
   > the expected figure also appears in the sentence denying it. Tightening the probe's assertions
   > (requiring the figure adjacent to "owed", or asserting on the payload rather than the prose once
   > Gap 474 is resolved) is follow-up work under this task.
+  >
+  > **Merged into the golden set 2026-09-07 (phase-2 P0.5, Gap 483).** The 16 turns are now
+  > also `ATTACHMENT_CASES` in `benchmarks/agent_eval_golden_sample.py`, with `required` /
+  > `forbidden` facts in `agent_eval_golden_facts.json` and the probe ids preserved
+  > (`attach_a1`…`attach_b7`), so the branches Gaps 470/472/473 fixed are gradeable by the
+  > same judge as everything else instead of by a private regex set. `attach_chat_eval.py`
+  > is unchanged and kept. A drift test reads `SESSIONS` back out of the probe and compares
+  > all 16 turns field by field, because two copies of the same questions would otherwise
+  > diverge silently.
+  >
+  > **They are not yet runnable by the harness, and that is the open half.** Twelve need a
+  > document attached; the probe gets its documents by uploading eight PDFs over HTTP and
+  > waiting for the **queue worker** to extract them, while `run_agent_eval.py` runs
+  > in-process with neither. `run_query_agent()` already accepts `attachment_id` /
+  > `attachment_ids`, so the call site is fine — what is missing is seeding attachment rows
+  > with their extraction results. **Task 29.10's `tests/golden_long_doc.json` needs exactly
+  > the same seeding**, so it is one piece of work for both, and until it exists CP1's
+  > "57 golden" is 36 golden plus a separately-run probe.
 - **29.10** `tests/golden_long_doc.json` (5 cases: multi-page contract, 3-page statement, 2 long POs,
   long delivery note); Terra vs Luna on the attachment branches; role decided by the 2-pt rule; env +
   bicep for `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`.
+
+  > **29.10 result, 2026-09-07 — Luna kept, Terra deleted, role removed (Gap 489).** Both models
+  > ran the five cases through `scripts/run_agent_eval.py --cases <the 5 long_doc ids> --fresh-tenants`
+  > (`runs/f29-luna-longdoc-20260907/`, `runs/f29-terra-longdoc-20260907/`), hand-graded against
+  > `tests/golden_long_doc.json` because the harness cannot score them (Gap 488):
+  >
+  > | case | golden | Luna | Terra |
+  > |---|---|---|---|
+  > | contract late fee | 1.5 %/month, clause 27.4 | pass (2.8 s) | pass (2.2 s) |
+  > | PO outlier line | line 47, USD 212.75 | pass (3.5 s) | pass (3.8 s) |
+  > | PO delivery term | partial shipments not permitted | pass (2.8 s) | pass (2.7 s) |
+  > | statement unmatched line | BRL-201062 | harness (Gap 488 #3) | harness (Gap 488 #3) |
+  > | delivery-note shortfall | lines 11, 29, 63 | harness (Gap 488 #4) | harness (Gap 488 #4) |
+  >
+  > Terra gains 0 points over Luna on the 3 gradable cases, so by the 2-point rule Luna keeps every
+  > role. Founder 2026-09-07: "delete terra"; "lets delete AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME to
+  > [not] maintain another unnecessary var". Done: `gpt-5.6-terra` deleted from
+  > `openai-invoicellm-dev` (`az … deployment list` → gpt-5-mini, gpt-4o, gpt-5.6-luna); the
+  > `long_doc` role, `get_long_doc_llm()`, the `Settings` field, `.env.example` line, bicep param /
+  > env on all three compute modules and `08-apps`, and both params-file keys are removed. The
+  > catalog row for Terra stays (historical cost rows must still price). Roles are now exactly
+  > `primary | fast | judge | chat_summary`.
 
 > **Build note, 2026-09-07 (tasks 29.6, 29.9, 29.12 as built; 29.5's measurement).**
 >
@@ -570,6 +671,36 @@ Grouped into four tracks. Each task is independently completable and testable; �
 - **29.11** `resolve_entities()`; automatic clarify on 0/>1; keyword lists demoted to fallback behind
   `ENABLE_CHAT_PLANNER=false` (still on) — measured by clarify-card rate on the probe → 0 for
   resolvable questions.
+
+  > **29.11 built 2026-09-07 (phase-2 P2.1, Gap 490), unit tests only per the founder's 18:16
+  > scope.** `agents/entity_resolver.py::resolve_entities(question, tenant_id, db_session,
+  > attachments=None, recent_invoice_ids=None) -> ResolutionResult`. Four deterministic resolvers,
+  > no model call: (1) invoice numbers — exact, case/whitespace-insensitive, parameterised,
+  > tenant-scoped; a token that matches nothing exactly is compared with `difflib` against the
+  > tenant's numbers and offered as a *suggestion* (`status = suggested`, ratio ≥ 0.80), never
+  > bound; (2) vendors — "from / by / vendor / supplier / of X" and "X's invoices" matched by
+  > substring, then `difflib` ≥ 0.85; one hit binds, several are `ambiguous`; (3) attachments —
+  > "the attached / this document / the contract / the second PO" bound by count, document type
+  > or ordinal; (4) session references — "the second one / the last invoice / that one" bound
+  > against the previous turn's invoice ids. `ResolutionResult.needs_clarification` and
+  > `.clarify_message()` build the clarify card that lists the candidates.
+  > **Wiring** — `_run_query_agent()` calls it before `classify_query()` when
+  > `ENABLE_ENTITY_RESOLVER` is on: an unresolved invoice or vendor mention returns a turn with
+  > `content` = the clarify card and a new `entity_clarification` key (message + entities +
+  > candidates), `stop_reason = awaiting_entity_clarification`, no model consulted; bound ids are
+  > added to the RAG and CHAT routes' full-record lookups alongside 29.5's
+  > `invoice_ids_named_in()`. Flag off (default, dev and prod) the block is skipped and routing is
+  > unchanged. The keyword lists are **not** deleted (spec §4.2: fallback for one release).
+  > **Not done, and said so:** the attachment resolver is unit-tested but not wired — the
+  > attachment branches already receive explicit `attachment_ids` from the FE; the FE does not
+  > yet render `entity_clarification` (it shows `content`, which carries the same text);
+  > "probe clarify-card rate" was not measured (no live runs, founder 18:16).
+  > **Evidence:** `tests/test_entity_resolver.py` **17 passed** on real Postgres
+  > (`localhost:5433/invoice_db`) — exact, typo → suggestion, unknown → none, cross-tenant never
+  > bound, substring vendor, fuzzy vendor above/below threshold, ambiguous vendor listed, invoice
+  > number after "from" is not a vendor, attachment by count/type/ordinal, session ordinal, fail-soft
+  > on a broken session, flag defaults False, and two flag-ON turns through `_run_query_agent`
+  > (clarify stops the turn with no LLM call; a bound invoice goes through to the route).
 - **29.13** `plan_turn()` + `CAPABILITIES` registry, flag-gated, **attachment branches first**
   (decision 8), gated by the 16-turn probe; then all routes once the golden set shows no regression and
   the 100-turn calibration (decision 4) is in; keyword lists deleted one release after the flag defaults on.
@@ -596,6 +727,20 @@ Grouped into four tracks. Each task is independently completable and testable; �
 **Track E — rollout**
 - **29.20** Rollout plan dev → soak → prod written (not applied); prod params untouched.
 
+  > **29.20 written 2026-09-07 — see §10.1 below.** Not applied. `params.prod.json` untouched.
+
+> **Phase-2 capability flags (P0.6, Gap 482, 2026-09-07).** Every capability in tasks
+> 29.11 / 29.14 / 29.15 / 29.16 / 29.18 is gated by its own setting —
+> `ENABLE_ENTITY_RESOLVER`, `ENABLE_SEMANTIC_VIEWS`, `ENABLE_CERTIFIED_EXAMPLES`,
+> `ENABLE_KNOWLEDGE_LAYER`, `ENABLE_RERANK`, all default False, all wired through the three
+> compute bicep modules and pinned false in both params files. The reason is arithmetic, not
+> caution: the 2026-09-07 golden run took **7h39m** for 36 cases, so localising a CP2
+> regression by re-running with one capability off at a time is not affordable. Instead each
+> golden turn record now carries `route` and `capability_flags`, and attribution comes out of
+> a single run. `ENABLE_SEMANTIC_VIEWS` gates *use* of the views, never their existence — the
+> migration is add-only and runs regardless, so the flag can be turned off without leaving a
+> query pointing at a view that is not there.
+
 ---
 
 ## 9. Verification Plan
@@ -616,8 +761,8 @@ gate — is deterministic code with its own tests; no prompt rule decides correc
 | 29.7 | `tests/test_chat_attachments.py`: two docs + invoice question → two per-document comparisons merged; explicit "compare these two" → doc-to-doc; A4 payload carries the ledger from the per-document path |
 | 29.8 | `attach_chat_eval.py` JSON per model committed under `runs/`; probe pass counts recorded; Gaps 470/472/473 evidence lines updated |
 | 29.9 | `tests/test_answer_contract.py`: a narration with a figure not in the payload is regenerated once then abstains; provenance keys present on every claim; no false positive on dates/ids/percentages that *are* in the payload |
-| 29.10 | `golden_long_doc.json` run on Terra and Luna, judged by the calibrated judge; decision recorded with the 2-pt rule applied |
-| 29.11 | `tests/test_entity_resolver.py` (exact, fuzzy above threshold, typo → suggestion not invention, 0 → abstain, N → clarify with candidates, session reference "the second one"); probe clarify-card rate |
+| 29.10 | `golden_long_doc.json` run on Terra and Luna, judged by the calibrated judge; decision recorded with the 2-pt rule applied — **done 2026-09-07, hand-graded (Gap 488), Luna kept, Terra deleted, role removed; `tests/test_model_registry.py` + `tests/test_model_role_env_wiring.py` 79 passed** |
+| 29.11 | `tests/test_entity_resolver.py` (exact, fuzzy above threshold, typo → suggestion not invention, 0 → abstain, N → clarify with candidates, session reference "the second one"); probe clarify-card rate — **done 2026-09-07: 17 passed on real Postgres; probe rate not measured (no live runs)** |
 | 29.12 | `tests/test_answer_cache.py`: same question, different attachment → different entry; content-branch bypass test removed with its invariant |
 | 29.13 | `tests/test_chat_planner.py`: plan validated against registry; unknown capability rejected; planner never receives document text (asserted on the prompt); golden set no regression with flag on |
 | 29.14 | migration applied, single head; each view returns tenant-scoped rows only (cross-tenant test); `query_metric()` results equal a hand-written query on seeded data; golden SQL delta vs 29.4 baseline |
@@ -626,7 +771,7 @@ gate — is deterministic code with its own tests; no prompt rule decides correc
 | 29.17 | each rule card has all five metadata fields non-empty (schema test); `lookup_rule()` returns the card whose `effective_from` ≤ today; compliance golden set (new, ≥10 cases) passes |
 | 29.18 | recall@k before/after rerank on the golden RAG cases; adopt only if recall@5 improves |
 | 29.19 | `tests/test_chat_corrections.py`; workbook JSON validates; a promoted example is retrievable |
-| 29.20 | document only |
+| 29.20 | document only — **done 2026-09-07, §10.1** |
 
 Track-boundary checkpoints: full backend suite `pytest -q --ignore=tests/us` at the end of Tracks
 A, B, C and D, compared file-for-file against the standing 43-failure baseline; no new failure.
@@ -651,8 +796,8 @@ Dev only. Every step is gated by the previous one's evidence; nothing here touch
    locally against dev DB; commit; push → dev deploy. Soak: the nightly quality job (never the deploy
    pipeline — Gap 312 rule) runs the golden set on the dev stack; the control-tower workbook shows
    pass %, abstain %, p95, $/turn.
-5. **Long-doc role** — 29.10 decides Terra vs Luna; if Terra: `params.dev.json` long_doc = terra,
-   bicep env on be/worker; if Luna: Terra is deleted with Sol/Astra. Deploy.
+5. **Long-doc role** — ~~29.10 decides Terra vs Luna~~ **decided 2026-09-07: Luna; Terra deleted; the role and its
+   env var removed (Gap 489)**. Nothing to deploy for this step beyond the bicep cleanup.
 6. **Resolver, then planner** — 29.11 ships with keywords still on; soak one week of nightly runs;
    29.13 behind `ENABLE_CHAT_PLANNER=false`, flipped in `params.dev.json` only after the golden set
    shows no regression with it on.
@@ -665,12 +810,52 @@ Dev only. Every step is gated by the previous one's evidence; nothing here touch
 9. **Reranker** — 29.18 only if 29.5's recall instrumentation says ranking is the limit; Cohere
    rerank-v4 deployed on Foundry via `04-ai.bicep`; env `COHERE_RERANK_DEPLOYMENT_NAME`.
 10. **Flywheel + workbook** — 29.19; from here the weekly taxonomy drives the next task.
-11. **Prod** — 29.20 writes the plan: prod deployment of luna/luna/gpt-5-mini (+ long_doc) via
+11. **Prod** — 29.20 writes the plan (§10.1): prod deployment of luna/luna/gpt-5-mini via
     `params.prod.json` and `deploy-prod.yml` (release tag, required-reviewer environment), preceded by
     a 2-week dev soak with the nightly job green and the workbook trend flat-or-up. **Not applied in
     this feature.**
 
 ---
+
+### 10.1 Task 29.20 — the rollout plan as written (2026-09-07, not applied)
+
+**What ships from Feature 29.** Model roles `primary`/`fast` = `gpt-5.6-luna`, `judge` =
+`gpt-5-mini`, `chat_summary` = `gpt-5-mini` (falls back to judge), api-version `2024-10-21`;
+full-record chat context (29.5), Python line arithmetic (29.6), the answer-contract gate (29.9),
+attachment-keyed answer cache (29.12), `provenance` / `abstention` on `MessageResponse` (Gap 474),
+the entity resolver behind `ENABLE_ENTITY_RESOLVER` (29.11), and the five capability flags all
+default False (Gap 482). No schema migration. No prompt-only correctness rule.
+
+**Stage 1 — dev (now).** Founder commits and pushes on their word; `deploy-dev.yml` rebuilds
+`ca-invoice-be-dev` / `ca-queue-worker-dev` on the changed paths and the infra `workflow_dispatch`
+re-applies `08-apps.bicep` (drops the `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` env from be, worker
+and the six jobs; nothing else changes in the container env). Verify: `az containerapp show` env
+lists no `LONG_DOC` key; `az cognitiveservices account deployment list` = gpt-5-mini, gpt-4o,
+gpt-5.6-luna. `ENABLE_ENTITY_RESOLVER` stays **false** in `params.dev.json`.
+
+**Stage 2 — dev soak (7 days).** The nightly quality job (never the deploy pipeline — Gap 312)
+runs the golden set; the control-tower workbook shows pass %, abstain %, p95 and $/turn. Exit
+gate: pass % on the 36 no-attachment cases within 2 pts of the 2026-09-07 interim
+(`runs/f29-baseline-20260907/`, 75.0 % / SQL 66.7 % n=39) and no new `judge`-bucket failures.
+Blocked until Gaps 478 / 480 / 488 are worked: today the harness cannot see the full-record
+block, fails correct abstentions, and cannot score the long-doc cases, so the soak number is
+not yet trustworthy — that is the honest precondition, not a formality.
+
+**Stage 3 — resolver on, dev only.** Flip `enableEntityResolver` to true in `params.dev.json`
+alone; re-run the golden set; exit gate is the clarify-card rate on resolvable questions = 0 and
+no pass-% regression. Rollback is the same param back to false.
+
+**Stage 4 — prod (not in this feature).** `params.prod.json` diff, listed here and **not
+applied**: `azureOpenAiDeploymentName` gpt-5-mini → `gpt-5.6-luna`; add
+`azureOpenAiFastDeploymentName` = `gpt-5.6-luna`, `azureOpenAiJudgeDeploymentName` =
+`gpt-5-mini`; `azureOpenAiChatSummaryDeploymentName` stays empty (judge fallback); all five
+`enable*` flags false. Prod OpenAI deployments to create: `gpt-5.6-luna`, `gpt-5-mini`
+(no Terra). Preceded by a green Stage 2, `deploy-prod.yml` with the required-reviewer
+environment, and a release tag. Rollback: previous image tag + previous params.
+
+**Out of scope for this plan.** `gpt-4o` deletion (unused; catalog row kept for pricing),
+`tests/test_a3_streaming.py` and the other pre-existing suite failures noted in the tasklist,
+and everything moved to Feature 30.
 
 ## 11. Decisions — all nine ruled by the founder, 2026-09-06
 
@@ -684,7 +869,7 @@ Dev only. Every step is gated by the previous one's evidence; nothing here touch
 | 6 | View tenant filter | **Parameterised `WHERE tenant_id = :t`** from `query_metric()`, enforced by the existing AST tenant guard (Gap 414); no RLS | 29.14 |
 | 7 | Rule-card verification | **Session drafts from a fetched primary source and cites it; founder spot-checks a sample** — never authored from model memory; `owner = founder` on every card | 29.17 |
 | 8 | Planner rollout order | **Attachment branches first**, gated by the 16-turn probe; SQL route after the golden set shows no regression | 29.13 |
-| 9 | Terra | **Keep Terra until 29.10 runs; delete Sol and Astra now** | 29.1 |
+| 9 | Terra | **Keep Terra until 29.10 runs; delete Sol and Astra now** — *29.10 ran 2026-09-07: Terra deleted, role removed (Gap 489)* | 29.1, 29.10 |
 
 No open decisions remain. The spec is ready for the founder's build go.
 
@@ -709,3 +894,71 @@ What changed, and what did not:
 Consequence for §2.3's numbers: the "pass %" column of every run before 2026-09-07 was produced
 by the old rule and is not comparable to runs after it. Task 29.2's calibration must be re-run on
 the new rule, and decision 4's 100-turn set is still owed.
+
+
+### Scope note — split to Feature 30 (2026-09-07)
+
+**Tasks 29.14–29.19 have moved out of this feature**, verbatim, into BE Feature 30
+"Business Intelligence" (`feature_30_business_intelligence.md`), where they appear in §5 as
+**30.3–30.4, 30.8, 30.7, 30.9–30.11, 30.14 and 30.13**. Nothing was deleted here and nothing
+above this line was rewritten — the task text stays in §8 as the record of where the work was
+first specified, and Feature 30 is now the place it is built.
+
+The founder's framing, which is what re-scoped it:
+
+> "the separate spec is for giving additional intelligence to end user while a document is
+> uploaded … by upload I mean the chat area document upload only … temp intelligence only
+> when a financial document is attached in chat which are not invoice type"
+
+That is a different product surface from this feature. Feature 29 is about **how the model is
+grounded and what it may claim**; Feature 30 is a **temporary insight block posted into the
+chat when a non-invoice financial document — PO, quotation, contract, credit or debit note,
+statement, remittance, delivery note — is attached**. The semantic views, certified examples,
+knowledge layer, regional rule cards, reranker and correction flywheel are the substrate that
+insight block needs, so they belong with it.
+
+**What stays here.** Feature 29 now closes at **29.1–29.13 + 29.20**, plus **Gap 474** and the
+**CP1 baseline**. Tasks **29.11** (entity resolver) and **29.13** (planner + capability
+registry) deliberately stay: they are what make attachment chat *generic* rather than a stack
+of keyword branches, and Feature 30's insight block is a consumer of that generality, not a
+replacement for it.
+
+**Consequences for the checkpoints in the phase-2 tasklist.** CP2's live eval becomes
+100 golden + SQL eval with **the entity resolver as the only flag on**; CP3's becomes
+100 golden with **the planner on**. The flags for the moved tasks
+(`ENABLE_SEMANTIC_VIEWS`, `ENABLE_CERTIFIED_EXAMPLES`, `ENABLE_KNOWLEDGE_LAYER`,
+`ENABLE_RERANK`) were added by phase-2 P0.6 and **stay in `config.py` and in bicep, all
+default False** — they are Feature 30's switches now, and removing them would only have to be
+undone.
+
+**29.13 moved to Feature 30 as 30.16 on 2026-09-07 (founder: "29.11 only, then close").** The
+planner and the capability registry leave this feature as well, deferred into Feature 30.
+**29.11 (entity resolver) stays** — it is what lets attachment chat resolve *what the user
+meant* without a keyword list, and Feature 30's insight block is a consumer of that, not a
+replacement for it. Feature 29's remaining path is therefore: **CP1 baseline → 29.11 entity
+resolver → the 100-turn golden set → CP2 (100 golden, resolver flag on, κ against the founder)
+→ 29.20 rollout plan → close.**
+
+**Re-scoped again 2026-09-07 18:16 (founder: "once luna and terra is compared and finalised we
+will code accordingly and mark feature completed, i dont want your nonsense testing and
+baselining").** CP1, CP2, the 100-turn set and every further live run were removed. The path
+became: 29.10 comparison → code the result → 29.11 (unit tests only) → 29.20 → close. **Closed
+2026-09-07**: 29.10 (Luna kept, Terra deleted, role removed — Gap 489), 29.11 (Gap 490), 29.20
+(§10.1). Left open and filed, not hidden: Gaps 477 (mock/re-baseline/fix split), 478, 480, 488
+(harness), and the FE half of Gap 474 (FE Gap 470).
+
+
+### Amendment to decision 4 — calibration raters (2026-09-07)
+
+Appended, not a rewrite; the table above stands as it was ruled on 2026-09-06.
+
+Decision 4 originally required **two raters** on the 100-turn calibration set. The founder
+ruled on 2026-09-07 (**"Me alone, 100 turns"**) that calibration is **judge versus the
+founder — one rater, 100 turns, gate unchanged at κ ≥ 0.6**. No second rater is sought, and
+task 29.2 / phase-2 P2.7 no longer waits on naming one; the founder grades each turn from the
+case's expected text.
+
+The bias a second rater existed to remove is still real, and is now handled by *who* the rater
+is rather than by how many there are: the 2026-09-07 calibration file records that its verdicts
+came from the same session that wrote the code under test, which is precisely the conflict the
+founder is not subject to.

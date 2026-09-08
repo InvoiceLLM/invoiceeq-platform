@@ -405,7 +405,6 @@ def deployments_in_force():
                 "AZURE_OPENAI_DEPLOYMENT_NAME",
                 "AZURE_OPENAI_FAST_DEPLOYMENT_NAME",
                 "AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME",
-                "AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME",
                 "AZURE_OPENAI_API_VERSION",
             )
         }
