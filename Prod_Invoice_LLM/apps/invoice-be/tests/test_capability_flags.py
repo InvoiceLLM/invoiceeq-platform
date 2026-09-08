@@ -50,12 +50,9 @@ _FLAG_PARAMS = {
     "ENABLE_ATTACHMENT_INSIGHTS": "enableAttachmentInsights",
 }
 
-#: Founder 2026-09-08 ("all the switches are on"): the built capabilities are ON in
-#: dev. Rerank stays off everywhere -- nothing is built behind it (30.14 closed).
-_DEV_ON = frozenset({
-    "enableEntityResolver", "enableSemanticViews", "enableCertifiedExamples",
-    "enableKnowledgeLayer", "enableAttachmentInsights",
-})
+#: Founder 2026-09-08 ("Turn them all ON"): every capability flag is ON in dev,
+#: rerank included (no consumer yet; on so it is not forgotten when one lands).
+_DEV_ON = frozenset(_FLAG_PARAMS.values())
 
 
 def _text(p: Path) -> str:

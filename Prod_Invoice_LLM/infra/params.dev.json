@@ -81,7 +81,7 @@
       "value": true
     },
     "enableRerank": {
-      "value": false
+      "value": true
     },
     "enableAttachmentInsights": {
       "value": true
