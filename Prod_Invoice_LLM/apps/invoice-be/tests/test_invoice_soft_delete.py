@@ -1,179 +1,282 @@
-"""Gap 192: invoice soft delete preserves AuditLog and hides the row from lists."""
-from datetime import datetime
+"""Gap 460, reopened 2026-09-08: invoice delete is a HARD delete.
+
+History kept in the filename on purpose. Gap 192 made delete a soft delete
+(`deleted_at`) and this file asserted the row survived; Gap 460 then closed the
+RAG leak and asserted the SQL route was safe, which it was not — model-generated
+SQL has only a tenant guard, so soft-deleted invoices answered in chat. The
+founder's rule is "delete means delete": every assertion below is on the
+DATABASE (real Postgres, per CONVENTIONS hard rule 2), not on a 404, because a
+404 alone is what the soft delete also produced.
+"""
+from datetime import date, datetime
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from dependencies import MOCK_TENANT_ID, get_db_session
+from config import get_settings
+from dependencies import TenantContext, get_db_session, get_tenant_context
 from main import app
-from models import AuditLog, Invoice, User
+from models import AuditLog, BankStatementLine, DocumentComparison, Invoice, Tenant, User
+from services import invoice_deletion
 
-sqlite_url = "sqlite:///:memory:"
-engine = create_engine(
-    sqlite_url,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
+INVOICES = "/api/v1/invoices"
 
 
-@pytest.fixture(name="db_session")
-def db_session_fixture():
+def _pg_engine_or_skip():
+    psycopg2 = pytest.importorskip("psycopg2")
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url, connect_timeout=5).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+    engine = create_engine(url)
     SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
+    return engine
+
+
+@pytest.fixture(name="pg")
+def pg_fixture():
+    with Session(_pg_engine_or_skip()) as session:
         yield session
-    SQLModel.metadata.drop_all(engine)
 
 
 @pytest.fixture(autouse=True)
-def override_db_session(db_session):
-    def get_db_session_override():
-        yield db_session
-
-    app.dependency_overrides[get_db_session] = get_db_session_override
+def _no_external_stores(monkeypatch):
+    """Blob and Chroma are patched at the module the router calls into; the
+    chat-cache invalidation gets a fake Redis so the keys it deletes are visible."""
+    monkeypatch.setattr(invoice_deletion, "_delete_blob", lambda *a, **k: None)
     yield
-    app.dependency_overrides.clear()
 
 
-def test_soft_delete_preserves_audit_logs_and_hides_from_list(db_session):
-    invoice_id = uuid4()
-    actor_id = uuid4()
-    db_session.add(
-        User(
-            id=actor_id,
-            tenant_id=MOCK_TENANT_ID,
-            clerk_user_id="actor-for-audit",
-            email="actor@example.com",
-            role="Admin",
+def _tenant(session, tag):
+    row = Tenant(
+        id=uuid4(), name=f"G460-{tag}", domain=f"g460-{tag}.invalid",
+        billing_plan="free", free_invoices_remaining=50,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _user(session, tenant, tag):
+    row = User(
+        id=uuid4(), tenant_id=tenant.id, email=f"g460-{tag}@g460.invalid",
+        role="Admin", clerk_user_id=f"user_g460_{tag}",
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _invoice(session, tenant, tag, batch_id=None, **extra):
+    row = Invoice(
+        id=uuid4(), tenant_id=tenant.id, batch_id=batch_id,
+        file_path=f"{tenant.id}/inv-{tag}.pdf", vendor_name=f"Vendor {tag}",
+        invoice_number=f"INV-{tag}", grand_total=100.0, currency="INR",
+        invoice_date=date(2026, 9, 1), created_at=datetime.utcnow(),
+        status="COMPLETED", flow_direction="INBOUND", **extra,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _cleanup(session, tenant_ids):
+    session.rollback()
+    for tid in tenant_ids:
+        for model in (AuditLog, DocumentComparison, BankStatementLine, Invoice, User):
+            for row in session.exec(select(model).where(model.tenant_id == tid)).all():
+                session.delete(row)
+        tenant = session.get(Tenant, tid)
+        if tenant:
+            session.delete(tenant)
+    session.commit()
+
+
+class _Client:
+    def __init__(self, session, tenant, db_user_id):
+        self._session, self._tenant, self._db_user_id = session, tenant, db_user_id
+
+    def __enter__(self):
+        def _db():
+            yield self._session
+
+        def _ctx():
+            return TenantContext(
+                tenant_id=self._tenant.id, user_id="test-user",
+                db_user_id=self._db_user_id, role="Admin", billing_plan="free",
+            )
+
+        app.dependency_overrides[get_db_session] = _db
+        app.dependency_overrides[get_tenant_context] = _ctx
+        return TestClient(app)
+
+    def __exit__(self, *exc):
+        app.dependency_overrides.clear()
+        return False
+
+
+class _FakeRedis:
+    def __init__(self, keys):
+        self.keys = set(keys)
+        self.deleted = []
+
+    def scan_iter(self, match, count=None):
+        import fnmatch
+        return [k for k in self.keys if fnmatch.fnmatch(k, match)]
+
+    def delete(self, *keys):
+        self.deleted.extend(keys)
+        self.keys -= set(keys)
+        return len(keys)
+
+
+def test_delete_removes_the_row_its_history_and_every_back_reference(pg):
+    tag = uuid4().hex[:10]
+    tenant = _tenant(pg, tag)
+    try:
+        user = _user(pg, tenant, tag)
+        inv = _invoice(pg, tenant, tag)
+        dup = _invoice(pg, tenant, tag + "d", duplicate_of_invoice_id=inv.id)
+        clone = _invoice(pg, tenant, tag + "c", source_invoice_id=inv.id)
+        pg.add(AuditLog(
+            tenant_id=tenant.id, invoice_id=inv.id, actor_user_id=user.id,
+            actor_role="Admin", action="RESOLVE_INVOICE", details={"target_status": "PAID"},
+            timestamp=datetime.utcnow(),
+        ))
+        pg.add(DocumentComparison(tenant_id=tenant.id, invoice_id=inv.id, kind="attachment_vs_invoice"))
+        line = BankStatementLine(
+            tenant_id=tenant.id, attachment_id=uuid4(), line_no=1, matched_invoice_id=inv.id,
+            **_bank_line_required(),
         )
-    )
-    db_session.add(
-        Invoice(
-            id=invoice_id,
-            tenant_id=MOCK_TENANT_ID,
-            file_path="mock/soft-delete.pdf",
-            status="COMPLETED",
-            vendor_name="Soft Delete Vendor",
-            grand_total=99.0,
-        )
-    )
-    prior = AuditLog(
-        tenant_id=MOCK_TENANT_ID,
-        invoice_id=invoice_id,
-        actor_user_id=actor_id,
-        actor_role="Admin",
-        action="RESOLVE_INVOICE",
-        details={"target_status": "PAID"},
-        timestamp=datetime.utcnow(),
-    )
-    db_session.add(prior)
-    db_session.commit()
+        pg.add(line)
+        pg.commit()
 
-    client = TestClient(app)
-    response = client.delete(f"/api/v1/invoices/{invoice_id}")
-    assert response.status_code == 200
-    assert response.json()["success"] is True
+        with _Client(pg, tenant, user.id) as client, \
+                patch("chroma_client.delete_invoice_chunks") as chunks, \
+                patch.object(invoice_deletion, "invalidate_tenant_chat_cache") as cache:
+            res = client.delete(f"{INVOICES}/{inv.id}")
+            assert res.status_code == 200, res.text
+            chunks.assert_called_once_with(str(inv.id), str(tenant.id))
+            cache.assert_called_once_with(tenant.id)
 
-    db_session.expire_all()
-    invoice = db_session.get(Invoice, invoice_id)
-    assert invoice is not None
-    assert invoice.deleted_at is not None
+            assert client.get(f"{INVOICES}/{inv.id}").status_code == 404
+            assert client.delete(f"{INVOICES}/{inv.id}").status_code == 404
 
-    logs = db_session.exec(
-        select(AuditLog).where(AuditLog.invoice_id == invoice_id)
-    ).all()
-    actions = {log.action for log in logs}
-    assert "RESOLVE_INVOICE" in actions
-    assert "DELETE_INVOICE" in actions
-    assert len(logs) == 2
+        pg.expire_all()
+        # The proof the SQL chat route cannot leak it: the row is not in the table.
+        assert pg.execute(
+            text("SELECT count(*) FROM invoice WHERE id = :id"), {"id": str(inv.id)}
+        ).scalar() == 0
+        assert pg.get(Invoice, dup.id).duplicate_of_invoice_id is None
+        assert pg.get(Invoice, clone.id).source_invoice_id is None
+        assert pg.get(BankStatementLine, line.id).matched_invoice_id is None
+        assert pg.exec(select(DocumentComparison).where(DocumentComparison.invoice_id == inv.id)).all() == []
 
-    list_resp = client.get("/api/v1/invoices")
-    assert list_resp.status_code == 200
-    assert all(row["id"] != str(invoice_id) for row in list_resp.json())
-
-    get_resp = client.get(f"/api/v1/invoices/{invoice_id}")
-    assert get_resp.status_code == 404
-
-    again = client.delete(f"/api/v1/invoices/{invoice_id}")
-    assert again.status_code == 404
+        logs = pg.exec(select(AuditLog).where(AuditLog.invoice_id == inv.id)).all()
+        assert [l.action for l in logs] == ["DELETE_INVOICE"], "exactly one summary row remains"
+        assert logs[0].details["hard_delete"] is True
+        assert logs[0].details["invoice_number"] == f"INV-{tag}"
+    finally:
+        _cleanup(pg, [tenant.id])
 
 
-def _seed_invoice(db_session, invoice_id, batch_id=None):
-    db_session.add(
-        Invoice(
-            id=invoice_id,
-            tenant_id=MOCK_TENANT_ID,
-            file_path=f"mock/{invoice_id}.pdf",
-            status="COMPLETED",
-            vendor_name="Chunk Vendor",
-            grand_total=10.0,
-            batch_id=batch_id,
-        )
-    )
+def test_delete_purges_blob_and_survives_chroma_failure(pg, monkeypatch):
+    tag = uuid4().hex[:10]
+    tenant = _tenant(pg, tag)
+    try:
+        user = _user(pg, tenant, tag)
+        inv = _invoice(pg, tenant, tag)
+        blobs = []
+        monkeypatch.setattr(invoice_deletion, "_delete_blob", lambda path, what: blobs.append(path))
+        import chroma_client
+
+        def boom():
+            raise RuntimeError("chroma down")
+
+        monkeypatch.setattr(chroma_client, "get_chroma_client", boom)
+
+        with _Client(pg, tenant, user.id) as client, \
+                patch.object(invoice_deletion, "invalidate_tenant_chat_cache"):
+            assert client.delete(f"{INVOICES}/{inv.id}").status_code == 200
+
+        assert blobs == [f"{tenant.id}/inv-{tag}.pdf"]
+        pg.expire_all()
+        assert pg.get(Invoice, inv.id) is None
+    finally:
+        _cleanup(pg, [tenant.id])
 
 
-def test_soft_delete_drops_chroma_chunks(db_session, monkeypatch):
-    """Gap 460: single delete calls delete_invoice_chunks after the commit."""
-    import routers.invoices as invoices_router
+def test_delete_invalidates_only_this_tenants_cached_chat_answers(monkeypatch):
+    tenant_id, other = uuid4(), uuid4()
+    fake = _FakeRedis({
+        f"chat_answer_cache:{tenant_id}:vendors", f"chat_answer_cache:{tenant_id}:total:rules=v2",
+        f"chat_answer_cache:{other}:vendors", "tenant_stats:x",
+    })
+    import agents.query_agent as qa
+    monkeypatch.setattr(qa, "_get_redis_client", lambda: fake)
 
-    invoice_id = uuid4()
-    _seed_invoice(db_session, invoice_id)
-    db_session.commit()
-
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        invoices_router, "delete_invoice_chunks",
-        lambda inv, tenant: calls.append((inv, tenant)),
-    )
-
-    response = TestClient(app).delete(f"/api/v1/invoices/{invoice_id}")
-    assert response.status_code == 200
-    assert calls == [(str(invoice_id), str(MOCK_TENANT_ID))]
-
-    db_session.expire_all()
-    assert db_session.get(Invoice, invoice_id).deleted_at is not None
+    assert invoice_deletion.invalidate_tenant_chat_cache(tenant_id) == 2
+    assert fake.keys == {f"chat_answer_cache:{other}:vendors", "tenant_stats:x"}
 
 
-def test_soft_delete_survives_chroma_failure(db_session, monkeypatch):
-    """Gap 460: an unreachable Chroma is swallowed inside delete_invoice_chunks;
-    the row stays soft-deleted and the caller still gets 200."""
-    import chroma_client
+def test_batch_rollback_hard_deletes_every_invoice_in_the_batch(pg):
+    tag = uuid4().hex[:10]
+    tenant = _tenant(pg, tag)
+    try:
+        user = _user(pg, tenant, tag)
+        batch_id = uuid4()
+        ids = [_invoice(pg, tenant, tag + str(i), batch_id=batch_id).id for i in range(2)]
+        keep = _invoice(pg, tenant, tag + "k", batch_id=uuid4())
 
-    invoice_id = uuid4()
-    _seed_invoice(db_session, invoice_id)
-    db_session.commit()
+        with _Client(pg, tenant, user.id) as client, \
+                patch("chroma_client.delete_invoice_chunks") as chunks, \
+                patch.object(invoice_deletion, "invalidate_tenant_chat_cache"):
+            res = client.delete(f"{INVOICES}/batches/{batch_id}")
+            assert res.status_code == 200, res.text
+            assert res.json()["count"] == 2
+            assert sorted(c.args for c in chunks.call_args_list) == sorted((str(i), str(tenant.id)) for i in ids)
 
-    def boom():
-        raise RuntimeError("chroma down")
-
-    monkeypatch.setattr(chroma_client, "get_chroma_client", boom)
-
-    response = TestClient(app).delete(f"/api/v1/invoices/{invoice_id}")
-    assert response.status_code == 200
-
-    db_session.expire_all()
-    assert db_session.get(Invoice, invoice_id).deleted_at is not None
+        pg.expire_all()
+        for i in ids:
+            assert pg.get(Invoice, i) is None
+        assert pg.get(Invoice, keep.id) is not None, "wrong batch was rolled back"
+        actions = pg.exec(select(AuditLog).where(AuditLog.tenant_id == tenant.id)).all()
+        assert sorted(a.details.get("batch_id") for a in actions) == [str(batch_id)] * 2
+    finally:
+        _cleanup(pg, [tenant.id])
 
 
-def test_batch_rollback_drops_chroma_chunks_for_every_invoice(db_session, monkeypatch):
-    """Gap 460: batch rollback calls delete_invoice_chunks once per invoice."""
-    import routers.invoices as invoices_router
+def test_cross_tenant_delete_is_404_and_destroys_nothing(pg):
+    tag = uuid4().hex[:10]
+    a, b = _tenant(pg, tag + "a"), _tenant(pg, tag + "b")
+    try:
+        user_b = _user(pg, b, tag)
+        inv = _invoice(pg, a, tag)
+        with _Client(pg, b, user_b.id) as client, patch("chroma_client.delete_invoice_chunks") as chunks:
+            assert client.delete(f"{INVOICES}/{inv.id}").status_code == 404
+            chunks.assert_not_called()
+        pg.expire_all()
+        assert pg.get(Invoice, inv.id) is not None
+    finally:
+        _cleanup(pg, [a.id, b.id])
 
-    batch_id = uuid4()
-    ids = [uuid4(), uuid4()]
-    for inv_id in ids:
-        _seed_invoice(db_session, inv_id, batch_id=batch_id)
-    db_session.commit()
 
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        invoices_router, "delete_invoice_chunks",
-        lambda inv, tenant: calls.append((inv, tenant)),
-    )
-
-    response = TestClient(app).delete(f"/api/v1/invoices/batches/{batch_id}")
-    assert response.status_code == 200
-    assert response.json()["count"] == 2
-    assert sorted(calls) == sorted((str(i), str(MOCK_TENANT_ID)) for i in ids)
+def _bank_line_required():
+    """Minimal non-null columns of BankStatementLine beyond the ones the test sets."""
+    from models import BankStatementLine as B
+    required = {}
+    for name, col in B.__table__.columns.items():
+        if col.nullable or col.default is not None or col.server_default is not None or col.primary_key:
+            continue
+        if name in {"tenant_id", "attachment_id", "line_no", "matched_invoice_id"}:
+            continue
+        py = col.type.python_type
+        required[name] = {str: "x", int: 1, float: 1.0}.get(py, date(2026, 9, 1) if py is date else datetime.utcnow())
+    return required

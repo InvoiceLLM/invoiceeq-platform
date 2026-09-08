@@ -45,6 +45,7 @@ from sqlmodel import Session, select
 from chroma_client import delete_document_chunks
 from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import Document
+from services.invoice_deletion import delete_document_rows, purge_document_stores
 
 logger = logging.getLogger(__name__)
 
@@ -263,14 +264,15 @@ def delete_document(
     """
     row = _require_owned_document(document_id, db_session, tenant_context)
 
-    row.deleted_at = datetime.utcnow()
-    db_session.add(row)
+    # Gap 460 (reopened 2026-09-08): hard delete -- row, blob, chunks, chat cache.
+    file_path, doc_type = row.file_path, row.doc_type
+    delete_document_rows(db_session, row)
     db_session.commit()
 
-    delete_document_chunks(str(document_id), str(tenant_context.tenant_id))
+    purge_document_stores(document_id, tenant_context.tenant_id, file_path)
 
     logger.info(
-        "Soft-deleted document %s (tenant %s, doc_type %s) and dropped its chunks.",
-        document_id, tenant_context.tenant_id, row.doc_type,
+        "Deleted document %s (tenant %s, doc_type %s), its blob and its chunks.",
+        document_id, tenant_context.tenant_id, doc_type,
     )
     return {"success": True}

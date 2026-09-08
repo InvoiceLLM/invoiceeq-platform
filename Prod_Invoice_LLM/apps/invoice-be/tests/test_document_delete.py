@@ -1,4 +1,7 @@
-"""Feature 27 task R6 — the `Document` soft-delete path and its chunk lifecycle.
+"""Feature 27 task R6 — the `Document` delete path and its chunk lifecycle.
+
+Gap 460 reopened 2026-09-08: delete is now a HARD delete (founder rule "delete
+means delete"); the assertions below check the row is GONE, not tombstoned.
 
 WHAT R6 ACTUALLY ASKED FOR AND WHAT WAS MISSING. §10B R6 reads "soft-delete of a
 `Document` removes its chunks". G14 (Gap 381) had shipped `deleted_at` on the
@@ -191,7 +194,7 @@ def test_delete_soft_deletes_the_row_and_both_read_endpoints_stop_seeing_it(pg):
     try:
         doc = _document(pg, tenant, tag)
         with _Client(pg, tenant) as client:
-            with patch("routers.documents.delete_document_chunks"):
+            with patch("chroma_client.delete_document_chunks"):
                 assert client.get(f"{DOCS}/{doc.id}").status_code == 200
                 assert len(client.get(DOCS).json()) == 1
 
@@ -203,9 +206,8 @@ def test_delete_soft_deletes_the_row_and_both_read_endpoints_stop_seeing_it(pg):
                 assert client.get(DOCS).json() == []
 
         pg.expire_all()
-        row = pg.get(Document, doc.id)
-        assert row is not None, "soft delete must keep the row"
-        assert row.deleted_at is not None
+        # Gap 460 reopened 2026-09-08: hard delete -- the row is gone.
+        assert pg.get(Document, doc.id) is None
     finally:
         _cleanup(pg, [tenant.id])
 
@@ -220,7 +222,7 @@ def test_delete_drops_the_documents_chunks_from_the_sibling_collection(pg):
     try:
         doc = _document(pg, tenant, tag)
         with _Client(pg, tenant) as client:
-            with patch("routers.documents.delete_document_chunks") as drop:
+            with patch("chroma_client.delete_document_chunks") as drop:
                 assert client.delete(f"{DOCS}/{doc.id}").status_code == 200
         drop.assert_called_once_with(str(doc.id), str(tenant.id))
     finally:
@@ -249,13 +251,13 @@ def test_the_row_is_committed_before_the_chunks_are_touched(pg, engine):
 
         def _observe(document_id, tenant_id):
             with Session(engine) as other:
-                seen["deleted_at"] = other.get(Document, doc.id).deleted_at
+                seen["gone"] = other.get(Document, doc.id) is None
 
         with _Client(pg, tenant) as client:
-            with patch("routers.documents.delete_document_chunks", side_effect=_observe):
+            with patch("chroma_client.delete_document_chunks", side_effect=_observe):
                 assert client.delete(f"{DOCS}/{doc.id}").status_code == 200
 
-        assert seen["deleted_at"] is not None, (
+        assert seen["gone"], (
             "chunks were dropped before the row was committed -- a failed commit "
             "would then leave a live document with no chunks"
         )
@@ -283,7 +285,7 @@ def test_an_unreachable_chroma_does_not_fail_the_request(pg):
             ):
                 assert client.delete(f"{DOCS}/{doc.id}").status_code == 200
         pg.expire_all()
-        assert pg.get(Document, doc.id).deleted_at is not None
+        assert pg.get(Document, doc.id) is None
     finally:
         _cleanup(pg, [tenant.id])
 
@@ -297,7 +299,7 @@ def test_a_second_delete_is_a_404_and_does_not_touch_chroma_again(pg):
     try:
         doc = _document(pg, tenant, tag)
         with _Client(pg, tenant) as client:
-            with patch("routers.documents.delete_document_chunks") as drop:
+            with patch("chroma_client.delete_document_chunks") as drop:
                 assert client.delete(f"{DOCS}/{doc.id}").status_code == 200
                 assert client.delete(f"{DOCS}/{doc.id}").status_code == 404
                 assert drop.call_count == 1
@@ -320,14 +322,14 @@ def test_a_cross_tenant_delete_is_404_and_destroys_nothing(pg):
     try:
         doc_b = _document(pg, tenant_b, tag)
         with _Client(pg, tenant_a) as client:
-            with patch("routers.documents.delete_document_chunks") as drop:
+            with patch("chroma_client.delete_document_chunks") as drop:
                 res = client.delete(f"{DOCS}/{doc_b.id}")
                 assert res.status_code == 404
                 assert "not found" in res.json()["detail"].lower()
                 drop.assert_not_called()
 
         pg.expire_all()
-        assert pg.get(Document, doc_b.id).deleted_at is None
+        assert pg.get(Document, doc_b.id) is not None
     finally:
         _cleanup(pg, [tenant_a.id, tenant_b.id])
 
@@ -351,7 +353,7 @@ def test_batch_rollback_soft_deletes_the_batchs_documents_too(pg):
         other = _document(pg, tenant, tag + "x", batch_id=uuid4())
 
         with _Client(pg, tenant, db_user_id=user.id) as client:
-            with patch("routers.invoices.delete_document_chunks") as drop:
+            with patch("chroma_client.delete_document_chunks") as drop:
                 res = client.delete(f"/api/v1/invoices/batches/{batch_id}")
                 assert res.status_code == 200, res.text
                 body = res.json()
@@ -361,9 +363,9 @@ def test_batch_rollback_soft_deletes_the_batchs_documents_too(pg):
                 drop.assert_called_once_with(str(doc.id), str(tenant.id))
 
         pg.expire_all()
-        assert pg.get(Invoice, inv.id).deleted_at is not None
-        assert pg.get(Document, doc.id).deleted_at is not None
-        assert pg.get(Document, other.id).deleted_at is None, "wrong batch was rolled back"
+        assert pg.get(Invoice, inv.id) is None
+        assert pg.get(Document, doc.id) is None
+        assert pg.get(Document, other.id) is not None, "wrong batch was rolled back"
     finally:
         _cleanup(pg, [tenant.id])
 
@@ -381,14 +383,14 @@ def test_a_batch_that_is_all_documents_is_no_longer_a_404(pg):
         d2 = _document(pg, tenant, tag + "2", batch_id=batch_id, doc_type="DELIVERY_NOTE")
 
         with _Client(pg, tenant, db_user_id=user.id) as client:
-            with patch("routers.invoices.delete_document_chunks"):
+            with patch("chroma_client.delete_document_chunks"):
                 res = client.delete(f"/api/v1/invoices/batches/{batch_id}")
                 assert res.status_code == 200, res.text
                 assert res.json() == {"success": True, "count": 0, "document_count": 2}
 
         pg.expire_all()
-        assert pg.get(Document, d1.id).deleted_at is not None
-        assert pg.get(Document, d2.id).deleted_at is not None
+        assert pg.get(Document, d1.id) is None
+        assert pg.get(Document, d2.id) is None
     finally:
         _cleanup(pg, [tenant.id])
 
@@ -422,14 +424,14 @@ def test_batch_rollback_cannot_reach_another_tenants_documents(pg):
         doc_b = _document(pg, tenant_b, tag, batch_id=batch_id)
 
         with _Client(pg, tenant_a, db_user_id=user_a.id) as client:
-            with patch("routers.invoices.delete_document_chunks") as drop:
+            with patch("chroma_client.delete_document_chunks") as drop:
                 res = client.delete(f"/api/v1/invoices/batches/{batch_id}")
                 assert res.status_code == 200
                 assert res.json()["document_count"] == 0
                 drop.assert_not_called()
 
         pg.expire_all()
-        assert pg.get(Document, doc_b.id).deleted_at is None
+        assert pg.get(Document, doc_b.id) is not None
     finally:
         _cleanup(pg, [tenant_a.id, tenant_b.id])
 

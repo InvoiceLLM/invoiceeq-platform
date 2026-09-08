@@ -30,6 +30,12 @@ from chroma_client import delete_document_chunks, delete_invoice_chunks
 from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
+from services.invoice_deletion import (
+    delete_document_rows,
+    delete_invoice_rows,
+    purge_document_stores,
+    purge_invoice_stores,
+)
 from services.billing_quota import charge_free_quota, count_billable_uploads
 from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
@@ -847,7 +853,8 @@ async def rollback_batch(
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Soft-deletes all active invoices in the specified batch, acting as a rollback.
+    Hard-deletes all invoices in the specified batch, acting as a rollback
+    (Gap 460 reopened 2026-09-08: was a soft delete since Gap 192).
 
     Gap 397 (Feature 27 task R6): **and every `Document` row from the same
     batch**, dropping their Chroma chunks as it goes. E10 (Gap 381) made a batch
@@ -896,48 +903,37 @@ async def rollback_batch(
             detail="No active invoices or documents found for the specified batch_id."
         )
 
-    now = datetime.utcnow()
+    # Gap 460 (reopened 2026-09-08): hard delete, both halves. Captured before
+    # the rows go, because the purge below needs ids and blob paths.
+    invoice_refs = [(inv.id, inv.file_path) for inv in invoices]
+    document_refs = [(doc.id, doc.file_path) for doc in documents]
     for invoice in invoices:
-        invoice.deleted_at = now
-        db_session.add(invoice)
-        db_session.add(
-            AuditLog(
-                tenant_id=context.tenant_id,
-                invoice_id=invoice.id,
-                actor_user_id=context.db_user_id,
-                actor_role=context.role,
-                action="DELETE_INVOICE",
-                details={
-                    "soft_delete": True,
-                    "batch_rollback": True,
-                    "batch_id": str(batch_id),
-                    "vendor_name": invoice.vendor_name,
-                    "invoice_number": invoice.invoice_number,
-                    "status": invoice.status,
-                },
-                timestamp=now,
-            )
+        delete_invoice_rows(
+            db_session,
+            invoice,
+            actor_user_id=context.db_user_id,
+            actor_role=context.role,
+            extra_details={"batch_rollback": True, "batch_id": str(batch_id)},
         )
     for document in documents:
         # No AuditLog row: `AuditLog.invoice_id` is non-nullable and a document id
         # in it would be a lie by column name (Gap 398 tracks giving documents
         # their own audit trail). Logged instead, so the action is not invisible.
-        document.deleted_at = now
-        db_session.add(document)
+        delete_document_rows(db_session, document)
 
     await run_in_threadpool(db_session.commit)
 
-    # After the commit, and swallowing its own errors (chroma_client.py:639): an
-    # unreachable Chroma must not turn a completed rollback into a 500 the caller
-    # would retry against rows that are already deleted.
-    for invoice in invoices:
-        delete_invoice_chunks(str(invoice.id), str(context.tenant_id))
-    for document in documents:
-        delete_document_chunks(str(document.id), str(context.tenant_id))
+    # After the commit, each step swallowing its own errors: an unreachable
+    # Chroma or blob store must not turn a completed rollback into a 500 the
+    # caller would retry against rows that are already gone.
+    for inv_id, path in invoice_refs:
+        purge_invoice_stores(inv_id, context.tenant_id, path)
+    for doc_id, path in document_refs:
+        purge_document_stores(doc_id, context.tenant_id, path)
     if documents:
         logger.info(
-            "Batch rollback %s also soft-deleted %d document(s) and dropped their chunks.",
-            batch_id, len(documents),
+            "Batch rollback %s also deleted %d document(s), their blobs and chunks.",
+            batch_id, len(document_refs),
         )
 
     return {
@@ -1025,18 +1021,13 @@ async def delete_invoice(
     db_session: Session = Depends(get_db_session)
 ):
     """
-    Gap 192: soft-deletes an invoice. Sets deleted_at, keeps the Postgres row and
-    all AuditLog history, and appends a DELETE_INVOICE audit entry. Blob Storage
-    is retained so a restore path remains possible. Enforces tenant isolation;
-    already-deleted rows return 404.
-
-    Gap 460: Chroma chunks are dropped after the commit. They used to be retained
-    alongside the blob, but no restore endpoint exists and the RAG route checks
-    citation existence rather than visibility (Gap 239), so a deleted invoice
-    kept answering in chat while the SQL route hid it. Commit first, chunks
-    second: `delete_invoice_chunks` swallows its own errors, so an unreachable
-    Chroma leaves at most an orphan the prune sweep reaches, never a 500 that a
-    caller would retry against an already-deleted row.
+    Hard-deletes an invoice (Gap 460, reopened and fixed properly 2026-09-08;
+    reverses Gap 192's soft delete -- see services/invoice_deletion.py for the
+    record of why). The row, its audit history, comparison rows and every
+    back-reference go in one transaction, replaced by a single DELETE_INVOICE
+    summary audit row; after the commit the PDF blob, the Chroma chunks and the
+    tenant's cached chat answers are purged, each best-effort. Enforces tenant
+    isolation; an unknown or already-deleted id is a 404.
     """
     if context.db_user_id is None:
         raise HTTPException(
@@ -1047,7 +1038,6 @@ async def delete_invoice(
     query = select(Invoice).where(
         Invoice.id == invoice_id,
         Invoice.tenant_id == context.tenant_id,
-        invoice_not_deleted(),
     )
     invoice = db_session.exec(query).first()
     if not invoice:
@@ -1056,28 +1046,12 @@ async def delete_invoice(
             detail="Invoice not found or access denied."
         )
 
-    now = datetime.utcnow()
-    invoice.deleted_at = now
-    db_session.add(invoice)
-    db_session.add(
-        AuditLog(
-            tenant_id=context.tenant_id,
-            invoice_id=invoice_id,
-            actor_user_id=context.db_user_id,
-            actor_role=context.role,
-            action="DELETE_INVOICE",
-            details={
-                "soft_delete": True,
-                "vendor_name": invoice.vendor_name,
-                "invoice_number": invoice.invoice_number,
-                "status": invoice.status,
-            },
-            timestamp=now,
-        )
+    file_path = invoice.file_path
+    delete_invoice_rows(
+        db_session, invoice, actor_user_id=context.db_user_id, actor_role=context.role
     )
     await run_in_threadpool(db_session.commit)
 
-    # Gap 460: after the commit, error-swallowing (see docstring).
-    delete_invoice_chunks(str(invoice_id), str(context.tenant_id))
+    purge_invoice_stores(invoice_id, context.tenant_id, file_path)
 
     return {"success": True}
