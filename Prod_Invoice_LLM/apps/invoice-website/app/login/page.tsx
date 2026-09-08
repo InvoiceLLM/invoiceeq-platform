@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useSignIn, useClerk, useUser } from "@clerk/nextjs";
 import { Eye, EyeOff } from "lucide-react";
 import { appHref } from "../../lib/billingPlans";
@@ -66,7 +66,38 @@ const STATS = [
 export default function LoginPage() {
   const { isLoaded, signIn, setActive } = useSignIn();
   const { signOut } = useClerk();
-  const { user: currentUser } = useUser();
+  // `isLoaded` is aliased: useSignIn and useUser each expose one, and the two
+  // resolve independently. The redirect below must wait on the USER one.
+  const { user: currentUser, isLoaded: userLoaded, isSignedIn } = useUser();
+
+  /**
+   * Gap 496: a visitor who is still signed in must not be shown the sign-in
+   * form. Before this, closing the tab and returning to the site landed on
+   * this page with a live session -- the banner below even printed "Signed in
+   * as <email>" -- and the only way forward was to retype credentials, which
+   * `handleLogin` then honoured by signing the good session OUT and building
+   * a new one. The session was never the problem; nothing here ever asked
+   * whether one already existed.
+   *
+   * Gated on `userLoaded`, not just `isSignedIn`: Clerk reports
+   * `isSignedIn === false` until it has resolved, so redirecting eagerly
+   * would fire for signed-out visitors too and bounce them in a loop. Same
+   * lesson as FE Gap 324 / the RouteGuard work -- "still loading" and
+   * "genuinely signed out" are different states and must never share a branch.
+   *
+   * Unconditional by founder ruling 2026-09-08: this product signs in one user
+   * at a time, so there is no "switch account" case to leave a door open for.
+   * Signing in as somebody else means signing out first, from the dashboard.
+   */
+  const [redirecting, setRedirecting] = useState(false);
+
+  useEffect(() => {
+    if (!userLoaded || !isSignedIn) return;
+    setRedirecting(true);
+    // `replace`, not `href`: leaving this page in history means Back from the
+    // dashboard returns here and immediately redirects forward again.
+    window.location.replace(appHref("/dashboard"));
+  }, [userLoaded, isSignedIn]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -209,6 +240,25 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+
+  // Gap 496: an already-signed-in visitor is on their way to the dashboard --
+  // show that, not a sign-in form they are about to be navigated away from.
+  // `redirecting` starts false on both server and client, so this never causes
+  // a hydration mismatch; it flips only inside the effect above.
+  if (redirecting) {
+    return (
+      <div className="flex flex-col min-h-screen">
+        <Header />
+        <div style={S.root} className="flex items-center justify-center">
+          <div style={{ textAlign: "center", zIndex: 1 }}>
+            <div style={S.avatarIcon}>🔓</div>
+            <p style={{ ...S.cardTitle, fontSize: "18px" }}>Welcome back</p>
+            <p style={S.cardSubtitle}>Taking you to your dashboard…</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen">
