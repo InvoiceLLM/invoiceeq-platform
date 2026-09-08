@@ -57,3 +57,23 @@ None in the FE. Types only.
 
 1. Cards inline under the bubble (spec assumes) or in a right-hand panel like `DocumentEvidence`?
 2. Show `blocked` cards to end users, or only to admins?
+
+---
+
+## 8. Amendment — intelligence bubble, founder 2026-09-07 (evening)
+
+Matches BE Feature 30 §8. Where this and §1–§7 disagree, this wins.
+
+- **No pin.** `PinButton` / `pinInsight` are dropped (BE R1/R7). Durability is the BE insight lifecycle; the bubble scrolls like any message.
+- **Bubble shape** (`InsightBubble.tsx` replaces `InsightCards.tsx`): verdict line; up to 3 findings (currency impact, confidence chip with reason, evidence links to document fields and invoice rows in History); "checks not run" collapsed list; action row.
+- **Actions** (`InsightActions.tsx`): Hold / Dispute / Paid → `POST /insights/{id}/transition` (also updates the invoice row in the History cache); Add note (inline); **Discuss** → seeds the composer with the finding text as a quoted prefix and focuses it; Dismiss. Thumbs-down still opens `InsightCorrectionDialog`.
+- **Two-stage rendering.** The sync bubble renders from the upload response. The chat SSE stream gains an `insight_update` event `{message_id, attachment_id, insights_version}`; `ChatWindow` refetches that message and redraws the bubble in place with a brief "updated" pulse. A stale `insights_version` is ignored.
+- **Persona.** Plain-verb copy, tenant currency formatting via the existing `formatMoney`; no internal terms (tier, delta, 3-way) in any string.
+- **Dashboard.** None in-app (Workbook rule); the History screen gets an "Open findings" filter chip fed by `GET /insights?status=OPEN`.
+
+| id | task |
+|---|---|
+| 21.6 | `InsightBubble` + `InsightActions`; remove `PinButton`; types for `Insight`, `insights_version` |
+| 21.7 | SSE `insight_update` handling + in-place redraw |
+| 21.8 | Discuss seed into composer; transition calls; History "Open findings" chip |
+| 21.9 | Playwright: attach PO → sync bubble → (mock SSE) update → Hold → History row shows the status |
