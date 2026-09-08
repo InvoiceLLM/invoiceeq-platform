@@ -260,6 +260,62 @@ class ChatQueueService:
         return {"job_id": job_id, "status": "queued", "created_at": now_iso}
 
     @staticmethod
+    def enqueue_insight_job(
+        attachment_id: str,
+        tenant_id: str,
+        message_id: str | None = None,
+        job_id: str | None = None,
+        client: "redis.Redis | None" = None,
+    ) -> dict | None:
+        """Feature 30 task 30.2: queue stage 2 of one attachment's insight bubble.
+
+        Rides the same list as the chat turns and the attachment extractions,
+        tagged `task: "insight"`, for the reason `enqueue_attachment_extraction()`
+        already gives: a second queue would need a second drain loop, a second
+        channel and a second failure mode.
+
+        Like the extraction job and unlike a chat turn, it does NOT take a tenant
+        chat slot. Gap 364's ceiling exists to stop one tenant's QUESTIONS
+        starving another's, and an insight update is not a question -- charging
+        it would mean a user who uploaded three documents could not ask anything
+        about them.
+
+        `message_id` is the assistant turn the SYNC stage already posted. The job
+        updates THAT message in place (§8.6 step 4); without it the worker would
+        post a second bubble that argues with the first.
+
+        Returns None when Redis is unreachable, and that is not an error: the
+        sync bubble is already on screen with a template verdict that is true.
+        The async stage is an improvement, never a prerequisite.
+        """
+        r = client or get_redis_client()
+        if not r:
+            return None
+
+        job_id = job_id or str(uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "task": "insight",
+            "job_id": job_id,
+            "attachment_id": attachment_id,
+            "tenant_id": tenant_id,
+            "message_id": message_id,
+            "status": "queued",
+            "created_at": now_iso,
+        }
+        try:
+            r.set(
+                f"{CHAT_JOB_STATUS_PREFIX}{job_id}",
+                json.dumps(payload),
+                ex=JOB_STATUS_TTL_SECONDS,
+            )
+            r.lpush(CHAT_QUEUE_KEY, json.dumps(payload))
+        except Exception as e:
+            logger.error("Failed to enqueue insight job for %s: %s", attachment_id, e)
+            return None
+        return {"job_id": job_id, "status": "queued", "created_at": now_iso}
+
+    @staticmethod
     def publish_progress(
         job_id: str,
         step: str,

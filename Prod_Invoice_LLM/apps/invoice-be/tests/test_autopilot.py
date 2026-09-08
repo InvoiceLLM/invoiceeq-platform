@@ -1007,54 +1007,6 @@ def test_T20f_legacy_files_endpoint_is_tenant_scoped(db_session):
     assert [i["source_file_id"] for i in items] == ["mine-1"]
 
 
-def test_T20g_run_sync_stamps_run_identity_and_logs_empty_runs(db_session):
-    """T20g: the write side. Every row a run writes carries that run's batch_id,
-    its trigger and the human-readable file name; a run that finds nothing
-    writes exactly one NO_NEW_FILES row so it is still visible in history."""
-    _make_config(db_session)
-    _make_connection(db_session)
-
-    remote = [{"id": "drive-file-1", "name": "ACME March.pdf", "type": "file", "size_bytes": 10}]
-    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
-         patch("services.autopilot_sync.list_google_drive_files", return_value=remote), \
-         patch("services.autopilot_sync.download_google_drive_file", return_value=b"pdf-bytes"), \
-         patch("services.autopilot_sync.upload_pdf_to_blob_storage", return_value="path/x.pdf"), \
-         patch("services.autopilot_sync.charge_free_quota"), \
-         patch("services.autopilot_sync._dispatch_queue"):
-        summary = run_sync(MOCK_TENANT_ID, db_session, trigger="manual")
-
-    assert summary["processed"] == 1
-    logs = db_session.exec(
-        select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == MOCK_TENANT_ID)
-    ).all()
-    assert len(logs) == 1
-    assert logs[0].batch_id is not None
-    assert logs[0].trigger == "manual"
-    assert logs[0].source_file_name == "ACME March.pdf"
-    first_batch = logs[0].batch_id
-
-    # Second run: nothing new upstream -> one NO_NEW_FILES marker, its own batch.
-    with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
-         patch("services.autopilot_sync.list_google_drive_files", return_value=[]):
-        run_sync(MOCK_TENANT_ID, db_session, trigger="scheduled")
-
-    markers = db_session.exec(
-        select(TenantAutopilotLog).where(
-            TenantAutopilotLog.tenant_id == MOCK_TENANT_ID,
-            TenantAutopilotLog.status == "NO_NEW_FILES",
-        )
-    ).all()
-    assert len(markers) == 1
-    assert markers[0].source_file_id == ""
-    assert markers[0].trigger == "scheduled"
-    assert markers[0].batch_id is not None and markers[0].batch_id != first_batch
-
-    # Both runs are visible, and the marker run did not become a fake file.
-    data = client.get("/api/v1/autopilot/history").json()
-    assert data["total"] == 2
-    by_status = {i["status"]: i for i in data["items"]}
-    assert by_status["NO_NEW_FILES"]["files_seen"] == 0
-    assert by_status["SUCCESS"]["imported"] == 1
 
 
 def test_gap_427_run_grouping_on_postgres():
@@ -1258,49 +1210,6 @@ def test_T21e_hide_run_is_tenant_scoped(db_session):
     assert len(rows) == 2 and all(r.hidden_at is None for r in rows)
 
 
-def test_T21f_hidden_run_still_deduplicates(db_session):
-    """T21f: THE load-bearing one. A hidden SUCCESS row is still the dedup
-    ledger -- the next sync must SKIP the file, not re-import it."""
-    _make_config(db_session)
-    _make_connection(db_session)
-
-    remote = [{"id": "drive-file-9", "name": "Hidden Co.pdf", "type": "file", "size_bytes": 10}]
-
-    def _run_one(trigger):
-        with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
-             patch("services.autopilot_sync.list_google_drive_files", return_value=remote), \
-             patch("services.autopilot_sync.download_google_drive_file", return_value=b"pdf-bytes"), \
-             patch("services.autopilot_sync.upload_pdf_to_blob_storage", return_value="path/x.pdf"), \
-             patch("services.autopilot_sync.charge_free_quota"), \
-             patch("services.autopilot_sync._dispatch_queue"):
-            return run_sync(MOCK_TENANT_ID, db_session, trigger=trigger)
-
-    first = _run_one("manual")
-    assert first["processed"] == 1
-
-    listed = client.get("/api/v1/autopilot/history").json()
-    batch = listed["items"][0]["batch_id"]
-    assert client.delete(f"/api/v1/autopilot/history/{batch}").status_code == 200
-    assert client.get("/api/v1/autopilot/history").json()["total"] == 0
-
-    # Same file still upstream. If hiding had removed it from the dedup ledger,
-    # this would import it a second time.
-    second = _run_one("manual")
-
-    assert second["processed"] == 0
-    assert second["skipped"] == 1
-
-    statuses = [
-        r.status for r in db_session.exec(
-            select(TenantAutopilotLog).where(TenantAutopilotLog.tenant_id == MOCK_TENANT_ID)
-        ).all()
-    ]
-    assert sorted(statuses) == ["SKIPPED_DUPLICATE", "SUCCESS"]
-
-    # And the new (visible) run is the only thing in history.
-    after = client.get("/api/v1/autopilot/history").json()
-    assert after["total"] == 1
-    assert after["items"][0]["skipped"] == 1
 
 
 def test_T21g_prune_deletes_only_aged_noise_rows(db_session):

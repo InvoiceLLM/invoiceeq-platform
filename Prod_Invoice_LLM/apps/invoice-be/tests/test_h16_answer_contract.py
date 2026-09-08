@@ -356,7 +356,16 @@ def test_v27_the_persist_side_and_the_wire_side_cannot_drift():
     # knows about must be in the router's tuple, and the router may carry the two
     # Feature 29 additions on top.
     assert set(CONTRACT_KEYS) <= set(ATTACHMENT_CONTRACT_KEYS)
-    assert set(ATTACHMENT_CONTRACT_KEYS) - set(CONTRACT_KEYS) == {"provenance", "abstention"}
+    # Feature 30 30.2 adds `insights` on the same terms: the intelligence bubble
+    # is written by `services/attachment_insights.post_insight_turn()` rather
+    # than by the agent, but it rides the SAME tuple precisely so the persist
+    # side and the wire side still cannot drift. Additive and Optional, so a
+    # non-insight turn serialises byte-identically.
+    assert set(ATTACHMENT_CONTRACT_KEYS) - set(CONTRACT_KEYS) == {
+        "provenance",
+        "abstention",
+        "insights",
+    }
     for key in ATTACHMENT_CONTRACT_KEYS:
         assert key in MessageResponse.model_fields, (
             f"{key} is persisted but is not a MessageResponse field, so it can "

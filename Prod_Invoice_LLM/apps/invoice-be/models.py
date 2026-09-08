@@ -565,6 +565,38 @@ class ChatAttachment(SQLModel, table=True):
     # row written before this column existed reads as -- the sweeper (H8) must
     # therefore treat null as "keep", not as "expired at the epoch".
     expires_at: datetime | None = Field(default=None)
+    # --- Feature 30 phase 0 (30.0a / 30.0c / 30.0d / 30.2) -------------------
+    # All five are add-only and every one has a default that reproduces today's
+    # behaviour on an existing row, because there is no backfill: a row written
+    # before this migration reads `retained=False`, `region=None`,
+    # `statement_date=None`, `insights_version=0`, `insights=None`, which is
+    # exactly "no insight bubble was ever computed for this attachment".
+    #
+    # 30.0a: an attachment that produced findings is exempt from the chat-doc TTL
+    # sweep while any of its `insight` rows is still OPEN. Kept as a column
+    # rather than derived by a join inside the sweeper so the exemption is
+    # visible on the row an operator is looking at, and so the sweeper's
+    # predicate stays a plain indexed filter. It is the *insight status* that
+    # decides -- `retained` is set when the first finding opens and cleared when
+    # the last one closes (services/insights.py).
+    retained: bool = Field(default=False, nullable=False)
+    # 30.0d: "IN" / "EU" / "US" / None, from services/region.py::detect_region().
+    # Which regional rule cards apply to this document is a property of the
+    # document, not of the tenant -- an Indian tenant can be sent a EU vendor's
+    # invoice -- so it is stored per attachment.
+    region: str | None = Field(default=None, max_length=8)
+    # 30.0c: a bank statement's "as of" date. Denormalised off the ledger lines
+    # for the same reason `doc_date` is denormalised off `extracted_json`: the
+    # cash-cover card labels every figure "as of <statement date>", and a
+    # staleness check must not have to open a JSON blob or aggregate a child
+    # table to know how old the statement is.
+    statement_date: date | None = Field(default=None)
+    # 30.2: the two-stage bubble. The sync stage writes version 1; the queue job
+    # replaces the block in place and writes version 2. The FE redraws only when
+    # the version it holds is lower, so an out-of-order SSE event cannot make a
+    # bubble go backwards.
+    insights_version: int = Field(default=0, nullable=False)
+    insights: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
 
 
 class ChatFeedback(SQLModel, table=True):
@@ -1681,3 +1713,233 @@ class SupportTicket(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# =============================================================================
+# Feature 30 - Business Intelligence (chat-attachment intelligence bubble)
+#
+# Phase 0 (spec section 8.4). Four new tables, all tenant-scoped, all written
+# only when `ENABLE_ATTACHMENT_INSIGHTS` is on. With the flag off nothing in the
+# running system inserts into any of them, so their existence is inert -- the
+# migration is add-only for exactly that reason (a table nobody writes to costs
+# nothing; a flag that has to wait for a migration costs a deployment).
+# =============================================================================
+
+
+class Insight(SQLModel, table=True):
+    """30.0e -- one FINDING, with a lifecycle.
+
+    Ruling R1 replaced "the bubble is temporary unless pinned" with this table:
+    a finding is not a rendering, it is a piece of work ("this invoice is
+    overbilled by 23,200 against the PO") that stays open until somebody does
+    something about it. That is why the row outlives the chat message it was
+    first shown in, why `ChatAttachment.retained` keys off it (30.0a), and why
+    the pin endpoint in section 2 was dropped (R7) -- pinning a message is a
+    worse version of tracking the finding.
+
+    `finding_key` is the stable identity of a finding WITHIN an attachment
+    (e.g. "agreed_vs_billed:INV-2026-014"). The async stage recomputes the same
+    cards the sync stage did, so without a key every bubble update would open a
+    second copy of every finding the user has already acted on.
+    """
+    __tablename__ = "insight"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    attachment_id: UUID = Field(index=True)
+    # Nullable because a finding can outlive its session, and because the
+    # dashboard ranks findings for a tenant with no session in hand at all.
+    session_id: UUID | None = Field(default=None, index=True)
+    doc_type: str = Field(default="OTHER", max_length=32)
+    card: str = Field(max_length=64)
+    finding_key: str = Field(max_length=255, index=True)
+    title: str = Field(default="", max_length=1024)
+    # Nullable: not every finding has money attached ("no PO on file for this
+    # challan" is a real finding with no amount), and 0.0 would rank it as a
+    # zero-impact finding rather than as an unquantified one.
+    impact_amount: float | None = Field(default=None)
+    currency: str | None = Field(default=None, max_length=8)
+    # "high" | "med" | "low" -- rendered next to the figure, with the reason,
+    # because a number whose confidence the user cannot see is a number they
+    # cannot act on.
+    confidence: str = Field(default="med", max_length=8)
+    confidence_reason: str | None = Field(default=None, max_length=512)
+    evidence: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    # OPEN | ACTED | SNOOZED | DISMISSED
+    status: str = Field(default="OPEN", max_length=16, index=True)
+    # The user's own record: "note" | "dismissed" | "snoozed" | None (Gap 492: never an invoice action)
+    outcome: str | None = Field(default=None, max_length=64)
+    note: str | None = Field(default=None, max_length=2000)
+    acted_by: str | None = Field(default=None, max_length=255)
+    acted_at: datetime | None = Field(default=None)
+    snoozed_until: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BankStatementLine(SQLModel, table=True):
+    """30.0c -- the bank ledger a statement attachment produces.
+
+    A statement is the one document type whose value is per LINE, not in its
+    header: "which of these 40 debits are invoices we already recorded" cannot
+    be answered from `extracted_json`'s summary fields, and re-parsing the blob
+    on every question would make the answer drift as the ledger moves. So the
+    lines are landed as rows, and the matcher (services/bank_matching.py) writes
+    its verdict back onto them.
+
+    Deliberately NOT `invoice` rows and NOT payments: a debit on a statement is
+    evidence that a payment may have happened, not the payment itself (Feature
+    26 D2's rule, applied one document type further along).
+    """
+    __tablename__ = "bank_statement_line"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    attachment_id: UUID = Field(index=True)
+    # Copied onto every line from the statement header so a line is
+    # self-describing for the "as of" label without a join back.
+    statement_date: date | None = Field(default=None)
+    line_date: date | None = Field(default=None)
+    narration: str | None = Field(default=None, max_length=1024)
+    # Debit and credit are separate nullable columns rather than one signed
+    # amount because that is how a statement is printed, and collapsing them
+    # loses the distinction between "0.00 credited" and "nothing in this column".
+    debit: float | None = Field(default=None)
+    credit: float | None = Field(default=None)
+    balance: float | None = Field(default=None)
+    utr_ref: str | None = Field(default=None, max_length=128)
+    matched_invoice_id: UUID | None = Field(default=None, index=True)
+    # UNMATCHED | MATCHED | AMBIGUOUS | POSSIBLE_DUPLICATE
+    match_status: str = Field(default="UNMATCHED", max_length=32)
+    match_confidence: str | None = Field(default=None, max_length=8)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Vendor(SQLModel, table=True):
+    """30.0f -- the per-tenant vendor master (ruling R6).
+
+    `invoice.vendor_name` is free text, so "Shree Packaging Pvt Ltd" and "SHREE
+    PACKAGING" are two vendors to every query that groups by it -- which is
+    exactly the query the PO / quotation / contract cards run. This table is the
+    canonical name; `VendorAlias` holds every spelling that resolves to it.
+
+    Per tenant, never shared across tenants: an alias is a claim about who two
+    names refer to, and one tenant's claim is not evidence for another's.
+    """
+    __tablename__ = "vendor"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    canonical_name: str = Field(max_length=512, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class VendorAlias(SQLModel, table=True):
+    """30.0f -- one spelling that resolves to a `Vendor`.
+
+    `confirmed_by` is the whole point. An UNCONFIRMED alias is a proposal and
+    never auto-binds (section 8.9's "an unconfirmed alias never auto-binds"):
+    binding on a fuzzy name match alone would let one vendor's negotiated rates
+    be compared against another's invoices, which is the same class of error as
+    Feature 26 D4's confirmation gate and is refused the same way.
+    """
+    __tablename__ = "vendor_alias"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    vendor_id: UUID = Field(index=True)
+    # Normalised (casefolded, punctuation-stripped) spelling -- the form
+    # `resolve_vendor()` looks up. The original is kept in `raw_alias`.
+    alias: str = Field(max_length=512, index=True)
+    raw_alias: str | None = Field(default=None, max_length=512)
+    confirmed_by: str | None = Field(default=None, max_length=255)
+    confirmed_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TenantInsightSetting(SQLModel, table=True):
+    """30.0g -- the per-tenant override for one threshold constant (ruling R9).
+
+    The constants themselves live in code (`services/insight_thresholds.py`), not
+    here: a tenant with no row must get the shipped default without a seed step,
+    and a threshold nobody has overridden should not need a database read at all.
+    This table holds only the exceptions.
+
+    One row per (tenant, name); the value is a float because every threshold so
+    far is a count or a currency/day tolerance, and a float holds both without a
+    second column or a type tag.
+    """
+    __tablename__ = "tenant_insight_setting"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    name: str = Field(max_length=64, index=True)
+    value: float
+    updated_by: str | None = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CertifiedSqlExample(SQLModel, table=True):
+    """Feature 30 task 30.8 — a question and the SQL that correctly answers it.
+
+    Two consumers, and they are why the table exists rather than a prompt
+    constant: the SQL prompt retrieves the closest certified examples instead of
+    carrying a static tail (Feature 6.1 C4), and the bubble's suggested-questions
+    card offers three that fit the document in front of the user.
+
+    **`certified` is the gate and it defaults False.** A row proposed by the
+    flywheel (30.13) is invisible to both consumers until a human sets it. An
+    uncertified example is a suggestion about what MIGHT be right, and putting
+    one in front of the model is how a wrong answer becomes the house style.
+
+    `tenant_id` NULL means global (Feature 29 decision 5): an example written
+    against the shared schema helps every tenant. One that names a tenant's own
+    vendor or rule carries their id and is never retrieved for anyone else.
+    """
+    __tablename__ = "certified_sql_example"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID | None = Field(default=None, index=True)
+    question: str = Field(max_length=2000)
+    sql: str
+    doc_type: str | None = Field(default=None, max_length=32, index=True)
+    metric: str | None = Field(default=None, max_length=64)
+    certified: bool = Field(default=False, index=True, nullable=False)
+    certified_by: str | None = Field(default=None, max_length=255)
+    certified_at: datetime | None = Field(default=None)
+    source_correction_id: UUID | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatCorrection(SQLModel, table=True):
+    """Feature 30 task 30.13 — what a user said we got wrong, and what it should say.
+
+    Distinct from `ChatFeedback` (Gap 54/232), which votes on a whole TURN and
+    routes to the Feature 18 triage flow. This is per CARD and per FINDING: "the
+    overbilling figure on this bubble is wrong because the PO was revised", which
+    is a statement about one computation, not about an answer.
+
+    `status` is the flywheel's gate. PENDING means a human has not looked; only
+    `promote_to_example()` moves it to PROMOTED and writes the certified row. The
+    same shape as an unconfirmed vendor alias (30.0f) and Feature 26 D4's
+    confirmation, for the same reason: a claim by one user is not yet a fact
+    about the tenant's data.
+    """
+    __tablename__ = "chat_correction"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    message_id: UUID | None = Field(default=None, index=True)
+    insight_id: UUID | None = Field(default=None, index=True)
+    card: str | None = Field(default=None, max_length=64)
+    finding_key: str | None = Field(default=None, max_length=255)
+    vote: str = Field(default="down", max_length=10)
+    reason: str | None = Field(default=None, max_length=64)
+    corrected_text: str | None = Field(default=None, max_length=4000)
+    corrected_sql: str | None = Field(default=None)
+    evidence: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    status: str = Field(default="PENDING", max_length=16, index=True)
+    promoted_example_id: UUID | None = Field(default=None)
+    created_by: str | None = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

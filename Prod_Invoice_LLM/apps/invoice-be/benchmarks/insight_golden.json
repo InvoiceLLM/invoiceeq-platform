@@ -1,0 +1,426 @@
+{
+  "version": 1,
+  "created": "2026-09-08",
+  "feature": "Feature 30 task 30.15 — the insight-bubble golden bank",
+  "note": "20 non-invoice attachments in the §5 30.15 mix (4 PO, 3 quotation, 3 contract, 3 credit note, 2 debit note, 2 statement, 2 remittance, 1 delivery note) across IN/EU/US. Every case is a SYNTHETIC extraction payload plus the ledger rows it should be compared against — no PDF and no OCR, because what 30.15 grades is the CARDS and the NARRATION, and putting extraction in the loop would make an extraction regression look like an insight regression. `expected_figures` are graded by exact match; `expected_cards` by status; `must_not_contain` catches figures the narration is not allowed to invent.",
+  "cases": [
+    {
+      "id": "po_overbilled_in",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "PO-2026-0043",
+        "party_name": "Shree Packaging Pvt Ltd",
+        "doc_date": "2026-02-20",
+        "grand_total": 100000.0,
+        "extracted_json": {
+          "doc_type": "PURCHASE_ORDER",
+          "po_number": "PO-2026-0043",
+          "payment_terms": "Net 30",
+          "grand_total": 100000.0,
+          "tax_ids": ["27AAPFU0939F1ZV"],
+          "items": [{"description": "Corrugated boxes", "quantity": 1000, "amount": 100000.0}]
+        }
+      },
+      "invoices": [
+        {"invoice_number": "INV-2026-014", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 123200.0, "po_number": "PO-2026-0043", "invoice_date": "2026-03-01", "due_date": "2026-04-15", "confirmed": true}
+      ],
+      "expected_cards": {"agreed_vs_billed": "ok", "terms_check": "ok", "what_this_is": "ok"},
+      "expected_figures": {"overbilled_INV-2026-014": 23200.0, "agreed_INV-2026-014": 100000.0, "billed_INV-2026-014": 123200.0, "agreed_payment_days": 30.0},
+      "expected_findings": ["agreed_vs_billed:INV-2026-014", "terms_check:INV-2026-014"],
+      "must_not_contain": [223200.0, 23.2]
+    },
+    {
+      "id": "po_matches_exactly_eu",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "EU",
+      "currency": "EUR",
+      "attachment": {
+        "doc_number": "PO-DE-881",
+        "party_name": "Berlin Verpackung GmbH",
+        "doc_date": "2026-01-10",
+        "grand_total": 45000.0,
+        "extracted_json": {"doc_type": "PURCHASE_ORDER", "po_number": "PO-DE-881", "grand_total": 45000.0, "tax_ids": ["DE123456789"], "payment_terms": "Net 14"}
+      },
+      "invoices": [
+        {"invoice_number": "INV-DE-101", "vendor_name": "Berlin Verpackung GmbH", "grand_total": 45000.0, "po_number": "PO-DE-881", "invoice_date": "2026-01-20", "due_date": "2026-02-03", "confirmed": true}
+      ],
+      "expected_cards": {"agreed_vs_billed": "ok"},
+      "expected_figures": {},
+      "expected_findings": [],
+      "note": "The control: a PO that agrees with its invoice must produce NO overbilling finding. A bank that only contains problems cannot detect a card that flags everything."
+    },
+    {
+      "id": "po_no_invoice_yet_us",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "US",
+      "currency": "USD",
+      "attachment": {
+        "doc_number": "PO-US-5521",
+        "party_name": "Redwood Facilities Group",
+        "doc_date": "2026-03-02",
+        "grand_total": 8200.0,
+        "extracted_json": {"doc_type": "PURCHASE_ORDER", "po_number": "PO-US-5521", "grand_total": 8200.0, "addresses": [{"line2": "San Francisco CA 94105"}]}
+      },
+      "invoices": [],
+      "expected_cards": {"agreed_vs_billed": "skipped", "what_this_is": "ok"},
+      "expected_figures": {},
+      "expected_findings": [],
+      "expected_skip_reasons": {"agreed_vs_billed": "no invoice"}
+    },
+    {
+      "id": "po_duplicate_number_in",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "PO-2026-0043",
+        "party_name": "Shree Packaging Pvt Ltd",
+        "doc_date": "2026-02-28",
+        "grand_total": 100000.0,
+        "extracted_json": {"doc_type": "PURCHASE_ORDER", "po_number": "PO-2026-0043", "grand_total": 100000.0, "tax_ids": ["27AAPFU0939F1ZV"]}
+      },
+      "invoices": [
+        {"invoice_number": "INV-2026-014", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 60000.0, "po_number": "PO-2026-0043", "invoice_date": "2026-03-01", "due_date": "2026-03-31", "confirmed": true},
+        {"invoice_number": "INV-2026-021", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 60000.0, "po_number": "PO-2026-0043", "invoice_date": "2026-03-11", "due_date": "2026-04-10", "confirmed": true}
+      ],
+      "expected_cards": {"agreed_vs_billed": "ok", "open_po_value": "ok"},
+      "expected_figures": {"ordered_value": 100000.0, "invoiced_against_order": 120000.0, "not_yet_invoiced": -20000.0},
+      "expected_findings": ["open_po_value:over:PO-2026-0043"],
+      "stage": "async"
+    },
+    {
+      "id": "quotation_drift_in",
+      "doc_type": "QUOTATION",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "QT-2026-77",
+        "party_name": "Luna Traders",
+        "doc_date": "2026-01-05",
+        "grand_total": 100000.0,
+        "extracted_json": {"doc_type": "QUOTATION", "grand_total": 100000.0}
+      },
+      "invoices": [
+        {"invoice_number": "INV-L-1", "vendor_name": "Luna Traders", "grand_total": 110000.0, "invoice_date": "2026-02-01", "due_date": "2026-03-01"},
+        {"invoice_number": "INV-L-2", "vendor_name": "Luna Traders", "grand_total": 130000.0, "invoice_date": "2026-03-01", "due_date": "2026-04-01"}
+      ],
+      "expected_cards": {"quote_drift": "ok"},
+      "expected_figures": {"quoted_total": 100000.0, "average_invoice_since_quote": 120000.0, "drift_amount": 20000.0, "drift_percent": 20.0},
+      "expected_findings": ["quote_drift:QT-2026-77"],
+      "stage": "async"
+    },
+    {
+      "id": "quotation_below_threshold_eu",
+      "doc_type": "QUOTATION",
+      "region": "EU",
+      "currency": "EUR",
+      "attachment": {
+        "doc_number": "QT-EU-3",
+        "party_name": "Amsterdam Logistiek BV",
+        "doc_date": "2026-02-01",
+        "grand_total": 5000.0,
+        "extracted_json": {"doc_type": "QUOTATION", "grand_total": 5000.0, "tax_ids": ["NL123456789"]}
+      },
+      "invoices": [
+        {"invoice_number": "INV-NL-1", "vendor_name": "Amsterdam Logistiek BV", "grand_total": 5400.0, "invoice_date": "2026-02-20", "due_date": "2026-03-20"}
+      ],
+      "expected_cards": {"quote_drift": "skipped"},
+      "expected_figures": {},
+      "expected_findings": [],
+      "expected_skip_reasons": {"quote_drift": "needs 2"},
+      "stage": "async",
+      "note": "R9's threshold: one invoice after a quote is a data point, not a drift."
+    },
+    {
+      "id": "quotation_no_history_us",
+      "doc_type": "QUOTATION",
+      "region": "US",
+      "currency": "USD",
+      "attachment": {
+        "doc_number": "QT-US-9",
+        "party_name": "Fieldstone Analytics",
+        "doc_date": "2026-03-01",
+        "grand_total": 12000.0,
+        "extracted_json": {"doc_type": "QUOTATION", "grand_total": 12000.0, "party_tax_id": "12-3456789"}
+      },
+      "invoices": [],
+      "expected_cards": {"agreed_vs_billed": "skipped", "quote_drift": "skipped"},
+      "expected_figures": {},
+      "expected_findings": [],
+      "stage": "async"
+    },
+    {
+      "id": "contract_terms_deviation_in",
+      "doc_type": "CONTRACT",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "CTR-2025-9",
+        "party_name": "Shree Packaging Pvt Ltd",
+        "doc_date": "2025-04-01",
+        "grand_total": null,
+        "extracted_json": {"doc_type": "CONTRACT", "payment_terms": "Net 30 days from invoice date", "tax_ids": ["27AAPFU0939F1ZV"]}
+      },
+      "invoices": [
+        {"invoice_number": "INV-C-1", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 10000.0, "invoice_date": "2026-03-01", "due_date": "2026-03-31"},
+        {"invoice_number": "INV-C-2", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 12000.0, "invoice_date": "2026-03-01", "due_date": "2026-04-15"}
+      ],
+      "expected_cards": {"contract_deviations": "ok", "terms_check": "ok"},
+      "expected_figures": {"contract_payment_days": 30.0, "invoices_checked": 2.0, "invoices_off_contract": 1.0},
+      "expected_findings": ["contract_deviations:CTR-2025-9"],
+      "stage": "async"
+    },
+    {
+      "id": "contract_no_terms_printed_eu",
+      "doc_type": "CONTRACT",
+      "region": "EU",
+      "currency": "EUR",
+      "attachment": {
+        "doc_number": "CTR-EU-2",
+        "party_name": "Berlin Verpackung GmbH",
+        "doc_date": "2025-06-01",
+        "grand_total": null,
+        "extracted_json": {"doc_type": "CONTRACT", "notes": "Framework agreement, rates as per annexure.", "tax_ids": ["DE123456789"]}
+      },
+      "invoices": [],
+      "expected_cards": {"terms_check": "skipped", "contract_deviations": "skipped"},
+      "expected_figures": {},
+      "expected_findings": [],
+      "expected_skip_reasons": {"terms_check": "payment window"},
+      "stage": "async"
+    },
+    {
+      "id": "contract_reverse_charge_missing_eu",
+      "doc_type": "CONTRACT",
+      "region": "EU",
+      "currency": "EUR",
+      "attachment": {
+        "doc_number": "CTR-EU-7",
+        "party_name": "Dublin Components Ltd",
+        "doc_date": "2026-01-15",
+        "grand_total": 20000.0,
+        "extracted_json": {"doc_type": "CONTRACT", "grand_total": 20000.0, "tax_amount": 0, "tax_ids": ["IE1234567X"], "payment_terms": "Net 45"}
+      },
+      "invoices": [],
+      "expected_cards": {"compliance": "ok"},
+      "expected_figures": {},
+      "expected_findings": ["compliance:eu-reverse-charge-wording"],
+      "note": "Zero tax with no 'reverse charge' wording — the EU card fetched on 2026-09-08."
+    },
+    {
+      "id": "credit_note_net_position_in",
+      "doc_type": "CREDIT_NOTE",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "CN-2026-3",
+        "party_name": "Shree Packaging Pvt Ltd",
+        "doc_date": "2026-03-20",
+        "grand_total": 21600.0,
+        "extracted_json": {"doc_type": "CREDIT_NOTE", "grand_total": 21600.0, "referenced_documents": [{"doc_number": "INV-2026-014", "amount": 21600.0}], "tax_ids": ["27AAPFU0939F1ZV"]}
+      },
+      "invoices": [
+        {"invoice_number": "INV-2026-014", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 123200.0, "invoice_date": "2026-03-01", "due_date": "2026-04-15", "confirmed": true}
+      ],
+      "expected_cards": {"net_position": "ok", "compliance": "skipped"},
+      "expected_figures": {"net_payable": 101600.0},
+      "expected_findings": ["net_position:CN-2026-3"],
+      "must_not_contain": [144800.0],
+      "note": "Gap 475's sign rule: the credit SUBTRACTS. 144800 is the number this feature must never produce."
+    },
+    {
+      "id": "credit_note_no_reference_eu",
+      "doc_type": "CREDIT_NOTE",
+      "region": "EU",
+      "currency": "EUR",
+      "attachment": {
+        "doc_number": "CN-EU-11",
+        "party_name": "Berlin Verpackung GmbH",
+        "doc_date": "2026-02-10",
+        "grand_total": 400.0,
+        "extracted_json": {"doc_type": "CREDIT_NOTE", "grand_total": 400.0, "tax_ids": ["DE123456789"], "tax_amount": 76.0}
+      },
+      "invoices": [],
+      "expected_cards": {"compliance": "ok", "net_position": "skipped"},
+      "expected_figures": {},
+      "expected_findings": ["compliance:eu-credit-note-reference"]
+    },
+    {
+      "id": "credit_note_negative_total_us",
+      "doc_type": "CREDIT_NOTE",
+      "region": "US",
+      "currency": "USD",
+      "attachment": {
+        "doc_number": "CN-US-2",
+        "party_name": "Apex Supplies Inc",
+        "doc_date": "2026-02-14",
+        "grand_total": -21.6,
+        "extracted_json": {"doc_type": "CREDIT_NOTE", "grand_total": -21.6, "referenced_documents": [{"doc_number": "INV-US-9", "amount": -21.6}], "party_tax_id": "12-3456789"}
+      },
+      "invoices": [
+        {"invoice_number": "INV-US-9", "vendor_name": "Apex Supplies Inc", "grand_total": 453.6, "invoice_date": "2026-02-01", "due_date": "2026-03-03", "confirmed": true}
+      ],
+      "expected_cards": {"net_position": "ok"},
+      "expected_figures": {"net_payable": 432.0},
+      "expected_findings": ["net_position:CN-US-2"],
+      "must_not_contain": [475.2],
+      "note": "The probe-A4 case verbatim: a credit note that PRINTS a negative total must still subtract. 475.20 is the regression."
+    },
+    {
+      "id": "debit_note_adds_in",
+      "doc_type": "DEBIT_NOTE",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "DN-2026-1",
+        "party_name": "Bharat Steels",
+        "doc_date": "2026-03-05",
+        "grand_total": 5000.0,
+        "extracted_json": {"doc_type": "DEBIT_NOTE", "grand_total": 5000.0, "referenced_documents": [{"doc_number": "INV-B-1", "amount": 5000.0}], "tax_ids": ["29AABCU9603R1ZM"]}
+      },
+      "invoices": [
+        {"invoice_number": "INV-B-1", "vendor_name": "Bharat Steels", "grand_total": 50000.0, "invoice_date": "2026-02-10", "due_date": "2026-03-12", "confirmed": true}
+      ],
+      "expected_cards": {"net_position": "ok"},
+      "expected_figures": {"net_payable": 55000.0},
+      "expected_findings": ["net_position:DN-2026-1"]
+    },
+    {
+      "id": "debit_note_unlinked_eu",
+      "doc_type": "DEBIT_NOTE",
+      "region": "EU",
+      "currency": "EUR",
+      "attachment": {
+        "doc_number": "DN-EU-4",
+        "party_name": "Amsterdam Logistiek BV",
+        "doc_date": "2026-03-18",
+        "grand_total": 250.0,
+        "extracted_json": {"doc_type": "DEBIT_NOTE", "grand_total": 250.0, "tax_ids": ["NL123456789"], "tax_amount": 52.5}
+      },
+      "invoices": [],
+      "expected_cards": {"net_position": "skipped", "compliance": "ok"},
+      "expected_figures": {},
+      "expected_findings": ["compliance:eu-credit-note-reference"]
+    },
+    {
+      "id": "statement_four_matches_in",
+      "doc_type": "STATEMENT_OF_ACCOUNT",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "STMT-03-2026",
+        "party_name": "HDFC Bank",
+        "doc_date": "2026-03-31",
+        "grand_total": null,
+        "statement_date": "2026-03-31",
+        "extracted_json": {
+          "doc_type": "STATEMENT_OF_ACCOUNT",
+          "statement_date": "2026-03-31",
+          "statement_lines": [
+            {"line_date": "2026-03-04", "narration": "NEFT SHREE PACKAGING PVT LTD", "debit": 100000.0, "balance": 900000.0, "utr_ref": "U1"},
+            {"line_date": "2026-03-09", "narration": "RTGS BHARAT STEELS", "debit": 45000.75, "balance": 854999.25, "utr_ref": "U2"},
+            {"line_date": "2026-03-18", "narration": "UPI LUNA TRADERS", "debit": 8000.5, "balance": 846998.75, "utr_ref": "U3"},
+            {"line_date": "2026-03-19", "narration": "NEFT CR ACME CUSTOMER", "credit": 250000.0, "balance": 1096998.75, "utr_ref": "U4"},
+            {"line_date": "2026-03-22", "narration": "NEFT SHREE PACKAGING PVT LTD", "debit": 61000.0, "balance": 1035998.75, "utr_ref": "U5"},
+            {"line_date": "2026-03-28", "narration": "NEFT UNKNOWN PARTY", "debit": 17777.0, "balance": 1018221.75, "utr_ref": "U6"}
+          ]
+        }
+      },
+      "invoices": [
+        {"invoice_number": "INV-A", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 100000.0, "invoice_date": "2026-02-03", "due_date": "2026-03-05"},
+        {"invoice_number": "INV-B", "vendor_name": "Bharat Steels", "grand_total": 45000.0, "invoice_date": "2026-02-08", "due_date": "2026-03-10"},
+        {"invoice_number": "INV-C", "vendor_name": "Luna Traders", "grand_total": 8000.5, "invoice_date": "2026-02-12", "due_date": "2026-03-14"},
+        {"invoice_number": "INV-D", "customer_name": "Acme Customer", "grand_total": 250000.0, "invoice_date": "2026-02-18", "due_date": "2026-03-20", "flow_direction": "OUTBOUND"},
+        {"invoice_number": "INV-PAID", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 61000.0, "invoice_date": "2026-02-18", "due_date": "2026-03-20", "status": "PAID", "paid": true}
+      ],
+      "expected_cards": {"bank_reconcile": "ok"},
+      "expected_figures": {"statement_line_count": 6.0, "matched_count": 4.0, "unmatched_debit_count": 1.0, "closing_balance": 1018221.75},
+      "expected_findings": ["bank_reconcile:duplicate:*", "bank_reconcile:unmatched_debit:*"]
+    },
+    {
+      "id": "statement_unreadable_us",
+      "doc_type": "STATEMENT_OF_ACCOUNT",
+      "region": "US",
+      "currency": "USD",
+      "attachment": {
+        "doc_number": "STMT-US-02",
+        "party_name": "First National",
+        "doc_date": "2026-02-28",
+        "grand_total": null,
+        "extracted_json": {"doc_type": "STATEMENT_OF_ACCOUNT", "notes": "Statement period 01 Feb - 28 Feb"}
+      },
+      "invoices": [],
+      "expected_cards": {"bank_reconcile": "skipped", "cash_cover": "skipped"},
+      "expected_figures": {},
+      "expected_findings": [],
+      "expected_skip_reasons": {"bank_reconcile": "no transaction rows"}
+    },
+    {
+      "id": "remittance_settles_two_eu",
+      "doc_type": "REMITTANCE_ADVICE",
+      "region": "EU",
+      "currency": "EUR",
+      "attachment": {
+        "doc_number": "RA-2026-8",
+        "party_name": "Acme Customer BV",
+        "doc_date": "2026-03-25",
+        "grand_total": 3000.0,
+        "extracted_json": {"doc_type": "REMITTANCE_ADVICE", "grand_total": 3000.0, "referenced_documents": [{"doc_number": "INV-R-1", "amount": 1000.0}, {"doc_number": "INV-R-2", "amount": 2000.0}], "tax_ids": ["NL987654321"]}
+      },
+      "invoices": [
+        {"invoice_number": "INV-R-1", "customer_name": "Acme Customer BV", "grand_total": 1000.0, "invoice_date": "2026-02-25", "due_date": "2026-03-27", "flow_direction": "OUTBOUND", "confirmed": true},
+        {"invoice_number": "INV-R-2", "customer_name": "Acme Customer BV", "grand_total": 2000.0, "invoice_date": "2026-02-25", "due_date": "2026-03-27", "flow_direction": "OUTBOUND", "confirmed": true}
+      ],
+      "expected_cards": {"net_position": "ok", "what_this_is": "ok"},
+      "expected_figures": {},
+      "expected_findings": []
+    },
+    {
+      "id": "remittance_short_paid_us",
+      "doc_type": "REMITTANCE_ADVICE",
+      "region": "US",
+      "currency": "USD",
+      "attachment": {
+        "doc_number": "RA-US-2",
+        "party_name": "Northwind Retail",
+        "doc_date": "2026-03-12",
+        "grand_total": 900.0,
+        "extracted_json": {"doc_type": "REMITTANCE_ADVICE", "grand_total": 900.0, "referenced_documents": [{"doc_number": "INV-N-1", "amount": 900.0}], "notes": "Deduction: damaged goods 100.00", "party_tax_id": "98-7654321"}
+      },
+      "invoices": [
+        {"invoice_number": "INV-N-1", "customer_name": "Northwind Retail", "grand_total": 1000.0, "invoice_date": "2026-02-12", "due_date": "2026-03-14", "flow_direction": "OUTBOUND", "confirmed": true}
+      ],
+      "expected_cards": {"net_position": "ok"},
+      "expected_figures": {},
+      "expected_findings": [],
+      "note": "A short payment. The bank does not yet assert a deduction figure — when 30.6's remittance half lands, `expected_figures` gains it."
+    },
+    {
+      "id": "challan_short_delivery_in",
+      "doc_type": "DELIVERY_NOTE",
+      "region": "IN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "DC-2026-19",
+        "party_name": "Shree Packaging Pvt Ltd",
+        "doc_date": "2026-03-02",
+        "grand_total": null,
+        "extracted_json": {
+          "doc_type": "DELIVERY_NOTE",
+          "po_number": "PO-2026-0043",
+          "tax_ids": ["27AAPFU0939F1ZV"],
+          "items": [{"description": "Corrugated boxes", "quantity": 800}]
+        }
+      },
+      "invoices": [
+        {"invoice_number": "INV-2026-014", "vendor_name": "Shree Packaging Pvt Ltd", "grand_total": 123200.0, "po_number": "PO-2026-0043", "invoice_date": "2026-03-01", "due_date": "2026-04-15", "confirmed": true, "items": [{"description": "Corrugated boxes", "quantity": 1000, "amount": 123200.0}]}
+      ],
+      "expected_cards": {"delivery_vs_order": "ok"},
+      "expected_figures": {},
+      "expected_findings": ["delivery_vs_order:INV-2026-014:corrugated boxes"],
+      "note": "1000 billed, 800 delivered — the short-delivery finding, quantity only and never priced."
+    }
+  ]
+}

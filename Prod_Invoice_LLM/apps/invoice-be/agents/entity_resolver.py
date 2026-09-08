@@ -139,7 +139,24 @@ class ResolutionResult:
 
     @property
     def vendor_names(self) -> list[str]:
-        return [e.candidates[0].label for e in self.entities if e.kind == "vendor" and e.status == "bound"]
+        """Every spelling of every bound vendor.
+
+        Feature 30 30.0f widened this from `candidates[0].label` to all of them.
+        Before the vendor master a bound vendor had exactly one candidate by
+        construction, so for the keyword path this returns the same list it
+        always did; with the master, one bound vendor carries every
+        `invoice.vendor_name` spelling the tenant has confirmed as that
+        supplier, and dropping all but the first would re-introduce the split
+        history the master exists to fix.
+        """
+        out: list[str] = []
+        for e in self.entities:
+            if e.kind != "vendor" or e.status != "bound":
+                continue
+            for c in e.candidates:
+                if c.label not in out:
+                    out.append(c.label)
+        return out
 
     @property
     def attachment_ids(self) -> list[str]:
@@ -298,6 +315,24 @@ def _resolve_vendors(question: str, tenant_id: str, db_session) -> list[Resolved
     names = _tenant_vendor_names(tenant_id, db_session)
     out: list[ResolvedEntity] = []
     for mention in mentions:
+        # Feature 30 task 30.0f: the per-tenant vendor master answers first.
+        # It is the only thing that knows "Shree Packaging Pvt Ltd" and "SHREE
+        # PACKAGING" are one supplier, and without it the three lines below
+        # return ambiguous (two spellings) or bind to whichever spelling the
+        # substring test happened to hit. A tenant with no vendor rows -- every
+        # tenant until ENABLE_ATTACHMENT_INSIGHTS opens one -- resolves to
+        # "none" here and falls straight through to the pre-existing matching,
+        # so this addition is inert until the vendor master has content.
+        #
+        # It binds ONLY on a canonical name or a CONFIRMED alias. A "proposed"
+        # resolution is deliberately allowed to fall through rather than being
+        # surfaced as a clarify: an unconfirmed alias is not evidence, and 30.0f
+        # owns that confirmation flow (POST /chat/vendors/aliases/confirm),
+        # not the chat clarify card.
+        mastered = _vendor_master_candidates(mention, tenant_id, db_session)
+        if mastered:
+            out.append(ResolvedEntity("vendor", mention, mastered, "bound"))
+            continue
         key = mention.lower()
         hits = [n for n in names if key in n.lower() or n.lower() in key]
         if not hits:
@@ -308,6 +343,32 @@ def _resolve_vendors(question: str, tenant_id: str, db_session) -> list[Resolved
         status = "bound" if len(cands) == 1 else "ambiguous" if cands else "none"
         out.append(ResolvedEntity("vendor", mention, cands, status))
     return out
+
+
+def _vendor_master_candidates(mention: str, tenant_id: str, db_session) -> tuple:
+    """Feature 30 30.0f: every invoice spelling of the vendor this mention binds to.
+
+    Returns () when the vendor master cannot bind the mention -- which is both
+    the "no such vendor" case and the "not confirmed yet" case, because neither
+    is something the resolver may act on. The candidates are `invoice.vendor_name`
+    spellings, not canonical names, because that is the column every downstream
+    query filters on.
+    """
+    try:
+        from services.vendor_master import resolve_vendor, vendor_invoice_names
+
+        resolution = resolve_vendor(mention, tenant_id, db_session)
+        if not resolution.is_bound:
+            return ()
+        spellings = vendor_invoice_names(resolution.vendor.id, tenant_id, db_session)
+        if not spellings:
+            # The vendor is known but has no invoices under any spelling yet.
+            # Bind to the canonical name so the mention is still resolved.
+            spellings = [resolution.vendor.canonical_name]
+        return tuple(Candidate(n, n, 1.0) for n in spellings)
+    except Exception as e:  # pragma: no cover - defensive, same rule as the rest
+        logger.warning("30.0f: vendor master lookup failed (non-fatal): %s", e)
+        return ()
 
 
 def _tenant_vendor_names(tenant_id: str, db_session) -> list[str]:

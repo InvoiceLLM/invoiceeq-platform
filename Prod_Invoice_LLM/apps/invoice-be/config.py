@@ -431,6 +431,25 @@ class Settings(BaseSettings):
     # (B11 item 1), and this must never grow into a gate on attachments as such.
     ENABLE_GENERIC_DOC_CHAT: bool = False
 
+    # --- Feature 30: Business Intelligence ----------------------------------
+    #
+    # `docs/feature_30_business_intelligence.md`. The chat-attachment
+    # intelligence bubble: when a NON-INVOICE financial document is attached in
+    # chat, the system speaks first with a deterministic insight block (what
+    # this is, agreed vs billed, terms, net position, delivery vs order), then
+    # updates it from a queue job.
+    #
+    # Default False, and OFF must be byte-identical to Feature 26's behaviour:
+    # no assistant turn is posted, no `insight` row is written, no attachment
+    # column is touched. Every card is deterministic Python/SQL (hard rule 3);
+    # the model only writes the verdict sentence and the finding prose, gated by
+    # the Feature 29 answer contract on every figure it repeats.
+    #
+    # The Feature 29 capability flags above gate the cards that depend on them:
+    # a card whose flag is off returns `skipped` with that as its reason rather
+    # than silently disappearing from the bubble.
+    ENABLE_ATTACHMENT_INSIGHTS: bool = False
+
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     # Where oauth_callback() redirects the browser back to after a connector

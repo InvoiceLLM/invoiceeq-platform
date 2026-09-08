@@ -101,6 +101,33 @@ class DiscountItem(BaseModel):
     percent: Optional[float] = Field(default=None, description="Discount rate as a percentage")
     amount: float = Field(description="Discount amount")
 
+class BankStatementLineItem(BaseModel):
+    """One printed row of a bank statement or account ledger (Feature 30, 30.0c).
+
+    A statement is the one document type whose substance is per ROW and cannot be
+    held by `items`: a transaction has a narration, a debit OR a credit, and a
+    running balance -- not a description, quantity and amount.
+
+    **`debit` and `credit` are separate and both Optional, deliberately.** That
+    is how a statement is printed, and collapsing them into one signed amount
+    loses the distinction between "0.00 credited" and "nothing in this column" --
+    the same `None`-is-not-zero rule `GenericLineItem` records at length. The
+    matcher (`services/bank_matching.py`) needs to know which side a row is on to
+    decide whether it is a payment we made or a receipt we were sent.
+
+    Nothing here is ever computed by the model: an unreadable balance is null,
+    never the previous balance plus this row.
+    """
+    model_config = {"extra": "forbid"}
+
+    line_date: Optional[str] = Field(default=None, description="The transaction's own date as printed, ISO 8601 if unambiguous. Null if the row prints none.")
+    narration: Optional[str] = Field(default=None, description="The row's description / particulars / narration, transcribed exactly as printed including any reference embedded in it.")
+    debit: Optional[float] = Field(default=None, description="Amount in the DEBIT / withdrawal column, as a positive number. Null when the row has nothing in that column -- never write 0 for an empty column.")
+    credit: Optional[float] = Field(default=None, description="Amount in the CREDIT / deposit column, as a positive number. Null when the row has nothing in that column -- never write 0 for an empty column.")
+    balance: Optional[float] = Field(default=None, description="The running balance printed on this row. Null if the statement prints no balance column. NEVER compute it from the previous row.")
+    utr_ref: Optional[str] = Field(default=None, description="The transaction reference printed on the row -- UTR, cheque number, NEFT/RTGS/UPI reference. Null if none is printed.")
+
+
 class DeductionItem(BaseModel):
     model_config = {"extra": "forbid"}
     deduction_type: str = Field(description="e.g. 'retention/holdback', 'advance payment already received'")
@@ -313,6 +340,32 @@ class ReferenceDocExtractionSchema(BaseModel):
     discount_amount: Optional[float] = Field(default=None, description="Top-level discount amount, if printed")
     items: List[ReferenceDocLineItem] = Field(default=[], description="List of ordered or quoted line items")
     taxes: List[TaxItem] = Field(default=[], description="Detailed list of taxes, one entry per printed tax line")
+    # --- Feature 30 (tasks 30.0c / 30.1, BE Gap 493) -------------------------
+    #
+    # WHY THIS SCHEMA IS WIDENED AT ALL. This is the schema the CHAT ATTACHMENT
+    # path uses (`flow_direction="REFERENCE"`), and Feature 30 reads documents
+    # through it that Feature 26 never did: contracts, credit notes, delivery
+    # notes, remittance advices and bank statements. Three of its cards read
+    # fields that were simply not on the schema, so they could never fire on the
+    # real path however correct their arithmetic was:
+    #
+    #   * `card_terms_check` reads `payment_terms` -- absent, so the payment
+    #     window check was structurally dead (BE Gap 493);
+    #   * `card_net_position` and the statement cards need the document's own
+    #     list of references;
+    #   * 30.0c's bank ledger needs per-line debit/credit/balance, which no
+    #     existing field can hold.
+    #
+    # Every field below is Optional or defaults to an empty list, so an existing
+    # REFERENCE extraction stays valid byte-for-byte and a document that prints
+    # none of them extracts exactly as it did before. The schema is
+    # `extra="forbid"`, so these had to be declared rather than tolerated.
+    payment_terms: Optional[str] = Field(default=None, description="Payment terms exactly as printed (e.g. 'Net 30 days from invoice date', '30% advance, balance against delivery'). Null if the document does not state them. Never infer a term from a due date.")
+    delivery_terms: Optional[str] = Field(default=None, description="Delivery terms, schedule or lead time as printed (e.g. 'Delivery within 4 weeks of order', 'Ex-works Pune'). Null if not stated.")
+    notes: Optional[str] = Field(default=None, description="Free-text terms, conditions and remarks worth keeping that no other field holds -- validity/renewal/termination wording, the reason a credit or debit note was raised, a statement's period and aging buckets. Quote the document rather than summarising it.")
+    referenced_documents: List[ReferencedDocument] = Field(default=[], description="For a STATEMENT OF ACCOUNT, REMITTANCE ADVICE, CREDIT NOTE or DEBIT NOTE: one entry per invoice, credit note or payment the document refers to. Transcribe the list exactly and NEVER total it. Empty for a document that refers to nothing.")
+    statement_lines: List[BankStatementLineItem] = Field(default=[], description="For a BANK STATEMENT or account ledger ONLY: one entry per printed transaction row, in the order printed. Empty for every other document type. Transcribe each row exactly and never compute a balance, a total or a missing side of a row.")
+    statement_date: Optional[str] = Field(default=None, description="For a BANK STATEMENT: the date the statement is made up to (the 'as on' / closing date), ISO 8601 if unambiguous. This is what every figure on the statement is true 'as of'. Null if the document does not print one.")
 
 
 # ---------------------------------------------------------------------------
@@ -864,13 +917,39 @@ def build_reference_multimodal_prompt(ocr_text: str, images: List[str], rules: O
     return [HumanMessage(content=content)]
 
 
+#: Feature 30. The REFERENCE path is no longer only "a PO or a quotation": the
+#: chat composer accepts eight non-invoice types (spec §8.1 R2), and three of
+#: them carry their substance somewhere `items` cannot hold it. This directive is
+#: what tells the model which of the widened fields to fill for which document,
+#: and it is deliberately a description of the DOCUMENT rather than an
+#: instruction to compute anything -- every figure is transcribed, never derived
+#: (hard rule 3 applies to extraction exactly as it applies to the cards).
+REFERENCE_DOC_FAMILY_DIRECTIVE = (
+    "The document may be a purchase order, quotation, order confirmation, "
+    "contract or rate agreement, delivery note / challan / GRN, credit note, "
+    "debit note, remittance advice or bank statement.\n"
+    "- Payment and delivery wording goes in `payment_terms` / `delivery_terms` "
+    "exactly as printed; other terms, conditions and the reason a note was "
+    "raised go in `notes`.\n"
+    "- If the document REFERS TO other documents (a statement, a remittance "
+    "advice, a credit or debit note), list every referenced number in "
+    "`referenced_documents`. Transcribe them; never total them.\n"
+    "- If, and only if, the document is a BANK STATEMENT or account ledger, put "
+    "every printed transaction row in `statement_lines` (date, narration, debit "
+    "OR credit, balance, reference) and the 'as on' date in `statement_date`. "
+    "Leave a column null when the row prints nothing in it -- never write 0 for "
+    "an empty column, and never compute a balance.\n\n"
+)
+
+
 def _build_reference_text_prompt(state: "ExtractionState", rules: Optional[Dict[str, Any]]) -> str:
     """Text-only (no page images / non-Azure) reference-document prompt. Same
     framing as `build_reference_multimodal_prompt`."""
     prompt = (
-        "This is a REFERENCE commercial document -- a PURCHASE ORDER or a QUOTATION, "
-        "not an invoice and not an amount owed. Set `doc_type` from the printed "
-        "document title. Extract structured details from the following OCR text:\n\n"
+        "This is a REFERENCE commercial document -- not an invoice and not an amount "
+        "owed. Set `doc_type` from the printed document title. Extract structured "
+        "details from the following OCR text.\n\n"
+        + REFERENCE_DOC_FAMILY_DIRECTIVE
         + GAP_46_VERBATIM_DIRECTIVE
     )
     dynamic_qa_context = state.get("dynamic_qa_context")

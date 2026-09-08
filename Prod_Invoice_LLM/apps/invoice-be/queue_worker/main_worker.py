@@ -9,6 +9,7 @@ from config import get_settings
 from utils.logging_config import setup_structured_logging, tenant_id_ctx, request_id_ctx
 from queue_worker.handlers import (
     handle_extract_attachment,
+    handle_insight_job,  # Feature 30 30.2
     handle_process_invoice,
     handle_import_connector_file,
     handle_reaudit_templates,
@@ -282,6 +283,19 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
             # Gap 452: the list now carries two job types. An older message has
             # no `task` key at all and is a chat turn, which is why the default
             # is the chat branch rather than a rejection.
+            # Feature 30 30.2: the third job type on this list. Same
+            # `.get("task")` shape as Gap 452's, checked before the chat-turn
+            # default for the same reason -- an older message has no `task` key
+            # at all and must still be read as a chat turn.
+            if data.get("task") == "insight":
+                executor.submit(
+                    handle_insight_job,
+                    job_id=data.get("job_id"),
+                    attachment_id=data.get("attachment_id"),
+                    tenant_id=data.get("tenant_id"),
+                    message_id=data.get("message_id"),
+                )
+                return
             if data.get("task") == "extract_attachment":
                 executor.submit(
                     handle_extract_attachment,

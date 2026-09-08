@@ -1282,8 +1282,19 @@ def test_the_notes_column_is_a_migrated_column_on_a_single_head(db_session):
     from alembic.script import ScriptDirectory
     from sqlalchemy import text
 
-    heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["e7f8a9b0c1d2"], heads
+    script = ScriptDirectory.from_config(Config("alembic.ini"))
+    heads = script.get_heads()
+    # ONE head, and Gap 467's revision is an ancestor of it.
+    #
+    # This used to pin the head to `e7f8a9b0c1d2` by name, which made every later
+    # migration fail a test about a column that had not changed. The thing worth
+    # protecting is what the docstring says -- a SECOND head, i.e. two agents
+    # branching off the same parent on the same day -- and that is `len(heads) == 1`.
+    # The ancestry check keeps the other half: this column's migration is still on
+    # the path that `upgrade head` walks.
+    assert len(heads) == 1, heads
+    ancestry = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert "e7f8a9b0c1d2" in ancestry
 
     column = db_session.exec(
         text(

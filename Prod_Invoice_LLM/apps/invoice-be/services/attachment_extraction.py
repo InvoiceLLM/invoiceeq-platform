@@ -52,6 +52,10 @@ STAGE_READING = "reading_document"
 STAGE_EXTRACTING = "extracting_fields"
 STAGE_INDEXING = "indexing_text"
 STAGE_MATCHING = "matching_invoices"
+#: Feature 30: the bubble is computed as a distinct stage, so the browser can
+#: say "looking for anything worth flagging" instead of appearing to hang
+#: between "matching invoices" and "ready".
+STAGE_INSIGHTS = "building_insights"
 STAGE_READY = "attachment_ready"
 STAGE_FAILED = "attachment_failed"
 
@@ -60,6 +64,7 @@ ATTACHMENT_STAGES = (
     STAGE_EXTRACTING,
     STAGE_INDEXING,
     STAGE_MATCHING,
+    STAGE_INSIGHTS,
     STAGE_READY,
 )
 
@@ -137,8 +142,70 @@ def extract_attachment(
         index_attachment(row, db_session)
         progress(STAGE_MATCHING)
         match_attachment(row, db_session)
+        insight_attachment(row, db_session, progress=progress)
 
     return row
+
+
+def insight_attachment(
+    row: ChatAttachment, db_session: Session, progress: Optional[ProgressFn] = None
+) -> None:
+    """Feature 30 (30.1/30.2): the intelligence bubble, after matching.
+
+    AFTER `match_attachment()` and not before it: every sync card is computed
+    against the invoices this document is linked to, and a bubble built before
+    the link exists would report "no invoice on file" for a document whose
+    invoice was found half a second later.
+
+    Best-effort, on the same rule as indexing and matching above: a failure here
+    is logged and the upload still succeeds. `run_sync_insights()` is itself
+    total -- it returns None for the flag being off, for a document type that
+    does not qualify, and for any exception -- so this call site stays three
+    lines and the failure policy lives in one place.
+
+    With `ENABLE_ATTACHMENT_INSIGHTS` off this is a single boolean read and a
+    return: no query, no message, no row touched.
+    """
+    progress = progress or _noop
+    try:
+        from services.attachment_insights import insights_enabled, is_insight_doc_type
+
+        if not insights_enabled() or not is_insight_doc_type(row.doc_type):
+            return
+        progress(STAGE_INSIGHTS)
+
+        # Feature 30 30.0c: a bank statement's rows are landed as a ledger BEFORE
+        # the cards run, because the bank card reads the table, not the JSON.
+        # Any other document type lands nothing and this is a single string
+        # comparison.
+        if str(row.doc_type or "").strip().upper() == "STATEMENT_OF_ACCOUNT":
+            from services.bank_ledger import land_statement_lines
+
+            land_statement_lines(row, db_session)
+
+        from services.attachment_insights import run_sync_insights
+
+        block = run_sync_insights(row, db_session)
+        if block is None:
+            return
+
+        # Stage 2 (§8.6 step 4) runs on the queue. Returning None here means
+        # Redis is unreachable, and that is not an error: the sync bubble is
+        # already posted with a true template verdict on it, and the async
+        # update is an improvement, not a prerequisite.
+        from services.chat_queue import ChatQueueService
+
+        ChatQueueService.enqueue_insight_job(
+            attachment_id=str(row.id),
+            tenant_id=str(row.tenant_id),
+            message_id=block.get("message_id"),
+        )
+    except Exception as e:
+        logger.error("Insight stage failed for attachment %s: %s", row.id, e)
+        try:
+            db_session.rollback()
+        except Exception:
+            pass
 
 
 def index_attachment(row: ChatAttachment, db_session: Session) -> None:
@@ -219,6 +286,7 @@ def stage_label(stage: str) -> str:
         STAGE_EXTRACTING: "Extracting the fields",
         STAGE_INDEXING: "Indexing the text",
         STAGE_MATCHING: "Looking for matching invoices",
+        STAGE_INSIGHTS: "Checking this against your records",
         STAGE_READY: "Ready",
         STAGE_FAILED: "Could not read this document",
     }.get(stage, stage)

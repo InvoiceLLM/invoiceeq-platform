@@ -19,6 +19,13 @@ last so a crash mid-sweep leaves a row that will simply be swept again rather
 than an orphaned blob or chunk set with nothing pointing at it. Deleting the row
 first would make the other two unreachable forever.
 
+A RETAINED ROW IS NEVER SWEPT (Feature 30 task 30.0a). An attachment that
+produced an insight finding is held back while any of those findings is OPEN --
+deleting the document a finding was computed from would leave the user with a
+claim ("this invoice is 23,200 over the PO") and no way to check it. The moment
+the last finding is acted on, snoozed past its wake time or dismissed, the flag
+clears and the row sweeps on the next run like any other.
+
 `expires_at IS NULL` MEANS KEEP, NEVER "EXPIRED AT THE EPOCH". H4's build note
 flags this explicitly and it is the one mistake that would be catastrophic here:
 every Part 1 attachment predates the column, so the opposite reading deletes the
@@ -67,6 +74,17 @@ def expired_attachments(session: Session, limit: int | None = None):
         .where(
             ChatAttachment.expires_at.is_not(None),
             ChatAttachment.expires_at <= datetime.utcnow(),
+            # Feature 30 task 30.0a. An attachment that produced findings is
+            # exempt while any of them is still open. `retained` is maintained
+            # by `services/insights.py::_sync_retained()` -- set when the first
+            # finding opens, cleared when the last one closes -- so this stays a
+            # plain indexed predicate and the sweeper does not carry a second
+            # copy of the "effectively open" rule.
+            #
+            # `is_not(True)` rather than `== False`: the column is NOT NULL with
+            # a false default, but a sweeper that deletes on a NULL it did not
+            # expect is the one failure mode this file cannot recover from.
+            ChatAttachment.retained.is_not(True),
         )
         .order_by(ChatAttachment.expires_at.asc())
     )

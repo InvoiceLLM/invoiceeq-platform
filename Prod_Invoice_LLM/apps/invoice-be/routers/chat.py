@@ -237,6 +237,13 @@ class MessageResponse(BaseModel):
     # contract in the FE's hands that the BE does not honour.
     provenance: list | None = None
     abstention: dict | None = None
+    # Feature 30 task 30.2: the chat-attachment intelligence bubble. Additive
+    # and Optional like every key above it, so a turn that is not an insight
+    # turn serialises byte-identically -- `exclude_none=True` drops it. This is
+    # the shape Gap 474 asked for, applied to the one new payload F30 adds:
+    # `{stage, doc_type, cards[], findings[], figures{}, checks_not_run[],
+    #   actions[], verdict}` (services/attachment_insights.build_insight_block).
+    insights: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -261,6 +268,11 @@ ATTACHMENT_CONTRACT_KEYS: tuple[str, ...] = (
     # flattens back out, which is exactly why it exists as one tuple.
     "provenance",
     "abstention",
+    # Feature 30 30.2. Written by `services/attachment_insights.post_insight_turn()`
+    # rather than by the agent, but flattened back out by the same mechanism --
+    # a session reload has to restore the bubble, and this tuple is what makes
+    # the persist side and the serialise side impossible to drift apart.
+    "insights",
 )
 
 
@@ -1578,3 +1590,355 @@ def clear_message_feedback(
         db_session.delete(existing)
         db_session.commit()
     return {"success": True, "vote": None}
+
+
+# =============================================================================
+# Feature 30 task 30.0e / 30.17 — the insight lifecycle surface.
+#
+# These live on the chat router because a finding is born in a chat turn and is
+# acted on from the chat bubble; a separate `/insights` router would have meant a
+# second ownership helper and a second set of tenant checks for rows that are
+# already reachable only through a chat attachment.
+#
+# Both endpoints are inert while `ENABLE_ATTACHMENT_INSIGHTS` is False: nothing
+# writes an `insight` row with the flag off, so `GET` returns an empty list and
+# `POST` can only 404. They are NOT flag-gated at the route level on purpose --
+# a finding opened while the flag was on must stay actionable after it is turned
+# off, or switching the flag would strand open work.
+# =============================================================================
+
+
+class InsightOut(BaseModel):
+    """One finding, in the shape the bubble and the dashboard both render.
+
+    `is_open` is computed rather than inferred from `status` by the client: an
+    expired snooze is open (services/insights.py::is_effectively_open), and a
+    browser re-deriving that from `snoozed_until` would be a second copy of the
+    wake rule that can disagree with the server's.
+    """
+
+    id: UUID
+    attachment_id: UUID
+    session_id: UUID | None = None
+    doc_type: str
+    card: str
+    finding_key: str
+    title: str
+    impact_amount: float | None = None
+    currency: str | None = None
+    confidence: str
+    confidence_reason: str | None = None
+    evidence: dict | None = None
+    status: str
+    is_open: bool
+    outcome: str | None = None
+    note: str | None = None
+    snoozed_until: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InsightTransitionIn(BaseModel):
+    status: str
+    outcome: str | None = None
+    note: str | None = None
+    snoozed_until: datetime | None = None
+
+
+def _insight_out(row) -> "InsightOut":
+    from services.insights import is_effectively_open
+
+    return InsightOut(
+        id=row.id,
+        attachment_id=row.attachment_id,
+        session_id=row.session_id,
+        doc_type=row.doc_type,
+        card=row.card,
+        finding_key=row.finding_key,
+        title=row.title,
+        impact_amount=row.impact_amount,
+        currency=row.currency,
+        confidence=row.confidence,
+        confidence_reason=row.confidence_reason,
+        evidence=row.evidence,
+        status=row.status,
+        is_open=is_effectively_open(row),
+        outcome=row.outcome,
+        note=row.note,
+        snoozed_until=row.snoozed_until,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@router.get("/insights", response_model=list[InsightOut])
+def list_open_insights(
+    status: str | None = "OPEN",
+    attachment_id: UUID | None = None,
+    limit: int = 100,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Open findings for this tenant, ranked by impact x confidence (§8.6.6)."""
+    from services.insights import list_insights
+
+    rows = list_insights(
+        tenant_context.tenant_id,
+        db_session,
+        status=status,
+        attachment_id=attachment_id,
+        limit=min(max(int(limit or 100), 1), 500),
+    )
+    return [_insight_out(r) for r in rows]
+
+
+@router.post("/insights/{insight_id}/transition", response_model=InsightOut)
+def transition_insight_endpoint(
+    insight_id: UUID,
+    payload: InsightTransitionIn,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Ruling R4 as corrected 2026-09-08 (Gap 492): the bubble is information only.
+
+    The system takes no action on an invoice from a finding -- the user acts
+    offline. What this endpoint records is the user's own bookkeeping about the
+    finding: "add note" is an ACTED transition with a note, snooze defers it,
+    dismiss closes it; Discuss is a read (`GET /chat/insights/{id}/discuss`).
+    Nothing here reads or writes `Invoice`.
+    """
+    from services.insights import InsightTransitionError, transition_insight
+
+    try:
+        row = transition_insight(
+            insight_id,
+            tenant_id=tenant_context.tenant_id,
+            status=payload.status,
+            outcome=payload.outcome,
+            note=payload.note,
+            snoozed_until=payload.snoozed_until,
+            acted_by=tenant_context.user_id,
+            db_session=db_session,
+        )
+    except InsightTransitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if row is None:
+        # 404, not 403: confirming that another tenant's finding exists is
+        # itself a disclosure (the rule `_require_owned_attachment()` follows).
+        raise HTTPException(status_code=404, detail="Insight not found.")
+
+    return _insight_out(row)
+
+
+@router.get("/insights/{insight_id}/discuss")
+def insight_discuss_seed(
+    insight_id: UUID,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Ruling R4's "Discuss": the seed text for a user turn about this finding.
+
+    A read, not a write. It returns prose the composer pre-fills so the user can
+    edit it before asking — sending the turn from here would put words in the
+    user's mouth and bill them for a turn they did not send.
+    """
+    from services.insights import list_insights
+
+    rows = list_insights(
+        tenant_context.tenant_id, db_session, status=None, limit=500
+    )
+    row = next((r for r in rows if r.id == insight_id), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Insight not found.")
+
+    amount = ""
+    if row.impact_amount is not None:
+        amount = f" ({row.currency or ''} {row.impact_amount:,.2f})".replace("  ", " ")
+    return {
+        "insight_id": str(row.id),
+        "attachment_id": str(row.attachment_id),
+        "seed_text": f"About this finding{amount}: {row.title} — what should I do?",
+    }
+
+
+# =============================================================================
+# Feature 30 task 30.0f — the vendor master's one write surface.
+#
+# `resolve_vendor()` returns "proposed" for a name it cannot bind, and a
+# proposal is worthless without somewhere to answer it. This is that place: one
+# POST that says "yes, this spelling is that supplier", recorded with who said
+# so. There is deliberately no "merge vendors" endpoint — merging two canonical
+# vendors rewrites history for every card that has already reported on them, and
+# that needs a founder decision, not an endpoint.
+# =============================================================================
+
+
+class VendorAliasConfirmIn(BaseModel):
+    alias: str
+    vendor_id: UUID | None = None
+    #: Used when the tenant has no canonical row for this supplier yet: the
+    #: caller names the canonical spelling and both rows are created together.
+    canonical_name: str | None = None
+
+
+@router.post("/vendors/aliases/confirm")
+def confirm_vendor_alias(
+    payload: VendorAliasConfirmIn,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Confirm that one spelling is one vendor, for this tenant only (R6)."""
+    from services.vendor_master import confirm_alias, get_or_create_vendor
+    from models import Vendor
+
+    if not (payload.alias or "").strip():
+        raise HTTPException(status_code=400, detail="An alias needs a name.")
+
+    if payload.vendor_id is not None:
+        vendor = db_session.exec(
+            select(Vendor).where(
+                Vendor.id == payload.vendor_id, Vendor.tenant_id == tenant_context.tenant_id
+            )
+        ).first()
+        if vendor is None:
+            raise HTTPException(status_code=404, detail="Vendor not found.")
+    elif payload.canonical_name:
+        vendor = get_or_create_vendor(
+            payload.canonical_name, tenant_context.tenant_id, db_session
+        )
+    else:
+        raise HTTPException(
+            status_code=400, detail="Name the vendor by id or give a canonical name."
+        )
+
+    row = confirm_alias(
+        payload.alias,
+        vendor.id,
+        tenant_context.tenant_id,
+        db_session,
+        confirmed_by=tenant_context.user_id,
+    )
+    return {
+        "vendor_id": str(vendor.id),
+        "canonical_name": vendor.canonical_name,
+        "alias": row.alias,
+        "confirmed_by": row.confirmed_by,
+    }
+
+
+# =============================================================================
+# Feature 30 task 30.13 — the flywheel's entry point.
+#
+# Per-CARD feedback, distinct from `POST /chat/messages/{id}/feedback` (Gap 54),
+# which votes on a whole turn and routes into Feature 18's triage. A bubble
+# carries up to nine cards and "this one figure is wrong" is not expressible as
+# a vote on the turn that contained it.
+#
+# Gap 492: a correction records what the user said. It never changes an invoice
+# and never changes the finding's own figures — a figure is fixed by fixing the
+# card that computed it, which is a code change, not a user action.
+# =============================================================================
+
+
+class InsightFeedbackIn(BaseModel):
+    vote: str = "down"
+    card: str | None = None
+    finding_key: str | None = None
+    insight_id: UUID | None = None
+    reason: str | None = None
+    corrected_text: str | None = None
+    corrected_sql: str | None = None
+
+
+@router.post("/messages/{message_id}/insight-feedback")
+def insight_feedback(
+    message_id: UUID,
+    payload: InsightFeedbackIn,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Thumbs-down (or up) on ONE card of an insight bubble."""
+    from services.chat_corrections import CorrectionError, record_correction
+
+    # Ownership is resolved through the message's session, the way every other
+    # endpoint in this router does it (Gap 341's rule) rather than trusting the
+    # id the caller sent.
+    _get_owned_message(message_id, db_session, tenant_context)
+
+    try:
+        row = record_correction(
+            tenant_context.tenant_id,
+            db_session,
+            message_id=message_id,
+            insight_id=payload.insight_id,
+            card=payload.card,
+            finding_key=payload.finding_key,
+            vote=payload.vote,
+            reason=payload.reason,
+            corrected_text=payload.corrected_text,
+            corrected_sql=payload.corrected_sql,
+            created_by=tenant_context.user_id,
+        )
+    except CorrectionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "correction_id": str(row.id),
+        "status": row.status,
+        "card": row.card,
+        "finding_key": row.finding_key,
+    }
+
+
+class PromoteCorrectionIn(BaseModel):
+    question: str | None = None
+    sql: str | None = None
+    doc_type: str | None = None
+
+
+@router.post("/corrections/{correction_id}/promote")
+def promote_correction(
+    correction_id: UUID,
+    payload: PromoteCorrectionIn,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(require_can_train),
+):
+    """Turn a reviewed correction into a certified example.
+
+    `require_can_train`, not the ordinary tenant context: promoting writes an
+    example that shapes every later answer for this tenant, which is the same
+    authority the chat-rule endpoints in this file already gate.
+    """
+    from services.chat_corrections import CorrectionError, promote_to_example
+
+    try:
+        example = promote_to_example(
+            correction_id,
+            db_session,
+            tenant_context.tenant_id,
+            question=payload.question,
+            sql=payload.sql,
+            doc_type=payload.doc_type,
+            certified_by=tenant_context.user_id,
+        )
+    except CorrectionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if example is None:
+        raise HTTPException(status_code=404, detail="Correction not found.")
+    return {
+        "example_id": str(example.id),
+        "question": example.question,
+        "certified": example.certified,
+    }
+
+
+@router.get("/corrections/stats")
+def correction_stats_endpoint(
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """What the control-tower "chat quality trend" panel renders."""
+    from services.chat_corrections import correction_stats
+
+    return correction_stats(tenant_context.tenant_id, db_session)

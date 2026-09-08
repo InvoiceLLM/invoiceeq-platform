@@ -1823,3 +1823,99 @@ def handle_extract_attachment(job_id: str, attachment_id: str, tenant_id: str) -
             ChatQueueService.fail_job(job_id, tenant_id, str(e))
         except Exception:
             pass
+
+
+def handle_insight_job(
+    job_id: str, attachment_id: str, tenant_id: str, message_id: str | None = None
+) -> None:
+    """Feature 30 task 30.2 — stage 2 of the chat-attachment intelligence bubble.
+
+    The sync stage already posted a bubble with a template verdict and opened
+    the findings it could compute from this document and its linked invoices.
+    This job does the two things that are too slow to hold an upload for:
+
+      1. re-runs `build_insight_block(stage="async")`, which adds the cards that
+         need history queries, and
+      2. makes ONE fast-tier model call to rewrite the verdict line, gated by
+         the Feature 29 answer contract -- if the model states a figure that is
+         not in the facts JSON, the template sentence stands.
+
+    The result REPLACES the payload on the SAME assistant message and bumps
+    `insights_version`, then pushes `insight_update` over the chat SSE channel
+    (§8.6 step 4). An open session redraws; a closed one has the findings on the
+    dashboard, which is exactly what the `insight` table is for.
+
+    Every exit path finishes the job, the same rule `handle_extract_attachment()`
+    follows: a browser waiting on the stream must be told the outcome even when
+    the outcome is "nothing changed".
+    """
+    from services.chat_queue import ChatQueueService
+
+    try:
+        from uuid import UUID
+
+        from models import ChatAttachment
+        from services.attachment_insights import (
+            build_insight_block,
+            insights_enabled,
+            is_insight_doc_type,
+            narrate_insight_block,
+            open_insights_from_block,
+            post_insight_turn,
+        )
+        from services.insights import notify_insight_update
+
+        if not insights_enabled():
+            # The flag was turned off between the enqueue and the drain. Not an
+            # error, and nothing to update.
+            ChatQueueService.complete_job(
+                job_id, tenant_id, {"attachment_id": attachment_id, "status": "disabled"}
+            )
+            return
+
+        with Session(engine) as session:
+            row = session.get(ChatAttachment, UUID(str(attachment_id)))
+            if row is None or not is_insight_doc_type(row.doc_type):
+                ChatQueueService.complete_job(
+                    job_id, tenant_id, {"attachment_id": attachment_id, "status": "gone"}
+                )
+                return
+
+            block = build_insight_block(row, session, row.tenant_id, stage="async")
+
+            narration = narrate_insight_block(block)
+            block["verdict"] = narration["verdict"]
+            block["verdict_source"] = narration["source"]
+            block["verdict_gate"] = narration["gate"]
+
+            target_message_id = message_id or (row.insights or {}).get("message_id")
+            message = post_insight_turn(
+                row, block, session, message_id=UUID(str(target_message_id)) if target_message_id else None
+            )
+            open_insights_from_block(row, block, session)
+
+            notify_insight_update(
+                job_id,
+                session_id=row.session_id,
+                attachment_id=row.id,
+                insights_version=row.insights_version,
+                message_id=message.id,
+            )
+
+            ChatQueueService.complete_job(
+                job_id,
+                tenant_id,
+                {
+                    "attachment_id": str(row.id),
+                    "message_id": str(message.id),
+                    "insights_version": row.insights_version,
+                    "verdict_source": block.get("verdict_source"),
+                    "finding_count": len(block.get("findings") or []),
+                },
+            )
+    except Exception as e:
+        logger.error("Insight job %s failed: %s", job_id, e, exc_info=True)
+        try:
+            ChatQueueService.fail_job(job_id, tenant_id, str(e))
+        except Exception:
+            pass

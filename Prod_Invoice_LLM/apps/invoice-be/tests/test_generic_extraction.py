@@ -408,12 +408,25 @@ def test_the_existing_schemas_are_unchanged_by_g3():
     assert "hsn_sac_code" not in GenericLineItem.model_fields
 
     # `ReferenceDocExtractionSchema` (Feature 26's chat-attachment path) keeps its
-    # narrower field set and its required `description`; A2 leaves REFERENCE
-    # unchanged in v1.
-    assert set(ReferenceDocExtractionSchema.model_fields) == {
+    # required `description` and, crucially, still carries NONE of the invoice-only
+    # fields -- that is what A2 protects and it is asserted below.
+    #
+    # Feature 30 (30.0c / 30.1, BE Gap 493) widened it by six ADDITIVE optional
+    # fields. The chat composer now accepts eight non-invoice types, and three
+    # cards read fields the schema did not have -- `payment_terms` was read by
+    # `card_terms_check` and could never arrive, so the check was structurally
+    # dead. The rule this test defends is unchanged: REFERENCE must not grow the
+    # invoice-only spine. It has not.
+    reference_v1 = {
         "doc_type", "party_name", "doc_number", "po_number", "doc_date", "subtotal",
         "tax_amount", "grand_total", "currency", "discount_amount", "items", "taxes",
     }
+    feature_30_additions = {
+        "payment_terms", "delivery_terms", "notes", "referenced_documents",
+        "statement_lines", "statement_date",
+    }
+    assert set(ReferenceDocExtractionSchema.model_fields) == reference_v1 | feature_30_additions
+    assert not (invoice_only & set(ReferenceDocExtractionSchema.model_fields))
     assert ea.ReferenceDocLineItem.model_fields["description"].is_required()
 
 

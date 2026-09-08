@@ -1735,6 +1735,37 @@
         "json": "*Single flat page, no tabs — tabs render unreliably in this workbook engine.*"
       },
       "name": "footer"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Section F — Chat-attachment intelligence (Feature 30)\n*Two panels, both from `AppEvents` custom events emitted by `services/attachment_insights.post_insight_turn()` and `services/chat_corrections.record_correction()`. Neither reads a tenant's data: the events carry counts, a document type and the narration gate's outcome, never finding text or a party name.*\n\n**Read `gate_unsupported_pct` first.** It is the share of bubbles where the model tried to state a figure that was not in the computed facts and the deterministic template sentence stood instead. Rising = narration drifting."
+      },
+      "name": "f30-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated > ago(30d)\n| where Name == \"insight_bubble\"\n| extend d = parse_json(Properties)\n| extend doc_type = tostring(d.doc_type), stage = tostring(d.stage),\n         verdict_source = tostring(d.verdict_source), gate_status = tostring(d.gate_status),\n         finding_count = toint(d.finding_count), impact_total = todouble(d.impact_total),\n         blocked_cards = toint(d.blocked_cards), skipped_cards = toint(d.skipped_cards)\n| summarize bubbles = count(),\n            findings = sum(finding_count),\n            impact = sum(impact_total),\n            blocked = sum(blocked_cards),\n            skipped = sum(skipped_cards),\n            model_written = countif(verdict_source == \"model\"),\n            gate_unsupported = countif(gate_status == \"unsupported\")\n        by doc_type, bin(TimeGenerated, 1d)\n| extend gate_unsupported_pct = round(100.0 * gate_unsupported / iff(model_written == 0, 1, model_written), 1)\n| order by TimeGenerated desc, bubbles desc",
+        "size": 0,
+        "title": "Open insights — bubbles posted, findings raised, currency impact, and how often the narration gate rejected a figure (30 d, by document type)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "f30-open-insights"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated > ago(90d)\n| where Name == \"insight_feedback\"\n| extend d = parse_json(Properties)\n| extend card = tostring(d.card), vote = tostring(d.vote), reason = tostring(d.reason)\n| summarize corrections = count(),\n            down = countif(vote == \"down\"),\n            wrong_figure = countif(reason == \"wrong_figure\"),\n            wrong_interpretation = countif(reason == \"wrong_interpretation\"),\n            wrong_document = countif(reason == \"wrong_document\")\n        by card, bin(TimeGenerated, 7d)\n| order by TimeGenerated desc, corrections desc",
+        "size": 0,
+        "title": "Chat quality trend — which insight CARD users correct, and why (90 d, weekly). `wrong_figure` is the one that means a computation is wrong rather than a judgement.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "f30-chat-quality-trend"
     }
   ],
   "fallbackResourceIds": [

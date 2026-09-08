@@ -1999,3 +1999,84 @@ def tracked_dependency(dependency_name: str, dependency_type: str = "InProc"):
         return wrapper
 
     return decorate
+
+
+def track_insight_bubble(
+    *,
+    tenant_id: str = "",
+    attachment_id: str = "",
+    doc_type: str = "",
+    stage: str = "",
+    region: str = "",
+    card_count: int = 0,
+    ok_cards: int = 0,
+    skipped_cards: int = 0,
+    blocked_cards: int = 0,
+    finding_count: int = 0,
+    impact_total: float = 0.0,
+    verdict_source: str = "",
+    gate_status: str = "",
+    duration_ms: Optional[float] = None,
+) -> None:
+    """Feature 30 — one ``insight_bubble`` custom event per posted bubble.
+
+    The fields are chosen so the control-tower panels can be built WITHOUT
+    reading any tenant's data: counts, a document type, a stage and the
+    narration's gate outcome. No finding text, no party name, no figure other
+    than the total impact — a monitoring event that carried the finding prose
+    would put one tenant's supplier names into a shared workspace.
+
+    ``gate_status`` is the one that matters for quality: it is ``unsupported``
+    every time the model tried to state a figure that was not in the facts JSON
+    and the template text stood instead. A rising rate there is the earliest
+    signal that narration is drifting.
+    """
+    attributes: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "attachment_id": attachment_id,
+        "doc_type": doc_type,
+        "stage": stage,
+        "region": region,
+        "card_count": int(card_count),
+        "ok_cards": int(ok_cards),
+        "skipped_cards": int(skipped_cards),
+        "blocked_cards": int(blocked_cards),
+        "finding_count": int(finding_count),
+        "impact_total": float(impact_total or 0.0),
+        "verdict_source": verdict_source,
+        "gate_status": gate_status,
+        "run_source": _resolve_run_source(),
+    }
+    if duration_ms is not None:
+        attributes["duration_ms"] = float(duration_ms)
+    _emit_event("insight_bubble", attributes)
+
+
+def track_insight_feedback(
+    *,
+    tenant_id: str = "",
+    card: str = "",
+    vote: str = "",
+    reason: str = "",
+    status: str = "",
+    promoted: bool = False,
+) -> None:
+    """Feature 30 task 30.13 — one ``insight_feedback`` event per correction.
+
+    Feeds the "Chat quality trend" panel: which CARD is corrected most often,
+    and how much of that feedback a human has actually acted on. `card` is a
+    fixed vocabulary (the keys of `CARDS_BY_DOC_TYPE`'s functions), never free
+    text, so the panel groups on a stable set.
+    """
+    _emit_event(
+        "insight_feedback",
+        {
+            "tenant_id": tenant_id,
+            "card": card,
+            "vote": vote,
+            "reason": reason,
+            "status": status,
+            "promoted": bool(promoted),
+            "run_source": _resolve_run_source(),
+        },
+    )

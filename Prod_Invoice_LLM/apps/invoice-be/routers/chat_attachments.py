@@ -428,3 +428,72 @@ def get_chat_attachment(
     reason this is a persisted row rather than session scratch (D2)."""
     row = _require_owned_attachment(attachment_id, db_session, tenant_context)
     return _to_out(row, attachment_count=_session_attachment_count(row.session_id, db_session))
+
+
+# =============================================================================
+# Feature 30 task 30.0b — the first-link confirmation.
+#
+# `POST /chat/attachments/{id}/links/confirm` sits beside Feature 26's
+# `confirm-matches` rather than replacing it, and the difference is what 30.0b
+# adds: this one ALSO records who the supplier is (a confirmed vendor alias), so
+# the NEXT document from the same supplier links without asking again.
+# `confirm-matches` stays exactly as it was for every existing caller.
+#
+# Gap 492: confirming a link never touches `invoice`. It writes
+# `confirmed_invoice_ids` on the attachment and a `vendor_alias` row, nothing
+# else.
+# =============================================================================
+
+
+class LinkConfirmIn(BaseModel):
+    invoice_ids: List[UUID]
+
+
+@router.get("/attachments/{attachment_id}/links")
+def get_attachment_links(
+    attachment_id: UUID,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """What this document links to, and whether we may use it without asking."""
+    row = _require_owned_attachment(attachment_id, db_session, tenant_context)
+    from services.doc_linking import link_attachment
+
+    result = link_attachment(row, tenant_context.tenant_id, db_session)
+    return {
+        "attachment_id": str(row.id),
+        "status": result.status,
+        "tier": result.tier,
+        "invoice_ids": result.invoice_ids,
+        "requires_confirmation": result.requires_confirmation,
+        "reason": result.reason,
+        "rejected": result.rejected,
+        "corroboration": result.corroboration,
+        "vendor_status": result.vendor_status,
+    }
+
+
+@router.post("/attachments/{attachment_id}/links/confirm", response_model=AttachmentOut)
+def confirm_attachment_links(
+    attachment_id: UUID,
+    payload: LinkConfirmIn,
+    db_session: Session = Depends(get_db_session),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+):
+    """Confirm the first link from a supplier; later ones auto-confirm."""
+    row = _require_owned_attachment(attachment_id, db_session, tenant_context)
+    from services.doc_linking import confirm_link
+
+    try:
+        confirm_link(
+            row,
+            [str(i) for i in payload.invoice_ids],
+            tenant_context.tenant_id,
+            db_session,
+            confirmed_by=tenant_context.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    db_session.refresh(row)
+    return _to_out(row, attachment_count=_session_attachment_count(row.session_id, db_session))
