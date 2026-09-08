@@ -1,7 +1,7 @@
 import io
 import pytest
 from unittest.mock import patch
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, create_engine, Session, select
 from sqlalchemy.pool import StaticPool
@@ -598,4 +598,207 @@ def test_rejects_a_file_whose_bytes_are_not_a_supported_format(db_session):
     response = client.post("/api/v1/invoices/upload", files=files)
     assert response.status_code == 400
     assert ACCEPTED_FORMATS_DETAIL in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Gap 497 Phase 1: GET /invoices/{id}/duplicates -- the duplicate cluster.
+#
+# The point of these is that the cluster is derived from the DATA (file_hash,
+# invoice_number+vendor), not from walking `duplicate_of_invoice_id`. The
+# three-copy case is the one that proves it: pointer-walking cannot answer it.
+# ---------------------------------------------------------------------------
+
+def _dup_tenant(db_session):
+    if db_session.get(Tenant, MOCK_TENANT_ID) is None:
+        db_session.add(Tenant(id=MOCK_TENANT_ID, name="T", domain="t.example.com", billing_plan="pro"))
+        db_session.commit()
+
+
+def _inv(db_session, *, file_hash=None, number=None, vendor=None, total=None,
+         status="COMPLETED", created_at=None, deleted_at=None, currency="USD",
+         duplicate_of=None):
+    from datetime import datetime, timedelta
+    _dup_tenant(db_session)
+    row = Invoice(
+        tenant_id=MOCK_TENANT_ID,
+        file_path=f"mock/{uuid4()}.pdf",
+        file_hash=file_hash,
+        invoice_number=number,
+        vendor_name=vendor,
+        grand_total=total,
+        currency=currency,
+        status=status,
+        flow_direction="INBOUND",
+        deleted_at=deleted_at,
+        duplicate_of_invoice_id=duplicate_of,
+        created_at=created_at or datetime.utcnow(),
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    return row
+
+
+def test_duplicates_finds_all_three_copies_of_the_same_file(db_session):
+    """The case pointer-walking cannot answer: three uploads of one file.
+    Asking any member must return the other two."""
+    from datetime import datetime, timedelta
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    a = _inv(db_session, file_hash="hhh", number="INV-1", vendor="Acme", total=100.0, created_at=base)
+    b = _inv(db_session, file_hash="hhh", number="INV-1", vendor="Acme", total=100.0,
+             status="DUPLICATE", created_at=base + timedelta(minutes=1))
+    c = _inv(db_session, file_hash="hhh", number="INV-1", vendor="Acme", total=100.0,
+             status="DUPLICATE", created_at=base + timedelta(minutes=2))
+
+    client = TestClient(app)
+    for asked in (a, b, c):
+        res = client.get(f"/api/v1/invoices/{asked.id}/duplicates")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["cluster_size"] == 3
+        returned = {m["invoice_id"] for m in body["members"]}
+        assert returned == {str(r.id) for r in (a, b, c)} - {str(asked.id)}
+
+
+def test_duplicates_marks_the_earliest_row_as_the_original(db_session):
+    from datetime import datetime, timedelta
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    a = _inv(db_session, file_hash="hhh", created_at=base)
+    b = _inv(db_session, file_hash="hhh", status="DUPLICATE", created_at=base + timedelta(minutes=5))
+
+    client = TestClient(app)
+    # Asked from the copy: the other member is the original.
+    body = client.get(f"/api/v1/invoices/{b.id}/duplicates").json()
+    assert [m["is_original"] for m in body["members"]] == [True]
+    # Asked from the original: the other member is NOT the original.
+    body = client.get(f"/api/v1/invoices/{a.id}/duplicates").json()
+    assert [m["is_original"] for m in body["members"]] == [False]
+
+
+def test_duplicates_reports_why_each_member_matched(db_session):
+    """EXACT_FILE and SAME_NUMBER_AND_VENDOR are different risks and must be
+    distinguishable -- an identical file has nothing to diff, a same-number
+    different file might be double billing."""
+    from datetime import datetime, timedelta
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    subject = _inv(db_session, file_hash="aaa", number="INV-9", vendor="Acme", total=500.0, created_at=base)
+    same_file = _inv(db_session, file_hash="aaa", number=None, vendor=None,
+                     created_at=base + timedelta(minutes=1))
+    same_number = _inv(db_session, file_hash="zzz", number="INV-9", vendor="Acme", total=900.0,
+                       created_at=base + timedelta(minutes=2))
+    both = _inv(db_session, file_hash="aaa", number="INV-9", vendor="Acme", total=500.0,
+                created_at=base + timedelta(minutes=3))
+
+    body = TestClient(app).get(f"/api/v1/invoices/{subject.id}/duplicates").json()
+    by_id = {m["invoice_id"]: m["match_type"] for m in body["members"]}
+    assert by_id[str(same_file.id)] == "EXACT_FILE"
+    assert by_id[str(same_number.id)] == "SAME_NUMBER_AND_VENDOR"
+    assert by_id[str(both.id)] == "BOTH"
+
+
+def test_duplicates_flags_a_differing_amount(db_session):
+    """The signal that matters: same invoice number, different total."""
+    subject = _inv(db_session, file_hash="q1", number="INV-7", vendor="Acme", total=100.0)
+    _inv(db_session, file_hash="q2", number="INV-7", vendor="Acme", total=250.0)
+
+    body = TestClient(app).get(f"/api/v1/invoices/{subject.id}/duplicates").json()
+    assert body["has_amount_difference"] is True
+    assert "grand_total" in body["differing_fields"]
+
+
+def test_duplicates_of_an_identical_file_report_no_differences(db_session):
+    """An exact-file duplicate has nothing to compare -- this is what lets the
+    console show the short view instead of a pointless diff."""
+    subject = _inv(db_session, file_hash="same", number="INV-2", vendor="Acme", total=42.0)
+    _inv(db_session, file_hash="same", number="INV-2", vendor="Acme", total=42.0, status="DUPLICATE")
+
+    body = TestClient(app).get(f"/api/v1/invoices/{subject.id}/duplicates").json()
+    assert body["differing_fields"] == []
+    assert body["has_amount_difference"] is False
+
+
+def test_duplicates_excludes_soft_deleted_rows(db_session):
+    from datetime import datetime
+    subject = _inv(db_session, file_hash="d1", number="INV-3", vendor="Acme")
+    _inv(db_session, file_hash="d1", number="INV-3", vendor="Acme",
+         status="DUPLICATE", deleted_at=datetime.utcnow())
+
+    body = TestClient(app).get(f"/api/v1/invoices/{subject.id}/duplicates").json()
+    assert body["cluster_size"] == 1
+    assert body["members"] == []
+
+
+def test_duplicates_does_not_match_on_a_null_invoice_number(db_session):
+    """Two un-extracted rows share NULL number and NULL vendor; that must not
+    make every pending upload a duplicate of every other."""
+    subject = _inv(db_session, file_hash="n1", number=None, vendor=None, status="PROCESSING")
+    _inv(db_session, file_hash="n2", number=None, vendor=None, status="PROCESSING")
+
+    body = TestClient(app).get(f"/api/v1/invoices/{subject.id}/duplicates").json()
+    assert body["cluster_size"] == 1
+    assert body["members"] == []
+
+
+def test_duplicates_is_tenant_isolated(db_session):
+    from uuid import uuid4 as _uuid4
+    other_tenant = _uuid4()
+    subject = _inv(db_session, file_hash="shared", number="INV-4", vendor="Acme")
+    db_session.add(Tenant(id=other_tenant, name="Other", domain="o.example.com", billing_plan="pro"))
+    db_session.add(Invoice(
+        tenant_id=other_tenant, file_path="mock/other.pdf", file_hash="shared",
+        invoice_number="INV-4", vendor_name="Acme", status="COMPLETED", flow_direction="INBOUND",
+    ))
+    db_session.commit()
+
+    body = TestClient(app).get(f"/api/v1/invoices/{subject.id}/duplicates").json()
+    assert body["cluster_size"] == 1, "another tenant's identical file must never appear"
+
+
+def test_duplicates_404s_for_a_missing_invoice(db_session):
+    _dup_tenant(db_session)
+    res = TestClient(app).get(f"/api/v1/invoices/{uuid4()}/duplicates")
+    assert res.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Gap 497 Phase 3: GET /invoices?is_duplicate=true -- the "Duplicates" tab.
+# ---------------------------------------------------------------------------
+
+def test_is_duplicate_filter_catches_both_detection_layers(db_session):
+    """The reason this filter keys on the COLUMN and not on status=DUPLICATE.
+
+    Layer 1 (identical file) sets status DUPLICATE. Layer 2 (same number +
+    vendor, different file) sets AUDIT_REQUIRED. A status-based tab would show
+    the first and silently hide the second -- which is the one that can be
+    double billing."""
+    original = _inv(db_session, number="INV-100", vendor="Acme")
+    layer1 = _inv(db_session, number="INV-100", vendor="Acme",
+                  status="DUPLICATE", duplicate_of=original.id)
+    layer2 = _inv(db_session, number="INV-100", vendor="Acme",
+                  status="AUDIT_REQUIRED", duplicate_of=original.id)
+
+    res = TestClient(app).get("/api/v1/invoices", params={"is_duplicate": "true", "limit": 100})
+    assert res.status_code == 200, res.text
+    returned = {row["id"] for row in res.json()}
+    assert returned == {str(layer1.id), str(layer2.id)}
+    assert str(original.id) not in returned
+
+
+def test_is_duplicate_false_returns_only_non_duplicates(db_session):
+    original = _inv(db_session, number="INV-200", vendor="Acme")
+    _inv(db_session, number="INV-200", vendor="Acme", status="DUPLICATE", duplicate_of=original.id)
+
+    res = TestClient(app).get("/api/v1/invoices", params={"is_duplicate": "false", "limit": 100})
+    assert [row["id"] for row in res.json()] == [str(original.id)]
+
+
+def test_omitting_is_duplicate_still_returns_everything(db_session):
+    """The filter must be opt-in -- every existing caller passes no such param
+    and must keep seeing duplicates in the unfiltered list."""
+    original = _inv(db_session, number="INV-300", vendor="Acme")
+    dup = _inv(db_session, number="INV-300", vendor="Acme", status="DUPLICATE", duplicate_of=original.id)
+
+    res = TestClient(app).get("/api/v1/invoices", params={"limit": 100})
+    returned = {row["id"] for row in res.json()}
+    assert {str(original.id), str(dup.id)} <= returned
 

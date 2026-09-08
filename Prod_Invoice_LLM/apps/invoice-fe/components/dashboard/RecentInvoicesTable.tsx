@@ -47,7 +47,12 @@ export interface InvoiceRecord {
 // finalized as Paid/Rejected (Processing, Completed, Audit Required,
 // Duplicate) -- matches the AP mental model of "still in the pipeline"
 // vs. a closed-out invoice, rather than mapping 1:1 to every raw status enum.
-export type StatusTab = "all" | "audit_required" | "paid" | "pending" | "rejected";
+// Gap 497 Phase 3: "duplicates" is deliberately its own tab rather than being
+// folded into the audit queue. Founder ruling 2026-09-08 -- pushing exact-file
+// duplicates into AUDIT_REQUIRED would inflate that queue with items needing no
+// human decision and dilute what "review required" means, while the genuinely
+// risky same-number-different-file duplicates already arrive there on their own.
+export type StatusTab = "all" | "audit_required" | "paid" | "pending" | "rejected" | "duplicates";
 
 interface RecentInvoicesTableProps {
   invoices: InvoiceRecord[];
@@ -69,6 +74,7 @@ const STATUS_TABS: { key: StatusTab; label: string }[] = [
   { key: "paid", label: "Paid" },
   { key: "pending", label: "Pending" },
   { key: "rejected", label: "Rejected" },
+  { key: "duplicates", label: "Duplicates" },
 ];
 
 export default function RecentInvoicesTable({

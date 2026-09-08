@@ -5,6 +5,7 @@ import hashlib
 import asyncio
 from uuid import uuid4, UUID
 from datetime import date, datetime
+from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -721,6 +722,7 @@ async def list_invoices(
     tag: str | None = None,
     vendor_name: str | None = None,
     batch_id: UUID | None = None,
+    is_duplicate: bool | None = None,
     # Feature 25 (Gap 335): readonly-scope API key or Clerk session.
     context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session)
@@ -728,7 +730,16 @@ async def list_invoices(
     """
     Fetches a page of matching records for the requesting tenant, most recent
     first. Supports pagination, date ranges, status/vendor filters, search
-    tags, and batch_id.
+    tags, batch_id, and `is_duplicate`.
+
+    Gap 497 Phase 3: `is_duplicate=true` returns rows the system believes
+    duplicate another invoice. It keys on `duplicate_of_invoice_id`, **not**
+    on `status == "DUPLICATE"`, and that distinction is the whole reason the
+    filter is worth having: only Layer 1 (identical file) sets that status.
+    Layer 2 (same number + vendor, different file) sets `AUDIT_REQUIRED`, so a
+    status-based tab would silently omit exactly the duplicates that carry
+    risk. The column became a reliable key for both only in Phase 1, which
+    taught Layer 2 to write it.
     """
     conditions = [
         Invoice.tenant_id == context.tenant_id,
@@ -747,6 +758,12 @@ async def list_invoices(
         conditions.append(Invoice.status.in_([s.strip() for s in status_in.split(",") if s.strip()]))
     if vendor_name:
         conditions.append(Invoice.vendor_name == vendor_name)
+    if is_duplicate is not None:
+        conditions.append(
+            Invoice.duplicate_of_invoice_id.is_not(None)
+            if is_duplicate
+            else Invoice.duplicate_of_invoice_id.is_(None)
+        )
 
     query = select(Invoice).where(*conditions)
     if tag:
@@ -1015,6 +1032,167 @@ async def get_invoice_pdf(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename={invoice_id}.pdf"}
+    )
+
+
+class DuplicateMemberOut(BaseModel):
+    """One other invoice that belongs to this invoice's duplicate cluster."""
+    invoice_id: UUID
+    # EXACT_FILE  -> byte-identical upload (Layer 1, matched on file_hash)
+    # SAME_NUMBER_AND_VENDOR -> same invoice number + vendor, DIFFERENT file
+    #                           (Layer 2, matched after extraction)
+    # BOTH -> satisfies both tests
+    match_type: str
+    status: str
+    invoice_number: Optional[str] = None
+    vendor_name: Optional[str] = None
+    invoice_date: Optional[date] = None
+    grand_total: Optional[float] = None
+    currency: Optional[str] = None
+    submitted_by_email: Optional[str] = None
+    created_at: datetime
+    is_original: bool
+
+
+class DuplicateClusterOut(BaseModel):
+    invoice_id: UUID
+    cluster_size: int
+    members: list[DuplicateMemberOut]
+    differing_fields: list[str]
+    has_amount_difference: bool
+
+
+# Fields compared across a cluster. `grand_total` is called out separately
+# below because a differing total is the difference that actually costs money.
+_DUPLICATE_COMPARED_FIELDS = (
+    "invoice_number",
+    "vendor_name",
+    "invoice_date",
+    "grand_total",
+    "currency",
+)
+
+
+@router.get("/{invoice_id}/duplicates", response_model=DuplicateClusterOut)
+async def get_invoice_duplicates(
+    invoice_id: UUID,
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
+    db_session: Session = Depends(get_db_session),
+):
+    """
+    Gap 497: every other invoice that duplicates this one, with why it matched.
+
+    WHY THIS IS NOT A `duplicate_of_invoice_id` LOOKUP. That column records a
+    single pointer, written by whichever detector fired. Upload the same file
+    three times and you get a chain whose shape depends on which row the
+    detector happened to match -- so following the pointer answers "what did
+    this one match?", never "show me every copy". The cluster is therefore
+    derived from the DATA that makes two rows duplicates:
+
+      * identical `file_hash`  -> the exact same file was uploaded twice
+      * identical (invoice_number, vendor_name), INBOUND -> the same invoice
+        arrived as a different file
+
+    which is stable regardless of upload order and correct for any number of
+    copies. The pointer is still written (and still useful for "which one did
+    the system compare against"); it is simply not the source of truth here.
+
+    Soft-deleted rows are excluded: they are hidden everywhere else, so
+    offering one for review would dead-end.
+    """
+    invoice = db_session.exec(
+        select(Invoice).where(
+            Invoice.id == invoice_id,
+            Invoice.tenant_id == context.tenant_id,
+            invoice_not_deleted(),
+        )
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
+
+    exact_ids: set[UUID] = set()
+    logical_ids: set[UUID] = set()
+    candidates: dict[UUID, Invoice] = {}
+
+    if invoice.file_hash:
+        for row in db_session.exec(
+            select(Invoice).where(
+                Invoice.tenant_id == context.tenant_id,
+                Invoice.id != invoice_id,
+                Invoice.file_hash == invoice.file_hash,
+                invoice_not_deleted(),
+            )
+        ).all():
+            exact_ids.add(row.id)
+            candidates[row.id] = row
+
+    # Guarded on both values being present: a NULL invoice_number would
+    # otherwise match every other un-extracted row in the tenant.
+    if invoice.invoice_number and invoice.vendor_name:
+        for row in db_session.exec(
+            select(Invoice).where(
+                Invoice.tenant_id == context.tenant_id,
+                Invoice.id != invoice_id,
+                Invoice.flow_direction == "INBOUND",
+                func.lower(Invoice.invoice_number) == invoice.invoice_number.lower(),
+                func.lower(Invoice.vendor_name) == invoice.vendor_name.lower(),
+                invoice_not_deleted(),
+            )
+        ).all():
+            logical_ids.add(row.id)
+            candidates[row.id] = row
+
+    # The earliest row in the whole cluster is the original; everything after
+    # it is a copy. Computed over the cluster rather than trusting any stored
+    # flag, so it stays right even if rows were backfilled or re-ingested.
+    ordered = sorted(candidates.values(), key=lambda r: r.created_at)
+    earliest = ordered[0].created_at if ordered else None
+    original_id = (
+        invoice.id
+        if earliest is None or invoice.created_at <= earliest
+        else ordered[0].id
+    )
+
+    members: list[DuplicateMemberOut] = []
+    for row in ordered:
+        if row.id in exact_ids and row.id in logical_ids:
+            match_type = "BOTH"
+        elif row.id in exact_ids:
+            match_type = "EXACT_FILE"
+        else:
+            match_type = "SAME_NUMBER_AND_VENDOR"
+        members.append(
+            DuplicateMemberOut(
+                invoice_id=row.id,
+                match_type=match_type,
+                status=row.status,
+                invoice_number=row.invoice_number,
+                vendor_name=row.vendor_name,
+                invoice_date=row.invoice_date,
+                grand_total=row.grand_total,
+                currency=row.currency,
+                submitted_by_email=row.submitted_by_email,
+                created_at=row.created_at,
+                is_original=(row.id == original_id),
+            )
+        )
+
+    # Which fields disagree with the invoice being reviewed. An EXACT_FILE
+    # duplicate normally disagrees on nothing (same bytes, copied fields),
+    # which is exactly the signal the console uses to show the short view
+    # instead of a full diff.
+    differing: list[str] = []
+    for field in _DUPLICATE_COMPARED_FIELDS:
+        mine = getattr(invoice, field, None)
+        if any(getattr(row, field, None) != mine for row in ordered):
+            differing.append(field)
+
+    return DuplicateClusterOut(
+        invoice_id=invoice_id,
+        cluster_size=len(ordered) + 1,
+        members=members,
+        differing_fields=differing,
+        has_amount_difference="grand_total" in differing,
     )
 
 

@@ -14,11 +14,18 @@ import { toLocalDateString } from "../../lib/utils";
 // Dashboard is overview-only now; this page is the actual invoice queue.
 const PAGE_SIZE = 8;
 
-function tabToStatusParams(tab: StatusTab): { status?: string; status_in?: string } {
+function tabToStatusParams(
+  tab: StatusTab
+): { status?: string; status_in?: string; is_duplicate?: boolean } {
   if (tab === "paid") return { status: "PAID" };
   if (tab === "rejected") return { status: "REJECTED" };
   if (tab === "audit_required") return { status: "AUDIT_REQUIRED" };
   if (tab === "pending") return { status_in: "PROCESSING,COMPLETED,DUPLICATE,REVIEW_LATER,NEEDS_RESUBMISSION" };
+  // Gap 497 Phase 3: filters on `duplicate_of_invoice_id`, NOT on
+  // `status == "DUPLICATE"`. Only Layer 1 (identical file) sets that status;
+  // Layer 2 (same number + vendor, different file) sets AUDIT_REQUIRED, so a
+  // status-based filter would omit precisely the duplicates that carry risk.
+  if (tab === "duplicates") return { is_duplicate: true };
   return {};
 }
 

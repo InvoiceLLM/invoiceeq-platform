@@ -24,6 +24,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import AlertConsole, { AlertCorrectionPreview } from "@/components/audit/AlertConsole";
+import DuplicatesPanel from "@/components/audit/DuplicatesPanel";
 import NotifyEmailPicker from "@/components/audit/NotifyEmailPicker";
 
 interface LineItem {
@@ -577,6 +578,22 @@ export default function AuditorReviewPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto custom-scrollbar">
+        {/* Gap 497 Phase 2: every other copy of this invoice, with what differs.
+            Placed above the console because "there are three of these and the
+            totals disagree" changes how you read everything below it. Renders
+            nothing at all when the invoice has no duplicates, which is almost
+            always -- it must not cost a row of vertical space on a normal
+            invoice. */}
+        <DuplicatesPanel
+          invoiceId={id as string}
+          subject={{
+            invoice_number: invoice.invoice_number,
+            vendor_name: invoice.vendor_name,
+            invoice_date: invoice.invoice_date,
+            grand_total: invoice.grand_total,
+            currency: invoice.currency ?? null,
+          }}
+        />
         {/* FE Gap 110: title/subtitle/Back all moved into the shared header
             above; the live status badge rides up there too rather than holding
             a row down here.

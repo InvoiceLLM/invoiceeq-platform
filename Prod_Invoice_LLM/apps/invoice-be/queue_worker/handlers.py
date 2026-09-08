@@ -1065,18 +1065,52 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                         # issued -- without this filter a self-billing tenant
                         # could have an outbound row flag an inbound one.
                         Invoice.flow_direction == "INBOUND",
+                        # Gap 497: a soft-deleted invoice must not flag a live one
+                        # as its duplicate. The row is hidden from every list,
+                        # aggregate and chat answer, so an alert pointing a human
+                        # at it is unactionable -- they cannot open what was
+                        # deleted. Layer 1 has always been immune to this because
+                        # it matches on `file_hash` before any row is written.
+                        Invoice.deleted_at.is_(None),
                         func.lower(Invoice.invoice_number) == invoice_number.lower(),
                         func.lower(Invoice.vendor_name) == vendor_name.lower()
-                    )
+                    # Gap 497: oldest first, so the pointer names the ORIGINAL.
+                    # `.first()` with no ORDER BY returned an arbitrary row, so
+                    # with three copies of one invoice the "original" this alert
+                    # names could itself be a duplicate -- and which one it named
+                    # could change between runs on the same data.
+                    ).order_by(Invoice.created_at)
                     dup_invoice = session.exec(dup_stmt).first()
                     if dup_invoice and dup_invoice.id:
                         dup_alert = {
                             "type": "duplicate_invoice",
-                            "message": f"An invoice with the same number ({invoice_number}) and vendor ({vendor_name}) already exists (ID: {dup_invoice.id})."
+                            "message": f"An invoice with the same number ({invoice_number}) and vendor ({vendor_name}) already exists (ID: {dup_invoice.id}).",
+                            # Gap 497: the id as data, not only inside prose.
+                            # Gap 195 fixed exactly this for Layer 1 and never
+                            # reached Layer 2, so the only machine-readable route
+                            # to the original was parsing an English sentence.
+                            "duplicate_of_invoice_id": str(dup_invoice.id),
+                            # Which detector fired. The review console needs this:
+                            # an identical FILE has nothing to diff, whereas a
+                            # matching number+vendor on a DIFFERENT file is the
+                            # dangerous case (re-issue, correction, or double
+                            # billing) and is what earns a full comparison.
+                            "match_type": "SAME_NUMBER_AND_VENDOR",
                         }
                         if dup_alert not in alerts:
                             alerts = list(alerts)
                             alerts.append(dup_alert)
+                        # Gap 497: the structured column, so the cluster endpoint
+                        # and the FE can link to the original without parsing the
+                        # message above. Deliberately set even though the status
+                        # is AUDIT_REQUIRED rather than DUPLICATE: the column
+                        # means "this row duplicates that one", which is true of a
+                        # suspected duplicate awaiting review just as much as of a
+                        # confirmed one. Nothing keys visibility off this column
+                        # (checked repo-wide: only Layer 1 wrote it, and no query
+                        # or FE component reads it), so widening what writes it
+                        # cannot change what any existing screen shows.
+                        invoice.duplicate_of_invoice_id = dup_invoice.id
                         status = "AUDIT_REQUIRED"
 
                 invoice.vendor_name = vendor_name
