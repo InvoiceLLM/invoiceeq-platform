@@ -82,6 +82,9 @@ param enableKnowledgeLayer bool = false
 @description('Feature 29 phase-2 capability flag; default false. See config.py.')
 param enableRerank bool = false
 
+@description('Feature 30 master flag (Gap 496): the chat-attachment intelligence bubble. Default false. See config.py.')
+param enableAttachmentInsights bool = false
+
 @description('Application Insights connection string. Empty by default (the overdue sweep does not emit telemetry); the golden-bank eval job needs it so scripts/run_agent_eval.py\'s track_eval_result()/emit_online_signals() calls actually reach appi-invoicellm-dev instead of silently no-op-ing to stdout.')
 param appInsightsConnectionString string = ''
 
@@ -293,6 +296,10 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'ENABLE_RERANK'
               value: enableRerank ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_ATTACHMENT_INSIGHTS'
+              value: enableAttachmentInsights ? 'true' : 'false'
             }
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'

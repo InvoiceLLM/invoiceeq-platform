@@ -68,6 +68,9 @@
     "enableRerank": {
       "value": false
     },
+    "enableAttachmentInsights": {
+      "value": false
+    },
     "azureOpenAiModelVersion": {
       "value": "2025-08-07"
     },

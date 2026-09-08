@@ -26,6 +26,7 @@
 // =============================================================================
 
 import IngestionHistoryTable from "@/components/ingestion/IngestionHistoryTable";
+import OpenFindingsChip from "@/components/insights/OpenFindingsChip";
 
 export default function HistoryPage() {
   return (
@@ -39,6 +40,11 @@ export default function HistoryPage() {
           entries rather than disappearing.
         </p>
       </header>
+
+      {/* FE Feature 21 task 21.8. Renders nothing at all when the tenant has no
+          open findings — which is also the shape of `ENABLE_ATTACHMENT_INSIGHTS`
+          being off — so this screen is unchanged for everyone else. */}
+      <OpenFindingsChip />
 
       <IngestionHistoryTable />
     </div>

@@ -35,6 +35,7 @@ import ThumbsDownTriage from "./ThumbsDownTriage";
 import AttachmentMatchConfirm from "./AttachmentMatchConfirm";
 import DocumentEvidence from "./DocumentEvidence";
 import ReconciliationTable from "./ReconciliationTable";
+import InsightBubble from "./InsightBubble";
 import { apiClient } from "@/lib/apiClient";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -464,6 +465,19 @@ interface MessageBubbleProps {
    */
   precedingUserQuestion?: string;
   attachmentHandlers?: AttachmentTurnHandlers;
+  /**
+   * FE Feature 21 (task 21.8). Seeds the composer with a finding's text and
+   * focuses it — it never SENDS. Supplied by ChatWindow, which owns the
+   * composer; absent everywhere else, and the bubble degrades to a Discuss
+   * button that has nothing to seed rather than disappearing.
+   */
+  onInsightDiscuss?: (seedText: string) => void;
+  /**
+   * True for the moment after an SSE `insight_update` redrew this turn's bubble
+   * (§8.6 step 4's brief pulse). Optional; nothing else in the bubble depends
+   * on it.
+   */
+  insightJustUpdated?: boolean;
 }
 
 function formatMessageTimestamp(dateStr?: string): string {
@@ -481,6 +495,8 @@ export default function MessageBubble({
   message,
   precedingUserQuestion,
   attachmentHandlers,
+  onInsightDiscuss,
+  insightJustUpdated,
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const formattedTime = formatMessageTimestamp(message.created_at);
@@ -618,6 +634,25 @@ export default function MessageBubble({
           <ReconciliationTable reconciliation={message.reconciliation} />
         )}
 
+        {/* ── FE Feature 21 — the intelligence bubble (BE Feature 30 §8.3) ──
+            Rendered on the key's presence, under the assistant reply that
+            follows the attached document, and behind the same settled-assistant
+            guard every other contract surface uses. A turn WITHOUT `insights`
+            takes no new branch at all and renders byte-identically to what it
+            rendered before this feature — asserted in
+            tests/unit/insight-bubble.test.tsx.
+
+            Information only (BE Gap 492): nothing inside changes an invoice,
+            and there is no pin. */}
+        {isSettledAssistant && message.insights && (
+          <InsightBubble
+            block={message.insights}
+            messageId={message.id}
+            onDiscussSeed={onInsightDiscuss}
+            justUpdated={insightJustUpdated}
+          />
+        )}
+
         {/* `needs_confirmation` does NOT gate the card below — the live backend
             only ever emits it as `false`, from the content branch. When it is
             true it explains why a turn produced no figures; the composer is
@@ -712,9 +747,26 @@ interface MessageStreamProps {
    * prop when it wires `useChatSession`.
    */
   attachmentHandlers?: AttachmentTurnHandlers;
+  /**
+   * FE Feature 21 task 21.8. Threaded to every bubble so a finding's Discuss
+   * button can seed the composer. It SEEDS, it does not send — see
+   * `InsightActions.tsx` for why that distinction is load-bearing.
+   */
+  onInsightDiscuss?: (seedText: string) => void;
+  /**
+   * Message ids whose bubble was just redrawn by an SSE `insight_update`
+   * (task 21.7), so the redraw is visible rather than silent.
+   */
+  updatedInsightMessageIds?: string[];
 }
 
-export function MessageStream({ messages, isSending, attachmentHandlers }: MessageStreamProps) {
+export function MessageStream({
+  messages,
+  isSending,
+  attachmentHandlers,
+  onInsightDiscuss,
+  updatedInsightMessageIds,
+}: MessageStreamProps) {
   // bottomRef is attached to an empty div at the end of the list.
   // scrollIntoView fires whenever messages or isSending changes, keeping
   // the latest content in view automatically (equivalent to WhatsApp behaviour).
@@ -750,6 +802,8 @@ export function MessageStream({ messages, isSending, attachmentHandlers }: Messa
             message={msg}
             precedingUserQuestion={precedingUserQuestion}
             attachmentHandlers={attachmentHandlers}
+            onInsightDiscuss={onInsightDiscuss}
+            insightJustUpdated={updatedInsightMessageIds?.includes(msg.id)}
           />
         );
       })}

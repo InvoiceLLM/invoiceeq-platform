@@ -160,7 +160,10 @@ jobs:
           app="${{ inputs.container_app_name }}"
           rg="${{ inputs.resource_group }}"
           prev_image="${{ steps.previous.outputs.image }}"
-          max_attempts=24
+          # Gap 498 (2026-09-08): 24 x 10 s rolled back a revision that became healthy at ~6 min
+          # (Feature 30's three migrations + four views), and the rollback image could not start
+          # against the migrated DB. 60 x 10 s covers a migration-bearing deploy.
+          max_attempts=60
 
           rollback() {
             if [ -z "$prev_image" ]; then

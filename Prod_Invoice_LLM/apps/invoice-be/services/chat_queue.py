@@ -266,8 +266,13 @@ class ChatQueueService:
         message_id: str | None = None,
         job_id: str | None = None,
         client: "redis.Redis | None" = None,
+        notify_job_id: str | None = None,
     ) -> dict | None:
         """Feature 30 task 30.2: queue stage 2 of one attachment's insight bubble.
+
+        `notify_job_id` (Gap 497) is the EXTRACTION job's id -- the channel the
+        browser is already listening on. The worker publishes `insight_update`
+        there; the insight job's own id is only its queue identity.
 
         Rides the same list as the chat turns and the attachment extractions,
         tagged `task: "insight"`, for the reason `enqueue_attachment_extraction()`
@@ -300,6 +305,7 @@ class ChatQueueService:
             "attachment_id": attachment_id,
             "tenant_id": tenant_id,
             "message_id": message_id,
+            "notify_job_id": notify_job_id,
             "status": "queued",
             "created_at": now_iso,
         }

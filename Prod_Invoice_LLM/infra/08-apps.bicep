@@ -121,6 +121,9 @@ param enableKnowledgeLayer bool = false
 @description('Feature 29 phase-2 capability flag; default false. See apps/invoice-be/config.py.')
 param enableRerank bool = false
 
+@description('Feature 30 master flag (Gap 496): the chat-attachment intelligence bubble. Default false. See apps/invoice-be/config.py.')
+param enableAttachmentInsights bool = false
+
 @description('Subscription ID for services/azure_cost.py and ops_recommendation.py -- see invoice-be.bicep for why this was missing.')
 param azureSubscriptionId string = subscription().subscriptionId
 
@@ -356,6 +359,7 @@ enableEntityResolver: enableEntityResolver
     enableCertifiedExamples: enableCertifiedExamples
     enableKnowledgeLayer: enableKnowledgeLayer
     enableRerank: enableRerank
+    enableAttachmentInsights: enableAttachmentInsights
     enableAsyncChatQueue: enableAsyncChatQueue
     enableChatStreaming: enableChatStreaming
     azureSubscriptionId: azureSubscriptionId
@@ -413,6 +417,7 @@ enableEntityResolver: enableEntityResolver
     enableCertifiedExamples: enableCertifiedExamples
     enableKnowledgeLayer: enableKnowledgeLayer
     enableRerank: enableRerank
+    enableAttachmentInsights: enableAttachmentInsights
     enableAsyncChatQueue: enableAsyncChatQueue
     enableChatStreaming: enableChatStreaming
     caeId: cae.id
@@ -689,6 +694,7 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     enableCertifiedExamples: enableCertifiedExamples
     enableKnowledgeLayer: enableKnowledgeLayer
     enableRerank: enableRerank
+    enableAttachmentInsights: enableAttachmentInsights
     // Both scripts emit telemetry (extraction's tracked_llm_call() sites,
     // Track 2's track_eval_result()/track_agent_call()) -- without this it
     // would silently no-op to stdout instead of reaching appi-invoicellm-dev.

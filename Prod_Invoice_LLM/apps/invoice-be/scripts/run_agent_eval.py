@@ -597,6 +597,8 @@ CAPABILITY_FLAGS = (
     "ENABLE_CERTIFIED_EXAMPLES",
     "ENABLE_KNOWLEDGE_LAYER",
     "ENABLE_RERANK",
+    # Feature 30 master flag (Gap 496): attributed on every turn like the phase-2 five.
+    "ENABLE_ATTACHMENT_INSIGHTS",
 )
 
 

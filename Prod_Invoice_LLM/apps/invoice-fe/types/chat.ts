@@ -48,6 +48,24 @@ export type {
   SuggestedAction,
 } from "@/lib/chatAttachments";
 
+// -----------------------------------------------------------------------------
+// FE Feature 21 — the intelligence bubble (BE Feature 30). Re-exported from
+// lib/chatInsights.ts for exactly the reason the attachment shapes above are:
+// ONE definition, next to the copy and the endpoints that mirror the same
+// backend module, while `@/types/chat` stays the import everything else uses.
+// -----------------------------------------------------------------------------
+export type {
+  Insight,
+  InsightAction,
+  InsightBlock,
+  InsightCardResult,
+  InsightCheckNotRun,
+  InsightFinding,
+  InsightUpdateEvent,
+} from "@/lib/chatInsights";
+
+import type { InsightBlock } from "@/lib/chatInsights";
+
 import type {
   AttachmentClarification,
   AttachmentComparison,
@@ -173,6 +191,20 @@ export interface ChatMessage {
 
   /** The clarifying turn (B2): two choices, no answer, no LLM call behind it. */
   attachment_clarification?: AttachmentClarification;
+
+  /**
+   * FE Feature 21 / BE Feature 30 task 30.2 — the intelligence bubble.
+   *
+   * Carried by `routers/chat.py::MessageResponse.insights` and persisted through
+   * `ATTACHMENT_CONTRACT_KEYS`, so a session reload restores the bubble. Like
+   * every key above it this is OPTIONAL and absent on an ordinary turn: a
+   * message without it must render byte-identically to what it renders today,
+   * which is what `tests/unit/insight-bubble.test.tsx` asserts.
+   *
+   * It is NOT on `AttachmentOut` — the upload response carries no insights (FE
+   * Gap 481); the bubble arrives as its own assistant turn.
+   */
+  insights?: InsightBlock;
 }
 
 // -----------------------------------------------------------------------------

@@ -326,6 +326,31 @@ class ReferenceDocLineItem(BaseModel):
     page_number: Optional[int] = Field(default=None, description="The 1-based page this row is printed on. Fill it only when you can see which page the row came from; null otherwise. NEVER guess a page, and never assume page 1 for a multi-page document -- a wrong page reference is worse than none, because it sends a reader to the wrong place to check a figure.")
 
 
+# Gap 499 (2026-09-08): defined BEFORE `ReferenceDocExtractionSchema`, which references it
+# in a field annotation. Python 3.12 (the container) evaluates class-body annotations
+# eagerly, so the previous placement raised NameError at import and took dev down.
+class ReferencedDocument(BaseModel):
+    """One document a statement or remittance advice REFERS TO (A7).
+
+    An advisory document's whole substance is a list of pointers at other
+    documents -- which invoices a payment covers, which invoices are still open.
+    This is the shape of one such pointer, and it is what Feature 26's
+    `list_reconcile` comparison joins against `Invoice` rows.
+
+    Every field Optional: a statement line may print a number and an amount and
+    nothing else. `status_hint` is transcribed EXACTLY AS PRINTED and never
+    inferred -- "Open" on a supplier's statement is the supplier's claim, not our
+    finding, and the entire value of reconciling is in seeing where the two differ.
+    """
+    model_config = {"extra": "forbid"}
+
+    doc_number: Optional[str] = Field(default=None, description="The referenced document's number, exactly as printed (an invoice number, a credit note number, a payment reference).")
+    doc_date: Optional[str] = Field(default=None, description="The referenced document's date as printed, ISO 8601 if unambiguous. Null if not stated.")
+    amount: Optional[float] = Field(default=None, description="The amount shown against this reference. Transcribe exactly, including a negative sign for a credit. Null if no amount is printed on the line.")
+    currency: Optional[str] = Field(default=None, description="ISO currency code for this line if printed per-line. Null if the document states one currency globally.")
+    status_hint: Optional[str] = Field(default=None, description="The status the DOCUMENT ITSELF claims for this reference: OPEN, PAID, PARTIALLY_PAID or DISPUTED. Transcribe only what is printed and never infer one from the amount -- this is the counterparty's claim, and comparing it to our own record is the point.")
+
+
 class ReferenceDocExtractionSchema(BaseModel):
     model_config = {"extra": "forbid"}
     doc_type: Optional[str] = Field(default=None, description="What this document calls itself: 'PURCHASE_ORDER' if it is a purchase order, 'QUOTATION' if it is a quotation/quote/estimate/proforma, otherwise 'OTHER'. Decide from the printed document title, not from the content.")
@@ -434,26 +459,6 @@ class GenericLineItem(BaseModel):
     # chat-attachment path), which is a different schema; widening this one was
     # scope creep that would have weakened A2 for no caller.
 
-class ReferencedDocument(BaseModel):
-    """One document a statement or remittance advice REFERS TO (A7).
-
-    An advisory document's whole substance is a list of pointers at other
-    documents -- which invoices a payment covers, which invoices are still open.
-    This is the shape of one such pointer, and it is what Feature 26's
-    `list_reconcile` comparison joins against `Invoice` rows.
-
-    Every field Optional: a statement line may print a number and an amount and
-    nothing else. `status_hint` is transcribed EXACTLY AS PRINTED and never
-    inferred -- "Open" on a supplier's statement is the supplier's claim, not our
-    finding, and the entire value of reconciling is in seeing where the two differ.
-    """
-    model_config = {"extra": "forbid"}
-
-    doc_number: Optional[str] = Field(default=None, description="The referenced document's number, exactly as printed (an invoice number, a credit note number, a payment reference).")
-    doc_date: Optional[str] = Field(default=None, description="The referenced document's date as printed, ISO 8601 if unambiguous. Null if not stated.")
-    amount: Optional[float] = Field(default=None, description="The amount shown against this reference. Transcribe exactly, including a negative sign for a credit. Null if no amount is printed on the line.")
-    currency: Optional[str] = Field(default=None, description="ISO currency code for this line if printed per-line. Null if the document states one currency globally.")
-    status_hint: Optional[str] = Field(default=None, description="The status the DOCUMENT ITSELF claims for this reference: OPEN, PAID, PARTIALLY_PAID or DISPUTED. Transcribe only what is printed and never infer one from the amount -- this is the counterparty's claim, and comparing it to our own record is the point.")
 
 
 class DeductionItem(BaseModel):

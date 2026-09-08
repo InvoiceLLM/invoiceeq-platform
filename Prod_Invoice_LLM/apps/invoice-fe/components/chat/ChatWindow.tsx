@@ -17,7 +17,7 @@
 
 "use client";
 
-import { useRef, useEffect, useState, KeyboardEvent } from "react";
+import { useRef, useEffect, useState, useCallback, KeyboardEvent } from "react";
 import {
   MessageSquarePlus,
   MessageSquare,
@@ -378,6 +378,18 @@ interface InputBarProps {
   onAttachmentIntent?: (intent: "read" | "compare") => void;
   /** How many attachments this SESSION already holds (backend cap is 5). */
   attachmentCount?: number;
+  /**
+   * FE Feature 21 task 21.8 — the intelligence bubble's "Discuss".
+   *
+   * `{ text, nonce }` rather than a bare string: seeding the SAME text twice
+   * (the user clicks Discuss, edits it away, clicks Discuss again) has to fill
+   * the box the second time too, and a plain string would compare equal and do
+   * nothing. The nonce is what makes the second click an event.
+   *
+   * Seeding FILLS AND FOCUSES. It never sends — the user reads, edits and
+   * presses Send themselves.
+   */
+  seed?: { text: string; nonce: number } | null;
 }
 
 function InputBar({
@@ -390,6 +402,7 @@ function InputBar({
   onCancelAttachment,
   onAttachmentIntent,
   attachmentCount = 0,
+  seed = null,
 }: InputBarProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -430,6 +443,18 @@ function InputBar({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [value]);
+
+  // Task 21.8. Keyed on the nonce so a repeat Discuss on the same finding
+  // re-seeds; the caret is put at the end so the user types after the quote
+  // rather than in front of it.
+  useEffect(() => {
+    if (!seed) return;
+    setValue(seed.text);
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(seed.text.length, seed.text.length);
+  }, [seed?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = () => {
     if (!value.trim() || isSending || disabled) return;
@@ -631,6 +656,13 @@ interface ChatWindowProps {
   // matching H10's precedent: absent means the bubbles render read-only rather
   // than showing a button that does nothing.
   attachmentHandlers?: AttachmentTurnHandlers;
+  /**
+   * FE Feature 21 task 21.7. Message ids whose bubble an SSE `insight_update`
+   * has just redrawn — passed straight through to `MessageStream` so the
+   * in-place redraw pulses instead of changing silently. Owned by
+   * `useChatSession`, which is what listens to the stream.
+   */
+  updatedInsightMessageIds?: string[];
 }
 
 export default function ChatWindow({
@@ -653,8 +685,22 @@ export default function ChatWindow({
   onAttachmentIntent,
   attachmentCount = 0,
   attachmentHandlers,
+  updatedInsightMessageIds,
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
+
+  /**
+   * FE Feature 21 task 21.8. The composer's text is InputBar's own state (it is
+   * transient and matters only until Send), so Discuss cannot write it
+   * directly. This is the one-way channel: a bubble raises a seed, ChatWindow
+   * holds it, InputBar applies it. Nothing here sends anything.
+   */
+  const [composerSeed, setComposerSeed] = useState<{ text: string; nonce: number } | null>(
+    null
+  );
+  const seedComposer = useCallback((text: string) => {
+    setComposerSeed((previous) => ({ text, nonce: (previous?.nonce ?? 0) + 1 }));
+  }, []);
 
   // FE Gap 274: the thread list can be hidden entirely (unlike the main
   // app Sidebar's icon-only collapse, per Gap 273 -- the chat window is
@@ -758,6 +804,8 @@ export default function ChatWindow({
               messages={messages}
               isSending={isSending}
               attachmentHandlers={attachmentHandlers}
+              onInsightDiscuss={seedComposer}
+              updatedInsightMessageIds={updatedInsightMessageIds}
             />
           )}
         </div>
@@ -773,6 +821,7 @@ export default function ChatWindow({
           onCancelAttachment={onCancelAttachment}
           onAttachmentIntent={onAttachmentIntent}
           attachmentCount={attachmentCount}
+          seed={composerSeed}
         />
       </div>
     </div>

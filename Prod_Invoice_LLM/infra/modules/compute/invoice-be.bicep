@@ -142,6 +142,9 @@ param enableKnowledgeLayer bool = false
 @description('Feature 29 phase-2 capability flag; default false. See config.py.')
 param enableRerank bool = false
 
+@description('Feature 30 master flag (Gap 496): the chat-attachment intelligence bubble. Default false. See config.py.')
+param enableAttachmentInsights bool = false
+
 @description('Subscription ID services/azure_cost.py and ops_recommendation.py read Cost Management / Resource Graph from. Declared in config.py but never wired here until now -- without it, the cost sweep and the nightly recommendation pass cost/container_health categories both fail with "not configured".')
 param azureSubscriptionId string = subscription().subscriptionId
 
@@ -535,6 +538,10 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'ENABLE_RERANK'
               value: enableRerank ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_ATTACHMENT_INSIGHTS'
+              value: enableAttachmentInsights ? 'true' : 'false'
             }
           ]
           probes: [

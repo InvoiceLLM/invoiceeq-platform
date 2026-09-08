@@ -355,9 +355,10 @@ def notify_insight_update(
 ) -> None:
     """Push the async bubble update over the chat SSE channel (section 8.6 step 4).
 
-    It rides `ChatQueueService.publish_progress()` on the insight job's own
-    channel -- the channel the browser already subscribed to when the upload
-    returned an `extraction_job_id` -- rather than opening a second stream. A
+    It rides `ChatQueueService.publish_progress()` on the EXTRACTION job's
+    channel (`notify_job_id`, Gap 497) -- the channel the browser subscribed to
+    when the upload returned an `extraction_job_id` -- rather than opening a
+    second stream. A
     second channel would need a second subscription, a second timeout and a
     second failure mode to deliver one event.
 

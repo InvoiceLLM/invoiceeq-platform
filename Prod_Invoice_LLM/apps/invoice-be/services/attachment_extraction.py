@@ -81,6 +81,7 @@ def extract_attachment(
     row: ChatAttachment,
     db_session: Session,
     progress: Optional[ProgressFn] = None,
+    notify_job_id: Optional[str] = None,
 ) -> ChatAttachment:
     """Run the REFERENCE profile over the stored file and denormalise the result.
 
@@ -142,13 +143,16 @@ def extract_attachment(
         index_attachment(row, db_session)
         progress(STAGE_MATCHING)
         match_attachment(row, db_session)
-        insight_attachment(row, db_session, progress=progress)
+        insight_attachment(row, db_session, progress=progress, notify_job_id=notify_job_id)
 
     return row
 
 
 def insight_attachment(
-    row: ChatAttachment, db_session: Session, progress: Optional[ProgressFn] = None
+    row: ChatAttachment,
+    db_session: Session,
+    progress: Optional[ProgressFn] = None,
+    notify_job_id: Optional[str] = None,
 ) -> None:
     """Feature 30 (30.1/30.2): the intelligence bubble, after matching.
 
@@ -195,10 +199,15 @@ def insight_attachment(
         # update is an improvement, not a prerequisite.
         from services.chat_queue import ChatQueueService
 
+        # Gap 497 (FE Gap 474): the async update must be published on the
+        # EXTRACTION job's channel -- the one the browser subscribed to when the
+        # upload returned `extraction_job_id` -- not on the insight job's own id,
+        # which the browser never sees.
         ChatQueueService.enqueue_insight_job(
             attachment_id=str(row.id),
             tenant_id=str(row.tenant_id),
             message_id=block.get("message_id"),
+            notify_job_id=notify_job_id,
         )
     except Exception as e:
         logger.error("Insight stage failed for attachment %s: %s", row.id, e)

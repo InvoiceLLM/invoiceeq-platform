@@ -77,3 +77,114 @@ Matches BE Feature 30 §8. Where this and §1–§7 disagree, this wins.
 | 21.7 | SSE `insight_update` handling + in-place redraw |
 | 21.8 | Discuss seed into composer; transition calls; History "Open findings" chip |
 | 21.9 | Playwright: attach PO → sync bubble → (mock SSE) update → Hold → History row shows the status |
+
+---
+
+## 9. Build note — 2026-09-08 (what was actually built)
+
+Built against the live backend (`routers/chat.py`, `routers/chat_attachments.py`,
+`services/attachment_insights.py`, `services/insights.py`,
+`queue_worker/handlers.py`), not against §2's table — which turned out to be stale
+in four places. §8 governs the rendered shape; §1–§7's card grid was not built.
+
+### 9.1 Named components and functions
+
+| path | named export | what it does |
+|---|---|---|
+| `lib/chatInsights.ts` | `InsightBlock`, `InsightFinding`, `InsightCardResult`, `InsightCheckNotRun`, `InsightAction`, `Insight`, `InsightUpdateEvent` | The wire shapes, mirrored from `build_insight_block()`, `finding()`, `InsightCard.as_dict()`, `BUBBLE_ACTIONS` and `InsightOut` |
+| `lib/chatInsights.ts` | `hasRenderableInsights()`, `splitFindings()`, `confidenceLabel()`, `confidenceTone()`, `findingImpact()`, `cardLabel()`, `checksNotRunLine()`, `evidenceInvoiceNumbers()`, `insightForFinding()`, `isStaleInsightUpdate()` | Every render decision, as pure functions a test can call without a DOM |
+| `lib/chatInsights.ts` | `fetchAttachmentInsights()`, `fetchOpenInsights()`, `transitionInsight()`, `fetchInsightDiscussSeed()`, `postInsightFeedback()` | The five calls. None of them touches an invoice |
+| `components/chat/InsightBubble.tsx` | `InsightBubble`, `ConfidenceChip`, `FindingRow` | The §8.3 anatomy: verdict, ≤3 findings, collapsed rest, "Not checked" line, action row |
+| `components/chat/InsightActions.tsx` | `InsightActions`, `outcomeLine()` | Discuss · Add a note · Dismiss (rendered from `block.actions`, i.e. the BE's own `BUBBLE_ACTIONS`) + thumbs |
+| `components/chat/InsightCorrectionDialog.tsx` | `InsightCorrectionDialog` | Thumbs-down: 4 reasons + optional corrected text, sent with the vote |
+| `components/insights/OpenFindingsChip.tsx` | `OpenFindingsChip` | The History screen's open-findings count and list |
+| `components/chat/MessageBubble.tsx` | `MessageBubble`, `MessageStream` | New render surface behind `isSettledAssistant && message.insights`; `onInsightDiscuss` / `updatedInsightMessageIds` threaded through |
+| `components/chat/ChatWindow.tsx` | `ChatWindow`, `InputBar` | `seedComposer()` → `InputBar`'s `seed={text, nonce}` effect: fills and focuses, never sends |
+| `hooks/useChatSession.ts` | `applyInsightUpdate()`, `insightVersionsRef`, `updatedInsightMessageIds` | The `insight_update` handler and its staleness guard |
+| `types/chat.ts` | `ChatMessage.insights?` | Optional, so a turn without it is unchanged |
+| `app/api/chat/insights/**`, `app/api/chat/messages/[messageId]/insight-feedback` | `GET`, `POST` | Four same-origin proxies. No invoice-website change needed — `chat` is already in `feApiPrefixes` |
+| `tests/unit/*.test.tsx`, `e2e/chat-insights.spec.ts` | — | 30 Vitest + 7 Playwright, screenshots in `docs/test_evidence/fe21_business_intelligence/` |
+
+`vitest.config.mts` / `vitest.setup.ts` / `npm test` were added with this feature:
+invoice-fe had no unit harness at all, and §6's 21.1 proof ("renders
+byte-identical") cannot be made by a Playwright spec, whose babel transform
+rewrites JSX in any `.tsx` it imports.
+
+### 9.2 Functionality as built
+
+1. The block arrives on `MessageResponse.insights` and renders under the
+   assistant turn that follows the attachment. A turn without the key takes no
+   new branch — proved by rendering the same message twice and comparing the
+   HTML, not by a snapshot file that would go green on unrelated edits.
+2. Findings: at most 3, each with its currency impact right-aligned in
+   `tabular-nums` (via the existing `formatCurrency`, tenant currency), a
+   plain-word confidence chip carrying its reason ("Sure" / "Fairly sure" / "Not
+   sure" — never "med"), and one evidence link per invoice number. The rest
+   collapse behind "N more findings". A finding with no amount shows no amount,
+   not a zero.
+3. §8.3.3 is one line — "Not checked: bank match (no bank statement on file); …" —
+   built from `block.checks_not_run`. **This is where task 21.2's "skipped/blocked
+   cards collapse with their reason" went.** `block.cards[]` is deliberately not
+   drawn one-per-card: the BE kept cards as compute units, and their findings are
+   already flattened and ranked into `block.findings`.
+4. **Information only (BE Gap 492).** No pin, no hold/dispute/paid, nothing that
+   changes an invoice. Add a note → `POST /chat/insights/{id}/transition`
+   `{status: "ACTED", outcome: "note", note}`; Dismiss → `{status: "DISMISSED",
+   outcome: "dismissed"}`; Discuss → `GET /chat/insights/{id}/discuss`, a read
+   whose text seeds and focuses the composer and is never sent. Both a unit test
+   and a Playwright test fail if a send fires, and one asserts the bubble's text
+   contains none of "pin / keep this / hold / dispute / mark paid / tier / delta".
+5. A finding the user already closed renders as "You dismissed this finding."
+   rather than offering the buttons again after a reload.
+
+### 9.3 Deviations from §1–§8, each with its reason
+
+- **No `AttachmentOut.insights`, no `GET /chat/attachments/{id}/insights`.** Neither
+  exists in the backend; §2's row would never have been populated. The block comes
+  on the message; the lifecycle rows come from `GET /chat/insights?attachment_id=…`.
+  **FE Gap 471.**
+- **The bubble makes an extra read to get an id.** A finding carries `finding_key`,
+  not the `insight` row id the transition endpoint needs, so `InsightBubble` fetches
+  the rows on mount and joins on `finding_key` + `card`. The two write actions stay
+  disabled until it resolves. **FE Gap 472.**
+- **Evidence links land on an unfiltered History screen.** The link is
+  `/history?invoice=<number>`; the History screen lists ingestion runs and has no
+  invoice-number filter, so the parameter is currently ignored. **FE Gap 473.**
+- **The "Open findings" filter chip is a count-that-opens, not a filter.** Same
+  reason: there is nothing finding-shaped in that table to filter. It renders
+  nothing when there is nothing open, which is also the flag-off shape.
+- **The action row acts on the top-ranked finding** — the one the verdict line is
+  written from. §8.3 puts one action row at the bottom of the bubble and the
+  founder's mockup shows one row, but every endpoint is per-finding. **Open: the
+  founder should confirm this reading, or ask for a row per finding.**
+- **Task 21.3 (suggested-question click) was not built.** The BE card exists
+  (`card_suggested_questions`, task 30.8), but §8.3's anatomy has five parts and
+  question chips are not one of them, and the approved mockup has none. **Open:
+  add a chip row, or drop 21.3.**
+- **Task 21.7's SSE leg is built but cannot fire.** `notify_insight_update()`
+  publishes on the insight job's own id, which is minted inside
+  `enqueue_insight_job()` and never returned to the browser. The FE handler,
+  in-place redraw, pulse and staleness guard are all in place and inert.
+  **FE Gap 474**, with two proposed BE fixes.
+
+### 9.4 Verification
+
+- `npx tsc --noEmit` → clean.
+- `npm test` (`npx vitest run`) → **Test Files 3 passed (3), Tests 30 passed (30)**.
+- `npx playwright test e2e/chat-insights.spec.ts` → **7 passed**; screenshots filed
+  under `docs/test_evidence/fe21_business_intelligence/`.
+- Regression over the five specs touching the changed files
+  (`chat-attachment-contract`, `chat-attachment-guards`, `chat-async-queue`,
+  `chat-thread-rename`, `ingestion-history`) → **41 passed**.
+- Not verified: anything against a real backend with `ENABLE_ATTACHMENT_INSIGHTS=true`
+  — §6's 21.5 asks for it, and it was not run. Every proof above is stubbed.
+
+### 8.1 Rulings on the build's open items — founder 2026-09-08 evening
+
+| item | ruling |
+|---|---|
+| Action row | **One row per bubble, acting on the top-ranked finding** (as built). Other findings are handled from the History "Open findings" count. |
+| Suggested-question chips (21.3) | **Dropped.** The BE card stays; nothing renders it. |
+| Live second-pass update (FE Gap 474) | BE fix chosen: **publish on the extraction job's channel** — BE Gap 497; the FE half already listens for `insight_update` on that stream. |
+| Evidence links (FE Gap 473) | **Plain text, no link.** `insight-evidence` spans replace the `insight-evidence-link` anchors; the `/history?invoice=` parameter is gone. |
+| Live check | **Commit and push now, verify on dev later.** |

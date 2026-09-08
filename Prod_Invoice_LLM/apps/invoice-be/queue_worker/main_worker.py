@@ -294,6 +294,7 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
                     attachment_id=data.get("attachment_id"),
                     tenant_id=data.get("tenant_id"),
                     message_id=data.get("message_id"),
+                    notify_job_id=data.get("notify_job_id"),
                 )
                 return
             if data.get("task") == "extract_attachment":

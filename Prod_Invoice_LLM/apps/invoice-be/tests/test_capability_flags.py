@@ -46,7 +46,16 @@ _FLAG_PARAMS = {
     "ENABLE_CERTIFIED_EXAMPLES": "enableCertifiedExamples",
     "ENABLE_KNOWLEDGE_LAYER": "enableKnowledgeLayer",
     "ENABLE_RERANK": "enableRerank",
+    # Feature 30 master flag (Gap 496) -- threaded exactly like the phase-2 five.
+    "ENABLE_ATTACHMENT_INSIGHTS": "enableAttachmentInsights",
 }
+
+#: Founder 2026-09-08 ("all the switches are on"): the built capabilities are ON in
+#: dev. Rerank stays off everywhere -- nothing is built behind it (30.14 closed).
+_DEV_ON = frozenset({
+    "enableEntityResolver", "enableSemanticViews", "enableCertifiedExamples",
+    "enableKnowledgeLayer", "enableAttachmentInsights",
+})
 
 
 def _text(p: Path) -> str:
@@ -56,7 +65,7 @@ def _text(p: Path) -> str:
 
 # --- 1: settings defaults ---------------------------------------------------
 
-def test_the_registry_lists_exactly_the_five_phase_2_capabilities():
+def test_the_registry_lists_exactly_the_six_capabilities():
     assert set(CAPABILITY_FLAGS) == set(_FLAG_PARAMS)
     assert len(CAPABILITY_FLAGS) == len(set(CAPABILITY_FLAGS)), "duplicate flag name"
 
@@ -146,12 +155,12 @@ def test_08_apps_declares_each_flag_and_threads_it_to_the_three_chat_running_mod
 
 
 @pytest.mark.parametrize("flag", sorted(_FLAG_PARAMS))
-def test_both_params_files_pin_the_flag_off(flag):
+def test_params_files_pin_dev_on_for_built_capabilities_and_prod_off(flag):
+    """Founder 2026-09-08: every built switch is ON in dev. Prod stays off until
+    the Feature 29 §10.1 rollout; rerank is off everywhere because 30.14 built nothing."""
     param = _FLAG_PARAMS[flag]
-    for name in ("params.dev.json", "params.prod.json"):
-        params = json.loads(_text(_INFRA / name))["parameters"]
-        assert param in params, f"{name} is missing {param}"
-        assert params[param]["value"] is False, (
-            f"{name} sets {param} true; phase-2 capabilities are off until their "
-            f"checkpoint says otherwise"
-        )
+    dev = json.loads(_text(_INFRA / "params.dev.json"))["parameters"]
+    prod = json.loads(_text(_INFRA / "params.prod.json"))["parameters"]
+    assert param in dev and param in prod, f"a params file is missing {param}"
+    assert dev[param]["value"] is (param in _DEV_ON), f"params.dev.json {param} should be {param in _DEV_ON}"
+    assert prod[param]["value"] is False, f"params.prod.json sets {param} true; prod is untouched by Features 29/30"

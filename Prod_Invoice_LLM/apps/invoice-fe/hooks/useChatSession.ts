@@ -5,6 +5,9 @@ import {
   type AttachmentState,
   type ChatAttachmentSummary,
 } from "@/lib/chatAttachments";
+// FE Feature 21 task 21.7 — the staleness rule lives in lib/chatInsights.ts so
+// the hook and the bubble cannot end up with two copies of it.
+import { isStaleInsightUpdate, type InsightUpdateEvent } from "@/lib/chatInsights";
 import type {
   ChatSession,
   ChatMessage,
@@ -19,6 +22,11 @@ import type {
 // Return type is explicitly exported so ChatWindow and page.tsx can type
 // the props they receive from this hook without re-declaring the shape.
 export interface UseChatSessionReturn {
+  /**
+   * FE Feature 21 task 21.7. Message ids whose insight bubble an SSE
+   * `insight_update` has just redrawn, for ~4 seconds after the redraw.
+   */
+  updatedInsightMessageIds: string[];
   sessions: ChatSession[];
   activeSessionId: string | null;
   messages: ChatMessage[];
@@ -190,6 +198,26 @@ export function useChatSession(): UseChatSessionReturn {
   // many this session already holds (the backend caps at 5 and 409s past it).
   const [attachment, setAttachment] = useState<AttachmentState | null>(null);
   const [attachmentCount, setAttachmentCount] = useState(0);
+  // -------------------------------------------------------------------------
+  // FE Feature 21 task 21.7 — the SSE `insight_update` redraw (spec §8.6 step 4).
+  //
+  // Message ids whose bubble was just replaced, so `MessageStream` can pulse the
+  // one that changed instead of the block silently swapping under the user.
+  // Cleared on a timer: it is a "this just changed" hint, not state.
+  // -------------------------------------------------------------------------
+  const [updatedInsightMessageIds, setUpdatedInsightMessageIds] = useState<string[]>([]);
+  // Last `insights_version` drawn, per attachment. Redis re-delivery and a
+  // stream reconnect both replay events; without this the bubble refetches and
+  // flashes for content it already has.
+  const insightVersionsRef = useRef<Record<string, number>>({});
+  // The insight job finishes outside any send, so the redraw handler cannot
+  // close over `activeSessionId` without going stale. A ref is read at the
+  // moment the event arrives.
+  const activeSessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
 
   // Keep track of active EventSource instances to prevent memory leaks or orphaned connections
   const activeStreamRef = useRef<EventSource | null>(null);
@@ -360,6 +388,43 @@ export function useChatSession(): UseChatSessionReturn {
         }
       };
 
+      /**
+       * §8.6 step 4. The async insight stage replaces the bubble ON THE SAME
+       * assistant message and pushes this event; the browser re-reads the
+       * session and redraws in place.
+       *
+       * Re-reading the whole session rather than patching the event's own
+       * payload is deliberate: the event carries a VERSION, not a block, so the
+       * server's copy is the only thing that can be trusted to be current.
+       */
+      const applyInsightUpdate = async (details: InsightUpdateEvent) => {
+        const attachmentKey = String(details.attachment_id || "");
+        if (isStaleInsightUpdate(details, insightVersionsRef.current[attachmentKey])) return;
+        insightVersionsRef.current[attachmentKey] = Number(details.insights_version);
+
+        const targetSessionId = details.session_id || activeSessionIdRef.current;
+        if (!targetSessionId) return;
+        try {
+          const res = await apiClient.get<GetSessionResponse>(
+            `/chat/sessions/${targetSessionId}`
+          );
+          setMessages(res.data ?? []);
+        } catch (err) {
+          // The bubble already on screen is true — the async stage only ever
+          // improves it — so a failed refetch costs the improvement, nothing else.
+          console.error("Could not redraw the updated findings:", err);
+          return;
+        }
+        const messageId = details.message_id ? String(details.message_id) : null;
+        if (!messageId) return;
+        setUpdatedInsightMessageIds((prev) =>
+          prev.includes(messageId) ? prev : [...prev, messageId]
+        );
+        setTimeout(() => {
+          setUpdatedInsightMessageIds((prev) => prev.filter((id) => id !== messageId));
+        }, 4000);
+      };
+
       let source: EventSource | null = null;
       try {
         source = new EventSource(`/api/chat/jobs/${jobId}/stream`);
@@ -376,7 +441,16 @@ export function useChatSession(): UseChatSessionReturn {
           const data = JSON.parse(e.data) as {
             status?: string;
             step?: string;
+            details?: any;
           };
+          // Task 21.7. MUST come before the generic `step` branch below: that
+          // branch writes `data.step` into the attachment chip as a stage label,
+          // so an un-intercepted `insight_update` would put the literal string
+          // "insight_update" under the user's document.
+          if (data.step === "insight_update") {
+            if (data.details) void applyInsightUpdate(data.details as InsightUpdateEvent);
+            return;
+          }
           if (data.status === "processing" && data.step) {
             setAttachment((prev) =>
               prev && prev.status === "extracting" ? { ...prev, stage: data.step } : prev
@@ -1057,5 +1131,7 @@ export function useChatSession(): UseChatSessionReturn {
     cancelAttachment,
     attachmentCount,
     confirmMatches,
+    // FE Feature 21 task 21.7
+    updatedInsightMessageIds,
   };
 }

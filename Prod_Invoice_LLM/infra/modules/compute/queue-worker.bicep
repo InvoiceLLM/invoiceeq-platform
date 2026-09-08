@@ -111,6 +111,9 @@ param enableKnowledgeLayer bool = false
 @description('Feature 29 phase-2 capability flag; default false. See config.py.')
 param enableRerank bool = false
 
+@description('Feature 30 master flag (Gap 496): the chat-attachment intelligence bubble. Default false. See config.py.')
+param enableAttachmentInsights bool = false
+
 var keyVaultUrl = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 var baseSecrets = [
@@ -455,6 +458,10 @@ resource queueWorkerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'ENABLE_RERANK'
               value: enableRerank ? 'true' : 'false'
+            }
+            {
+              name: 'ENABLE_ATTACHMENT_INSIGHTS'
+              value: enableAttachmentInsights ? 'true' : 'false'
             }
           ], docIntel2Env, docIntel3Env)
           // Gap 41/42 scaling (Jul 2026): 2 additional Doc Intelligence

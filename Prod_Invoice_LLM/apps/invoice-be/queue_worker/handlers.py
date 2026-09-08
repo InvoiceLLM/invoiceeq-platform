@@ -1795,7 +1795,8 @@ def handle_extract_attachment(job_id: str, attachment_id: str, tenant_id: str) -
                 )
                 return
 
-            row = extract_attachment(row, session, progress=progress)
+            # Gap 497: the insight job publishes its update on THIS job's channel.
+            row = extract_attachment(row, session, progress=progress, notify_job_id=job_id)
 
             if row.extraction_status == "EXTRACTED":
                 progress(STAGE_READY)
@@ -1826,7 +1827,11 @@ def handle_extract_attachment(job_id: str, attachment_id: str, tenant_id: str) -
 
 
 def handle_insight_job(
-    job_id: str, attachment_id: str, tenant_id: str, message_id: str | None = None
+    job_id: str,
+    attachment_id: str,
+    tenant_id: str,
+    message_id: str | None = None,
+    notify_job_id: str | None = None,
 ) -> None:
     """Feature 30 task 30.2 — stage 2 of the chat-attachment intelligence bubble.
 
@@ -1894,8 +1899,10 @@ def handle_insight_job(
             )
             open_insights_from_block(row, block, session)
 
+            # Gap 497: publish on the extraction job's channel (the browser's
+            # subscription); fall back to our own id only when none was given.
             notify_insight_update(
-                job_id,
+                notify_job_id or job_id,
                 session_id=row.session_id,
                 attachment_id=row.id,
                 insights_version=row.insights_version,

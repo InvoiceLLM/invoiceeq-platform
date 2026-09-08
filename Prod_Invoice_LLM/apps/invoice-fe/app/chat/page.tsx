@@ -55,6 +55,9 @@ export default function ChatPage() {
     // confirmation card and clarification buttons rendered read-only. The
     // handlers below are what make the D4 confirmation gate operable from the UI.
     confirmMatches,
+    // FE Feature 21 task 21.7: which bubble the async insight stage just
+    // redrew, so the change is visible rather than silent.
+    updatedInsightMessageIds,
   } = useChatSession();
 
   // R6. `AttachmentTurnHandlers` (components/chat/MessageBubble.tsx:422) is the
@@ -178,6 +181,7 @@ export default function ChatPage() {
         attachmentHandlers={attachmentHandlers}
         attachmentCount={attachmentCount}
         onAttachmentIntent={onAttachmentIntent}
+        updatedInsightMessageIds={updatedInsightMessageIds}
       />
     </div>
   );

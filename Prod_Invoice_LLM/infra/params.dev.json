@@ -69,19 +69,22 @@
       "value": "gpt-5-mini"
     },
     "enableEntityResolver": {
-      "value": false
+      "value": true
     },
     "enableSemanticViews": {
-      "value": false
+      "value": true
     },
     "enableCertifiedExamples": {
-      "value": false
+      "value": true
     },
     "enableKnowledgeLayer": {
-      "value": false
+      "value": true
     },
     "enableRerank": {
       "value": false
+    },
+    "enableAttachmentInsights": {
+      "value": true
     },
     "azureOpenAiModelVersion": {
       "value": "2026-07-09"
