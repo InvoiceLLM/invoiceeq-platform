@@ -82,6 +82,7 @@ def extract_attachment(
     db_session: Session,
     progress: Optional[ProgressFn] = None,
     notify_job_id: Optional[str] = None,
+    insight_state: Optional[dict] = None,
 ) -> ChatAttachment:
     """Run the REFERENCE profile over the stored file and denormalise the result.
 
@@ -143,7 +144,9 @@ def extract_attachment(
         index_attachment(row, db_session)
         progress(STAGE_MATCHING)
         match_attachment(row, db_session)
-        insight_attachment(row, db_session, progress=progress, notify_job_id=notify_job_id)
+        insight_attachment(
+            row, db_session, progress=progress, notify_job_id=notify_job_id, insight_state=insight_state
+        )
 
     return row
 
@@ -153,6 +156,7 @@ def insight_attachment(
     db_session: Session,
     progress: Optional[ProgressFn] = None,
     notify_job_id: Optional[str] = None,
+    insight_state: Optional[dict] = None,
 ) -> None:
     """Feature 30 (30.1/30.2): the intelligence bubble, after matching.
 
@@ -203,12 +207,17 @@ def insight_attachment(
         # EXTRACTION job's channel -- the one the browser subscribed to when the
         # upload returned `extraction_job_id` -- not on the insight job's own id,
         # which the browser never sees.
-        ChatQueueService.enqueue_insight_job(
+        queued = ChatQueueService.enqueue_insight_job(
             attachment_id=str(row.id),
             tenant_id=str(row.tenant_id),
             message_id=block.get("message_id"),
             notify_job_id=notify_job_id,
         )
+        # Gap 500: tell the extraction job whether a second pass is coming, so it
+        # can keep its stream open for the `insight_update` (see the handler).
+        if insight_state is not None:
+            insight_state["queued"] = bool(queued)
+            insight_state["insight_job_id"] = (queued or {}).get("job_id")
     except Exception as e:
         logger.error("Insight stage failed for attachment %s: %s", row.id, e)
         try:

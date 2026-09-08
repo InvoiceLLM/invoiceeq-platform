@@ -41,11 +41,11 @@ _As of 2026-09-08. Sources: `be_features_tracker.md`, `fe_features_tracker.md`, 
 
 Open before Phase 2 can be called complete: F27 fixture breadth (task F/V) and 27 flag-OFF parity tests (Gap 461); F26 Part 2 H6–H9 + Postgres/Redis verification; F28/F17 dev-stack manual rows; Plug & Play Drive write-back (338), sandbox keys (340), widget token (341).
 
-## Phase 3 — Business Intelligence & Platform Expansion — **~10% done**
+## Phase 3 — Business Intelligence & Platform Expansion — **~25% done**
 
 | Area | Functionality | % done | AI accuracy |
 |---|---|---|---|
-| Business Intelligence (BE30 / FE21) | Insight bubble for non-invoice docs in chat: verdict + findings, bank-statement match, hold/dispute/paid actions, per-tenant vendor master | 15% (spec approved w/ 10 rulings; phase-0 code started, uncommitted) | not yet measured |
+| Business Intelligence (BE30 / FE21) | Insight bubble for non-invoice docs in chat: verdict + findings, bank-statement match, per-tenant vendor master; information only (no invoice actions, Gap 492) | 70% (BE 20/23 tasks, FE 6/8; India rule cards await founder text; not yet verified live on dev with the switch on) | insight eval 20/20 figures exact (deterministic, no model) |
 | Entity resolver (29.11) | Vendor/entity resolution behind `ENABLE_ENTITY_RESOLVER` | 60% (built, flag off, rollout plan not applied) | 17 Postgres tests pass |
 | Desktop app (FE18) | PWA wrapper (Tauri dropped) | 0% | n/a |
 | Plug & Play remainder | Drive archive write-back, sandbox `inv_test_` keys, chat widget token | 0% | n/a |
@@ -59,4 +59,4 @@ Open before Phase 2 can be called complete: F27 fixture breadth (task F/V) and 2
 |---|---|---|---|
 | 1 | Core invoice platform | 100% | Extraction 99.3% · Chat 72% pass |
 | 2 | Automation & any-document intelligence | ~85% | Doc-type 100% · Attachment chat 25/25 |
-| 3 | Business intelligence & platform expansion | ~10% | not yet measured |
+| 3 | Business intelligence & platform expansion | ~25% | insight figures 20/20 exact (offline) |

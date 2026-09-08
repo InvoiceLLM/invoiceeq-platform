@@ -395,6 +395,59 @@ class ChatQueueService:
             except Exception as e:
                 logger.error("Error finalizing chat job %s in Redis: %s", job_id, e)
 
+    #: Gap 500. An extraction job whose insight stage was queued keeps its SSE
+    #: stream open until the insight job has published `insight_update`; the
+    #: extraction result is parked here and the insight job completes both.
+    DEFERRED_RESULT_PREFIX = "chat_job_deferred:"
+
+    @staticmethod
+    def defer_completion(job_id: str, result_payload: dict, client: "redis.Redis | None" = None) -> bool:
+        """Park an extraction job's final payload instead of completing it now.
+
+        The browser's stream on `job_id` closes on the first `completed`
+        status, and the second-pass bubble arrives later on the same channel
+        (Gap 497). So the extraction job stays `processing` with a
+        `insight_pending` step until `complete_deferred()` runs. Returns False
+        (and the caller completes normally) when Redis is unreachable.
+        """
+        r = client or get_redis_client()
+        if not r:
+            return False
+        try:
+            r.set(
+                f"{ChatQueueService.DEFERRED_RESULT_PREFIX}{job_id}",
+                json.dumps(result_payload),
+                ex=JOB_STATUS_TTL_SECONDS,
+            )
+            ChatQueueService.publish_progress(job_id, "insight_pending", {"attachment_id": result_payload.get("attachment_id")})
+            return True
+        except Exception as e:
+            logger.error("Could not defer completion of job %s: %s", job_id, e)
+            return False
+
+    @staticmethod
+    def complete_deferred(job_id: str | None, tenant_id: str, extra: dict | None = None, client: "redis.Redis | None" = None) -> bool:
+        """Complete a job parked by `defer_completion()`. No-op (False) when
+        nothing was parked -- the extraction job then already completed itself."""
+        if not job_id:
+            return False
+        r = client or get_redis_client()
+        if not r:
+            return False
+        try:
+            key = f"{ChatQueueService.DEFERRED_RESULT_PREFIX}{job_id}"
+            raw = r.get(key)
+            if not raw:
+                return False
+            payload = json.loads(raw)
+            payload.update(extra or {})
+            r.delete(key)
+        except Exception as e:
+            logger.error("Could not read deferred result for job %s: %s", job_id, e)
+            return False
+        ChatQueueService.complete_job(job_id, tenant_id, payload, client=r)
+        return True
+
     @staticmethod
     def fail_job(
         job_id: str,

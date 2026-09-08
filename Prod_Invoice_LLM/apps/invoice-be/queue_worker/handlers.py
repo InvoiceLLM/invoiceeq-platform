@@ -1796,28 +1796,36 @@ def handle_extract_attachment(job_id: str, attachment_id: str, tenant_id: str) -
                 return
 
             # Gap 497: the insight job publishes its update on THIS job's channel.
-            row = extract_attachment(row, session, progress=progress, notify_job_id=job_id)
+            insight_state: dict = {}
+            row = extract_attachment(
+                row, session, progress=progress, notify_job_id=job_id, insight_state=insight_state
+            )
 
             if row.extraction_status == "EXTRACTED":
                 progress(STAGE_READY)
             else:
                 progress(STAGE_FAILED)
 
-            ChatQueueService.complete_job(
-                job_id,
-                tenant_id,
-                {
-                    "attachment_id": str(row.id),
-                    "extraction_status": row.extraction_status,
-                    "doc_type": row.doc_type,
-                    "doc_number": row.doc_number,
-                    "party_name": row.party_name,
-                    "grand_total": row.grand_total,
-                    "match_summary": row.match_summary,
-                    "match_tier": row.match_tier,
-                    "candidate_invoice_ids": [str(i) for i in (row.candidate_invoice_ids or [])],
-                },
-            )
+            result = {
+                "attachment_id": str(row.id),
+                "extraction_status": row.extraction_status,
+                "doc_type": row.doc_type,
+                "doc_number": row.doc_number,
+                "party_name": row.party_name,
+                "grand_total": row.grand_total,
+                "match_summary": row.match_summary,
+                "match_tier": row.match_tier,
+                "candidate_invoice_ids": [str(i) for i in (row.candidate_invoice_ids or [])],
+            }
+            # Gap 500: the browser closes this stream on the first `completed`,
+            # and the second-pass bubble (Gap 497) rides this same stream. So
+            # when a second pass was queued, park the result and let the insight
+            # job complete this job AFTER it has published `insight_update`.
+            # If parking fails (Redis down) the job completes now, as before.
+            if insight_state.get("queued") and ChatQueueService.defer_completion(job_id, result):
+                logger.info("Extraction job %s deferred to insight job %s", job_id, insight_state.get("insight_job_id"))
+            else:
+                ChatQueueService.complete_job(job_id, tenant_id, result)
     except Exception as e:
         logger.error("Attachment extraction job %s failed: %s", job_id, e)
         try:
@@ -1920,9 +1928,20 @@ def handle_insight_job(
                     "finding_count": len(block.get("findings") or []),
                 },
             )
+            # Gap 500: now that `insight_update` is on the wire, close the
+            # extraction job the browser is actually streaming.
+            ChatQueueService.complete_deferred(
+                notify_job_id, tenant_id, {"insights_version": row.insights_version}
+            )
     except Exception as e:
         logger.error("Insight job %s failed: %s", job_id, e, exc_info=True)
         try:
             ChatQueueService.fail_job(job_id, tenant_id, str(e))
+        except Exception:
+            pass
+        # Gap 500: a failed second pass must never leave the browser's
+        # extraction stream open -- the sync bubble already stands.
+        try:
+            ChatQueueService.complete_deferred(notify_job_id, tenant_id, {"insight_stage": "failed"})
         except Exception:
             pass
