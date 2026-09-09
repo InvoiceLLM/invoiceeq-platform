@@ -179,7 +179,7 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName, onTerminal
       </div>
 
       <div className="text-[11px] text-slate-400 font-mono truncate">
-        Customer: {customerName || "Pending"} | Total: {grandTotal ? formatCurrency(grandTotal, currency) : "Pending"}
+        Customer: {customerName || "Pending"} | Total: {grandTotal != null ? formatCurrency(grandTotal, currency) : "Pending"}
       </div>
 
       <div className="flex items-center justify-between gap-3 text-[11px] min-h-[1.25rem]">

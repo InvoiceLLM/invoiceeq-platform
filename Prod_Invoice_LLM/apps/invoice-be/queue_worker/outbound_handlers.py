@@ -140,6 +140,9 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                         except Exception as de:
                             logger.warning("Could not parse date %s for %s: %s", date_val, date_field, de)
 
+                # Gap 505: subtotal was never persisted on the outbound path (inbound
+                # writes it at handlers.py); every outbound row had subtotal NULL.
+                invoice.subtotal = extracted_data.get("subtotal")
                 invoice.grand_total = extracted_data.get("grand_total")
                 invoice.tax_amount = extracted_data.get("tax_amount")
                 invoice.currency = extracted_data.get("currency")

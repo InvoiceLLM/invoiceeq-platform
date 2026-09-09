@@ -175,15 +175,19 @@ export default function StatusTable({
       try {
         const payload = JSON.parse(event.data);
         if (payload && payload.invoice_id) {
+          // FE Gap 477: the terminal event carries `data` (the extracted
+          // payload). Read vendor/total/currency from it instead of passing
+          // undefined, which used to wipe the values the mount fetch had set.
+          const d = payload.data || {};
           updateItemStatus(
             payload.invoice_id,
             payload.status,
             TERMINAL_STATUSES.includes(payload.status) ? 100 : 60,
             payload.alerts || [],
-            undefined,
-            undefined,
-            undefined,
-            payload.doc_type
+            d.vendor_name ?? undefined,
+            d.grand_total ?? undefined,
+            d.currency ?? undefined,
+            payload.doc_type ?? d.doc_type
           );
         }
       } catch (e) {
@@ -218,9 +222,11 @@ export default function StatusTable({
               status,
               progress,
               alerts: alerts || [],
-              vendorName,
-              total,
-              currency,
+              // FE Gap 477: keep what the row already knows when the caller
+              // has nothing newer (same rule docType already followed).
+              vendorName: vendorName ?? item.vendorName,
+              total: total ?? item.total,
+              currency: currency ?? item.currency,
               // FE Gap 378: unlike the fields above, a doc type already on the
               // row is kept when the caller doesn't supply one. The SSE stream
               // sends status transitions and nothing else, so overwriting with
@@ -547,7 +553,7 @@ export default function StatusTable({
 
                             <div className="pt-2 flex items-center justify-between gap-2 flex-wrap">
                               <span className="text-[10px] text-slate-400 font-mono">
-                                Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? formatCurrency(item.total, item.currency) : "Pending"}
+                                Vendor: {item.vendorName || "Unknown"} | Total: {item.total != null ? formatCurrency(item.total, item.currency) : "Pending"}
                               </span>
                               <Link
                                 href={`/invoices/review/${item.id}`}
@@ -565,7 +571,7 @@ export default function StatusTable({
                               Invoice parsed successfully with zero warnings.
                             </span>
                             <span className="text-[10px] text-slate-400 font-mono">
-                              Vendor: {item.vendorName || "Unknown"} | Total: {item.total ? formatCurrency(item.total, item.currency) : "Pending"}
+                              Vendor: {item.vendorName || "Unknown"} | Total: {item.total != null ? formatCurrency(item.total, item.currency) : "Pending"}
                             </span>
                           </div>
                         )}

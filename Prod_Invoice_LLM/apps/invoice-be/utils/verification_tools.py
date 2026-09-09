@@ -6,17 +6,26 @@ logger = logging.getLogger(__name__)
 # Gap 31: a flat 0.01 absolute tolerance flags economically-immaterial rounding
 # differences on large invoices (e.g. a ~13-unit gap on an 80,000-unit line from
 # percentage-discount rounding). Add a relative tolerance alongside it.
-REL_TOLERANCE = 0.005  # 0.5%
+#
+# Gap 504 (2026-09-09): that relative band was 0.5%, which on a 4.8-lakh invoice
+# silently accepted a printed total 640 above its own arithmetic (VPI-OUT-2014
+# on the founder's demo tenant, 0.13% off, VERIFIED with no alert). Rounding is
+# a matter of units, not hundreds: the band is now max(1.00 absolute, 0.05%).
+# Gap 31's own case (13 on 80,000 = 0.016%) still passes; tenants can widen it
+# per alert type through Feature 18 tolerance overrides.
+REL_TOLERANCE = 0.0005  # 0.05%
+DEFAULT_ABS_TOLERANCE = 1.00
 
 
-def _within_tolerance(actual: float, expected: float, abs_tol: float = 0.01, rel_tol: float = REL_TOLERANCE) -> bool:
+def _within_tolerance(
+    actual: float, expected: float, abs_tol: float = DEFAULT_ABS_TOLERANCE, rel_tol: float = REL_TOLERANCE
+) -> bool:
     return abs(actual - expected) <= max(abs_tol, rel_tol * abs(expected))
 
 
 # Feature 18: default tolerances, named so the override machinery and the
 # preview's historical replay both read the same numbers this module has always
 # used rather than re-declaring them.
-DEFAULT_ABS_TOLERANCE = 0.01
 
 
 def _tolerance_for(tolerances: dict | None, alert_type: str) -> tuple[float, float]:
