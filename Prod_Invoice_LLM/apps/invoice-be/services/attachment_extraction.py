@@ -218,6 +218,12 @@ def insight_attachment(
         if insight_state is not None:
             insight_state["queued"] = bool(queued)
             insight_state["insight_job_id"] = (queued or {}).get("job_id")
+        # Gap 507: record it on the row too, so the ownership check behind
+        # `/chat/jobs/{id}/stream` resolves an insight job id as well.
+        if queued and queued.get("job_id"):
+            row.insight_job_id = queued["job_id"]
+            db_session.add(row)
+            db_session.commit()
     except Exception as e:
         logger.error("Insight stage failed for attachment %s: %s", row.id, e)
         try:

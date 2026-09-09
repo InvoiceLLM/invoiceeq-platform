@@ -543,6 +543,18 @@ class ChatAttachment(SQLModel, table=True):
     # recomputed so the chip says the same thing after a reload as it did at
     # upload -- the matcher is a database query, and re-running it on every
     # render would let the answer drift as the ledger changes underneath it.
+    #: Gap 507: the background job ids this attachment owns, written before the
+    #: enqueue so `/chat/jobs/{id}/stream` can answer "is this job yours?" for an
+    #: attachment job the same way `ChatMessage.job_id` answers it for a chat job.
+    extraction_job_id: str | None = Field(default=None, index=True, max_length=64)
+    insight_job_id: str | None = Field(default=None, index=True, max_length=64)
+    #: Gap 507: the background job ids this attachment owns. Written before the
+    #: enqueue, so `/chat/jobs/{id}/stream` can answer "is this job yours?" for
+    #: an attachment job the same way `ChatMessage.job_id` answers it for a chat
+    #: job. Without them the ownership check found no row and 404'd a job that
+    #: was running fine, so the browser never saw the extraction finish.
+    extraction_job_id: str | None = Field(default=None, index=True, max_length=64)
+    insight_job_id: str | None = Field(default=None, index=True, max_length=64)
     match_tier: int | None = Field(default=None)
     match_summary: str | None = Field(default=None, max_length=512)
     created_at: datetime = Field(default_factory=datetime.utcnow)

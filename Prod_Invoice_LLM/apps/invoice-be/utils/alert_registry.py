@@ -212,6 +212,16 @@ ALERT_TYPES: dict[str, AlertTypeSpec] = {
         not_correctable_reason=_FACTUAL_NOT_CORRECTABLE,
         flaggable_as_missed=False,
     ),
+    # Gap 503 (2026-09-09), registered under Gap 506: without this entry the
+    # Trainer rejected the alert as unknown, so a tenant could not even relabel it.
+    "possible_duplicate": AlertTypeSpec(
+        type="possible_duplicate",
+        label="Possible duplicate (same vendor, date and total, different number)",
+        producer="queue_worker/handlers.py::find_near_duplicate",
+        default_field=None,
+        not_correctable_reason=_FACTUAL_NOT_CORRECTABLE,
+        flaggable_as_missed=False,
+    ),
     "duplicate": AlertTypeSpec(
         type="duplicate",
         label="Duplicate upload (same file bytes)",

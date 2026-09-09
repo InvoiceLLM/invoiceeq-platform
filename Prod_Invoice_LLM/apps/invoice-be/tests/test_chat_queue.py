@@ -193,6 +193,78 @@ def _seed_owned_job(db_session, job_id: str, tenant_id=MOCK_TENANT_ID):
     return session_id
 
 
+def test_an_attachment_job_stream_is_reachable_by_its_owner(db_session):
+    """Gap 507: `_require_owned_chat_job()` resolved ownership only through
+    `ChatMessage.job_id`, which an ATTACHMENT extraction job never has -- its id
+    lives on the attachment row. Every attachment stream 404'd, so the chip never
+    learned the doc type, the total or the matched invoices (founder, 2026-09-09:
+    a purchase order sat on "OTHER / no matching invoice found yet" while the row
+    held PURCHASE_ORDER, PO-VPI-1041, Rajesh Steel and two candidates)."""
+    from models import ChatAttachment
+
+    job_id = "job-attach-507"
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="t"))
+    db_session.commit()
+    db_session.add(
+        ChatAttachment(
+            id=uuid4(),
+            tenant_id=MOCK_TENANT_ID,
+            session_id=session_id,
+            filename="PO.pdf",
+            blob_path="x/PO.pdf",
+            extraction_status="PENDING",
+            extraction_job_id=job_id,
+        )
+    )
+    db_session.commit()
+
+    client = TestClient(app)
+    with patch(
+        "services.chat_queue.ChatQueueService.get_job_status",
+        return_value={"job_id": job_id, "status": "completed", "result": {}},
+    ):
+        res = client.get(f"/api/v1/chat/jobs/{job_id}/stream")
+        assert res.status_code == 200, res.text
+        assert "text/event-stream" in res.headers["content-type"]
+
+    # An id in neither table is still a 404 -- probing other tenants is unchanged.
+    with patch(
+        "services.chat_queue.ChatQueueService.get_job_status",
+        return_value={"job_id": "nope", "status": "completed"},
+    ):
+        assert client.get("/api/v1/chat/jobs/job-that-does-not-exist/stream").status_code == 404
+
+
+def test_an_attachment_job_of_another_tenant_is_forbidden(db_session):
+    """Gap 507 keeps Gap 341's rule: a job that exists but is not yours is a 403."""
+    from models import ChatAttachment
+
+    job_id = "job-attach-507-other"
+    other_tenant = uuid4()
+    session_id = uuid4()
+    db_session.add(ChatSession(id=session_id, tenant_id=other_tenant, title="t"))
+    db_session.commit()
+    db_session.add(
+        ChatAttachment(
+            id=uuid4(),
+            tenant_id=other_tenant,
+            session_id=session_id,
+            filename="PO.pdf",
+            blob_path="x/PO.pdf",
+            extraction_status="PENDING",
+            extraction_job_id=job_id,
+        )
+    )
+    db_session.commit()
+
+    with patch(
+        "services.chat_queue.ChatQueueService.get_job_status",
+        return_value={"job_id": job_id, "status": "completed"},
+    ):
+        assert TestClient(app).get(f"/api/v1/chat/jobs/{job_id}/stream").status_code == 403
+
+
 def test_chat_job_status_and_stream_endpoints(db_session):
     """Gap 280: Verify /chat/jobs/{id}/status and /stream endpoints.
 

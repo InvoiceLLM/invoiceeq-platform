@@ -363,6 +363,13 @@ async def upload_chat_attachment(
         extract_attachment(row, db_session)
         return _to_out(row, attachment_count=len(existing) + 1)
 
+    # Gap 507: persist the job id before handing it to the browser, so the
+    # ownership check behind `/chat/jobs/{id}/stream` can resolve it.
+    row.extraction_job_id = queued["job_id"]
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+
     return _to_out(
         row,
         attachment_count=len(existing) + 1,

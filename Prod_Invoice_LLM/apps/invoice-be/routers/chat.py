@@ -4,6 +4,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
+from sqlalchemy import or_
 from sqlmodel import Session, select
 from uuid import UUID, uuid4
 from datetime import datetime
@@ -894,10 +895,32 @@ def _require_owned_chat_job(
         select(ChatMessage).where(ChatMessage.job_id == job_id)
     ).first()
     if message is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat job not found.",
-        )
+        # Gap 507: an ATTACHMENT job (extraction, or its second-pass insight job)
+        # has no `ChatMessage` -- its id lives on the attachment row. Resolving
+        # only through `ChatMessage` 404'd every attachment stream, so the chip
+        # never learned the doc type, the total or the matched invoices and sat
+        # on "no matching invoice found yet" for a document that had extracted
+        # perfectly. Same rule, second place to look; an id in neither table is
+        # still a 404, so nothing about probing other tenants changes.
+        attachment = db_session.exec(
+            select(ChatAttachment).where(
+                or_(
+                    ChatAttachment.extraction_job_id == job_id,
+                    ChatAttachment.insight_job_id == job_id,
+                )
+            )
+        ).first()
+        if attachment is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Chat job not found.",
+            )
+        if attachment.tenant_id != tenant_context.tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access forbidden to this chat job.",
+            )
+        return
 
     chat_session = db_session.exec(
         select(ChatSession).where(ChatSession.id == message.session_id)
