@@ -1079,6 +1079,27 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                             alerts.append(dup_alert)
                         status = "AUDIT_REQUIRED"
 
+                # Layer 3 (Gap 503): near-duplicate -- same vendor, same invoice
+                # date, same grand total, DIFFERENT number. Layer 2 cannot see a
+                # re-issued or re-numbered bill (founder, 2026-09-09: NAT-2006 /
+                # NAT-2007 uploaded together, no alert). A soft alert, not a
+                # DUPLICATE status: the row is routed to review and a human decides.
+                near_dup = find_near_duplicate(session, invoice, extracted_data)
+                if near_dup is not None:
+                    near_alert = {
+                        "type": "possible_duplicate",
+                        "severity": "warning",
+                        "message": (
+                            f"Possible duplicate: {near_dup.vendor_name} invoice {near_dup.invoice_number} "
+                            f"(ID: {near_dup.id}) has the same date and total ({near_dup.grand_total:,.2f}) "
+                            f"but a different number ({invoice_number}). Check whether this is a re-issue."
+                        ),
+                    }
+                    if near_alert not in alerts:
+                        alerts = list(alerts)
+                        alerts.append(near_alert)
+                    status = "AUDIT_REQUIRED"
+
                 invoice.vendor_name = vendor_name
                 invoice.subtotal = extracted_data.get("subtotal")
                 invoice.grand_total = extracted_data.get("grand_total")
@@ -1268,6 +1289,45 @@ def _persist_processing_failure(file_path: str, error: Exception) -> None:
             "Could not persist FAILED status for %s: %s (original error preserved)",
             file_path, persist_error,
         )
+
+
+def find_near_duplicate(session, invoice, extracted_data: dict):
+    """Layer 3 duplicate detection (Gap 503). Returns the earlier INBOUND invoice
+    of the same tenant with the same vendor (case-insensitive), the same invoice
+    date and the same grand total (+/- 0.01) but a DIFFERENT invoice number, or
+    None. Pure query, no side effects, so it is testable on its own.
+
+    Same-number matches are Layer 2's job and are excluded here so one pair never
+    raises two alerts. Rows already marked DUPLICATE are excluded: pointing at a
+    duplicate pointer would send the reviewer to the wrong row.
+    """
+    from sqlalchemy import func
+
+    vendor_name = extracted_data.get("vendor_name")
+    invoice_number = extracted_data.get("invoice_number")
+    grand_total = extracted_data.get("grand_total")
+    raw_date = extracted_data.get("invoice_date")
+    if not (vendor_name and grand_total is not None and raw_date):
+        return None
+    try:
+        invoice_date = datetime.strptime(str(raw_date).split("T")[0].split(" ")[0].strip(), "%Y-%m-%d").date()
+        total = float(grand_total)
+    except (TypeError, ValueError):
+        return None
+
+    stmt = select(Invoice).where(
+        Invoice.tenant_id == invoice.tenant_id,
+        Invoice.id != invoice.id,
+        Invoice.flow_direction == "INBOUND",
+        Invoice.status != "DUPLICATE",
+        func.lower(Invoice.vendor_name) == vendor_name.lower(),
+        Invoice.invoice_date == invoice_date,
+        Invoice.grand_total >= total - 0.01,
+        Invoice.grand_total <= total + 0.01,
+    )
+    if invoice_number:
+        stmt = stmt.where(func.lower(Invoice.invoice_number) != invoice_number.lower())
+    return session.exec(stmt.order_by(Invoice.created_at)).first()
 
 
 def handle_reaudit_templates(tenant_id: str, vendor_name: str = None) -> dict:

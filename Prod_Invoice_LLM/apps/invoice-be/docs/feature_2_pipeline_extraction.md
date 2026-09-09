@@ -152,6 +152,8 @@ Net effect once this lands: an Indian GST invoice, a US multi-jurisdiction sales
   - The bare-`Tenant`-row fallback is gone from `routers/invoices.py::upload_invoices()` (now 404s if no tenant exists). Provisioning consolidated into `dependencies.py::get_tenant_context()`, which does real domain-matching (creates a `Tenant` on new domain, joins an existing one on match) and now also provisions `User` rows — this effectively folds in most of Website Feature 4's Task 4.2 on the backend side.
 - [x] **Task 2.20: Layer-2 duplicate detection** *(tracker Gap 9 — resolved)*
   - `handle_process_invoice()` runs a post-extraction case-insensitive match on `invoice_number` + `vendor_name` within the tenant; a hit appends a `duplicate_invoice` alert and forces `status=AUDIT_REQUIRED`.
+  - **Layer 3 (Gap 503, 2026-09-09):** `find_near_duplicate()` — same vendor (case-insensitive), same `invoice_date`, same `grand_total` ±0.01, *different* number, INBOUND, not DUPLICATE, same tenant → soft alert `possible_duplicate` (severity warning) naming the earlier invoice, `status=AUDIT_REQUIRED`. Never sets DUPLICATE; the reviewer decides.
+  - **Credit / debit notes (Gap 502):** `verify_line_items_math(doc_type=...)` accepts the sign-flipped qty × rate for `CREDIT_NOTE` / `DEBIT_NOTE`, so a credit note with positive qty and rate and a negative amount is not flagged.
 - [x] **Task 2.21: Add structured `taxes` list to the extraction schema** *(tracker Gap 18 — resolved)*
   - `InvoiceExtractionSchema.taxes: List[TaxItem]` (`{tax_type, rate_percent, amount}`) exists alongside the flat `tax_amount`, matching `Invoice.taxes` (JSONB). Top-level `discount_percent`/`discount_amount` also added.
 - [x] **Task 2.22: Per-line-item tax/discount math** *(tracker Gap 18 — resolved)*

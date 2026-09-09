@@ -2256,7 +2256,8 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     subtotal = data.get("subtotal")
     if run_line_item_math:
         line_item_alert = verify_line_items_math(
-            items, subtotal, invoice_tax_amount=data.get("tax_amount"), tolerances=tolerances
+            items, subtotal, invoice_tax_amount=data.get("tax_amount"), tolerances=tolerances,
+            doc_type=state.get("doc_type"),  # Gap 502: credit/debit notes are sign-flipped
         )
         if line_item_alert:
             alerts.append(line_item_alert)

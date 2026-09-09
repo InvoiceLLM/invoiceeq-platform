@@ -37,16 +37,28 @@ def _tolerance_for(tolerances: dict | None, alert_type: str) -> tuple[float, flo
     )
 
 
+#: Document types whose printed line amounts carry the opposite sign to
+#: qty x unit_price (a credit note prints qty 25, rate 1,450.00, amount
+#: -36,250.00). Gap 502: the per-line check accepts either sign for these.
+SIGN_FLIPPED_DOC_TYPES: frozenset[str] = frozenset({"CREDIT_NOTE", "DEBIT_NOTE"})
+
+
 def verify_line_items_math(
     items: list[dict],
     subtotal: float | None,
     invoice_tax_amount: float | None = None,
     tolerances: dict | None = None,
+    doc_type: str | None = None,
 ) -> dict | None:
     """
     Checks if sum(item.amount) == subtotal.
     Also verifies each item's amount matches qty * rate * (1 - discount) * (1 + tax) if details are present.
     Returns an alert dict if mismatch, else None.
+
+    `doc_type` (Gap 502): for CREDIT_NOTE / DEBIT_NOTE the printed amount is
+    the negative of qty x rate (quantities and rates are printed positive, the
+    money is negative), so the per-line check also accepts the sign-flipped
+    expected value. Any other doc type, or None, is byte-for-byte the old check.
 
     `tolerances` (Feature 18, optional) widens the acceptance band per alert type
     — `line_item_calculation_mismatch` for the per-line check and
@@ -104,9 +116,11 @@ def verify_line_items_math(
                 elif tax_amount is not None:
                     expected_post_tax += float(tax_amount)
 
-                if not (
-                    _within_tolerance(amount, expected_pre_tax, line_abs_tol, line_rel_tol)
-                    or _within_tolerance(amount, expected_post_tax, line_abs_tol, line_rel_tol)
+                candidates = [expected_pre_tax, expected_post_tax]
+                if doc_type in SIGN_FLIPPED_DOC_TYPES:
+                    candidates += [-expected_pre_tax, -expected_post_tax]
+                if not any(
+                    _within_tolerance(amount, c, line_abs_tol, line_rel_tol) for c in candidates
                 ):
                     return {
                         "type": "line_item_calculation_mismatch",
