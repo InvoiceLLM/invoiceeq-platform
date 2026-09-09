@@ -2764,3 +2764,50 @@ def test_rule_6d_attribute_exemption_is_present_in_both_dialects():
     assert "`discount_amount`" in block
     assert "never that the invoice does not exist" in block
     assert "Do NOT search line items for this word" in block
+
+
+# ---------------------------------------------------------------------------
+# Gap 508: `sa_alerts` in a results table is rendered as its messages, not JSON
+# ---------------------------------------------------------------------------
+def test_sa_alerts_renders_as_the_alert_message_not_raw_json():
+    """Founder, 2026-09-09: asking "do we have duplicate invoices?" makes the
+    model select `sa_alerts`, and the cell dumped the whole alert object
+    (type/field/severity/message) as JSON into the chat table."""
+    from agents.query_agent import render_result_cell
+
+    alerts = [
+        {
+            "type": "possible_duplicate",
+            "field": None,
+            "severity": "warning",
+            "message": "Possible duplicate: NAT-2006 has the same date and total.",
+        }
+    ]
+    cell = render_result_cell(alerts, "sa_alerts")
+    assert cell == "Possible duplicate: NAT-2006 has the same date and total."
+    assert "severity" not in cell and "{" not in cell
+
+
+def test_two_alerts_are_joined_and_a_pipe_cannot_break_the_row():
+    from agents.query_agent import render_result_cell
+
+    cell = render_result_cell(
+        [{"message": "first | thing"}, {"type": "tax_mismatch"}], "sa_alerts"
+    )
+    assert cell == "first / thing; tax_mismatch"
+    assert "|" not in cell
+
+
+def test_empty_or_missing_alerts_render_as_an_empty_cell():
+    from agents.query_agent import render_result_cell
+
+    for empty in (None, [], {}, ""):
+        assert render_result_cell(empty, "sa_alerts") == ""
+
+
+def test_other_json_columns_are_untouched():
+    """`items` and `tags` keep the Gap-306 json.dumps rendering."""
+    from agents.query_agent import render_result_cell
+
+    cell = render_result_cell([{"description": "Hex Bolts", "amount": 36250.0}], "items")
+    assert cell.startswith("[{") and "description" in cell

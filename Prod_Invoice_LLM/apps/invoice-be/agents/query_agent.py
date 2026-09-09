@@ -1214,7 +1214,8 @@ def category_search_fallback(
     header = " | ".join(keys)
     separator = " | ".join(["---"] * len(keys))
     markdown_rows = [
-        " | ".join(render_result_cell(val) for val in row) for row in rows
+        " | ".join(render_result_cell(val, keys[i]) for i, val in enumerate(row))
+        for row in rows
     ]
     return f"{header}\n{separator}\n" + "\n".join(markdown_rows)
 
@@ -2154,7 +2155,7 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     separator = " | ".join(["---"] * len(display_keys))
     markdown_rows = []
     for row in rows:
-        cells = [render_result_cell(row[i]) for i in display_indices]
+        cells = [render_result_cell(row[i], keys[i]) for i in display_indices]
         markdown_rows.append(" | ".join(cells))
 
     # Deliberately no leading "\n\n" here (Found live, 2026-08-19): the SQL
@@ -2167,7 +2168,46 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     return f"{header}\n{separator}\n" + "\n".join(markdown_rows)
 
 
-def render_result_cell(val) -> str:
+#: Gap 508: columns whose raw JSON is not what a person asked for. `sa_alerts`
+#: is the one a user meets in practice -- "do we have duplicates?" makes the
+#: model select it, and the cell rendered the whole alert object (type, field,
+#: severity, message, nested dicts) as JSON in the middle of a results table.
+#: The alert MESSAGE is the content; everything around it is plumbing. Rendered
+#: in code rather than asked for in the prompt, for the reason the column
+#: denylist above gives: a column's shape is a fact, not a judgement call.
+_ALERT_COLUMNS = frozenset({"sa_alerts", "alerts"})
+
+
+def render_alert_cell(val) -> str:
+    """`sa_alerts` as a person reads it: the messages, joined, nothing else."""
+    if val in (None, "", [], {}):
+        return ""
+    if isinstance(val, str):
+        try:
+            val = json.loads(val)
+        except (TypeError, ValueError):
+            return val
+    if isinstance(val, dict):
+        val = [val]
+    if not isinstance(val, list):
+        return str(val)
+    parts: list[str] = []
+    for alert in val:
+        if isinstance(alert, dict):
+            text = alert.get("message") or alert.get("type") or ""
+        else:
+            text = str(alert)
+        text = " ".join(str(text).split())
+        if text:
+            parts.append(text)
+    if not parts:
+        return ""
+    # The pipe is the results table's own column separator: an alert message
+    # carrying one would split the row into an extra cell.
+    return "; ".join(parts).replace("|", "/")
+
+
+def render_result_cell(val, column: str | None = None) -> str:
     """One results-table cell, rendered the way the chat window expects it.
 
     Lifted verbatim out of `execute_generated_sql()` by Gap 306 so the
@@ -2178,6 +2218,8 @@ def render_result_cell(val) -> str:
     exactly one of the two paths. No behaviour change: every branch below is the
     original, in the original order.
     """
+    if column in _ALERT_COLUMNS:
+        return render_alert_cell(val)
     if val is None:
         return ""
     if isinstance(val, (list, dict)):
