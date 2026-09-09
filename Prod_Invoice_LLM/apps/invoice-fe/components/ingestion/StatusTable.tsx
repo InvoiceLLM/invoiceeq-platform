@@ -54,6 +54,8 @@ interface StatusTableProps {
 // jump straight to 100% progress instead of sitting at the SSE stream's
 // default in-progress value.
 const TERMINAL_STATUSES = ["COMPLETED", "AUDIT_REQUIRED", "DUPLICATE", "FAILED", "PAID", "REJECTED"];
+// FE Gap 475: how long the finished rows stay on screen before collapsing.
+const COLLAPSE_AFTER_MS = 5000;
 
 export default function StatusTable({
   batchId,
@@ -63,6 +65,20 @@ export default function StatusTable({
   const [items, setItems] = useState<StatusItem[]>([]);
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  // FE Gap 475 (founder 2026-09-09: "once ingestion is done ... the extracted
+  // files should not be displayed"). When every file is terminal the row list
+  // collapses to a one-line summary after a short grace period; "Show files"
+  // brings the rows back. `null` = not collapsed yet / user re-opened.
+  const [collapsed, setCollapsed] = useState(false);
+  const allTerminal = items.length > 0 && items.every((i) => TERMINAL_STATUSES.includes(i.status));
+  useEffect(() => {
+    if (!allTerminal) {
+      setCollapsed(false);
+      return;
+    }
+    const t = setTimeout(() => setCollapsed(true), COLLAPSE_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [allTerminal, batchId]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes";
@@ -339,6 +355,8 @@ export default function StatusTable({
   ).length;
   const duplicateCount = items.filter((i) => i.status === "DUPLICATE").length;
   const failedCount = items.filter((i) => i.status === "FAILED").length;
+  const needsReviewCount = items.filter((i) => i.status === "AUDIT_REQUIRED").length;
+  const firstReviewId = items.find((i) => i.status === "AUDIT_REQUIRED")?.id ?? null;
 
   return (
     <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D]">
@@ -378,6 +396,41 @@ export default function StatusTable({
         </div>
       </div>
 
+      {/* FE Gap 475: finished batch -> one summary line, rows on demand. The
+          header block above (title + counters) is unchanged so the e2e
+          "Ingestion Progress Queue" anchor keeps resolving. */}
+      {collapsed && (
+        <div
+          data-testid="ingestion-summary"
+          className="px-4 py-3 flex items-center gap-3 flex-wrap text-xs text-slate-300"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+          <span>
+            <span className="font-semibold text-white">{processedCount} processed</span>
+            {needsReviewCount > 0 && <span className="text-amber-400"> &middot; {needsReviewCount} need review</span>}
+            {duplicateCount > 0 && <span className="text-amber-400"> &middot; {duplicateCount} duplicate{duplicateCount === 1 ? "" : "s"}</span>}
+            {failedCount > 0 && <span className="text-rose-400"> &middot; {failedCount} failed</span>}
+          </span>
+          <span className="ml-auto flex items-center gap-3">
+            {needsReviewCount > 0 && firstReviewId && (
+              <Link href={`/invoices/review/${firstReviewId}`} className="text-[#3B82F6] hover:text-[#3B82F6]/80 font-bold">
+                Review
+              </Link>
+            )}
+            <Link href="/dashboard" className="text-[#3B82F6] hover:text-[#3B82F6]/80 font-bold">
+              Dashboard
+            </Link>
+            <button
+              onClick={() => setCollapsed(false)}
+              className="text-slate-400 hover:text-white font-semibold"
+            >
+              Show files
+            </button>
+          </span>
+        </div>
+      )}
+
+      {!collapsed && (<>
       {/* Table view.
           FE Gap 113 item 6: six columns (File Name / Size / Type / Status /
           Progress / Details) collapsed to the three this ledger is actually
@@ -525,6 +578,7 @@ export default function StatusTable({
           </tbody>
         </table>
       </div>
+      </>)}
     </div>
   );
 }

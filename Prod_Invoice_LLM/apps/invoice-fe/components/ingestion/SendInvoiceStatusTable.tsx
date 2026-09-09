@@ -28,6 +28,9 @@ const TERMINAL_STATUSES: OutboundStatus[] = ["VERIFIED", "NEEDS_REVIEW", "SENT",
 interface SendInvoiceStatusTableProps {
   invoiceId: string | null;
   fileName: string;
+  // FE Gap 475: the page hides this card's log terminal once the invoice is
+  // terminal; the card itself stays as the three-line record of the upload.
+  onTerminal?: (invoiceId: string, status: OutboundStatus) => void;
 }
 
 /**
@@ -52,7 +55,7 @@ interface SendInvoiceStatusTableProps {
  * The surviving terminal is the page-level one, which is given the real
  * `batch_id` returned by POST /outbound-invoices/upload.
  */
-export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvoiceStatusTableProps) {
+export default function SendInvoiceStatusTable({ invoiceId, fileName, onTerminal }: SendInvoiceStatusTableProps) {
   const [status, setStatus] = useState<OutboundStatus>("UPLOADED");
   const [customerName, setCustomerName] = useState<string | null>(null);
   const [grandTotal, setGrandTotal] = useState<number | null>(null);
@@ -98,6 +101,8 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
       }
       if (activeRef.current && !TERMINAL_STATUSES.includes(latest)) {
         setTimeout(poll, 2000);
+      } else if (activeRef.current && invoiceId) {
+        onTerminal?.(invoiceId, latest);
       }
     };
     poll();
@@ -157,56 +162,58 @@ export default function SendInvoiceStatusTable({ invoiceId, fileName }: SendInvo
   };
 
   const canConfirm = status === "VERIFIED" || status === "NEEDS_REVIEW";
+  const firstAlert = alerts.length > 0 ? alerts[0].message : null;
 
+  // FE Gap 476 (founder 2026-09-09: "the processing box are too big, reduce it
+  // to 3 line box"). Line 1: file + status badge. Line 2: customer | total.
+  // Line 3: the outcome -- first alert (+ count) with the console link, the
+  // failure text, or the Confirm & Send action. Nothing else.
   return (
-    <div className="space-y-4">
-      <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D] space-y-4 p-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 max-w-xs truncate">
-            <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-            <span className="truncate font-semibold text-slate-200 text-xs">{fileName}</span>
-          </div>
-          {getStatusBadge()}
+    <div className="glass-panel rounded-xl overflow-hidden border border-[#222D3D] px-4 py-2.5 space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+          <span className="truncate font-semibold text-slate-200 text-xs" title={fileName}>{fileName}</span>
         </div>
+        {getStatusBadge()}
+      </div>
 
-        {(customerName || grandTotal) && (
-          <div className="text-[11px] text-slate-400 font-mono">
-            Customer: {customerName || "Pending"} | Total: {grandTotal ? formatCurrency(grandTotal, currency) : "Pending"}
-          </div>
-        )}
+      <div className="text-[11px] text-slate-400 font-mono truncate">
+        Customer: {customerName || "Pending"} | Total: {grandTotal ? formatCurrency(grandTotal, currency) : "Pending"}
+      </div>
 
-        {status === "FAILED" && (
-          <div className="space-y-1 text-xs text-red-300 bg-red-500/5 border border-red-500/20 rounded-lg p-3">
-            <div className="font-semibold">Processing failed.</div>
-            {alerts.length > 0 ? (
-              alerts.map((a, idx) => <div key={idx}>{a.message}</div>)
-            ) : (
-              <div>The document could not be processed. Try re-uploading the file.</div>
-            )}
-          </div>
-        )}
-
-        {status === "NEEDS_REVIEW" && alerts.length > 0 && (
-          <div className="space-y-1 text-xs text-amber-300 bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
-            {alerts.map((a, idx) => (
-              <div key={idx}>{a.message}</div>
-            ))}
+      <div className="flex items-center justify-between gap-3 text-[11px] min-h-[1.25rem]">
+        {status === "FAILED" ? (
+          <span className="text-red-300 truncate" title={firstAlert ?? undefined}>
+            Processing failed{firstAlert ? `: ${firstAlert}` : ". Try re-uploading the file."}
+          </span>
+        ) : status === "NEEDS_REVIEW" ? (
+          <>
+            <span className="text-amber-300 truncate" title={firstAlert ?? undefined}>
+              {firstAlert ?? "Needs review"}
+              {alerts.length > 1 ? ` (+${alerts.length - 1} more)` : ""}
+            </span>
             <Link
               href={`/invoices/outbound-review/${invoiceId}`}
-              className="inline-block mt-1 text-[#3B82F6] hover:text-[#3B82F6]/80 font-bold"
+              className="text-[#3B82F6] hover:text-[#3B82F6]/80 font-bold whitespace-nowrap"
             >
-              Open Outbound Auditor Console &rarr;
+              Open Console &rarr;
             </Link>
-          </div>
+          </>
+        ) : status === "SENT" ? (
+          <span className="text-sky-300">Sent to customer.</span>
+        ) : status === "VERIFIED" ? (
+          <span className="text-emerald-300">Verified, ready to send.</span>
+        ) : (
+          <span className="text-slate-500">Processing&hellip;</span>
         )}
-
         {canConfirm && (
           <button
             onClick={handleConfirmSend}
             disabled={isConfirming}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-xs font-semibold border border-emerald-500/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/40 transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 py-1 px-2.5 rounded-md text-[11px] font-semibold border border-emerald-500/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/40 transition-colors disabled:opacity-50 whitespace-nowrap"
           >
-            {isConfirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            {isConfirming ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
             Confirm &amp; Send
           </button>
         )}

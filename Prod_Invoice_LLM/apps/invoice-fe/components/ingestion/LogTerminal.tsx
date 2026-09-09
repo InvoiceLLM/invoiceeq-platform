@@ -30,6 +30,8 @@ interface LogTerminalProps {
    * the whole of outbound's log stream today.
    */
   includeStatusEvents?: boolean;
+  // FE Gap 476: three-line box (outbound cards were a full h-40 terminal each).
+  compact?: boolean;
 }
 
 /**
@@ -40,7 +42,7 @@ interface LogTerminalProps {
  * `status`/`invoice_id`). Opens its own EventSource regardless of batch size,
  * since log visibility is independent of StatusTable's polling/SSE choice.
  */
-export default function LogTerminal({ batchId, includeStatusEvents = false }: LogTerminalProps) {
+export default function LogTerminal({ batchId, includeStatusEvents = false, compact = false }: LogTerminalProps) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -132,7 +134,7 @@ export default function LogTerminal({ batchId, includeStatusEvents = false }: Lo
 
   return (
     <div data-testid="log-terminal" className="glass-panel rounded-xl border border-[#222D3D] overflow-hidden">
-      <div className="px-4 py-3 border-b border-[#222D3D] flex items-center gap-2">
+      <div className={`px-4 border-b border-[#222D3D] flex items-center gap-2 ${compact ? "py-1.5" : "py-3"}`}>
         <Terminal className="w-4 h-4 text-slate-500" />
         <span className="text-xs font-semibold text-slate-300">Live Processing Log</span>
         <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-[#22D3EE]/10 text-[#22D3EE] border border-[#22D3EE]/30 font-mono font-semibold">NOVA</span>
@@ -140,7 +142,7 @@ export default function LogTerminal({ batchId, includeStatusEvents = false }: Lo
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="bg-[#0B0F19] p-3 h-40 overflow-y-auto font-mono text-[11px] leading-relaxed"
+        className={`bg-[#0B0F19] p-3 overflow-y-auto font-mono text-[11px] leading-relaxed ${compact ? "h-[4.25rem]" : "h-40"}`}
       >
         {lines.length === 0 ? (
           <span className="text-slate-600">Waiting for processing to start...</span>

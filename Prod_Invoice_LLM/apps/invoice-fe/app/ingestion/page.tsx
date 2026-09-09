@@ -239,6 +239,9 @@ function IngestionPageContent() {
 
   const [outboundFiles, setOutboundFiles] = useState<File[]>(() => cachedOutboundFiles);
   const [outboundInvoices, setOutboundInvoices] = useState<Array<{ id: string; batchId: string; name: string }>>([]);
+  // FE Gap 475: outbound ids whose processing reached a terminal status; their
+  // compact log terminal is dropped, the three-line card (FE Gap 476) stays.
+  const [outboundDone, setOutboundDone] = useState<Record<string, boolean>>({});
   const [isOutboundUploading, setIsOutboundUploading] = useState(false);
   const [outboundError, setOutboundError] = useState<string | null>(null);
 
@@ -521,9 +524,14 @@ function IngestionPageContent() {
                    the id the SSE channel is actually named after.
                    `includeStatusEvents` because the outbound worker publishes
                    stage events, never `log_line` events. */
-                <div key={inv.id} className="space-y-4">
-                  <SendInvoiceStatusTable invoiceId={inv.id} fileName={inv.name} />
-                  <LogTerminal batchId={inv.batchId} includeStatusEvents />
+                <div key={inv.id} className="space-y-2">
+                  <SendInvoiceStatusTable
+                    invoiceId={inv.id}
+                    fileName={inv.name}
+                    onTerminal={(id) => setOutboundDone((prev) => (prev[id] ? prev : { ...prev, [id]: true }))}
+                  />
+                  {/* FE Gaps 475/476: compact (three-line) while processing, gone once terminal. */}
+                  {!outboundDone[inv.id] && <LogTerminal batchId={inv.batchId} includeStatusEvents compact />}
                 </div>
               ))
             ) : (
