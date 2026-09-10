@@ -3,9 +3,10 @@
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, ChevronDown, User, LogOut, Settings } from "lucide-react";
+import { Bell, ChevronDown, User, LogOut, Settings, Palette, Moon } from "lucide-react";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { useAuth, clearAuth } from "@/hooks/useAuth";
+import { useTheme } from "@/hooks/useTheme";
 import PageHeader from "./PageHeader";
 import { usePageHeaderActionsRef, usePageHeaderMeta } from "./PageHeaderContext";
 
@@ -147,6 +148,7 @@ export default function Header() {
   const { canAudit, role, tenantName, loading: authLoading } = useAuth();
   const needsAttention = useNeedsAttentionCount(canAudit);
   const isAdmin = role === "Admin";
+  const { toggleTheme, isInfinevo } = useTheme();
 
   // FE Gap 110: the active route's title/badge/subtitle and its own header-row
   // controls, both fed up from the page through PageHeaderContext.
@@ -282,6 +284,38 @@ export default function Header() {
             )}
           </Link>
         )}
+
+        {/* Dual-Theme Toggle Switch — FE Gap 478 */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={isInfinevo}
+          onClick={toggleTheme}
+          aria-label={isInfinevo ? "Switch to Classic Dark Theme" : "Switch to InfiNevo PPT Brand Theme"}
+          title={isInfinevo ? "Active Theme: InfiNevo PPT Brand (Click to toggle Classic Dark)" : "Active Theme: Classic Dark (Click to toggle InfiNevo Brand)"}
+          className={`relative inline-flex h-7 w-14 items-center rounded-full transition-all duration-300 cursor-pointer focus:outline-none select-none ${
+            isInfinevo
+              ? "bg-gradient-to-r from-[#0F6FC6] to-[#009DD9] border border-[#009DD9]/80 shadow-[0_0_12px_rgba(0,157,217,0.4)]"
+              : "bg-[#131B2A] border border-[#222D3D] hover:border-slate-600"
+          }`}
+        >
+          {/* Background Track Icons */}
+          <Moon className={`w-3.5 h-3.5 absolute left-1.5 transition-opacity duration-200 pointer-events-none ${isInfinevo ? "text-white/80 opacity-100" : "opacity-0"}`} />
+          <Palette className={`w-3.5 h-3.5 absolute right-1.5 transition-opacity duration-200 pointer-events-none ${isInfinevo ? "opacity-0" : "text-slate-400 opacity-100"}`} />
+
+          {/* Sliding Thumb Knob */}
+          <span
+            className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-300 ease-in-out flex items-center justify-center ${
+              isInfinevo ? "translate-x-8" : "translate-x-1"
+            }`}
+          >
+            {isInfinevo ? (
+              <Palette className="w-3 h-3 text-[#0F6FC6]" />
+            ) : (
+              <Moon className="w-3 h-3 text-slate-700" />
+            )}
+          </span>
+        </button>
 
         {/* Vertical Divider */}
         <div className="h-6 w-px bg-[#222D3D]"></div>

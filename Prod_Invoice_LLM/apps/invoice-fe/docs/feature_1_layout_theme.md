@@ -5,6 +5,7 @@ Setup the visual system design tokens and the primary grid layout shell containi
 ### Theme & Styling Specifications
 All features must strictly adhere to these color mappings. Configure CSS tokens inside `apps/invoice-fe/styles/globals.css`:
 ```css
+/* 1. Classic Dark (Default Theme) */
 :root {
   --bg-main: #0B0F19;               /* Primary dark navy canvas */
   --bg-panel: rgba(21, 27, 38, 0.75);/* Glassmorphic panel base background */
@@ -16,12 +17,30 @@ All features must strictly adhere to these color mappings. Configure CSS tokens 
   --accent-green: #10B981;          /* Save, Success, Complete indicators */
   --accent-red: #EF4444;            /* Reject, Error warnings */
   --accent-blue: #3B82F6;           /* Processing, Active selections */
+  --accent-cyan: #38BDF8;           /* Cyan highlight */
   --accent-yellow: #F59E0B;         /* Warnings and Audit required states */
+}
+
+/* 2. InfiNevoCloud PPT Brand Theme (FE Gap 478) */
+[data-theme="infinevo"] {
+  --bg-main: #0A1324;               /* InfiNevo Midnight Navy canvas */
+  --bg-panel: rgba(23, 64, 109, 0.25);/* InfiNevo Navy glassmorphic panel base */
+  --border-default: #1D3557;        /* InfiNevo Slate borders and dividers */
+  --text-primary: #F0F6FC;          /* High contrast ice-white headings */
+  --text-muted: #8BA3C7;            /* Slate blue labels and captions */
+  
+  /* Brand/Status Accents */
+  --accent-green: #10CF9B;          /* InfiNevo Mint - Verified, Save, Success */
+  --accent-red: #EF4444;            /* Reject, Error warnings */
+  --accent-blue: #0F6FC6;           /* InfiNevo Azure - Primary buttons, active routes */
+  --accent-cyan: #009DD9;           /* InfiNevo Sky Cyan - Active nav highlight, glows */
+  --accent-yellow: #F49100;         /* InfiNevo Tangerine - Audit Required & Attention */
 }
 ```
 
 ### File Coordinates
 * Styles: [apps/invoice-fe/styles/globals.css](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/styles/globals.css)
+* Theme Hook: [apps/invoice-fe/hooks/useTheme.ts](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/hooks/useTheme.ts) — `useTheme()`; manages theme switching and `localStorage` persistence (FE Gap 478)
 * Layout Shell: [apps/invoice-fe/components/layout/Shell.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/layout/Shell.tsx) — `Shell()`; composes `Sidebar` + `Header` around a scrollable `<main>`, all wrapped in `PageHeaderProvider`
 * Sidebar Component: [apps/invoice-fe/components/layout/Sidebar.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/layout/Sidebar.tsx) — `Sidebar()`
 * Header Component: [apps/invoice-fe/components/layout/Header.tsx](file:///c:/Users/S%20Banerjee/Desktop/Invoice_LLM/Prod_Invoice_LLM/apps/invoice-fe/components/layout/Header.tsx) — `Header()`, `useNeedsAttentionCount()`, `useDisplayIdentity()`
@@ -63,7 +82,36 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Profile dropdown retrieves details from Clerk (`useUser()`); Sign Out wired to real Clerk `signOut()` + backend logout. Gap 116 replaced the invented fallback identity with an `isLoaded` skeleton and an email-derived name.
   - **Gap 151 (fixed 2026-08-12)**: `signOut()` was called with no destination, so Clerk's own post-sign-out navigation (falling back to its hosted Account Portal) raced and won against the following manual `window.location.href` line, landing users on an unbranded Clerk page instead of `/login`. Now calls `signOut({ redirectUrl: \`${WEBSITE_URL}/login\` })` directly; the manual redirect survives only as a fallback if that call throws. `app/layout.tsx`'s `<ClerkProvider>` also gained `afterSignOutUrl` as a second layer for any sign-out path other than this button.
 - [x] **Task 1.4: One shared page header for every screen** — added 2026-08-04 (Gap 110). `PageHeaderContext.tsx` + `usePageHeader()` + `<PageHeaderActions>`; `PageHeader.tsx` reduced to the title cluster and rendered once by `Header`; all 12 screens converted off their own title markup.
+- [x] **Task 1.5: Dual-Theme Switcher & InfiNevoCloud Brand Palette (FE Gap 478)** — added 2026-09-10.
+  - Support both Classic Dark theme and InfiNevo PPT Brand Theme via `[data-theme="infinevo"]` CSS variables, matching `InfiNevoCloud Induction Programe - Antoday.pptx` and the reference mockup `infinevo_theme_preview_1789030360159.jpg`.
+  - State managed by `hooks/useTheme.ts` with `localStorage` persistence, toggled via a dedicated `Palette` button in `Header.tsx`, with anti-flash hydration script in `app/layout.tsx`.
+  - Implements:
+    - Soft Ice-Blue canvas (`#F0F6FA`).
+    - Hero KPI Card with InfiNevo corporate Navy-to-Azure Gradient (`#071C38` to `#17406D`), pure white text, and cyan glow icon box.
+    - Secondary KPI and content cards in Pure White (`#FFFFFF`) with `#E2EDF5` borders and deep navy values (`#0F2847`).
+    - AI Score widget with soft ice-blue inner container (`#EDF5FB`) and deep navy text (`#17406D`).
+    - Recent Invoices table with Signature Ice-Blue headers (`#DBEFF9`) and bold deep navy labels (`#17406D`).
+    - Solid high-contrast badges: Mint Green (`#10CF9B`), Tangerine Orange (`#F49100`), Sky Cyan (`#009DD9`).
+    - High-contrast dropdown filter text (`#17406D` on `#FFFFFF`).
+  - Zero structural changes, zero label changes, and Classic Dark mode fully preserved as default.
+- [x] **Task 1.6: Product-wide Text Contrast & Visibility Audit (FE Gap 479)** — added 2026-09-10.
+  - Full product-wide inspection and CSS adapter fixes for text visibility and contrast across all routes in InfiNevo mode:
+    - `/chat`: ThreadSidebar converted to crisp white (`#FFFFFF`), bold `#0F2847` titles, `#64748B` empty state text, InfiNevo Azure `#0F6FC6` New Chat button; message bubbles with `#0F6FC6` user pill / white assistant card; input composer converted to white/ice-blue with clearly visible disclaimer text.
+    - Top header scoping: restricted to `header.h-16`, ensuring content headers on `/history` and other screens remain transparent with deep navy titles and slate subtitles.
+    - `/settings`: Integration grid tiles converted from dark `bg-[#111827]` to crisp white cards with `#0F2847` titles and `#475569` descriptions.
+    - `/trainer`: Upgrade prompt feature box converted from black-on-black to soft ice-blue (`#EDF5FB`) with clearly legible `#17406D` text.
+    - `/help`: Search input pill and nav tabs updated for clean light-mode contrast.
+    - Alert and error banners updated to soft pastel backgrounds with high-contrast text (`#FEF2F2` / `#B91C1C`).
+  - Verified across all 8 routes via automated Playwright screenshots with zero regression on Classic Dark mode.
+- [x] **Task 1.7: Inner Modals, Form Controls & Settings Subpages Theme Alignment (FE Gap 480)** — added 2026-09-10.
+  - Form controls (`input`, `textarea`, `select`, `label`) globally adapted to InfiNevo brand palette: pure white background (`#FFFFFF`), light slate borders (`#CBDCEB`), deep corporate navy text (`#0F2847`), and visible placeholders (`#94A3B8`).
+  - Modal dialog cards (`div.fixed.inset-0 > div`) and drawers converted to `#FFFFFF` with `#D6E4F0` borders, `#F0F6FA` ice-blue headers, and `#0F2847` titles.
+  - Support Ticket Modal (`SupportTicketModal.tsx`): input fields, textarea, category select, priority pills, and transcript attachments styled with high-contrast InfiNevo tokens.
+  - Help Center SAGE AI Support Assistant (`SupportChatWindow.tsx`): chat area converted to crisp white canvas, high-contrast message cards, soft ice-blue prompt chips (`#EDF5FB`), and white bottom input bar.
+  - Settings Subpages (`/settings/*`) verified with 10/10 scores across Connectors, Email Setup, Subscriptions, Webhooks, Security, and Workflows.
+  - Zero component markup alterations, zero dark mode regressions.
 
 ### Verification Plan
+
 * **Manual Verification**: Run `npm run dev` inside `apps/invoice-fe` and inspect the layout elements. Verify layout responsiveness and correct styling.
 * **Automated (Gap 110)**: `e2e/rbac-sidebar.spec.ts` — for `/dashboard`, `/settings` and `/help`, exactly one `<header>` and one `<h1>` in the document and that `<h1>` inside the header (a page drawing its own second bar fails this); Trainer's Commit + Rule History resolve inside the header; the title updates across a client-side navigation; and the Help entry point exists once, in the Sidebar, and still reaches `/help`. Run with `npm run test:e2e`.

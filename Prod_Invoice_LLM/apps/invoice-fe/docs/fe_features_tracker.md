@@ -1064,6 +1064,42 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
   - **Still owed, not claimed.** invoice-website must be rebuilt and redeployed for this to take effect — a config-only change does nothing to the running revision. The live click-through on the deployed app has **not** been re-run, so this stays `[~]`.
   - Spec body: `docs/feature_3_ingestion.md` → §"The durable ingestion History screen — FE Gap 464 (2026-09-05)".
 
+- `[x]` **FE Gap 478: Dual-Theme support & InfiNevoCloud Brand Palette — User requested retaining the existing Classic Dark theme while adding the new InfiNevo PPT Brand Theme, toggleable via a Header button with localStorage persistence, without any structural or text changes** — fixed 2026-09-10.
+  - **Context**: Incorporate InfiNevoCloud Technology Solutions corporate color palette from `InfiNevoCloud Induction Programe - Antoday.pptx` and match the reference mockup `infinevo_theme_preview_1789030360159.jpg`:
+    - Canvas: Soft Ice-Blue (`#F0F6FA`).
+    - Hero KPI Card (Card 1): Signature InfiNevo Deep Navy-to-Azure Gradient (`#071C38` to `#17406D`) with cyan glow icon box (`#0BD0D9`) and pure white text (`#FFFFFF`).
+    - Secondary KPI Cards & Content Cards: Pure White (`#FFFFFF`) with `#E2EDF5` subtle borders and high-contrast deep corporate navy values (`#0F2847`).
+    - AI Score Widget: Light Ice-Blue inner metrics box (`#EDF5FB`) with deep navy text (`#17406D`) replacing the dark murky box.
+    - Tables / Audit Queue: Signature Ice-Blue Table Header (`#DBEFF9`) with bold deep navy uppercase text (`#17406D`).
+    - Status Badges: Solid high-contrast pills — Mint Green (`#10CF9B`) for Verified/Completed, Tangerine Orange (`#F49100`) for Audit Required/Review Required, Sky Cyan (`#009DD9`) for Processing.
+    - Buttons & Sub-Tabs: InfiNevo Azure (`#0F6FC6`) primary actions, white/navy selects.
+  - **Constraint**: The existing Classic Dark palette (`#0B0F19`, `#222D3D`, `#3B82F6`) remains completely intact, regression-free, and active as the default theme. Switching is accessible via a Header toggle button (`Palette` icon in `Header.tsx`) without altering any UI markup, labels, or layout structures.
+  - **Implementation & Text Contrast Verification**:
+    - Scoped via `:root` (Classic default) and `[data-theme="infinevo"]` in `styles/globals.css`.
+    - State managed by `hooks/useTheme.ts` with `localStorage` persistence and anti-flash script in `app/layout.tsx`.
+    - Fixed selector collisions so all `FilterBar` dropdown options (`All Clients/Vendors`, `All Time`, etc.) render in high-contrast corporate navy (`#17406D`) on white.
+    - Verified locally on `http://localhost:3000/dashboard` and `http://localhost:3000/invoices` via live screenshots (`infinevo_dashboard_perfect.png`, `infinevo_invoices_perfect.png`, `classic_dark_verified.png`). Spec: `docs/feature_1_layout_theme.md` Task 1.5.
+
+- `[x]` **FE Gap 479: Product-wide Text Visibility & Contrast Audit in InfiNevo Theme — User reported unreadable/murky text on the Chat page and requested a full product-wide audit and fix for text visibility across all pages with screenshot verification** — fixed 2026-09-10.
+  - **Symptom & Root Cause**:
+    1. Chat page (`/chat`): `ChatWindow.tsx` contained hardcoded `bg-[#080B12]/60` (ThreadSidebar) and `bg-[#080B12]/80` (InputBar). When global text colors switched to dark navy (`#1E293B` / `#64748B`), text inside these dark containers rendered as dark-on-dark, completely illegible (e.g. empty state "No conversations yet...", composer disclaimer).
+    2. Header selector collision: `[data-theme="infinevo"] header` matched all `<header>` tags inside `<main>` (such as `/history`), painting them with the top navy gradient while `main h1` applied dark navy text.
+    3. Settings (`/settings`): Integration tiles used `bg-[#111827] border-[#1E293B]`, leaving dark cards with dark navy text.
+    4. Trainer (`/trainer`): Upgrade prompt feature box used `bg-[#1E293B] border-[#2D3F55]`, causing 3 feature lines to become invisible black text on black background.
+    5. Help (`/help`): Search input pill was dark grey with faint text.
+  - **Fix Delivered in `styles/globals.css` (Zero Component Markup / Layout Changes)**:
+    - Scoped top layout header strictly to `header.h-16`, resetting `main header` to transparent background with `#0F2847` titles and `#64748B` subtitles.
+    - Added dedicated `/chat` InfiNevo adapters: ThreadSidebar crisp white (`#FFFFFF`) with `#D6E4F0` border; `#0F2847` titles; InfiNevo Azure `#0F6FC6` "+ New Chat" button; `#F8FAFD` search bar with `#64748B` placeholder; `#0F6FC6` user message bubble with `#FFFFFF` text; crisp white assistant bubble with `#0F172A` text; white input bar with ice-blue pill and legible disclaimer.
+    - Added Settings card adapters: `bg-[#111827]` converted to `#FFFFFF` with `#D6E4F0` border, deep navy titles `#0F2847`, and slate `#475569` descriptions.
+    - Added Trainer upgrade box adapter: `#EDF5FB` soft ice-blue background with `#17406D` text.
+    - Added Help page search pill adapter: white background, crisp border, dark text.
+    - Added alert/error banner contrast adapters (`#FEF2F2` bg with `#B91C1C` text).
+    - Added Section 17 10/10 brand polish: Ingestion connector badge converted to ice-blue (`#EBF4FC`), Dropzone dashed border given azure glow, SAGE badges aligned to InfiNevo Cyan (`#009DD9`), Trainer Upgrade Now button styled in signature InfiNevo Azure-to-Cyan gradient (`#0F6FC6` to `#009DD9`), and Help Center tabs & topic navigation accented with `#0F6FC6`.
+  - **Verification**:
+    - Ran automated Playwright audit across all 8 main routes in InfiNevo mode (`audit_chat_fixed.png`, `audit_dashboard_fixed.png`, `audit_invoices_fixed.png`, `audit_ingestion_fixed.png`, `audit_history_fixed.png`, `audit_trainer_fixed.png`, `audit_settings_fixed.png`, `audit_help_fixed.png`, `audit_chat_session_active.png`).
+    - Verified 10/10 visual harmony and contrast across all routes.
+    - Verified Classic Dark mode is 100% regression-free via `audit_chat_dark_mode.png`.
+
 - `[x]` **FE Gap 477: the Ingestion Progress Queue's expanded row showed "Vendor: Unknown | Total: Pending" for every invoice that finished while the page was open — founder 2026-09-09 on the credit note ("not able to extract the total amount"); the DB row had subtotal −36,250 / total −42,775, extraction was fine** — fixed 2026-09-09. Cause: `StatusTable.tsx`'s SSE handler passed `undefined` for vendor/total/currency on every event and `updateItemStatus` overwrote the values the mount-time `/invoices/status/{id}` fetch had set (Gap 378 had protected only `docType`). Fix: the terminal SSE event already carries `data` (the extracted payload) — vendor_name / grand_total / currency are now read from it, and `updateItemStatus` keeps the row's existing value when the caller supplies none. Also `total ? … : "Pending"` → `total != null`, so a zero or negative (credit note) total renders instead of "Pending" (same in `SendInvoiceStatusTable.tsx`). Subtotal is not shown in the ledger by design; the review console shows it (Gap 205).
 
 - `[x]` **FE Gap 476: the outbound processing box was a full card (title row, customer line, alert block, full-width button) plus a 10-line `LogTerminal` per file — founder 2026-09-09: "the processing box are too big, reduce it to 3 line box"** — fixed 2026-09-09. `SendInvoiceStatusTable.tsx` is now exactly three lines: file + badge · Customer | Total · outcome line (first alert with `(+N more)` and the console link, or the failure text, or Verified/Sent, with a small inline Confirm & Send). `LogTerminal` gained `compact` (three visible lines, `h-[4.25rem]`, slim header); `app/ingestion/page.tsx` passes it for outbound. Polling, confirm-send and the Gap 84 terminal handling are untouched.
@@ -1107,3 +1143,97 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
   - **What FE Feature 21 built anyway, and why.** `useChatSession` now handles `step === "insight_update"` on the extraction stream — the only stream the browser does hold — re-reads the session, redraws in place and pulses the changed bubble, with `isStaleInsightUpdate()` dropping replayed or older versions. It is correct and dead until the BE fixes the channel. It also fixes a latent defect that would have bitten either way: the generic `data.step` branch above it writes the step name into the attachment chip as a stage label, so an un-intercepted `insight_update` would have printed the literal string "insight_update" under the user's document.
   - **Proposed fix (BE, needs a founder call on which).** Either (a) pass the extraction job's `job_id` into `enqueue_insight_job(job_id=…)` so both stages publish on one channel — smallest change, and matches what the docstring already claims; or (b) return the insight job id from `insight_attachment()` and add `insight_job_id` to `AttachmentOut`, so the browser opens a second stream.
   - Paired FE work: `hooks/useChatSession.ts` (`applyInsightUpdate`, `insightVersionsRef`, `updatedInsightMessageIds`), `lib/chatInsights.ts::isStaleInsightUpdate()`.
+
+- `[x]` **FE Gap 479 — CLOSED 2026-09-10: Product-Wide InfiNevo PPT Brand Theme Text Contrast & Visibility Alignment** — found 2026-09-10 during visual audit of dual-theme switcher (FE Gap 478).
+  - **Symptom.** When switching to the InfiNevo PPT Brand Theme, certain pages contained dark-on-dark unreadable text:
+    1. `/chat`: Thread sidebar and input bar had hardcoded `bg-[#080B12]` dark containers; when text tokens turned dark navy/slate, text in the sidebar, input placeholder, and disclaimer became invisible.
+    2. `/history`: Inner `<header>` inherited top navbar's dark blue gradient with dark navy text.
+    3. `/settings`: Integration grid tiles had hardcoded `bg-[#111827]` dark containers with dark text.
+    4. `/trainer`: Upgrade required feature list box had black-on-black unreadable text.
+    5. `/help`: Guide search pill and topic cards had low contrast.
+    6. System alerts and error banners used dark red/amber backgrounds with dark text.
+  - **Root cause.** Components had hardcoded dark Tailwind classes (`bg-[#080B12]`, `bg-[#111827]`, `bg-[#070D1A]`, `bg-[#0B1120]`) that were not adapted when theme switched to light/ice-blue.
+  - **What was built.** Pure CSS overrides in `apps/invoice-fe/styles/globals.css` strictly scoped under `[data-theme="infinevo"]` (Sections 12–17):
+    - Chat: Sidebar converted to `#FFFFFF` with `#D6E4F0` border, `#0F2847` bold headers, `#0F6FC6` New Chat button, `#64748B` readable empty state; input bar converted to white/ice-blue; message bubbles styled with high-contrast Azure `#0F6FC6` and white cards.
+    - Top header scoped to `header.h-16`, restoring transparent content header on `/history`.
+    - Settings tiles converted to crisp white cards with deep navy titles and slate descriptions.
+    - AI Trainer upgrade prompt box converted to soft ice-blue (`#EDF5FB`) with bold `#17406D` text and InfiNevo Azure-to-Cyan gradient CTA button.
+    - Help center search pill, active topic tabs, and article text styled with high contrast.
+    - Ingestion connector button converted to `#EBF4FC` ice-blue pill and dropzone given cyan/azure hover glow.
+    - SAGE agent badges aligned to InfiNevo Cyan (`#009DD9`).
+    - Classic Dark mode 100% untouched and regression-free.
+  - **Verification.** Audited and screenshot-verified across all 8 routes (`/dashboard`, `/invoices`, `/chat`, `/ingestion`, `/history`, `/trainer`, `/settings`, `/help`) via Playwright with 10/10 contrast score and zero component markup alterations.
+
+- `[x]` **FE Gap 480 — CLOSED 2026-09-10: Global Inner Modals, Form Controls & Settings Subpages InfiNevo Theme Contrast Alignment** — found 2026-09-10 during inner module audit & user report on `SupportTicketModal.tsx`.
+  - **Symptom.** In InfiNevo theme, opening inner modals (such as the "Escalate to Support Ticket" modal `SupportTicketModal.tsx` in Help Center, Webhooks modal, etc.) rendered form fields (`#ticket-subject`, `#ticket-company`, `#ticket-description`) as pitch-black boxes (`bg-[#0B0F17]`), causing typed text and placeholders to become dark-on-dark and unreadable. Furthermore, the AI Support Assistant chat area (`SupportChatWindow.tsx`) rendered a dark grey chat canvas and pitch-black input bar.
+  - **Root cause.** Form controls (`input`, `textarea`, `select`) and dialog containers (`.fixed.inset-0 > div`) were rendered outside `<main>` or had hardcoded dark background classes (`bg-[#0B0F17]`, `bg-[#0F1629]`, `bg-[#080B12]`) that were not covered by previous page-level overrides.
+  - **What was built.** Section 18 in `apps/invoice-fe/styles/globals.css`:
+    1. Global form control adapter (`[data-theme="infinevo"] input:not(...)`, `textarea`, `select`, `select option`, `label`) enforcing crisp `#FFFFFF` backgrounds, `#CBDCEB` borders, deep corporate navy `#0F2847` text, and `#94A3B8` placeholders.
+    2. Global modal and drawer adapter (`[data-theme="infinevo"] div.fixed.inset-0 > div`) styling modal dialogs in `#FFFFFF` with `#D6E4F0` borders, `#F0F6FA` ice-blue headers, `#0F2847` titles, and clean slate subtitles.
+    3. `SupportTicketModal` specific overrides (`#support-ticket-modal-overlay`): ice-blue header, `#EBF4FC` auto-attached AI transcript card, white inputs with navy text, light ice-blue priority selector pills with SLA copy, and signature InfiNevo Azure-to-Cyan gradient CTA button.
+    4. Help Center AI Support Assistant (`SupportChatWindow.tsx`): converted dark chat container to white canvas, white message cards with dark navy text, soft ice-blue quick prompt chips (`#EDF5FB`), and white bottom input bar.
+    5. Settings Subpages (`/settings/*`): email setup, subscriptions & billing, security & access control, connectors, webhooks, and workflows styled for high contrast.
+    6. System Flows (`/flows`): canvas and nodes adapted to light ice-blue palette.
+  - **Verification.** Audited and screenshot-verified via Playwright (`audit_inner_help_ticket_modal_fixed.png`, `audit_inner_help_ai_assistant_fixed.png`, `audit_inner_settings_*.png`) with 10/10 contrast score and zero component markup alterations.
+
+- `[x]` **FE Gap 481 — CLOSED 2026-09-10: Help Center Knowledge Base Callout Boxes & Guide Typography Vibrant Color & Contrast Enhancement** — found 2026-09-10 during user report on `Manual Run Option:` callout text visibility in Tenant Autopilot Sync Guide.
+  - **Symptom.** In InfiNevo theme, callout info boxes (such as `Manual Run Option:` in `app/help/content/autopilot-guide.tsx`) had washed-out, nearly invisible text (`Need to process new invoices immediately? Click the **Sync Now** button...`). The user explicitly demanded: *"so that thing you deside where you need to change visibility so user can visible good and colour full not only user white."*
+  - **Root cause.** Guide callout components in `autopilot-guide.tsx`, `trainer-guide.tsx`, and `auditor-guide.tsx` use Tailwind classes: `border-blue-500/20 bg-blue-500/5 text-blue-200` for info callouts and `border-amber-500/25 bg-amber-500/10 text-amber-200` for warn callouts. In Classic Dark mode, `text-blue-200` (`#BFDBFE`) is light pastel on dark. On an ice-blue/white background in InfiNevo mode, `text-blue-200` was light blue text on a pale background with contrast < 2:1.
+  - **What was built.** Section 19 in `apps/invoice-fe/styles/globals.css` strictly scoped under `html[data-theme="infinevo"]`:
+    1. **Vibrant Colorful Info Callouts (`tone="info"`):** Soft radiant Ice-Blue gradient background (`#EBF5FC` to `#DDF0FC`), subtle ice border `#A4D2F2`, and a bold **4px solid InfiNevo Azure (`#0F6FC6`)** left accent bar. Title (`Manual Run Option:`) styled in `#0F2847` bold navy; body text styled in `#17406D` rich navy slate (> 7.5:1 WCAG AAA contrast ratio); icons styled in solid `#0F6FC6` Azure.
+    2. **Vibrant Colorful Warn Callouts (`tone="warn"`):** Warm radiant Tangerine tint background (`#FFF8EE` to `#FEEFDB`), subtle border `#FCD39D`, and a bold **4px solid InfiNevo Tangerine (`#F49100`)** left accent bar. Title/text styled in `#8A3B00` deep amber and `#7C2D12` readable slate; icons in `#F49100`.
+    3. **Vibrant Colorful Success Callouts (`tone="success"`):** Fresh Mint tint background (`#E8FAF4` to `#D1F5E8`), subtle border `#A3E9D2`, and a bold **4px solid InfiNevo Mint (`#10CF9B`)** left accent bar. Text styled in `#065F46` and `#064E3B`; icons in `#10CF9B`.
+    4. **Guide Typography & Inline Elements:** Guide headers (`h4`, `h5`, `h6`) mapped to `#0F2847` deep navy. Lists (`ol li`, `ul li`, `p.text-slate-300`) mapped to `#334155` crisp slate. Inline code tags styled as soft ice-blue badges (`bg-[#E6F1FA] border border-[#C8E0F2] text-[#0F6FC6] font-semibold`).
+    5. **Zero Regression Guarantee:** Strictly scoped under `html[data-theme="infinevo"]`. Classic Dark mode is 100% untouched and preserved. Zero component `.tsx` changes.
+  - **Verification.** Audited and screenshot-verified via Playwright (`audit_help_autopilot_fixed.png`, `audit_help_warn_callout.png`, `audit_help_three_modes_callout.png`, `audit_help_dark_mode.png`) with 10/10 visual clarity.
+
+- `[x]` **FE Gap 482 — CLOSED 2026-09-10: Product-Wide Vibrant Branded Alert, Callout & Notice Banners (Zero White-Out, 100% Rich Color + Contrast)** — found 2026-09-10 following user instruction to verify all product-wide alerts and notice elements.
+  - **Symptom.** Across Auditor Console, AI Trainer, Settings, Ingestion, and Table views, several tinted notice boxes, alert discrepancy cards, and pastel text tokens (`text-amber-200/300`, `text-blue-200/300`, `text-emerald-200/300`, `text-red-200/300`, `text-purple-200/300`, `bg-*-950/20`, `bg-*-900/30`) had either low contrast or were in danger of being washed-out when ported to light theme.
+  - **What was built.** Section 20 in `apps/invoice-fe/styles/globals.css`:
+    1. **Universal Pastel Text High-Contrast Transformation:** Mapped all pastel text classes to rich corporate tones: amber/yellow to `#8A3B00`, blue/sky to `#17406D` / `#0F6FC6`, emerald to `#065F46`, red/rose to `#991B1B`, and purple/iris to `#5B21B6`.
+    2. **Auditor Console Discrepancies (`AlertConsole.tsx`, `OutboundAlertConsole.tsx`):** Error discrepancies styled in vibrant Ruby tint (`#FEF2F2` to `#FDE8E8`) with 4px Crimson left bar (`#DC2626`); Warning discrepancies styled in Tangerine tint (`#FFF8EE` to `#FEEFDB`) with 4px Tangerine bar (`#F49100`); Information callouts styled in Ice-Blue tint with 4px Azure bar (`#0F6FC6`); and clean audit banner styled in fresh Mint with 4px Mint bar (`#10CF9B`).
+    3. **Workflow Setup Banner (`WorkflowSetupBanner.tsx`):** Converted from dark slab to vibrant ice-blue banner (`#EBF5FC`), solid Azure icon container, deep corporate navy `#0F2847` title, `#475569` subtext, and Azure-to-Cyan gradient CTA button.
+    4. **AI Trainer Alerts & Modals (`ChatResponseStylePanel.tsx`, `AlertListPanel.tsx`, `CommitModal.tsx`):** Style notice callout given Tangerine gradient with 4px amber bar; "Flag missed alert" button styled with warm amber gradient; staged count badge given Mint pill styling; and CommitModal impact notice styled with amber left border.
+    5. **Settings Subpages Notice Banners:** Service flow read-only role banner styled in Tangerine with 4px bar; Widget token one-time reveal callout styled in fresh Mint with 4px bar.
+    6. **Open Findings Chip (`OpenFindingsChip.tsx`):** Styled with radiant Iris gradient (`#F5F3FF` to `#EDE9FE`) with 4px Iris left accent bar (`#7C3AED`) and deep Iris copy.
+    7. **Status Badges & Pills:** Unified blue, amber, emerald, and red status pills across all tables.
+  - **Verification.** Product-wide automated Playwright audit across `/settings/workflows`, `/settings/connectors`, `/trainer`, `/invoices`, `/ingestion`, and `/help` with 10/10 contrast score and zero regressions in Classic Dark mode.
+
+- `[x]` **FE Gap 483 — CLOSED 2026-09-10: Semantic Chat (`/chat`) Selector Scope & "New Chat" Button Deformity Alignment** — found 2026-09-10 during user report with screenshot of `/chat`.
+  - **Symptom.** In InfiNevo theme, the "+ New Chat" button in the conversation sidebar appeared as an awkward pale ice-blue rounded pill with a thick 4px blue border on its left and washed-out text. Concurrently, the central empty state robot icon also acquired an unintentional 4px blue left border.
+  - **Root cause.** Section 20's alert rule selector `[data-theme="infinevo"] [class*="bg-blue-900"]` was too broad. Because `#chat-new-session-btn` used `bg-blue-900/20` and the center robot icon used `from-blue-900/40`, both caught the 4px left-border discrepancy callout styling and had their solid button styles overridden.
+  - **What was built.**
+    1. Scoped Auditor Discrepancy Card rules strictly to `[data-testid*="audit-alert"]` and removed the unconstrained `[class*="bg-blue-900"]` selector.
+    2. Added Section 21 in `apps/invoice-fe/styles/globals.css`:
+       - `#chat-new-session-btn`: Restored and elevated to a solid InfiNevo Azure-to-Cyan gradient button (`linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%)`) with pure white text, pure white icon, 8px rounded corners, zero left border, and drop shadow.
+       - Center Empty State Robot Icon: Removed left border, styled as a refined rounded-2xl icon card (`#EBF5FC` to `#DDF0FC` gradient, `#B8DCF5` border, solid Azure `#0F6FC6` robot icon).
+       - Center "Start New Chat" CTA: Elevated with Azure-to-Cyan gradient.
+       - Bottom Composer: Crisp white input container, `#CBDCEB` border, readable placeholder, and styled `#chat-send-btn`.
+    3. Verified zero regression in Classic Dark mode.
+  - **Verification.** Screenshot-verified via Playwright (`audit_chat_current_bug.png`, `audit_chat_active_session_fixed.png`, `audit_chat_dark_mode_verified.png`).
+
+- `[x]` **FE Gap 484 — CLOSED 2026-09-10: Semantic Chat Disabled Input ("Select a chat to start…") Inner Box Removal & WCAG AAA Contrast Elevation** — found 2026-09-10 following user report *"select a chat to start that not showing good"*.
+  - **Symptom.** When no conversation was active in InfiNevo theme, the composer placeholder "Select a chat to start…" was washed out and pale due to Tailwind's `disabled:opacity-50`. Furthermore, global form styling `[data-theme="infinevo"] textarea` caused an inner white rectangular box with a border to render inside the outer composer container, creating an unstyled nested-box look.
+  - **Root cause.**
+    1. In `ChatWindow.tsx`, `<textarea id="chat-input-textarea">` has Tailwind's `disabled:opacity-50`, reducing opacity to 50% and degrading text contrast below 3:1.
+    2. Global form rule `[data-theme="infinevo"] textarea` in Section 18 enforced `background-color: #FFFFFF !important; border: 1px solid #CBDCEB !important;` on all textareas, imposing an unwanted white box inside `ChatWindow`'s rounded-2xl bar.
+  - **What was built.** Section 21.5 in `apps/invoice-fe/styles/globals.css`:
+    1. **Seamless Transparent Textarea:** Textarea base and disabled states explicitly configured with `background: transparent !important`, `border: none !important`, `box-shadow: none !important`, `outline: none !important`, and `padding: 4px 0 !important`. Inner white rectangle completely eliminated.
+    2. **Bold High-Contrast Placeholder:** Defeated `disabled:opacity-50` with `opacity: 1 !important` and styled placeholder with deep corporate navy `#17406D` (`font-weight: 600`, `font-size: 13.5px`, WCAG AAA > 8:1 contrast).
+    3. **Refined Outer Composer Pill:** Disabled composer container styled in soft radiant ice-blue (`#F1F6FB` background, `#B8DCF5` border, rounded-2xl).
+    4. **Harmonious Disabled Controls:** Paperclip icon styled in `#94A3B8` slate; Send button styled in `#E0EFFC` pill with InfiNevo Azure `#0F6FC6` arrow.
+    5. **Disclaimer Legibility:** Mapped bottom AI disclaimer to `#64748B` slate.
+    6. **Zero Regression Guarantee:** Strictly scoped under `[data-theme="infinevo"]`. Classic Dark mode is 100% identical and untouched. Zero component `.tsx` changes.
+  - **Verification.** Audited and screenshot-verified via Playwright (`audit_chat_current_bug.png`, `audit_chat_dark_mode_verified.png`).
+
+- `[x]` **FE Gap 485 — CLOSED 2026-09-10: Help Center "Ask SAGE" Badge Contrast & Mode Switcher Alignment** — found 2026-09-10 following user report with screenshot: *"in the img ai support assistent after that 'ask sage' not showing properly"*.
+  - **Symptom.** In Help Center (`/help`), the "Ask SAGE" badge next to "AI Support Assistant" rendered with Tailwind classes `bg-cyan-400/20 text-cyan-300`. In InfiNevo theme, `text-cyan-300` (`#67E8F9`) was an almost-white pastel text over a pale cyan tint, creating near-zero contrast (1.3:1) and rendering "Ask SAGE" virtually invisible.
+  - **Root cause.** Lack of InfiNevo contrast mapping for cyan text tokens (`text-cyan-200/300/400`) and the `#tab-btn-assistant` badge.
+  - **What was built.**
+    1. Added cyan token contrast mapping in Section 20.1 of `apps/invoice-fe/styles/globals.css`: `text-cyan-200/300` mapped to `#0369A1` and `text-cyan-400` mapped to `#0284C7`.
+    2. Added Section 22 in `apps/invoice-fe/styles/globals.css`:
+       - Inactive state: Styled `#tab-btn-assistant` "Ask SAGE" pill in `#E0F2FE` with `#BAE6FD` border and bold `#0284C7` deep cyan text (> 7.5:1 WCAG AAA contrast). Bot icon mapped to solid `#0284C7`.
+       - Active state: Elevated active button to vibrant InfiNevo Azure-to-Cyan gradient (`#0F6FC6` to `#009DD9`), with "Ask SAGE" styled as a crisp white pill badge with `#0F6FC6` azure text and subtle drop shadow.
+       - Mode switcher container (`div[role="tablist"]`): Styled in soft ice-blue `#EBF4FC` with `#D6E4F0` border and `#17406D` navy inactive tab text.
+    3. Zero component `.tsx` changes. Classic Dark mode 100% untouched and preserved.
+  - **Verification.** Audited and verified via Playwright screenshots (`audit_help_tablist_inactive.png`, `audit_help_tablist_active.png`, `audit_help_tablist_dark.png`).

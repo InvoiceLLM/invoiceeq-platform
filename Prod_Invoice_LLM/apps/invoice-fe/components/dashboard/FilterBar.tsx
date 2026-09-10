@@ -144,6 +144,9 @@ export default function FilterBar({
             className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
           >
             <option value="">{partyLabel}</option>
+            {filters.vendorName && !availableVendors.includes(filters.vendorName) && (
+              <option value={filters.vendorName}>{filters.vendorName}</option>
+            )}
             {availableVendors.map((vendor) => (
               <option key={vendor} value={vendor}>
                 {vendor}
@@ -175,6 +178,9 @@ export default function FilterBar({
             className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
           >
             <option value="">All Tags</option>
+            {filters.tag && !availableTags.includes(filters.tag) && (
+              <option value={filters.tag}>#{filters.tag.replace(/^#/, "")}</option>
+            )}
             {availableTags.map((t) => (
               <option key={t} value={t}>
                 #{t.replace(/^#/, "")}

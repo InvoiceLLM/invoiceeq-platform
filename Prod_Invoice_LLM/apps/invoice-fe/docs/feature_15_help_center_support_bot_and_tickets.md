@@ -60,8 +60,20 @@ Upgrade the Help Center (`/help`) into a dual-mode support and troubleshooting h
   - **Scope correction, found while building this task**: the plan behind this gap assumed the backend response would include `admin_notes` (present on the `SupportTicket` model) so a "latest note from support" line could be shown. Reading `routers/support.py::list_support_tickets()` directly shows the response is narrower than the model — it returns only `ticket_number`, `subject`, `category`, `priority`, `status`, `source`, and `created_at`; no `admin_notes`, no `description`, no `updated_at`. The panel shows exactly those seven fields and nothing else. Showing any note/reply content — even a single latest one — needs a backend response-shape change first, not attempted here.
   - **No backend changes.** `GET /support/tickets` was already tenant-scoped and already worked; this task only added a caller.
   - **Verified**: `npx tsc --noEmit` clean. Two new Playwright specs (`e2e/help-support.spec.ts` tests 8–9): the tab lists a stubbed tenant's tickets with correct ticket numbers/subjects, and the empty state renders when the list is empty. Not run against a real backend/real tenant with real tickets — same standing caveat as the rest of this feature (§5.1).
+- [x] **Task 15.9: InfiNevo PPT Brand Theme Alignment (FE Gap 480)** — Done 2026-09-10.
+  - Adapted `SupportTicketModal.tsx` and `SupportChatWindow.tsx` to the InfiNevo dual-theme palette:
+    - `SupportTicketModal`: crisp white dialog body, ice-blue header (`#F0F6FA`), pure white input fields with `#CBDCEB` borders and deep corporate navy text (`#0F2847`), light ice-blue priority selector pills (`#F8FAFD`), soft ice-blue AI conversation transcript card (`#EBF4FC`), and signature InfiNevo Azure-to-Cyan gradient CTA button (`#0F6FC6` to `#009DD9`).
+    - `SupportChatWindow`: converted dark chat container to crisp white canvas, high-contrast message cards with dark navy text, soft ice-blue quick prompt chips (`#EDF5FB`), and white bottom input bar with Cyan Send button.
+  - Fully preserved Classic Dark mode with zero component markup changes.
+- [x] **Task 15.10: Knowledge Base Guide Callout Boxes & Typography Vibrant Color Styling (FE Gap 481)** — Done 2026-09-10.
+  - Fixed washed-out callout boxes across all guides (`autopilot-guide.tsx`, `trainer-guide.tsx`, `auditor-guide.tsx`) under InfiNevo theme:
+    - Info Callouts (`tone="info"` e.g. "Manual Run Option:"): Styled with radiant Ice-Blue gradient background (`#EBF5FC` to `#DDF0FC`), 4px solid InfiNevo Azure (`#0F6FC6`) left accent bar, deep corporate navy bold titles (`#0F2847`), and rich navy slate body text (`#17406D`) with > 7.5:1 contrast.
+    - Warn Callouts (`tone="warn"`): Warm radiant Tangerine tint background (`#FFF8EE` to `#FEEFDB`), 4px solid InfiNevo Tangerine (`#F49100`) left accent bar, and `#8A3B00` / `#7C2D12` deep readable amber copy.
+    - Guide Typography & Inline Badges: All guide headings (`h4`, `h5`, `h6`) mapped to `#0F2847` deep navy, bullet lists to `#334155` slate, and inline code snippets to soft ice-blue badges (`bg-[#E6F1FA] border-[#C8E0F2] text-[#0F6FC6]`).
+  - Fully preserved Classic Dark mode with zero component markup changes.
 
 ---
+
 
 ## 5. Verification Plan
 

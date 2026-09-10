@@ -61,7 +61,7 @@
 
   --tooltip-size: 12px;
 
-  /* Workspace Palette */
+  /* Workspace Palette (Default Theme: Classic Dark) */
   --bg-main: #0B0F19;               /* Primary dark navy canvas */
   --bg-panel: rgba(21, 27, 38, 0.75);/* Glassmorphic panel base background */
   --border-default: #222D3D;        /* Panel separations and card borders */
@@ -72,7 +72,24 @@
   --accent-green: #10B981;          /* Save, Success, Complete indicators */
   --accent-red: #EF4444;            /* Reject, Error warnings */
   --accent-blue: #3B82F6;           /* Processing, Active selections */
+  --accent-cyan: #38BDF8;           /* Cyan highlight */
   --accent-yellow: #F59E0B;         /* Warnings and Audit required states */
+}
+
+/* InfiNevoCloud PPT Brand Theme (FE Gap 478) */
+[data-theme="infinevo"] {
+  --bg-main: #0A1324;               /* InfiNevo Midnight Navy canvas */
+  --bg-panel: rgba(23, 64, 109, 0.25);/* InfiNevo Navy glassmorphic panel base */
+  --border-default: #1D3557;        /* InfiNevo Slate borders and dividers */
+  --text-primary: #F0F6FC;          /* High contrast ice-white headings */
+  --text-muted: #8BA3C7;            /* Slate blue labels and captions */
+  
+  /* Brand/Status Accents */
+  --accent-green: #10CF9B;          /* InfiNevo Mint - Verified, Save, Success */
+  --accent-red: #EF4444;            /* Reject, Error warnings */
+  --accent-blue: #0F6FC6;           /* InfiNevo Azure - Primary buttons, active routes */
+  --accent-cyan: #009DD9;           /* InfiNevo Sky Cyan - Active nav highlight, glows */
+  --accent-yellow: #F49100;         /* InfiNevo Tangerine - Audit Required & Attention */
 }
 
 *, html, body, button, input, select, textarea {
@@ -239,3 +256,1926 @@ td, .table-cell {
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* ==========================================================================
+   InfiNevo PPT Brand Theme Dynamic Adapters (FE Gap 478)
+   Matches infinevo_theme_preview_1789030360159.jpg
+   - Deep Corporate Navy Sidebar & Header
+   - Crisp Ice-Blue Canvas (#F0F6FA)
+   - First Featured KPI Card in Signature Dark Navy/Azure Gradient with Cyan Glow
+   - Secondary KPI & Content Cards in Pure White (#FFFFFF)
+   - Signature Ice-Blue Table Headers (#DBEFF9) with Deep Navy Text (#17406D)
+   - High-Contrast Solid Badges: Mint (#10CF9B), Tangerine (#F49100), Sky (#009DD9)
+   - InfiNevo Azure (#0F6FC6) Action Buttons
+   ========================================================================== */
+
+/* 1. Root & Base Canvas */
+[data-theme="infinevo"] {
+  --bg-main: #F0F6FA;
+  --bg-panel: #FFFFFF;
+  --border-default: #D6E4F0;
+  --text-primary: #0F172A;
+  --text-muted: #64748B;
+  --accent-green: #10CF9B;
+  --accent-red: #EF4444;
+  --accent-blue: #0F6FC6;
+  --accent-cyan: #009DD9;
+  --accent-yellow: #F49100;
+}
+
+[data-theme="infinevo"] body {
+  background-color: #F0F6FA !important;
+  color: #0F172A !important;
+}
+
+/* 2. Top Header - Deep Corporate Navy Bar Matching Preview Image */
+[data-theme="infinevo"] header.h-16,
+[data-theme="infinevo"] body > div > div > header {
+  background: linear-gradient(90deg, #07192F 0%, #0F325E 60%, #17406D 100%) !important;
+  border-bottom: 1px solid rgba(0, 157, 217, 0.35) !important;
+  box-shadow: 0 4px 20px rgba(7, 25, 47, 0.25) !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] header.h-16 h1,
+[data-theme="infinevo"] header.h-16 .page-title,
+[data-theme="infinevo"] header.h-16 [class*="text-white"],
+[data-theme="infinevo"] header.h-16 p,
+[data-theme="infinevo"] body > div > div > header h1,
+[data-theme="infinevo"] body > div > div > header p {
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] header.h-16 .text-slate-300,
+[data-theme="infinevo"] header.h-16 .text-slate-400,
+[data-theme="infinevo"] body > div > div > header .text-slate-300,
+[data-theme="infinevo"] body > div > div > header .text-slate-400 {
+  color: #DBEFF9 !important;
+}
+
+/* Page Content Header inside main (e.g. History page header) */
+[data-theme="infinevo"] main header {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme="infinevo"] main header h1 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main header p {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] header .bg-amber-500 {
+  background-color: #F49100 !important;
+  color: #FFFFFF !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+}
+
+[data-theme="infinevo"] header .border-\[\#222D3D\] {
+  border-color: rgba(0, 157, 217, 0.35) !important;
+}
+
+[data-theme="infinevo"] header .hover\:bg-\[\#1E293B\]\/50:hover,
+[data-theme="infinevo"] header .hover\:bg-\[\#1E293B\]\/40:hover {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+[data-theme="infinevo"] header [class*="bg-[#6366F1]"] {
+  background-color: rgba(0, 157, 217, 0.2) !important;
+  color: #0BD0D9 !important;
+  border-color: rgba(0, 157, 217, 0.6) !important;
+}
+
+[data-theme="infinevo"] header [class*="bg-[#3B82F6]/10"] {
+  background-color: rgba(0, 157, 217, 0.25) !important;
+  border-color: rgba(0, 157, 217, 0.6) !important;
+  color: #0BD0D9 !important;
+}
+
+/* 3. Left Sidebar - Deep Navy Matching Preview Image */
+[data-theme="infinevo"] aside {
+  background-color: #061324 !important;
+  border-right: 1px solid #142844 !important;
+  color: #CBD5E1 !important;
+}
+
+[data-theme="infinevo"] aside .border-\[\#222D3D\],
+[data-theme="infinevo"] aside [class*="border-[#222D3D]"] {
+  border-color: #142844 !important;
+}
+
+[data-theme="infinevo"] aside .text-accent-blue {
+  color: #009DD9 !important;
+}
+
+/* Inactive Sidebar Nav Items */
+[data-theme="infinevo"] aside a {
+  background-color: transparent !important;
+  color: #94A3B8 !important;
+  border-left: none !important;
+}
+
+[data-theme="infinevo"] aside a svg {
+  color: #94A3B8 !important;
+}
+
+[data-theme="infinevo"] aside a:hover {
+  background-color: rgba(23, 64, 109, 0.4) !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] aside a:hover svg {
+  color: #FFFFFF !important;
+}
+
+/* Active Sidebar Nav Item (Exact Match to Preview Image) */
+[data-theme="infinevo"] aside a.border-l-2,
+[data-theme="infinevo"] aside a[class*="border-l-2"] {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  border-left: 4px solid #009DD9 !important;
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  box-shadow: 0 4px 14px rgba(15, 111, 198, 0.35) !important;
+}
+
+[data-theme="infinevo"] aside a.border-l-2 svg,
+[data-theme="infinevo"] aside a[class*="border-l-2"] svg {
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] aside .text-slate-400 {
+  color: #8BA3C7 !important;
+}
+
+/* 4. Main Content Area Canvas */
+[data-theme="infinevo"] main,
+[data-theme="infinevo"] main[class*="bg-gradient-to-b"],
+[data-theme="infinevo"] .bg-bg-main,
+[data-theme="infinevo"] div[class*="bg-[#0B0F19]"]:has(> main),
+[data-theme="infinevo"] main div[class*="bg-[#0B0F19]"][class*="h-full"] {
+  background-image: none !important;
+  background-color: #F0F6FA !important;
+  color: #0F172A !important;
+}
+
+/* 5. General Cards & Panels in Main Content (Turn Crisp White) */
+[data-theme="infinevo"] main .glass-panel,
+[data-theme="infinevo"] main [class*="bg-[#0B0F19]"],
+[data-theme="infinevo"] main [class*="bg-[#0F172A]"],
+[data-theme="infinevo"] main [class*="bg-[#111827]"],
+[data-theme="infinevo"] main [class*="bg-[#070D1A]"],
+[data-theme="infinevo"] main [class*="bg-[#0B1120]"],
+[data-theme="infinevo"] main [class*="bg-[#0D131F]"],
+[data-theme="infinevo"] main [class*="bg-[#08101A]"],
+[data-theme="infinevo"] main [class*="bg-[#050810]"],
+[data-theme="infinevo"] main [class*="bg-slate-900"],
+[data-theme="infinevo"] main [class*="bg-slate-950"] {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+  color: #0F172A !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 111, 198, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="infinevo"] main .border-\[\#222D3D\],
+[data-theme="infinevo"] main [class*="border-[#222D3D]"],
+[data-theme="infinevo"] main [class*="border-[#1E293B]"],
+[data-theme="infinevo"] main [class*="border-[#1E2D45]"],
+[data-theme="infinevo"] main [class*="border-[#2D3F55]"],
+[data-theme="infinevo"] main [class*="border-[#334155]"] {
+  border-color: #D6E4F0 !important;
+}
+
+/* Secondary Nested Boxes & Subtle Sub-Panels (Soft Ice-Blue Tint) */
+[data-theme="infinevo"] main [class*="bg-[#1E293B]"]:not(button):not(a):not([id^="chat-session-"]),
+[data-theme="infinevo"] main [class*="bg-[#1E293B]/"]:not(button):not(a):not([id^="chat-session-"]) {
+  background-color: #EDF5FB !important;
+  border-color: #D6E4F0 !important;
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#1E293B]"] p,
+[data-theme="infinevo"] main [class*="bg-[#1E293B]"] span,
+[data-theme="infinevo"] main [class*="bg-[#1E293B]"] div {
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#1E293B]"] .text-slate-300,
+[data-theme="infinevo"] main [class*="bg-[#1E293B]"] .text-slate-400 {
+  color: #1E293B !important;
+}
+
+/* 6. Typography in Main Content */
+[data-theme="infinevo"] main h1,
+[data-theme="infinevo"] main h2,
+[data-theme="infinevo"] main h3,
+[data-theme="infinevo"] main .page-title,
+[data-theme="infinevo"] main .section-title,
+[data-theme="infinevo"] main .card-title {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] main [class*="text-white"]:not(button):not(a):not(span[class*="rounded-full"]):not([class*="bg-accent-blue"]):not([class*="bg-blue"]):not([class*="bg-[#3B82F6]"]) {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] main .text-slate-200,
+[data-theme="infinevo"] main .text-slate-300 {
+  color: #1E293B !important;
+}
+
+[data-theme="infinevo"] main .text-slate-400,
+[data-theme="infinevo"] main .text-slate-500 {
+  color: #64748B !important;
+}
+
+/* 7. KPI Cards: Card 1 Featured Gradient vs Cards 2, 3, 4 Crisp White */
+/* Card 1 Featured Navy/Azure Gradient (Preview Image Feature) - Scoped strictly to KPI card row */
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:first-child {
+  background: linear-gradient(135deg, #071C38 0%, #0F3866 50%, #17406D 100%) !important;
+  border: 1px solid rgba(0, 157, 217, 0.4) !important;
+  box-shadow: 0 10px 25px -5px rgba(15, 111, 198, 0.35) !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:first-child * {
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:first-child span {
+  color: #DBEFF9 !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:first-child [data-testid="kpi-value"] * {
+  color: #FFFFFF !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:first-child div[class*="rounded-lg"] {
+  background-color: rgba(0, 157, 217, 0.25) !important;
+  border: 1px solid rgba(11, 208, 217, 0.5) !important;
+  box-shadow: 0 0 12px rgba(0, 157, 217, 0.3) !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:first-child div[class*="rounded-lg"] svg {
+  color: #0BD0D9 !important;
+}
+
+/* Secondary KPI Cards (2, 3, 4) - Crisp White with Styled Sub-elements */
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:not(:first-child) {
+  background-color: #FFFFFF !important;
+  border: 1px solid #E2EDF5 !important;
+  box-shadow: 0 4px 16px -2px rgba(15, 111, 198, 0.06) !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:not(:first-child) span[class*="uppercase"] {
+  color: #475569 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:not(:first-child) [data-testid="kpi-value"],
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:not(:first-child) [data-testid="kpi-value"] div {
+  color: #0F2847 !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="infinevo"] main .space-y-4 > .flex.flex-wrap.gap-3 > div:not(:first-child) div[class*="rounded-lg"] {
+  background-color: #F0F6FA !important;
+  border-color: #D6E4F0 !important;
+}
+
+/* 8. AI Score Card, Gauge & Inner Sub-Box (Crisp Contrast) */
+[data-theme="infinevo"] main circle[class*="stroke-[#222D3D]"] {
+  stroke: #DBEFF9 !important;
+}
+
+[data-theme="infinevo"] main circle[class*="stroke-[#3B82F6]"] {
+  stroke: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-slate-900/40"],
+[data-theme="infinevo"] main [class*="bg-slate-900"] {
+  background-color: #EDF5FB !important;
+  border: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-slate-900/40"] span,
+[data-theme="infinevo"] main [class*="bg-slate-900/40"] .text-slate-400 {
+  color: #17406D !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-slate-900/40"] span[class*="text-white"],
+[data-theme="infinevo"] main [class*="bg-slate-900/40"] .font-bold {
+  color: #0F172A !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#F59E0B]/10"] {
+  background-color: #FEF3E7 !important;
+  border-color: #FDD7AE !important;
+  color: #F49100 !important;
+}
+
+/* 9. Tables & Audit Queue - Exact Match to Preview Image */
+[data-theme="infinevo"] table {
+  background-color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] thead,
+[data-theme="infinevo"] thead tr,
+[data-theme="infinevo"] th,
+[data-theme="infinevo"] .table-header {
+  background-color: #DBEFF9 !important; /* Signature Ice-Blue Table Header */
+  color: #17406D !important; /* Deep Navy Header Text */
+  font-weight: 700 !important;
+  border-bottom: 2px solid #C0DCED !important;
+  border-top: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] tbody tr {
+  background-color: #FFFFFF !important;
+  border-bottom: 1px solid #E8F0F7 !important;
+  transition: background-color 0.15s ease !important;
+}
+
+[data-theme="infinevo"] tbody tr:nth-child(even) {
+  background-color: #F8FAFD !important;
+}
+
+[data-theme="infinevo"] tbody tr:hover {
+  background-color: #EDF5FC !important;
+}
+
+[data-theme="infinevo"] td,
+[data-theme="infinevo"] .table-cell {
+  color: #1E293B !important;
+  border-bottom: 1px solid #E8F0F7 !important;
+}
+
+/* 10. Status Badges - High-Contrast Solid Pills (Preview Image Match) */
+/* Solid Mint Green (Verified / Completed / Paid) */
+[data-theme="infinevo"] span[class*="bg-teal-500"],
+[data-theme="infinevo"] span[class*="bg-emerald-500"],
+[data-theme="infinevo"] span.text-teal-400,
+[data-theme="infinevo"] span.text-emerald-400 {
+  background-color: #10CF9B !important;
+  color: #FFFFFF !important;
+  border-color: #10CF9B !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-teal-500"] *,
+[data-theme="infinevo"] span[class*="bg-emerald-500"] *,
+[data-theme="infinevo"] span.text-teal-400 svg,
+[data-theme="infinevo"] span.text-emerald-400 svg {
+  color: #FFFFFF !important;
+}
+
+/* Solid Tangerine Orange (Audit Required / Review Required / Duplicate) */
+[data-theme="infinevo"] span[class*="bg-amber-500"],
+[data-theme="infinevo"] span[class*="bg-orange-500"],
+[data-theme="infinevo"] span.text-amber-400,
+[data-theme="infinevo"] span.text-orange-400 {
+  background-color: #F49100 !important;
+  color: #FFFFFF !important;
+  border-color: #F49100 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-amber-500"] *,
+[data-theme="infinevo"] span[class*="bg-orange-500"] *,
+[data-theme="infinevo"] span.text-amber-400 svg,
+[data-theme="infinevo"] span.text-orange-400 svg {
+  color: #FFFFFF !important;
+}
+
+/* Solid Sky Cyan (Processing / Review Later) */
+[data-theme="infinevo"] span[class*="bg-sky-500"],
+[data-theme="infinevo"] span.text-sky-400 {
+  background-color: #009DD9 !important;
+  color: #FFFFFF !important;
+  border-color: #009DD9 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-sky-500"] *,
+[data-theme="infinevo"] span.text-sky-400 svg {
+  color: #FFFFFF !important;
+}
+
+/* Solid Crimson Red (Failed / Rejected) */
+[data-theme="infinevo"] span[class*="bg-rose-500"],
+[data-theme="infinevo"] span[class*="bg-red-500"],
+[data-theme="infinevo"] span.text-rose-400,
+[data-theme="infinevo"] span.text-red-400 {
+  background-color: #EF4444 !important;
+  color: #FFFFFF !important;
+  border-color: #EF4444 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-rose-500"] *,
+[data-theme="infinevo"] span[class*="bg-red-500"] *,
+[data-theme="infinevo"] span.text-rose-400 svg {
+  color: #FFFFFF !important;
+}
+
+/* 11. Buttons, Filters & Sub-Tabs in Main Area */
+/* Sub-tabs bar container */
+[data-theme="infinevo"] main [class*="rounded-lg p-1 bg-[#0B0F19]"],
+[data-theme="infinevo"] main [class*="flex items-center gap-1 bg-[#0B0F19]"] {
+  background-color: #E6F0F7 !important;
+  border-color: #D0E2EF !important;
+}
+
+[data-theme="infinevo"] main [class*="rounded-lg p-1 bg-[#0B0F19]"] button:not([class*="bg-[#3B82F6]"]) {
+  color: #475569 !important;
+}
+
+[data-theme="infinevo"] main [class*="rounded-lg p-1 bg-[#0B0F19]"] button:not([class*="bg-[#3B82F6]"]):hover {
+  color: #0F172A !important;
+  background-color: #D8E7F3 !important;
+}
+
+/* Active tab button */
+[data-theme="infinevo"] main button[class*="bg-[#3B82F6]"],
+[data-theme="infinevo"] main .bg-\[\#3B82F6\] {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 6px rgba(15, 111, 198, 0.3) !important;
+}
+
+/* Primary Action Buttons */
+[data-theme="infinevo"] main button[class*="bg-accent-blue"],
+[data-theme="infinevo"] main button[class*="bg-blue-600"] {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px rgba(15, 111, 198, 0.3) !important;
+}
+
+/* Secondary Action Buttons & Select Dropdowns */
+[data-theme="infinevo"] main button[class*="border"],
+[data-theme="infinevo"] main select,
+[data-theme="infinevo"] main [class*="bg-[#1A2230]"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #C8DBEC !important;
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] main select:focus {
+  outline: none !important;
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 2px rgba(15, 111, 198, 0.2) !important;
+}
+
+[data-theme="infinevo"] main select option {
+  background-color: #FFFFFF !important;
+  color: #17406D !important;
+}
+
+/* Save Filter Button */
+[data-theme="infinevo"] main button[class*="bg-accent-blue/15"],
+[data-theme="infinevo"] main button[class*="border-accent-blue"] {
+  background-color: #0F6FC6 !important;
+  border-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.25) !important;
+}
+
+[data-theme="infinevo"] main button[class*="bg-accent-blue/15"] svg,
+[data-theme="infinevo"] main button[class*="border-accent-blue"] svg {
+  color: #FFFFFF !important;
+}
+
+/* 12. Semantic Chat (/chat) InfiNevo Theme Adapter */
+/* Thread Sidebar Container */
+[data-theme="infinevo"] div[class*="w-64"][class*="bg-[#080B12]"] {
+  background-color: #FFFFFF !important;
+  border-right: 1px solid #D6E4F0 !important;
+}
+
+/* Thread Sidebar Header */
+[data-theme="infinevo"] div[class*="w-64"] .text-slate-200,
+[data-theme="infinevo"] div[class*="w-64"] span.font-semibold {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] button[title="Hide conversation list"] {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] button[title="Hide conversation list"]:hover {
+  background-color: #EDF5FC !important;
+  color: #0F2847 !important;
+}
+
+/* + New Chat Button in Sidebar */
+[data-theme="infinevo"] #chat-new-session-btn {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  border: 1px solid #0F6FC6 !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.25) !important;
+}
+
+[data-theme="infinevo"] #chat-new-session-btn svg {
+  color: #FFFFFF !important;
+}
+
+/* Thread Search Bar */
+[data-theme="infinevo"] div[class*="w-64"] input {
+  background-color: #F8FAFD !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] input::placeholder {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] svg.text-slate-500 {
+  color: #64748B !important;
+}
+
+/* Thread List Items */
+[data-theme="infinevo"] div[class*="w-64"] [id^="chat-session-"] {
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] [id^="chat-session-"]:hover {
+  background-color: #EDF5FC !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] [id^="chat-session-"][class*="bg-[#1E293B]"] {
+  background-color: #E2EFF9 !important;
+  border: 1px solid #0F6FC6 !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] [id^="chat-session-"] p.text-xs {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] div[class*="w-64"] [id^="chat-session-"] p.text-\[10px\] {
+  color: #64748B !important;
+}
+
+/* Thread Empty State */
+[data-theme="infinevo"] div[class*="w-64"] .text-center {
+  color: #64748B !important;
+  font-weight: 500 !important;
+}
+
+/* Chat Top Agent Strip */
+[data-theme="infinevo"] main div[class*="border-b"][class*="px-4 py-1.5"] {
+  background-color: #F8FAFD !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] main div[class*="border-b"][class*="px-4 py-1.5"] span.text-slate-500 {
+  color: #64748B !important;
+}
+
+/* Chat Empty State Center */
+[data-theme="infinevo"] main div[class*="bg-gradient-to-br from-blue-900/40"] {
+  background: linear-gradient(135deg, #DBEFF9 0%, #EBF4FC 100%) !important;
+  border: 1px solid #B8DCF5 !important;
+  box-shadow: 0 8px 24px rgba(15, 111, 198, 0.15) !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-gradient-to-br from-blue-900/40"] svg {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] #chat-empty-new-btn {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 14px rgba(15, 111, 198, 0.3) !important;
+}
+
+/* Suggestion Chips */
+[data-theme="infinevo"] main button[class*="rounded-full"][class*="bg-[#1E293B]"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #17406D !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04) !important;
+}
+
+[data-theme="infinevo"] main button[class*="rounded-full"][class*="bg-[#1E293B]"]:hover {
+  background-color: #EDF5FB !important;
+  border-color: #0F6FC6 !important;
+  color: #0F2847 !important;
+}
+
+/* Chat Message Bubbles */
+/* User Bubble: Crisp InfiNevo Azure with pure white text */
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tr-none"][class*="bg-[#1E293B]"] {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  border: none !important;
+  box-shadow: 0 4px 14px rgba(15, 111, 198, 0.25) !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tr-none"][class*="bg-[#1E293B]"] span,
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tr-none"][class*="bg-[#1E293B]"] * {
+  color: #FFFFFF !important;
+}
+
+/* Assistant Bubble: Crisp White with subtle shadow and navy text */
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  color: #0F172A !important;
+  box-shadow: 0 4px 16px rgba(15, 111, 198, 0.06) !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] p,
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] li,
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] td,
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] span:not([class*="bg-"]) {
+  color: #1E293B !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] strong {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] code {
+  background-color: #F0F6FA !important;
+  border: 1px solid #D6E4F0 !important;
+  color: #0F6FC6 !important;
+}
+
+/* Input Bar Outer Container */
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] {
+  background-color: #FFFFFF !important;
+  border-top: 1px solid #D6E4F0 !important;
+}
+
+/* Input Bar Inner Input Pill */
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] div[class*="rounded-2xl"][class*="bg-[#0F172A]"] {
+  background-color: #F8FAFD !important;
+  border: 1px solid #CBD5E1 !important;
+}
+
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] div[class*="rounded-2xl"]:focus-within {
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 2px rgba(15, 111, 198, 0.15) !important;
+}
+
+/* Textarea & Placeholder */
+[data-theme="infinevo"] #chat-input-textarea {
+  color: #0F172A !important;
+}
+
+[data-theme="infinevo"] #chat-input-textarea::placeholder {
+  color: #64748B !important;
+}
+
+/* Paperclip & Send Button */
+[data-theme="infinevo"] #chat-attach-btn {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] #chat-attach-btn:hover {
+  color: #0F6FC6 !important;
+  background-color: #EDF5FB !important;
+}
+
+[data-theme="infinevo"] #chat-send-btn {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] #chat-send-btn:disabled {
+  background-color: #E2EDF5 !important;
+  color: #94A3B8 !important;
+}
+
+/* Disclaimer under composer */
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] p.text-center {
+  color: #64748B !important;
+}
+
+/* 13. Settings Page InfiNevo Theme Adapter */
+[data-theme="infinevo"] main section h2 {
+  color: #17406D !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main hr {
+  border-color: #D6E4F0 !important;
+}
+
+/* Settings Integration Tile Cards */
+[data-theme="infinevo"] main a[class*="bg-[#111827]"],
+[data-theme="infinevo"] main div[class*="bg-[#111827]"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 4px 16px -2px rgba(15, 111, 198, 0.06) !important;
+}
+
+[data-theme="infinevo"] main a[class*="bg-[#111827]"]:hover {
+  border-color: #0F6FC6 !important;
+  background-color: #FAFDFE !important;
+  box-shadow: 0 6px 20px -2px rgba(15, 111, 198, 0.12) !important;
+}
+
+[data-theme="infinevo"] main a[class*="bg-[#111827]"] p.text-white,
+[data-theme="infinevo"] main div[class*="bg-[#111827]"] p.text-white {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main a[class*="bg-[#111827]"] p[class*="text-slate"],
+[data-theme="infinevo"] main div[class*="bg-[#111827]"] p[class*="text-slate"] {
+  color: #475569 !important;
+}
+
+/* 14. AI Trainer Page InfiNevo Theme Adapter */
+[data-theme="infinevo"] main [class*="bg-[#070D1A]"],
+[data-theme="infinevo"] main [class*="bg-[#0B1120]"],
+[data-theme="infinevo"] main [class*="bg-[#0D131F]"] {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+}
+
+/* Trainer Upgrade Prompt Feature Box */
+[data-theme="infinevo"] main div[class*="rounded-xl"][class*="bg-[#1E293B]"][class*="border-[#2D3F55]"] {
+  background-color: #EDF5FB !important;
+  border-color: #C8DBEC !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-xl"][class*="bg-[#1E293B]"][class*="border-[#2D3F55]"] div {
+  color: #17406D !important;
+  font-weight: 600 !important;
+}
+
+/* 15. History & Help Pages InfiNevo Theme Adapter */
+[data-theme="infinevo"] #history-page header h1 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] #history-page header p {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] #history-page button,
+[data-theme="infinevo"] #history-page [class*="rounded-full"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] #history-page button:hover {
+  background-color: #EDF5FC !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #history-page button[class*="bg-blue"],
+[data-theme="infinevo"] #history-page button[class*="bg-[#3B82F6]"] {
+  background-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  border-color: #0F6FC6 !important;
+}
+
+/* Help Search & Navigation */
+[data-theme="infinevo"] main input[placeholder*="Search help guides"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+[data-theme="infinevo"] main input[placeholder*="Search help guides"]::placeholder {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-xl"][class*="bg-[#0F172A]"] button:not([class*="bg-accent-blue"]):not([class*="bg-[#3B82F6]"]) {
+  color: #475569 !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-xl"][class*="bg-[#0F172A]"] button:not([class*="bg-accent-blue"]):not([class*="bg-[#3B82F6]"]):hover {
+  color: #0F172A !important;
+  background-color: #D8E7F3 !important;
+}
+
+/* 16. Alert & Error Banners Contrast */
+[data-theme="infinevo"] main [class*="bg-rose-950"],
+[data-theme="infinevo"] main [class*="bg-red-950"] {
+  background-color: #FEF2F2 !important;
+  border-color: #FECACA !important;
+  color: #B91C1C !important;
+}
+
+[data-theme="infinevo"] main [class*="text-rose-300"],
+[data-theme="infinevo"] main [class*="text-red-300"],
+[data-theme="infinevo"] main [class*="text-rose-400"],
+[data-theme="infinevo"] main [class*="text-red-400"] {
+  color: #B91C1C !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-amber-950"] {
+  background-color: #FFFBEB !important;
+  border-color: #FDE68A !important;
+  color: #B45309 !important;
+}
+
+[data-theme="infinevo"] main [class*="text-amber-300"],
+[data-theme="infinevo"] main [class*="text-amber-400"] {
+  color: #B45309 !important;
+}
+
+/* 17. Perfect 10/10 Polish: Ingestion, Chat SAGE Brand, Trainer CTA, Help Navigation */
+/* Ingestion: Connectors & DropZone */
+[data-theme="infinevo"] main [class*="bg-[#151B26]"] {
+  background-color: #EBF4FC !important;
+  border: 1px solid #C8DBEC !important;
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#151B26]"] a {
+  color: #0F6FC6 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#151B26]"] svg {
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] main .border-dashed {
+  border-color: #B8DCF5 !important;
+  background-color: #F8FAFD !important;
+}
+
+[data-theme="infinevo"] main .border-dashed:hover {
+  border-color: #0F6FC6 !important;
+  background-color: #F0F6FA !important;
+  box-shadow: 0 4px 16px rgba(15, 111, 198, 0.08) !important;
+}
+
+[data-theme="infinevo"] main .border-dashed .rounded-full {
+  background-color: #EBF4FC !important;
+  border-color: #C8DBEC !important;
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] main .border-dashed .rounded-full svg {
+  color: #0F6FC6 !important;
+}
+
+/* Chat: SAGE Agent Badge InfiNevo PPT Brand Alignment */
+[data-theme="infinevo"] span[class*="text-[#6366F1]"],
+[data-theme="infinevo"] span[class*="text-[#8B5CF6]"] {
+  color: #009DD9 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-[#8B5CF6]/10"] {
+  background-color: rgba(0, 157, 217, 0.12) !important;
+  border-color: rgba(0, 157, 217, 0.35) !important;
+  color: #009DD9 !important;
+}
+
+/* Trainer: Upgrade Prompt CTA & Lock Icon InfiNevo Alignment */
+[data-theme="infinevo"] main [class*="bg-violet-500/10"] {
+  background-color: #EBF4FC !important;
+  border-color: #C8DBEC !important;
+}
+
+[data-theme="infinevo"] main [class*="text-violet-400"],
+[data-theme="infinevo"] main [class*="text-violet-300"] {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] main a[class*="bg-violet-600"] {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 14px rgba(15, 111, 198, 0.3) !important;
+}
+
+[data-theme="infinevo"] main a[class*="bg-violet-600"]:hover {
+  background: linear-gradient(135deg, #0D62B0 0%, #008BBF 100%) !important;
+}
+
+/* Help: Navigation Tabs & Topic Cards Accents */
+[data-theme="infinevo"] main [role="tablist"][class*="bg-[#0B0F17]"] {
+  background-color: #E6F0F7 !important;
+  border: 1px solid #D0E2EF !important;
+}
+
+[data-theme="infinevo"] main [role="tablist"] button[aria-selected="true"] {
+  background: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.3) !important;
+}
+
+[data-theme="infinevo"] main [role="tablist"] button[aria-selected="false"] {
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] main [role="tablist"] button[aria-selected="false"]:hover {
+  background-color: #D8E7F3 !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #help-guides-container button[class*="bg-blue-600/15"] {
+  background-color: #E2EFF9 !important;
+  border: 1px solid #0F6FC6 !important;
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] #help-guides-container button[class*="bg-blue-600/15"] svg {
+  color: #0F6FC6 !important;
+  opacity: 1 !important;
+}
+
+[data-theme="infinevo"] #help-guides-container button:not([class*="bg-blue-600/15"]) {
+  background-color: #FFFFFF !important;
+  border: 1px solid #E2EDF5 !important;
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] #help-guides-container button:not([class*="bg-blue-600/15"]):hover {
+  background-color: #EDF5FC !important;
+  border-color: #C8DBEC !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #help-guides-container button:hover svg {
+  color: #0F6FC6 !important;
+  opacity: 1 !important;
+}
+
+/* ==========================================================================
+   18. Global Inner Modals, Form Controls & Subpages (InfiNevo Brand Adapter)
+   ========================================================================== */
+
+/* 18.1 Global Form Controls (Inputs, Textareas, Selects, Labels) */
+[data-theme="infinevo"] input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+[data-theme="infinevo"] textarea,
+[data-theme="infinevo"] select {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBDCEB !important;
+  color: #0F2847 !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) !important;
+}
+
+[data-theme="infinevo"] input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):focus,
+[data-theme="infinevo"] textarea:focus,
+[data-theme="infinevo"] select:focus {
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 3px rgba(15, 111, 198, 0.15) !important;
+  outline: none !important;
+}
+
+[data-theme="infinevo"] input::placeholder,
+[data-theme="infinevo"] textarea::placeholder {
+  color: #94A3B8 !important;
+}
+
+[data-theme="infinevo"] select option {
+  background-color: #FFFFFF !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] label {
+  color: #17406D !important;
+  font-weight: 600 !important;
+}
+
+/* 18.2 Global Modals & Dialog Cards */
+[data-theme="infinevo"] div.fixed.inset-0 > div[class*="bg-[#151B26]"],
+[data-theme="infinevo"] div.fixed.inset-0 > div[class*="bg-[#0B0F17]"],
+[data-theme="infinevo"] div.fixed.inset-0 > div[class*="bg-[#060810]"],
+[data-theme="infinevo"] div.fixed.inset-0 > div[class*="rounded-2xl"],
+[data-theme="infinevo"] div.fixed.inset-0 > div[class*="rounded-3xl"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 25px 50px -12px rgba(15, 40, 71, 0.25) !important;
+}
+
+/* Modal Headers */
+[data-theme="infinevo"] div.fixed.inset-0 div[class*="border-b"] {
+  border-bottom-color: #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] div.fixed.inset-0 div[class*="border-b"][class*="bg-"] {
+  background-color: #F0F6FA !important;
+}
+
+[data-theme="infinevo"] div.fixed.inset-0 h2,
+[data-theme="infinevo"] div.fixed.inset-0 h3 {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] div.fixed.inset-0 p[class*="text-slate-400"],
+[data-theme="infinevo"] div.fixed.inset-0 p[class*="text-slate-300"],
+[data-theme="infinevo"] div.fixed.inset-0 span[class*="text-slate-400"] {
+  color: #475569 !important;
+}
+
+/* 18.3 Support Ticket Modal (#support-ticket-modal-overlay) */
+[data-theme="infinevo"] #support-ticket-modal-overlay > div {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay .flex.items-center.justify-between.px-6.py-4 {
+  background-color: #F0F6FA !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay h2 {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay .font-mono[class*="text-blue-400"] {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay [class*="bg-blue-950"] {
+  background-color: #EBF4FC !important;
+  border-color: #C8DBEC !important;
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay [class*="bg-blue-950"] svg,
+[data-theme="infinevo"] #support-ticket-modal-overlay [class*="bg-blue-950"] span[class*="font-mono"] {
+  color: #0F6FC6 !important;
+}
+
+/* Priority Pills in Support Ticket Modal */
+[data-theme="infinevo"] #support-ticket-modal-overlay button[id^="ticket-priority-"]:not([style*="background"]) {
+  background-color: #F8FAFD !important;
+  border-color: #D6E4F0 !important;
+  color: #475569 !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay button[id^="ticket-priority-"]:not([style*="background"]):hover {
+  background-color: #EDF5FC !important;
+  border-color: #C8DBEC !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay button[id^="ticket-priority-"][style*="background"] {
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.15) !important;
+}
+
+/* Submit Ticket Button */
+[data-theme="infinevo"] #support-ticket-modal-overlay button[type="submit"] {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 14px rgba(15, 111, 198, 0.3) !important;
+}
+
+[data-theme="infinevo"] #support-ticket-modal-overlay button[type="submit"]:hover {
+  background: linear-gradient(135deg, #0D62B0 0%, #008BBF 100%) !important;
+}
+
+/* 18.4 Help Center SAGE AI Support Assistant (SupportChatWindow) */
+[data-theme="infinevo"] #help-assistant-container > div {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 111, 198, 0.08) !important;
+}
+
+[data-theme="infinevo"] #help-assistant-container div[class*="bg-[#0F1629]"],
+[data-theme="infinevo"] #help-assistant-container div[class*="bg-[#0B0F17]"] {
+  background-color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] #help-assistant-container div[class*="bg-[#080B12]"] {
+  background-color: #F8FAFD !important;
+  border-top: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] #help-assistant-container div[class*="border-[#222D3D]"] {
+  border-color: #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] #help-assistant-container span[class*="text-slate-400"],
+[data-theme="infinevo"] #help-assistant-container span[class*="text-slate-300"],
+[data-theme="infinevo"] #help-assistant-container p[class*="text-slate-400"] {
+  color: #475569 !important;
+}
+
+/* Quick prompt chips */
+[data-theme="infinevo"] #help-assistant-container button[class*="bg-[#151B26]"],
+[data-theme="infinevo"] #help-assistant-container button[class*="bg-white"] {
+  background-color: #EDF5FB !important;
+  border: 1px solid #C8DBEC !important;
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] #help-assistant-container button[class*="bg-[#151B26]"]:hover,
+[data-theme="infinevo"] #help-assistant-container button[class*="bg-white"]:hover {
+  background-color: #E2EFF9 !important;
+  border-color: #0F6FC6 !important;
+  color: #0F2847 !important;
+}
+
+/* AI Message Bubble in Support Assistant */
+[data-theme="infinevo"] #help-assistant-container div[class*="bg-[#151B26]"][class*="rounded-2xl"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  color: #0F172A !important;
+  box-shadow: 0 2px 10px rgba(15, 111, 198, 0.05) !important;
+}
+
+[data-theme="infinevo"] #help-assistant-container div[class*="bg-[#151B26]"][class*="rounded-2xl"] * {
+  color: #0F172A !important;
+}
+
+/* Support Chat Input bar & send button */
+[data-theme="infinevo"] #support-chat-input {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBDCEB !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #support-chat-input::placeholder {
+  color: #94A3B8 !important;
+}
+
+[data-theme="infinevo"] #support-chat-send-btn {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+}
+
+/* 18.5 Subscriptions & Billing Inner Page Enhancements */
+[data-theme="infinevo"] main span[class*="bg-amber-500"],
+[data-theme="infinevo"] main span[class*="bg-yellow-500"],
+[data-theme="infinevo"] main span[class*="text-amber-900"],
+[data-theme="infinevo"] main span[class*="text-yellow-900"] {
+  background-color: #FEF3C7 !important;
+  border: 1px solid #FDE68A !important;
+  color: #92400E !important;
+  font-weight: 600 !important;
+}
+
+/* 18.6 System Flows Page (/flows) InfiNevo Brand Adapter */
+[data-theme="infinevo"] div:has(> #flow-canvas-container),
+[data-theme="infinevo"] #flow-canvas-container {
+  background-color: #F0F6FA !important;
+}
+
+[data-theme="infinevo"] #flow-canvas-container div[class*="bg-[#0B0F19]"],
+[data-theme="infinevo"] #flow-canvas-container div[class*="bg-[#151B26]"],
+[data-theme="infinevo"] #flow-canvas-container div[class*="bg-[#0F1629]"] {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #flow-canvas-container h1,
+[data-theme="infinevo"] #flow-canvas-container h2,
+[data-theme="infinevo"] #flow-canvas-container h3,
+[data-theme="infinevo"] #flow-canvas-container span[class*="text-white"] {
+  color: #0F2847 !important;
+}
+
+/* ==========================================================================
+   19. Vibrant Brand Callouts, Tips & Help Guide Typography
+   ========================================================================== */
+
+/* 19.1 Info Callouts (e.g., "Manual Run Option", Platform Guidance) */
+[data-theme="infinevo"] main div[class*="bg-blue-500/"],
+[data-theme="infinevo"] main div[class*="border-blue-500/"] {
+  background: linear-gradient(135deg, #EBF5FC 0%, #DDF0FC 100%) !important;
+  border: 1px solid #A4D2F2 !important;
+  border-left: 4px solid #0F6FC6 !important;
+  color: #17406D !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(15, 111, 198, 0.08) !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-blue-500/"] p,
+[data-theme="infinevo"] main div[class*="border-blue-500/"] p,
+[data-theme="infinevo"] main div[class*="bg-blue-500/"] span,
+[data-theme="infinevo"] main div[class*="border-blue-500/"] span,
+[data-theme="infinevo"] main div[class*="bg-blue-500/"] div,
+[data-theme="infinevo"] main div[class*="border-blue-500/"] div {
+  color: #17406D !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-blue-500/"] .font-semibold,
+[data-theme="infinevo"] main div[class*="border-blue-500/"] .font-semibold,
+[data-theme="infinevo"] main div[class*="bg-blue-500/"] strong,
+[data-theme="infinevo"] main div[class*="border-blue-500/"] strong {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-blue-500/"] svg,
+[data-theme="infinevo"] main div[class*="border-blue-500/"] svg {
+  color: #0F6FC6 !important;
+  flex-shrink: 0 !important;
+}
+
+/* 19.2 Warning & Attention Callouts */
+[data-theme="infinevo"] main div[class*="bg-amber-500/"],
+[data-theme="infinevo"] main div[class*="border-amber-500/"] {
+  background: linear-gradient(135deg, #FFF8EE 0%, #FEEFDB 100%) !important;
+  border: 1px solid #FCD39D !important;
+  border-left: 4px solid #F49100 !important;
+  color: #7C2D12 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(244, 145, 0, 0.08) !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-amber-500/"] p,
+[data-theme="infinevo"] main div[class*="border-amber-500/"] p,
+[data-theme="infinevo"] main div[class*="bg-amber-500/"] span,
+[data-theme="infinevo"] main div[class*="border-amber-500/"] span,
+[data-theme="infinevo"] main div[class*="bg-amber-500/"] div,
+[data-theme="infinevo"] main div[class*="border-amber-500/"] div {
+  color: #7C2D12 !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-amber-500/"] .font-semibold,
+[data-theme="infinevo"] main div[class*="border-amber-500/"] .font-semibold,
+[data-theme="infinevo"] main div[class*="bg-amber-500/"] strong,
+[data-theme="infinevo"] main div[class*="border-amber-500/"] strong {
+  color: #8A3B00 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-amber-500/"] svg,
+[data-theme="infinevo"] main div[class*="border-amber-500/"] svg {
+  color: #F49100 !important;
+  flex-shrink: 0 !important;
+}
+
+/* 19.3 Success & Mint Callouts */
+[data-theme="infinevo"] main div[class*="bg-emerald-500/"],
+[data-theme="infinevo"] main div[class*="border-emerald-500/"] {
+  background: linear-gradient(135deg, #E8FAF4 0%, #D1F5E8 100%) !important;
+  border: 1px solid #A3E9D2 !important;
+  border-left: 4px solid #10CF9B !important;
+  color: #064E3B !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(16, 207, 155, 0.08) !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-emerald-500/"] p,
+[data-theme="infinevo"] main div[class*="border-emerald-500/"] p,
+[data-theme="infinevo"] main div[class*="bg-emerald-500/"] strong,
+[data-theme="infinevo"] main div[class*="border-emerald-500/"] strong {
+  color: #065F46 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-emerald-500/"] svg,
+[data-theme="infinevo"] main div[class*="border-emerald-500/"] svg {
+  color: #10CF9B !important;
+}
+
+/* 19.4 Help Article Headings, Paragraphs, Lists & Code Styling */
+[data-theme="infinevo"] main h4[class*="text-white"],
+[data-theme="infinevo"] main h5[class*="text-white"],
+[data-theme="infinevo"] main h6[class*="text-white"] {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main ol[class*="text-slate-300"],
+[data-theme="infinevo"] main ul[class*="text-slate-300"],
+[data-theme="infinevo"] main p[class*="text-slate-300"] {
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] main ol strong,
+[data-theme="infinevo"] main ul strong,
+[data-theme="infinevo"] main p strong {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* Inline code tags inside articles (e.g. `tenant_autopilot_configs`) */
+[data-theme="infinevo"] main code {
+  background-color: #E6F1FA !important;
+  color: #0F6FC6 !important;
+  border: 1px solid #C8E0F2 !important;
+  padding: 1px 5px !important;
+  border-radius: 5px !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 0.9em !important;
+}
+
+/* ==========================================================================
+   SECTION 20: Product-Wide Vibrant Branded Alert, Callout & Notice Banners
+   (Zero plain-whiteout, 100% rich brand color, WCAG AAA contrast)
+   ========================================================================== */
+
+/* 20.1 Universal Pastel Text High-Contrast Transformation */
+[data-theme="infinevo"] [class*="text-amber-200"],
+[data-theme="infinevo"] [class*="text-amber-300"],
+[data-theme="infinevo"] [class*="text-yellow-200"],
+[data-theme="infinevo"] [class*="text-yellow-300"] {
+  color: #8A3B00 !important;
+}
+
+[data-theme="infinevo"] [class*="text-blue-200"],
+[data-theme="infinevo"] [class*="text-blue-300"],
+[data-theme="infinevo"] [class*="text-sky-200"],
+[data-theme="infinevo"] [class*="text-sky-300"] {
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] [class*="text-cyan-200"],
+[data-theme="infinevo"] [class*="text-cyan-300"] {
+  color: #0369A1 !important;
+}
+
+[data-theme="infinevo"] [class*="text-cyan-400"] {
+  color: #0284C7 !important;
+}
+
+[data-theme="infinevo"] [class*="text-emerald-200"],
+[data-theme="infinevo"] [class*="text-emerald-300"] {
+  color: #065F46 !important;
+}
+
+[data-theme="infinevo"] [class*="text-red-200"],
+[data-theme="infinevo"] [class*="text-red-300"],
+[data-theme="infinevo"] [class*="text-rose-200"],
+[data-theme="infinevo"] [class*="text-rose-300"] {
+  color: #991B1B !important;
+}
+
+[data-theme="infinevo"] [class*="text-purple-200"],
+[data-theme="infinevo"] [class*="text-purple-300"] {
+  color: #5B21B6 !important;
+}
+
+/* 20.2 Auditor Console Discrepancies & Alert Cards (/invoices/review/[id], AlertConsole.tsx) */
+/* Error Severity Discrepancy Cards */
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-red-"],
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="bg-red-"] {
+  background: linear-gradient(135deg, #FEF2F2 0%, #FDE8E8 100%) !important;
+  border: 1px solid #FECACA !important;
+  border-left: 4px solid #DC2626 !important;
+  color: #7F1D1D !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(220, 38, 38, 0.06) !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-red-"] p,
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-red-"] span {
+  color: #7F1D1D !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-red-"] svg {
+  color: #DC2626 !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-red-"] button {
+  background: #FEE2E2 !important;
+  border: 1px solid #FCA5A5 !important;
+  color: #991B1B !important;
+  font-weight: 600 !important;
+}
+
+/* Warning Severity Discrepancy Cards */
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-yellow-"],
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="bg-yellow-"] {
+  background: linear-gradient(135deg, #FFF8EE 0%, #FEEFDB 100%) !important;
+  border: 1px solid #FCD39D !important;
+  border-left: 4px solid #F49100 !important;
+  color: #7C2D12 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(244, 145, 0, 0.06) !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-yellow-"] p,
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-yellow-"] span {
+  color: #7C2D12 !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-yellow-"] svg {
+  color: #F49100 !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-yellow-"] button {
+  background: #FEF3C7 !important;
+  border: 1px solid #FDE68A !important;
+  color: #8A3B00 !important;
+  font-weight: 600 !important;
+}
+
+/* Information Severity Discrepancy Cards */
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-blue-"],
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="bg-blue-"] {
+  background: linear-gradient(135deg, #EBF5FC 0%, #DDF0FC 100%) !important;
+  border: 1px solid #A4D2F2 !important;
+  border-left: 4px solid #0F6FC6 !important;
+  color: #17406D !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 10px rgba(15, 111, 198, 0.06) !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-blue-"] p,
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-blue-"] span {
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-blue-"] svg {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="border-blue-"] button {
+  background: #EBF5FC !important;
+  border: 1px solid #A4D2F2 !important;
+  color: #0F6FC6 !important;
+  font-weight: 600 !important;
+}
+
+/* Auditor Console Clean / No Alerts Banner */
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="bg-emerald-"] {
+  background: linear-gradient(135deg, #E8FAF4 0%, #D1F5E8 100%) !important;
+  border: 1px solid #A3E9D2 !important;
+  border-left: 4px solid #10CF9B !important;
+  color: #065F46 !important;
+  border-radius: 12px !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="bg-emerald-"] span {
+  color: #065F46 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] [data-testid*="audit-alert"][class*="bg-emerald-"] svg {
+  color: #10CF9B !important;
+}
+
+/* 20.3 Workflow Setup Banner (WorkflowSetupBanner.tsx) */
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] {
+  background: linear-gradient(135deg, #EBF5FC 0%, #E2F0FA 100%) !important;
+  border-bottom: 1px solid #C8DBEC !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] div.rounded-lg {
+  background: #0F6FC6 !important;
+  border: 1px solid #0F6FC6 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] div.rounded-lg svg {
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] p {
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] p span.font-semibold {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] p span.text-slate-400 {
+  color: #475569 !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] a {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.25) !important;
+  border: none !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] button[aria-label="Dismiss workflow setup prompt"] {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] [data-testid="workflow-setup-banner"] button[aria-label="Dismiss workflow setup prompt"]:hover {
+  color: #0F2847 !important;
+  background-color: rgba(15, 111, 198, 0.08) !important;
+}
+
+/* 20.4 AI Trainer Notice Callouts & Modals */
+/* ChatResponseStylePanel callout */
+[data-theme="infinevo"] main [class*="bg-amber-950/20"][class*="border-amber-500"] {
+  background: linear-gradient(135deg, #FFF8EE 0%, #FEEFDB 100%) !important;
+  border: 1px solid #FCD39D !important;
+  border-left: 4px solid #F49100 !important;
+  color: #7C2D12 !important;
+  border-radius: 12px !important;
+  font-weight: 500 !important;
+}
+
+/* Response length selected pill */
+[data-theme="infinevo"] main button[class*="bg-blue-600/20"][class*="border-blue-500/50"] {
+  background: #0F6FC6 !important;
+  border-color: #0F6FC6 !important;
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+}
+
+/* Trainer AlertListPanel: Flag missed alert button */
+[data-theme="infinevo"] [data-testid="trainer-flag-missed"] {
+  background: linear-gradient(135deg, #FFF8EE 0%, #FEEFDB 100%) !important;
+  border: 1px solid #FCD39D !important;
+  color: #8A3B00 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-flag-missed"]:hover {
+  background: #FEEFDB !important;
+  border-color: #F49100 !important;
+  color: #7C2D12 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-flag-missed"] svg {
+  color: #F49100 !important;
+}
+
+/* Trainer staged count badge */
+[data-theme="infinevo"] [data-testid="trainer-staged-count"] {
+  background: #E8FAF4 !important;
+  border: 1px solid #A3E9D2 !important;
+  color: #065F46 !important;
+  font-weight: 700 !important;
+}
+
+/* Commit Modal impact warning */
+[data-theme="infinevo"] div[class*="bg-amber-500/5"][class*="border-amber-500/20"] {
+  background: linear-gradient(135deg, #FFF8EE 0%, #FEEFDB 100%) !important;
+  border: 1px solid #FCD39D !important;
+  border-left: 3px solid #F49100 !important;
+  color: #7C2D12 !important;
+  border-radius: 8px !important;
+}
+
+[data-theme="infinevo"] div[class*="bg-amber-500/5"][class*="border-amber-500/20"] svg {
+  color: #F49100 !important;
+}
+
+/* Commit Modal impact sample list */
+[data-theme="infinevo"] [data-testid="impact-sample"] > div {
+  background: #F8FAFD !important;
+  border: 1px solid #CBDCEB !important;
+}
+
+[data-theme="infinevo"] [data-testid="impact-sample"] > div > div {
+  border-color: #E2ECF5 !important;
+}
+
+[data-theme="infinevo"] [data-testid="impact-sample"] span.text-slate-300 {
+  color: #0F2847 !important;
+}
+
+/* 20.5 Settings Subpages Notice Banners */
+/* Service Flow Toggles read-only banner */
+[data-theme="infinevo"] [class*="bg-amber-500/10"][class*="border-amber-500/20"] {
+  background: linear-gradient(135deg, #FFF8EE 0%, #FEEFDB 100%) !important;
+  border: 1px solid #FCD39D !important;
+  border-left: 4px solid #F49100 !important;
+  color: #7C2D12 !important;
+  border-radius: 12px !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] [class*="bg-amber-500/10"][class*="border-amber-500/20"] svg {
+  color: #F49100 !important;
+}
+
+/* Widget Token one-time reveal callout */
+[data-theme="infinevo"] [class*="bg-emerald-500/5"][class*="border-emerald-500/30"] {
+  background: linear-gradient(135deg, #E8FAF4 0%, #D1F5E8 100%) !important;
+  border: 1px solid #A3E9D2 !important;
+  border-left: 4px solid #10CF9B !important;
+  color: #064E3B !important;
+  border-radius: 12px !important;
+}
+
+[data-theme="infinevo"] [class*="bg-emerald-500/5"][class*="border-emerald-500/30"] p {
+  color: #065F46 !important;
+}
+
+[data-theme="infinevo"] [class*="bg-emerald-500/5"][class*="border-emerald-500/30"] svg {
+  color: #10CF9B !important;
+}
+
+/* 20.6 Open Findings Chip (OpenFindingsChip.tsx) */
+[data-theme="infinevo"] [data-testid="open-findings"] {
+  background: linear-gradient(135deg, #F5F3FF 0%, #EDE9FE 100%) !important;
+  border: 1px solid #DDD6FE !important;
+  border-left: 4px solid #7C3AED !important;
+  border-radius: 10px !important;
+}
+
+[data-theme="infinevo"] [data-testid="open-findings-chip"] {
+  color: #5B21B6 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] [data-testid="open-findings-chip"] svg {
+  color: #7C3AED !important;
+}
+
+[data-theme="infinevo"] [data-testid="open-findings-chip"]:hover {
+  background-color: rgba(124, 58, 237, 0.06) !important;
+}
+
+/* 20.7 Status Badges & Pills Across All Tables & Panels */
+[data-theme="infinevo"] span[class*="bg-blue-500/10"],
+[data-theme="infinevo"] span[class*="bg-sky-500/10"] {
+  background-color: #EBF5FC !important;
+  border-color: #A4D2F2 !important;
+  color: #0F6FC6 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-amber-500/10"],
+[data-theme="infinevo"] span[class*="bg-amber-500/20"] {
+  background-color: #FFF4E5 !important;
+  border-color: #FCD39D !important;
+  color: #8A3B00 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-emerald-500/10"],
+[data-theme="infinevo"] span[class*="bg-emerald-500/20"] {
+  background-color: #E8FAF4 !important;
+  border-color: #A3E9D2 !important;
+  color: #065F46 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-red-500/10"],
+[data-theme="infinevo"] span[class*="bg-rose-500/10"] {
+  background-color: #FEF2F2 !important;
+  border-color: #FECACA !important;
+  color: #991B1B !important;
+  font-weight: 600 !important;
+}
+
+/* ==========================================================================
+   SECTION 21: Dedicated Semantic Chat (/chat) InfiNevo Theme Fixes
+   ========================================================================== */
+
+/* 21.1 Sidebar "+ New Chat" Button */
+[data-theme="infinevo"] #chat-new-session-btn {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  border: none !important;
+  border-left: none !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  padding: 6px 12px !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.25) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+[data-theme="infinevo"] #chat-new-session-btn svg {
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] #chat-new-session-btn:hover {
+  opacity: 0.92 !important;
+  box-shadow: 0 4px 12px rgba(15, 111, 198, 0.35) !important;
+}
+
+/* 21.2 Center Empty State Robot Icon (Never an alert box) */
+[data-theme="infinevo"] main div[class*="bg-gradient-to-br from-blue-900"] {
+  background: linear-gradient(135deg, #EBF5FC 0%, #DDF0FC 100%) !important;
+  border: 1px solid #B8DCF5 !important;
+  border-left: 1px solid #B8DCF5 !important;
+  border-radius: 16px !important;
+  box-shadow: 0 8px 24px rgba(15, 111, 198, 0.12) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-gradient-to-br from-blue-900"] svg {
+  color: #0F6FC6 !important;
+}
+
+/* 21.3 Center Empty State Title & Badge */
+[data-theme="infinevo"] main h2.text-lg {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main h2.text-lg span[class*="text-[#8B5CF6]"] {
+  background-color: #E0F2FE !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0284C7 !important;
+  font-weight: 700 !important;
+}
+
+/* 21.4 Center "Start New Chat" CTA Button */
+[data-theme="infinevo"] #chat-empty-new-btn {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  border: none !important;
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+  box-shadow: 0 4px 16px rgba(15, 111, 198, 0.3) !important;
+}
+
+[data-theme="infinevo"] #chat-empty-new-btn:hover {
+  opacity: 0.95 !important;
+  box-shadow: 0 6px 20px rgba(15, 111, 198, 0.4) !important;
+}
+
+/* 21.5 Bottom Input Composer Container & Controls */
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] {
+  background-color: #FFFFFF !important;
+  border-top: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] div[class*="rounded-2xl"] {
+  background-color: #F8FAFD !important;
+  border: 1.5px solid #CBD5E1 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.04) !important;
+  transition: all 0.2s ease !important;
+}
+
+/* Active focus state */
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] div[class*="rounded-2xl"]:focus-within {
+  background-color: #FFFFFF !important;
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 3px rgba(15, 111, 198, 0.15) !important;
+}
+
+/* Disabled "Select a chat to start…" container: soft ice-blue tint with refined border */
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] div[class*="rounded-2xl"]:has(#chat-input-textarea:disabled) {
+  background-color: #F1F6FB !important;
+  border: 1.5px solid #B8DCF5 !important;
+  box-shadow: 0 1px 4px rgba(15, 111, 198, 0.03) !important;
+}
+
+/* Base Textarea — must be transparent with no inner box or borders */
+[data-theme="infinevo"] #chat-input-textarea {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 4px 0 !important;
+  color: #0F172A !important;
+  font-size: 13.5px !important;
+}
+
+[data-theme="infinevo"] #chat-input-textarea::placeholder {
+  color: #64748B !important;
+  font-weight: 500 !important;
+  opacity: 1 !important;
+}
+
+/* Disabled state override: defeat Tailwind's disabled:opacity-50 so placeholder is 100% sharp and visible */
+[data-theme="infinevo"] #chat-input-textarea:disabled {
+  opacity: 1 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  color: #17406D !important;
+  cursor: default !important;
+}
+
+[data-theme="infinevo"] #chat-input-textarea:disabled::placeholder {
+  color: #17406D !important;
+  font-weight: 600 !important;
+  font-size: 13.5px !important;
+  opacity: 1 !important;
+  letter-spacing: 0.01em !important;
+}
+
+/* Paperclip Icon */
+[data-theme="infinevo"] #chat-attach-btn {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] #chat-attach-btn:hover {
+  color: #0F6FC6 !important;
+  background-color: #EDF5FB !important;
+}
+
+[data-theme="infinevo"] #chat-attach-btn:disabled {
+  color: #94A3B8 !important;
+  opacity: 0.6 !important;
+  background: transparent !important;
+}
+
+/* Send Button */
+[data-theme="infinevo"] #chat-send-btn {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.25) !important;
+}
+
+[data-theme="infinevo"] #chat-send-btn:disabled {
+  background: #E0EFFC !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0F6FC6 !important;
+  opacity: 0.8 !important;
+  box-shadow: none !important;
+}
+
+[data-theme="infinevo"] #chat-send-btn:disabled svg {
+  color: #0F6FC6 !important;
+}
+
+/* 21.6 Chat Disclaimer */
+[data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] p[class*="text-slate-600"] {
+  color: #64748B !important;
+  font-weight: 500 !important;
+}
+
+/* ==========================================================================
+   SECTION 22: Help Center Tablist & "Ask SAGE" Badge Contrast Fixes
+   ========================================================================== */
+
+/* 22.1 Top Tab Switcher Container */
+[data-theme="infinevo"] div[role="tablist"] {
+  background-color: #EBF4FC !important;
+  border: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] div[role="tablist"] button[aria-selected="false"],
+[data-theme="infinevo"] div[role="tablist"] button:not([class*="bg-blue"]):not([class*="from-blue"]) {
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] div[role="tablist"] button[aria-selected="false"]:hover,
+[data-theme="infinevo"] div[role="tablist"] button:not([class*="bg-blue"]):not([class*="from-blue"]):hover {
+  background-color: rgba(15, 111, 198, 0.08) !important;
+  color: #0F2847 !important;
+}
+
+/* 22.2 Inactive "AI Support Assistant" Button & "Ask SAGE" Badge */
+[data-theme="infinevo"] #tab-btn-assistant span.bg-cyan-400\/20,
+[data-theme="infinevo"] #tab-btn-assistant span[class*="bg-cyan-"] {
+  background-color: #E0F2FE !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0284C7 !important;
+  font-weight: 700 !important;
+  font-size: 9.5px !important;
+  padding: 2px 6px !important;
+  letter-spacing: 0.02em !important;
+  box-shadow: 0 1px 2px rgba(2, 132, 199, 0.08) !important;
+}
+
+[data-theme="infinevo"] #tab-btn-assistant svg.text-cyan-400,
+[data-theme="infinevo"] #tab-btn-assistant svg {
+  color: #0284C7 !important;
+}
+
+/* 22.3 Active "AI Support Assistant" Tab State */
+[data-theme="infinevo"] #tab-btn-assistant[class*="bg-gradient"],
+[data-theme="infinevo"] #tab-btn-assistant[aria-selected="true"] {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 4px 12px rgba(15, 111, 198, 0.3) !important;
+}
+
+[data-theme="infinevo"] #tab-btn-assistant[class*="bg-gradient"] svg,
+[data-theme="infinevo"] #tab-btn-assistant[aria-selected="true"] svg {
+  color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] #tab-btn-assistant[class*="bg-gradient"] span.bg-cyan-400\/20,
+[data-theme="infinevo"] #tab-btn-assistant[class*="bg-gradient"] span[class*="bg-cyan-"],
+[data-theme="infinevo"] #tab-btn-assistant[aria-selected="true"] span.bg-cyan-400\/20,
+[data-theme="infinevo"] #tab-btn-assistant[aria-selected="true"] span[class*="bg-cyan-"] {
+  background: #FFFFFF !important;
+  border: 1px solid #FFFFFF !important;
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+  font-size: 9.5px !important;
+  padding: 2px 6px !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12) !important;
+}
+
+
+
+
+
+
+
+
+
+
+
+
