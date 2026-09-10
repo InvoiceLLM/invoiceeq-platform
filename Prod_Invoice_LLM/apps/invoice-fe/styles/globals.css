@@ -638,8 +638,8 @@ td, .table-cell {
 /* Solid Tangerine Orange (Audit Required / Review Required / Duplicate) */
 [data-theme="infinevo"] span[class*="bg-amber-500"],
 [data-theme="infinevo"] span[class*="bg-orange-500"],
-[data-theme="infinevo"] span.text-amber-400,
-[data-theme="infinevo"] span.text-orange-400 {
+[data-theme="infinevo"] span[class*="rounded"][class*="text-amber-400"],
+[data-theme="infinevo"] span[class*="rounded"][class*="text-orange-400"] {
   background-color: #F49100 !important;
   color: #FFFFFF !important;
   border-color: #F49100 !important;
@@ -648,8 +648,8 @@ td, .table-cell {
 
 [data-theme="infinevo"] span[class*="bg-amber-500"] *,
 [data-theme="infinevo"] span[class*="bg-orange-500"] *,
-[data-theme="infinevo"] span.text-amber-400 svg,
-[data-theme="infinevo"] span.text-orange-400 svg {
+[data-theme="infinevo"] span[class*="rounded"][class*="text-amber-400"] svg,
+[data-theme="infinevo"] span[class*="rounded"][class*="text-orange-400"] svg {
   color: #FFFFFF !important;
 }
 
@@ -1110,25 +1110,47 @@ td, .table-cell {
   color: #17406D !important;
 }
 
-[data-theme="infinevo"] main .border-dashed {
-  border-color: #B8DCF5 !important;
+[data-theme="infinevo"] main .border-dashed,
+[data-theme="infinevo"] .border-dashed {
+  border: 2px dashed #009DD9 !important;
+  border-width: 2px !important;
+  border-style: dashed !important;
+  border-color: #009DD9 !important;
   background-color: #F8FAFD !important;
+  transition: all 0.2s ease-in-out !important;
 }
 
-[data-theme="infinevo"] main .border-dashed:hover {
+[data-theme="infinevo"] main .border-dashed:hover,
+[data-theme="infinevo"] .border-dashed:hover {
+  border: 2px dashed #0F6FC6 !important;
+  border-width: 2px !important;
+  border-style: dashed !important;
   border-color: #0F6FC6 !important;
-  background-color: #F0F6FA !important;
-  box-shadow: 0 4px 16px rgba(15, 111, 198, 0.08) !important;
+  background-color: #EBF5FC !important;
+  box-shadow: 0 4px 16px rgba(15, 111, 198, 0.12) !important;
 }
 
-[data-theme="infinevo"] main .border-dashed .rounded-full {
+[data-theme="infinevo"] main .border-dashed .rounded-full,
+[data-theme="infinevo"] .border-dashed .rounded-full {
   background-color: #EBF4FC !important;
-  border-color: #C8DBEC !important;
+  border: 1.5px solid #C8DBEC !important;
   color: #0F6FC6 !important;
 }
 
-[data-theme="infinevo"] main .border-dashed .rounded-full svg {
+[data-theme="infinevo"] main .border-dashed .rounded-full svg,
+[data-theme="infinevo"] .border-dashed .rounded-full svg {
   color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] main .border-dashed p.text-white,
+[data-theme="infinevo"] .border-dashed p.text-white {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main .border-dashed p.text-slate-500,
+[data-theme="infinevo"] .border-dashed p.text-slate-500 {
+  color: #64748B !important;
 }
 
 /* Chat: SAGE Agent Badge InfiNevo PPT Brand Alignment */
@@ -1893,33 +1915,79 @@ td, .table-cell {
 [data-theme="infinevo"] span[class*="bg-blue-500/10"],
 [data-theme="infinevo"] span[class*="bg-sky-500/10"] {
   background-color: #EBF5FC !important;
-  border-color: #A4D2F2 !important;
-  color: #0F6FC6 !important;
+  border: 1px solid #7DD3FC !important;
+  color: #0369A1 !important;
   font-weight: 600 !important;
+}
+[data-theme="infinevo"] span[class*="bg-blue-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-sky-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-blue-500/10"] *,
+[data-theme="infinevo"] span[class*="bg-sky-500/10"] * {
+  color: #0284C7 !important;
 }
 
 [data-theme="infinevo"] span[class*="bg-amber-500/10"],
-[data-theme="infinevo"] span[class*="bg-amber-500/20"] {
-  background-color: #FFF4E5 !important;
-  border-color: #FCD39D !important;
-  color: #8A3B00 !important;
+[data-theme="infinevo"] span[class*="bg-amber-500/20"],
+[data-theme="infinevo"] span[class*="bg-orange-500/10"],
+[data-theme="infinevo"] span[class*="bg-orange-500/20"] {
+  background-color: #FFF7ED !important;
+  border: 1px solid #FDBA74 !important;
+  color: #C2410C !important;
   font-weight: 600 !important;
+}
+[data-theme="infinevo"] span[class*="bg-amber-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-amber-500/20"] svg,
+[data-theme="infinevo"] span[class*="bg-orange-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-orange-500/20"] svg,
+[data-theme="infinevo"] span[class*="bg-amber-500/10"] *,
+[data-theme="infinevo"] span[class*="bg-amber-500/20"] *,
+[data-theme="infinevo"] span[class*="bg-orange-500/10"] *,
+[data-theme="infinevo"] span[class*="bg-orange-500/20"] * {
+  color: #EA580C !important;
+}
+
+[data-theme="infinevo"] span[class*="bg-teal-500/10"],
+[data-theme="infinevo"] span[class*="bg-teal-500/20"] {
+  background-color: #F0FDFA !important;
+  border: 1px solid #5EEAD4 !important;
+  color: #0F766E !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] span[class*="bg-teal-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-teal-500/20"] svg,
+[data-theme="infinevo"] span[class*="bg-teal-500/10"] *,
+[data-theme="infinevo"] span[class*="bg-teal-500/20"] * {
+  color: #0D9488 !important;
 }
 
 [data-theme="infinevo"] span[class*="bg-emerald-500/10"],
 [data-theme="infinevo"] span[class*="bg-emerald-500/20"] {
-  background-color: #E8FAF4 !important;
-  border-color: #A3E9D2 !important;
-  color: #065F46 !important;
+  background-color: #ECFDF5 !important;
+  border: 1px solid #6EE7B7 !important;
+  color: #047857 !important;
   font-weight: 600 !important;
+}
+[data-theme="infinevo"] span[class*="bg-emerald-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-emerald-500/20"] svg,
+[data-theme="infinevo"] span[class*="bg-emerald-500/10"] *,
+[data-theme="infinevo"] span[class*="bg-emerald-500/20"] * {
+  color: #059669 !important;
 }
 
 [data-theme="infinevo"] span[class*="bg-red-500/10"],
-[data-theme="infinevo"] span[class*="bg-rose-500/10"] {
+[data-theme="infinevo"] span[class*="bg-rose-500/10"],
+[data-theme="infinevo"] span[class*="bg-red-500/20"],
+[data-theme="infinevo"] span[class*="bg-rose-500/20"] {
   background-color: #FEF2F2 !important;
-  border-color: #FECACA !important;
-  color: #991B1B !important;
+  border: 1px solid #FCA5A5 !important;
+  color: #B91C1C !important;
   font-weight: 600 !important;
+}
+[data-theme="infinevo"] span[class*="bg-red-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-rose-500/10"] svg,
+[data-theme="infinevo"] span[class*="bg-red-500/10"] *,
+[data-theme="infinevo"] span[class*="bg-rose-500/10"] * {
+  color: #DC2626 !important;
 }
 
 /* ==========================================================================
@@ -2168,14 +2236,830 @@ td, .table-cell {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12) !important;
 }
 
+/* ==========================================================================
+   23. InfiNevo Auditor Review Console Optimization & Text Visibility
+   - Scoped strictly to [data-theme="infinevo"]
+   - Zero modifications to Classic Dark mode
+   - Top Header Action Buttons: High-contrast legible text & borders on dark navy header
+   - Extracted Fields Panel: Crisp branded card header, high-contrast field labels & inputs
+   - Line Items Panel: Clean header pill styling, branded table headers, high-contrast rows
+   - Sentinel Discrepancy Card: Ice-blue radiant card, crisp badges
+   - PDF Viewer Toolbar: Crisp buttons and zoom percentage indicator
+   - Tenant Isolation Footer: Legible muted text
+   ========================================================================== */
 
+/* 23.1 Top Header Action Buttons & Badges (inside <header>) */
+[data-theme="infinevo"] header button.text-sky-300,
+[data-theme="infinevo"] header button[class*="text-sky-"] {
+  color: #E0F2FE !important;
+  background: rgba(14, 165, 233, 0.22) !important;
+  border: 1px solid rgba(56, 189, 248, 0.6) !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] header button[class*="text-sky-"]:hover {
+  background: rgba(14, 165, 233, 0.38) !important;
+  border-color: #38BDF8 !important;
+}
 
+[data-theme="infinevo"] header button.text-orange-300,
+[data-theme="infinevo"] header button[class*="text-orange-"] {
+  color: #FFEDD5 !important;
+  background: rgba(249, 115, 22, 0.22) !important;
+  border: 1px solid rgba(251, 146, 60, 0.6) !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] header button[class*="text-orange-"]:hover {
+  background: rgba(249, 115, 22, 0.38) !important;
+  border-color: #FB923C !important;
+}
 
+[data-theme="infinevo"] header button.text-red-300,
+[data-theme="infinevo"] header button[class*="text-red-"] {
+  color: #FEE2E2 !important;
+  background: rgba(239, 68, 68, 0.22) !important;
+  border: 1px solid rgba(248, 113, 113, 0.6) !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] header button[class*="text-red-"]:hover {
+  background: rgba(239, 68, 68, 0.38) !important;
+  border-color: #F87171 !important;
+}
 
+[data-theme="infinevo"] header button.text-emerald-300,
+[data-theme="infinevo"] header button[class*="text-emerald-"] {
+  color: #DCFCE7 !important;
+  background: rgba(16, 185, 129, 0.25) !important;
+  border: 1px solid rgba(52, 211, 153, 0.65) !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] header button[class*="text-emerald-"]:hover {
+  background: rgba(16, 185, 129, 0.42) !important;
+  border-color: #34D399 !important;
+}
 
+[data-theme="infinevo"] header button.text-amber-300,
+[data-theme="infinevo"] header button[class*="text-amber-"] {
+  color: #FEF3C7 !important;
+  background: rgba(245, 158, 11, 0.22) !important;
+  border: 1px solid rgba(251, 191, 36, 0.6) !important;
+  font-weight: 600 !important;
+}
 
+[data-theme="infinevo"] header button[class*="text-rose-"] {
+  color: #FFE4E6 !important;
+  background: rgba(244, 63, 94, 0.22) !important;
+  border: 1px solid rgba(251, 113, 133, 0.6) !important;
+  font-weight: 600 !important;
+}
 
+[data-theme="infinevo"] header a[class*="text-blue-"],
+[data-theme="infinevo"] header button[class*="text-blue-"] {
+  color: #E0F2FE !important;
+  background: rgba(14, 165, 233, 0.22) !important;
+  border: 1px solid rgba(56, 189, 248, 0.6) !important;
+  font-weight: 600 !important;
+}
 
+/* Header status pills (COMPLETED, PAID, AUDIT_REQUIRED, etc.) */
+[data-theme="infinevo"] header span.rounded-full[class*="border-slate-"] {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] header span.rounded-full[class*="border-emerald-"] {
+  background: rgba(16, 185, 129, 0.25) !important;
+  border: 1px solid rgba(52, 211, 153, 0.65) !important;
+  color: #DCFCE7 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] header span.rounded-full[class*="border-yellow-"] {
+  background: rgba(245, 158, 11, 0.25) !important;
+  border: 1px solid rgba(251, 191, 36, 0.65) !important;
+  color: #FEF3C7 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] header span.rounded-full[class*="border-red-"] {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border: 1px solid rgba(248, 113, 113, 0.65) !important;
+  color: #FEE2E2 !important;
+  font-weight: 600 !important;
+}
 
+/* Header chevron queue navigation buttons */
+[data-theme="infinevo"] header button:has(> svg.lucide-chevron-left),
+[data-theme="infinevo"] header button:has(> svg.lucide-chevron-right) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: #FFFFFF !important;
+}
+[data-theme="infinevo"] header button:has(> svg.lucide-chevron-left):hover:not(:disabled),
+[data-theme="infinevo"] header button:has(> svg.lucide-chevron-right):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: #FFFFFF !important;
+}
+
+/* 23.2 Notify Registered Emails Banner */
+[data-theme="infinevo"] .border-slate-700\/60.bg-slate-900\/40 {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 1px 3px rgba(15, 40, 71, 0.05) !important;
+}
+[data-theme="infinevo"] .border-slate-700\/60.bg-slate-900\/40 span {
+  color: #0F2847 !important;
+}
+[data-theme="infinevo"] .border-slate-700\/60.bg-slate-900\/40 span.text-slate-400 {
+  color: #0F6FC6 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] .border-slate-700\/60.bg-slate-900\/40 span.italic {
+  color: #5A7184 !important;
+  font-weight: 500 !important;
+}
+
+/* 23.3 PDF Viewer Canvas Header & Toolbar */
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 1px 4px rgba(15, 40, 71, 0.06) !important;
+}
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:first-child {
+  background: linear-gradient(135deg, #F8FAFC 0%, #F0F6FA 100%) !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+}
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:first-child p.text-slate-400 {
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+}
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:first-child p.text-slate-200 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+/* Toolbar buttons */
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:nth-child(2) {
+  background: #FFFFFF !important;
+  border-bottom: 1px solid #E2E8F0 !important;
+}
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:nth-child(2) button {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+  border: 1px solid transparent !important;
+}
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:nth-child(2) button:hover {
+  background: #EBF5FC !important;
+  border-color: #BAE6FD !important;
+  color: #0F6FC6 !important;
+}
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:nth-child(2) span.font-mono {
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+}
+
+/* 23.4 Extracted Fields & Additional Metadata Panels */
+[data-theme="infinevo"] [data-testid="fields-panel"] {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 1px 4px rgba(15, 40, 71, 0.06) !important;
+}
+[data-theme="infinevo"] [data-testid="fields-panel"] > div:first-child {
+  background: linear-gradient(135deg, #F8FAFC 0%, #F0F6FA 100%) !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+}
+[data-theme="infinevo"] [data-testid="fields-panel"] > div:first-child p {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+[data-theme="infinevo"] [data-testid="fields-panel"] > div:first-child span {
+  background: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0F6FC6 !important;
+  font-weight: 600 !important;
+}
+
+/* Editable Field Labels & Inputs */
+[data-theme="infinevo"] [data-testid^="field-"] label {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+  font-size: 11.5px !important;
+}
+[data-theme="infinevo"] [data-testid^="field-"] input {
+  background: #FFFFFF !important;
+  border: 1.5px solid #CBD5E1 !important;
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 2px rgba(15, 40, 71, 0.04) !important;
+}
+[data-theme="infinevo"] [data-testid^="field-"] input:hover {
+  border-color: #94A3B8 !important;
+}
+[data-theme="infinevo"] [data-testid^="field-"] input:focus {
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 3px rgba(15, 111, 198, 0.15) !important;
+}
+
+/* Additional Extracted Metadata Panel */
+[data-theme="infinevo"] [data-testid="extracted-metadata-panel"] {
+  background: #F8FAFC !important;
+  border: 1px solid #D6E4F0 !important;
+}
+[data-theme="infinevo"] [data-testid="extracted-metadata-panel"] p {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+[data-theme="infinevo"] [data-testid="extracted-metadata-panel"] span.text-slate-500 {
+  color: #5A7184 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] [data-testid="extracted-metadata-panel"] span.text-slate-300,
+[data-theme="infinevo"] [data-testid="extracted-metadata-panel"] span.text-slate-400 {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+/* Pinned Footer (Saved/Resolved notice) */
+[data-theme="infinevo"] [data-testid="fields-panel"] > div:last-child {
+  background: #F8FAFC !important;
+  border-top: 1px solid #D6E4F0 !important;
+  color: #0F2847 !important;
+}
+[data-theme="infinevo"] [data-testid="fields-panel"] > div:last-child strong {
+  color: #0F6FC6 !important;
+}
+
+/* 23.5 Sentinel Discrepancy Banner */
+[data-theme="infinevo"] [data-testid="alerts-banner"] {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 1px 4px rgba(15, 40, 71, 0.06) !important;
+}
+[data-theme="infinevo"] [data-testid="alerts-banner"] > button {
+  background: linear-gradient(135deg, #F8FAFC 0%, #F0F6FA 100%) !important;
+}
+[data-theme="infinevo"] [data-testid="alerts-banner"] span.font-mono {
+  background: #EBF5FC !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+}
+[data-theme="infinevo"] [data-testid="alerts-banner"] span[class*="border-emerald-"] {
+  background: #ECFDF5 !important;
+  border: 1px solid #A7F3D0 !important;
+  color: #059669 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] [data-testid="alerts-banner"] span[class*="border-yellow-"] {
+  background: #FEF3C7 !important;
+  border: 1px solid #FDE68A !important;
+  color: #D97706 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] [data-testid="alerts-banner"] button > div:last-child {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+/* 23.6 Line Items Panel & Table */
+[data-theme="infinevo"] [data-testid="line-items-panel"] {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 1px 4px rgba(15, 40, 71, 0.06) !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] > div:first-child {
+  background: linear-gradient(135deg, #F8FAFC 0%, #F0F6FA 100%) !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] > div:first-child p {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+/* Items count badge */
+[data-theme="infinevo"] [data-testid="line-items-panel"] > div:first-child span.border-slate-700 {
+  background: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+/* Subtotal badge in header */
+[data-theme="infinevo"] [data-testid="line-items-panel"] > div:first-child span[class*="border-blue-"] {
+  background: #EBF5FC !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+}
+/* Edit Items button */
+[data-theme="infinevo"] [data-testid="line-items-panel"] button:has(> svg.lucide-pencil),
+[data-theme="infinevo"] [data-testid="line-items-panel"] button.bg-\[\#3B82F6\] {
+  background: linear-gradient(135deg, #0F6FC6 0%, #0D5CA6 100%) !important;
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+  box-shadow: 0 2px 6px rgba(15, 111, 198, 0.25) !important;
+}
+
+/* Line Items Table Styling */
+[data-theme="infinevo"] [data-testid="line-items-panel"] table thead tr {
+  border-bottom: 1.5px solid #D6E4F0 !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] table th {
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] table tbody tr {
+  border-bottom: 1px solid #F0F6FA !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] table tbody td {
+  color: #0F2847 !important;
+  font-weight: 500 !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] table tbody td:first-child {
+  color: #5A7184 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] table tbody td.text-slate-400 {
+  color: #5A7184 !important;
+  font-weight: 600 !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] table tfoot tr {
+  border-top: 1.5px solid #D6E4F0 !important;
+}
+[data-theme="infinevo"] [data-testid="line-items-panel"] table tfoot td {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* 23.7 Sidebar Tenant ID */
+[data-theme="infinevo"] aside .border-t.border-\[\#222D3D\] {
+  border-top-color: rgba(255, 255, 255, 0.1) !important;
+}
+[data-theme="infinevo"] aside .border-t.border-\[\#222D3D\] span:first-child {
+  color: #8BA3B8 !important;
+  font-weight: 500 !important;
+}
+[data-theme="infinevo"] aside .border-t.border-\[\#222D3D\] span.font-mono {
+  background: rgba(15, 23, 42, 0.6) !important;
+  color: #CBD5E1 !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* 23.8 Header Compact Spacing & Breadcrumb Visibility */
+[data-theme="infinevo"] header {
+  padding-left: 1.25rem !important;
+  padding-right: 1.25rem !important;
+}
+[data-theme="infinevo"] header > div:first-child {
+  min-width: 220px !important;
+  flex-shrink: 0 !important;
+}
+[data-theme="infinevo"] header > div:last-child {
+  gap: 0.75rem !important;
+}
+[data-theme="infinevo"] header button:not([role="switch"]) {
+  padding-left: 0.65rem !important;
+  padding-right: 0.65rem !important;
+  font-size: 11.5px !important;
+}
+
+/* 23.9 InfiNevo Trainer Impact Panel & Weekly Audit Rate Polish */
+[data-theme="infinevo"] #trainer-impact-panel,
+[data-theme="infinevo"] .trainer-impact-panel {
+  background: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 111, 198, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.03) !important;
+}
+
+/* Stat Tiles */
+[data-theme="infinevo"] #trainer-impact-panel .grid > div,
+[data-theme="infinevo"] .trainer-impact-panel .grid > div {
+  background-color: #F8FAFD !important;
+  border-color: #E2E8F0 !important;
+}
+
+[data-theme="infinevo"] #trainer-impact-panel .grid > div .text-white,
+[data-theme="infinevo"] .trainer-impact-panel .grid > div .text-white {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* Section Subheadings */
+[data-theme="infinevo"] #trainer-impact-panel .text-slate-500.uppercase,
+[data-theme="infinevo"] .trainer-impact-panel .text-slate-500.uppercase {
+  color: #17406D !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* Weekly Audit Rate Chart Baseline */
+[data-theme="infinevo"] #trainer-impact-panel .border-b.border-\[\#222D3D\],
+[data-theme="infinevo"] .trainer-impact-panel .border-b.border-\[\#222D3D\],
+[data-theme="infinevo"] #trainer-impact-panel [class*="border-b"][class*="border-[#222D3D]"],
+[data-theme="infinevo"] .trainer-impact-panel [class*="border-b"][class*="border-[#222D3D]"] {
+  border-bottom: 2px solid #CBD5E1 !important;
+}
+
+/* Percentage Text: Crisp, Clear, High-Contrast Tangerine (No Ugly Background Box) */
+[data-theme="infinevo"] #trainer-impact-panel span.text-amber-400,
+[data-theme="infinevo"] .trainer-impact-panel span.text-amber-400,
+[data-theme="infinevo"] #trainer-impact-panel [class*="text-amber-400"],
+[data-theme="infinevo"] .trainer-impact-panel [class*="text-amber-400"] {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-color: transparent !important;
+  color: #D97706 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  line-height: 1.2 !important;
+  margin-bottom: 2px !important;
+}
+
+/* Percentage Bar: Vibrant InfiNevo Tangerine with Border & Subtle Depth */
+[data-theme="infinevo"] #trainer-impact-panel [class*="bg-amber-500/60"],
+[data-theme="infinevo"] .trainer-impact-panel [class*="bg-amber-500/60"],
+[data-theme="infinevo"] #trainer-impact-panel div[class*="bg-amber-500"],
+[data-theme="infinevo"] .trainer-impact-panel div[class*="bg-amber-500"] {
+  background: linear-gradient(180deg, #F49100 0%, #D97706 100%) !important;
+  border: 1px solid rgba(217, 119, 6, 0.45) !important;
+  border-bottom: none !important;
+  border-radius: 3px 3px 0 0 !important;
+  box-shadow: 0 1px 3px rgba(244, 145, 0, 0.25) !important;
+  min-height: 4px !important;
+}
+
+[data-theme="infinevo"] #trainer-impact-panel div[class*="bg-amber-500"]:hover,
+[data-theme="infinevo"] .trainer-impact-panel div[class*="bg-amber-500"]:hover {
+  background: linear-gradient(180deg, #FF9E1A 0%, #EA580C 100%) !important;
+  box-shadow: 0 2px 8px rgba(244, 145, 0, 0.4) !important;
+}
+
+/* Date Labels Under Bars */
+[data-theme="infinevo"] #trainer-impact-panel .border-b + span,
+[data-theme="infinevo"] #trainer-impact-panel .h-28 span.text-slate-500,
+[data-theme="infinevo"] .trainer-impact-panel .h-28 span.text-slate-500 {
+  color: #475569 !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+}
+
+/* Vendors Needing a Rule Links */
+[data-theme="infinevo"] #trainer-impact-panel a[class*="bg-amber-500/5"],
+[data-theme="infinevo"] .trainer-impact-panel a[class*="bg-amber-500/5"] {
+  background-color: #FFFBEB !important;
+  border-color: #FDE68A !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #trainer-impact-panel a[class*="bg-amber-500/5"]:hover,
+[data-theme="infinevo"] .trainer-impact-panel a[class*="bg-amber-500/5"]:hover {
+  background-color: #FEF3C7 !important;
+  border-color: #F59E0B !important;
+}
+
+[data-theme="infinevo"] #trainer-impact-panel a[class*="bg-amber-500/5"] span,
+[data-theme="infinevo"] .trainer-impact-panel a[class*="bg-amber-500/5"] span {
+  color: #0F2847 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] #trainer-impact-panel a[class*="bg-amber-500/5"] span .text-slate-500,
+[data-theme="infinevo"] .trainer-impact-panel a[class*="bg-amber-500/5"] span .text-slate-500 {
+  color: #64748B !important;
+}
+
+/* 23.10 Ingestion Progress Queue & Summary Bar Polish */
+[data-theme="infinevo"] [data-testid="ingestion-summary"] {
+  background-color: #F8FAFD !important;
+  border-top: 1px solid #D6E4F0 !important;
+  color: #0F2847 !important;
+  border-radius: 8px !important;
+  padding: 10px 16px !important;
+}
+
+[data-theme="infinevo"] [data-testid="ingestion-summary"] span.text-white,
+[data-theme="infinevo"] [data-testid="ingestion-summary"] [class*="text-white"] {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* Fix overlapping orange badge box on duplicate / review counts */
+[data-theme="infinevo"] [data-testid="ingestion-summary"] span.text-amber-400,
+[data-theme="infinevo"] [data-testid="ingestion-summary"] [class*="text-amber-400"],
+[data-theme="infinevo"] [data-testid="ingestion-summary"] span.text-amber-300 {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: #C2410C !important;
+  font-weight: 700 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: inline !important;
+  border-radius: 0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="ingestion-summary"] span.text-rose-400,
+[data-theme="infinevo"] [data-testid="ingestion-summary"] [class*="text-rose-400"] {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #DC2626 !important;
+  font-weight: 700 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: inline !important;
+  border-radius: 0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="ingestion-summary"] a {
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [data-testid="ingestion-summary"] button {
+  color: #475569 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] [data-testid="ingestion-summary"] button:hover {
+  color: #0F172A !important;
+}
+
+/* ==========================================================================
+   SECTION 23.11: InfiNevo Autopilot Configuration & Sync History Theme Polish
+   (Vibrant button actions, high-contrast status badges & progress visibility)
+   ========================================================================== */
+
+/* 1. Autopilot Configuration Header Icon & Title */
+[data-theme="infinevo"] .glass-panel svg.text-violet-400 {
+  color: #7C3AED !important;
+}
+
+[data-theme="infinevo"] .glass-panel h3.text-white {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* 2. Google Drive Folder Input & Browse Button */
+[data-theme="infinevo"] div.glass-panel div[class*="bg-[#0B0F19]"] {
+  background-color: #FFFFFF !important;
+  border-color: #CBD5E1 !important;
+  color: #0F2847 !important;
+}
+
+/* Browse Button: Branded Rich Violet Action Pill */
+[data-theme="infinevo"] button[class*="bg-violet-600/20"][class*="text-violet-300"] {
+  background-color: #EDE9FE !important;
+  border: 1.5px solid #7C3AED !important;
+  color: #5B21B6 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 4px rgba(124, 58, 237, 0.18) !important;
+}
+
+[data-theme="infinevo"] button[class*="bg-violet-600/20"][class*="text-violet-300"] svg {
+  color: #7C3AED !important;
+}
+
+[data-theme="infinevo"] button[class*="bg-violet-600/20"][class*="text-violet-300"]:hover {
+  background-color: #DDD6FE !important;
+  border-color: #6D28D9 !important;
+  color: #4C1D95 !important;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.25) !important;
+}
+
+/* 3. Flow Direction Segment Buttons: Active vs Inactive */
+/* Active Button: Prominent InfiNevo Blue Selection */
+[data-theme="infinevo"] button[class*="bg-blue-600/20"][class*="border-blue-500/"] {
+  background-color: #DBEAFE !important;
+  border: 2px solid #2563EB !important;
+  color: #1E40AF !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* Inactive Button: Clean Subtle Slate Pill */
+[data-theme="infinevo"] button[class*="bg-slate-900/40"][class*="border-[#222D3D]"] {
+  background-color: #F8FAFD !important;
+  border: 1px solid #D6E4F0 !important;
+  color: #64748B !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+}
+
+[data-theme="infinevo"] button[class*="bg-slate-900/40"][class*="border-[#222D3D]"]:hover {
+  background-color: #F1F5F9 !important;
+  border-color: #CBD5E1 !important;
+  color: #0F2847 !important;
+}
+
+/* 4. Configuration Form Inputs, Selects & Labels */
+[data-theme="infinevo"] .glass-panel select[class*="bg-[#0B0F19]"],
+[data-theme="infinevo"] .glass-panel input[class*="bg-[#0B0F19]"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] .glass-panel select[class*="bg-[#0B0F19]"]:focus,
+[data-theme="infinevo"] .glass-panel input[class*="bg-[#0B0F19]"]:focus {
+  border-color: #7C3AED !important;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15) !important;
+}
+
+[data-theme="infinevo"] .glass-panel label[class*="text-slate-400"] {
+  color: #475569 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] input[type="checkbox"][class*="accent-violet-500"] {
+  accent-color: #7C3AED !important;
+}
+
+/* 5. Action Buttons: Save Config & Sync Now */
+/* Save Config: Branded Violet Button */
+[data-theme="infinevo"] button[class*="bg-violet-600/20"][class*="border-violet-500/"][class*="rounded-xl"] {
+  background-color: #EDE9FE !important;
+  border: 1.5px solid #7C3AED !important;
+  color: #5B21B6 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.18) !important;
+}
+
+[data-theme="infinevo"] button[class*="bg-violet-600/20"][class*="border-violet-500/"][class*="rounded-xl"] svg {
+  color: #7C3AED !important;
+}
+
+[data-theme="infinevo"] button[class*="bg-violet-600/20"][class*="border-violet-500/"][class*="rounded-xl"]:hover {
+  background-color: #DDD6FE !important;
+  border-color: #6D28D9 !important;
+  color: #4C1D95 !important;
+  box-shadow: 0 3px 8px rgba(124, 58, 237, 0.25) !important;
+}
+
+/* Sync Now: Branded Blue Button */
+[data-theme="infinevo"] button[class*="bg-blue-600/20"][class*="border-blue-500/"][class*="rounded-xl"] {
+  background-color: #DBEAFE !important;
+  border: 1.5px solid #2563EB !important;
+  color: #1E40AF !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.18) !important;
+}
+
+[data-theme="infinevo"] button[class*="bg-blue-600/20"][class*="border-blue-500/"][class*="rounded-xl"] svg {
+  color: #1D4ED8 !important;
+}
+
+[data-theme="infinevo"] button[class*="bg-blue-600/20"][class*="border-blue-500/"][class*="rounded-xl"]:hover {
+  background-color: #BFDBFE !important;
+  border-color: #1D4ED8 !important;
+  color: #172554 !important;
+  box-shadow: 0 3px 8px rgba(37, 99, 235, 0.25) !important;
+}
+
+/* 6. Sync History Card Header, Summary Tiles & Clear Action */
+[data-theme="infinevo"] .glass-panel h3[class*="tracking-wider"] {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* Clear History Button in Header */
+[data-theme="infinevo"] button[class*="text-rose-400"] {
+  color: #DC2626 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] button[class*="text-rose-400"] svg {
+  color: #DC2626 !important;
+}
+
+[data-theme="infinevo"] button[class*="text-rose-400"]:hover {
+  color: #B91C1C !important;
+}
+
+/* Summary Tiles in Sync History */
+[data-theme="infinevo"] div[class*="rounded-lg"][class*="border-[#222D3D]"][class*="bg-slate-900/40"] {
+  background-color: #F8FAFD !important;
+  border-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] div[class*="rounded-lg"][class*="border-[#222D3D]"][class*="bg-slate-900/40"] p {
+  color: #64748B !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] div[class*="rounded-lg"][class*="border-[#222D3D]"][class*="bg-slate-900/40"] span.text-white {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* 7. High-Contrast Status Chips (RunStatusChip & StatusBadge) */
+/* SUCCESS status chip (Last Run & Run Row) */
+[data-theme="infinevo"] span.rounded-full[class*="bg-emerald-500/10"][class*="text-emerald-400"],
+[data-theme="infinevo"] span.rounded-full[class*="bg-emerald-500/20"][class*="text-emerald-400"],
+[data-theme="infinevo"] span.rounded-full[class*="text-emerald-300"],
+[data-theme="infinevo"] span[class*="rounded-full"][class*="text-emerald-400"] {
+  background-color: #D1FAE5 !important;
+  border: 1.5px solid #059669 !important;
+  color: #064E3B !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  padding: 2px 8px !important;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.22) !important;
+}
+
+[data-theme="infinevo"] span.rounded-full[class*="text-emerald-400"] svg {
+  color: #059669 !important;
+}
+
+/* PARTIAL status chip */
+[data-theme="infinevo"] span.rounded-full[class*="bg-amber-500/10"][class*="text-amber-400"],
+[data-theme="infinevo"] span.rounded-full[class*="bg-amber-500/20"][class*="text-amber-400"] {
+  background-color: #FEF3C7 !important;
+  border: 1.5px solid #D97706 !important;
+  color: #78350F !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  padding: 2px 8px !important;
+  box-shadow: 0 1px 3px rgba(217, 119, 6, 0.22) !important;
+}
+
+/* FAILED status chip */
+[data-theme="infinevo"] span.rounded-full[class*="bg-rose-500/10"][class*="text-rose-400"],
+[data-theme="infinevo"] span.rounded-full[class*="bg-rose-500/20"][class*="text-rose-400"],
+[data-theme="infinevo"] span.rounded-full[class*="bg-red-500/10"][class*="text-red-400"] {
+  background-color: #FEE2E2 !important;
+  border: 1.5px solid #DC2626 !important;
+  color: #7F1D1D !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  padding: 2px 8px !important;
+  box-shadow: 0 1px 3px rgba(220, 38, 38, 0.22) !important;
+}
+
+/* NO_NEW_FILES status chip */
+[data-theme="infinevo"] span.rounded-full[class*="bg-slate-500/10"][class*="text-slate-400"],
+[data-theme="infinevo"] span.rounded-full[class*="bg-slate-500/20"][class*="text-slate-400"] {
+  background-color: #F1F5F9 !important;
+  border: 1.5px solid #64748B !important;
+  color: #1E293B !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  padding: 2px 8px !important;
+}
+
+/* 8. Progress Proportion Bar (RunProportionBar) */
+[data-theme="infinevo"] div[class*="max-w-[180px]"][class*="bg-slate-800"],
+[data-theme="infinevo"] .max-w-\[180px\].bg-slate-800 {
+  background: #CBD5E1 !important;
+  background-color: #CBD5E1 !important;
+  height: 6px !important;
+  border-radius: 9999px !important;
+}
+
+[data-theme="infinevo"] div[class*="max-w-[180px]"] div[class*="bg-emerald-500/"] {
+  background: #059669 !important;
+  background-color: #059669 !important;
+  opacity: 1 !important;
+  height: 100% !important;
+}
+
+[data-theme="infinevo"] div[class*="max-w-[180px]"] div[class*="bg-amber-500/"] {
+  background: #D97706 !important;
+  background-color: #D97706 !important;
+  opacity: 1 !important;
+  height: 100% !important;
+}
+
+[data-theme="infinevo"] div[class*="max-w-[180px]"] div[class*="bg-rose-500/"] {
+  background: #DC2626 !important;
+  background-color: #DC2626 !important;
+  opacity: 1 !important;
+  height: 100% !important;
+}
+
+/* 9. Sync History Run Row Text & Hover */
+[data-theme="infinevo"] .glass-panel div.group:hover {
+  background-color: #F8FAFD !important;
+}
+
+[data-theme="infinevo"] .glass-panel div.group span.text-slate-200 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .glass-panel div.group p.text-slate-300 {
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] .glass-panel div.group span.text-slate-400 {
+  color: #475569 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] .glass-panel div.group span.text-slate-600 {
+  color: #94A3B8 !important;
+}
 
 

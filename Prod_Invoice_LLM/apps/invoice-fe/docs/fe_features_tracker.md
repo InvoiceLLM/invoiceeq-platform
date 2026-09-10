@@ -1237,3 +1237,40 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
        - Mode switcher container (`div[role="tablist"]`): Styled in soft ice-blue `#EBF4FC` with `#D6E4F0` border and `#17406D` navy inactive tab text.
     3. Zero component `.tsx` changes. Classic Dark mode 100% untouched and preserved.
   - **Verification.** Audited and verified via Playwright screenshots (`audit_help_tablist_inactive.png`, `audit_help_tablist_active.png`, `audit_help_tablist_dark.png`).
+
+- `[x]` **Gap 486 (FE): Auditor Review Console InfiNevo Theme 100% Optimization & Text Visibility Fix** — opened & closed 2026-09-10.
+  - **Symptom.** On the Single Invoice Review / Auditor Review Console (`/invoices/review/[id]`) in the InfiNevo theme:
+    1. Top action buttons in header (`Review Later`, `Needs Resubmission`, `Reject`, `Approve Invoice`) had dark-on-dark text because global pastel overrides turned `text-sky-300`, `text-orange-300`, `text-red-300`, and `text-emerald-300` into dark colors inside the dark navy header.
+    2. Pitch-black slabs (`bg-[#0B1220]`) inside white cards for `EXTRACTED FIELDS`, `LINE ITEMS`, and `Additional Extracted Metadata`.
+    3. Low contrast editable field labels (`Vendor`, `Invoice Number`, etc.) in washed-out grey (`text-slate-500`).
+    4. PDF viewer toolbar buttons (`Zoom In`, `Zoom Out`, `Rotate`, `Expand PDF`) in faint grey.
+    5. Sentinel discrepancy card rendered in murky `bg-yellow-950/20`.
+    6. Notify Registered Emails banner rendered in dark murky `bg-slate-900/40`.
+    7. Header title "Auditor Review Console" was squished to 0px due to right-side action buttons crowding the row.
+  - **Root cause.** The review console contains a mix of dark-header portalled actions and light-card body components without dedicated InfiNevo scoping.
+  - **What was built.** Added Section 23 to `apps/invoice-fe/styles/globals.css`:
+    1. Scoped high-contrast vibrant rules for `header button[class*="text-sky-"]`, `text-orange-`, `text-red-`, `text-emerald-`, `text-blue-`, `text-rose-` ensuring luminous text on dark header.
+    2. Replaced `bg-[#0B1220]` slabs with radiant ice-blue headers (`linear-gradient(135deg, #F8FAFC, #F0F6FA)`) with corporate navy `#0F2847` titles.
+    3. Elevated editable field labels to bold Corporate Navy `#0F2847` with crisp `#CBD5E1` input borders.
+    4. Styled PDF Viewer toolbar with bold `#0F2847` buttons, `#0F6FC6` hover states, and bold zoom percentage badge.
+    5. Converted Sentinel Discrepancy Card to crisp white card with ice-blue header and clean status pills.
+    6. Converted Notify Registered Emails banner to crisp white card with `#0F6FC6` label and `#5A7184` text.
+    7. Added compact header spacing and `min-width: 220px` to `header > div:first-child`, preventing `Auditor Review Console` title from truncating away.
+    8. Preserved 100% of Classic Dark mode without any regression. Zero `.tsx` changes.
+  - **Verification.** Verified via Playwright screenshots (`audit_review_page_reproduced.png`, `audit_review_classic_dark.png`).
+
+- `[x]` **Gap 487 (FE): Autopilot Configuration & Sync History Color Visibility Polish in InfiNevo Mode** — opened & closed 2026-09-10.
+  - **Symptom.** In InfiNevo mode on `/ingestion` (Autopilot tab):
+    1. Status chips (`SUCCESS`, `PARTIAL`, `FAILED`) were pale and washed-out with faint borders and low contrast text.
+    2. Autopilot Configuration buttons (`Browse →`, `Save Config`, `Sync Now`) looked like empty/unclickable input fields instead of colored action buttons.
+    3. `Inbound (AP)` active flow direction button looked almost identical to inactive `Outbound (AR)`, lacking visual indication of selection.
+    4. Sync History progress proportion bar was washed out with an invisible track.
+  - **What was built.** Added Section 23.11 in `apps/invoice-fe/styles/globals.css`:
+    1. High-contrast elevated status badges for `SUCCESS` (`#D1FAE5` / `#059669` / `#064E3B`), `PARTIAL` (`#FEF3C7` / `#D97706` / `#78350F`), and `FAILED` (`#FEE2E2` / `#DC2626` / `#7F1D1D`).
+    2. Branded action buttons: `Browse →` in rich lavender (`#EDE9FE` / `#7C3AED` / `#5B21B6`), `Save Config` in violet (`#EDE9FE` / `#7C3AED`), and `Sync Now` in azure (`#DBEAFE` / `#2563EB`).
+    3. Prominent active highlight for `Inbound (AP)` (`#DBEAFE` / `#2563EB` / `#1E40AF`) vs neutral slate `Outbound (AR)`.
+    4. Defined slate track (`#CBD5E1`) and 6px solid fills for the progress proportion bar.
+    5. Zero changes to Classic Dark mode. Zero `.tsx` changes.
+  - **Verification.** Verified via Playwright screenshots (`autopilot_infinevo_1run_fixed.png`, `autopilot_dark_1run_comparison.png`, `autopilot_infinevo_history_detail.png`, `autopilot_dark_history_detail.png`).
+
+
