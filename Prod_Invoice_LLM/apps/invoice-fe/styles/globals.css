@@ -1017,6 +1017,106 @@ td, .table-cell {
   color: #17406D !important;
   font-weight: 600 !important;
 }
+
+/* Trainer Invoice Picker Container & Rows */
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+  box-shadow: 0 2px 12px rgba(15, 30, 60, 0.04) !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] ul,
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] ul li {
+  border-color: #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] button {
+  background-color: #FFFFFF !important;
+  transition: background-color 0.15s ease !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] button:hover {
+  background-color: #F0F7FD !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] svg {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] div.text-xs {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] div.text-\\[10px\\] {
+  color: #475569 !important;
+  font-weight: 500 !important;
+}
+
+/* 0 alerts status button: crisp, subtle neutral slate pill */
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] span[class*="bg-slate-700"] {
+  background: #F8FAFD !important;
+  background-color: #F8FAFD !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+
+/* 1 alert / active alerts status button: vibrant high-contrast warm amber badge */
+[data-theme="infinevo"] [data-testid="trainer-invoice-picker"] span[class*="bg-amber-500"] {
+  background: #FEF3C7 !important;
+  background-color: #FEF3C7 !important;
+  border: 1.5px solid #D97706 !important;
+  color: #78350F !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.03em !important;
+  box-shadow: 0 1px 4px rgba(217, 119, 6, 0.18) !important;
+}
+
+/* Trainer Session Alert List Panels & Badges */
+[data-theme="infinevo"] [data-testid="trainer-alert-list"] {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-alert-list"] > div:first-child {
+  background-color: #F4F8FC !important;
+  border-bottom-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-alert-list"] h2 {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-alert-list"] span[data-testid="trainer-staged-count"] {
+  background: #D1FAE5 !important;
+  border: 1.5px solid #059669 !important;
+  color: #064E3B !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-alert-list"] span[class*="bg-amber-500"] {
+  background: #FEF3C7 !important;
+  border: 1.5px solid #D97706 !important;
+  color: #78350F !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-alert-list"] span[class*="bg-red-500"] {
+  background: #FEE2E2 !important;
+  border: 1.5px solid #DC2626 !important;
+  color: #7F1D1D !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-alert-list"] span[class*="bg-blue-500"] {
+  background: #E0F2FE !important;
+  border: 1.5px solid #0284C7 !important;
+  color: #0369A1 !important;
+  font-weight: 800 !important;
+}
+
 /* 15. History Page & Ingestion History InfiNevo Theme Alignment */
 [data-theme="infinevo"] #history-page header h1 {
   color: #0F2847 !important;

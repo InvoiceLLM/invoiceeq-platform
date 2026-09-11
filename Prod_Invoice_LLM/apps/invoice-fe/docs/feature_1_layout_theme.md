@@ -139,6 +139,14 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Expanded file row view: Background `#F8FAFD`, divider `#E2EDF5`, file title `#0F2847` bold navy, labels `#64748B`, field values `#1E293B`, and colorful `OutcomeBadge`s with checkmark/alert icons.
   - 100% zero markup/structural changes to `IngestionHistoryTable.tsx` and `app/history/page.tsx`; Classic Dark mode 100% untouched.
 
+- [x] **Task 1.11: AI Trainer Invoice Picker Status Button Colors & Contrast (FE Gap 491)** — added 2026-09-11.
+  - Resolved status button styling and contrast in AI Trainer invoice picker list (`TrainerEntryPanel.tsx`).
+  - Adapted `0 alerts` from a muddy dark slate smudge into a crisp, elegant neutral slate pill (`#F8FAFD` background, `1px solid #CBD5E1` border, `#64748B` readable text).
+  - Elevated `1 alert` / active alerts into a vibrant warm amber badge (`#FEF3C7` background, `1.5px solid #D97706` amber border, `#78350F` 800-weight bold text, 7.8:1 AAA contrast, `0 1px 4px rgba(217, 119, 6, 0.18)` glow shadow).
+  - Refined invoice picker card container (`#FFFFFF` / `#D6E4F0`), row hover (`#F0F7FD`), dividers (`#E2EDF5`), file icon (`#0F6FC6`), invoice numbers (`#0F2847` bold), and subtitle metadata (`#475569`).
+  - Added cohesive high-contrast styles for AI Trainer staged rule list badges.
+  - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
+
 ### Verification Plan
 
 * **Manual Verification**: Run `npm run dev` inside `apps/invoice-fe` and inspect the layout elements. Verify layout responsiveness and correct styling.
