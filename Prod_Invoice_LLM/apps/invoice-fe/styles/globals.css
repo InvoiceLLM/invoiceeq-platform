@@ -1117,6 +1117,133 @@ td, .table-cell {
   font-weight: 800 !important;
 }
 
+/* Trainer Control Bar Top Header & Pill Container */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) {
+  background-color: #FFFFFF !important;
+  border-bottom-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) > div {
+  background-color: #F8FAFD !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 1px 3px rgba(15, 30, 60, 0.03) !important;
+}
+
+/* Step circles (pending) */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.rounded-full:not(:has(svg)) {
+  background-color: #E0F2FE !important;
+  border: 1px solid #7DD3FC !important;
+  color: #0369A1 !important;
+  font-weight: 700 !important;
+}
+
+/* Step circles (done with checkmark) */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.rounded-full:has(svg) {
+  background-color: #D1FAE5 !important;
+  border: 1.5px solid #059669 !important;
+  color: #047857 !important;
+  font-weight: 800 !important;
+}
+
+/* Step uppercase labels */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.uppercase {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* Step 1 subtitle helper text */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.text-slate-400 {
+  color: #475569 !important;
+  font-weight: 500 !important;
+}
+
+/* Active loaded document badge in Step 1 */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) div[class*="bg-emerald-500"] {
+  background-color: #ECFDF5 !important;
+  border: 1px solid #6EE7B7 !important;
+  color: #065F46 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) div[class*="bg-emerald-500"] svg {
+  color: #059669 !important;
+}
+
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) button[data-testid="trainer-change-document"] {
+  color: #059669 !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) button[data-testid="trainer-change-document"]:hover {
+  color: #DC2626 !important;
+  background-color: #FEE2E2 !important;
+}
+
+/* Vertical divider */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) div[aria-hidden="true"] {
+  background-color: #D6E4F0 !important;
+}
+
+/* Active Workspace Tab (Royal Violet Pill matching Dark Mode identity) */
+[data-theme="infinevo"] [data-testid="trainer-tab-rules"].bg-violet-600\/20,
+[data-theme="infinevo"] [data-testid="trainer-tab-style"].bg-violet-600\/20 {
+  background: #EDE9FE !important;
+  background-color: #EDE9FE !important;
+  border: 1.5px solid #7C3AED !important;
+  color: #5B21B6 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 4px rgba(124, 58, 237, 0.18) !important;
+}
+
+/* Inactive Workspace Tab */
+[data-theme="infinevo"] [data-testid="trainer-tab-rules"]:not(.bg-violet-600\/20),
+[data-theme="infinevo"] [data-testid="trainer-tab-style"]:not(.bg-violet-600\/20) {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-tab-rules"]:not(.bg-violet-600\/20):hover,
+[data-theme="infinevo"] [data-testid="trainer-tab-style"]:not(.bg-violet-600\/20):hover {
+  background: #F0F7FD !important;
+  border-color: #94A3B8 !important;
+  color: #0F2847 !important;
+}
+
+/* Active Session Mode (Azure Blue Pill) */
+[data-theme="infinevo"] [data-testid="trainer-mode-rule_creation"].bg-blue-600\/20,
+[data-theme="infinevo"] [data-testid="trainer-mode-qa_test"].bg-blue-600\/20 {
+  background: #E0F2FE !important;
+  background-color: #E0F2FE !important;
+  border: 1.5px solid #0284C7 !important;
+  color: #0369A1 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 4px rgba(2, 132, 199, 0.18) !important;
+}
+
+/* Inactive Session Mode */
+[data-theme="infinevo"] [data-testid="trainer-mode-rule_creation"]:not(.bg-blue-600\/20),
+[data-theme="infinevo"] [data-testid="trainer-mode-qa_test"]:not(.bg-blue-600\/20) {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-mode-rule_creation"]:not(.bg-blue-600\/20):hover,
+[data-theme="infinevo"] [data-testid="trainer-mode-qa_test"]:not(.bg-blue-600\/20):hover {
+  background: #F0F7FD !important;
+  border-color: #94A3B8 !important;
+  color: #0F2847 !important;
+}
+
 /* 15. History Page & Ingestion History InfiNevo Theme Alignment */
 [data-theme="infinevo"] #history-page header h1 {
   color: #0F2847 !important;

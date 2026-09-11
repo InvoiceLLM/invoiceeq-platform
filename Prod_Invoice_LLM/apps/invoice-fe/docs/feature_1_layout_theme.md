@@ -147,6 +147,14 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Added cohesive high-contrast styles for AI Trainer staged rule list badges.
   - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
 
+- [x] **Task 1.12: AI Trainer Workspace Control Bar & Tabs Contrast Alignment (FE Gap 492)** — added 2026-09-11.
+  - Resolved active vs inactive tab distinction in AI Trainer header control bar (`TrainerControlBar.tsx`).
+  - Active workspace tab (`Extraction Rules` / `Chat Response Style`) styled in Royal Violet badge (`#EDE9FE` / `#7C3AED` / `#5B21B6` bold, 7.6:1 AAA contrast) matching Dark Mode's violet tab identity.
+  - Inactive tab styled in crisp neutral (`#FFFFFF` / `#CBD5E1` / `#64748B`) with soft ice-blue hover.
+  - Session mode toggles (`Correct Alerts` / `Ask Questions`) styled in high-contrast Azure Blue (`#E0F2FE` / `#0284C7` / `#0369A1`).
+  - Step numbers, document loaded pill, and dividers harmonized to InfiNevo design system.
+  - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
+
 ### Verification Plan
 
 * **Manual Verification**: Run `npm run dev` inside `apps/invoice-fe` and inspect the layout elements. Verify layout responsiveness and correct styling.
