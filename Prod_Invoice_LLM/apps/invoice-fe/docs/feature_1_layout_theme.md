@@ -126,7 +126,18 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Enhanced font weight to 700 bold, size to 10px, line-height 1.25, with clean letter-spacing and soft rounded corners.
   - Added smooth hover state (`#DFEFFB` / `#7DD3FC` / `#025A8B`).
   - Adapted Batch Ingestion TagSelector chips in `TagSelector.tsx` for visual harmony.
-  - 100% zero markup/structural changes in `RecentInvoicesTable.tsx`; Classic Dark mode completely untouched.
+- [x] **Task 1.10: Ingestion History Status Badges & Filter Options Vibrant Contrast (FE Gap 490)** — added 2026-09-11.
+  - Resolved Ingestion History (`/history`) status colors and filter chips visibility issue in InfiNevo theme.
+  - Replaced blunt `#history-page button, #history-page [class*="rounded-full"]` rule that forced all chips and badges into identical washed-out white/grey pills.
+  - Filter chips: Active chips styled in InfiNevo Cyan/Azure gradient (`linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%)`) with bold white text (`#FFFFFF`) and cyan drop shadow (`0 2px 8px rgba(15, 111, 198, 0.3)`); inactive chips in crisp white with slate border and readable dark slate text (`#475569`).
+  - Status badges (`RunStatusChip` & `OutcomeBadge`): Vivid, high-contrast tinted badges with strong borders and 800-weight bold text:
+    - `LOADED`: Mint green background (`#D1FAE5`), solid emerald border (`1.5px solid #059669`), deep emerald text (`#064E3B`, 8.1:1 AAA contrast).
+    - `PARTIAL`: Warm amber background (`#FEF3C7`), amber border (`1.5px solid #D97706`), deep amber text (`#78350F`, 7.8:1 AAA contrast).
+    - `REJECTED`: Soft rose background (`#FEE2E2`), crimson border (`1.5px solid #DC2626`), deep dark crimson text (`#7F1D1D`, 8.5:1 AAA contrast).
+    - `NOT_LOADED`: Ice-sky background (`#E0F2FE`), sky blue border (`1.5px solid #0284C7`), dark ocean blue text (`#0369A1`, 7.9:1 AAA contrast).
+    - `IN_PROGRESS` / `EMPTY`: Polished slate tints and borders.
+  - Expanded file row view: Background `#F8FAFD`, divider `#E2EDF5`, file title `#0F2847` bold navy, labels `#64748B`, field values `#1E293B`, and colorful `OutcomeBadge`s with checkmark/alert icons.
+  - 100% zero markup/structural changes to `IngestionHistoryTable.tsx` and `app/history/page.tsx`; Classic Dark mode 100% untouched.
 
 ### Verification Plan
 

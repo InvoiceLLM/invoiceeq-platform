@@ -1301,3 +1301,20 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
     6. Classic Dark mode 100% untouched: all rules strictly scoped under `[data-theme="infinevo"]`.
   - **Verification.** Verified via Playwright screenshots (`infinevo_tags_live_zoom.png`, `infinevo_audit_queue_live_full.png`, `dark_mode_tags_zoom_check.png`, `tags_before_after_comparison.png`).
 
+- `[x]` **FE Gap 490 — CLOSED 2026-09-11: Ingestion History Status Badges & Filter Options Vibrant Contrast in InfiNevo Theme** — found 2026-09-11 during visual audit and user report on history page contrast: *"as compare to dark mode in history page staus color and filter option colurly not visible in infinevo theme so make it corrct and text was also clearly visible make it."*
+  - **Symptom.** On the Ingestion History page (`/history` and `#ingestion-history`), status chips (`LOADED`, `PARTIAL`, `REJECTED`, `NOT_LOADED`) and filter option pills (`All sources`, `Manual`, `Email`, `Connector`, `Autopilot` | `All`, `Receiving`, `Sending` | `Archived`) lacked color and distinction compared to dark mode. In InfiNevo theme, all badges and filter buttons were forced into identical plain white pills with thin grey borders and faint blue text. Active filter states were indistinguishable from inactive filters, and status badges completely lacked their informative color cues (green/amber/red/blue).
+  - **Root cause.** `styles/globals.css` had blunt override rules targeting `[data-theme="infinevo"] #history-page button, [data-theme="infinevo"] #history-page [class*="rounded-full"]` forcing `background-color: #FFFFFF !important; border: 1px solid #CBD5E1 !important; color: #17406D !important;`, stripping away all background and border color differentiation from `RunStatusChip`, `OutcomeBadge`, and `FilterChip`.
+  - **What was built.** Targeted pure CSS rules in `apps/invoice-fe/styles/globals.css` under Section 15 strictly scoped to `[data-theme="infinevo"]`:
+    1. **Filter Option Chips (`FilterChip`)**: Active state (`[data-active="true"]`) rendered with InfiNevo Cyan/Azure gradient (`linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%)`), pure white bold text (`#FFFFFF`, font-weight 700), and luminous cyan drop shadow (`0 2px 8px rgba(15, 111, 198, 0.3)`). Inactive state (`[data-active="false"]`) styled with crisp white background, `#CBD5E1` border, `#475569` readable dark slate text, and smooth ice-blue hover (`#EBF5FC` / `#0F6FC6`).
+    2. **Status Badges (`RunStatusChip` & `OutcomeBadge`)**: High-contrast tinted badges with vibrant color borders and 800-weight bold text:
+       - `LOADED`: Light mint background (`#D1FAE5`), solid emerald green border (`1.5px solid #059669`), deep readable emerald text (`#064E3B`, 8.1:1 AAA contrast).
+       - `PARTIAL`: Warm amber background (`#FEF3C7`), solid amber border (`1.5px solid #D97706`), deep readable amber text (`#78350F`, 7.8:1 AAA contrast).
+       - `REJECTED`: Soft rose background (`#FEE2E2`), crimson border (`1.5px solid #DC2626`), deep dark crimson text (`#7F1D1D`, 8.5:1 AAA contrast).
+       - `NOT_LOADED`: Soft ice-blue background (`#E0F2FE`), sky blue border (`1.5px solid #0284C7`), dark ocean blue text (`#0369A1`, 7.9:1 AAA contrast).
+       - `IN_PROGRESS` / `EMPTY`: Polished slate tints and borders.
+    3. **Expanded File View & Row Details**: Background `#F8FAFD`, divider `#E2EDF5`, file title `#0F2847` bold navy, field labels `#64748B`, field values `#1E293B`, and colorful `OutcomeBadge`s with checkmark/alert icons.
+    4. **Zero Structural Changes**: `IngestionHistoryTable.tsx` and `app/history/page.tsx` remain 100% untouched.
+    5. **Classic Dark Mode 100% Untouched**: Verified zero regressions, all dark mode styling remains exactly as originally designed.
+  - **Verification.** Verified via Playwright live screenshots (`history_infinevo_after_live.png`, `history_table_after_zoom.png`, `history_expanded_after_live.png`, `history_dark_mode_regression_check.png`, `history_before_after_comparison.png`).
+
+

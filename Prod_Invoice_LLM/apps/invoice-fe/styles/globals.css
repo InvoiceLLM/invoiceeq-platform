@@ -1017,8 +1017,7 @@ td, .table-cell {
   color: #17406D !important;
   font-weight: 600 !important;
 }
-
-/* 15. History & Help Pages InfiNevo Theme Adapter */
+/* 15. History Page & Ingestion History InfiNevo Theme Alignment */
 [data-theme="infinevo"] #history-page header h1 {
   color: #0F2847 !important;
   font-weight: 700 !important;
@@ -1028,23 +1027,236 @@ td, .table-cell {
   color: #64748B !important;
 }
 
-[data-theme="infinevo"] #history-page button,
-[data-theme="infinevo"] #history-page [class*="rounded-full"] {
+/* History Card Container */
+[data-theme="infinevo"] #ingestion-history {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 30, 60, 0.05) !important;
+}
+
+/* Top Header Bar */
+[data-theme="infinevo"] #ingestion-history > div:first-child {
+  background-color: #F4F8FC !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history > div:first-child span.text-slate-300 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history > div:first-child span.text-slate-500 {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-refresh"] {
+  color: #0F6FC6 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-refresh"]:hover {
+  color: #025A8B !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive-all"] {
+  color: #64748B !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive-all"]:hover {
+  color: #0F6FC6 !important;
+}
+
+/* Filter Bar Container & Separators */
+[data-theme="infinevo"] #ingestion-history > div:nth-child(2) {
+  background-color: #FAFBFD !important;
+  border-bottom: 1px solid #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history > div:nth-child(2) span.text-slate-700 {
+  color: #CBD5E1 !important;
+}
+
+/* Filter Chips (ACTIVE & INACTIVE) */
+[data-theme="infinevo"] #history-page button[data-testid*="history-filter"][data-active="true"],
+[data-theme="infinevo"] #history-page button[data-testid*="history-filter"].border-sky-500\/40 {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  background-color: #0F6FC6 !important;
+  border: 1px solid #0F6FC6 !important;
+  color: #FFFFFF !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 8px rgba(15, 111, 198, 0.3) !important;
+}
+
+[data-theme="infinevo"] #history-page button[data-testid*="history-filter"][data-active="false"] {
+  background: #FFFFFF !important;
   background-color: #FFFFFF !important;
   border: 1px solid #CBD5E1 !important;
-  color: #17406D !important;
+  color: #475569 !important;
+  font-weight: 600 !important;
 }
 
-[data-theme="infinevo"] #history-page button:hover {
-  background-color: #EDF5FC !important;
+[data-theme="infinevo"] #history-page button[data-testid*="history-filter"][data-active="false"]:hover {
+  background-color: #EBF5FC !important;
+  border-color: #BAE6FD !important;
+  color: #0F6FC6 !important;
+}
+
+/* Status Badges (RunStatusChip & OutcomeBadge) */
+/* LOADED */
+[data-theme="infinevo"] #history-page span[data-run-status="LOADED"],
+[data-theme="infinevo"] #history-page span[data-outcome="LOADED"],
+[data-theme="infinevo"] #history-page span[class*="border-emerald-"][class*="text-emerald-"] {
+  background: #D1FAE5 !important;
+  background-color: #D1FAE5 !important;
+  border: 1.5px solid #059669 !important;
+  color: #064E3B !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.18) !important;
+}
+
+/* PARTIAL */
+[data-theme="infinevo"] #history-page span[data-run-status="PARTIAL"],
+[data-theme="infinevo"] #history-page span[data-outcome="PARTIAL"],
+[data-theme="infinevo"] #history-page span[class*="border-amber-"][class*="text-amber-"] {
+  background: #FEF3C7 !important;
+  background-color: #FEF3C7 !important;
+  border: 1.5px solid #D97706 !important;
+  color: #78350F !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  box-shadow: 0 1px 3px rgba(217, 119, 6, 0.18) !important;
+}
+
+/* REJECTED */
+[data-theme="infinevo"] #history-page span[data-run-status="REJECTED"],
+[data-theme="infinevo"] #history-page span[data-outcome="REJECTED"],
+[data-theme="infinevo"] #history-page span[class*="border-rose-"][class*="text-rose-"] {
+  background: #FEE2E2 !important;
+  background-color: #FEE2E2 !important;
+  border: 1.5px solid #DC2626 !important;
+  color: #7F1D1D !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  box-shadow: 0 1px 3px rgba(220, 38, 38, 0.18) !important;
+}
+
+/* NOT_LOADED */
+[data-theme="infinevo"] #history-page span[data-run-status="NOT_LOADED"],
+[data-theme="infinevo"] #history-page span[data-outcome="NOT_LOADED"],
+[data-theme="infinevo"] #history-page span[class*="border-sky-"][class*="text-sky-"] {
+  background: #E0F2FE !important;
+  background-color: #E0F2FE !important;
+  border: 1.5px solid #0284C7 !important;
+  color: #0369A1 !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  box-shadow: 0 1px 3px rgba(2, 132, 199, 0.18) !important;
+}
+
+/* IN_PROGRESS */
+[data-theme="infinevo"] #history-page span[data-run-status="IN_PROGRESS"],
+[data-theme="infinevo"] #history-page span[data-outcome="IN_PROGRESS"] {
+  background: #F1F5F9 !important;
+  background-color: #F1F5F9 !important;
+  border: 1.5px solid #64748B !important;
+  color: #1E293B !important;
+  font-weight: 800 !important;
+}
+
+/* EMPTY */
+[data-theme="infinevo"] #history-page span[data-run-status="EMPTY"] {
+  background: #F8FAFC !important;
+  background-color: #F8FAFC !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+  font-weight: 700 !important;
+}
+
+/* Row Layout & Text Readability */
+[data-theme="infinevo"] #history-page [data-testid="history-run"] {
+  background-color: #FFFFFF !important;
+  border-bottom: 1px solid #EBF1F7 !important;
+  transition: background-color 0.15s ease !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="history-run"]:hover {
+  background-color: #F0F7FD !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="history-run"] button:not([data-testid*="history-archive"]) {
+  background: transparent !important;
+  border: none !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="history-run"] svg.lucide-chevron-right {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="history-run"] span.font-medium.text-slate-200 {
   color: #0F2847 !important;
+  font-weight: 700 !important;
 }
 
-[data-theme="infinevo"] #history-page button[class*="bg-blue"],
-[data-theme="infinevo"] #history-page button[class*="bg-[#3B82F6]"] {
-  background-color: #0F6FC6 !important;
-  color: #FFFFFF !important;
-  border-color: #0F6FC6 !important;
+[data-theme="infinevo"] #history-page [data-testid="history-run"] p.text-slate-300 {
+  color: #1E293B !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="history-run"] span.text-slate-600 {
+  color: #94A3B8 !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="history-run"] span.text-slate-400 {
+  color: #475569 !important;
+  font-weight: 500 !important;
+}
+
+/* Archive Action Button */
+[data-theme="infinevo"] #history-page button[data-testid="history-archive"],
+[data-theme="infinevo"] #history-page button[data-testid="history-unarchive"] {
+  background: transparent !important;
+  border: none !important;
+  color: #94A3B8 !important;
+}
+
+[data-theme="infinevo"] #history-page button[data-testid="history-archive"]:hover,
+[data-theme="infinevo"] #history-page button[data-testid="history-unarchive"]:hover {
+  background-color: #EBF5FC !important;
+  color: #0F6FC6 !important;
+}
+
+/* Expanded Run File List View */
+[data-theme="infinevo"] #history-page [data-testid="history-run"] > div:last-child[class*="bg-slate-950"] {
+  background-color: #F8FAFD !important;
+  border-top: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="run-file"] {
+  border-color: #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="run-file"] p.text-slate-300 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="run-file"] dt {
+  color: #64748B !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] #history-page [data-testid="run-file"] dd {
+  color: #1E293B !important;
+  font-weight: 600 !important;
+}
+
+/* Footer Note */
+[data-theme="infinevo"] #ingestion-history > div:last-child {
+  background-color: #FAFBFD !important;
+  border-top: 1px solid #E2EDF5 !important;
+  color: #64748B !important;
 }
 
 /* Help Search & Navigation */
