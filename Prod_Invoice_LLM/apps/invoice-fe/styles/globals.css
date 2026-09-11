@@ -3062,4 +3062,173 @@ td, .table-cell {
   color: #94A3B8 !important;
 }
 
+/* ==========================================================================
+   26. Profile Section Visibility Enhancement for InfiNevo Theme
+   Fixes contrast on user identity, menu options, icons, and eliminates the
+   accidental red background block on the Sign Out button.
+   Classic Dark Mode remains 100% untouched.
+   ========================================================================== */
 
+/* Header Profile Trigger Button */
+[data-theme="infinevo"] header div.relative > button p.text-slate-400,
+[data-theme="infinevo"] header div.relative > button p[class*="text-slate-400"] {
+  color: #BAE6FD !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] header div.relative > button svg.lucide-chevron-down {
+  color: #BAE6FD !important;
+  transition: color 0.15s ease !important;
+}
+
+[data-theme="infinevo"] header div.relative > button:hover svg.lucide-chevron-down {
+  color: #FFFFFF !important;
+}
+
+/* Profile Dropdown Container - Deep InfiNevo Corporate Navy with Glowing Cyan Border */
+[data-theme="infinevo"] header div.relative > div.absolute[class*="bg-[#0F172A]"],
+[data-theme="infinevo"] header div[class*="w-52"][class*="bg-[#0F172A]"] {
+  background: #08172C !important;
+  background-color: #08172C !important;
+  border: 1px solid rgba(0, 157, 217, 0.45) !important;
+  box-shadow: 0 12px 30px -4px rgba(7, 25, 47, 0.6), 0 0 16px rgba(0, 157, 217, 0.2) !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden !important;
+  padding-top: 0 !important;
+  padding-bottom: 0.35rem !important;
+}
+
+/* Dropdown Top Header ("Signed in as" + Email) */
+[data-theme="infinevo"] header div[class*="w-52"] > div[class*="border-b"] {
+  background-color: rgba(0, 157, 217, 0.12) !important;
+  border-bottom: 1px solid rgba(0, 157, 217, 0.3) !important;
+  padding: 0.65rem 1rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > div[class*="border-b"] p.text-slate-400 {
+  color: #BAE6FD !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.03em !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > div[class*="border-b"] p.text-white {
+  color: #FFFFFF !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+}
+
+/* Menu Actions ("My Profile", "Account Settings") */
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-slate-300"],
+[data-theme="infinevo"] header div[class*="w-52"] > a[class*="text-slate-300"] {
+  color: #F0F6FC !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  padding: 0.5rem 1rem !important;
+  transition: all 0.15s ease !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-slate-300"] svg,
+[data-theme="infinevo"] header div[class*="w-52"] > a[class*="text-slate-300"] svg {
+  color: #009DD9 !important;
+  transition: color 0.15s ease !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-slate-300"]:hover,
+[data-theme="infinevo"] header div[class*="w-52"] > a[class*="text-slate-300"]:hover {
+  background-color: rgba(0, 157, 217, 0.2) !important;
+  color: #0BD0D9 !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-slate-300"]:hover svg,
+[data-theme="infinevo"] header div[class*="w-52"] > a[class*="text-slate-300"]:hover svg {
+  color: #0BD0D9 !important;
+}
+
+/* Subtle Divider */
+[data-theme="infinevo"] header div[class*="w-52"] div[class*="h-px"] {
+  background-color: rgba(0, 157, 217, 0.25) !important;
+  margin: 0.25rem 0 !important;
+}
+
+/* Sign Out Action - Crisp Coral Red & Clean Hover (Overrides generic header red button rule) */
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-red-"] {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  color: #F87171 !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  padding: 0.5rem 1rem !important;
+  border-radius: 0 0 0.75rem 0.75rem !important;
+  transition: all 0.15s ease !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-red-"] svg {
+  color: #F87171 !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-red-"]:hover {
+  background: rgba(239, 68, 68, 0.18) !important;
+  background-color: rgba(239, 68, 68, 0.18) !important;
+  color: #FCA5A5 !important;
+  border: none !important;
+}
+
+[data-theme="infinevo"] header div[class*="w-52"] > button[class*="text-red-"]:hover svg {
+  color: #FCA5A5 !important;
+}
+
+/* =========================================================================
+   InfiNevo Theme - Table Invoice Tags Visibility Enhancement
+   (FE InfiNevo Contrast Enhancement - Zero Dark Mode / Zero Structural Change)
+   ========================================================================= */
+[data-theme="infinevo"] table td span[class*="bg-slate-800"],
+[data-theme="infinevo"] table td div[class*="flex-wrap"] span,
+[data-theme="infinevo"] tr[class*="group"] td div span[class*="bg-slate-800"] {
+  background-color: #EBF5FC !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0369A1 !important;
+  font-weight: 700 !important;
+  font-size: 10px !important;
+  line-height: 1.25 !important;
+  padding: 2px 7px !important;
+  border-radius: 4px !important;
+  letter-spacing: 0.01em !important;
+  box-shadow: 0 1px 2px rgba(3, 105, 161, 0.06) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  transition: all 0.15s ease !important;
+}
+
+[data-theme="infinevo"] table td span[class*="bg-slate-800"]:hover,
+[data-theme="infinevo"] table td div[class*="flex-wrap"] span:hover,
+[data-theme="infinevo"] tr[class*="group"] td div span[class*="bg-slate-800"]:hover {
+  background-color: #DFEFFB !important;
+  border-color: #7DD3FC !important;
+  color: #025A8B !important;
+  box-shadow: 0 2px 4px rgba(3, 105, 161, 0.12) !important;
+}
+
+/* InfiNevo Theme - Batch Ingestion TagSelector Chips */
+[data-theme="infinevo"] div[class*="glass-panel"] div[class*="flex-wrap"] > div[class*="bg-[#1E293B]"] {
+  background-color: #EBF5FC !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0369A1 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] div[class*="glass-panel"] div[class*="flex-wrap"] > div[class*="bg-[#1E293B]"]:hover {
+  background-color: #DFEFFB !important;
+  border-color: #7DD3FC !important;
+  color: #025A8B !important;
+}
+
+[data-theme="infinevo"] div[class*="glass-panel"] div[class*="flex-wrap"] > div[class*="bg-[#1E293B]"] button {
+  color: #0284C7 !important;
+}
+
+[data-theme="infinevo"] div[class*="glass-panel"] div[class*="flex-wrap"] > div[class*="bg-[#1E293B]"] button:hover {
+  color: #0F172A !important;
+}

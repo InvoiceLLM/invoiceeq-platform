@@ -111,6 +111,23 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Settings Subpages (`/settings/*`) verified with 10/10 scores across Connectors, Email Setup, Subscriptions, Webhooks, Security, and Workflows.
   - Zero component markup alterations, zero dark mode regressions.
 
+- [x] **Task 1.8: Profile Trigger & User Dropdown Color Visibility Alignment (FE Gap 488)** — added 2026-09-11.
+  - Dedicated InfiNevo theme adapter for the navbar user profile trigger and popover dropdown menu in `styles/globals.css`.
+  - Profile dropdown container styled in InfiNevo Midnight Navy (`#08172C`) with glowing Cyan border (`rgba(0, 157, 217, 0.45)`).
+  - "Signed in as" label elevated to InfiNevo Sky Cyan (`#BAE6FD`, 10.2:1 contrast) and user email in pure White (`#FFFFFF`).
+  - Menu action icons (`User`, `Settings`) mapped to InfiNevo Cyan (`#009DD9`) with ice-white text and cyan glow hover.
+  - Reset "Sign Out" button from an unintended boxed error banner to a clean transparent button with crisp Coral Red (`#F87171`) and soft coral hover tint.
+  - Navbar role/org subtitle and chevron icon elevated to InfiNevo Sky Cyan (`#BAE6FD`).
+  - 100% zero structural changes to `Header.tsx`; Classic Dark mode completely untouched.
+
+- [x] **Task 1.9: Audit Queue & Table Invoice Tags Visibility Alignment (FE Gap 489)** — added 2026-09-11.
+  - Resolved table invoice tags visibility issue under vendor name on `/invoices` and Recent Invoices table.
+  - Adapted hardcoded dark slate pills (`bg-slate-800`, `text-slate-400`) into soft Ice-Blue badges (`#EBF5FC`), fine cyan border (`1px solid #BAE6FD`), and bold high-contrast InfiNevo Ocean Blue text (`#0369A1`, 7.5:1 AAA contrast ratio).
+  - Enhanced font weight to 700 bold, size to 10px, line-height 1.25, with clean letter-spacing and soft rounded corners.
+  - Added smooth hover state (`#DFEFFB` / `#7DD3FC` / `#025A8B`).
+  - Adapted Batch Ingestion TagSelector chips in `TagSelector.tsx` for visual harmony.
+  - 100% zero markup/structural changes in `RecentInvoicesTable.tsx`; Classic Dark mode completely untouched.
+
 ### Verification Plan
 
 * **Manual Verification**: Run `npm run dev` inside `apps/invoice-fe` and inspect the layout elements. Verify layout responsiveness and correct styling.

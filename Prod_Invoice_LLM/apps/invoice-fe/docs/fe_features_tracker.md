@@ -1273,4 +1273,31 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
     5. Zero changes to Classic Dark mode. Zero `.tsx` changes.
   - **Verification.** Verified via Playwright screenshots (`autopilot_infinevo_1run_fixed.png`, `autopilot_dark_1run_comparison.png`, `autopilot_infinevo_history_detail.png`, `autopilot_dark_history_detail.png`).
 
+- `[x]` **FE Gap 488 — CLOSED 2026-09-11: Header Profile Trigger & User Dropdown Menu Color Visibility Alignment in InfiNevo Theme** — found 2026-09-11 during visual audit and user report on profile section color visibility.
+  - **Symptom.** In InfiNevo theme:
+    1. The organization and role subtitle (`ADM Global Solutions (Admin)`) and chevron icon in the header navbar were rendered in dim slate (`text-slate-400`), producing weak contrast against the navy top bar.
+    2. Inside the profile dropdown popover, the "Signed in as" label was dim slate (`#94A3B8`).
+    3. Action button styles leaked into the dropdown: a generic rule `header button[class*="text-red-"]` (intended for review queue action buttons) wrapped the "Sign Out" button in a solid maroon/burgundy box (`rgba(239, 68, 68, 0.22)`) with a red border, making it look like an error banner rather than a clean menu item.
+    4. Menu icons (`User`, `Settings`) lacked vibrancy.
+  - **Root cause.** The profile popover inside `<header>` lacked dedicated InfiNevo theme styling rules in `styles/globals.css`, causing it to fall back to dark mode Tailwind classes (`bg-[#0F172A]`, `text-slate-400`, `border-[#222D3D]`), with unintended selector collision on the red button.
+  - **What was built.** Scoped CSS rules in `apps/invoice-fe/styles/globals.css` strictly under `[data-theme="infinevo"]`:
+    1. Profile dropdown container styled in InfiNevo Midnight Navy (`#08172C`) with glowing InfiNevo Cyan border (`rgba(0, 157, 217, 0.45)`).
+    2. "Signed in as" label elevated to InfiNevo Sky Cyan (`#BAE6FD`, 10.2:1 contrast ratio) and user email in pure crisp White (`#FFFFFF`).
+    3. Menu icons (`User`, `Settings`) styled in vivid InfiNevo Cyan (`#009DD9`) with ice-white text (`#F0F6FC`) and cyan glow hover (`rgba(0, 157, 217, 0.2)`).
+    4. "Sign Out" button reset to clean transparent background, no border, crisp Coral Red (`#F87171`), with smooth coral hover tint (`rgba(239, 68, 68, 0.18)`).
+    5. Header navbar trigger subtitle and chevron icon elevated to InfiNevo Sky Cyan (`#BAE6FD`) turning pure white on hover.
+    6. Zero structural changes in `Header.tsx`. Classic Dark mode 100% untouched and regression-free.
+  - **Verification.** Verified via Playwright screenshots (`infinevo_profile_enhanced_live.png`, `dark_mode_profile_live_check.png`, `profile_before_after_comparison.png`).
+
+- `[x]` **FE Gap 489 — CLOSED 2026-09-11: Audit Queue Table Invoice Tags Visibility Enhancement in InfiNevo Theme** — found 2026-09-11 during visual audit and user report on table tags visibility: *"in the page tags not visible properly. so make it clerly visible don not chnage in dark mode only text visible properly not nay stuctural chnage."*
+  - **Symptom.** On the Audit Queue table (`/invoices` and Recent Invoices table), invoice tags displayed under the vendor name (e.g. `#electronics`, `#computer accessories`, `#gaming monitor`, `#keyboard`, `#charger`, `#tablet`) were rendered as dark slate pills (`bg-slate-800` ~ `#1E293B`) with muted grey text (`text-slate-400` ~ `#94A3B8`). On white/light ice-blue table rows (`#FFFFFF` / `#F0F6FA`), the dark pills looked like harsh black smudges with illegible text (~2.3:1 contrast ratio), severely violating visual clarity.
+  - **Root cause.** `RecentInvoicesTable.tsx` hardcoded dark-mode Tailwind classes (`className="text-[9px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 border border-[#222D3D]"`) without an InfiNevo CSS adapter rule in `styles/globals.css`.
+  - **What was built.** Pure CSS rules in `apps/invoice-fe/styles/globals.css` strictly scoped under `[data-theme="infinevo"]`:
+    1. `table td span[class*="bg-slate-800"]`, `table td div[class*="flex-wrap"] span`: styled as soft Ice-Blue badges (`#EBF5FC`), fine cyan border (`1px solid #BAE6FD`), and bold high-contrast InfiNevo Ocean Blue text (`#0369A1`, 7.5:1 AAA contrast ratio).
+    2. Elevated font weight to 700 bold, font size to 10px, line height 1.25, and padding `2px 7px` with soft 4px rounded corners.
+    3. Smooth hover state: `#DFEFFB` background, `#7DD3FC` border, `#025A8B` text.
+    4. Batch Ingestion TagSelector chips (`TagSelector.tsx`): adapted to soft Ice-Blue pills with `#0369A1` text and sky blue remove button.
+    5. Zero structural changes: `RecentInvoicesTable.tsx` and all TSX components kept 100% untouched.
+    6. Classic Dark mode 100% untouched: all rules strictly scoped under `[data-theme="infinevo"]`.
+  - **Verification.** Verified via Playwright screenshots (`infinevo_tags_live_zoom.png`, `infinevo_audit_queue_live_full.png`, `dark_mode_tags_zoom_check.png`, `tags_before_after_comparison.png`).
 
