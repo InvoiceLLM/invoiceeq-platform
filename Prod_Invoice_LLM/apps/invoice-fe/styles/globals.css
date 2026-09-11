@@ -826,6 +826,71 @@ td, .table-cell {
   color: #64748B !important;
 }
 
+/* Thread Action Buttons (Rename & Delete) — InfiNevo Theme */
+[data-theme="infinevo"] [id^="chat-session-"] button[title*="Rename"] {
+  background-color: transparent !important;
+  color: #64748B !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] button[title*="Rename"]:hover {
+  background-color: #FFFFFF !important;
+  color: #0F6FC6 !important;
+  border-color: #BAE6FD !important;
+  box-shadow: 0 2px 6px rgba(15, 111, 198, 0.18) !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] button[title*="Rename"] svg {
+  color: inherit !important;
+  stroke: currentColor !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] button[title*="Delete"] {
+  background-color: transparent !important;
+  color: #64748B !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] button[title*="Delete"]:hover {
+  background-color: #FEF2F2 !important;
+  color: #DC2626 !important;
+  border-color: #FECDD3 !important;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.15) !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] button[title*="Delete"] svg {
+  color: inherit !important;
+  stroke: currentColor !important;
+}
+
+/* Inline Thread Rename Input & Confirmation in InfiNevo Theme */
+[data-theme="infinevo"] [id^="chat-session-"] form input {
+  background-color: #FFFFFF !important;
+  color: #0F2847 !important;
+  border: 1px solid #0F6FC6 !important;
+  box-shadow: 0 0 0 2px rgba(15, 111, 198, 0.15) !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] form button[type="submit"] {
+  color: #059669 !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] form button[type="submit"]:hover {
+  color: #047857 !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] form button[type="button"] {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] [id^="chat-session-"] form button[type="button"]:hover {
+  color: #DC2626 !important;
+}
+
 /* Thread Empty State */
 [data-theme="infinevo"] div[class*="w-64"] .text-center {
   color: #64748B !important;
@@ -872,11 +937,42 @@ td, .table-cell {
   border-color: #0F6FC6 !important;
   color: #0F2847 !important;
 }
+/* Chat Message Bubbles & Avatars */
+/* SAGE AI Avatar: High-contrast Cyan/Azure ring & icon */
+[data-theme="infinevo"] main div[class*="rounded-full"]:has(svg.lucide-bot) {
+  background-color: #E0F2FE !important;
+  border: 1.5px solid #009DD9 !important;
+  box-shadow: 0 2px 8px rgba(0, 157, 217, 0.18) !important;
+}
 
-/* Chat Message Bubbles */
+[data-theme="infinevo"] main div[class*="rounded-full"] svg.lucide-bot {
+  color: #0284C7 !important;
+}
+
+/* User Avatar */
+[data-theme="infinevo"] main div[class*="rounded-full"]:has(svg.lucide-user) {
+  background-color: #EBF5FC !important;
+  border: 1.5px solid #CBD5E1 !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-full"] svg.lucide-user {
+  color: #0F6FC6 !important;
+}
+
+/* SAGE Agent Pill Badge */
+[data-theme="infinevo"] span.rounded-full[class*="bg-[#8B5CF6]/10"],
+[data-theme="infinevo"] span[class*="text-[#8B5CF6]"] {
+  background-color: #E0F2FE !important;
+  border: 1px solid #7DD3FC !important;
+  color: #0284C7 !important;
+  font-weight: 700 !important;
+}
+
 /* User Bubble: Crisp InfiNevo Azure with pure white text */
 [data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tr-none"][class*="bg-[#1E293B]"] {
+  background: #0F6FC6 !important;
   background-color: #0F6FC6 !important;
+  background-image: none !important;
   color: #FFFFFF !important;
   border: none !important;
   box-shadow: 0 4px 14px rgba(15, 111, 198, 0.25) !important;
@@ -887,19 +983,22 @@ td, .table-cell {
   color: #FFFFFF !important;
 }
 
-/* Assistant Bubble: Crisp White with subtle shadow and navy text */
+/* Assistant Bubble: Pure Crisp White with zero muddy gradient */
 [data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] {
+  background: #FFFFFF !important;
   background-color: #FFFFFF !important;
+  background-image: none !important;
   border: 1px solid #D6E4F0 !important;
-  color: #0F172A !important;
-  box-shadow: 0 4px 16px rgba(15, 111, 198, 0.06) !important;
+  color: #0F2847 !important;
+  box-shadow: 0 2px 12px rgba(15, 30, 60, 0.05) !important;
 }
 
 [data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] p,
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] span:not([class*="bg-"]):not([class*="text-red"]),
 [data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] li,
-[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] td,
-[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] span:not([class*="bg-"]) {
-  color: #1E293B !important;
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] td {
+  color: #0F2847 !important;
+  line-height: 1.6 !important;
 }
 
 [data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] strong {
@@ -907,10 +1006,122 @@ td, .table-cell {
   font-weight: 700 !important;
 }
 
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] a {
+  color: #0F6FC6 !important;
+  font-weight: 600 !important;
+  text-decoration: underline !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] a:hover {
+  color: #025A8B !important;
+}
+
 [data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] code {
   background-color: #F0F6FA !important;
   border: 1px solid #D6E4F0 !important;
   color: #0F6FC6 !important;
+}
+
+/* Processing State ("Writing the query...") */
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"]:has(svg.animate-spin) {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  background-image: none !important;
+  border: 1px solid #BAE6FD !important;
+  box-shadow: 0 2px 10px rgba(0, 157, 217, 0.08) !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] svg.animate-spin {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] div[class*="text-purple-300"] {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] div[class*="text-purple-300"] span {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+/* Pulsing Dots in Processing State */
+[data-theme="infinevo"] main div[class*="rounded-2xl"][class*="rounded-tl-none"] span.rounded-full[class*="bg-purple-400"] {
+  background-color: #009DD9 !important;
+}
+
+/* Citation Source Pills */
+[data-theme="infinevo"] main button.rounded-full:has(span[class*="bg-blue-500"]) {
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  color: #0F2847 !important;
+  box-shadow: 0 1px 3px rgba(15, 30, 60, 0.04) !important;
+}
+
+[data-theme="infinevo"] main button.rounded-full:has(span[class*="bg-blue-500"]):hover {
+  background-color: #F0F7FD !important;
+  border-color: #009DD9 !important;
+  color: #009DD9 !important;
+}
+
+[data-theme="infinevo"] main button.rounded-full:has(span[class*="bg-blue-500"]) span.font-medium {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main button.rounded-full:has(span[class*="bg-blue-500"]) span.text-slate-400 {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] main button.rounded-full:has(span[class*="bg-blue-500"]) span[class*="bg-blue-500"] {
+  background-color: #009DD9 !important;
+}
+
+/* Executed SQL Query Accordion */
+[data-theme="infinevo"] main div.rounded-lg.border:has(> button[aria-controls="sql-audit-body"]) {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+  box-shadow: 0 1px 4px rgba(15, 30, 60, 0.04) !important;
+}
+
+[data-theme="infinevo"] main button[aria-controls="sql-audit-body"] {
+  background-color: #F8FAFD !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main button[aria-controls="sql-audit-body"]:hover {
+  background-color: #F0F7FD !important;
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] main button[aria-controls="sql-audit-body"] span.bg-emerald-500 {
+  background-color: #059669 !important;
+}
+
+[data-theme="infinevo"] #sql-audit-body pre {
+  background-color: #F4F8FC !important;
+  border-top: 1px solid #D6E4F0 !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] #sql-audit-body code {
+  color: #0369A1 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] #sql-audit-body button {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+  border-radius: 6px !important;
+  padding: 2px 6px !important;
+}
+
+[data-theme="infinevo"] #sql-audit-body button:hover {
+  background-color: #F0F7FD !important;
+  color: #0F6FC6 !important;
+  border-color: #0F6FC6 !important;
 }
 
 /* Input Bar Outer Container */
@@ -1130,19 +1341,60 @@ td, .table-cell {
 }
 
 /* Step circles (pending) */
-[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.rounded-full:not(:has(svg)) {
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.rounded-full:not(:has(svg)),
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-style"]) span.rounded-full:not(:has(svg)) {
   background-color: #E0F2FE !important;
   border: 1px solid #7DD3FC !important;
   color: #0369A1 !important;
   font-weight: 700 !important;
+  padding: 0 !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: none !important;
 }
 
 /* Step circles (done with checkmark) */
-[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.rounded-full:has(svg) {
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.rounded-full:has(svg),
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-style"]) span.rounded-full:has(svg),
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.w-4.h-4.rounded-full,
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-style"]) span.w-4.h-4.rounded-full {
   background-color: #D1FAE5 !important;
   border: 1.5px solid #059669 !important;
   color: #047857 !important;
   font-weight: 800 !important;
+  padding: 0 !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: none !important;
+}
+
+/* Ensure checkmark SVG is fully visible with crisp green stroke */
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.rounded-full svg,
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-style"]) span.rounded-full svg,
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) span.w-4.h-4 svg,
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-style"]) span.w-4.h-4 svg,
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-rules"]) svg.lucide-check,
+[data-theme="infinevo"] div.border-b:has([data-testid="trainer-tab-style"]) svg.lucide-check {
+  display: block !important;
+  width: 10px !important;
+  height: 10px !important;
+  min-width: 10px !important;
+  min-height: 10px !important;
+  color: #047857 !important;
+  stroke: #047857 !important;
+  stroke-width: 2.5px !important;
+  flex-shrink: 0 !important;
+  visibility: visible !important;
 }
 
 /* Step uppercase labels */
@@ -1242,6 +1494,234 @@ td, .table-cell {
   background: #F0F7FD !important;
   border-color: #94A3B8 !important;
   color: #0F2847 !important;
+}
+
+/* Trainer Workspace PDF Viewer Toolbar & Viewport */
+[data-theme="infinevo"] main div:has(> div [aria-label="Zoom in"]) {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has([aria-label="Zoom in"]) {
+  background-color: #F8FAFD !important;
+  border-bottom-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has([aria-label="Zoom in"]) span.text-white {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has([aria-label="Zoom in"]) div[class*="bg-[#111827]"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has([aria-label="Zoom in"]) button {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has([aria-label="Zoom in"]) button:hover {
+  background-color: #F0F7FD !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has([aria-label="Zoom in"]) span.font-mono {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has([aria-label="Zoom in"]) span[class*="bg-[#111827]"] {
+  background-color: #F0F7FD !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0369A1 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main div.relative.flex-1.min-h-0:has(iframe) {
+  background-color: #F4F8FC !important;
+}
+
+/* Trainer Workspace Extracted Fields Panel */
+[data-theme="infinevo"] main div:has(> div h2:is([class*="text-xs"])) {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2\.5:has(h2) {
+  background-color: #F8FAFD !important;
+  border-bottom-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2\.5:has(h2) h2 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2\.5:has(h2) span.font-mono {
+  background-color: #E0F2FE !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0369A1 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y {
+  border-color: #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y li {
+  border-color: #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y button {
+  background-color: #FFFFFF !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y button:hover {
+  background-color: #F0F7FD !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y button[aria-pressed="true"] {
+  background-color: #E0F2FE !important;
+  border-left: 3px solid #009DD9 !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y button span.text-\[9px\] {
+  color: #64748B !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y button span.text-white {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main ul.divide-y button span.text-emerald-400 {
+  color: #059669 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main div.px-3.py-2:has(> span.select-none) {
+  background-color: #F8FAFD !important;
+  border-top-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] main span.select-none {
+  color: #64748B !important;
+  font-weight: 500 !important;
+}
+
+/* Trainer Workspace SAGE QA Chat Panel */
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] > div:first-child {
+  background-color: #F8FAFD !important;
+  border-bottom-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] h2 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] span[class*="text-[#6366F1]"] {
+  background-color: #EEF2FF !important;
+  border: 1px solid #C7D2FE !important;
+  color: #4F46E5 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] div[class*="bg-blue-500/5"] {
+  background-color: #F4F8FC !important;
+  border-color: #D6E4F0 !important;
+  border-left: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] div[class*="bg-blue-500/5"] svg {
+  color: #0369A1 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] div[class*="bg-blue-500/5"] p {
+  color: #334155 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] div[class*="bg-[#111827]"]:has(p.leading-relaxed) {
+  background-color: #FFFFFF !important;
+  border: 1px solid #E2EDF5 !important;
+  box-shadow: 0 1px 3px rgba(15, 30, 60, 0.04) !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] div[class*="bg-[#111827]"] p.leading-relaxed {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] div[class*="bg-[#111827]"] span[class*="text-slate-500"] {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] div.rounded-xl:has(svg.lucide-bot) {
+  background-color: #ECFDF5 !important;
+  border: 1px solid #6EE7B7 !important;
+  color: #059669 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] form {
+  background-color: #F8FAFD !important;
+  border-top-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] input[data-testid="qa-input"] {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] input[data-testid="qa-input"]:focus {
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 3px rgba(15, 111, 198, 0.12) !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] input[data-testid="qa-input"]::placeholder {
+  color: #94A3B8 !important;
+}
+
+[data-theme="infinevo"] [data-testid="trainer-qa-panel"] button[type="submit"] {
+  background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 6px rgba(15, 111, 198, 0.25) !important;
+}
+/* Trainer Rightmost Collapsed Rules Drawer */
+[data-theme="infinevo"] button[aria-label*="rule candidates"],
+[data-theme="infinevo"] button[title*="Rule candidates"] {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+  box-shadow: 0 4px 12px rgba(15, 30, 60, 0.05) !important;
+}
+
+[data-theme="infinevo"] button[aria-label*="rule candidates"]:hover,
+[data-theme="infinevo"] button[title*="Rule candidates"]:hover {
+  border-color: #009DD9 !important;
+}
+
+[data-theme="infinevo"] button[aria-label*="rule candidates"] span[style*="vertical-rl"],
+[data-theme="infinevo"] button[title*="Rule candidates"] span[style*="vertical-rl"] {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] button[aria-label*="rule candidates"]:hover span[style*="vertical-rl"],
+[data-theme="infinevo"] button[title*="Rule candidates"]:hover span[style*="vertical-rl"] {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] button[aria-label*="rule candidates"] span.font-mono,
+[data-theme="infinevo"] button[title*="Rule candidates"] span.font-mono {
+  background-color: #F0F7FD !important;
+  border-color: #CBD5E1 !important;
+  color: #64748B !important;
 }
 
 /* 15. History Page & Ingestion History InfiNevo Theme Alignment */
@@ -3395,10 +3875,10 @@ td, .table-cell {
 
 /* 7. High-Contrast Status Chips (RunStatusChip & StatusBadge) */
 /* SUCCESS status chip (Last Run & Run Row) */
-[data-theme="infinevo"] span.rounded-full[class*="bg-emerald-500/10"][class*="text-emerald-400"],
-[data-theme="infinevo"] span.rounded-full[class*="bg-emerald-500/20"][class*="text-emerald-400"],
-[data-theme="infinevo"] span.rounded-full[class*="text-emerald-300"],
-[data-theme="infinevo"] span[class*="rounded-full"][class*="text-emerald-400"] {
+[data-theme="infinevo"] span.rounded-full[class*="bg-emerald-500/10"][class*="text-emerald-400"]:not(.w-4),
+[data-theme="infinevo"] span.rounded-full[class*="bg-emerald-500/20"][class*="text-emerald-400"]:not(.w-4),
+[data-theme="infinevo"] span.rounded-full[class*="text-emerald-300"]:not(.w-4),
+[data-theme="infinevo"] span[class*="rounded-full"][class*="text-emerald-400"]:not(.w-4) {
   background-color: #D1FAE5 !important;
   border: 1.5px solid #059669 !important;
   color: #064E3B !important;

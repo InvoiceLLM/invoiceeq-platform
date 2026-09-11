@@ -155,6 +155,30 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Step numbers, document loaded pill, and dividers harmonized to InfiNevo design system.
   - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
 
+- [x] **Task 1.13: AI Trainer Active Workspace Panel Layout & Contrast Alignment (FE Gap 493)** — added 2026-09-11.
+  - Aligned all 4 active training session panels (`PdfViewerPanel.tsx`, `ExtractedFieldsPanel.tsx`, `QaChatPanel.tsx`, `RulesRail.tsx`) in InfiNevo theme to match Dark Mode contrast hierarchy.
+  - PDF document viewer: Clean `#F8FAFD` header, `#CBD5E1` border, `#0F2847` bold document title and page zoom counter, `#0369A1` page count badge (`Page 1 / 1`), and `#F4F8FC` viewport canvas.
+  - Extracted fields column: Crisp white card container with `#0F2847` navy title, `#E0F2FE` azure count badge (`[ 7 ]`), uppercase slate labels (`#64748B`), deep navy values (`#0F2847`, 11.2:1 AAA contrast), `#E0F2FE` / `#009DD9` selected field highlight, and `#E2EDF5` row dividers.
+  - SAGE QA chat column: Refined top disclaimer notice into a quiet ice-blue container (`#F4F8FC` bg, `1px solid #D6E4F0` border, `#0369A1` info icon, `#334155` text, removing harsh `border-l-4`); crisp white message cards with `#0F2847` text; `#ECFDF5` bot avatar; and crisp white input bar with Azure send button.
+  - Rules drawer: Sleek white collapsed rail (`#FFFFFF` / `#D6E4F0`) with `#009DD9` hover accent and `#64748B` vertical text.
+  - Step checkmark indicators: Restored high-contrast right ticks (`(✓) DOCUMENT` & `(✓) WORKSPACE`) in crisp mint green circle (`#D1FAE5` / `#059669`) with 10px `#047857` stroke icon.
+  - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
+
+- [x] **Task 1.14: Semantic Chat Assistant Bubble Gradient Removal & Azure Avatars (FE Gap 494)** — added 2026-09-11.
+  - Eliminated muddy dark purple/blue gradient from assistant response bubbles and processing states in InfiNevo theme.
+  - Assistant bubbles styled as pure crisp white cards (`#FFFFFF`, `1px solid #D6E4F0`, `box-shadow: 0 2px 12px rgba(15, 30, 60, 0.05)`) with high-contrast `#0F2847` navy typography and primary azure `#0F6FC6` citation links.
+  - Upgraded SAGE bot avatar disc to high-contrast cyan ring (`#E0F2FE` / `#009DD9` / `#0284C7`), harmonizing 100% with the cyan SAGE pill badge.
+  - Transformed "Writing the query..." processing bubble into a clean white card with azure animated spinner, bold navy text, and `#009DD9` cyan pulsing dots.
+  - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
+
+- [x] **Task 1.15: Semantic Chat Sidebar Thread Action Buttons Hover Contrast (FE Gap 495)** — added 2026-09-11.
+  - Fixed thread rename (`Pencil`) and delete (`Trash2`) buttons in chat sidebar (`ThreadSidebar`).
+  - Eliminated the pitch-black box (`#1E293B`) and black-on-black invisible icon defect on hover.
+  - Rename hover button styled as a crisp white rounded pill card (`#FFFFFF` bg, `1px solid #BAE6FD` cyan border, `0 2px 6px rgba(15, 111, 198, 0.18)` shadow) with vivid InfiNevo Azure pencil icon (`#0F6FC6`).
+  - Delete hover button styled as a soft rose pill (`#FEF2F2` bg, `1px solid #FECDD3` border, `#DC2626` crimson trash icon).
+  - Inline rename form input and submit/cancel buttons styled cleanly in InfiNevo palette.
+  - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
+
 ### Verification Plan
 
 * **Manual Verification**: Run `npm run dev` inside `apps/invoice-fe` and inspect the layout elements. Verify layout responsiveness and correct styling.
