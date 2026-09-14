@@ -11,19 +11,19 @@ When a user attaches a **non-invoice financial document** (PO, quotation, contra
 | path | named component / function | new or edit | what it does |
 |---|---|---|---|
 | `types/chat.ts` | `InsightCard`, `InsightBlock`, `ChatMessage.insights?: InsightBlock` | edit | Wire types matching BE `MessageResponse.insights` |
-| `lib/chatAttachments.ts` | `ChatAttachmentSummary.insights?`, `fetchAttachmentInsights(id)` | edit | Reload path via `GET /chat/attachments/{id}/insights` |
+| `lib/chatInsights.ts` | `InsightBlock`, `InsightFinding.insight_id?`, `fetchAttachmentInsights(attachmentId, {status})` | new | Reload / lifecycle read via `GET /chat/insights?attachment_id=…` — **corrected 2026-09-14 (FE Gap 471):** the row originally named `AttachmentOut.insights` and `GET /chat/attachments/{id}/insights`; neither exists on the BE. `ChatMessage.insights` is the only carrier. |
 | `components/chat/InsightCards.tsx` | `InsightCards({ block, onFeedback, onAskSuggested })` | new | Card grid: one card per block entry; `skipped`/`blocked` cards render collapsed with their reason |
 | `components/chat/InsightCard.tsx` | `InsightCard`, `CardFigures`, `CardEvidence` | new | Figures table + evidence links (invoice ids → History screen) + thumbs |
 | `components/chat/MessageBubble.tsx` | render `message.insights` after the existing attachment surfaces | edit | Fifth render surface on an assistant turn |
 | `components/chat/ChatWindow.tsx` | `onAskSuggested(question)` → composer submit | edit | Clicking a suggested question sends it as the next turn |
 | `lib/apiClient.ts` | `postInsightFeedback(messageId, card, vote, correction?)` | edit | `POST /chat/messages/{id}/insight-feedback` |
 | `components/chat/InsightCorrectionDialog.tsx` | `InsightCorrectionDialog` | new | On thumbs-down: optional free-text correction, sent with the vote |
-| `components/chat/InsightCards.tsx` | `PinButton` → `pinInsight(attachmentId)` | new | "Keep this" pins the block (`POST /chat/attachments/{id}/insights/pin`); unpinned blocks expire with the session |
+| ~~`PinButton` / `pinInsight`~~ | — | removed | **Corrected 2026-09-14 (FE Gap 471):** there is no pin. Durability is the BE insight lifecycle (§8; BE Gap 492 — information only). |
 | `e2e/chat-insights.spec.ts` | Playwright | new | Attach a fixture PO → cards appear → click suggested question → thumbs-down → dialog |
 
 ## 3. Functionality
 
-1. The attachment upload response (`AttachmentOut`) and the session history (`MessageResponse`) both carry `insights`. `MessageBubble` renders `InsightCards` when present; older turns without it render exactly as today.
+1. The session history (`MessageResponse.insights`) carries the block — **corrected 2026-09-14 (FE Gap 471):** `AttachmentOut` does not and never did; the upload response is not a carrier. `MessageBubble` renders `InsightCards` when present; older turns without it render exactly as today.
 2. Card order follows the block. `ok` cards open; `skipped`/`blocked` cards collapse to one line with the reason (from the BE confidence-gaps card).
 3. Suggested-question card: three buttons; click submits the text through the composer, so it is an ordinary chat turn.
 4. Thumbs on each card call `postInsightFeedback`; thumbs-down opens `InsightCorrectionDialog`. The vote survives reload (stored on the message, same pattern as Gap 54).

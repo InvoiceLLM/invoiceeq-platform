@@ -1,0 +1,832 @@
+{
+  "generated_at": "2026-09-14T07:20:09.169708",
+  "cases": 20,
+  "passed": 20,
+  "figures_total": 21,
+  "figures_exact": 21,
+  "figures_exact_pct": 100.0,
+  "fabricated_figures": 0,
+  "narrated": true,
+  "meets_figure_target": true,
+  "meets_fabrication_target": true,
+  "results": [
+    {
+      "case_id": "po_overbilled_in",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "IN",
+      "figures": [
+        {
+          "figure": "overbilled_INV-2026-014",
+          "expected": 23200.0,
+          "actual": 23200.0,
+          "exact": true
+        },
+        {
+          "figure": "agreed_INV-2026-014",
+          "expected": 100000.0,
+          "actual": 100000.0,
+          "exact": true
+        },
+        {
+          "figure": "billed_INV-2026-014",
+          "expected": 123200.0,
+          "actual": 123200.0,
+          "exact": true
+        },
+        {
+          "figure": "agreed_payment_days",
+          "expected": 30.0,
+          "actual": 30.0,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "agreed_vs_billed",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        },
+        {
+          "card": "terms_check",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        },
+        {
+          "card": "what_this_is",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "agreed_vs_billed:INV-2026-014",
+          "found": true
+        },
+        {
+          "finding_key": "terms_check:INV-2026-014",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "INV-2026-014 overbilled by \u20b923,200.00 and sets payment terms to 45 days instead of the agreed 30 days.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "po_matches_exactly_eu",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "EU",
+      "figures": [],
+      "cards": [
+        {
+          "card": "agreed_vs_billed",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Purchase order shows \u20ac45,000.00 and the agreed payment terms are 14 days, which matches the invoice payment days of 14 days.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "po_no_invoice_yet_us",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "US",
+      "figures": [],
+      "cards": [
+        {
+          "card": "agreed_vs_billed",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        },
+        {
+          "card": "what_this_is",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [
+        {
+          "card": "agreed_vs_billed",
+          "fragment": "no invoice",
+          "reason": "no invoice from Redwood Facilities Group is linked to this document yet",
+          "ok": true
+        }
+      ],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "I can't confirm billing for Redwood Facilities Group's $8,200.00 purchase order, so it might be overbilled.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "po_duplicate_number_in",
+      "doc_type": "PURCHASE_ORDER",
+      "region": "IN",
+      "figures": [
+        {
+          "figure": "ordered_value",
+          "expected": 100000.0,
+          "actual": 100000.0,
+          "exact": true
+        },
+        {
+          "figure": "invoiced_against_order",
+          "expected": 120000.0,
+          "actual": 120000.0,
+          "exact": true
+        },
+        {
+          "figure": "not_yet_invoiced",
+          "expected": -20000.0,
+          "actual": -20000.0,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "agreed_vs_billed",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        },
+        {
+          "card": "open_po_value",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "open_po_value:over:PO-2026-0043",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Shree Packaging Pvt Ltd overbilled by \u20b920,000.00 and has \u20b9120,000.00 overdue.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "quotation_drift_in",
+      "doc_type": "QUOTATION",
+      "region": "IN",
+      "figures": [
+        {
+          "figure": "quoted_total",
+          "expected": 100000.0,
+          "actual": 100000.0,
+          "exact": true
+        },
+        {
+          "figure": "average_invoice_since_quote",
+          "expected": 120000.0,
+          "actual": 120000.0,
+          "exact": true
+        },
+        {
+          "figure": "drift_amount",
+          "expected": 20000.0,
+          "actual": 20000.0,
+          "exact": true
+        },
+        {
+          "figure": "drift_percent",
+          "expected": 20.0,
+          "actual": 20.0,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "quote_drift",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "quote_drift:QT-2026-77",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Luna Traders overbilled by \u20b930,000.00 on INV-L-2 and by \u20b910,000.00 on INV-L-1, and \u20b9240,000.00 is already overdue across 2 bills.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "quotation_below_threshold_eu",
+      "doc_type": "QUOTATION",
+      "region": "EU",
+      "figures": [],
+      "cards": [
+        {
+          "card": "quote_drift",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [
+        {
+          "card": "quote_drift",
+          "fragment": "needs 2",
+          "reason": "only 1 invoice(s) from Amsterdam Logistiek BV since this quote; drift needs 2",
+          "ok": true
+        }
+      ],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Amsterdam Logistiek BV overbilled you by \u20ac400.00 on INV-NL-1 and \u20ac5,400.00 is overdue.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "quotation_no_history_us",
+      "doc_type": "QUOTATION",
+      "region": "US",
+      "figures": [],
+      "cards": [
+        {
+          "card": "agreed_vs_billed",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        },
+        {
+          "card": "quote_drift",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "This quote from Fieldstone Analytics totals $12,000.00 and shows an overdue total of $0.00.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "contract_terms_deviation_in",
+      "doc_type": "CONTRACT",
+      "region": "IN",
+      "figures": [
+        {
+          "figure": "contract_payment_days",
+          "expected": 30.0,
+          "actual": 30.0,
+          "exact": true
+        },
+        {
+          "figure": "invoices_checked",
+          "expected": 2.0,
+          "actual": 2.0,
+          "exact": true
+        },
+        {
+          "figure": "invoices_off_contract",
+          "expected": 1.0,
+          "actual": 1.0,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "contract_deviations",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        },
+        {
+          "card": "terms_check",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "contract_deviations:CTR-2025-9",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Shree Packaging Pvt Ltd is overdue \u20b922,000.00 across 2 bills and an invoice uses 45 days instead of the contract 30 days.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "contract_no_terms_printed_eu",
+      "doc_type": "CONTRACT",
+      "region": "EU",
+      "figures": [],
+      "cards": [
+        {
+          "card": "terms_check",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        },
+        {
+          "card": "contract_deviations",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [
+        {
+          "card": "terms_check",
+          "fragment": "payment window",
+          "reason": "this document does not print a payment window we can read",
+          "ok": true
+        }
+      ],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "No overdue invoices found: \u20ac0.00 across 0 invoices, but some checks couldn't run because this contract doesn't print a payment window.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "contract_reverse_charge_missing_eu",
+      "doc_type": "CONTRACT",
+      "region": "EU",
+      "figures": [],
+      "cards": [
+        {
+          "card": "compliance",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "compliance:eu-reverse-charge-wording",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Dublin Components Ltd document for \u20ac20,000.00 is missing the required \"reverse charge\" statement.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "credit_note_net_position_in",
+      "doc_type": "CREDIT_NOTE",
+      "region": "IN",
+      "figures": [
+        {
+          "figure": "net_payable",
+          "expected": 101600.0,
+          "actual": 101600.0,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "net_position",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        },
+        {
+          "card": "compliance",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "net_position:CN-2026-3",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "This credit note reduces what you owe by \u20b921,600.00 and leaves \u20b9101,600.00 payable.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "credit_note_no_reference_eu",
+      "doc_type": "CREDIT_NOTE",
+      "region": "EU",
+      "figures": [],
+      "cards": [
+        {
+          "card": "compliance",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        },
+        {
+          "card": "net_position",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "compliance:eu-credit-note-reference",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Credit note for \u20ac400.00 does not name the invoice it adjusts and is therefore unlinked.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "credit_note_negative_total_us",
+      "doc_type": "CREDIT_NOTE",
+      "region": "US",
+      "figures": [
+        {
+          "figure": "net_payable",
+          "expected": 432.0,
+          "actual": 432.0,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "net_position",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "net_position:CN-US-2",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Overbilled: credit note -$21.60 leaves $432.00 payable.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "debit_note_adds_in",
+      "doc_type": "DEBIT_NOTE",
+      "region": "IN",
+      "figures": [
+        {
+          "figure": "net_payable",
+          "expected": 55000.0,
+          "actual": 55000.0,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "net_position",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "net_position:DN-2026-1",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Debit note shows \u20b95,000.00 payable.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "debit_note_unlinked_eu",
+      "doc_type": "DEBIT_NOTE",
+      "region": "EU",
+      "figures": [],
+      "cards": [
+        {
+          "card": "net_position",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        },
+        {
+          "card": "compliance",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "compliance:eu-credit-note-reference",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "The debit note for \u20ac250.00 does not name the invoice it amends, so it cannot be applied.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "statement_four_matches_in",
+      "doc_type": "STATEMENT_OF_ACCOUNT",
+      "region": "IN",
+      "figures": [
+        {
+          "figure": "statement_line_count",
+          "expected": 6.0,
+          "actual": 6.0,
+          "exact": true
+        },
+        {
+          "figure": "matched_count",
+          "expected": 4.0,
+          "actual": 4.0,
+          "exact": true
+        },
+        {
+          "figure": "unmatched_debit_count",
+          "expected": 1.0,
+          "actual": 1.0,
+          "exact": true
+        },
+        {
+          "figure": "closing_balance",
+          "expected": 1018221.75,
+          "actual": 1018221.75,
+          "exact": true
+        }
+      ],
+      "cards": [
+        {
+          "card": "bank_reconcile",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "bank_reconcile:duplicate:*",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "INV-PAID appears to have been paid twice for \u20b961,000.00.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "statement_unreadable_us",
+      "doc_type": "STATEMENT_OF_ACCOUNT",
+      "region": "US",
+      "figures": [],
+      "cards": [
+        {
+          "card": "bank_reconcile",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        },
+        {
+          "card": "cash_cover",
+          "expected": "skipped",
+          "actual": "skipped",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [
+        {
+          "card": "bank_reconcile",
+          "fragment": "no transaction rows",
+          "reason": "no transaction rows could be read from this statement",
+          "ok": true
+        }
+      ],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "I couldn't read any transaction rows on this bank statement, please upload a clearer copy.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "remittance_settles_two_eu",
+      "doc_type": "REMITTANCE_ADVICE",
+      "region": "EU",
+      "figures": [],
+      "cards": [
+        {
+          "card": "net_position",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        },
+        {
+          "card": "what_this_is",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "INV-R-1 was paid in full for \u20ac1,000.00 and INV-R-2 was paid in full for \u20ac2,000.00, leaving \u20ac0.00 payable after this remittance advice totaling \u20ac3,000.00.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "remittance_short_paid_us",
+      "doc_type": "REMITTANCE_ADVICE",
+      "region": "US",
+      "figures": [],
+      "cards": [
+        {
+          "card": "net_position",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Invoice INV-N-1 shows you paid $900.00 on a $1,000.00 invoice, so the supplier is still owed $100.00.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    },
+    {
+      "case_id": "challan_short_delivery_in",
+      "doc_type": "DELIVERY_NOTE",
+      "region": "IN",
+      "figures": [],
+      "cards": [
+        {
+          "card": "delivery_vs_order",
+          "expected": "ok",
+          "actual": "ok",
+          "ok": true
+        }
+      ],
+      "skip_reasons": [],
+      "findings": [
+        {
+          "finding_key": "delivery_vs_order:INV-2026-014:corrugated boxes",
+          "found": true
+        }
+      ],
+      "fabrications": [],
+      "passed": true,
+      "narration": {
+        "verdict": "Invoice INV-2026-014 overbilled for Corrugated boxes: billed \u20b91,000.00 but delivered \u20b9800.00.",
+        "source": "model",
+        "gate": {
+          "status": "ok"
+        },
+        "gate_held": true
+      }
+    }
+  ]
+}

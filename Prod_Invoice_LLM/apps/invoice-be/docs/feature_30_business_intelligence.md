@@ -732,3 +732,72 @@ Stated because the review could be read as a verdict on the whole feature, and i
    are real, never that the claim about them is true. Gap 512 and Gap 480 are both that hole. Feature
    29 §4.3 puts the verifier stage at "not yet" and notes "we are at router"; this review is the
    evidence for revisiting that.
+
+
+## 12. Build note — 2026-09-13/14 (tasks 30.19, 30.20, L1; Tracks B–D of the completion plan)
+
+Founder go 2026-09-13 ("go"), then 2026-09-14 ("develop, test, review and verify … 1 hr is hard stop").
+Everything below is behind `ENABLE_ATTACHMENT_INSIGHTS` as before. Nothing writes `Invoice` (Gap 492 stands).
+
+### 12.1 What §11 asked for, as built
+
+| §11 item | Built as | Where |
+|---|---|---|
+| 30.19 three-state check | `CheckLog(card)` with `check_passed / check_failed(finding) / check_not_checked(subject, reason)`; `title(noun)` → "N checked, M not checked"; `as_card()` puts `evidence["not_checked"]` (grouped by reason, naming subjects) on the card and `build_insight_block()` copies it into `checks_not_run` | `services/attachment_insights.py` |
+| 30.20 claims not prose | `Claim(kind, entity, figures, subjects, severity, currency, asserts)`; `@claim_template(kind)` registry; `render_claim()`; `claim_finding()` keeps the claim on the finding. `money_text()`, `days_text()`, `count_text()` are the only number-to-text paths; locals holding rendered text end in `_text` (both guards look for that) | same |
+| §11.3 "reuse a money(), do not add a fifth" | **Deviation, recorded:** the four named helpers all QUANTIZE and none formats to text — the text step did not exist. `money_text()` delegates quantisation to `invoice_builder.money()`; no fifth quantizer | same |
+| §11.7 step 4 — L1 | `verify_claims(block)`: two claims about the same entity asserting different values for one fact → `block["contradictions"]`. No table of incompatible card pairs; a card participates by declaring `asserts` | same |
+| Gap 519 | `rank_findings()` primary key is `SEVERITY_RANK[claim.severity]`, money second | same |
+
+Cards on the new shape: `terms_check`, `bank_reconcile`, `agreed_vs_billed`, `cash_cover`, `open_po_value`, `cash_out_timing`, `delivery_vs_order`, `compliance`. New: `payment_application` (REMITTANCE_ADVICE, before `net_position`), `linked_duplicates` (DELIVERY_NOTE, GRN). Not yet migrated (still `finding()` + f-strings, no money in them): `what_this_is`, `net_position`, `cash_impact`, `over_invoicing_history`, `quote_drift`, `partial_delivery_balance`, `repeat_short_delivery`, `contract_deviations`, `suggested_questions`, `confidence_gaps`.
+
+### 12.2 Decisions taken inside the build (founder to overrule if wrong)
+
+1. **Unmatched bank rows are unknowns, not findings** (Gap 515.2). Only a payment against an already-settled bill is a finding. The user still sees every unmatched row, under "checks not run", with its amount, date and narration.
+2. **A full settlement is spoken** (Gap 518): `payment_settles_in_full` is emitted as an `info` finding even though the check PASSED — it is the answer the document asks for.
+3. **Gap 513 rule shape**: substring removed; whole-name word-boundary match with longest-name-wins, plus resolver bindings; ambiguous mentions select nothing. Pure resolver binding alone was rejected because `_vendor_mentions()` needs a capitalised name after a lead word and the protected legacy question ("what did we pay acme corporation") has neither.
+4. **30.9**: India cards remain `unverified` — every primary source probed 2026-09-14 was unreachable (ECONNRESET / 404 / JS shell / TLS). `card_compliance` now renders them as `NOT_CHECKED` naming rule and source, so the bubble says a check is missing rather than "no IN rule card applies". No rule text was written from memory.
+
+### 12.3 Verification (real Postgres, `localhost:5433/invoice_db`)
+
+`tests/test_insight_claims.py` 22 (incl. the fixture-mutation test), `tests/test_insight_track_b.py` 16, `tests/test_no_hardcoding.py` 4; Feature 30 file set + guards **210 passed**; Track C/D with chat neighbours (`test_rule_schema`, `test_trainer`, `test_entity_resolver`, `test_chat_sql_quality`) **272 passed**. Re-baselined with the reason in the body: `test_bank_matching.py::test_the_sync_bubble_reports_the_match_and_the_as_of_date` (plus the unmatched-credit row §11.5 said was missing). The full 1h23m suite was last run before Tracks B–D (3787 passed, Gaps 520/521 fixed since) and was **not** re-run inside the hour.
+
+### 12.4 Still open on this feature
+
+30.15 live narration run; Track E (FE Gaps 470/471/472, Gap 514 + FE Gap 478 — renumber FE 478 first); the ten cards listed above still on f-strings (no money in them, so the guard is silent, but §11.3's "one renderer" is not yet true for them); Gap 516 parked.
+
+### 12.5 Task 30.15 — first live narration run, 2026-09-14 12:01–12:06
+
+`scripts/run_insight_eval.py --narrate` (one gpt-5-mini `chat_summary` call per case, real Postgres):
+**18/20 cases passed · figures exact 21/21 (100%, target ≥ 90%) · fabricated figures 0 (target 0) ·
+model-narrated 20/20 · answer-contract gate held 20/20.**
+
+Two failures, both golden expectations that describe the bubble BEFORE tasks 30.19/30.20 — the golden
+bank is ground truth and is **not** edited without a founder ruling:
+
+| case | expects | now | why |
+|---|---|---|---|
+| `statement_four_matches_in` | finding `bank_reconcile:unmatched_debit:*` | NOT_CHECKED entry | Gap 515.2 — an unmatched row is an unknown, not a problem |
+| `credit_note_net_position_in` | `compliance` skipped | `compliance` ok, "0 IN rules checked, N not checked" | §12.2(4) — unverified IN cards are surfaced, not hidden |
+
+**New finding — Gap 522.** 17 of the 20 model verdicts print raw floats ("overbilled by 23200.0",
+"across 2.0 bills", "allows 45.0 days"). 30.20 gave the cards one number-to-text path and left the
+narration step out: the model is shown `_f()` floats, repeats them faithfully, and the contract gate —
+which checks presence, not spelling — holds. The deterministic eval grades figures by value and so could
+never see this; only the live run could. Proposed fixes are in the Gap entry; none applied.
+
+### 12.6 Gap 522 closed — 2026-09-14 12:43–12:51 (founder: option (a))
+
+The narration model no longer sees a number. `narration_payload()` hands it `figures_text` and
+`impact_text`, rendered through the same `money_text()` / `days_text()` / `count_text()` the cards
+use, with the shape chosen by the figure's KEY (`figure_text()`); the prompt says to copy that
+spelling character for character. The contract gate keeps the raw figures in its allowed set, so
+nothing that passed before fails now. Second live run: **20/20 · 21/21 exact · 0 fabricated · gate
+20/20 · raw-float verdicts 0/20** (was 17/20). §11.3's "one renderer" is now true end to end —
+cards, bubble titles, and the model's sentence.
+
+### 12.7 Still open on this feature after 2026-09-14
+
+Nothing in Tracks A–E. Gap 516 (STATEMENT_OF_ACCOUNT overload) stays parked on Feature 27's frozen
+taxonomy; Feature 33 / FE Feature 22 / Feature 31 parked by ruling. The full 1h23m suite has not been
+re-run since Tracks B–E landed — the F30 file set, guards, chat neighbours and the FE suite have.

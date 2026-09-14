@@ -1,0 +1,31 @@
+WARNING: --narrate makes one live model call per case. Confirm this run was approved before continuing.
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\scripts\run_insight_eval.py:99: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  paid_at=datetime.utcnow() if spec.get("paid") else None,
+C:\Users\S Banerjee\Desktop\Invoice_LLM\Prod_Invoice_LLM\apps\invoice-be\scripts\run_insight_eval.py:272: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  "generated_at": datetime.utcnow().isoformat(),
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+[LLM] initialising Azure OpenAI: gpt-5-mini on https://openai-invoicellm-dev.openai.azure.com/
+
+Insight eval — 20/20 cases passed
+  figures exact: 21/21 (100.0%)  target >= 90.0%  PASS
+  fabricated figures: 0  target 0  PASS
+
+wrote C:/Users/SBANER~1/AppData/Local/Temp/insight_eval_live2.json

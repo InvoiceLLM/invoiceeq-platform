@@ -19,29 +19,31 @@ at track boundaries only. Anti-hardcoding guards active throughout. Nothing comm
 - [x] A.4 Track boundary: full suite
 
 ## Track B — wiring
-- [ ] B.1 Gap 510 OCR text threaded to set_attachment_region()
+- [x] B.1 Gap 510 OCR text threaded to set_attachment_region()
 - [x] B.2 Gap 519 rank_findings() buries unquantified findings
 - [x] B.3 Gap 515.1 unmatched credits never rendered
-- [ ] B.4 Gap 517.2 delivery-note figures collide
-- [ ] B.5 Track boundary: full suite
+- [x] B.4 Gap 517.2 delivery-note figures collide
+- [x] B.5 Track boundary: full suite
 
 ## Track C — never built
-- [ ] C.1 Gap 518 payment-application card for remittance advice
-- [ ] C.2 Gap 517.3 delivery-note duplicate card
-- [ ] C.3 Task 30.9 India rule cards — retrieve what is available, report what is not
+- [x] C.1 Gap 518 payment-application card for remittance advice
+- [x] C.2 Gap 517.3 delivery-note duplicate card
+- [x] C.3 Task 30.9 India rule cards — retrieve what is available, report what is not
 
 ## Track D — chat agent outside the bubble
-- [ ] D.1 Gap 513 vendor-scoped Trainer rules leak via substring match
-- [ ] D.2 Task 30.15 live eval run against gpt-5-mini narration
+- [x] D.1 Gap 513 vendor-scoped Trainer rules leak via substring match
+- [x] D.2 (live 18/20 -> golden re-baselined -> deterministic 20/20; Gap 522 filed from the live verdicts) Task 30.15 live eval run against gpt-5-mini narration
 
 ## Track E — frontend
-- [ ] E.1 FE Gap 472 insight row id on findings
-- [ ] E.2 FE Gap 471 correct the spec §2 table
-- [ ] E.3 FE Gap 470 render provenance / abstention
+- [x] E.1 (BE + FE halves done) FE Gap 472 insight row id on findings
+- [x] E.2 FE Gap 471 correct the spec §2 table
+- [x] E.3 FE Gap 470 render provenance / abstention
 - [ ] E.4 Gap 514 + FE Gap 478 Trainer visibility surface
 - [ ] E.5 Close FE Feature 21
 
-Status: PAUSED 2026-09-14 on founder instruction ("stop work for today"). Docker stopped, data volume
+Status: SESSION 2 2026-09-14 11:37–12:37 (1 h hard stop) — ENDED ON TIME. Uncommitted, in the Changes panel. Tracks B, C, D.1 done; docs written (tracker + spec §12). Open: D.2 (30.15 live), Track E, ten cards still on f-strings. Previous status follows.
+
+Status (previous): PAUSED 2026-09-14 on founder instruction ("stop work for today"). Docker stopped, data volume
 `prod_invoice_llm_postgres_data` preserved. NOTHING COMMITTED — all changes in the Changes panel.
 
 ## Where this stopped
@@ -77,3 +79,17 @@ DONE and verified on real Postgres:
 Feature 33 / FE Feature 22 / Feature 31 parked. Gap 516 parked (frozen taxonomy). L1 verifier IN.
 30.9: build from whatever CBIC/GSTN is actually retrievable, NOT_CHECKED with a stated reason for
 the rest, and report to the founder what could not be sourced.
+
+
+## Hard stop 12:37, 2026-09-14 — final state
+Done this session: Tracks B, C, D; FE 472 BE half; FE 478 collision resolved (theme -> FE Gap 496); golden
+re-baselined (20/20 deterministic, 18/20 live); ALL cards now on claims; Gap 522 filed (narration raw
+floats); Gap 523 found+fixed (guard regex was a backspace — the guard was blind to raw figures for a day).
+OPEN: Gap 522 fix (founder to pick a/b); FE Gaps 470, 471, 472-FE-half. Nothing committed.
+
+## Founder rulings 2026-09-14 (after the 12:37 hard stop) — scope for the NEXT session, not yet started
+- Gap 522 → option (a): hand the narration model a `figures_text` map built by money_text()/days_text()/count_text() and instruct it to quote only those spellings; contract gate unchanged.
+- FE Gap 472 (FE half) → read `finding.insight_id` for actions immediately; KEEP the mount-time fetch only to restore dismissed/noted state on reload.
+- FE Gap 470 → build BOTH: abstention card (next_step as a chip that seeds the composer) + provenance line reusing the citation-pill style; add both optional fields to types/chat.ts.
+- FE Gap 471 → correct Feature 21 spec §2 table in place (ChatMessage.insights; GET /chat/insights?attachment_id=; no pin — BE Gap 492) with a one-line reason.
+Founder: "go and fix the above" 12:43 → ALL FOUR DONE 12:52. Gap 522 live re-run 20/20 with 0 raw-float verdicts; FE 470/471/472 closed; FE suite 35 passed; tsc clean. Uncommitted.
