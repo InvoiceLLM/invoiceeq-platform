@@ -1,6 +1,7 @@
 # Feature 18 — Desktop App
 
-> **STATUS: PLANNED — NOT IMPLEMENTED.**
+> **STATUS: CANCELLED 2026-09-14 — founder ruling, not needed by customers. FE Gap 326 cancelled with it. Kept for the record only; do not build.**
+> (Previously: PLANNED — NOT IMPLEMENTED.)
 > Created 2026-08-30 as a placeholder for later work, at the founder's request
 > ("small feature we will develop it later"). No design decisions below are
 > final — this captures the idea and the obvious shape, not a committed plan.

@@ -49,7 +49,7 @@ Twenty routes exist today, sorted by *which feature built them*. This feature so
 | `components/records/RulesTable.tsx` | `RulesTable` | new | BE Gap 514: extraction rules by scope (Global / vendor), opens `RuleHistoryDrawer`. **Chat rules are not duplicated here** — see §3.3 |
 | `components/records/OutboundBuilderDrawer.tsx` | `OutboundBuilderDrawer` | wrap of Feature 20 | the one screen that stays a form; opened from `Invoices out` |
 | `app/settings/page.tsx` | `SettingsPage` with sections `People` / `Inbox` / `Checks` / `Notify` / `Plan` / `Security` | rewrite | each section is today's sub-page's content, inline; the sub-routes redirect to `#section` |
-| `components/onboarding/FirstRun.tsx` | `FirstRun` | new | first login: Ask opens with the advisor's three steps (people, inbox, drop one file) — content from BE 33 §3.5 / Feature 32; skippable; never shown again |
+| `components/onboarding/FirstRun.tsx` | `FirstRun` | new | first login: Ask opens with the advisor's three steps (people, inbox, drop one file) — content from BE 33 §3.5 / §3.7 (business profile, ex-Feature 32); skippable; never shown again |
 | `lib/apiClient.ts` | `getToday()`, `openTodayItem()`, `getFacts()` | edit | |
 | `app/api/today/route.ts`, `app/api/today/[id]/open/route.ts` | proxies | new | `proxyJson` to BE |
 | `app/dashboard/page.tsx`, `app/chat/page.tsx`, `app/history/page.tsx`, `app/ingestion/page.tsx`, `app/trainer/page.tsx`, `app/invoices/review/[id]/page.tsx`, `app/invoices/outbound-review/[id]/page.tsx`, `app/admin/page.tsx`, `app/flows/page.tsx`, `app/debug-org/page.tsx`, `app/settings/*/page.tsx` | — | redirect / remove | per level (§6) |

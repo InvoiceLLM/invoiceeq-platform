@@ -1,6 +1,6 @@
 # Feature 33 — The Analyst Agent (`<AGENT_NAME>`): one investigative loop at two scopes — the chat bubble and the owner's intelligence
 
-**App:** invoice-be (+ FE counterpart `apps/invoice-fe/docs/feature_22_today_ask_records.md`) · **Status:** lives in `be_features_tracker.md` · **Depends on:** `feature_30_business_intelligence.md` (§11 tasks 30.19 / 30.20 — the three-state check result and the claim renderer are prerequisites, not part of this feature), `feature_31_credit_debit_notes.md` (net position is wrong without an adjustment lifecycle), `feature_29_llm_optimisation.md` (L3 planner, the answer-contract gate, §12's open L1 decision), `feature_26_chat_attached_documents.md` (rulings D2 / D3, revisited in §4), Feature 32 placeholder (business profile — consumed here, built there).
+**App:** invoice-be (+ FE counterpart `apps/invoice-fe/docs/feature_22_today_ask_records.md`) · **Status:** lives in `be_features_tracker.md` · **Depends on:** `feature_30_business_intelligence.md` (§11 tasks 30.19 / 30.20 — the three-state check result and the claim renderer are prerequisites, not part of this feature), ~~`feature_31_credit_debit_notes.md`~~ (cancelled 2026-09-14: only invoices are ingested, by user training; notes / proformas / receipts arrive as chat attachments, whose Feature 30 cards this agent plans over), `feature_29_llm_optimisation.md` (L3 planner, the answer-contract gate, §12's open L1 decision), `feature_26_chat_attached_documents.md` (rulings D2 / D3, revisited in §4). **Absorbs the former Feature 32 placeholder (founder 2026-09-14):** business-profile discovery and guided configuration are this agent's onboarding scope, §3.7 — one agent gets to know the business, then helps it see its priorities.
 
 **Agent name.** `<AGENT_NAME>` is a placeholder throughout — founder 2026-09-10: "just keep a placeholder for the name in feature". The only persona name in the codebase today is SAGE (`agents/sage_prompts.py`); the extraction, trainer and support agents are file names. Whatever name is chosen replaces the placeholder in one pass; nothing in this spec depends on it.
 
@@ -20,8 +20,9 @@
 |---|---|---|---|---|
 | **attachment** | a document is attached in chat (Feature 26 path) | this document + everything on file it resolves to | the insight bubble — Feature 30's bubble, now planned rather than dispatched by doc type | whoever attached it |
 | **tenant** | scheduled (weekly) + event-driven (a statement lands, a deviation crosses a threshold) | everything that arrived since the last run, open findings, the business profile | the owner's **Today** lines and briefing; input requests | Admin (§6) |
+| **onboarding** (§3.7) | first login, and again whenever coverage changes materially (a new doc type, vendor cluster or currency appears) | everything on file for the tenant, read as a whole | the **business profile** (`BusinessProfile`), a ranked list of proposed conventions for the Trainer, and the first priorities list | Admin |
 
-Same code, same tools, different scope object and budget. The bubble is a one-document investigation; the briefing is a tenant-wide one.
+Same code, same tools, different scope object and budget. The bubble is a one-document investigation; the briefing is a tenant-wide one; onboarding is the tenant-wide one run before there is a profile to consume, producing the profile itself.
 
 **The one rule, unchanged from Feature 30.** The model **plans, prioritises, investigates, explains and asks**. It never produces a number. Every figure comes from a tool; every sentence passes `_answer_contract_gate()`; a rejected sentence falls back to the template. This is what makes an agent that speaks first trustworthy enough to speak to a CFO. Feature 29 §12 records that the gate validates figures, not claims — that limitation is inherited here and not solved here (§7 Q6).
 
@@ -39,7 +40,7 @@ Same code, same tools, different scope object and budget. The bubble is a one-do
 
 **What this is not.**
 - Not SAGE. SAGE answers a question about records the user asked; `<AGENT_NAME>` investigates and advises, unprompted or from a launch point. The boundary is stated in §3.6 and tested.
-- Not Feature 32. Feature 32 *discovers* the tenant's conventions at onboarding and *configures* them in the Trainer; this feature *consumes* that profile at runtime. One idea, two halves; two specs.
+- **Formerly split from Feature 32 — merged 2026-09-14, founder ruling** ("the analyst agent is for getting the user's business profile along with helping the user understand priorities better"). Discovering the tenant's conventions, proposing them, and consuming the accepted profile at runtime are one loop with one owner (§3.7); a second spec would have described the same `observe()` over the same data.
 - Not a dashboard. Founder ruling stands (`project_dashboard_is_workbook_not_inapp`): operational monitoring is Azure Workbooks. Today (FE Feature 22) is a ranked list of things that expect an action, not a metrics page.
 - Not a second BI system. The card engine, `Insight` table, thresholds, semantic views, bank ledger and matcher, entity resolver, doc linking and the gate are all **reused**. This feature adds a loop, a planner call, a facts ledger, a scope predicate, a dependency table and a forecast engine — and removes one LLM-authored panel.
 - Not multi-agent. Feature 29 §4.3's progression is router → planner → verifier → multi-agent; this feature is the planner and the first verifier-shaped behaviour (investigate before you speak). It does not orchestrate agents.
@@ -136,7 +137,7 @@ Triggers: the weekly job; `statement_landed` (a bank statement's facts committed
 
 Cash runway = balance-on-date (from the latest statement fact) + certain-in − certain-out − recurring, by week. `scenario()` recomputes with one change ("Kaveri pays 20 days late") — arithmetic, no model. Every rendered forecast line names its tier and depth; below the depth threshold the line is `NOT_CHECKED("needs N months")`, which is exactly what `ask()` turns into an input request.
 
-Recurrence is **detected**, never keyword-matched: "salary" is a counterparty with a ~30-day period, learned from the statement and confirmable once in the Trainer (Feature 32's Configure).
+Recurrence is **detected**, never keyword-matched: "salary" is a counterparty with a ~30-day period, learned from the statement and confirmable once in the Trainer (§3.7 Configure).
 
 ### 3.5 The dependency table and input requests
 
@@ -144,7 +145,7 @@ Every `Capability` declares `needs: tuple[InputKind, ...]`. `INPUT_KINDS` is the
 
 `coverage_for()` computes, from what is actually on file, per kind: present / absent, months of depth, days since last. `missing_inputs()` intersects the plan's needs with coverage. `unlock_value()` is a real number from the views — "14 invoices with a PO reference and no delivery fact" or "₹18.3L of statement outflows currently invisible" — never a template.
 
-The result is the "To see more" section of Today and the advisor's prompts in Feature 32. The same agent asks at onboarding ("forward invoices here; what matters most to you?"), weekly ("attach last quarter's statement → cash forecast") and in a bubble ("no GSTIN read — attach the tax invoice and I can run the compliance checks"). One mechanism, three moments.
+The result is the "To see more" section of Today and the advisor's onboarding prompts (§3.7). The same agent asks at onboarding ("forward invoices here; what matters most to you?"), weekly ("attach last quarter's statement → cash forecast") and in a bubble ("no GSTIN read — attach the tax invoice and I can run the compliance checks"). One mechanism, three moments.
 
 ### 3.6 SAGE and `<AGENT_NAME>`
 
@@ -157,6 +158,18 @@ The result is the "To see more" section of Today and the advisor's prompts in Fe
 | may compute | never | never |
 
 A Today line opened in Ask becomes a SAGE session seeded with the finding and its evidence; follow-up questions are SAGE's. `<AGENT_NAME>` does not converse; it reports and hands over. The boundary is one sentence in `PERSONA_BLOCK` and one test: a SAGE turn never calls `run_analyst()`, and `run_analyst()` never calls SAGE's SQL tools.
+
+### 3.7 Business profile — discover, propose, configure; then priorities
+
+**Origin.** The former Feature 32 placeholder (founder 2026-09-09: "understand the customer docs well as a first step and then the system should align itself to show what additional is needed and end client can configure it thru trainer"), merged here 2026-09-14: the agent that will advise the business is the agent that should first get to know it.
+
+**Discover.** `handle_analyst_onboarding_run()` runs the loop with `scope.kind="onboarding"`. `observe()` reads everything on file for the tenant as a whole — not since-last-run — and `profile_tenant()` (`services/business_profile.py`) reduces it deterministically to a `BusinessProfile`: document types and their volumes, vendor and customer clusters (`resolve_entities()`), currencies and tax regimes seen, fields consistently present / absent per doc type, payment habits (median days-to-pay per counterparty from `v_payment_events`), document chains actually observed (PO → delivery → invoice → payment coverage), and `coverage_for()` over `INPUT_KINDS`. No model call produces a profile value; the model only narrates it.
+
+**Propose.** From the profile, `propose_conventions()` emits `ConventionProposal` rows: a plain-language rule the system needs a decision on, its default, and the evidence that prompted it — "Rajesh Steel is paid at 47 days on average; set default terms to NET 45?", "3 proformas were followed by a final invoice within 14 days; treat proformas as commitments?", "credit notes arrive for 6% of invoices; auto-apply them to the open invoice?", "two partial payments seen on one invoice; enable partial payments?". Proposals are ranked by `unlock_value()` (§3.5), the same number that ranks input requests, so "what to configure" and "what to feed in" sit on one scale.
+
+**Configure.** Each proposal is accepted, edited or rejected in the Trainer (FE Feature 22 `FirstRun`, then the Trainer's rules surface). An accepted proposal becomes an `ExtractionTemplate` rule or a `TenantChatRule`, whichever store it belongs to — no third store. A rejected proposal is suppressed for that tenant via `learn()` (task 33.19), the same mechanism as a dismissed Today line. The Trainer remains where the business's conventions live.
+
+**Priorities.** The onboarding run ends with the first tenant-scope `TodayItem` set (§3.3), ranked severity-first, prefaced by one gated sentence per item saying *why it ranks where it does* against the profile ("largest open exposure is 3 unpaid invoices to your slowest-paying customer"). This is the "help them understand priorities" half: the profile explains the ranking, the ranking is what the owner acts on. Weekly runs re-rank against the same profile; a materially changed profile (new doc type, vendor cluster, currency) re-triggers Discover, so onboarding and continuous learning are the same run at two cadences (§8 Q9).
 
 ## 4. Data & schema changes — facts persist, documents may expire
 
@@ -208,7 +221,7 @@ Founder: "a higher authority can attach a bank statement or P&L to just understa
 
 ## 6. Tasks
 
-Prerequisites, not tasks here: Feature 30 §11.7 sequence (Gap 477, then 30.19, then 30.20), Feature 31 through 31.9, Feature 29 CP2 calibration if the planner flag is to be turned on.
+Prerequisites, not tasks here: Feature 30 §11.7 sequence (Gap 477, then 30.19, then 30.20), Feature 29 CP2 calibration if the planner flag is to be turned on.
 
 | # | task |
 |---|---|
@@ -233,6 +246,9 @@ Prerequisites, not tasks here: Feature 30 §11.7 sequence (Gap 477, then 30.19, 
 | 33.19 | `learn()`: acted / dismissed → per-tenant suppression; narration corrections → `record_correction()` |
 | 33.20 | SAGE boundary: `PERSONA_BLOCK` sentence; the two boundary tests |
 | 33.21 | Eval: `benchmarks/analyst_golden.json` — the ten `showcase/vpi_demo` §5 scenarios with expected findings **and expected NOT_CHECKED items**, plus five tenant-scope weeks; `scripts/run_analyst_eval.py` |
+| 33.22 | `services/business_profile.py`: `BusinessProfile`, `profile_tenant()` — deterministic reduction over entities, views and `coverage_for()`; Postgres test that the profile is a pure function of the tenant's rows (two tenants, no leakage) |
+| 33.23 | `propose_conventions()` → `ConventionProposal`; migration `a1b2c3f33003` (`convention_proposal`); accept / edit / reject endpoints writing to `ExtractionTemplate` or `TenantChatRule`; rejection routed through `learn()` |
+| 33.24 | `handle_analyst_onboarding_run()` (`scope.kind="onboarding"`): first-login trigger + material-coverage-change re-trigger; first `TodayItem` set with the per-item "why it ranks here" gated sentence |
 
 ## 7. Verification plan
 
@@ -261,6 +277,9 @@ Hard rule 3 applies throughout: every number, match, tier, rank and coverage fig
 | 33.19 | a kind dismissed three times by one tenant is suppressed for that tenant only |
 | 33.20 | a SAGE turn on the VPI fixture never calls `run_analyst`; `run_analyst` never calls `query_tools` SQL |
 | 33.21 | the ten §5 scenarios: every expected finding present, every expected `NOT_CHECKED` present, **zero** findings on rows the README says are clean; deterministic set comparison, not the judge (Gap 484's rule) |
+| 33.22 | `profile_tenant()` on two seeded tenants (India GST + US) on Postgres: each profile lists only its own doc types, counterparties and currencies; re-running on unchanged rows returns an identical profile (pure function); a tenant with no rows returns an empty profile with every `INPUT_KINDS` entry absent, not an error |
+| 33.23 | seeded 47-day median payer → a `default_terms` proposal whose evidence names the counterparty and the figure; accept writes the rule to `ExtractionTemplate` (vendor scope) and nothing else; reject suppresses it via `learn()` and it does not reappear on the next run; edit persists the edited text; proposals from tenant A never appear for tenant B |
+| 33.24 | first login triggers exactly one onboarding run; a second login triggers none; adding a first `BANK_STATEMENT` re-triggers Discover; the first `TodayItem` set carries one gated sentence per item, and a sentence the gate rejects falls back to the template with the item still ranked |
 
 ## 8. Open decisions — founder
 
@@ -268,7 +287,8 @@ Hard rule 3 applies throughout: every number, match, tier, rank and coverage fig
 2. **Sharing rule — Option C (§5).** Derived facts about records operations can already see flow down as `ops`; source rows and non-invoice lines stay `exec`. Yes, or strictly private, or share-whole-document on request?
 3. **Clearance by role or by person?** By role: every Admin sees every exec session. By person: the owner's statement is the owner's. Role is simpler; person is what "not seen by others" literally says.
 4. **Planner on for this feature?** It adds one model round-trip per run. Feature 30 task 30.16 deferred it pending Feature 29's 100-turn calibration. Turn it on for tenant scope only (weekly, latency irrelevant) and leave attachment scope on `plan_by_rule()` until calibrated?
-5. **Bank statements as a standing input.** Email-in / connector ingest for statements, monthly, rather than chat attachment — so the forecast has a regular feed with no manual step. Build the ingest path in this feature, or defer to Feature 32's onboarding prescription?
+5. **Bank statements as a standing input.** Email-in / connector ingest for statements, monthly, rather than chat attachment — so the forecast has a regular feed with no manual step. Build the ingest path in this feature, or leave it as an onboarding input request (§3.7) the owner fulfils by hand?
 6. **Feature 29 §12 — the gate validates figures, not claims.** This feature inherits it. Accept for v1 (findings carry evidence the reader can check) or block tenant-scope narration on a claim-level verifier first?
 7. **Scope statement.** "AP/AR + cash intelligence for an SMB" — or full FP&A (P&L, margin, budget variance tiles)? `period_accounts` facts make the second possible; the first is what invoices + statements support today.
 8. **Agent name.** `<AGENT_NAME>` throughout; SAGE is the precedent.
+9. **Onboarding cadence (from the former Feature 32).** §3.7 proposes one mechanism at two cadences: a first-login scan, re-run on material coverage change. Accept, or first-login only, or continuous on every weekly run?

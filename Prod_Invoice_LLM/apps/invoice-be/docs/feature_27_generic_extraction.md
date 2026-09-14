@@ -258,6 +258,8 @@ planned, not in §10B's remaining list.
 
 ### A2 — The INVOICE family keeps its existing schema, prompts and direction profile. Flag ON or OFF.
 
+> **Note, 2026-09-14 (founder ruling, Feature 31 cancelled).** A2 stands as written. The MONEY sub-types do reach the `invoice` table if someone ingests them, and the product does not guard against that in code: the ruling is that **only invoices are ingested** and that this is user training, not routing. Notes / proformas / receipts are attached in chat (Feature 26 / Feature 30) for reconciliation intelligence.
+
 **Decision.** `GenericDocumentSchema`, `GenericLineItem` and `_DOC_TYPE_OVERLAYS` apply
 **only** to non-INVOICE `doc_type`s. The INVOICE family (`INVOICE`, `PROFORMA_INVOICE`,
 `CREDIT_NOTE`, `DEBIT_NOTE`) keeps `InvoiceExtractionSchema` /
