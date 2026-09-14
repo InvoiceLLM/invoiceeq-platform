@@ -1211,6 +1211,66 @@ def gen_de_statement_of_account_01():
     return path
 
 
+def gen_in_bank_statement_01():
+    """India BANK_STATEMENT -- BE Gap 516.1's fixture, and the reason the split
+    happened.
+
+    Until 2026-09-14 this document had no type of its own: it borrowed
+    STATEMENT_OF_ACCOUNT, the SUPPLIER statement's value. The two are different
+    documents and this fixture is what makes the difference testable -- the rows
+    here are movements on ONE account we hold at a bank (narration, debit OR
+    credit, running balance, UTR references), not a list of a vendor's invoices,
+    and they are what `services/bank_ledger.py::land_statement_lines()` lands.
+
+    Titled by the document's own name so it resolves deterministically, which is
+    the A-series cost gate (`test_t_c_6_every_fixture_resolves_without_paying_for
+    _a_model_call`). A bank statement titled only "Statement of Account" is
+    deliberately NOT this fixture: that title is shared with the supplier
+    document and is decided by the model, per the boundary stated in
+    `_DOC_TYPE_SYNONYMS`.
+    """
+    path = os.path.join(HERE, "bank_statement", "india_inbound", "IN-BANK-01_bank_statement.pdf")
+    _build(
+        path=path,
+        title="BANK STATEMENT",
+        header_lines=[
+            "Meridian Commercial Bank Ltd",
+            "Branch: Gurugram Sector 44, HR 122003, India",
+            "IFSC: MCBL0004471 &nbsp;&nbsp; MICR: 110240037",
+        ],
+        meta_lines=[
+            "<b>Statement Period:</b> 01/08/2026 to 31/08/2026",
+            "<b>Account Number:</b> 50200041884471 &nbsp;&nbsp; <b>Account Type:</b> Current "
+            "&nbsp;&nbsp; <b>Currency:</b> INR",
+        ],
+        party_label="Account Holder:",
+        party_lines=[
+            "Infinevo Cloud Pvt Ltd",
+            "Tower B, Cyber Hub, Gurugram, HR 122002, India",
+        ],
+        columns=["Date", "Narration", "Reference", "Debit", "Credit", "Balance"],
+        rows=[
+            ["01/08/2026", "Opening Balance", "", "", "", "9,84,200.00"],
+            ["04/08/2026", "NEFT ASHOKA PRECISION COMPONENTS", "UTR MCBLN26080400118", "2,36,000.00", "", "7,48,200.00"],
+            ["09/08/2026", "RTGS NORDWIND ZULIEFERER", "UTR MCBLN26080900214", "1,41,000.00", "", "6,07,200.00"],
+            ["14/08/2026", "UPI ELECTRICITY BOARD AUG", "UPI/226714/BILLPAY", "96,410.00", "", "5,10,790.00"],
+            ["21/08/2026", "NEFT RECEIVED CASCADE SUPPLY CO", "UTR HDFCN26082100477", "", "3,18,500.00", "8,29,290.00"],
+            ["27/08/2026", "SALARY AUG 2026", "BULK/SAL/0826", "4,86,000.00", "", "3,43,290.00"],
+            ["31/08/2026", "ACCOUNT MAINTENANCE CHARGES", "CHG/QTR/0826", "1,180.00", "", "3,42,110.00"],
+        ],
+        summary_rows=[
+            ["Closing Balance as on 31/08/2026", "3,42,110.00"],
+            ["Total Debits", "8,60,590.00"],
+            ["Total Credits", "3,18,500.00"],
+        ],
+        notes=[
+            "This is a computer generated statement and does not require a signature.",
+            "Please report any discrepancy within 15 days of the statement date.",
+        ],
+    )
+    return path
+
+
 if __name__ == "__main__":
     generated = [
         gen_in_delivery_note_01(),
@@ -1238,6 +1298,8 @@ if __name__ == "__main__":
         gen_us_remittance_advice_01(),
         gen_in_statement_of_account_01(),
         gen_de_statement_of_account_01(),
+        # BE Gap 516.1 -- the fifteenth type.
+        gen_in_bank_statement_01(),
     ]
     for p in generated:
         print("wrote " + p)

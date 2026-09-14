@@ -709,6 +709,7 @@ _MODE_BY_DOC_TYPE: Dict[str, str] = {
     "RECEIPT": MONEY_MODE,
     # No line items to diff -- a list of pointers at other documents (B8).
     "STATEMENT_OF_ACCOUNT": LIST_RECONCILE_MODE,
+    "BANK_STATEMENT": LIST_RECONCILE_MODE,  # BE Gap 516.1 — split off the line above
     "REMITTANCE_ADVICE": LIST_RECONCILE_MODE,
     # OTHER is deliberately absent: we do not know what it is, so there is no
     # defensible mode and the turn clarifies instead.

@@ -46,7 +46,9 @@ def test_the_document_type_mix_matches_the_spec():
         "CONTRACT": 3,
         "CREDIT_NOTE": 3,
         "DEBIT_NOTE": 2,
-        "STATEMENT_OF_ACCOUNT": 2,
+        # BE Gap 516.1: both statement cases are BANK statements (HDFC Bank,
+        # First National) and were retyped when the value was split out.
+        "BANK_STATEMENT": 2,
         "REMITTANCE_ADVICE": 2,
         "DELIVERY_NOTE": 1,
     }

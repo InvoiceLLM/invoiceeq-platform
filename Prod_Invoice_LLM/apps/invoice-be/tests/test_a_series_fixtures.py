@@ -40,6 +40,8 @@ EXPECTED_BY_FOLDER = {
     "receipt": "RECEIPT",
     "remittance_advice": "REMITTANCE_ADVICE",
     "statement_of_account": "STATEMENT_OF_ACCOUNT",
+    # BE Gap 516.1 -- the bank statement stopped borrowing the supplier type.
+    "bank_statement": "BANK_STATEMENT",
     "delivery_note": "DELIVERY_NOTE",
     "proforma_invoice": "PROFORMA_INVOICE",
     "purchase_order": "PURCHASE_ORDER",

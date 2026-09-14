@@ -13,6 +13,11 @@ which would make an unrelated build red; the fetch happened once, on
 assert is the thing that protects the user: an `unverified` card, with no text
 because nobody read the source, can never reach a bubble.
 
+**Task 30.9 was dropped by founder ruling on 2026-09-14** ("Drop the India
+cards"). The three IN skeletons are deleted; no card that ships is `unverified`.
+The `unverified` filter itself is still tested, on a card this file writes to a
+tmp dir — the rule outlived the only files that exercised it.
+
 No LLM: every check in `CHECKS` is deterministic Python over the extracted JSON.
 """
 import os
@@ -38,9 +43,14 @@ def _row(doc_type="CREDIT_NOTE", region="EU", **data):
 # --- the card files ---------------------------------------------------------
 
 
-def test_there_are_cards_for_all_three_regions():
+def test_the_shipped_regions_are_exactly_the_ones_with_a_fetched_source():
+    """Was `{"IN", "EU", "US"}`. **Task 30.9 dropped by founder ruling 2026-09-14**
+    ("Drop the India cards"): the three IN cards were `unverified` skeletons with
+    no rule text, and every CBIC/GSTN primary source was unreachable on both
+    probes (2026-09-08 and 2026-09-14). A region ships when somebody fetched and
+    read its source, and only then."""
     regions = {c.region for c in ALL_CARDS}
-    assert regions == {"IN", "EU", "US"}
+    assert regions == {"EU", "US"}
 
 
 @pytest.mark.parametrize("card", ALL_CARDS, ids=lambda c: c.id)
@@ -80,23 +90,63 @@ def test_status_and_body_agree(card):
         assert not card.body.strip(), f"{card.id} is unverified but carries rule text"
 
 
-def test_unverified_cards_are_never_loaded_for_display():
-    shown = {c.id for c in rc.load_rule_cards()}
-    unverified = {c.id for c in ALL_CARDS if c.status != rc.STATUS_VERIFIED}
-    assert unverified, "this test is meaningless with no unverified cards"
-    assert not (shown & unverified)
+def test_unverified_cards_are_never_loaded_for_display(tmp_path, monkeypatch):
+    """Hard rule 8's filter, asserted on a card written for the test rather than
+    on one shipped in the repo.
+
+    It used to assert `unverified, "this test is meaningless with no unverified
+    cards"` over the cards on disk — true while the three IN skeletons existed,
+    and self-defeating the moment they were dropped (30.9, founder ruling
+    2026-09-14). The filter is still the thing that matters, so it is now
+    exercised against a card this test puts on disk itself: dropping the last
+    unverified file must not silently retire the rule that hides them."""
+    region_dir = tmp_path / "xx"
+    region_dir.mkdir()
+    (region_dir / "xx-skeleton.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "id: xx-skeleton",
+                "region: XX",
+                "title: A rule nobody has read yet",
+                "source_url: https://example.gov/",
+                "applies_to_doc_types: [CREDIT_NOTE]",
+                "status: unverified",
+                "review_at: 2026-12-31",
+                "---",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rc, "RULE_CARD_ROOT", str(tmp_path))
+    assert {c.id for c in rc.load_rule_cards(include_unverified=True)} == {"xx-skeleton"}
+    assert rc.load_rule_cards() == []
 
 
-def test_the_india_cards_are_unverified_and_say_which_source_they_need():
-    """Recorded as a test, not only in prose: the founder asked for CBIC/GSTN
-    cards, the sources could not be fetched from this environment, and the
-    skeletons must not drift into looking authoritative."""
-    india = [c for c in ALL_CARDS if c.region == "IN"]
-    assert len(india) == 3
-    assert all(c.status == rc.STATUS_UNVERIFIED for c in india)
-    assert all(not c.body.strip() for c in india)
-    assert all("cbic-gst.gov.in" in c.source_url for c in india)
-    assert all(c.source_title for c in india)
+def test_no_unverified_card_ships_any_more():
+    """The state 30.9's drop leaves behind, asserted so a skeleton cannot creep
+    back in without the founder's ruling being revisited."""
+    assert [c.id for c in ALL_CARDS if c.status != rc.STATUS_VERIFIED] == []
+
+
+def test_the_india_cards_are_gone_and_no_skeleton_replaced_them():
+    """**Task 30.9, dropped by founder ruling 2026-09-14 ("Drop the India cards").**
+
+    This test used to assert the opposite — that exactly three IN skeletons
+    existed, `unverified`, bodyless, each naming the CBIC source it still needed.
+    That was the honest shape of an unfinished card. It is not the shape of a
+    card that is never going to be finished: no CBIC/GSTN primary source could be
+    reached on either probe (2026-09-08 and 2026-09-14: JS shell, 404,
+    ECONNRESET, TLS failure), so the skeletons were a permanent promise rather
+    than a work item. They are deleted from `knowledge/rule_cards/`.
+
+    What is asserted now is the deletion AND that it was a deletion, not a
+    downgrade: no IN card, and no card anywhere still pointing at a source
+    nobody could read."""
+    assert [c.id for c in ALL_CARDS if c.region == "IN"] == []
+    assert not os.path.isdir(os.path.join(rc.RULE_CARD_ROOT, "in"))
+    assert [c.id for c in ALL_CARDS if "cbic-gst.gov.in" in c.source_url] == []
 
 
 def test_a_malformed_card_is_skipped_not_half_loaded():
@@ -222,8 +272,11 @@ def test_no_region_means_no_checks_rather_than_default_checks():
     assert rc.run_compliance_checks(_row("CREDIT_NOTE", None)) == []
 
 
-def test_india_cards_never_run_even_on_an_indian_document():
-    """They are unverified, so `load_rule_cards()` does not return them."""
+def test_an_indian_document_gets_no_checks_rather_than_someone_elses():
+    """Was: "they are unverified, so `load_rule_cards()` does not return them."
+    After 30.9's drop there are no IN cards at all, and the outcome the user sees
+    must be identical — no verdict, rather than EU or US rules quietly applied to
+    an Indian document because its own region has nothing."""
     row = _row("CREDIT_NOTE", "IN", grand_total=1000.0)
     assert rc.run_compliance_checks(row) == []
 

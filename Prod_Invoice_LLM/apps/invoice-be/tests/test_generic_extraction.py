@@ -80,6 +80,7 @@ from agents.extraction_agent import (
     resolve_extraction_profile,
 )
 from services.document_type_classifier import (
+    ADVISORY_FAMILY,
     COMMITMENT_FAMILY,
     DOC_TYPE_FAMILY,
     DOC_TYPES,
@@ -512,7 +513,10 @@ def test_gap_435_reference_direction_takes_the_generic_spine_for_advisory_types_
     from agents.extraction_agent import resolve_extraction_profile
 
     monkeypatch.setattr(ea.get_settings(), "ENABLE_GENERIC_EXTRACTION", True)
-    for adv in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+    # BE Gap 516.1: every ADVISORY type, from the family table.
+    advisory = [t for t, f in DOC_TYPE_FAMILY.items() if f == ADVISORY_FAMILY]
+    assert "BANK_STATEMENT" in advisory and len(advisory) >= 3
+    for adv in advisory:
         assert resolve_extraction_profile("REFERENCE", adv) is ea._DIRECTION_PROFILES["GENERIC"]
     for other in ("PURCHASE_ORDER", "QUOTATION", "DELIVERY_NOTE", "CONTRACT", "INVOICE", None):
         assert resolve_extraction_profile("REFERENCE", other) is ea._DIRECTION_PROFILES["REFERENCE"]
@@ -718,7 +722,9 @@ def test_outbound_and_reference_are_unchanged_for_every_doc_type(
     Gap 435 (2026-09-04) carved out ONE exception: REFERENCE + an ADVISORY type
     takes the generic spine, because reconcile needs `referenced_documents[]`.
     """
-    if flow_direction == "REFERENCE" and doc_type in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+    # BE Gap 516.1: read off the family table, not a literal pair -- BANK_STATEMENT
+    # is the third ADVISORY type and this carve-out applies to it identically.
+    if flow_direction == "REFERENCE" and DOC_TYPE_FAMILY.get(doc_type or "") == ADVISORY_FAMILY:
         pytest.skip("Gap 435: covered by test_gap_435_reference_direction_takes_the_generic_spine_for_advisory_types_only")
     resolved = resolve_extraction_profile(flow_direction, doc_type)
     assert resolved is resolve_direction_profile(flow_direction)
@@ -2992,7 +2998,9 @@ def test_t_r_8_the_advisory_family_runs_no_arithmetic_and_never_sets_a_review_st
     from agents.extraction_agent import _RUBRIC_BY_DOC_TYPE
     from services.document_type_classifier import ADVISORY_FAMILY, DOC_TYPE_FAMILY
 
-    for doc_type in ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE"):
+    # BE Gap 516.1: driven off the family table so a new advisory type (this is
+    # how BANK_STATEMENT arrived) is covered the day it is added.
+    for doc_type in [t for t, f in DOC_TYPE_FAMILY.items() if f == ADVISORY_FAMILY]:
         assert DOC_TYPE_FAMILY[doc_type] == ADVISORY_FAMILY, doc_type
         rubric = _RUBRIC_BY_DOC_TYPE[doc_type]
         assert rubric.run_line_item_math is False, doc_type

@@ -10,6 +10,7 @@ import {
   MessageSquare,
   GraduationCap,
   Settings,
+  ScrollText,
   CreditCard,
   HelpCircle,
   FileText,
@@ -52,7 +53,7 @@ export default function Sidebar() {
   //   Dashboard / Chat / Help  -> every signed-in user
   //   Ingest                   -> can_load
   //   Audit Queue              -> can_audit
-  //   AI Trainer               -> can_train
+  //   AI Trainer / Chat Rules  -> can_train
   //   Settings / Subscriptions -> Admin only
   // Admins pass all three permission checks (resolved backend-side in
   // dependencies.resolve_permissions, not re-derived here).
@@ -81,6 +82,17 @@ export default function Sidebar() {
     { name: "History", href: "/history", icon: History, visible: canAudit },
     // AI Trainer link for rule scope fine-tuning & sandbox evaluation (Feature 6)
     { name: "AI Trainer", href: "/trainer", icon: GraduationCap, visible: canTrain },
+    // FE Gap 478: the chat rules a tenant teaches from a thumbs-down rewrite
+    // every later answer for the whole workspace, and /settings/chat-rules was
+    // reachable only by URL or by the Settings tile grid -- which is Admin-only
+    // in this nav, so a Trainer (the exact role that creates these rules) had no
+    // way to discover the screen that reads them back. Same remedy and same
+    // pattern as FE Gap 143's Subscriptions entry: promote the page to its own
+    // nav row. Gated on can_train rather than Admin because that is the
+    // permission the destructive half enforces backend-side
+    // (routers/chat.py::delete_chat_rule -> require_can_train); an Admin passes
+    // it too (dependencies.resolve_permissions).
+    { name: "Chat Rules", href: "/settings/chat-rules", icon: ScrollText, visible: canTrain },
     { name: "Chat", href: "/chat", icon: MessageSquare, visible: true },
     { name: "Settings", href: "/settings", icon: Settings, visible: role === "Admin" },
     // FE Gap 143: the one page a paying tenant checks regularly -- plan, spend
@@ -104,7 +116,9 @@ export default function Sidebar() {
   // FE Gap 143: the most specific matching item wins. "Settings" (/settings)
   // and "Subscriptions" (/settings/subscriptions) both prefix-match while the
   // subscriptions page is open, which would light up two nav items at once --
-  // the longer href is the one the user is actually on.
+  // the longer href is the one the user is actually on. FE Gap 478's
+  // "Chat Rules" (/settings/chat-rules) is the same shape and needs no new
+  // logic here.
   const activeHref = visibleItems
     .filter((item) => pathname === item.href || pathname.startsWith(item.href + "/"))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href;

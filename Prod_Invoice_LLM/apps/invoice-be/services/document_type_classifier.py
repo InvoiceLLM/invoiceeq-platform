@@ -85,6 +85,17 @@ DOC_TYPES = (
     "DEBIT_NOTE",
     "REMITTANCE_ADVICE",      # A5/R7 — advisory; "what did they short-pay?"
     "STATEMENT_OF_ACCOUNT",   # A5/R7 — advisory; "which of these are unpaid?"
+    # BE Gap 516.1 — the taxonomy's fifteenth value, added 2026-09-14 under the
+    # founder's narrow unfreeze ("Unfreeze and split now"; `active-work.md`
+    # § "Frozen / do not touch"). A BANK statement and a SUPPLIER statement of
+    # account are two different documents that had been sharing one value: the
+    # bank one is a ledger of an account we hold at a bank (its rows are landed
+    # into `bank_statement_line` and reconciled against invoices), the supplier
+    # one is a list of THEIR invoices and is advisory only. One value meant
+    # `DOC_TYPE_LABELS` called a supplier statement "bank statement" to the user
+    # and `services/attachment_extraction.py` parsed a supplier's invoice list
+    # into the bank ledger.
+    "BANK_STATEMENT",
     "OTHER",
 )
 
@@ -175,6 +186,12 @@ DOC_TYPE_FAMILY: Dict[str, str] = {
     # Feature 26's `list_reconcile` comparison mode.
     "REMITTANCE_ADVICE": ADVISORY_FAMILY,
     "STATEMENT_OF_ACCOUNT": ADVISORY_FAMILY,
+    # BE Gap 516.1. Same family as the supplier statement and for the same
+    # reason: it reports ON other documents, carries a running balance rather
+    # than a subtotal/tax/total triple, and is NEVER itself a payable. What
+    # differs between the two is not the rubric, it is who issued it and what
+    # downstream does with the rows — which is exactly what a second value buys.
+    "BANK_STATEMENT": ADVISORY_FAMILY,
     "OTHER": OTHER_FAMILY,
 }
 
@@ -369,6 +386,36 @@ _DOC_TYPE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
         "estratto conto",
         "extracto de cuenta",
         "rekeningoverzicht",
+    ),
+    # BE Gap 516.1. ONLY vocabulary that is unambiguously a BANK's own document
+    # goes here. The founder's rule for this split, verbatim: bank vocabulary
+    # only where it is genuinely bank vocabulary, supplier-statement vocabulary
+    # stays on STATEMENT_OF_ACCOUNT, and a phrase that is genuinely ambiguous
+    # between the two is left OUT of the deterministic list so the LLM stage —
+    # which reads the whole page, not just the title — decides.
+    #
+    # Left out deliberately, and this is the boundary of the deterministic half
+    # of this fix: "statement of account", "account statement", "kontoauszug",
+    # "estratto conto", "releve de compte", "extracto de cuenta",
+    # "rekeningoverzicht". Every one of them is printed by banks AND by
+    # suppliers — they all literally mean "account statement" — so the title
+    # alone cannot decide and they stay where they are, on the supplier type,
+    # rather than being duplicated into a second entry that would make every
+    # genuine supplier statement ambiguous. A bank statement whose title says
+    # only "Statement of Account" (the showcase demo's own HDFC file) therefore
+    # still reaches this decision through the model, not through this table.
+    #
+    # No non-English bank vocabulary is invented here — the same rule the rest
+    # of this map states: guessing foreign labels from an office chair is how a
+    # synonym table acquires entries no real document has ever carried.
+    "BANK_STATEMENT": (
+        "bank statement",
+        "bank account statement",
+        "statement of bank account",
+        "current account statement",
+        "savings account statement",
+        "bank passbook",
+        "passbook",
     ),
     # --- E5's deferred documents, routed to OTHER DETERMINISTICALLY (A5/R7) ---
     #
@@ -934,8 +981,20 @@ def _build_classifier_prompt(ocr_text: str) -> str:
         "   are all INVOICE — they are sub-cases, not separate types.",
         "5. Transport and custody documents — bill of lading, air waybill, CMR consignment note,",
         "   India's e-way bill — are OTHER. They are deliberately out of scope.",
-        "6. If you are not sure, say OTHER and give a low confidence. A wrong type is worse than no type.",
-        "7. `evidence` must be a phrase copied verbatim from the document text below. Do not paraphrase it.",
+        # BE Gap 516.1. The deterministic table deliberately leaves the ambiguous
+        # "statement of account" / "account statement" / "Kontoauszug" family out
+        # of the bank entry, so THIS rule is where those documents are decided.
+        # It is a disambiguation instruction, not a correctness control (hard
+        # rule 3): nothing downstream trusts it for arithmetic — it only chooses
+        # which of two advisory types the document is filed under.
+        "6. A statement printed by a BANK about an account held at that bank — rows of debits and",
+        "   credits with a running balance, an account number, IFSC/IBAN/routing or sort code — is",
+        "   BANK_STATEMENT. A statement printed by a SUPPLIER or CUSTOMER listing the invoices,",
+        "   credit notes and payments open between the two parties is STATEMENT_OF_ACCOUNT, even",
+        "   when it is titled 'Statement of Account', 'Account Statement' or 'Kontoauszug' — those",
+        "   titles are used by both, so decide from WHO issued it and WHAT the rows are.",
+        "7. If you are not sure, say OTHER and give a low confidence. A wrong type is worse than no type.",
+        "8. `evidence` must be a phrase copied verbatim from the document text below. Do not paraphrase it.",
         "",
         "Document text:",
         ocr_text[:_LLM_TEXT_BUDGET_CHARS],

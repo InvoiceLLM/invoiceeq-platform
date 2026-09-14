@@ -200,6 +200,15 @@ def supplier_address_present(data: dict, row: Any) -> tuple:
 #: The only functions a card may name. A card whose `verify` is not in here is
 #: loaded and shown, but its check reports `not_applicable` with that as the
 #: reason — a typo in a card must not silently become a pass.
+#:
+#: **`gstin_present` and `hsn_code_present` are named by no shipped card** since
+#: task 30.9's India cards were dropped on the founder's ruling of 2026-09-14
+#: (no reachable CBIC/GSTN primary source — see `knowledge/rule_cards/README.md`).
+#: They are kept, not deleted: they are correct, tested, region-agnostic
+#: predicates over the extracted JSON, and the day an IN card arrives with real
+#: fetched wording it needs exactly these. Deleting them would make that day's
+#: work larger for no benefit today — but nothing in production calls them now,
+#: and that is the honest state rather than an oversight.
 CHECKS: dict = {
     "credit_note_references_invoice": credit_note_references_invoice,
     "gstin_present": gstin_present,

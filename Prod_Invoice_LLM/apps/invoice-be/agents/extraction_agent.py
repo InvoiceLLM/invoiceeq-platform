@@ -534,8 +534,8 @@ class GenericDocumentSchema(BaseModel):
     notes: Optional[str] = Field(default=None, description="Free-text terms, conditions and remarks worth keeping that no other field holds — validity/renewal/termination wording, short-delivery or damage remarks, the reason a credit or debit note was raised. Quote the document rather than summarising it.")
     # --- A7/R9: the ADVISORY family's two lists -----------------------------
     #
-    # Populated for STATEMENT_OF_ACCOUNT and REMITTANCE_ADVICE, and empty for
-    # every other type. They are additive and default to `[]`, so no existing
+    # Populated for STATEMENT_OF_ACCOUNT, BANK_STATEMENT (BE Gap 516.1) and
+    # REMITTANCE_ADVICE, and empty for every other type. They are additive and default to `[]`, so no existing
     # document's extracted shape changes.
     #
     # These carry the substance of a document that HAS NO LINE ITEMS to diff
@@ -1190,6 +1190,25 @@ _DOC_TYPE_OVERLAYS: Dict[str, str] = {
         "total.\n"
         "- `grand_total` is the amount actually remitted, if printed. If the document shows only "
         "per-invoice amounts, leave it null rather than summing them yourself."
+    ),
+    # BE Gap 516.1: the BANK's own statement, split off STATEMENT_OF_ACCOUNT on
+    # 2026-09-14. The overlay differs from the supplier statement's in what the
+    # rows ARE -- dated debit/credit movements on one account, which
+    # `services/bank_ledger.py::land_statement_lines()` lands as a ledger --
+    # not in the never-a-payable guarantee, which both share.
+    "BANK_STATEMENT": (
+        "This is a BANK STATEMENT - a periodic list of movements on ONE bank account the reader "
+        "holds. It must NEVER be treated as a payable.\n"
+        "- Its substance is the TRANSACTION ROWS: each row's date, narration exactly as printed, "
+        "and its debit OR credit amount, plus the running balance if the statement prints one. "
+        "Do not re-sign, net or reorder them.\n"
+        "- Any invoice, cheque or UTR/reference number printed inside a narration goes into "
+        "`reference_numbers` exactly as printed. Do not infer which invoice a row settles.\n"
+        "- A statement carries an OPENING and CLOSING BALANCE, not a subtotal/tax/total triple. "
+        "Put the closing balance in `grand_total` only if it is printed as such, and leave "
+        "`subtotal` and `tax_amount` null.\n"
+        "- The account number, IFSC/IBAN/sort code and statement period go into `notes` as printed. "
+        "Do not add the rows up: the statement's own arithmetic is what it states."
     ),
     "STATEMENT_OF_ACCOUNT": (
         "This is a STATEMENT OF ACCOUNT (vendor statement, ledger, Kontoauszug, Khata) - a periodic "

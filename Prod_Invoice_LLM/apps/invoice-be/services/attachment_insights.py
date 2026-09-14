@@ -60,12 +60,15 @@ logger = logging.getLogger(__name__)
 #: classifier actually emits (`services/document_type_classifier.py`).
 #:
 #: Two folds, both from R2: ORDER_CONFIRMATION is a PO for our purposes, and GRN
-#: is a challan. One substitution: R2 says "bank statement"; the classifier's
-#: type is STATEMENT_OF_ACCOUNT and **the taxonomy is frozen** (`active-work.md`,
-#: "no taxonomy/schema amendment work ... until F27's existing ledger closes"),
-#: so this feature uses the existing value rather than adding a fourteenth type.
-#: The ledger table (30.0c) is keyed on the attachment, not on the type name, so
-#: nothing downstream depends on the spelling.
+#: is a challan.
+#:
+#: BE Gap 516.1 (2026-09-14) ENDED THE ONE SUBSTITUTION. R2's "bank statement"
+#: had been borrowing `STATEMENT_OF_ACCOUNT` because the taxonomy was frozen;
+#: the founder unfroze it for this one value and `BANK_STATEMENT` now exists.
+#: The bank cards are registered against it, and `STATEMENT_OF_ACCOUNT` is back
+#: to meaning what Feature 27 defined it as -- a SUPPLIER's statement, advisory
+#: only, reconciled through Feature 26's `list_reconcile`, never landed as bank
+#: ledger rows.
 #:
 #: INVOICE and OTHER are deliberately absent. An invoice attached in chat is
 #: Feature 26's existing comparison path, and OTHER means we do not know what
@@ -80,6 +83,7 @@ INSIGHT_DOC_TYPES: frozenset = frozenset(
         "CREDIT_NOTE",
         "DEBIT_NOTE",
         "STATEMENT_OF_ACCOUNT",
+        "BANK_STATEMENT",  # BE Gap 516.1
         "CONTRACT",
         "REMITTANCE_ADVICE",
     }
@@ -95,7 +99,10 @@ DOC_TYPE_LABELS: dict = {
     "GRN": "delivery note",
     "CREDIT_NOTE": "credit note",
     "DEBIT_NOTE": "debit note",
-    "STATEMENT_OF_ACCOUNT": "bank statement",
+    # BE Gap 516.1: this said "bank statement" for the borrowed value, which is
+    # what a SUPPLIER's statement of account was being called to the user.
+    "STATEMENT_OF_ACCOUNT": "statement of account",  # hardcode-ok: this dict IS the label registry
+    "BANK_STATEMENT": "bank statement",  # hardcode-ok: this dict IS the label registry
     "CONTRACT": "contract",
     "REMITTANCE_ADVICE": "remittance advice",
 }
@@ -2340,11 +2347,19 @@ def card_compliance(row: Any, db_session: Any, ctx: dict) -> InsightCard:
 
     # Task 30.9 x task 30.19. `run_compliance_checks()` only ever sees VERIFIED cards --
     # correct, a rule nobody sourced must never be shown as a rule. But before this, an
-    # unverified card simply vanished, and a region whose cards are ALL unverified (IN, as of
-    # 2026-09-14: every CBIC / GSTN primary source probed is a JS shell, a 404, an
-    # ECONNRESET or a TLS failure) produced "no IN rule card applies" -- which is false.
-    # Three exist. They are now surfaced as NOT_CHECKED, naming the rule and why it could
-    # not run, so the reader knows a check is missing rather than believing it passed.
+    # unverified card simply vanished, so a region whose cards were ALL unverified produced
+    # "no <region> rule card applies" -- which was false where cards existed. Such cards are
+    # surfaced as NOT_CHECKED instead, naming the rule and why it could not run, so the reader
+    # knows a check is missing rather than believing it passed.
+    #
+    # **As of 2026-09-14 no unverified card ships.** The three IN skeletons that motivated this
+    # branch were DROPPED on the founder's ruling ("Drop the India cards", task 30.9 closed as
+    # dropped) because no CBIC/GSTN primary source was reachable on either probe. The branch is
+    # deliberately KEPT and still tested (`tests/test_insight_track_b.py`, which supplies its own
+    # cards): it is the general rule for any future half-sourced region, and deleting it would
+    # put the silent-vanish behaviour back the moment one appears. An IN document now takes the
+    # `not results and not unverified` path below -- no verdict at all, which is the accurate
+    # answer, not a fabricated clean.
     doc_type = str(row.doc_type or "").strip().upper()
     unverified = [
         c for c in load_rule_cards(region=region, include_unverified=True)
@@ -2507,10 +2522,23 @@ CARDS_BY_DOC_TYPE: dict = {
     "REMITTANCE_ADVICE": (card_what_this_is, card_payment_application, card_net_position, card_cash_impact, card_compliance, card_suggested_questions, card_confidence_gaps),  # Gap 518
     # 30.5: the sync card matches the ledger rows; the cash-cover card is async
     # and skips itself at the sync stage with that as its reason.
-    "STATEMENT_OF_ACCOUNT": (
+    #
+    # BE Gap 516.1: these two cards read `bank_statement_line` rows, so they
+    # belong to the BANK statement and moved here off `STATEMENT_OF_ACCOUNT`
+    # when the type was split.
+    "BANK_STATEMENT": (
         card_what_this_is,
         card_bank_reconcile,
         card_cash_cover,
+        card_compliance, card_suggested_questions, card_confidence_gaps,
+    ),
+    # BE Gap 516.1: a SUPPLIER's statement of account keeps only the cards that
+    # do not assume a bank ledger. `card_bank_reconcile` / `card_cash_cover`
+    # would have run over rows this document never lands -- and did, which is
+    # the defect this split closes. Its real reconciliation is Feature 26's
+    # `list_reconcile` mode, which is not a card.
+    "STATEMENT_OF_ACCOUNT": (
+        card_what_this_is,
         card_compliance, card_suggested_questions, card_confidence_gaps,
     ),
 }

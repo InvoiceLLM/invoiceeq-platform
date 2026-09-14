@@ -179,7 +179,7 @@ def bank_statement():
             bal += cr
         rows.append([d, Paragraph(n, SM), f"{dr:,.2f}" if dr else "", f"{cr:,.2f}" if cr else "", f"{bal:,.2f}"])
     story = [
-        Paragraph("HDFC BANK LIMITED — STATEMENT OF ACCOUNT", H),
+        Paragraph("HDFC BANK LIMITED — BANK STATEMENT", H),  # BE Gap 516, founder ruling 2026-09-14: an unambiguous bank title, so stage 1 decides it
         Paragraph("Branch: Bhosari MIDC, Pune 411026 &nbsp;&nbsp; IFSC: HDFC0000471 &nbsp;&nbsp; Account type: Current", SM),
         Paragraph("Account holder: <b>Vishwa Precision Industries Pvt Ltd</b>, Plot 47, MIDC Bhosari, Pune, MH 411026", SM),
         Paragraph("Account No: XXXXXXXX4471 &nbsp;&nbsp; Statement period: 01-Aug-2026 to 31-Aug-2026 &nbsp;&nbsp; Currency: INR", SM),

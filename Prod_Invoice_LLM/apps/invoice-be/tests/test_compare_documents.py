@@ -77,6 +77,7 @@ def _doc(*lines):
         ("DEBIT_NOTE", MONEY_MODE),
         ("RECEIPT", MONEY_MODE),
         ("STATEMENT_OF_ACCOUNT", LIST_RECONCILE_MODE),
+        ("BANK_STATEMENT", LIST_RECONCILE_MODE),  # BE Gap 516.1
         ("REMITTANCE_ADVICE", LIST_RECONCILE_MODE),
     ],
 )

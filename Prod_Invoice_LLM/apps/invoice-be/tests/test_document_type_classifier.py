@@ -59,7 +59,7 @@ def _document(title: str) -> str:
 # --- The taxonomy itself (E4) ------------------------------------------------
 
 
-def test_doc_types_is_the_closed_fourteen_value_tuple_in_lifecycle_order():
+def test_doc_types_is_the_closed_fifteen_value_tuple_in_lifecycle_order():
     """The order is load-bearing (E4): quote -> proforma -> order -> confirmation
     -> contract -> delivery -> goods receipt -> invoice -> payment receipt ->
     adjustments -> settlement -> reconciliation. It is the order a future matching
@@ -71,6 +71,14 @@ def test_doc_types_is_the_closed_fourteen_value_tuple_in_lifecycle_order():
     by direction, not layout), RECEIPT is money with legally-absent fields,
     and REMITTANCE_ADVICE / STATEMENT_OF_ACCOUNT are advisory list documents that
     must never be booked as payables (research §5 trap 10).
+
+    Widened 14 -> 15 by BE Gap 516.1 (2026-09-14, founder's narrow unfreeze of the
+    taxonomy): BANK_STATEMENT sits last, after the reconciliation pair, because a
+    bank statement is the settlement record the other two are reconciled AGAINST.
+    It earns a value rather than an attribute for the same reason the A5/R7 four
+    did -- a different downstream: its rows are landed into `bank_statement_line`
+    and matched to invoices, which is exactly what must NOT happen to a supplier's
+    statement of account.
     """
     assert DOC_TYPES == (
         "QUOTATION",
@@ -86,6 +94,7 @@ def test_doc_types_is_the_closed_fourteen_value_tuple_in_lifecycle_order():
         "DEBIT_NOTE",
         "REMITTANCE_ADVICE",
         "STATEMENT_OF_ACCOUNT",
+        "BANK_STATEMENT",
         "OTHER",
     )
 
@@ -753,13 +762,175 @@ def test_the_segment_pass_never_overrides_a_whole_line_answer():
 
 
 def test_a_title_whose_words_are_not_in_the_vocabulary_is_still_the_models_job():
-    """The stated boundary of this fix, asserted rather than described.
+    """The stated boundary of the 516.2 segment fix, asserted rather than
+    described: the coverage mechanism cannot recognise vocabulary we do not have.
 
-    "BANK STATEMENT" is not a phrase in `_DOC_TYPE_SYNONYMS` and BE Gap 516 does
-    NOT add it (founder ruling 2026-09-09: a string rule that fails is removed,
-    not extended). The coverage mechanism cannot recognise vocabulary it does not
-    have, so this document still reaches stage 2 -- deliberately."""
-    assert classify_doc_type_deterministic(_document("BANK STATEMENT")) == (None, "")
+    RE-BASELINED by BE Gap 516.1 (2026-09-14). This test used to make its point
+    with "BANK STATEMENT", which was genuinely absent from `_DOC_TYPE_SYNONYMS`
+    at the time. 516.1 added the BANK_STATEMENT type and that phrase with it, so
+    the property is now stated over titles that really are outside the table --
+    "Kassenbuch" (DE cash book) and "Kreditorenliste" (DE creditors list) are
+    both real documents and neither is in any synonym tuple."""
+    assert classify_doc_type_deterministic(_document("KASSENBUCH")) == (None, "")
     assert classify_doc_type_deterministic(
-        _document("ICICI BANK LTD - BANK STATEMENT")
+        _document("SPARKASSE KOELN - KREDITORENLISTE")
     ) == (None, "")
+
+
+# --- BE Gap 516.1: BANK_STATEMENT is its own type ----------------------------
+#
+# The defect class this closes: ONE enum value meant TWO documents. A bank's
+# statement of an account we hold and a supplier's statement of what we owe them
+# were both `STATEMENT_OF_ACCOUNT`, so the supplier document was labelled "bank
+# statement" to the user and had its list of invoices parsed into the bank
+# ledger.
+#
+# Everything below is driven off the registries (`_DOC_TYPE_SYNONYMS`,
+# `DOC_TYPE_FAMILY`), never off a literal title list, and every case is crossed
+# with unrelated issuer names -- so no assertion here can pass by memorising one
+# fixture's bank or one fixture's vendor.
+
+#: Banks that have nothing to do with each other or with any fixture in this repo.
+_BANKS = (
+    "HDFC Bank Limited",
+    "ICICI Bank Ltd",
+    "Deutsche Bank AG",
+    "First National Bank",
+    "Banco Santander SA",
+)
+
+#: Suppliers, likewise. A vendor statement must stay a vendor statement whoever
+#: printed it.
+_VENDORS = (
+    "Om Stationery Pvt Ltd",
+    "Natraj Industries",
+    "Shree Packaging Pvt Ltd",
+    "Nordwind Zulieferer GmbH",
+    "Cascade Supply Co",
+)
+
+#: Supplier-statement vocabulary, quoted from the registry rather than restated,
+#: so removing one from the tuple fails here instead of silently narrowing the
+#: type.
+_SUPPLIER_STATEMENT_PHRASES = (
+    "statement of account",
+    "vendor statement",
+    "aging statement",
+    "balance confirmation",
+)
+
+
+@pytest.mark.parametrize("phrase", _SYNONYMS["BANK_STATEMENT"])
+def test_gap_516_1_a_bank_statement_titled_by_its_own_name_classifies_bank_statement(phrase):
+    """Every phrase the bank entry declares, on its own line, must reach
+    BANK_STATEMENT deterministically -- no model call, no supplier type."""
+    doc_type, evidence = classify_doc_type_deterministic(_document(phrase.upper()))
+
+    assert doc_type == "BANK_STATEMENT", f"{phrase!r} -> {doc_type}"
+    assert evidence.strip() == phrase.upper()
+
+
+@pytest.mark.parametrize("bank", _BANKS)
+@pytest.mark.parametrize("phrase", _SYNONYMS["BANK_STATEMENT"])
+def test_gap_516_1_the_issuing_bank_name_does_not_change_the_answer(bank, phrase):
+    """The 516.2 segment pass and the 516.1 vocabulary, crossed: an unrelated
+    bank's name printed before the document's own name must not move the type.
+    Mutating the bank is the point -- five banks, none of them a fixture's."""
+    title = f"{bank} \u2014 {phrase.title()}"
+
+    doc_type, _ = classify_doc_type_deterministic(_document(title))
+
+    assert doc_type == "BANK_STATEMENT", f"{title!r} -> {doc_type}"
+
+
+@pytest.mark.parametrize("vendor", _VENDORS)
+@pytest.mark.parametrize("phrase", _SUPPLIER_STATEMENT_PHRASES)
+def test_gap_516_1_a_supplier_statement_stays_statement_of_account(vendor, phrase):
+    """The other half, and the one that would have gone unnoticed: splitting a
+    type is only correct if the ORIGINAL type still answers for its own
+    documents. Five unrelated vendors x four supplier phrases."""
+    assert phrase in _SYNONYMS["STATEMENT_OF_ACCOUNT"], (
+        f"{phrase!r} is supplier vocabulary and must stay on STATEMENT_OF_ACCOUNT"
+    )
+    title = f"{phrase.title()} \u2014 {vendor}"
+
+    doc_type, _ = classify_doc_type_deterministic(_document(title))
+
+    assert doc_type == "STATEMENT_OF_ACCOUNT", f"{title!r} -> {doc_type}"
+
+
+def test_gap_516_1_no_phrase_is_claimed_by_both_statement_types():
+    """The registries may not disagree. A phrase in both tuples would make every
+    statement ambiguous and send all of them to the model -- which is the opposite
+    of the founder's rule, not an application of it: genuinely ambiguous phrases
+    are left out of the BANK entry, not duplicated into it."""
+    bank = set(_SYNONYMS["BANK_STATEMENT"])
+    supplier = set(_SYNONYMS["STATEMENT_OF_ACCOUNT"])
+
+    assert bank & supplier == set()
+
+
+def test_gap_516_1_the_ambiguous_account_statement_family_stays_off_the_bank_entry():
+    """The stated boundary of this fix, as an assertion rather than a comment.
+
+    "Statement of account", "account statement", "Kontoauszug", "estratto conto"
+    and their siblings are printed by banks AND by suppliers, so the title alone
+    cannot decide. None of them is bank vocabulary here; a bank statement carrying
+    only such a title is decided by the model from the whole page (prompt rule 6),
+    which is why this fix does NOT claim to type the showcase demo's
+    "HDFC BANK LIMITED - STATEMENT OF ACCOUNT" deterministically."""
+    for phrase in ("statement of account", "account statement", "kontoauszug",
+                   "estratto conto", "releve de compte", "rekeningoverzicht"):
+        assert phrase not in _SYNONYMS["BANK_STATEMENT"], phrase
+
+    doc_type, _ = classify_doc_type_deterministic(
+        _document("HDFC BANK LIMITED \u2014 STATEMENT OF ACCOUNT")
+    )
+    assert doc_type == "STATEMENT_OF_ACCOUNT"
+
+
+def test_gap_516_1_the_new_type_is_advisory_and_never_a_payable():
+    """A bank statement must never be booked (research \u00a75 trap 10), the same
+    guarantee the type it was split from carries. Asserted through the rubric the
+    family resolves to, not through the family's name."""
+    from agents.extraction_agent import _RUBRIC_BY_DOC_TYPE
+
+    assert DOC_TYPE_FAMILY["BANK_STATEMENT"] == dtc.ADVISORY_FAMILY
+    assert DOC_TYPE_FAMILY["BANK_STATEMENT"] != MONEY_FAMILY
+    rubric = _RUBRIC_BY_DOC_TYPE["BANK_STATEMENT"]
+    assert rubric.advisory_only is True
+
+
+def test_gap_516_1_the_closed_vocabulary_the_model_sees_carries_both_types():
+    """Stage 2 is the general case for the ambiguous titles, so both values must
+    be offered to the model, and the rule that separates them must be present."""
+    prompt = dtc._build_classifier_prompt("Some document text")
+
+    assert "BANK_STATEMENT" in prompt
+    assert "STATEMENT_OF_ACCOUNT" in prompt
+    assert "bank statement" in prompt
+    # The disambiguation rule itself, by its load-bearing words rather than verbatim.
+    assert "WHO issued it" in prompt
+
+
+def test_gap_516_1_the_user_facing_labels_are_no_longer_the_same_words():
+    """`DOC_TYPE_LABELS` called a supplier's statement "bank statement" to the
+    user for the whole life of the borrowed value. The two must differ now."""
+    from services.attachment_insights import DOC_TYPE_LABELS
+
+    assert DOC_TYPE_LABELS["BANK_STATEMENT"] == "bank statement"
+    assert DOC_TYPE_LABELS["STATEMENT_OF_ACCOUNT"] != DOC_TYPE_LABELS["BANK_STATEMENT"]
+
+
+def test_gap_516_1_only_the_bank_type_gets_the_cards_that_read_bank_ledger_rows():
+    """The registry half of the split: `card_bank_reconcile` / `card_cash_cover`
+    read `bank_statement_line`, which a supplier statement never lands."""
+    from services import attachment_insights as ai
+
+    bank_cards = {fn.__name__ for fn in ai.CARDS_BY_DOC_TYPE["BANK_STATEMENT"]}
+    supplier_cards = {fn.__name__ for fn in ai.CARDS_BY_DOC_TYPE["STATEMENT_OF_ACCOUNT"]}
+
+    assert {"card_bank_reconcile", "card_cash_cover"} <= bank_cards
+    assert {"card_bank_reconcile", "card_cash_cover"} & supplier_cards == set()
+    # Both are still analysed -- the supplier type keeps the type-agnostic cards.
+    assert supplier_cards

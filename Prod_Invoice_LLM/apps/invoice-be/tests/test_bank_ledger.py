@@ -25,7 +25,7 @@ from services import bank_ledger as bl  # noqa: E402
 #: Six rows, the §8.9 30.5 fixture shape: four that will match, one unmatched
 #: debit, one unmatched credit.
 STATEMENT_JSON = {
-    "doc_type": "STATEMENT_OF_ACCOUNT",
+    "doc_type": "BANK_STATEMENT",
     "party_name": "HDFC Bank",
     "statement_date": "2026-03-31",
     "currency": "INR",
@@ -72,7 +72,7 @@ def statement_fixture(pg_session):
         session_id=chat.id,
         filename="statement.pdf",
         blob_path="",
-        doc_type="STATEMENT_OF_ACCOUNT",
+        doc_type="BANK_STATEMENT",
         extraction_status="EXTRACTED",
         party_name="HDFC Bank",
         currency="INR",
@@ -208,7 +208,7 @@ def test_a_confirmed_match_survives_a_re_extraction(pg_session, statement):
 
 
 def test_an_unreadable_statement_lands_nothing_and_says_nothing(pg_session, statement):
-    statement["attachment"].extracted_json = {"doc_type": "STATEMENT_OF_ACCOUNT"}
+    statement["attachment"].extracted_json = {"doc_type": "BANK_STATEMENT"}
     pg_session.add(statement["attachment"])
     pg_session.commit()
 
@@ -232,3 +232,49 @@ def test_the_reference_schema_can_actually_carry_a_statement():
     parsed = ReferenceDocExtractionSchema(**STATEMENT_JSON)
     assert parsed.statement_lines[0].debit == 123200.0
     assert parsed.statement_lines[0].credit is None
+
+
+# --- BE Gap 516.1: only a BANK statement is landed as bank ledger rows -------
+
+
+@pytest.mark.parametrize(
+    "doc_type,party_name,should_land",
+    [
+        ("BANK_STATEMENT", "HDFC Bank", True),
+        ("BANK_STATEMENT", "Banco Santander SA", True),
+        ("STATEMENT_OF_ACCOUNT", "Ashoka Precision Components Pvt Ltd", False),
+        ("STATEMENT_OF_ACCOUNT", "Nordwind Zulieferer GmbH", False),
+    ],
+)
+def test_gap_516_1_only_a_bank_statement_reaches_the_ledger(
+    pg_session, statement, monkeypatch, doc_type, party_name, should_land
+):
+    """The consequence half of the type split, asserted at the call site that
+    had the defect.
+
+    `insight_attachment()` used to land ledger rows for `STATEMENT_OF_ACCOUNT`,
+    which was BOTH documents: a supplier's list of THEIR invoices was parsed into
+    OUR bank ledger. The gate now names the bank type, and this asserts the
+    property over both types and over mutated party names -- the decision must
+    come from the TYPE, never from who printed it, so renaming the bank or the
+    vendor cannot change the answer.
+    """
+    from services import attachment_extraction as ae
+    from services import attachment_insights as ai
+
+    landed: list = []
+    monkeypatch.setattr(bl, "land_statement_lines", lambda row, db: landed.append(row.doc_type))
+    monkeypatch.setattr(ai, "insights_enabled", lambda: True)
+    monkeypatch.setattr(ai, "run_sync_insights", lambda *a, **k: None)
+
+    att = statement["attachment"]
+    att.doc_type = doc_type
+    att.party_name = party_name
+    pg_session.add(att)
+    pg_session.commit()
+
+    ae.insight_attachment(att, pg_session)
+
+    assert bool(landed) is should_land, (
+        f"{doc_type} printed by {party_name}: landed={landed}"
+    )

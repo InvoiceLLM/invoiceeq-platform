@@ -188,7 +188,14 @@ def insight_attachment(
         # the cards run, because the bank card reads the table, not the JSON.
         # Any other document type lands nothing and this is a single string
         # comparison.
-        if str(row.doc_type or "").strip().upper() == "STATEMENT_OF_ACCOUNT":
+        #
+        # BE Gap 516.1 (2026-09-14): the test is now the REAL bank type. It was
+        # `STATEMENT_OF_ACCOUNT`, which Feature 30 had borrowed while the
+        # taxonomy was frozen -- so a SUPPLIER's statement of account had its
+        # list of their invoices parsed into the BANK ledger. A supplier
+        # statement now takes the ADVISORY path only (`list_reconcile`) and
+        # lands nothing here.
+        if str(row.doc_type or "").strip().upper() == "BANK_STATEMENT":
             from services.bank_ledger import land_statement_lines
 
             land_statement_lines(row, db_session)

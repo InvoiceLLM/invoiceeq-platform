@@ -295,10 +295,18 @@ STARTER_QUESTIONS: dict = {
         "Is anything still unpaid from this customer?",
         "What is overdue with this customer?",
     ],
-    "STATEMENT_OF_ACCOUNT": [
+    # BE Gap 516.1: these three are BANK-statement questions ("payments on this
+    # statement", "paid twice") and moved with the type they belong to.
+    "BANK_STATEMENT": [
         "Which payments on this statement are not in our records?",
         "What is due in the next 30 days?",
         "Have we paid any bill twice?",
+    ],
+    # BE Gap 516.1: a supplier's statement asks about THEIR list of OUR bills.
+    "STATEMENT_OF_ACCOUNT": [
+        "Which invoices on this statement are missing from our records?",
+        "Does their balance agree with ours?",
+        "What is overdue with this supplier?",
     ],
     "_default": [
         "What is overdue right now?",

@@ -167,6 +167,7 @@ class _StubLLM:
         ("CREDIT_NOTE", True),
         ("GRN", True),
         ("STATEMENT_OF_ACCOUNT", True),
+        ("BANK_STATEMENT", True),  # BE Gap 516.1
         ("INVOICE", False),
         ("OTHER", False),
         ("", False),

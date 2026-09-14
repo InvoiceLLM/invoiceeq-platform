@@ -12,6 +12,9 @@ from telemetry import tracked_dependency, tracked_llm_call
 from utils.llm import build_llm, get_llm
 from utils.rule_schema import normalize_constraints
 from services.turn_drift import detect_turn_drift
+# BE Gap 516.1: the taxonomy's family table, so the advisory routing below is
+# derived from it rather than repeated as a literal tuple of type names.
+from services.document_type_classifier import ADVISORY_FAMILY, DOC_TYPE_FAMILY
 from services import full_records
 from chroma_client import query_invoice_chunks
 # Gap 313: the persona is imported, never re-typed. `agents/sage_prompts.py` is
@@ -4758,7 +4761,16 @@ _INTENT_CLARIFY = "clarify"
 #: line-item diff -- an advisory document has no lines to diff.
 _INTENT_RECONCILE = "reconcile"
 
-_ADVISORY_DOC_TYPES = ("STATEMENT_OF_ACCOUNT", "REMITTANCE_ADVICE")
+# BE Gap 516.1: derived from the taxonomy's own family table rather than listed
+# here. This was a literal tuple of two type names, and adding BANK_STATEMENT to
+# the taxonomy would have silently demoted a bank statement to the line-item
+# diff until someone remembered this line. Now a new ADVISORY type routes to
+# `list_reconcile` the moment it has a family.
+_ADVISORY_DOC_TYPES = tuple(
+    doc_type
+    for doc_type, family in DOC_TYPE_FAMILY.items()
+    if family == ADVISORY_FAMILY
+)
 
 
 def _is_advisory_doc_type(doc_type) -> bool:
@@ -4882,6 +4894,8 @@ _INTENT_BIAS_BY_DOC_TYPE = {
     # about a document whose entire content is a list of numbers the user can
     # already see.
     "STATEMENT_OF_ACCOUNT": _INTENT_COMPARISON,
+    # BE Gap 516.1 — the bank's own statement, same bias for the same reason.
+    "BANK_STATEMENT": _INTENT_COMPARISON,
     "REMITTANCE_ADVICE": _INTENT_COMPARISON,
     # Unknown — we do not know what the document is and have no defensible
     # default. Explicit rather than absent, so a reader sees it was considered.
@@ -4976,6 +4990,11 @@ _DOC_TYPE_PHRASES = (
     ("credit note", "CREDIT_NOTE"),
     ("debit note", "DEBIT_NOTE"),
     ("contract", "CONTRACT"),
+    # BE Gap 516.1. "bank statement" is listed BEFORE the bare "statement" and
+    # `_requested_doc_types()` drops a phrase whose span sits inside a longer
+    # one, so "the bank statement" asks for BANK_STATEMENT only -- it does not
+    # also drag in the supplier type the shorter phrase would match.
+    ("bank statement", "BANK_STATEMENT"),
     ("statement", "STATEMENT_OF_ACCOUNT"),
     ("remittance", "REMITTANCE_ADVICE"),
     ("receipt", "RECEIPT"),
@@ -4986,7 +5005,7 @@ _DOC_TYPE_PHRASES = (
 #: attached in this session.
 _ATTACHMENT_DEICTIC_PATTERN = re.compile(
     r"(?<!\w)(that document|this document|the document|the attachment|the attached|"
-    r"the po\b|the purchase order|the quotation|the quote|the statement|the remittance|"
+    r"the po\b|the purchase order|the quotation|the quote|the bank statement|the statement|the remittance|"
     r"the delivery note|the grn|the credit note|the debit note|the contract|the proforma)(?!\w)",
     re.IGNORECASE,
 )
@@ -4999,7 +5018,19 @@ def _requested_doc_types(user_message: str) -> list:
     for phrase, doc_type in _DOC_TYPE_PHRASES:
         pos = text.find(phrase)
         if pos >= 0:
-            found.append((pos, doc_type))
+            found.append((pos, pos + len(phrase), doc_type))
+    # BE Gap 516.1: a phrase wholly inside a longer matched phrase is that
+    # phrase's tail, not independent evidence of a second document type -- the
+    # same rule `_drop_subsumed()` applies in the classifier. Without it "the
+    # bank statement" would request BANK_STATEMENT *and* STATEMENT_OF_ACCOUNT.
+    found = [
+        (start, doc_type)
+        for start, end, doc_type in found
+        if not any(
+            other_start <= start and other_end >= end and (other_end - other_start) > (end - start)
+            for other_start, other_end, _ in found
+        )
+    ]
     seen, ordered = set(), []
     for _, doc_type in sorted(found):
         if doc_type not in seen:

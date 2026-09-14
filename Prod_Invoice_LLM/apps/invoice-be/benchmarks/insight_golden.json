@@ -600,7 +600,7 @@
     },
     {
       "id": "statement_four_matches_in",
-      "doc_type": "STATEMENT_OF_ACCOUNT",
+      "doc_type": "BANK_STATEMENT",
       "region": "IN",
       "currency": "INR",
       "attachment": {
@@ -610,7 +610,7 @@
         "grand_total": null,
         "statement_date": "2026-03-31",
         "extracted_json": {
-          "doc_type": "STATEMENT_OF_ACCOUNT",
+          "doc_type": "BANK_STATEMENT",
           "statement_date": "2026-03-31",
           "statement_lines": [
             {
@@ -714,7 +714,7 @@
     },
     {
       "id": "statement_unreadable_us",
-      "doc_type": "STATEMENT_OF_ACCOUNT",
+      "doc_type": "BANK_STATEMENT",
       "region": "US",
       "currency": "USD",
       "attachment": {
@@ -723,7 +723,7 @@
         "doc_date": "2026-02-28",
         "grand_total": null,
         "extracted_json": {
-          "doc_type": "STATEMENT_OF_ACCOUNT",
+          "doc_type": "BANK_STATEMENT",
           "notes": "Statement period 01 Feb - 28 Feb"
         }
       },

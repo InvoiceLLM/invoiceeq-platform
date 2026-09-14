@@ -1004,6 +1004,7 @@ def test_the_flag_is_the_only_difference_between_the_two_paths(db_session, monke
         ("GRN", "content"),
         ("CONTRACT", "content"),
         ("STATEMENT_OF_ACCOUNT", "comparison"),
+        ("BANK_STATEMENT", "comparison"),  # BE Gap 516.1
         ("REMITTANCE_ADVICE", "comparison"),
     ],
 )

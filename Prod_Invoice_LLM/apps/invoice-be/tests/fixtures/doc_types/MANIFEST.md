@@ -191,6 +191,7 @@ proves nothing about the classifier.
 | `US-RA-01_remittance_deductions.pdf` | REMITTANCE_ADVICE | US | Same shape, different deduction KINDS — OTIF short-pay and an ASN chargeback rather than withholding tax. `deductions[].kind` has to carry both. |
 | `IN-SOA-01_vendor_statement.pdf` | STATEMENT_OF_ACCOUNT | IN | A running balance and no subtotal/tax/total triple at all (§5 trap 6). Lists `INV-2026-1301`, which the buyer has no record of — the `not_found` outcome `list_reconcile` exists to surface. |
 | `EU-SOA-01_kontoauszug.pdf` | STATEMENT_OF_ACCOUNT | DE | Same shape, the "Kontoauszug / Saldenbestätigung" vocabulary — the classifier must reach the same type from a word it shares with a bank statement. |
+| `IN-BANK-01_bank_statement.pdf` | BANK_STATEMENT | IN | BE Gap 516.1's fixture. Movements on ONE account held at a bank -- narration, debit OR credit, running balance, UTR references -- which is what `land_statement_lines()` lands and what a supplier statement must never be parsed as. Titled by the document's own name, so it resolves deterministically; a bank statement titled only "Statement of Account" is decided by the model on purpose (that title is shared with the supplier document). |
 
 **Coverage after this pass: 24 fixtures, 13 of 14 `DOC_TYPES` values.** `INVOICE`
 is excluded deliberately — §7 says to reuse the existing `tests/india` and

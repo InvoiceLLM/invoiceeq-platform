@@ -129,7 +129,9 @@ def build_case(case: dict, session: Any, tenant_id: UUID) -> tuple:
     session.commit()
     session.refresh(attachment)
 
-    if case["doc_type"] == "STATEMENT_OF_ACCOUNT":
+    # BE Gap 516.1: the bank ledger is landed for the BANK statement only. This
+    # said STATEMENT_OF_ACCOUNT while the two shared one value.
+    if case["doc_type"] == "BANK_STATEMENT":
         from services.bank_ledger import land_statement_lines
 
         land_statement_lines(attachment, session)

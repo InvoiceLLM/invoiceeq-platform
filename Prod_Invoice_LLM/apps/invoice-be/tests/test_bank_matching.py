@@ -26,7 +26,7 @@ from services import bank_matching as bm  # noqa: E402
 STATEMENT_DATE = date(2026, 3, 31)
 
 STATEMENT_JSON = {
-    "doc_type": "STATEMENT_OF_ACCOUNT",
+    "doc_type": "BANK_STATEMENT",
     "party_name": "HDFC Bank",
     "statement_date": "2026-03-31",
     "currency": "INR",
@@ -117,7 +117,7 @@ def world_fixture(pg_session):
         session_id=chat.id,
         filename="statement.pdf",
         blob_path="",
-        doc_type="STATEMENT_OF_ACCOUNT",
+        doc_type="BANK_STATEMENT",
         extraction_status="EXTRACTED",
         party_name="HDFC Bank",
         currency="INR",
