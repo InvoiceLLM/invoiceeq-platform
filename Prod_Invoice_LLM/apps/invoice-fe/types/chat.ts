@@ -15,6 +15,25 @@
 //   assistant answer.  Each chunk maps back to a specific page of a specific
 //   invoice.  CitationPill.tsx consumes this to render clickable source pills.
 // -----------------------------------------------------------------------------
+/** One claim -> the record and column it was read from (FE Gap 470). */
+export interface ChatProvenanceEntry {
+  claim?: string | null;
+  invoice_id?: string | null;
+  invoice_number?: string | null;
+  column?: string | null;
+  chunk_id?: string | null;
+  function?: string | null;
+}
+
+/** The decision-3 refusal card (FE Gap 470). */
+export interface ChatAbstention {
+  status: string;
+  missing?: string[];
+  on_file?: string[];
+  next_step?: string | null;
+  message?: string | null;
+}
+
 export interface Citation {
   invoice_id: string;    // UUID — used to navigate to the audit detail view
   vendor_name: string;   // Displayed as the pill label
@@ -146,6 +165,19 @@ export interface ChatMessage {
   // keys are dropped before the HTTP response is built. H12 wires the hook; it
   // does not fix that. See the Gap 379 entry in fe_features_tracker.md.
   // ---------------------------------------------------------------------------
+
+  /**
+   * FE Gap 470 / BE Gap 474 (Feature 29 tasks 29.5 / 29.9). Which record and
+   * which column each claim in the answer came from. Absent (not null) on an
+   * ordinary turn — the BE dumps with exclude_none — so no existing turn changes.
+   */
+  provenance?: ChatProvenanceEntry[];
+  /**
+   * FE Gap 470 / BE Gap 474 (Feature 29 decision 3). The structured refusal:
+   * what is missing, what IS on file, and the nearest next step. Rendered as a
+   * card so "I don't know" and "I can't confirm X, but I hold Y" look different.
+   */
+  abstention?: ChatAbstention;
 
   /** The match-confirmation gate (D4). Its presence is what renders the card. */
   attachment_confirmation?: AttachmentConfirmation;

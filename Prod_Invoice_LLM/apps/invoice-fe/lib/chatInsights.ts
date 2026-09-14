@@ -42,6 +42,12 @@ export interface InsightFinding {
   finding_key: string;
   card: string;
   title: string;
+  /**
+   * FE Gap 472 (BE half landed 2026-09-14): the `insight` row opened from this
+   * finding. Present on every block written since then; absent on older turns,
+   * where the bubble still falls back to the finding_key join below.
+   */
+  insight_id?: string | null;
   impact_amount?: number | null;
   currency?: string | null;
   /** "high" | "med" | "low" — the backend's own vocabulary, not widened here. */

@@ -88,9 +88,7 @@ DOMAIN_COLLECTION_RE = re.compile(
 # An interpolated value next to money vocabulary with no formatting applied —
 # "437190.0 of this order has not been invoiced yet". F30 §11.3's guard test.
 MONEY_WORDS_RE = re.compile(
-    r"(?:₹|€|£|\$|(?:amount|amounts|total|totals|value|balance|outstanding|invoiced"
-    r"|owed|paid|pay|payable|due|bills|billed|charge|charges|charged|costs|cost|spend"
-    r"|refund|credit|debit|shortfall|excess))",
+    r"(?:₹|€|£|\$|\b(?:amount|amounts|total|totals|value|balance|outstanding|invoiced|owed|paid|pay|payable|due|bills|billed|charge|charges|charged|costs|cost|spend|refund|credit|debit|shortfall|excess|overdue|quoted|quote|average|net|subtotal|price|priced|rate)\b)",
     re.IGNORECASE,
 )
 FSTRING_RE = re.compile(r"""(?:f"[^"]*"|f'[^']*'|`[^`]*`)""")
@@ -102,6 +100,12 @@ FORMATTED_RE = re.compile(
     r"|:,|:\.\d|toLocaleString|formatCurrency|\.toFixed)"
 )
 PLACEHOLDER_RE = re.compile(r"\$?\{[^{}]+\}")
+# A placeholder whose expression is a date, a count, an id/key or a name is not a figure
+# reaching text unformatted. Shapes, not vendors: `.isoformat()`, `['as_of']`, `len(`,
+# `_count`, `.party_name`, `.invoice_number`, `doc_number`, `.id`, `.card`.
+NONMONEY_PLACEHOLDER_RE = re.compile(
+    r"\{[^{}]*(?:isoformat\(|\['as_of'\]|len\(|_count\b|\.party_name|\.invoice_number|doc_number|\.id\b|\.card\b|\.doc_type)[^{}]*\}"
+)
 
 SUPPRESS_RE = re.compile(r"hardcode-ok:\s*\S+")
 
@@ -267,8 +271,9 @@ def scan(repo: str, path: str) -> list[str]:
                 )
 
             for frag in FSTRING_RE.findall(text):
+                money_placeholders = [m for m in PLACEHOLDER_RE.findall(frag) if not NONMONEY_PLACEHOLDER_RE.fullmatch(m)]
                 if (
-                    PLACEHOLDER_RE.search(frag)
+                    money_placeholders
                     and MONEY_WORDS_RE.search(frag)
                     and not FORMATTED_RE.search(text)
                 ):

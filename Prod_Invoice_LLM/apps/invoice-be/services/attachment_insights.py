@@ -994,12 +994,13 @@ def card_net_position(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     if net is not None:
         figures["net_payable"] = _f(net)
         findings.append(
-            finding(
+            claim_finding(
+                Claim(kind="net_payable_after_document", entity=str(row.doc_number or "this document"),
+                      figures={"net": net}, subjects=[_label(row.doc_type)],
+                      severity=SEVERITY_INFO, currency=owed.get("currency") or row.currency),
                 f"net_position:{row.doc_number or row.id}",
-                f"After this {_label(row.doc_type)}, {_f(net)} is payable",
                 card="net_position",
                 impact_amount=_f(_dec(row.grand_total)),
-                currency=owed.get("currency") or row.currency,
                 confidence=confidence if owed.get("complete") else "low",
                 confidence_reason=(
                     why
@@ -1049,57 +1050,285 @@ def card_delivery_vs_order(row: Any, db_session: Any, ctx: dict) -> InsightCard:
         )
 
     confidence, why = _confidence_for_link(invoices, row)
-    findings = []
-    figures = {}
+    figures: dict = {}
+    log = CheckLog(card="delivery_vs_order")
+
+    # Billed quantity per (invoice, normalised description). Gap 517.2: the figure keys used
+    # to be `delivered_<desc>` with no invoice in them, so two linked invoices billing the
+    # same item overwrote each other's figures inside one bubble.
+    billed_by_invoice: dict = {}
     for inv in invoices:
-        billed = {}
         for item in inv.items or []:
             if not isinstance(item, dict):
                 continue
             key = _norm_desc(item.get("description"))
             qty = _dec(item.get("quantity"))
             if key and qty is not None:
-                billed[key] = billed.get(key, Decimal("0")) + qty
+                bucket = billed_by_invoice.setdefault(inv.invoice_number, {})
+                bucket[key] = bucket.get(key, Decimal("0")) + qty
 
-        for item in delivered:
-            key = _norm_desc(item.get("description"))
-            got = _dec(item.get("quantity"))
-            if not key or got is None or key not in billed:
-                continue
-            diff = billed[key] - got
+    for item in delivered:
+        key = _norm_desc(item.get("description"))
+        got = _dec(item.get("quantity"))
+        label = str(item.get("description") or "unnamed line")
+        if not key or got is None:
+            log.check_not_checked(label, "the delivered line has no readable description")
+            continue
+
+        pairs = [(num, b[key]) for num, b in billed_by_invoice.items() if key in b]
+        # Gap 517.1 / task 30.19: a delivered line that pairs with NO billed line was silently
+        # `continue`d and the card still said "N delivered line(s) checked". It is an unknown,
+        # named to the user; no synonym table or fuzzy threshold is added (spec §11.2 ruling).
+        if not pairs:
+            log.check_not_checked(label, "no billed line on the linked invoices pairs with this description")
+            continue
+
+        for number, billed_qty in pairs:
+            subject = f"{label} on {number}"
+            figures[f"delivered_{number}_{key[:32]}"] = _f(got)
+            figures[f"billed_qty_{number}_{key[:32]}"] = _f(billed_qty)
+            diff = billed_qty - got
             if diff == 0:
+                log.check_passed(subject)
                 continue
-            figures[f"delivered_{key[:32]}"] = _f(got)
-            figures[f"billed_qty_{key[:32]}"] = _f(billed[key])
-            short = diff > 0
-            findings.append(
-                finding(
-                    f"delivery_vs_order:{inv.invoice_number}:{key[:64]}",
-                    (
-                        f"{inv.invoice_number} bills {_f(billed[key])} of "
-                        f"'{item.get('description')}' but {_f(got)} was delivered"
+            log.check_failed(
+                subject,
+                claim_finding(
+                    Claim(
+                        kind="delivery_quantity_mismatch",
+                        entity=str(number),
+                        figures={"billed": billed_qty, "delivered": got},
+                        subjects=[label],
+                        severity=SEVERITY_WARN,
                     ),
+                    f"delivery_vs_order:{number}:{key[:64]}",
                     card="delivery_vs_order",
-                    impact_amount=_f(abs(diff)),
                     confidence=confidence,
                     confidence_reason=why,
                     evidence={
-                        "invoice_number": inv.invoice_number,
-                        "description": item.get("description"),
+                        "invoice_number": number,
+                        "description": label,
                         "delivered_quantity": str(got),
-                        "billed_quantity": str(billed[key]),
-                        "direction": "short_delivery" if short else "excess_delivery",
+                        "billed_quantity": str(billed_qty),
+                        "direction": "short_delivery" if diff > 0 else "excess_delivery",
                     },
-                )
+                ),
             )
 
-    return InsightCard(
-        card="delivery_vs_order",
-        status=STATUS_OK,
-        title=f"{len(delivered)} delivered line(s) checked against the linked invoice(s)",
-        figures=figures,
-        findings=findings,
-    )
+    card = log.as_card("delivered lines", figures=figures)
+    card.title += " against the linked invoices"
+    return card
+
+
+@claim_template("delivery_quantity_mismatch")
+def _render_delivery_quantity_mismatch(claim: Claim) -> str:
+    what_text = claim.subjects[0] if claim.subjects else "this line"
+    billed_text = _qty_text(claim.figures.get("billed"))
+    delivered_text = _qty_text(claim.figures.get("delivered"))
+    return f"{claim.entity} bills {billed_text} of '{what_text}' but {delivered_text} was delivered"
+
+
+def _qty_text(value: Any) -> str:
+    """A quantity as printed: no trailing .00 on whole units, 2 dp otherwise."""
+    q = _dec(value)
+    if q is None:
+        return "an unknown quantity"
+    return str(int(q)) if q == q.to_integral_value() else f"{q.quantize(Decimal('0.01'))}"
+
+
+
+def card_payment_application(row: Any, db_session: Any, ctx: dict) -> InsightCard:
+    """Gap 518 — which invoice does this remittance / payment advice settle, and how much?
+
+    The document prints its own answer: `referenced_documents` (number + amount) and a UTR.
+    Before this card, nothing read them; `card_net_position` fed only `row.grand_total`
+    into a VENDOR-level net and the bubble answered a question the document did not ask.
+
+    Each printed reference is resolved EXACTLY against this tenant's invoices (the Gap 490
+    resolver's lookup). Unresolved = NOT_CHECKED, named — never a guess, never a fuzzy match.
+    """
+    from agents.entity_resolver import _exact_invoice_lookup
+
+    data = row.extracted_json or {}
+    refs = [r for r in (data.get("referenced_documents") or []) if isinstance(r, dict) and r.get("doc_number")]
+    if not refs:
+        return InsightCard(
+            card="payment_application",
+            status=STATUS_SKIPPED,
+            reason="this advice prints no invoice references we can read",
+        )
+
+    found = _exact_invoice_lookup([str(r["doc_number"]) for r in refs], row.tenant_id, db_session)
+    by_number = {str(inv.invoice_number).strip().lower(): inv for inv in _tenant_invoices(row, db_session)}
+    log = CheckLog(card="payment_application")
+    figures: dict = {"referenced_count": float(len(refs)), "advice_total": _f(_dec(row.grand_total))}
+    utr = data.get("utr_ref") or data.get("payment_reference")
+
+    for ref in refs:
+        number = str(ref["doc_number"]).strip()
+        key = number.lower()
+        inv = by_number.get(key) if key in found else None
+        if inv is None:
+            log.check_not_checked(number, "no invoice on file carries this reference number")
+            continue
+        paid = _dec(ref.get("amount"))
+        due = _dec(inv.grand_total)
+        if paid is None or due is None:
+            log.check_not_checked(number, "the advice or the invoice prints no amount to compare")
+            continue
+        figures[f"paid_{number}"] = _f(paid)
+        figures[f"invoice_total_{number}"] = _f(due)
+        shortfall = due - paid
+        evidence = {"invoice_number": number, "paid": str(paid), "invoice_total": str(due), "utr_ref": utr}
+        if shortfall == 0:
+            log.check_passed(number)
+            # A full settlement is worth saying out loud — it is the answer the document asks for.
+            log._findings.append(
+                claim_finding(
+                    Claim(kind="payment_settles_in_full", entity=number, figures={"paid": paid},
+                          severity=SEVERITY_INFO, currency=row.currency,
+                          asserts={"settled_in_full": True}),
+                    f"payment_application:{number}", card="payment_application",
+                    impact_amount=_f(paid), confidence="high",
+                    confidence_reason="the advice names this invoice and the amounts agree",
+                    evidence=evidence,
+                )
+            )
+            continue
+        log.check_failed(
+            number,
+            claim_finding(
+                Claim(kind="payment_partial_or_over", entity=number,
+                      figures={"paid": paid, "invoice_total": due, "difference": abs(shortfall)},
+                      subjects=["short" if shortfall > 0 else "over"],
+                      severity=SEVERITY_WARN, currency=row.currency,
+                      asserts={"settled_in_full": False}),
+                f"payment_application:{number}", card="payment_application",
+                impact_amount=_f(abs(shortfall)), confidence="high",
+                confidence_reason="the advice names this invoice and the amounts differ",
+                evidence=evidence,
+            ),
+        )
+
+    return log.as_card("referenced invoices", figures=figures)
+
+
+@claim_template("payment_settles_in_full")
+def _render_payment_settles_in_full(claim: Claim) -> str:
+    paid_text = money_text(claim.figures.get("paid"), claim.currency)
+    return f"this payment settles {claim.entity} in full ({paid_text})"
+
+
+@claim_template("payment_partial_or_over")
+def _render_payment_partial_or_over(claim: Claim) -> str:
+    paid_text = money_text(claim.figures.get("paid"), claim.currency)
+    total_text = money_text(claim.figures.get("invoice_total"), claim.currency)
+    diff_text = money_text(claim.figures.get("difference"), claim.currency)
+    direction = claim.subjects[0] if claim.subjects else "short"
+    if direction == "short":
+        return f"this payment of {paid_text} against {claim.entity} ({total_text}) leaves {diff_text} still owed"
+    return f"this payment of {paid_text} against {claim.entity} ({total_text}) exceeds the invoice by {diff_text}"
+
+
+def card_linked_duplicates(row: Any, db_session: Any, ctx: dict) -> InsightCard:
+    """Gap 517.3 — two linked invoices that look like the same bill (challan / GRN types).
+
+    Same supplier, same total, same date, DIFFERENT number: the Layer 3 near-duplicate
+    rule (Gap 503) applied to the invoices this document links to. Deterministic; an
+    invoice missing a date or total is NOT_CHECKED rather than silently excluded.
+    """
+    invoices = ctx.get("invoices") or []
+    if len(invoices) < 2:
+        return InsightCard(card="linked_duplicates", status=STATUS_SKIPPED,
+                           reason="fewer than two invoices are linked, so there is nothing to compare")
+    log = CheckLog(card="linked_duplicates")
+    groups: dict = {}
+    for inv in invoices:
+        total = _dec(inv.grand_total)
+        if total is None or not inv.invoice_date:
+            log.check_not_checked(inv.invoice_number, "the invoice has no total and date to compare on")
+            continue
+        key = (_norm_desc(inv.vendor_name), str(inv.invoice_date), str(total))
+        groups.setdefault(key, []).append(inv)
+    figures: dict = {}
+    for key, members in groups.items():
+        numbers = sorted({str(m.invoice_number) for m in members})
+        if len(numbers) < 2:
+            for m in members:
+                log.check_passed(m.invoice_number)
+            continue
+        total = _dec(members[0].grand_total)
+        figures["duplicate_total_" + "_".join(numbers)[:40]] = _f(total)
+        log.check_failed(
+            " / ".join(numbers),
+            claim_finding(
+                Claim(kind="linked_possible_duplicate", entity=" and ".join(numbers),
+                      figures={"total": total}, subjects=[str(members[0].invoice_date)],
+                      severity=SEVERITY_BREACH, currency=members[0].currency or row.currency),
+                "linked_duplicates:" + "|".join(numbers), card="linked_duplicates",
+                impact_amount=_f(total), confidence="med",
+                confidence_reason="same supplier, date and total; only the number differs",
+                evidence={"invoice_numbers": numbers, "date": key[1], "total": key[2]},
+            ),
+        )
+    return log.as_card("linked invoices", figures=figures)
+
+
+@claim_template("linked_possible_duplicate")
+def _render_linked_possible_duplicate(claim: Claim) -> str:
+    total_text = money_text(claim.figures.get("total"), claim.currency)
+    when_text = claim.subjects[0] if claim.subjects else "the same date"
+    return f"{claim.entity} look like one bill entered twice: {total_text} on {when_text}"
+
+
+
+# --- templates for the six async / net cards migrated 2026-09-14 ---------------------
+
+
+@claim_template("net_payable_after_document")
+def _render_net_payable_after_document(claim: Claim) -> str:
+    net_text = money_text(claim.figures.get("net"), claim.currency)
+    doc_text = claim.subjects[0] if claim.subjects else "document"
+    return f"After this {doc_text}, {net_text} is payable"
+
+
+@claim_template("overdue_with_party")
+def _render_overdue_with_party(claim: Claim) -> str:
+    total_text = money_text(claim.figures.get("overdue_total"), claim.currency)
+    bills_text = count_text(claim.figures.get("bill_count"), "bill")
+    oldest_text = claim.subjects[0] if claim.subjects else "the oldest"
+    age_text = days_text(claim.figures.get("oldest_days"))
+    return (f"{total_text} is already overdue with {claim.entity} across {bills_text}; "
+            f"the oldest is {oldest_text} at {age_text}")
+
+
+@claim_template("orders_invoiced_more_than_once")
+def _render_orders_invoiced_more_than_once(claim: Claim) -> str:
+    multi_text = str(int(claim.figures.get("multi") or 0))
+    orders_text = count_text(claim.figures.get("orders"), "order")
+    return f"{multi_text} of {orders_text} from {claim.entity} were invoiced more than once"
+
+
+@claim_template("invoices_drift_from_quote")
+def _render_invoices_drift_from_quote(claim: Claim) -> str:
+    avg_text = money_text(claim.figures.get("average"), claim.currency)
+    quoted_text = money_text(claim.figures.get("quoted"), claim.currency)
+    return f"invoices from {claim.entity} since this quote average {avg_text} against a quoted {quoted_text}"
+
+
+@claim_template("repeat_short_delivery")
+def _render_repeat_short_delivery(claim: Claim) -> str:
+    lines_text = count_text(claim.figures.get("short_lines"), "short-delivered line")
+    notes_text = count_text(claim.figures.get("notes"), "delivery note")
+    return f"{lines_text} across {notes_text} from {claim.entity}"
+
+
+@claim_template("contract_term_deviations")
+def _render_contract_term_deviations(claim: Claim) -> str:
+    dev_text = str(int(claim.figures.get("deviating") or 0))
+    inv_text = count_text(claim.figures.get("invoices"), "invoice")
+    window_text = days_text(claim.figures.get("agreed_days"))
+    return f"{dev_text} of {inv_text} from {claim.entity} do not use the contract's {window_text} payment window"
 
 
 def _tenant_invoices(row: Any, db_session: Any, limit: int = 500) -> list:
@@ -1525,16 +1754,15 @@ def card_cash_impact(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     if overdue:
         oldest = max(overdue, key=lambda r: r["days_overdue"])
         findings.append(
-            finding(
+            claim_finding(
+                Claim(kind="overdue_with_party", entity=str(row.party_name),
+                      figures={"overdue_total": overdue_total, "bill_count": len(overdue),
+                               "oldest_days": oldest["days_overdue"]},
+                      subjects=[str(oldest["invoice_number"])],
+                      severity=SEVERITY_WARN, currency=row.currency),
                 f"cash_impact:overdue:{row.party_name}",
-                (
-                    f"{_f(overdue_total)} is already overdue with {row.party_name} "
-                    f"across {len(overdue)} bill(s); the oldest is "
-                    f"{oldest['invoice_number']} at {oldest['days_overdue']} days"
-                ),
                 card="cash_impact",
                 impact_amount=_f(overdue_total),
-                currency=row.currency,
                 confidence="high",
                 confidence_reason="computed from your own recorded due dates",
                 evidence={
@@ -1749,17 +1977,15 @@ def card_over_invoicing_history(row: Any, db_session: Any, ctx: dict) -> Insight
     findings = []
     if multi:
         findings.append(
-            finding(
+            claim_finding(
+                Claim(kind="orders_invoiced_more_than_once", entity=str(row.party_name),
+                      figures={"multi": len(multi), "orders": len(pairs)},
+                      severity=SEVERITY_WARN, currency=row.currency),
                 f"over_invoicing_history:{row.party_name}",
-                (
-                    f"{len(multi)} of {len(pairs)} orders from {row.party_name} were "
-                    "invoiced more than once"
-                ),
                 card="over_invoicing_history",
                 impact_amount=_f(
                     sum((_dec(p["invoiced_amount"]) or Decimal("0")) for p in multi)
                 ),
-                currency=row.currency,
                 confidence="med",
                 confidence_reason=(
                     "several invoices against one order can be legitimate part-billing; "
@@ -1830,15 +2056,13 @@ def card_quote_drift(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     findings = []
     if drift > 0:
         findings.append(
-            finding(
+            claim_finding(
+                Claim(kind="invoices_drift_from_quote", entity=str(row.party_name),
+                      figures={"average": average, "quoted": quoted, "drift": drift},
+                      severity=SEVERITY_WARN, currency=row.currency),
                 f"quote_drift:{row.doc_number or row.id}",
-                (
-                    f"invoices from {row.party_name} since this quote average "
-                    f"{_f(average)} against a quoted {_f(quoted)}"
-                ),
                 card="quote_drift",
                 impact_amount=_f(drift),
-                currency=row.currency,
                 confidence="low",
                 confidence_reason=(
                     "compares whole-invoice totals, not line rates, so a bigger order "
@@ -1967,12 +2191,11 @@ def card_repeat_short_delivery(row: Any, db_session: Any, ctx: dict) -> InsightC
     findings = []
     if shortfalls:
         findings.append(
-            finding(
+            claim_finding(
+                Claim(kind="repeat_short_delivery", entity=str(row.party_name),
+                      figures={"short_lines": len(shortfalls), "notes": len(theirs)},
+                      severity=SEVERITY_WARN),
                 f"repeat_short_delivery:{row.party_name}",
-                (
-                    f"{len(shortfalls)} short-delivered line(s) across "
-                    f"{len(theirs)} delivery notes from {row.party_name}"
-                ),
                 card="repeat_short_delivery",
                 confidence="med",
                 confidence_reason="from the delivery notes you have uploaded",
@@ -2062,12 +2285,11 @@ def card_contract_deviations(row: Any, db_session: Any, ctx: dict) -> InsightCar
     findings = []
     if deviations:
         findings.append(
-            finding(
+            claim_finding(
+                Claim(kind="contract_term_deviations", entity=str(row.party_name),
+                      figures={"deviating": len(deviations), "invoices": len(rows), "agreed_days": agreed_days},
+                      severity=SEVERITY_WARN),
                 f"contract_deviations:{row.doc_number or row.id}",
-                (
-                    f"{len(deviations)} of {len(rows)} invoices from {row.party_name} "
-                    f"do not use the contract's {agreed_days}-day payment window"
-                ),
                 card="contract_deviations",
                 confidence="med",
                 confidence_reason="compares the printed contract term against recorded due dates",
@@ -2112,41 +2334,76 @@ def card_compliance(row: Any, db_session: Any, ctx: dict) -> InsightCard:
             ),
         )
 
-    from services.rule_cards import run_compliance_checks
+    from services.rule_cards import load_rule_cards, run_compliance_checks
 
     results = run_compliance_checks(row, region)
-    if not results:
+
+    # Task 30.9 x task 30.19. `run_compliance_checks()` only ever sees VERIFIED cards --
+    # correct, a rule nobody sourced must never be shown as a rule. But before this, an
+    # unverified card simply vanished, and a region whose cards are ALL unverified (IN, as of
+    # 2026-09-14: every CBIC / GSTN primary source probed is a JS shell, a 404, an
+    # ECONNRESET or a TLS failure) produced "no IN rule card applies" -- which is false.
+    # Three exist. They are now surfaced as NOT_CHECKED, naming the rule and why it could
+    # not run, so the reader knows a check is missing rather than believing it passed.
+    doc_type = str(row.doc_type or "").strip().upper()
+    unverified = [
+        c for c in load_rule_cards(region=region, include_unverified=True)
+        if not getattr(c, "is_showable", False)
+        and (not getattr(c, "applies_to_doc_types", None) or doc_type in [str(d).upper() for d in c.applies_to_doc_types])
+    ]
+
+    if not results and not unverified:
         return InsightCard(
             card="compliance",
             status=STATUS_SKIPPED,
             reason=f"no {region} rule card applies to a {_label(row.doc_type)} yet",
         )
 
-    findings = []
+    log = CheckLog(card="compliance")
+    entity = str(getattr(row, "doc_number", None) or "this document")
     for result in results:
-        if result["outcome"] != "fail":
-            continue
-        findings.append(
-            finding(
-                f"compliance:{result['card_id']}",
-                f"{result['title']} — {result['detail']}",
-                card="compliance",
-                confidence="high",
-                confidence_reason=(
-                    f"checked against {result.get('source_title') or 'the published rule'}"
+        outcome = result.get("outcome")
+        if outcome == "pass":
+            log.check_passed(result["title"])
+        elif outcome == "fail":
+            log.check_failed(
+                result["title"],
+                claim_finding(
+                    Claim(
+                        kind="compliance_rule_failed",
+                        entity=entity,
+                        subjects=[result["title"], result.get("detail") or "", result.get("source_title") or "the published rule"],
+                        severity=SEVERITY_BREACH,
+                    ),
+                    f"compliance:{result['card_id']}",
+                    card="compliance",
+                    confidence="high",
+                    confidence_reason=f"checked against {result.get('source_title') or 'the published rule'}",
+                    evidence=result,
                 ),
-                evidence=result,
             )
+        elif outcome == "not_applicable":
+            continue
+        else:  # informational -- guidance, not a check; recorded, never counted as passed
+            continue
+
+    for card in unverified:
+        log.check_not_checked(
+            card.title,
+            f"rule text not yet sourced from {card.source_title or card.source_url or 'its primary source'} "
+            "-- the official page could not be retrieved, so this check did not run",
         )
 
-    passed = [r for r in results if r["outcome"] == "pass"]
-    return InsightCard(
-        card="compliance",
-        status=STATUS_OK,
-        title=f"{len(passed)} of {len(results)} {region} checks passed",
-        findings=findings,
-        evidence={"region": region, "checks": results},
-    )
+    result_card = log.as_card(f"{region} rules", evidence={"region": region, "checks": results,
+                                                            "unverified_card_ids": [c.id for c in unverified]})
+    return result_card
+
+
+@claim_template("compliance_rule_failed")
+def _render_compliance_rule_failed(claim: Claim) -> str:
+    title_text = claim.subjects[0] if claim.subjects else "a compliance rule"
+    detail_text = claim.subjects[1] if len(claim.subjects) > 1 and claim.subjects[1] else ""
+    return f"{title_text} -- {detail_text}" if detail_text else title_text
 
 
 def card_suggested_questions(row: Any, db_session: Any, ctx: dict) -> InsightCard:
@@ -2238,16 +2495,16 @@ CARDS_BY_DOC_TYPE: dict = {
         card_contract_deviations, card_cash_impact, card_compliance, card_suggested_questions, card_confidence_gaps,
     ),
     "DELIVERY_NOTE": (
-        card_what_this_is, card_delivery_vs_order, card_partial_delivery_balance,
+        card_what_this_is, card_delivery_vs_order, card_linked_duplicates, card_partial_delivery_balance,
         card_repeat_short_delivery, card_compliance, card_suggested_questions, card_confidence_gaps,
     ),
     "GRN": (
-        card_what_this_is, card_delivery_vs_order, card_partial_delivery_balance,
+        card_what_this_is, card_delivery_vs_order, card_linked_duplicates, card_partial_delivery_balance,
         card_repeat_short_delivery, card_compliance, card_suggested_questions, card_confidence_gaps,
     ),
     "CREDIT_NOTE": (card_what_this_is, card_net_position, card_cash_impact, card_compliance, card_suggested_questions, card_confidence_gaps),
     "DEBIT_NOTE": (card_what_this_is, card_net_position, card_cash_impact, card_compliance, card_suggested_questions, card_confidence_gaps),
-    "REMITTANCE_ADVICE": (card_what_this_is, card_net_position, card_cash_impact, card_compliance, card_suggested_questions, card_confidence_gaps),
+    "REMITTANCE_ADVICE": (card_what_this_is, card_payment_application, card_net_position, card_cash_impact, card_compliance, card_suggested_questions, card_confidence_gaps),  # Gap 518
     # 30.5: the sync card matches the ledger rows; the cash-cover card is async
     # and skips itself at the sync stage with that as its reason.
     "STATEMENT_OF_ACCOUNT": (
@@ -2460,15 +2717,70 @@ def verdict_template(block: dict) -> str:
 NARRATION_SYSTEM_PROMPT = (
     "You write one short verdict line for a small business owner about a "
     "financial document they just uploaded.\n\n"
-    "EVERY FIGURE HAS ALREADY BEEN COMPUTED and is given to you in the JSON "
-    "below. You must not compute, sum, convert, estimate or round any number. "
-    "If you state a figure, copy it exactly from the JSON. If a figure you want "
-    "is not in the JSON, do not state it.\n\n"
+    "EVERY FIGURE HAS ALREADY BEEN COMPUTED AND ALREADY SPELLED OUT for you in "
+    "the JSON below: `figures_text` and each finding's `impact_text` are the ONLY "
+    "forms of a number you may use. Copy that spelling character for character -- "
+    "currency symbol, thousands separators, 'days', 'invoices' -- and never write a "
+    "bare number of your own. You must not compute, sum, convert, estimate or round "
+    "anything. If a figure you want is not in the JSON, do not state it.\n\n"
     "Write ONE sentence, plain words, no jargon: say 'overbilled', 'short "
     "delivered', 'paid twice?', never 'variance', 'delta', '3-way match' or "
     "'tier'. Name the supplier and the action if there is one. Do not add "
     "advice that is not supported by the findings."
 )
+
+
+def figure_text(key: str, value: Any, currency: Any) -> str:
+    """One block figure as the narration model is allowed to see it.
+
+    The KEY decides the shape, not the value: `*days*` is a duration, `*count*` /
+    `*_lines*` / `*_pairs*` is a count, everything else is money in the document's
+    currency. A non-numeric value is passed through as text. This is the same rule
+    the cards' own templates follow, applied once at the model boundary.
+    """
+    k = str(key).lower()
+    if not isinstance(value, (int, float, Decimal)) or isinstance(value, bool):
+        return str(value)
+    if "days" in k:
+        return days_text(value)
+    if "count" in k or k.endswith("_lines") or k.endswith("_pairs") or k.endswith("_orders") or k.endswith("_notes"):
+        try:
+            return str(int(Decimal(str(value))))
+        except (InvalidOperation, ValueError):
+            return str(value)
+    return money_text(value, currency)
+
+
+def narration_payload(block: dict) -> dict:
+    """What the narration model is shown. Gap 522: NO raw number reaches this payload.
+
+    Before this, `figures` were the `_f()` floats the block carries for arithmetic
+    (`23200.0`, `45.0`) and the model, correctly refusing to invent, copied them
+    verbatim into 17 of 20 verdicts. Task 30.20 gave the cards one number-to-text
+    path; this is the same path applied at the model boundary, so the model can only
+    ever repeat a spelling that `money_text()` / `days_text()` produced.
+    """
+    currency = block.get("currency")
+    figures = block.get("figures") or {}
+    return {
+        "document": {
+            "type": block.get("doc_type_label"),
+            "currency": currency,
+        },
+        "findings": [
+            {
+                "title": f_.get("title"),
+                "impact_text": (
+                    money_text(f_.get("impact_amount"), f_.get("currency") or currency)
+                    if f_.get("impact_amount") is not None else None
+                ),
+                "confidence": f_.get("confidence"),
+            }
+            for f_ in (block.get("findings") or [])[:3]
+        ],
+        "figures_text": {str(k): figure_text(k, v, currency) for k, v in figures.items()},
+        "checks_not_run": block.get("checks_not_run") or [],
+    }
 
 
 def narrate_insight_block(block: dict, llm: Any = None, glossary: dict | None = None) -> dict:
@@ -2508,22 +2820,7 @@ def narrate_insight_block(block: dict, llm: Any = None, glossary: dict | None = 
             logger.warning("Glossary lookup failed for narration: %s", exc)
             glossary = {}
 
-    payload = {
-        "document": {
-            "type": block.get("doc_type_label"),
-            "currency": block.get("currency"),
-        },
-        "findings": [
-            {
-                "title": f_.get("title"),
-                "impact_amount": f_.get("impact_amount"),
-                "confidence": f_.get("confidence"),
-            }
-            for f_ in (block.get("findings") or [])[:3]
-        ],
-        "figures": block.get("figures") or {},
-        "checks_not_run": block.get("checks_not_run") or [],
-    }
+    payload = narration_payload(block)
     if glossary:
         payload["glossary"] = glossary
         # The glossary is vocabulary, never figures. Saying so in the prompt
@@ -2552,7 +2849,11 @@ def narrate_insight_block(block: dict, llm: Any = None, glossary: dict | None = 
     try:
         from agents.query_agent import _answer_contract_gate, _gate_evidence_numbers
 
-        allowed = _gate_evidence_numbers(json.dumps(payload, default=str))
+        allowed = _gate_evidence_numbers(
+            json.dumps(payload, default=str),
+            json.dumps(block.get("figures") or {}, default=str),
+            json.dumps([f_.get("impact_amount") for f_ in (block.get("findings") or [])], default=str),
+        )
         verdict = _answer_contract_gate(prose, allowed)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Insight answer-contract gate unavailable: %s", exc)
@@ -2665,8 +2966,12 @@ def open_insights_from_block(row: Any, block: dict, db_session: Any) -> list:
     out = []
     for f_ in block.get("findings") or []:
         try:
-            out.append(
-                open_insight(
+            # FE Gap 472 (BE half): the bubble's note / dismiss actions are keyed by the
+            # `insight` row id, and the finding the browser renders never carried it -- so
+            # the FE issued a second read and joined on finding_key + card. The id is
+            # written back onto the finding here, and both stages now open rows BEFORE
+            # `post_insight_turn()` persists the block, so the payload carries it.
+            opened = open_insight(
                     tenant_id=row.tenant_id,
                     attachment_id=row.id,
                     session_id=row.session_id,
@@ -2681,13 +2986,15 @@ def open_insights_from_block(row: Any, block: dict, db_session: Any) -> list:
                     evidence=f_.get("evidence"),
                     db_session=db_session,
                 )
-            )
+            if getattr(opened, "id", None) is not None:
+                f_["insight_id"] = str(opened.id)
+            out.append(opened)
         except Exception as exc:
             logger.error("Could not open finding %s on %s: %s", f_.get("finding_key"), row.id, exc)
     return out
 
 
-def run_sync_insights(row: Any, db_session: Any) -> Optional[dict]:
+def run_sync_insights(row: Any, db_session: Any, ocr_text: Optional[str] = None) -> Optional[dict]:
     """The whole sync stage, as one call the extractor can make and forget.
 
     Returns the block, or None when the flag is off / the type does not qualify
@@ -2700,10 +3007,10 @@ def run_sync_insights(row: Any, db_session: Any) -> Optional[dict]:
     try:
         from services.region import set_attachment_region
 
-        set_attachment_region(row, db_session)
+        set_attachment_region(row, db_session, ocr_text)  # BE Gap 510
         block = build_insight_block(row, db_session, row.tenant_id, stage="sync")
+        open_insights_from_block(row, block, db_session)  # FE Gap 472: ids before the payload is written
         message = post_insight_turn(row, block, db_session)
-        open_insights_from_block(row, block, db_session)
         block["message_id"] = str(message.id)
         # Persisted so the async stage updates the same message rather than
         # posting a second bubble.

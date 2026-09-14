@@ -249,3 +249,27 @@ describe("21.8 — the History screen's open-findings chip", () => {
     expect(container.innerHTML).toBe("");
   });
 });
+
+describe("FE Gap 472 — actions use the insight_id carried on the finding", () => {
+  it("posts the transition to the finding's own row id before the lifecycle read resolves", async () => {
+    const user = userEvent.setup();
+    // The lifecycle read never resolves here: if the bubble still depended on the
+    // finding_key join, the buttons would stay disabled and the click could not happen.
+    get.mockImplementation(() => new Promise(() => {}));
+    const withId: InsightBlock = {
+      ...block,
+      findings: block.findings.map((f) => ({ ...f, insight_id: "ffffffff-0000-0000-0000-00000000f472" })),
+    };
+    render(<InsightBubble block={withId} messageId={MESSAGE_ID} />);
+    await waitFor(() => expect(screen.getByTestId("insight-action-dismiss")).toBeEnabled());
+
+    await user.click(screen.getByTestId("insight-action-dismiss"));
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        "/chat/insights/ffffffff-0000-0000-0000-00000000f472/transition",
+        expect.objectContaining({ status: "DISMISSED" })
+      )
+    );
+  });
+});

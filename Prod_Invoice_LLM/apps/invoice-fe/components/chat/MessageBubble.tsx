@@ -36,6 +36,8 @@ import AttachmentMatchConfirm from "./AttachmentMatchConfirm";
 import DocumentEvidence from "./DocumentEvidence";
 import ReconciliationTable from "./ReconciliationTable";
 import InsightBubble from "./InsightBubble";
+import AbstentionCard from "./AbstentionCard";
+import ProvenanceLine from "./ProvenanceLine";
 import { apiClient } from "@/lib/apiClient";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -693,6 +695,17 @@ export default function MessageBubble({
               ) ?? false
             }
           />
+        )}
+
+        {/* ── FE Gap 470 — Feature 29's answer contract, rendered ──────────
+            Both keys are absent on an ordinary turn (BE exclude_none), so a turn
+            without them renders byte-identically to before. The abstention's
+            next step SEEDS the composer via the same handler Discuss uses. */}
+        {isSettledAssistant && message.abstention && (
+          <AbstentionCard abstention={message.abstention} onSeed={onInsightDiscuss} />
+        )}
+        {isSettledAssistant && message.provenance && message.provenance.length > 0 && (
+          <ProvenanceLine entries={message.provenance} />
         )}
 
         {/* ── Citation Pills — RAG path only ───────────────────────────── */}

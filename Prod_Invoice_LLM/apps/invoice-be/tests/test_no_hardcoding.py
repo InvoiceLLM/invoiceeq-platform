@@ -49,9 +49,7 @@ DOC_ID_ALLOW = {
 }
 
 MONEY_WORDS_RE = re.compile(
-    r"(?:₹|€|£|\$|(?:amount|amounts|total|totals|value|balance|outstanding|invoiced"
-    r"|owed|paid|pay|payable|due|bills|billed|charge|charges|charged|costs|cost|spend"
-    r"|refund|credit|debit|shortfall|excess))",
+    r"(?:₹|€|£|\$|\b(?:amount|amounts|total|totals|value|balance|outstanding|invoiced|owed|paid|pay|payable|due|bills|billed|charge|charges|charged|costs|cost|spend|refund|credit|debit|shortfall|excess|overdue|quoted|quote|average|net|subtotal|price|priced|rate)\b)",
     re.IGNORECASE,
 )
 FSTRING_RE = re.compile(r"""(?:f"[^"\n]*"|f'[^'\n]*')""")
@@ -62,6 +60,12 @@ FORMATTED_RE = re.compile(
     r"|:,|:\.\d|_money|\.quantize|format_currency)"
 )
 PLACEHOLDER_RE = re.compile(r"\{[^{}]+\}")
+# A placeholder whose expression is a date, a count, an id/key or a name is not a figure
+# reaching text unformatted. Shapes, not vendors: `.isoformat()`, `['as_of']`, `len(`,
+# `_count`, `.party_name`, `.invoice_number`, `doc_number`, `.id`, `.card`.
+NONMONEY_PLACEHOLDER_RE = re.compile(
+    r"\{[^{}]*(?:isoformat\(|\['as_of'\]|len\(|_count\b|\.party_name|\.invoice_number|doc_number|\.id\b|\.card\b|\.doc_type)[^{}]*\}"
+)
 
 # The claim layer — the modules whose whole job is turning a computed figure into a
 # sentence. F30 §11.3 gives number-to-text one owner; this is where that is enforced.
@@ -236,7 +240,8 @@ def test_money_never_reaches_text_unformatted(source_files):
             if FORMATTED_RE.search(line):
                 continue
             for frag in FSTRING_RE.findall(line):
-                if PLACEHOLDER_RE.search(frag) and MONEY_WORDS_RE.search(frag):
+                money_placeholders = [m for m in PLACEHOLDER_RE.findall(frag) if not NONMONEY_PLACEHOLDER_RE.fullmatch(m)]
+                if money_placeholders and MONEY_WORDS_RE.search(frag):
                     offenders.append(f"{_rel(path)}:{line_no} {frag.strip()[:110]}")
                     break
     assert not offenders, (

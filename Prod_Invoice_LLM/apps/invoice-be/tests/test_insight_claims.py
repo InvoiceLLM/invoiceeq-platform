@@ -228,6 +228,41 @@ def test_the_same_fact_about_different_entities_is_not_a_contradiction():
     assert ai.verify_claims({"findings": rows}) == []
 
 
+# --- Gap 522: the narration model never sees a raw number -------------------
+
+
+def test_the_narration_payload_carries_no_raw_figure_only_rendered_text():
+    """17 of 20 live verdicts printed `23200.0` because the model was shown floats. The
+    payload is now text-only; any bare float in it is a regression of this gap."""
+    import json, re
+
+    block = {
+        "doc_type_label": "purchase order", "currency": "INR",
+        "figures": {"overbilled_INV-1": 23200.0, "agreed_payment_days": 30.0,
+                    "matched_count": 4.0, "ordered_value": 120000.0, "region": "IN"},
+        "findings": [{"title": "t", "impact_amount": 23200.0, "confidence": "high", "currency": "INR"}],
+        "checks_not_run": [],
+    }
+    payload = ai.narration_payload(block)
+    text = json.dumps(payload, ensure_ascii=False)
+
+    assert "figures" not in payload and "impact_amount" not in text
+    assert re.findall(r"(?<![\d,])\d+\.\d(?!\d)", text) == []
+    assert payload["figures_text"]["overbilled_INV-1"] == "₹23,200.00"
+    assert payload["figures_text"]["agreed_payment_days"] == "30 days"
+    assert payload["figures_text"]["matched_count"] == "4"
+    assert payload["figures_text"]["region"] == "IN"          # non-numeric passes through
+    assert payload["findings"][0]["impact_text"] == "₹23,200.00"
+
+
+def test_figure_text_is_decided_by_key_shape_not_by_value():
+    """The same value renders as money, days or a count depending only on what the key
+    says it is — so a new card's figure needs no edit here."""
+    assert ai.figure_text("something_days", 7, "INR") == "7 days"
+    assert ai.figure_text("line_count", 7, "INR") == "7"
+    assert ai.figure_text("shortfall", 7, "SGD") == "SGD 7.00"
+
+
 # --- the mutation check ----------------------------------------------------
 
 

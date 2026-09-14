@@ -2317,15 +2317,63 @@ def _get_vendor_business_rules(tenant_id: str, user_message: str, db_session) ->
         )
         templates = db_session.exec(stmt).all()
         
-        user_message_lower = user_message.lower()
+        # BE Gap 513: this used to be `template.vendor_name.lower() in user_message_lower`,
+        # a SUBSTRING test -- so a rule scoped to "Shree" applied to every question naming
+        # "Shree Packaging", and any vendor whose name sits inside another vendor's name
+        # leaked its rules across. The founder's ruling: a string rule that fails is
+        # removed, not extended. Two structural rules replace it, neither of them a list:
+        #
+        #   1. A template's vendor name must appear in the question as a WHOLE name on word
+        #      boundaries ("acme corporation" matches "what did we pay acme corporation";
+        #      "shree" does not match inside "shreeji"), and the LONGEST such name wins --
+        #      a shorter template name contained in a longer matching or resolvable vendor
+        #      name is dropped, because the user meant the longer one.
+        #   2. Vendor mentions the entity resolver BINDS (Feature 29 29.11 / Feature 30 30.0f:
+        #      vendor master, confirmed aliases) also select their template, so "SHREE
+        #      PACKAGING" finds the rule taught under "Shree Packaging Pvt Ltd".
+        #
+        # An ambiguous or unresolved mention selects nothing on its own -- no rule is better
+        # than the wrong vendor's rule.
+        import re as _re
+        from agents.entity_resolver import _resolve_vendors
+
+        def _norm(name: object) -> str:
+            return " ".join(str(name or "").lower().split())
+
+        question = _norm(user_message)
+        template_names = {_norm(tp.vendor_name) for tp in templates if tp.vendor_name}
+
+        candidate_labels: set[str] = set()
+        bound: set[str] = set()
+        try:
+            for entity in _resolve_vendors(user_message, str(tenant_id), db_session):
+                for cand in entity.candidates:
+                    for label in (getattr(cand, "label", None), getattr(cand, "id", None)):
+                        if label:
+                            candidate_labels.add(_norm(label))
+                if entity.status == "bound" and entity.candidates:
+                    cand = entity.candidates[0]
+                    bound.add(_norm(getattr(cand, "label", None) or getattr(cand, "id", None)))
+        except Exception as resolve_exc:  # the resolver is an aid here, never a gate
+            logger.warning("Gap 513: vendor resolution unavailable, whole-name match only: %s", resolve_exc)
+
+        direct = {
+            name for name in template_names
+            if name and _re.search(r"(?<!\w)" + _re.escape(name) + r"(?!\w)", question)
+        }
+        longer_pool = candidate_labels | direct | bound
+        selected = set(bound)
+        for name in direct:
+            if any(other != name and name in other for other in longer_pool):
+                continue  # a longer vendor name covers this one -- the user meant that vendor
+            selected.add(name)
+
         matched_rules = []
         for template in templates:
-            # Basic substring match, e.g., "Home Depot" inside "what did we spend at home depot?"
-            if template.vendor_name and template.vendor_name.lower() in user_message_lower:
-                if isinstance(template.rules, dict):
-                    matched_rules.extend(
-                        normalize_constraints(template.rules.get("constraints") or [])
-                    )
+            if _norm(template.vendor_name) in selected and isinstance(template.rules, dict):
+                matched_rules.extend(
+                    normalize_constraints(template.rules.get("constraints") or [])
+                )
         return matched_rules
     except Exception as e:
         logger.warning("Failed to load vendor trainer rules for tenant %s: %s", tenant_id, e)

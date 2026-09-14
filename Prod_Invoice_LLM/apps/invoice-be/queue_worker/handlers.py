@@ -1962,10 +1962,10 @@ def handle_insight_job(
             block["verdict_gate"] = narration["gate"]
 
             target_message_id = message_id or (row.insights or {}).get("message_id")
+            open_insights_from_block(row, block, session)  # FE Gap 472: ids before the payload is written
             message = post_insight_turn(
                 row, block, session, message_id=UUID(str(target_message_id)) if target_message_id else None
             )
-            open_insights_from_block(row, block, session)
 
             # Gap 497: publish on the extraction job's channel (the browser's
             # subscription); fall back to our own id only when none was given.

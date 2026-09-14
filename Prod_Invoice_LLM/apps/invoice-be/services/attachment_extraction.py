@@ -145,7 +145,8 @@ def extract_attachment(
         progress(STAGE_MATCHING)
         match_attachment(row, db_session)
         insight_attachment(
-            row, db_session, progress=progress, notify_job_id=notify_job_id, insight_state=insight_state
+            row, db_session, progress=progress, notify_job_id=notify_job_id, insight_state=insight_state,
+            ocr_text=ocr_text,
         )
 
     return row
@@ -157,6 +158,7 @@ def insight_attachment(
     progress: Optional[ProgressFn] = None,
     notify_job_id: Optional[str] = None,
     insight_state: Optional[dict] = None,
+    ocr_text: Optional[str] = None,
 ) -> None:
     """Feature 30 (30.1/30.2): the intelligence bubble, after matching.
 
@@ -193,7 +195,11 @@ def insight_attachment(
 
         from services.attachment_insights import run_sync_insights
 
-        block = run_sync_insights(row, db_session)
+        # BE Gap 510: the page text travels with the row into the sync stage. `ChatAttachment`
+        # persists no raw text, and `detect_region()` already knew how to read a tax id off
+        # the page that the extractor did not lift into a field -- the argument existed and
+        # was never passed, which left every compliance card dead on every document type.
+        block = run_sync_insights(row, db_session, ocr_text=ocr_text)
         if block is None:
             return
 

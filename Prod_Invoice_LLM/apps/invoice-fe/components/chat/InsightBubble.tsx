@@ -155,6 +155,12 @@ export default function InsightBubble({
   // verdict line is written from (`verdict_template()` takes the top finding).
   const primary = shown[0];
   const primaryRow = primary ? insightForFinding(rows, primary) : undefined;
+  // FE Gap 472: the row id now rides on the finding itself, so note / dismiss /
+  // discuss are live on first paint instead of after the lifecycle read resolves.
+  // The read below is KEPT for one purpose only — restoring "you already dismissed
+  // this" on reload — and the join remains the fallback for blocks written before
+  // the BE half landed (2026-09-14).
+  const primaryId = primary?.insight_id ?? primaryRow?.id;
 
   useEffect(() => {
     // `status: null` — a finding the user already noted or dismissed must still
@@ -184,15 +190,15 @@ export default function InsightBubble({
 
   const handleTransition = useCallback(
     async (status: string, transitionOutcome: string, note?: string) => {
-      if (!primaryRow) return;
-      await transitionInsight(primaryRow.id, {
+      if (!primaryId) return;
+      await transitionInsight(primaryId, {
         status,
         outcome: transitionOutcome,
         ...(note ? { note } : {}),
       });
       setOutcome(transitionOutcome);
     },
-    [primaryRow]
+    [primaryId]
   );
 
   const handleVote = useCallback(
@@ -209,10 +215,10 @@ export default function InsightBubble({
         vote: "up",
         card: primary?.card,
         finding_key: primary?.finding_key,
-        ...(primaryRow ? { insight_id: primaryRow.id } : {}),
+        ...(primaryId ? { insight_id: primaryId } : {}),
       });
     },
-    [messageId, primary, primaryRow]
+    [messageId, primary, primaryId]
   );
 
   if (!hasRenderableInsights(block)) return null;
@@ -282,7 +288,7 @@ export default function InsightBubble({
       <InsightActions
         actions={block.actions || []}
         finding={primary}
-        actionable={Boolean(primaryRow)}
+        actionable={Boolean(primaryId)}  // FE Gap 472: live on first paint when the finding carries its id
         outcome={outcome}
         vote={vote}
         onAddNote={(note) => handleTransition("ACTED", "note", note)}
@@ -293,8 +299,8 @@ export default function InsightBubble({
           // The backend writes the seed sentence (it knows the amount and the
           // currency); falling back to the finding title keeps Discuss useful
           // when the lifecycle row has not resolved.
-          const seed = primaryRow
-            ? await fetchInsightDiscussSeed(primaryRow.id)
+          const seed = primaryId
+            ? await fetchInsightDiscussSeed(primaryId)
             : `About this finding: ${primary?.title ?? block.verdict} — what should I do?`;
           onDiscussSeed(seed);
         }}
@@ -305,7 +311,7 @@ export default function InsightBubble({
         <InsightCorrectionDialog
           messageId={messageId}
           finding={primary}
-          insightId={primaryRow?.id}
+          insightId={primaryId}
           onClose={() => setCorrectionOpen(false)}
         />
       )}
