@@ -1383,8 +1383,6 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
     4. Processing State ("Writing the query..."): Pure white card (`#FFFFFF` bg, `1px solid #BAE6FD` border), `#0F6FC6` animated spinner, `#0F2847` bold text, and `#009DD9` pulsing dots.
     5. Citation Pills & SQL Drawer: Soft white source pills (`#FFFFFF`, `#D6E4F0` border, `#009DD9` dot); SQL drawer styled with `#F8FAFD` header, `#F4F8FC` code box, and `#0369A1` mono query text.
     6. Zero structural changes to TSX components; Classic Dark Mode 100% untouched.
-  - **Verification.** Verified via Playwright live screenshots (`chat_live_infinevo_fixed.png`, `chat_live_dark_check.png`, `chat_bubbles_before_after_comparison.png`, `chat_live_theme_comparison.png`).
-
 - `[x]` **FE Gap 495 — CLOSED 2026-09-11: Semantic Chat Sidebar Thread Action Buttons (Rename & Delete) Hover Contrast Fix in InfiNevo Theme** — found 2026-09-11 during visual audit and user report on thread edit button: *"when i take cursor on chat edit icon it not visible so that aslo fix ."*
   - **Symptom.** In the Semantic Chat left sidebar (`ChatWindow.tsx::ThreadSidebar`), hovering the cursor over the thread rename button (`button[title="Rename thread"]`) caused the button to turn into a jarring pitch-black box (`rgb(30, 41, 59)` / `#1E293B`) on top of the soft light blue session card. Simultaneously, the pencil icon (`Pencil`) inside the button completely disappeared, becoming 100% invisible.
   - **Root cause.** Two conflicting styles combined to cause this defect:
@@ -1396,5 +1394,20 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
     3. Inline Thread Rename Input: Styled `form input` in `#FFFFFF` with `#0F2847` text and `#0F6FC6` border; submit checkmark button in emerald `#059669`; cancel button in slate `#64748B`.
     4. Zero structural changes to TSX components; Classic Dark Mode 100% untouched.
   - **Verification.** Verified via Playwright live screenshots (`chat_rename_button_hover_comparison.png`, `chat_full_screen_infinevo_fixed.png`, `fixed_rename_hover.png`, `fixed_delete_hover.png`, `dark_rename_hovered_real.png`).
+
+- `[x]` **FE Gap 496 — CLOSED 2026-09-11: Semantic Chat Feedback Triage Modal ("What went wrong?") Option Text Contrast Fix in InfiNevo Theme** — found 2026-09-11 during visual audit and user report on thumbs-down feedback modal: *"text not visible properly. don't commit"*
+  - **Symptom.** When clicking the thumbs-down feedback button on an assistant reply, the triage modal (`ThumbsDownTriage.tsx` / `[data-testid="thumbs-down-triage"]`) displayed option titles ("Wrong data", "Wrong interpretation", "Bad tone or length") as nearly invisible white text on white card backgrounds.
+  - **Root cause.** The option button title spans used Tailwind class `text-slate-100` (`#F1F5F9`, near-white). While `styles/globals.css` mapped `.text-slate-200` and `.text-slate-300` to dark navy `#1E293B`, it lacked a rule for `.text-slate-100`. Furthermore, Section 12 lacked dedicated InfiNevo styling rules for `[data-testid="thumbs-down-triage"]` option cards, form inputs, and modal containers.
+  - **What was built.** Pure CSS rules added to Section 12.1 in `apps/invoice-fe/styles/globals.css` strictly scoped under `[data-theme="infinevo"]`:
+    1. Option Headings: Added `[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"] span:first-child, span.text-slate-100` styled in deep corporate navy (`#0F2847`, font-weight 700, 13px), achieving 11.2:1 AAA contrast against the white card background.
+    2. Option Descriptions: Refined to legible dark slate (`#475569`, 11.5px, line-height 1.5).
+    3. Option Card Container: Styled as a crisp white card (`#FFFFFF`, `1.5px solid #D6E4F0`, `box-shadow: 0 2px 8px rgba(15, 30, 60, 0.04)`), transitioning on hover to a soft rose tint (`#FEF2F2` bg, `#FCA5A5` border, `#991B1B` crimson title).
+    4. Scope Choice Cards: Styled "One specific invoice is wrong" and "The overall answer or total is wrong" in high-contrast navy with soft ice-blue hover.
+    5. Modal Container & Header: Crisp white dialog (`#FFFFFF`, `1px solid #D6E4F0`, `box-shadow: 0 20px 50px rgba(15, 40, 71, 0.18)`), `#F8FAFD` header, and `#FEF2F2` rose thumbs-down icon container.
+    6. Form Inputs & Selects: Pure white background (`#FFFFFF`), `#CBD5E1` border, `#0F2847` text, and `#0F6FC6` focus rings.
+    7. Global text color rule updated to include `.text-slate-100` alongside `.text-slate-200` and `.text-slate-300`.
+    8. Zero structural changes to TSX components; Classic Dark Mode 100% untouched.
+  - **Verification.** Verified via Playwright live screenshots (`triage_feedback_modal_comparison.png`, `triage_infinevo_neutral.png`, `triage_infinevo_hovered.png`, `triage_dark_modal.png`).
+
 
 

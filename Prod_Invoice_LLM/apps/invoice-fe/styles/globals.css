@@ -483,6 +483,7 @@ td, .table-cell {
   color: #0F2847 !important;
 }
 
+[data-theme="infinevo"] main .text-slate-100,
 [data-theme="infinevo"] main .text-slate-200,
 [data-theme="infinevo"] main .text-slate-300 {
   color: #1E293B !important;
@@ -1173,6 +1174,177 @@ td, .table-cell {
 /* Disclaimer under composer */
 [data-theme="infinevo"] div[class*="border-t"][class*="bg-[#080B12]"] p.text-center {
   color: #64748B !important;
+}
+
+/* 12.1 Thumbs-Down Triage Modal ("What went wrong?") — InfiNevo Theme */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 20px 50px rgba(15, 40, 71, 0.18), 0 4px 16px rgba(15, 40, 71, 0.08) !important;
+  border-radius: 16px !important;
+}
+
+/* Modal Header */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] > div:first-child {
+  background: #F8FAFD !important;
+  background-color: #F8FAFD !important;
+  border-bottom: 1px solid #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] h3 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] span.text-slate-400 {
+  color: #64748B !important;
+}
+
+/* Thumbs-Down Icon Container */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] div[class*="bg-rose-500/10"] {
+  background-color: #FEF2F2 !important;
+  border: 1px solid #FECDD3 !important;
+  color: #DC2626 !important;
+}
+
+/* Header Close Button */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button:has(svg.lucide-x) {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button:has(svg.lucide-x):hover {
+  background-color: #F1F5F9 !important;
+  color: #0F2847 !important;
+  border-color: #94A3B8 !important;
+}
+
+/* Triage Reason Option Cards (Wrong data / Wrong interpretation / Bad tone) */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"] {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1.5px solid #D6E4F0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 8px rgba(15, 30, 60, 0.04) !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"]:hover {
+  background: #FEF2F2 !important;
+  background-color: #FEF2F2 !important;
+  border-color: #FCA5A5 !important;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.12) !important;
+}
+
+/* High-Contrast Option Title Text (Fixes white-on-white invisible text) */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"] span.text-slate-100,
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"] span:first-child {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+}
+
+/* High-Contrast Option Description / Hint */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"] span.text-slate-500,
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"] span:last-child {
+  color: #475569 !important;
+  font-size: 11.5px !important;
+  line-height: 1.5 !important;
+}
+
+/* Hover color adjustments for reason cards */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"]:hover span:first-child {
+  color: #991B1B !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"]:hover span:last-child {
+  color: #7F1D1D !important;
+}
+
+/* Step 2a: Scope Choice Cards (One specific invoice vs overall answer) */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-scope-"] {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1.5px solid #D6E4F0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 8px rgba(15, 30, 60, 0.04) !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-scope-"]:hover {
+  background: #F0F7FD !important;
+  background-color: #F0F7FD !important;
+  border-color: #BAE6FD !important;
+  box-shadow: 0 4px 14px rgba(15, 111, 198, 0.12) !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-scope-"] span.text-slate-100 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-scope-"] span.text-slate-500 {
+  color: #475569 !important;
+}
+
+/* Step 2b: Invoice Picker List in Triage */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] div.rounded-xl.border:has(button[data-testid="triage-invoice-option"]) {
+  background-color: #FFFFFF !important;
+  border-color: #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid="triage-invoice-option"] {
+  border-bottom: 1px solid #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid="triage-invoice-option"]:hover {
+  background-color: #F0F7FD !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid="triage-invoice-option"] span.text-slate-200 {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+/* Step 2c, 3: Form Controls (Selects, Inputs, Textareas) */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] select,
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] input[type="text"],
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] textarea {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] select:focus,
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] input[type="text"]:focus,
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] textarea:focus {
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 2px rgba(15, 111, 198, 0.15) !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] label {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+/* Triage Modal Footer */
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] > div:last-child {
+  background: #F8FAFD !important;
+  background-color: #F8FAFD !important;
+  border-top: 1px solid #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] > div:last-child button:not([class*="bg-rose"]):not([class*="bg-emerald"]) {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #475569 !important;
+}
+
+[data-theme="infinevo"] [data-testid="thumbs-down-triage"] > div:last-child button:not([class*="bg-rose"]):not([class*="bg-emerald"]):hover {
+  background-color: #F1F5F9 !important;
+  color: #0F2847 !important;
 }
 
 /* 13. Settings Page InfiNevo Theme Adapter */

@@ -179,6 +179,15 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Inline rename form input and submit/cancel buttons styled cleanly in InfiNevo palette.
   - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
 
+- [x] **Task 1.16: Semantic Chat Feedback Triage Modal ("What went wrong?") Option Contrast (FE Gap 496)** — added 2026-09-11.
+  - Resolved white-on-white invisible heading defect in thumbs-down triage modal (`ThumbsDownTriage.tsx`).
+  - Option headings ("Wrong data", "Wrong interpretation", "Bad tone or length") styled in bold deep corporate navy (`#0F2847`, font-weight 700, 13px) with 11.2:1 AAA contrast.
+  - Option descriptions refined in readable dark slate (`#475569`, 11.5px, line-height 1.5).
+  - Reason option cards styled as crisp white cards (`#FFFFFF`, `1.5px solid #D6E4F0`), with smooth interactive rose hover (`#FEF2F2` bg, `#FCA5A5` border, `#991B1B` title).
+  - Modal container styled in pure crisp white (`#FFFFFF`, `1px solid #D6E4F0`, `box-shadow: 0 20px 50px rgba(15, 40, 71, 0.18)`), `#F8FAFD` header, and `#FEF2F2` rose thumbs-down icon badge.
+  - Scope choice cards, invoice pickers, and form inputs/selects fully aligned to InfiNevo design system.
+  - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
+
 ### Verification Plan
 
 * **Manual Verification**: Run `npm run dev` inside `apps/invoice-fe` and inspect the layout elements. Verify layout responsiveness and correct styling.
