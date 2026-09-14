@@ -433,6 +433,18 @@ td, .table-cell {
 [data-theme="infinevo"] main [class*="bg-[#0D131F]"],
 [data-theme="infinevo"] main [class*="bg-[#08101A]"],
 [data-theme="infinevo"] main [class*="bg-[#050810]"],
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"],
+[data-theme="infinevo"] main [class*="bg-[#0B0F17]"],
+[data-theme="infinevo"] main [class*="bg-[#050816]"],
+[data-theme="infinevo"] main [class*="bg-[#060810]"],
+[data-theme="infinevo"] main [class*="bg-[#070A13]"],
+[data-theme="infinevo"] main [class*="bg-[#080B12]"],
+[data-theme="infinevo"] main [class*="bg-[#0B1220]"],
+[data-theme="infinevo"] main [class*="bg-[#0F1622]"],
+[data-theme="infinevo"] main [class*="bg-[#0F1629]"],
+[data-theme="infinevo"] main [class*="bg-[#111722]"],
+[data-theme="infinevo"] main [class*="bg-[#131B2A]"],
+[data-theme="infinevo"] main [class*="bg-[#1A2230]"],
 [data-theme="infinevo"] main [class*="bg-slate-900"],
 [data-theme="infinevo"] main [class*="bg-slate-950"] {
   background-color: #FFFFFF !important;
@@ -1380,6 +1392,151 @@ td, .table-cell {
 [data-theme="infinevo"] main a[class*="bg-[#111827]"] p[class*="text-slate"],
 [data-theme="infinevo"] main div[class*="bg-[#111827]"] p[class*="text-slate"] {
   color: #475569 !important;
+}
+
+/* 13.1 Settings — Email Setup Page (Feature 8) & Authorized Senders InfiNevo Adapter */
+/* App Mailbox Input Row & Copy Button */
+[data-theme="infinevo"] main .select-all {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1.5px solid #D6E4F0 !important;
+  box-shadow: 0 2px 6px rgba(15, 40, 71, 0.04) !important;
+}
+
+[data-theme="infinevo"] main .select-all span.font-mono {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main .select-all button {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+  border-radius: 8px !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+[data-theme="infinevo"] main .select-all button:hover {
+  background-color: #F0F7FD !important;
+  border-color: #0F6FC6 !important;
+  color: #0F6FC6 !important;
+}
+
+/* Authorized Email List Container & Rows */
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"] {
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1.5px solid #D6E4F0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 2px 8px rgba(15, 40, 71, 0.04) !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"]:hover {
+  border-color: #BAE6FD !important;
+  box-shadow: 0 4px 14px rgba(15, 111, 198, 0.09) !important;
+}
+
+/* High-Contrast Email Address Text in List Row */
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"] span.font-mono,
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"] span.text-slate-200 {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+  font-size: 12.5px !important;
+}
+
+/* Mail Icon inside Row */
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"] svg.lucide-mail {
+  color: #0F6FC6 !important;
+}
+
+/* Delete / Trash Button in Authorized Email Row */
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"] button {
+  background-color: #FFFFFF !important;
+  border: 1px solid #CBD5E1 !important;
+  color: #64748B !important;
+  border-radius: 8px !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"] button:hover {
+  background-color: #FEF2F2 !important;
+  border-color: #FECDD3 !important;
+  color: #DC2626 !important;
+}
+
+[data-theme="infinevo"] main [class*="bg-[#0F141F]"] button:hover svg {
+  color: #DC2626 !important;
+}
+
+/* Authorized Email Headings (Inbound / Outbound Authorized Emails) */
+[data-theme="infinevo"] main h3.uppercase {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* Empty State ("No addresses in this set yet.") */
+[data-theme="infinevo"] main div.text-slate-500.text-center {
+  color: #64748B !important;
+  font-weight: 500 !important;
+}
+
+/* Form Input inside Email Settings */
+[data-theme="infinevo"] main form input[type="email"] {
+  background-color: #FFFFFF !important;
+  border: 1.5px solid #CBD5E1 !important;
+  color: #0F2847 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] main form input[type="email"]::placeholder {
+  color: #94A3B8 !important;
+}
+
+[data-theme="infinevo"] main form input[type="email"]:focus {
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 3px rgba(15, 111, 198, 0.15) !important;
+}
+
+/* Mail Badge in App Mailbox Header */
+[data-theme="infinevo"] main section div[class*="bg-blue-500/10"]:has(svg.lucide-mail) {
+  background-color: #EBF4FC !important;
+  border: 1px solid #BAE6FD !important;
+}
+
+[data-theme="infinevo"] main section div[class*="bg-blue-500/10"] svg.lucide-mail {
+  color: #0F6FC6 !important;
+}
+
+/* Info Icon & Description */
+[data-theme="infinevo"] main section svg.lucide-info {
+  color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] main section .text-\[11px\].text-slate-400 {
+  color: #475569 !important;
+}
+
+/* Feedback Alerts in Settings Lists */
+[data-theme="infinevo"] main div[class*="bg-emerald-500/10"] {
+  background-color: #ECFDF5 !important;
+  border: 1px solid #A7F3D0 !important;
+  color: #047857 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-emerald-500/10"] svg {
+  color: #059669 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-red-500/10"] {
+  background-color: #FEF2F2 !important;
+  border: 1px solid #FECDD3 !important;
+  color: #B91C1C !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-red-500/10"] svg {
+  color: #DC2626 !important;
 }
 
 /* 14. AI Trainer Page InfiNevo Theme Adapter */

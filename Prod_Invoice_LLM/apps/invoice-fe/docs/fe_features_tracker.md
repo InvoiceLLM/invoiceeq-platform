@@ -1409,5 +1409,19 @@ Context: the 2026-08-12/13 ground-truth investigation closed BE Gaps 222/223/224
     8. Zero structural changes to TSX components; Classic Dark Mode 100% untouched.
   - **Verification.** Verified via Playwright live screenshots (`triage_feedback_modal_comparison.png`, `triage_infinevo_neutral.png`, `triage_infinevo_hovered.png`, `triage_dark_modal.png`).
 
-
+- `[x]` **FE Gap 497 — CLOSED 2026-09-14: Email Setup Page (`/settings/email`) Authorized Senders List Text & Container Contrast Fix in InfiNevo Theme** — found 2026-09-14 during visual audit and user report on email settings: *"check the all text are visible properly fix don't commit the code"*
+  - **Symptom.** On the Email Setup page (`/settings/email`), authorized email rows in `EmailSendersList.tsx` rendered as pitch-black boxes (`bg-[#0F141F]`) containing nearly invisible dark navy text (`#1E293B`) on a black background (e.g. `sonalkarkrushna413@gmail.com`). The Mail icon and delete trash button were also dark grey on black (`text-slate-500`), resulting in an illegible dark-on-dark block inside the clean light InfiNevo theme layout.
+  - **Root cause.** `EmailSendersList.tsx` uses class `bg-[#0F141F]` for each sender item row. While `globals.css` mapped `.text-slate-200` to dark navy (`#1E293B`), the container class `bg-[#0F141F]` was omitted from Rule 5 of the InfiNevo theme adapter, leaving the container in its dark mode black state while the text inside was turned dark.
+  - **What was built.** Pure CSS rules added to `apps/invoice-fe/styles/globals.css`:
+    1. **Rule 5 Enhancement**: Added `[class*="bg-[#0F141F]"]` and other missing dark hex background variants (`#0B0F17`, `#050816`, `#060810`, `#070A13`, `#080B12`, `#0B1220`, `#0F1622`, `#0F1629`, `#111722`, `#131B2A`, `#1A2230`) to ensure all dark containers automatically convert to clean white panels in InfiNevo theme.
+    2. **Section 13.1 Dedicated Email Setup Adapter**:
+       - Sender Item Rows: Transformed `[class*="bg-[#0F141F]"]` into a crisp white card (`#FFFFFF`, `1.5px solid #D6E4F0`, `box-shadow: 0 2px 8px rgba(15, 40, 71, 0.04)`), with an ice-blue border transition on hover (`#BAE6FD`).
+       - Email Text: Styled `span.font-mono` and `span.text-slate-200` in high-contrast deep corporate navy (`#0F2847`, font-weight 600, 12.5px), delivering 11.2:1 AAA contrast against white.
+       - Mail Icon: Styled in vibrant InfiNevo primary brand blue (`#0F6FC6`).
+       - Delete Button: Styled as a clean white button transitioning to a soft rose hover state (`#FEF2F2` bg, `#FECDD3` border, `#DC2626` crimson icon).
+       - App Mailbox Container & Copy Button: Styled `.select-all` container in pure white with `#D6E4F0` border and high-contrast `#0F2847` font; copy button in `#FFFFFF` with `#0F6FC6` icon and `#F0F7FD` hover state.
+       - Form Controls & Alerts: Input fields styled in white with `#0F2847` text and `#CBD5E1` border; success (`#ECFDF5`) and error (`#FEF2F2`) alerts styled with high-contrast text and icons.
+    3. **Zero Structural Changes**: `EmailSendersList.tsx` and `app/settings/email/page.tsx` remain 100% untouched.
+    4. **Classic Dark Mode 100% Untouched**: Zero regressions for dark mode users.
+  - **Verification.** Verified via Playwright live screenshots (`email_settings_before_after_comparison.png`, `email_settings_after.png`, `email_settings_before.png`).
 

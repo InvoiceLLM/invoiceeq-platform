@@ -186,6 +186,13 @@ The profile block is wired to real Clerk session data via `useUser()`/`useClerk(
   - Reason option cards styled as crisp white cards (`#FFFFFF`, `1.5px solid #D6E4F0`), with smooth interactive rose hover (`#FEF2F2` bg, `#FCA5A5` border, `#991B1B` title).
   - Modal container styled in pure crisp white (`#FFFFFF`, `1px solid #D6E4F0`, `box-shadow: 0 20px 50px rgba(15, 40, 71, 0.18)`), `#F8FAFD` header, and `#FEF2F2` rose thumbs-down icon badge.
   - Scope choice cards, invoice pickers, and form inputs/selects fully aligned to InfiNevo design system.
+- [x] **Task 1.17: Email Setup Page Authorized Senders List Contrast & Card Styling (FE Gap 497)** — added 2026-09-14.
+  - Resolved dark-on-dark invisible email text defect on `/settings/email` in `EmailSendersList.tsx`.
+  - Authorized email row container `bg-[#0F141F]` converted into a crisp white card (`#FFFFFF`, `1.5px solid #D6E4F0`, `box-shadow: 0 2px 8px rgba(15, 40, 71, 0.04)`), transitioning to ice-blue border on hover.
+  - Email address text (`span.font-mono`) styled in deep corporate navy (`#0F2847`, font-weight 600, 12.5px) for 11.2:1 AAA legibility.
+  - Mail icon styled in InfiNevo primary brand blue (`#0F6FC6`); delete button styled with subtle border and crimson hover (`#FEF2F2` bg, `#FECDD3` border, `#DC2626` trash icon).
+  - App mailbox container (`.select-all`) and copy button styled in crisp white with blue hover and bold mono text.
+  - Global Rule 5 updated to catch all dark container background hexes (`#0F141F`, `#0B0F17`, etc.).
   - 100% zero TSX/DOM structural changes; Classic Dark mode 100% untouched.
 
 ### Verification Plan
