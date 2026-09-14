@@ -46,7 +46,7 @@ Twenty routes exist today, sorted by *which feature built them*. This feature so
 | `components/records/InvoiceTable.tsx` | `InvoiceTable` | edit of `RecentInvoicesTable` / `OutboundInvoicesTable` | one component, `direction` prop; filters `Status` / `Month` / `Party`; search; export |
 | `components/records/RecordDrawer.tsx` | `RecordDrawer` | new | PDF left, fields right, alerts, **facts** (linked PO, delivery events, payment events — from `facts_for()`), `Ask about this` (opens Ask seeded), `Edit`, `Delete` |
 | `components/records/DocumentsTable.tsx` | `DocumentsTable` | new | every attachment that left facts, and where the facts went; exec rows only for exec clearance |
-| `components/records/RulesTable.tsx` | `RulesTable` | new | FE Gap 478 / BE Gap 514: every rule by scope (Global / vendor), extraction and chat rules side by side, opens `RuleHistoryDrawer` |
+| `components/records/RulesTable.tsx` | `RulesTable` | new | BE Gap 514: extraction rules by scope (Global / vendor), opens `RuleHistoryDrawer`. **Chat rules are not duplicated here** — see §3.3 |
 | `components/records/OutboundBuilderDrawer.tsx` | `OutboundBuilderDrawer` | wrap of Feature 20 | the one screen that stays a form; opened from `Invoices out` |
 | `app/settings/page.tsx` | `SettingsPage` with sections `People` / `Inbox` / `Checks` / `Notify` / `Plan` / `Security` | rewrite | each section is today's sub-page's content, inline; the sub-routes redirect to `#section` |
 | `components/onboarding/FirstRun.tsx` | `FirstRun` | new | first login: Ask opens with the advisor's three steps (people, inbox, drop one file) — content from BE 33 §3.5 / Feature 32; skippable; never shown again |
@@ -77,7 +77,9 @@ Today's chat page, renamed, with three additions:
 
 ### 3.3 Records
 
-Four tabs over existing data. `RecordDrawer` is the review surface for anyone who wants the full page rather than the card: same fields, same actions, plus the **facts** panel — the first place a user sees "PO-1041 linked · delivered on DC-0812 · unpaid" on an invoice. `Documents` is the ledger of attachments that left facts (BE 33 §4), which makes the persistence visible. `Rules` closes FE Gap 478 / BE Gap 514.
+Four tabs over existing data. `RecordDrawer` is the review surface for anyone who wants the full page rather than the card: same fields, same actions, plus the **facts** panel — the first place a user sees "PO-1041 linked · delivered on DC-0812 · unpaid" on an invoice. `Documents` is the ledger of attachments that left facts (BE 33 §4), which makes the persistence visible. `Rules` covers BE Gap 514.
+
+**Chat rules are not a Records tab (amended 2026-09-14, founder).** This spec originally claimed `Rules` would close FE Gap 478 by listing extraction and chat rules side by side. FE Gap 478 was instead closed on 2026-09-14 by a dedicated settings screen, `/settings/chat-rules` (`ChatRulesSettingsPage` / `ChatRulesPanel`, feature_14 §11), with its own `can_train`-gated sidebar entry — and **Settings is the long-term home for chat rules**. So `RulesTable` lists extraction rules (`ExtractionTemplate.rules`) only, and the chat-rule half of the tab is a single link out to `/settings/chat-rules` rather than a second implementation of the same list. Two screens reading `GET /chat/rules` with two delete affordances is exactly the drift this avoids; `TenantChatRule` and `ExtractionTemplate.rules` are separate stores (models.py) and stay separately surfaced.
 
 ### 3.4 Settings
 
@@ -100,7 +102,7 @@ Level markers: **L1** navigation only · **L2** merge · **L3** chat-first. L1 �
 | 22.5 | `PositionLine` and `InputRequestLine`; `open` flow into Ask with `?session=` / `&attach=1` | L2 |
 | 22.6 | `AskPage` rename; `SessionRail` grouped by day, 🔒 badge, Admin `Private` toggle; seeded first turn renders the finding card | L2 |
 | 22.7 | `RecordDrawer` with the facts panel (`getFacts()`); `DocumentsTable` | L2 |
-| 22.8 | `RulesTable` (FE Gap 478 / BE Gap 514) | L2 |
+| 22.8 | `RulesTable` — extraction rules by scope (BE Gap 514); chat rules are a link to `/settings/chat-rules`, not a second list (FE Gap 478 already closed there) | L2 |
 | 22.9 | Remove `ActionableInsightsPanel`, `MetricsGrid` as a page, `NeedsAttentionWidget` as a page (their data is Today's); `/dashboard` redirects to `/today` | L2 |
 | 22.10 | `DecisionCard` in `MessageBubble`; transitions post and re-render in place | L2 |
 | 22.11 | `InsightCard` checks-passed / not-checked disclosure and evidence thread | L2 |
@@ -121,7 +123,7 @@ Level markers: **L1** navigation only · **L2** merge · **L3** chat-first. L1 �
 | 22.5 | clicking a line calls `POST /today/{id}/open` once and navigates with the returned session id; an input request navigates with `attach=1` and the composer's attach control has focus |
 | 22.6 | an exec session is badged; a session list fixture for an Auditor contains no exec rows (the FE never filters — the assertion is that it renders exactly what the server sent); seeded session's first bubble is a `DecisionCard` |
 | 22.7 | drawer on RAJ-2008 fixture shows three facts in order (commitment, delivery, payment); `Ask about this` opens Ask seeded with the invoice number |
-| 22.8 | two vendor templates + one Global + the chat settings render as four groups; a vendor with zero rules is absent |
+| 22.8 | two vendor templates + one Global render as three groups; a vendor with zero rules is absent; the tab renders exactly one link to `/settings/chat-rules` and makes no `GET /chat/rules` call of its own |
 | 22.9 | `/dashboard` → `/today`; no import of `ActionableInsightsPanel` remains (grep test) |
 | 22.10 | `Duplicate` on a `DecisionCard` posts the transition and the bubble re-renders `ACTED` without a page reload |
 | 22.11 | a card with 3 passed / 1 not-checked renders both counts and the not-checked subjects on expand |

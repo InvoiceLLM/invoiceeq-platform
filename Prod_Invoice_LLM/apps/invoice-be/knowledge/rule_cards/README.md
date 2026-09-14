@@ -30,20 +30,31 @@ wording.
 order or delivery note, so one card is deliberately guidance (`verify: null`)
 rather than a check that would pretend a federal requirement exists.
 
-**India — unverified (3), and this is a real gap.** Every primary source was
-attempted on 2026-09-08 and none could be fetched from this environment:
+**India — DROPPED 2026-09-14 by founder ruling ("Drop the India cards"), task
+30.9 closed as dropped.** Three skeleton cards (`in-tax-invoice-gstin`,
+`in-hsn-code-on-lines`, `in-credit-note-original-reference`) used to sit here as
+`status: unverified` with no rule text. They are deleted, and the reason is that
+the gap was never going to close on its own: **no CBIC/GSTN primary source could
+be reached on either attempt.**
 
-* `cbic-gst.gov.in` — serves its act/rules pages through JavaScript; every
-  direct path tried (`/CGST-bill-e.html`, `/sectionwise-cgst.html`, seven
-  `/pdf/…` guesses) returned 404. Its homepage and unrelated PDFs do load, so
-  the host is reachable and the documents are simply not at guessable URLs.
-* `taxinformation.cbic.gov.in` — `SSL: CERTIFICATE_VERIFY_FAILED`.
-* `gst.gov.in` — "Request Rejected" (WAF).
-* `indiacode.nic.in`, `gstcouncil.gov.in` — the CGST Act PDF is not at any path
-  that could be found from their link graphs.
+* 2026-09-08 — `cbic-gst.gov.in` serves act/rules pages through JavaScript (every
+  direct path 404s); `taxinformation.cbic.gov.in` fails TLS
+  (`SSL: CERTIFICATE_VERIFY_FAILED`); `gst.gov.in` returns "Request Rejected"
+  (WAF); `indiacode.nic.in` and `gstcouncil.gov.in` have no findable path to the
+  CGST Act PDF.
+* 2026-09-14, re-probed — `einvoice1.gst.gov.in` ECONNRESET;
+  `tutorial.gst.gov.in/userguide/einvoice/` 404; `cbic-gst.gov.in` a JS shell
+  redirecting to `taxinformation.cbic.gov.in`, which still fails TLS.
 
-The three India cards therefore carry `status: unverified`, the source they
-must be checked against, and **no rule text**. Their `verify` names are already
-wired to real checks in `CHECKS`, so flipping one to `verified` is: fetch the
-source, paste the wording, fill `fetched_at` and `effective_from`, change the
-status. Nothing else changes.
+A skeleton with no reachable source is not an unfinished card, it is a standing
+promise that something will be checked when nothing is checking it. Per hard rule
+8 the honest output is no card at all: an Indian document now gets **no
+compliance verdict**, rather than a rule with no text or (worse) EU/US rules
+applied to it. `card_compliance`'s three-state `NOT_CHECKED` path for
+all-unverified regions is **unchanged and still tested** — it just has no card on
+disk that reaches it.
+
+**To add India properly, later:** fetch a primary source, paste the wording,
+fill `fetched_at` / `effective_from`, and write the card `status: verified` from
+the start. `gstin_present` and `hsn_code_present` are still in `CHECKS`, correct
+and unit-tested, waiting for it. Do not re-create the skeletons.

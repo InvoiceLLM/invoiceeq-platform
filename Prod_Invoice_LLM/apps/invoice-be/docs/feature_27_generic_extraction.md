@@ -565,6 +565,7 @@ DOC_TYPES = (
     "DEBIT_NOTE",
     "REMITTANCE_ADVICE",      # A5 — new
     "STATEMENT_OF_ACCOUNT",   # A5 — new
+    "BANK_STATEMENT",         # BE Gap 516.1 — new 2026-09-14
     "OTHER",
 )
 ```
@@ -575,6 +576,7 @@ DOC_TYPES = (
 | `RECEIPT` | Money, **relaxed rubric** | Payment receipts, fiscal receipts and simplified invoices (DE Kleinbetragsrechnung ≤ €250, IT scontrino / fattura semplificata ≤ €400, ES ticket / factura simplificada, PL ≤ PLN 450, India cash memo / B2C < ₹200 consolidated). By law they may lack the buyer's name, the unit price and the VAT amount (rate only) — research §5 trap 9 — so grading them on the full money rubric manufactures false discrepancies. Expenses volume is high. |
 | `REMITTANCE_ADVICE` | **Advisory (A7)** | Payment advice with invoice-level allocations and deductions (India: TDS, GST-TDS, UTR; US: EDI 820 / CTX addenda, chargebacks; EU: Zahlungsavis, camt.054). The natural document for "what did they short-pay?". Never a payable. |
 | `STATEMENT_OF_ACCOUNT` | **Advisory (A7)** | Monthly vendor statement / ledger / balance confirmation (SOA, Khata, Kontoauszug, Saldenbestätigung, relevé de compte, aging statement). Highest-value non-invoice for "which of these are missing or unpaid?". Research §5 trap 10: **must never be booked as a payable.** |
+| `BANK_STATEMENT` | **Advisory (A7)** | **Added 2026-09-14, BE Gap 516.1**, under the founder's narrow unfreeze of the taxonomy ("Unfreeze and split now"). The BANK's own statement of an account we hold: dated debit/credit movements, a running balance, an account number and IFSC/IBAN/sort code. It earns a value because its DOWNSTREAM differs, not its rubric — its rows are landed into `bank_statement_line` (`services/bank_ledger.py`) and matched to invoices (`services/bank_matching.py`), which is exactly what must never happen to a supplier's `STATEMENT_OF_ACCOUNT`. Until this date the two shared one value: the bubble called a supplier statement "bank statement" to the user and parsed the supplier's list of THEIR invoices into OUR bank ledger. Same never-a-payable guarantee as the row above. |
 
 **Folded, not added:** `PACKING_LIST` → `DELIVERY_NOTE`. Same quantity rubric, same
 absent-price expectation; the synonym table (A8) maps "Packing List", "Pack List", "Pick
@@ -710,6 +712,16 @@ order of execution:
      Relevé de compte, Estratto conto, Extracto de cuenta, Rekeningoverzicht, Ledger,
      Khata, Balance Confirmation, Vendor Statement, Account Statement, Aging Statement,
      Open Items, Vendor Reconciliation Statement.
+   - `BANK_STATEMENT` (**BE Gap 516.1, 2026-09-14**): Bank Statement, Bank Account
+     Statement, Statement of Bank Account, Current Account Statement, Savings Account
+     Statement, Passbook, Bank Passbook. **Deliberately NOT here:** Statement of Account,
+     Account Statement, Kontoauszug, Estratto conto, Relevé de compte, Extracto de cuenta,
+     Rekeningoverzicht — every one of them is printed by banks AND by suppliers, so the
+     title alone cannot decide. Those stay on `STATEMENT_OF_ACCOUNT` above, and a bank
+     statement carrying only such a title is decided by the LLM stage from the whole page
+     (prompt rule 6: WHO issued it and WHAT the rows are). Adding an ambiguous phrase to
+     both tuples was rejected: it would make every genuine supplier statement ambiguous
+     and send all of them to the model. No non-English bank vocabulary is invented.
    - `REMITTANCE_ADVICE`: Remittance Advice, Payment Advice, Zahlungsavis, Avis de
      paiement, Avviso di pagamento, Aviso de pago, Betalingsspecificatie, Check Stub,
      EFT Advice, Bhugtan vivaran.
@@ -752,7 +764,7 @@ data points (0.90 / 0.92 / 0.95) suggest 0.75–0.8 but are too few to move it.
 
 **Edits:** E7 (annotated), `_DOC_TYPE_SYNONYMS`, two new module-level pre-check tables,
 `_classify_with_llm`'s prompt (direction supplied), `DocTypeClassification` (unchanged —
-still a `Literal` over `DOC_TYPES`, now fourteen). **Task: §10B R10.**
+still a `Literal` over `DOC_TYPES`, fourteen at A8 and **fifteen since BE Gap 516.1**). **Task: §10B R10.**
 
 ### A9 — Fixture cells and tests for A5–A8.
 
@@ -1843,7 +1855,14 @@ otherwise assume they were arbitrary:
    **Boundary:** this fixes the denominator, never the vocabulary — `BANK STATEMENT` is
    still `(None, "")` and still reaches stage 2, because that phrase is in no synonym tuple
    and the founder's 2026-09-09 ruling is that a failing string rule is removed, not
-   extended. **Evidence:** `tests/test_document_type_classifier.py` **260 passed** on real
+   extended. *(Amended again 2026-09-14, later the same day: **BE Gap 516.1** added the
+   `BANK_STATEMENT` type under the founder's narrow unfreeze, and "bank statement" IS in a
+   tuple now — as the new type's own name, not as an extension of a failing rule. The
+   boundary stands in its general form: the segment pass recognises only vocabulary the
+   table has, and the ambiguous "statement of account / account statement / Kontoauszug"
+   family is deliberately absent from the bank entry, so those titles still reach stage 2.
+   The test that stated this boundary was re-baselined onto "Kassenbuch" /
+   "Kreditorenliste", which really are outside the table.)* **Evidence:** `tests/test_document_type_classifier.py` **260 passed** on real
    Postgres (66 of them the new registry-driven property tests: every separator × five
    issuers, every document type's first synonym, six reference-line controls).
 2. **Containment resolves specificity, length does not.** "PROFORMA INVOICE" matches both

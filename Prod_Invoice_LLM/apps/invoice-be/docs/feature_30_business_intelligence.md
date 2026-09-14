@@ -88,7 +88,7 @@
 | 30.6 | Cash-impact card over `v_overdue`, `v_vendor_spend` | new |
 | 30.7 | Knowledge layer + glossary-aware narration | 29.16 |
 | 30.8 | Certified examples table + retrieval + `seed_from_golden()`; suggested-questions card (top-3 by doc type) | 29.15 |
-| 30.9 | India rule cards (CBIC/GSTN primary sources) with `applies_to_doc_types` | 29.17a |
+| ~~30.9~~ | ~~India rule cards (CBIC/GSTN primary sources) with `applies_to_doc_types`~~ **DROPPED 2026-09-14 by founder ruling** — no reachable primary source (see §10.6) | 29.17a |
 | 30.10 | EU + US cards | 29.17b |
 | 30.11 | Compliance card: deterministic `verify` checks per card and doc type | 29.17c |
 | 30.12 | Confidence & gaps card | new |
@@ -108,7 +108,7 @@
 | 30.6 | Fixture party with two overdue invoices and a PO: card names both and the month outflow |
 | 30.7 | `lookup_glossary("total")` → `grand_total`; another tenant's collection not readable |
 | 30.8 | Uncertified row never retrieved; three questions returned, all tagged for the doc type |
-| 30.9–30.10 | Every card file has all fields and a reachable `source_url`; founder spot-checks each card against its source |
+| ~~30.9~~ / 30.10 | Every card file has all fields and a reachable `source_url`; founder spot-checks each card against its source. **30.9 dropped 2026-09-14** — this row is exactly why: the IN cards could never satisfy "a reachable `source_url`". It now applies to the 5 EU/US cards only. |
 | 30.11 | Fixtures per check (credit note without original invoice reference; EU PO without VAT id; RCM contract without flag) → `verify` fails with the citing rule id; compliant fixtures pass |
 | 30.12 | Lists every skipped card's reason and every low-confidence field |
 | 30.13 | Thumbs-down writes `chat_correction`; `promote_to_example()` creates a certified row; workbook KQL dry-runs |
@@ -116,6 +116,8 @@
 | 30.15 | 20-attachment eval: card figures graded deterministically (exact match), narration by the Feature 29 checklist judge; target ≥ 90% figures exact, 0 fabricated figures |
 
 Hard rule 3: any number the user sees is computed in `attachment_insights.py`, `document_comparison.py` or the views; the model narrates a JSON block it is told not to recompute.
+
+**Amendment 2026-09-14 — the real-Azure row. Founder ruling 2026-09-14: local stack + real Azure DI/OpenAI accepted as the Azure-path evidence** in place of a dev-stack run for this feature's end-to-end proof. Every row above (30.1–30.15) is a `LLM_PROVIDER=mock` / deterministic proof; the pipeline had never been observed with real Azure services. It now has been: BE + worker restarted with `ENABLE_ATTACHMENT_INSIGHTS=true`, a synthetic non-invoice Purchase Order PDF attached to a real chat session, extracted by **real Azure Document Intelligence** (`doc_type=PURCHASE_ORDER`, confidence 1.00), matched by the deterministic Tier-2 matcher (`match_tier=2`, `match_summary="probable match: IEQ-US-9003 (same party and date window)"`), and narrated by **real Azure OpenAI** — telemetry `insight_bubble` `stage: "async"`, `card_count: 10`, `finding_count: 2`, `impact_total: 12000.0`, `verdict_source: "model"`, `gate_status: "ok"`. The posted turn was arithmetically exact ($12,000 billed − $10,000 agreed = $2,000 overbilled). Result lines: *"Real Azure DI extraction + real Azure OpenAI narration ran (not mocked): PASS"*, *"Intelligence bubble renders under the assistant answer with verdict + findings: PASS"*, *"Discuss chip works: PASS"*, *"Per-card thumbs endpoint works (confirmed via direct API call): PASS"*, *"Per-card thumbs UI click-through: not independently confirmed in this run"*. Evidence: `docs/test_evidence/f30_chat_insights_2026-09-14/`. This does **not** close the feature: **30.9** (India cards — §12 item 4, every CBIC/GSTN primary source unreachable, the three IN cards still `unverified`) remains open by this plan's 30.9–30.10 row, so the tracker marker stays `[~]`.
 
 ## 7. Open decisions (as of 2026-09-07 morning — see §8 for the rulings)
 
@@ -337,10 +339,15 @@ on must stay actionable after it is turned off.
 
 `INSIGHT_DOC_TYPES` is the eight R2 types in the Feature 27 classifier's own
 vocabulary, with R2's two folds (ORDER_CONFIRMATION → PO, GRN → challan).
-**Deviation:** R2 says "bank statement"; the classifier emits
+~~**Deviation:** R2 says "bank statement"; the classifier emits
 `STATEMENT_OF_ACCOUNT` and the taxonomy is frozen in `active-work.md`, so §5's
 "REFERENCE discriminator extended to the nine types" was **not** done and the
-existing value is used instead. Nothing downstream keys on the spelling.
+existing value is used instead. Nothing downstream keys on the spelling.~~
+**SUPERSEDED 2026-09-14 by BE Gap 516.1 (§12.9):** the founder unfroze the
+taxonomy for one value and the classifier now emits `BANK_STATEMENT`. R2's
+"bank statement" is a type of its own; `STATEMENT_OF_ACCOUNT` is back to meaning
+a SUPPLIER's statement, keeps only the type-agnostic cards, and is never landed
+as bank ledger rows. `INSIGHT_DOC_TYPES` is nine values.
 
 Cards, all pure Python/SQL: `card_what_this_is`, `card_agreed_vs_billed`
 (`document_comparison.compare_reference_to_invoices()` verbatim, so the bubble
@@ -516,18 +523,50 @@ reports `not_applicable`, **never** a pass; a raising check is contained),
 |---|---|---|
 | EU | 3 — credit/debit-note reference, supplier VAT id, "reverse charge" wording | European Commission, VAT invoicing rules |
 | US | 2 — supporting documents (`verify: null`, guidance, because there IS no federal content rule for a PO), document number | IRS Publication 583 |
-| **IN** | **3 skeletons, `status: unverified`, NO rule text** | every CBIC/GSTN source was attempted and none was reachable — see below |
+| ~~**IN**~~ | ~~**3 skeletons, `status: unverified`, NO rule text**~~ **DROPPED 2026-09-14, files deleted** | every CBIC/GSTN source was attempted, twice, and none was reachable — see below |
 
-India is a real gap, not an omission. `cbic-gst.gov.in` serves its act/rules
-through JavaScript (seven direct paths → 404 while its homepage and unrelated
-PDFs load), `taxinformation.cbic.gov.in` fails TLS verification, `gst.gov.in`
-returns a WAF rejection, and no CGST Act PDF could be found on `indiacode.nic.in`
-or `gstcouncil.gov.in`. The three skeletons name the source they must be checked
-against and the `verify` check they will use, carry no rule text, and are
-filtered out of every display path by `load_rule_cards()`. The attempt log is in
-`knowledge/rule_cards/README.md`; a per-file test asserts that a `verified` card
-HAS text and an `unverified` card has NONE. **Founder call: fetch the CBIC pages
-by hand, or accept a secondary source.**
+**30.9 — DROPPED, founder ruling 2026-09-14 ("Drop the India cards"). Reason:
+no reachable primary source.** `knowledge/rule_cards/in/` and its three files
+(`in-tax-invoice-gstin`, `in-hsn-code-on-lines`,
+`in-credit-note-original-reference`) are **deleted**. Every CBIC/GSTN source was
+attempted on **two separate days** and none was reachable: 2026-09-08 —
+`cbic-gst.gov.in` serves its act/rules through JavaScript (seven direct paths →
+404 while its homepage and unrelated PDFs load), `taxinformation.cbic.gov.in`
+fails TLS verification, `gst.gov.in` returns a WAF rejection, and no CGST Act PDF
+could be found on `indiacode.nic.in` or `gstcouncil.gov.in`; 2026-09-14 —
+`einvoice1.gst.gov.in` ECONNRESET, `tutorial.gst.gov.in/userguide/einvoice/` 404,
+`cbic-gst.gov.in` a JS shell redirecting to the host that fails TLS.
+
+**Why dropping beats keeping the skeletons.** An `unverified` card was the honest
+shape of an *unfinished* card — it names the source it still needs and carries no
+text. It is the wrong shape for a card that will not be finished from this
+environment: it reads as a work item on a list that nothing can advance, and it
+keeps a permanent "a check is missing" line in front of every Indian document's
+bubble. Per hard rule 8 and the founder's ruling, an Indian document now receives
+**no compliance verdict at all** — not an invented one, and not EU/US rules
+applied to it (`test_an_indian_document_gets_no_checks_rather_than_someone_elses`).
+
+**Deliberately kept, and this is the deviation worth naming:** the
+`NOT_CHECKED`-for-unverified-cards branch in `card_compliance` (task 30.19's
+three-state work) stays, along with `gstin_present` and `hsn_code_present` in
+`CHECKS`. Neither is reachable from any shipped card today. Both are the general
+mechanism rather than India-specific code, and both are still tested — the branch
+by `tests/test_insight_track_b.py` (which supplies its own cards) and the two
+checks by `tests/test_rule_cards.py`. Removing them would delete working, tested
+behaviour to tidy up after one region.
+
+**Test changes that came with the drop**, in `tests/test_rule_cards.py`: the
+region set is now `{"EU", "US"}`; `test_the_india_cards_are_unverified_and_say_which_source_they_need`
+became `test_the_india_cards_are_gone_and_no_skeleton_replaced_them` (asserts no
+IN card, no `knowledge/rule_cards/in/` directory, and no card anywhere still
+citing `cbic-gst.gov.in`); `test_unverified_cards_are_never_loaded_for_display`
+used to assert `unverified, "this test is meaningless with no unverified cards"`
+over the shipped files and now writes its own skeleton to a tmp dir, so the
+filter survives the last real skeleton being deleted; and a new
+`test_no_unverified_card_ships_any_more` pins the state the ruling leaves behind.
+
+**To add India later:** fetch a source, paste the wording, write the card
+`status: verified` from the start. Do not re-create skeletons.
 
 ### 10.7 30.13 — the flywheel
 
@@ -696,9 +735,10 @@ amount is meant.
 2. **No payment-application card for `REMITTANCE_ADVICE`** (Gap 518). The bubble answers "what is the
    net owed" when the document asks "which invoice did this settle". Needs a new card that resolves
    the advice's own printed reference through the Gap 490 entity resolver.
-3. **`STATEMENT_OF_ACCOUNT` carries two meanings** (Gap 516.1). Splitting it means touching the frozen
+3. ~~**`STATEMENT_OF_ACCOUNT` carries two meanings** (Gap 516.1). Splitting it means touching the frozen
    taxonomy, which is blocked on Feature 27's ledger closing — so this is a decision to defer
-   deliberately, not an oversight to fix now.
+   deliberately, not an oversight to fix now.~~ **CLOSED 2026-09-14** — founder: "Unfreeze and split
+   now". `BANK_STATEMENT` exists; see §12.9.
 
 ### 11.5 One spec violation, recorded
 
@@ -761,7 +801,7 @@ Cards on the new shape: `terms_check`, `bank_reconcile`, `agreed_vs_billed`, `ca
 1. **Unmatched bank rows are unknowns, not findings** (Gap 515.2). Only a payment against an already-settled bill is a finding. The user still sees every unmatched row, under "checks not run", with its amount, date and narration.
 2. **A full settlement is spoken** (Gap 518): `payment_settles_in_full` is emitted as an `info` finding even though the check PASSED — it is the answer the document asks for.
 3. **Gap 513 rule shape**: substring removed; whole-name word-boundary match with longest-name-wins, plus resolver bindings; ambiguous mentions select nothing. Pure resolver binding alone was rejected because `_vendor_mentions()` needs a capitalised name after a lead word and the protected legacy question ("what did we pay acme corporation") has neither.
-4. **30.9**: India cards remain `unverified` — every primary source probed 2026-09-14 was unreachable (ECONNRESET / 404 / JS shell / TLS). `card_compliance` now renders them as `NOT_CHECKED` naming rule and source, so the bubble says a check is missing rather than "no IN rule card applies". No rule text was written from memory.
+4. **30.9**: India cards remain `unverified` — every primary source probed 2026-09-14 was unreachable (ECONNRESET / 404 / JS shell / TLS). `card_compliance` now renders them as `NOT_CHECKED` naming rule and source, so the bubble says a check is missing rather than "no IN rule card applies". No rule text was written from memory. **Superseded hours later the same day: the founder ruled the cards DROPPED** ("Drop the India cards") and the three files are deleted — §10.6 carries the reasoning, the kept mechanism and the test changes. 30.9 is closed as **dropped**, not as done.
 
 ### 12.3 Verification (real Postgres, `localhost:5433/invoice_db`)
 
@@ -803,9 +843,9 @@ cards, bubble titles, and the model's sentence.
 
 ### 12.7 Still open on this feature after 2026-09-14
 
-Nothing in Tracks A–E. Gap 516 (STATEMENT_OF_ACCOUNT overload) stays parked on Feature 27's frozen
-taxonomy — **updated 2026-09-14: 516.2, the classifier miss, is now FIXED (§12.8); only 516.1, the
-type split, is still parked**; Feature 33 / FE Feature 22 / Feature 31 parked by ruling. The full 1h23m suite has not been
+Nothing in Tracks A–E. ~~Gap 516 (STATEMENT_OF_ACCOUNT overload) stays parked on Feature 27's frozen
+taxonomy~~ — **updated 2026-09-14: 516.2, the classifier miss, is FIXED (§12.8), and 516.1, the type
+split, is FIXED too (§12.9) after the founder's narrow unfreeze. Gap 516 is closed in full**; Feature 33 / FE Feature 22 / Feature 31 parked by ruling. The full 1h23m suite has not been
 re-run since Tracks B–E landed — the F30 file set, guards, chat neighbours and the FE suite have.
 
 ### 12.8 Gap 516.2 closed — 2026-09-14 (the classifier; 516.1 stays blocked)
@@ -830,7 +870,10 @@ a failing string rule is removed, not extended). `BANK STATEMENT` as a standalon
 `(None, "")` and still costs a stage-2 model call, which then answers from the closed vocabulary.
 The fix repairs titles whose words we already know; it cannot recognise vocabulary we do not have.
 
-**Gap 516.1 — the `STATEMENT_OF_ACCOUNT` overload — is NOT fixed and was not attempted.** Re-checked
+**Gap 516.1 — the `STATEMENT_OF_ACCOUNT` overload — is NOT fixed and was not attempted.**
+*(SUPERSEDED THE SAME DAY — the founder unfroze the taxonomy for this one value hours later and
+516.1 was built; §12.9 is the current record. The paragraph below is kept as the state at the time
+of the 516.2 pass.)* Re-checked
 against `active-work.md` on 2026-09-14: "Frozen / do not touch" still reads *no taxonomy/schema
 amendment work starts until F27's existing ledger closes*, and Feature 27's own §10A ledger still has
 **task V `[ ]`** (no Postgres verification, no `test_evidence/` folder) and R-27-26's migration
@@ -846,3 +889,87 @@ test_no_hardcoding` **504 passed, 2 skipped in 45.52s**. Insight/attachment side
 `test_attachment_insights / test_bank_ledger / test_bank_matching / test_chat_attachments /
 test_compare_documents / test_insight_eval` **183 passed in 122.16s**. `tests/test_no_hardcoding.py`
 alone **4 passed in 41.87s**.
+
+### 12.9 Gap 516.1 closed — 2026-09-14 (the type split; the taxonomy was unfrozen for it)
+
+**Founder ruling, this session: "Unfreeze and split now."** The freeze in `active-work.md`
+§"Frozen / do not touch" was lifted for **one value only**, `BANK_STATEMENT`; the rest of it
+(F27's ledger, the A/B-series amendment) still stands, and the unfreeze is recorded there as a
+dated line rather than by deleting the original text.
+
+**The defect class.** One enum value meant two different documents. A bank's statement of an
+account we hold and a supplier's statement of what we owe them were both `STATEMENT_OF_ACCOUNT`,
+because Feature 30 borrowed the value while the taxonomy was frozen. Two user-visible
+consequences, both on the SUPPLIER document: `DOC_TYPE_LABELS` called it **"bank statement"** to
+the user, and `services/attachment_extraction.py::insight_attachment()` ran
+`land_statement_lines()` on it — parsing a supplier's list of THEIR invoices into OUR bank ledger,
+where `card_bank_reconcile` then matched them against invoices.
+
+**What the split is.** `BANK_STATEMENT` is the taxonomy's fifteenth value, ADVISORY family (same
+never-a-payable guarantee, same rubric), added through the existing closed-vocabulary mechanism —
+`DOC_TYPES`, `DOC_TYPE_FAMILY`, `_DOC_TYPE_SYNONYMS`, and the LLM prompt, which is rendered from
+those same registries so the deterministic table and the model's vocabulary cannot drift. The
+bank cards (`card_bank_reconcile`, `card_cash_cover` — the two that read `bank_statement_line`)
+are registered against it; `STATEMENT_OF_ACCOUNT` keeps the type-agnostic four and takes the
+ADVISORY path only (`list_reconcile`), landing nothing.
+
+**Vocabulary, and the boundary of the deterministic half.** The bank entry carries only
+unambiguous bank vocabulary (`bank statement`, `bank account statement`, `statement of bank
+account`, `current account statement`, `savings account statement`, `passbook`, `bank passbook`).
+The ambiguous family — `statement of account`, `account statement`, `kontoauszug`, `estratto
+conto`, `releve de compte`, `extracto de cuenta`, `rekeningoverzicht` — is deliberately **left
+out** of it: every one is printed by banks AND by suppliers, so a title alone cannot decide, and
+those stay on the supplier type. Registering a phrase under both was rejected: it would make every
+genuine supplier statement ambiguous and route all of them to a paid model call. The consequence,
+stated rather than implied: **the showcase demo's own file, titled `HDFC BANK LIMITED — STATEMENT
+OF ACCOUNT`, is still typed by the model, not by the title table** — prompt rule 6 now tells the
+model to decide from who issued it and what the rows are. No non-English bank vocabulary was
+invented; the module's own standing rule.
+
+**Call sites — found vs changed.** Fifteen code call sites found by grepping `STATEMENT_OF_ACCOUNT`
+across `apps/invoice-be` and `apps/invoice-fe`, fifteen changed: `services/document_type_classifier.py`
+(three registries + the prompt), `agents/extraction_agent.py` (the per-type overlay; the rubric map
+is derived from the family table and needed no edit), `agents/query_agent.py`
+(`_ADVISORY_DOC_TYPES`, now derived from the family table instead of being a literal pair;
+`_INTENT_BIAS_BY_DOC_TYPE`; `_DOC_TYPE_PHRASES` + a containment drop in `_requested_doc_types()`
+so "the bank statement" does not also request the supplier type; the deictic pattern),
+`services/attachment_extraction.py` (the landing gate), `services/attachment_insights.py`
+(`INSIGHT_DOC_TYPES`, `DOC_TYPE_LABELS`, `CARDS_BY_DOC_TYPE`), `services/document_comparison.py`,
+`services/certified_examples.py`, `knowledge/rule_cards/us/us-supporting-documents.md`,
+`benchmarks/insight_golden.json` (both statement cases are bank statements — HDFC Bank, First
+National), `scripts/run_insight_eval.py`, and the test/fixture set. **FE: nothing to change** —
+`docTypeBadgeLabel()` derives its badge from the string itself and there is no doc-type union or
+label map in `apps/invoice-fe`, confirmed by grep.
+
+**No migration.** `doc_type` is `character varying(32)` on all six tables that carry it
+(`invoice`, `documents`, `document_comparisons`, `chat_attachments`, `insight`,
+`certified_sql_example`) with **no check constraint and no PG enum** — verified against the live
+database (`pg_constraint` matching `%doc_type%`: 0 rows; `pg_enum`: 0 types). `BANK_STATEMENT` is
+14 characters. Nothing to alter, so no Alembic revision was written.
+
+**Existing rows are NOT migrated.** Documents already stored as `STATEMENT_OF_ACCOUNT` that are
+really bank statements keep that type — dev-phase rule: schema changes are add-only, no backfill.
+Their bubbles will read as supplier statements until they are re-uploaded.
+
+**Tests assert a property, not a fixture.** The new cases in `tests/test_document_type_classifier.py`
+are driven off the registries: every declared bank phrase alone and behind five unrelated banks;
+four supplier phrases behind five unrelated vendors; the two tuples proven disjoint; the ambiguous
+family proven absent from the bank entry. `tests/test_bank_ledger.py` asserts the landing property
+at the call site that had the defect — both types × mutated party names, the decision coming from
+the type and never from who printed it. A new A-series fixture
+(`bank_statement/india_inbound/IN-BANK-01_bank_statement.pdf`, generator + MANIFEST row) satisfies
+the coverage gate that every taxonomy value has a fixture and resolves without a model call.
+Re-baselined, with the reason in the test body: `test_a_title_whose_words_are_not_in_the_vocabulary_
+is_still_the_models_job` used "BANK STATEMENT" to make its point and that phrase is now IN the
+vocabulary — it now uses "Kassenbuch" / "Kreditorenliste", which really are outside the table.
+Three tests that enumerated the advisory types as a literal pair are now read off `DOC_TYPE_FAMILY`.
+
+**Verification (real Postgres, `localhost:5433/invoice_db`).** `test_attachment_insights /
+test_bank_ledger / test_bank_matching / test_chat_attachments / test_compare_documents /
+test_insight_eval / test_classifier_prechecks / test_no_hardcoding / test_document_type_classifier /
+test_a_series_fixtures` **611 passed in 31.94s**. `tests/test_generic_extraction.py` **392 passed,
+3 skipped in 18.33s**. Chat/insight neighbours `test_chat_doc_content_branch /
+test_insight_async_cards / test_insight_claims / test_insight_track_b / test_insight_lifecycle`
+**157 passed in 42.25s**. Deterministic 30.15 eval re-run on the retyped golden bank:
+**20/20 cases, 21/21 figures exact (100.0%), 0 fabricated**. Full backend suite:
+**4039 passed, 4 skipped, 5 deselected in 206.72s (0:03:26)**.

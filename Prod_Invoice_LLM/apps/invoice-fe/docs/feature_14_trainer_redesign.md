@@ -39,6 +39,8 @@ The backend fixed that structurally. This pass makes the UI match — and closes
 * [components/trainer/TrainerControlBar.tsx](../components/trainer/TrainerControlBar.tsx) → Global section removed; props now `panelTab`/`onPanelTabChange`/`hasSession`/`onChangeDocument`. Types `VendorPanelTab` replaces `GlobalSubTab`/`TrainerSection`/`VendorEntryMode`
 * [components/trainer/PdfViewerPanel.tsx](../components/trainer/PdfViewerPanel.tsx) → `scope` widened to include `outbound`; empty state and loading stages reworded
 * [components/chat/MessageBubble.tsx](../components/chat/MessageBubble.tsx) → `FeedbackVote` split into `handleUp()`/`handleDown()`; thumbs-down opens `ThumbsDownTriage`
+* **FE Gap 478 (2026-09-14)** [components/layout/Sidebar.tsx](../components/layout/Sidebar.tsx) → `Sidebar` — `menuItems` gains the `Chat Rules` row (`/settings/chat-rules`, `ScrollText`, `visible: canTrain`), after `AI Trainer`; `activeHref` unchanged
+* **FE Gap 478 (2026-09-14)** [app/settings/page.tsx](../app/settings/page.tsx) → `INTEGRATIONS` gains the `Chat Rules` tile (not `adminOnly`)
 * [e2e/trainer-loading-state.spec.ts](../e2e/trainer-loading-state.spec.ts), [e2e/group-a-layout-overflow.spec.ts](../e2e/group-a-layout-overflow.spec.ts), [e2e/rbac-sidebar.spec.ts](../e2e/rbac-sidebar.spec.ts) → updated for the removed endpoints and the renamed commit button
 
 **Deleted**
@@ -216,6 +218,26 @@ questions, and the only way to even discover it existed was to open
   open Settings and the destructive half is gated on `can_train`, the same
   permission `routers/chat.py::delete_chat_rule` enforces via `require_can_train`.
   The FE gate is discoverability; the backend is the control.
+* **Sidebar entry (added 2026-09-14, founder decision on the same gap).** The tile
+  above is only reachable through Settings, whose sidebar row is Admin-only — so a
+  Trainer, the exact role that teaches these rules, still could not find the screen
+  that reads them back. `Sidebar` (`components/layout/Sidebar.tsx`) now carries a
+  `Chat Rules` row — `{ name: "Chat Rules", href: "/settings/chat-rules", icon:
+  ScrollText, visible: canTrain }` — placed directly after `AI Trainer` in
+  `menuItems`, since the two share a permission and a mental model. This is the FE
+  Gap 143 pattern verbatim (`Subscriptions`, a `/settings/*` page promoted to its
+  own nav row), with one deliberate difference: Subscriptions is gated on
+  `role === "Admin"` because it is the billing record, whereas this row is gated on
+  `canTrain` from `useAuth()`, matching the backend permission on delete. Admins
+  pass `can_train` server-side (`dependencies.resolve_permissions`), so they see it
+  too. No change was needed to the `activeHref` longest-prefix rule FE Gap 143
+  added — `/settings` vs `/settings/chat-rules` is the same shape as
+  `/settings` vs `/settings/subscriptions`, so only the deeper row lights up.
+* **Settings is the long-term home.** `feature_22_today_ask_records.md` §3.3 had
+  claimed its future `Records › Rules` tab would close FE Gap 478 by listing chat
+  and extraction rules side by side. That claim was removed on 2026-09-14: that tab
+  lists extraction rules only and links out to `/settings/chat-rules`, so there is
+  one implementation and one delete affordance for chat rules, not two.
 
 **Deviations from the proposal in the gap entry.** None on scope: no backend
 change was needed, the proxy routes (`app/api/chat/rules/route.ts`,
@@ -228,15 +250,40 @@ Refresh control.
 **Boundary — what this does not do.** It cannot *edit* a rule (the backend has no
 update endpoint; the workflow is delete and re-teach), cannot disable one without
 deleting it (no PATCH for `enabled`), does not show which answers a rule has
-affected, and does not surface the rule set anywhere inside chat itself. A
-non-Admin trainer must reach it by URL or tile — the sidebar's Settings entry is
-Admin-gated (unchanged by this pass).
+affected, and does not surface the rule set anywhere inside chat itself. The
+sidebar's own `Settings` row remains Admin-gated (unchanged): a non-Admin trainer
+reaches this page by its dedicated `Chat Rules` row, not through Settings.
 
 **Verification (FE Gap 478).** `npx tsc --noEmit` — exit 0, no output.
 `npm test` (vitest) — `Test Files  5 passed (5)` / `Tests  44 passed (44)`,
 including the new `tests/unit/chat-rules-panel.test.tsx` (9 tests) whose
 assertions are properties of the render against a fixture the test mutates
 (rules renamed, an unknown category substituted, a row added, the author
-dropped), not literal expected strings. **Not verified:** the page's own fetch
-and delete wiring has never run against a live backend or in a browser — no
-Playwright spec and no manual run — so the gap is `[~]`, not `[x]`.
+dropped), not literal expected strings.
+
+**Live verification (functional-tester, 2026-09-14)** — this is what moved FE Gap
+478 from `[~]` to `[x]`. Evidence:
+`docs/test_evidence/fe_gap478_chat_rules_2026-09-14/README.md`. Against the local
+stack with real Azure AI services and real Postgres (no `/api/**` stubbing,
+`DISABLE_CLERK_AUTH=true`, Playwright chromium 1280x900): a rule was created
+through the real `POST /chat/rules/preview` → `/commit` pair, `/settings/chat-rules`
+rendered it with its category chip, full `ruleText` and
+`"Added 14 Sept 2026, 08:31 by user_test_default"` (`before_delete.png`); the trash
+affordance fired the confirm dialog and, on accept, the list fell to the
+"No chat rules yet" empty state (`after_delete.png`); `GET /chat/rules` returned
+`[]` and `SELECT id FROM tenant_chat_rules WHERE id='cfe830a9-…'` returned 0 rows,
+confirming a hard delete rather than a soft disable. All three checks **PASS**.
+
+**Sidebar entry verification.** `e2e/rbac-sidebar.spec.ts` gained a
+`Sidebar — Chat Rules (FE Gap 478)` block: the row is visible and its `href` is
+`/settings/chat-rules` for a `can_train` identity, absent for an identity holding
+`can_audit` + `can_load` but not `can_train`, and visible for an Admin. The
+existing exact-set assertions were extended in the same pass (`can_train` now
+reveals `AI Trainer` **and** `Chat Rules`), and a pre-existing staleness was fixed
+while there: FE Gap 464 added the `History` row on `can_audit` and this spec had
+never been updated for it. `npx playwright test e2e/rbac-sidebar.spec.ts` —
+`22 passed (1.5m)`.
+
+**Still not covered:** the page's fetch/delete wiring has no *stubbed* Playwright
+spec of its own — the live run above is the only browser evidence, so a
+regression there would be caught by a manual run, not by CI.

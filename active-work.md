@@ -29,6 +29,7 @@ _Last updated: 2026-09-05. Founder maintains this file. If it is more than ~1 we
 
 ## Frozen / do not touch
 - **No taxonomy/schema amendment work** — the founder's draft A/B-series proposal — starts until **F27's existing ledger closes** (G6 remainder, G8, G11, F, V, and the A4/F5 ruling) **and its flag-safety equality test passes against real Postgres**. Amending the taxonomy on top of an unverified ledger would put two unproven layers underneath each other.
+  - **2026-09-14 — NARROW UNFREEZE, founder ("Unfreeze and split now"): BE Gap 516.1 only.** One value, `BANK_STATEMENT`, was added to the taxonomy so a bank statement stops borrowing `STATEMENT_OF_ACCOUNT` (the supplier statement's type). The freeze above is otherwise unchanged and still holds: F27's ledger (G6 remainder, G8, F, V, the A4/F5 ruling) is still open, and no other type, schema field or A/B-series amendment is authorised by this line.
 - SAGE Phase 3 — gated on Gap 310's real-world result; 4 product decisions deliberately unresolved (see `feature_21_sage.md`). Do not start or "resolve" them.
 - F24 Ops Digest — deleted; do not rebuild without a founder decision.
 - Gap 225 verification scope — closed by product decision, arithmetic-only; do not build semantic checks.

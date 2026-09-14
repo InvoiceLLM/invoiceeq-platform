@@ -273,6 +273,25 @@ matching `/delete/i` or `/^hide/i`; and the sidebar swap is net zero — a
 backend. Every `/api/**` call in the spec is stubbed, so this proves the
 rendering and the request shapes, not the wiring to real data.
 
+**Closed 2026-09-14 — live run against a real backend.** *Founder ruling
+2026-09-14: local stack + real Azure DI/OpenAI accepted as the Azure-path
+evidence* in place of a deployed dev-stack run. A real Purchase Order PDF was
+uploaded through `POST /api/v1/invoices/upload`; real Azure Document
+Intelligence classified it `PURCHASE_ORDER` at confidence `1.0`, **no `Invoice`
+row was created**, a `documents` row was, and `/history` (no stubbing, real
+`GET /api/v1/ingestion-history`) rendered the run as *"Today 08:27 · Upload ·
+Receiving · 1 file: 1 not loaded"* with a **NOT LOADED** badge; expanding it
+showed the chip *"Not loaded — Purchase order"* with the full extracted
+evidence (party names, `PO-US-8841`, date, total, 2 line items · 1 attribute).
+Result lines: *"Non-invoice upload does not silently disappear (the FE Gap 464
+defect): PASS"*, *"Ingest classification message and durable `/history` row both
+confirmed: PASS"*, *"Matches the `/api/v1/ingestion-history` durable-record
+contract described in the spec: PASS"*. Evidence:
+`docs/test_evidence/fe_gap464_history_2026-09-14/`. This closes the only open
+`done`-gate item on FE Gap 464. It does **not** touch FE Gap 469, which is a
+defect of the deployed website-tier proxy and is not verifiable from a local
+stack.
+
 #### Reaching this screen on the deployed origin — FE Gap 469 (2026-09-05)
 
 The screen above is served by invoice-fe, but nobody reaches invoice-fe directly: its Container App ingress is internal, and the public origin is **invoice-website**, which rewrites an explicit allowlist of paths through to it (`fePages` and `feApiPrefixes` in `apps/invoice-website/next.config.js`, plus a matching negative lookahead in `apps/invoice-website/middleware.ts`'s matcher).

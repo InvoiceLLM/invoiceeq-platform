@@ -51,7 +51,7 @@ None in the FE. Types only.
 | 21.2 | Vitest: block with one `ok`, one `skipped`, one `blocked` card renders three cards, two collapsed, reasons visible |
 | 21.3 | Vitest: click dispatches the composer submit with the question text |
 | 21.4 | Vitest: thumbs-down opens the dialog; submit calls `postInsightFeedback` with `vote: "down"` and the text |
-| 21.5 | Playwright against local BE with `ENABLE_ATTACHMENT_INSIGHTS=true`; screenshot filed |
+| 21.5 | Playwright against local BE with `ENABLE_ATTACHMENT_INSIGHTS=true`; screenshot filed — **DONE 2026-09-14** (see §9.5). **Founder ruling 2026-09-14: local stack + real Azure DI/OpenAI accepted as the Azure-path evidence**; this row already asked only for a local BE, and the run exceeded it by using real Azure Document Intelligence + real Azure OpenAI narration (`verdict_source: "model"`, `gate_status: "ok"`). Result lines: *"Intelligence bubble renders under the assistant answer with verdict + findings: PASS"*, *"Discuss chip works (composer prefilled with the finding's context): PASS"*, *"Per-card thumbs endpoint works (confirmed via direct API call): PASS"*, *"Per-card thumbs UI click-through: not independently confirmed in this run"*. Screenshots `insight_bubble.png` / `discuss_chip.png`; evidence: `apps/invoice-be/docs/test_evidence/f30_chat_insights_2026-09-14/`. The unconfirmed item is the per-card thumbs **UI click-through**, which no row of this plan requires — 21.4's proof is the vitest assertion on `postInsightFeedback` (30/30 passed) and the endpoint behind the button was exercised directly (200, correction row persisted) — so it is recorded as a caveat, not as an open gate item. |
 
 ## 7. Open decisions
 
